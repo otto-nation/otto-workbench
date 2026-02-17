@@ -1,0 +1,59 @@
+[alias]
+        hard-delete = branch -D
+        delete = branch -d
+        ch = checkout
+        st = status
+        unstage = reset HEAD --
+        discard = checkout --
+        plog = log --pretty=oneline --abbrev-commit
+        newBranches = fetch --all
+        graph-log = log --graph --decorate --pretty=oneline --abbrev-commit
+        fixup = "!func() { git commit --fixup=$1 && git stash && git rebase -i --autosquash $1^1; }; func"
+        wip = !git add . && git commit -m 'wip'
+        nah = !git reset --hard && git clean -df
+        rebase-off-main = !git fetch --all && git stash && git checkout main && git pull && git checkout - && git rebase main
+        deploy-branch = !git checkout main && git pull && git checkout -b your-name/deploy && git rebase main && git commit --allow-empty --no-verify -m 'chore: deploy' && git push --no-verify
+        deploy-commit = !git commit -m 'chore: deploy' --allow-empty --no-verify && git push --no-verify
+[color]
+        ui = true
+[color "diff-highlight"]
+        oldNormal = red bold
+        oldHighlight = red bold 52
+        newNormal = green bold
+        newHighlight = green bold 22
+[color "diff"]
+        meta = yellow
+        frag = magenta bold
+        commit = yellow bold
+        old = red bold
+        new = green bold
+        whitespace = red reverse
+[filter "lfs"]
+        smudge = git-lfs smudge -- %f
+        process = git-lfs filter-process
+        required = true
+        clean = git-lfs clean -- %f
+[user]
+	email = your-email@example.com
+	name = Your Name
+	signingKey = YOUR_GPG_KEY_ID
+[init]
+	defaultBranch = main
+[pull]
+	rebase = true
+[commit]
+	gpgSign = true
+[tag]
+	forceSignAnnotated = true
+[gpg]
+	program = /opt/homebrew/bin/gpg
+	format = openpgp
+[push]
+	autoSetupRemote = true
+	username = your-username
+[gpg "ssh"]
+	program = 
+	allowedSignersFile = 
+[credential]
+	helper = 
+	helper = /usr/local/share/gcm-core/git-credential-manager

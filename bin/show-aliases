@@ -1,0 +1,136 @@
+#!/usr/bin/env zsh
+# Auto-discover and display custom aliases and functions from config files
+
+# Colors
+BOLD='\033[1m'
+DIM='\033[2m'
+BLUE='\033[34m'
+GREEN='\033[32m'
+CYAN='\033[36m'
+YELLOW='\033[33m'
+RESET='\033[0m'
+
+CONFIG_DIR="$HOME/.config/zsh/config.d"
+FILTER="${1:-}"
+
+# Skip these files (deprecated/internal)
+SKIP_FILES=("aws-sso-set.zsh" "aws-sso-set-blackbird.zsh" "aws-sso-set-cache.zsh" "aws-sso-set-eks.zsh" "aws-sso-set-logging.zsh" "aws-sso-set-ssm.zsh" "aws-sso-set-upgrade.zsh")
+
+print_header() {
+  echo -e "\n${BOLD}${BLUE}$1${RESET}"
+  echo -e "${DIM}$(printf '─%.0s' {1..80})${RESET}"
+}
+
+print_item() {
+  local type=$1 name=$2 value=$3
+  local color=$GREEN
+  [[ "$type" == "function" ]] && color=$CYAN
+  
+  value=$(echo "$value" | sed "s/^['\"]//;s/['\"]$//" | cut -c1-60)
+  printf "  ${color}%-25s${RESET} ${DIM}→${RESET} %s\n" "$name" "$value"
+}
+
+should_skip_file() {
+  [[ " ${SKIP_FILES[@]} " =~ " $1 " ]]
+}
+
+matches_filter() {
+  [[ -z "$FILTER" ]] || [[ "$1" =~ "$FILTER" ]]
+}
+
+# Process each config file
+for config_file in "$CONFIG_DIR"/*.zsh; do
+  [[ ! -f "$config_file" ]] && continue
+  
+  filename=$(basename "$config_file")
+  should_skip_file "$filename" && continue
+  
+  # Skip if filtering and file doesn't match
+  if [[ -n "$FILTER" ]] && [[ ! "$filename" =~ "$FILTER" ]]; then
+    grep -qiE "^(alias|function) .*$FILTER" "$config_file" 2>/dev/null || continue
+  fi
+  
+  header=$(grep -m1 "^# .*Configuration" "$config_file" 2>/dev/null | sed 's/^# //' || echo "${filename%.zsh}")
+  
+  typeset -a items=()
+  
+  # Extract aliases
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^alias\ +([^=]+)=(.+)$ ]]; then
+      name="${match[1]}"
+      name="${name## }"; name="${name%% }"
+      value="${match[2]}"
+      value="${value#\'}"; value="${value%\'}"; value="${value#\"}"; value="${value%\"}"
+      
+      # Skip internal/legacy aliases (whitelist specific aws- aliases)
+      [[ "$name" =~ ^(aws-|_) ]] && [[ ! "$name" =~ ^(aws-whoami|aws-logout|aws-docker|aws-k8s-qa)$ ]] && continue
+      
+      matches_filter "$name" || matches_filter "$value" || continue
+      items+=("alias|$name|$value")
+    fi
+  done < <(grep "^alias " "$config_file" 2>/dev/null)
+  
+  # Extract functions
+  local prev_line=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ *(.+)$ ]]; then
+      prev_line="${match[1]}"
+    elif [[ "$line" =~ "^(function +)?([a-zA-Z0-9_-]+) *[(][)] *[{]" ]]; then
+      local fname="${match[2]}"
+      [[ "$fname" =~ ^_ ]] && continue
+      matches_filter "$fname" || continue
+      
+      local desc="Function"
+      [[ -n "$prev_line" && ! "$prev_line" =~ ^=+ ]] && desc="$prev_line"
+      
+      items+=("function|$fname|$desc")
+      prev_line=""
+    else
+      prev_line=""
+    fi
+  done < "$config_file"
+  
+  # Print section if we have items
+  if [[ ${#items[@]} -gt 0 ]]; then
+    print_header "$header"
+    for item in "${items[@]}"; do
+      IFS='|' read -r type name value <<< "$item"
+      print_item "$type" "$name" "$value"
+    done
+  fi
+done
+
+# Extract git aliases
+if [[ -z "$FILTER" ]] || [[ "git" =~ "$FILTER" ]]; then
+  typeset -a git_items=()
+  
+  git config --get-regexp '^alias\.' 2>/dev/null | while IFS= read -r line; do
+    line="${line#alias.}"
+    name="${line%% *}"
+    value="${line#* }"
+    
+    matches_filter "$name" || matches_filter "$value" || continue
+    echo "alias|$name|$value"
+  done | while IFS='|' read -r type name value; do
+    git_items+=("$type|$name|$value")
+  done
+  
+  if [[ ${#git_items[@]} -gt 0 ]]; then
+    print_header "Git Configuration"
+    for item in "${git_items[@]}"; do
+      IFS='|' read -r type name value <<< "$item"
+      print_item "$type" "$name" "$value"
+    done
+  fi
+fi
+
+# Usage hint
+if [[ -z "$FILTER" ]]; then
+  echo -e "\n${DIM}Usage: aliases [filter]${RESET}"
+  echo -e "${DIM}Example: aliases aws, aliases git, aliases docker${RESET}"
+  echo -e "${DIM}Add new aliases to: $CONFIG_DIR/*.zsh${RESET}"
+else
+  echo -e "\n${DIM}Showing results for: ${YELLOW}$FILTER${RESET}"
+fi
+
+echo ""

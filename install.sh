@@ -14,7 +14,34 @@ prompt_overwrite() {
   echo -e "${YELLOW}⚠️  $file already exists${NC}"
   read -p "Overwrite? [y/N] " -n 1 -r
   echo
-  [[ $REPLY =~ ^[Yy]$ ]]
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    read -p "Create backup? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      cp "$file" "${file}.backup"
+      echo "  ✓ Backed up to ${file}.backup"
+    fi
+    return 0
+  fi
+  return 1
+}
+
+install_symlink() {
+  local source=$1
+  local target=$2
+  local name=$(basename "$source")
+  
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    if prompt_overwrite "$target"; then
+      ln -sf "$source" "$target"
+      echo "  ✓ $name"
+    else
+      echo "  ⊘ Skipped $name"
+    fi
+  else
+    ln -sf "$source" "$target"
+    echo "  ✓ $name"
+  fi
 }
 
 echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}\n"
@@ -23,62 +50,37 @@ echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}\n"
 mkdir -p ~/.local/bin
 mkdir -p ~/.config/zsh/config.d
 
-# Install scripts to PATH
+# Install scripts
 echo -e "${GREEN}→${NC} Installing scripts to ~/.local/bin/"
 for script in "$DOTFILES_DIR"/bin/*; do
-  target=~/.local/bin/$(basename "$script")
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
-    if prompt_overwrite "$target"; then
-      ln -sf "$script" "$target"
-      echo "  ✓ $(basename "$script")"
-    else
-      echo "  ⊘ Skipped $(basename "$script")"
-    fi
-  else
-    ln -sf "$script" "$target"
-    echo "  ✓ $(basename "$script")"
-  fi
+  install_symlink "$script" ~/.local/bin/$(basename "$script")
 done
 
 # Install zsh configs
 echo -e "\n${GREEN}→${NC} Installing zsh configs to ~/.config/zsh/config.d/"
 for config in "$DOTFILES_DIR"/zsh/*.zsh; do
-  target=~/.config/zsh/config.d/$(basename "$config")
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
-    if prompt_overwrite "$target"; then
-      ln -sf "$config" "$target"
-      echo "  ✓ $(basename "$config")"
-    else
-      echo "  ⊘ Skipped $(basename "$config")"
-    fi
-  else
-    ln -sf "$config" "$target"
-    echo "  ✓ $(basename "$config")"
-  fi
+  install_symlink "$config" ~/.config/zsh/config.d/$(basename "$config")
 done
 
 # Install gitconfig
 echo -e "\n${GREEN}→${NC} Installing gitconfig"
-if [ -e ~/.gitconfig ] && [ ! -L ~/.gitconfig ]; then
-  if prompt_overwrite ~/.gitconfig; then
-    ln -sf "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
-    echo "  ✓ .gitconfig"
-  else
-    echo "  ⊘ Skipped .gitconfig"
-  fi
-else
-  ln -sf "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
-  echo "  ✓ .gitconfig"
+install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
+
+# Add ~/.local/bin to PATH
+SHELL_RC=""
+if [ -n "$ZSH_VERSION" ]; then
+  SHELL_RC=~/.zshrc
+elif [ -n "$BASH_VERSION" ]; then
+  SHELL_RC=~/.bashrc
 fi
 
-# Ensure PATH includes ~/.local/bin
-if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.zshrc 2>/dev/null; then
-  echo -e "\n${GREEN}→${NC} Adding ~/.local/bin to PATH in ~/.zshrc"
-  echo '' >> ~/.zshrc
-  echo '# Add local bin to PATH' >> ~/.zshrc
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-  echo "  ✓ Updated ~/.zshrc"
+if [ -n "$SHELL_RC" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHELL_RC" 2>/dev/null; then
+  echo -e "\n${GREEN}→${NC} Adding ~/.local/bin to PATH in $SHELL_RC"
+  echo '' >> "$SHELL_RC"
+  echo '# Add local bin to PATH' >> "$SHELL_RC"
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+  echo "  ✓ Updated $SHELL_RC"
 fi
 
 echo -e "\n${BOLD}${GREEN}✓ Installation complete!${NC}"
-echo -e "\nReload your shell: ${BOLD}exec zsh${NC}"
+echo -e "\nReload your shell: ${BOLD}exec $(basename $SHELL)${NC}"

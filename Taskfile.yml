@@ -1,0 +1,150 @@
+version: "3"
+
+tasks:
+  # ============================================================================
+  # GIT AUTOMATION
+  # ============================================================================
+
+  setup-ai:
+    desc: "⚙️ Setup AI configuration for taskfile automation"
+    silent: true
+    cmds:
+      - |
+        TASKFILE_DIR=".taskfile"
+        ENV_FILE="$TASKFILE_DIR/taskfile.env"
+        EXAMPLE_FILE="$TASKFILE_DIR/taskfile.env.example"
+        GITIGNORE_FILE="$TASKFILE_DIR/.gitignore"
+        
+        echo "⚙️ Setting up AI configuration..."
+        
+        # Create directory
+        mkdir -p "$TASKFILE_DIR"
+        
+        # Create .gitignore
+        if [ ! -f "$GITIGNORE_FILE" ]; then
+          echo "# Taskfile local configuration" > "$GITIGNORE_FILE"
+          echo "taskfile.env" >> "$GITIGNORE_FILE"
+          echo "✅ Created $GITIGNORE_FILE"
+        fi
+        
+        # Create example file
+        if [ ! -f "$EXAMPLE_FILE" ]; then
+          echo "# Taskfile AI Configuration" > "$EXAMPLE_FILE"
+          echo "# Copy this file to taskfile.env and configure your AI command" >> "$EXAMPLE_FILE"
+          echo "" >> "$EXAMPLE_FILE"
+          echo "# AI command for commit messages" >> "$EXAMPLE_FILE"
+          echo "# Examples:" >> "$EXAMPLE_FILE"
+          echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$EXAMPLE_FILE"
+          echo "AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$EXAMPLE_FILE"
+          echo "✅ Created $EXAMPLE_FILE"
+        fi
+        
+        # Create env file if it doesn't exist
+        if [ ! -f "$ENV_FILE" ]; then
+          cp "$EXAMPLE_FILE" "$ENV_FILE"
+          echo "✅ Created $ENV_FILE"
+          echo ""
+          echo "📝 Please edit $ENV_FILE to configure your AI command"
+        else
+          echo "ℹ️ $ENV_FILE already exists"
+        fi
+        
+        echo ""
+        echo "✅ AI configuration setup complete!"
+
+  check-ai:
+    desc: "🤖 Check AI command availability (internal helper)"
+    internal: true
+    silent: true
+    cmds:
+      - |
+        ENV_FILE=".taskfile/taskfile.env"
+        
+        if [ -f "$ENV_FILE" ] && grep -q "^AI_COMMAND=" "$ENV_FILE"; then
+          AI_COMMAND=$(grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2-)
+          AI_CMD=$(echo "$AI_COMMAND" | cut -d' ' -f1)
+          
+          if ! command -v "$AI_CMD" >/dev/null 2>&1; then
+            echo "❌ AI command not found: $AI_CMD" >&2
+            exit 1
+          fi
+          
+          mkdir -p /tmp/task-ai
+          echo "$AI_COMMAND" > /tmp/task-ai/command
+        else
+          echo "❌ AI not configured." >&2
+          echo "   Run: task setup-ai" >&2
+          exit 1
+        fi
+
+  commit:
+    desc: "🤖 Generate AI-powered commit message based on staged changes"
+    silent: true
+    deps: [check-ai]
+    cmds:
+      - |
+        # Validate staged changes exist
+        STAGED_FILES=$(git diff --cached --name-only)
+        if [ -z "$STAGED_FILES" ]; then
+          echo "❌ No staged changes found. Use 'git add' first."
+          exit 1
+        fi
+        
+        echo "🤖 Analyzing staged changes with AI..."
+        echo ""
+        
+        # Prepare diff and file list
+        DIFF_CONTENT=$(git diff --cached --no-color)
+        FILE_LIST=$(echo "$STAGED_FILES" | tr '\n' ', ' | sed 's/,$//')
+        
+        # Commit rules
+        COMMIT_RULES="Follow these conventional commit rules:
+        - Header (first line) must be ≤72 characters
+        - Use format: type(scope): description
+        - Types: feat, fix, docs, style, refactor, test, chore
+        - No period at end of subject
+        - Separate header and body with blank line
+        - Body lines ≤100 characters
+        - Use bullet points for multiple changes"
+        
+        # Build AI prompt
+        AI_PROMPT="Generate a conventional commit message based on the changes.
+        
+        $COMMIT_RULES
+        
+        Files changed: $FILE_LIST
+        
+        Diff:
+        $DIFF_CONTENT
+        
+        Return only the commit message, nothing else."
+        
+        # Get AI command and generate commit message
+        AI_COMMAND=$(cat /tmp/task-ai/command)
+        COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g')
+        
+        # Display and commit
+        echo "✨ AI Analysis Complete"
+        echo ""
+        echo "📝 Generated commit message:"
+        echo "   $COMMIT_MSG"
+        echo ""
+        echo "🚀 Committing..."
+        git commit -m "$COMMIT_MSG"
+        echo "✅ Committed successfully!"
+
+  # ============================================================================
+  # UTILITY
+  # ============================================================================
+
+  help:
+    desc: "❓ Show this help message"
+    silent: true
+    cmds:
+      - echo "🛠️ Dotfiles Task Runner"
+      - echo ""
+      - echo "🤖 AI-Powered Git Automation:"
+      - echo "   setup-ai - Setup AI configuration (first-time setup)"
+      - echo "   commit   - AI-generated commit messages"
+      - echo ""
+      - echo "ℹ️ For detailed task list: task --list"

@@ -1,12 +1,12 @@
 version: "3"
 
 tasks:
+  # SYNC:START:git-automation
   # ============================================================================
   # GIT AUTOMATION
   # ============================================================================
-
   setup-ai:
-    desc: "⚙️ Setup AI configuration for taskfile automation"
+    desc: "⚙️  Setup AI configuration for taskfile automation"
     silent: true
     cmds:
       - |
@@ -15,7 +15,7 @@ tasks:
         EXAMPLE_FILE="$TASKFILE_DIR/taskfile.env.example"
         GITIGNORE_FILE="$TASKFILE_DIR/.gitignore"
         
-        echo "⚙️ Setting up AI configuration..."
+        echo "⚙️  Setting up AI configuration..."
         
         # Create directory
         mkdir -p "$TASKFILE_DIR"
@@ -32,9 +32,10 @@ tasks:
           echo "# Taskfile AI Configuration" > "$EXAMPLE_FILE"
           echo "# Copy this file to taskfile.env and configure your AI command" >> "$EXAMPLE_FILE"
           echo "" >> "$EXAMPLE_FILE"
-          echo "# AI command for commit messages" >> "$EXAMPLE_FILE"
+          echo "# AI command for commit messages and PR generation" >> "$EXAMPLE_FILE"
           echo "# Examples:" >> "$EXAMPLE_FILE"
           echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$EXAMPLE_FILE"
+          echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$EXAMPLE_FILE"
           echo "AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$EXAMPLE_FILE"
           echo "✅ Created $EXAMPLE_FILE"
         fi
@@ -45,8 +46,9 @@ tasks:
           echo "✅ Created $ENV_FILE"
           echo ""
           echo "📝 Please edit $ENV_FILE to configure your AI command"
+          echo "   Example: AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd"
         else
-          echo "ℹ️ $ENV_FILE already exists"
+          echo "ℹ️  $ENV_FILE already exists"
         fi
         
         echo ""
@@ -74,6 +76,7 @@ tasks:
         else
           echo "❌ AI not configured." >&2
           echo "   Run: task setup-ai" >&2
+          echo "   Then edit: $ENV_FILE" >&2
           exit 1
         fi
 
@@ -89,36 +92,37 @@ tasks:
           echo "❌ No staged changes found. Use 'git add' first."
           exit 1
         fi
-        
+
         echo "🤖 Analyzing staged changes with AI..."
         echo ""
-        
+
         # Prepare diff and file list
         DIFF_CONTENT=$(git diff --cached --no-color)
         FILE_LIST=$(echo "$STAGED_FILES" | tr '\n' ', ' | sed 's/,$//')
         
         # Commit rules
         COMMIT_RULES="Follow these conventional commit rules:
-        - Header (first line) must be ≤72 characters
-        - Use format: type(scope): description
-        - Types: feat, fix, docs, style, refactor, test, chore
-        - No period at end of subject
-        - Separate header and body with blank line
-        - Body lines ≤100 characters
-        - Use bullet points for multiple changes"
-        
+- Header (first line) must be ≤72 characters (no exceptions)
+- Use conventional commit format: type(scope): description
+- Types: feat, fix, perf, deps, revert, docs, style, refactor, test, build, ci, chore
+- No period at end of subject
+- Use semicolon (;) to separate multiple changes in header
+- Separate header and body with blank line
+- Body lines must be ≤100 characters each
+- Use bullet points for multiple changes in body"
+
         # Build AI prompt
         AI_PROMPT="Generate a conventional commit message based on the changes.
-        
-        $COMMIT_RULES
-        
-        Files changed: $FILE_LIST
-        
-        Diff:
-        $DIFF_CONTENT
-        
-        Return only the commit message, nothing else."
-        
+
+$COMMIT_RULES
+
+Files changed: $FILE_LIST
+
+Diff:
+$DIFF_CONTENT
+
+Return only the commit message, nothing else."
+
         # Get AI command and generate commit message
         AI_COMMAND=$(cat /tmp/task-ai/command)
         COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g')
@@ -133,18 +137,239 @@ tasks:
         git commit -m "$COMMIT_MSG"
         echo "✅ Committed successfully!"
 
+  pr-content:
+    desc: "🤖 Generate AI-powered PR content (internal helper)"
+    internal: true
+    silent: true
+    deps: [check-ai]
+    cmds:
+      - |
+        BRANCH=$(git branch --show-current)
+        if [ "$BRANCH" = "main" ]; then
+          echo "❌ Cannot create PR from main branch"
+          exit 1
+        fi
+
+        # Extract issue number from branch name (e.g., feature/ISSUE-123-description)
+        ISSUE_NUMBER=$(echo "$BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1)
+        
+        # If no issue in branch name, prompt for it
+        if [ -z "$ISSUE_NUMBER" ]; then
+          echo "🔍 No issue number found in branch name: $BRANCH"
+          echo ""
+          read -p "📋 Enter issue number (e.g., ISSUE-123) or press Enter to skip: " USER_ISSUE
+          ISSUE_NUMBER="$USER_ISSUE"
+        else
+          echo "✅ Found issue number: $ISSUE_NUMBER"
+        fi
+
+        COMMITS=$(git log --oneline origin/main..HEAD)
+        COMMIT_COUNT=$(git rev-list --count origin/main..$BRANCH)
+        CHANGED_FILES=$(git diff --name-only origin/main..$BRANCH)
+        
+        # Use PR template if exists, otherwise use simple format
+        if [ -f .github/pull_request_template.md ]; then
+          PR_TEMPLATE=$(cat .github/pull_request_template.md)
+        else
+          PR_TEMPLATE="## Summary
+
+## Changes
+
+## Testing"
+        fi
+
+        AI_PROMPT="Generate a professional PR title and fill out this template based on the changes:
+
+        Template:
+        $PR_TEMPLATE
+
+        Branch: $BRANCH
+        Issue: ${ISSUE_NUMBER:-None}
+        Commits: $COMMIT_COUNT
+
+        Recent commits:
+        $COMMITS
+
+        Changed files:
+        $CHANGED_FILES
+
+        Return: TITLE: <title>
+        DESCRIPTION: <filled template>"
+
+        AI_COMMAND=$(cat /tmp/task-ai/command)
+
+        RAW_RESPONSE=$(echo "$AI_PROMPT" | $AI_COMMAND)
+        AI_RESPONSE=$(echo "$RAW_RESPONSE" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed 's/\x1b\[[0-9;]*R//g' | tr -d '\033\007\015' | sed 's/^[> ]*//g')
+
+        PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r')
+        PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
+
+        if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
+        if [ -z "$PR_DESCRIPTION" ]; then PR_DESCRIPTION="## Summary\n\nBranch: $BRANCH\nCommits: $COMMIT_COUNT"; fi
+        
+        # Add issue number to description if provided
+        if [ -n "$ISSUE_NUMBER" ]; then
+          PR_DESCRIPTION="Closes $ISSUE_NUMBER\n\n$PR_DESCRIPTION"
+        fi
+        
+        mkdir -p /tmp/task-pr
+        echo "$PR_TITLE" > /tmp/task-pr/title
+        echo "$PR_DESCRIPTION" > /tmp/task-pr/description
+        
+        echo "📝 Title: $PR_TITLE"
+        echo "📄 Description:"
+        echo "$PR_DESCRIPTION"
+
+  create-pr:
+    desc: "🤖 Create AI-powered pull request with smart title and description"
+    silent: true
+    cmds:
+      - |
+        BRANCH=$(git branch --show-current)
+        
+        # Check if remote branch exists
+        if git ls-remote --heads origin $BRANCH | grep -q $BRANCH; then
+          # Remote exists, check for divergence
+          git fetch origin $BRANCH --quiet
+          
+          LOCAL=$(git rev-parse @)
+          REMOTE=$(git rev-parse @{u})
+          BASE=$(git merge-base @ @{u})
+          
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "✅ Branch is up to date with remote"
+          elif [ "$LOCAL" = "$BASE" ]; then
+            echo "⚠️  Remote has commits not in local branch"
+            echo "❌ Cannot create PR - please pull first: git pull"
+            exit 1
+          elif [ "$REMOTE" = "$BASE" ]; then
+            echo "📤 Local has unpushed commits, pushing..."
+            if ! git push origin $BRANCH; then
+              echo "❌ Push failed"
+              exit 1
+            fi
+          else
+            echo "❌ Branch has diverged from remote"
+            echo "💡 Fix with: git pull --rebase or git reset"
+            exit 1
+          fi
+        else
+          # Remote doesn't exist, push it
+          echo "📤 Pushing new branch to remote..."
+          if ! git push -u origin $BRANCH; then
+            echo "❌ Push failed"
+            exit 1
+          fi
+        fi
+        
+        echo "🤖 Analyzing branch changes with AI: $BRANCH"
+      - task: pr-content
+      - |
+        PR_TITLE=$(cat /tmp/task-pr/title)
+        PR_DESCRIPTION=$(cat /tmp/task-pr/description)
+        
+        echo "✨ AI Analysis Complete"
+        echo "🚀 Creating PR..."
+
+        PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1)
+        PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com[^[:space:]]*')
+
+        echo "✅ Pull request created!"
+        if [ -n "$PR_URL" ]; then
+          echo "🔗 $PR_URL"
+        else
+          echo "$PR_OUTPUT"
+        fi
+
+  update-pr:
+    desc: "🔄 Update current PR description with AI-generated content"
+    silent: true
+    cmds:
+      - |
+        BRANCH=$(git branch --show-current)
+        if [ "$BRANCH" = "main" ]; then
+          echo "❌ Cannot update PR from main branch"
+          exit 1
+        fi
+
+        echo "🔍 Checking for existing PR..."
+        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
+        
+        if [ -z "$PR_NUMBER" ]; then
+          echo "❌ No PR found for branch: $BRANCH"
+          echo "💡 Use 'task create-pr' to create a new PR"
+          exit 1
+        fi
+
+        echo "🤖 Analyzing branch changes with AI: $BRANCH"
+      - task: pr-content
+      - |
+        PR_DESCRIPTION=$(cat /tmp/task-pr/description)
+        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
+        
+        echo "✨ AI Analysis Complete"
+        echo "🔄 Updating PR #$PR_NUMBER..."
+
+        gh pr edit $PR_NUMBER --body "$PR_DESCRIPTION"
+
+        echo "✅ PR description updated!"
+        echo "🔗 View: $(gh pr view --json url -q .url)"
+  # SYNC:END:git-automation
+
   # ============================================================================
   # UTILITY
   # ============================================================================
+  
+  sync-taskfile:
+    desc: "🔄 Sync Taskfile sections from gist"
+    silent: true
+    cmds:
+      - |
+        GIST_URL="https://gist.github.com/isaacgarza/6985f3cadb4eb3bb20e116700aefba88/raw"
+        TEMP_FILE="/tmp/taskfile-gist.yml"
+        
+        echo "📥 Downloading latest Taskfile from gist..."
+        if ! curl -sL "$GIST_URL" -o "$TEMP_FILE"; then
+          echo "❌ Failed to download gist"
+          exit 1
+        fi
+        
+        echo "🔄 Syncing marked sections..."
+        
+        # Extract sections between SYNC markers from gist
+        awk '/# SYNC:START:git-automation/,/# SYNC:END:git-automation/' "$TEMP_FILE" > /tmp/sync-section.txt
+        
+        # Replace section in local file
+        awk '
+          /# SYNC:START:git-automation/ { 
+            print
+            system("cat /tmp/sync-section.txt | sed \"1d;\\$d\"")
+            skip=1
+            next
+          }
+          /# SYNC:END:git-automation/ { skip=0 }
+          !skip
+        ' Taskfile.yml > /tmp/taskfile-new.yml
+        
+        mv /tmp/taskfile-new.yml Taskfile.yml
+        rm -f "$TEMP_FILE" /tmp/sync-section.txt
+        
+        echo "✅ Taskfile synced successfully!"
+        echo "💡 Review changes with: git diff Taskfile.yml"
 
   help:
     desc: "❓ Show this help message"
     silent: true
     cmds:
-      - echo "🛠️ Dotfiles Task Runner"
+      - echo "🛠️  Dotfiles Task Runner"
       - echo ""
       - echo "🤖 AI-Powered Git Automation:"
-      - echo "   setup-ai - Setup AI configuration (first-time setup)"
-      - echo "   commit   - AI-generated commit messages"
+      - echo "   setup-ai       - Setup AI configuration (first-time setup)"
+      - echo "   commit         - AI-generated commit messages"
+      - echo "   create-pr      - AI-generated PR (auto-pushes if needed)"
+      - echo "   update-pr      - Update existing PR description"
       - echo ""
-      - echo "ℹ️ For detailed task list: task --list"
+      - echo "🔄 Maintenance:"
+      - echo "   sync-taskfile  - Sync git automation tasks from gist"
+      - echo ""
+      - echo "ℹ️  For detailed task list: task --list"

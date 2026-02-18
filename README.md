@@ -1,163 +1,106 @@
-# Dotfiles
+# Workbench
 
-Personal shell configuration and utilities.
+Personal development environment with shell configuration, utilities, and AI-powered git automation.
 
-## Contents
-
-- **bin/** - Executable scripts (added to PATH)
-  - `cleanup-testcontainers` - Clean up Docker testcontainers
-  - `get-secret` - Interactive AWS Secrets Manager retrieval
-  - `mem-analyze` - System memory analysis report
-  - `show-aliases` - Display all configured aliases and functions
-
-- **zsh/** - ZSH configuration files
-  - `aliases-docker.zsh` - Docker and container aliases
-  - `aliases-kubernetes.zsh` - Kubernetes aliases
-  - `aliases-development.zsh` - Git, Gradle, and development tools
-  - `aliases-aws.zsh` - AWS utilities
-  - `aliases-system.zsh` - System utilities and macOS helpers
-
-- **git/** - Git configuration
-  - `.gitconfig` - Git aliases and settings
-
-## Installation
+## Quick Start
 
 ```bash
-git clone https://github.com/isaacgarza/dotfiles ~/dotfiles
-cd ~/dotfiles
+git clone https://github.com/isaacgarza/workbench ~/workbench
+cd ~/workbench
 ./install.sh
 ```
 
-The install script will:
-1. Symlink scripts to `~/.local/bin/`
-2. Symlink zsh configs to `~/.config/zsh/config.d/`
-3. Symlink gitconfig to `~/.gitconfig`
-4. Add `~/.local/bin` to your PATH
+The installer will:
+- Install [Task](https://taskfile.dev) if needed
+- Symlink scripts to `~/.local/bin/`
+- Symlink zsh configs to `~/.config/zsh/config.d/`
+- Install global Taskfile for AI-powered git automation
+- Prompt you to configure your AI command
+
+## What's Included
+
+### Custom Scripts
+- `cleanup-testcontainers` - Clean up Docker testcontainers
+- `get-secret` - Interactive AWS Secrets Manager retrieval
+- `mem-analyze` - System memory analysis report
+- `show-aliases` - Display all configured aliases and functions
+
+### ZSH Configuration
+- Docker and container aliases (`d-*`)
+- Kubernetes aliases (`k-*`)
+- Git and development tools (`gw-*`, `gs`, `ga`, `gc`)
+- AWS utilities
+- System utilities and macOS helpers
+
+### Git Configuration
+- Useful git aliases and settings
+
+### Global Taskfile (AI-Powered Git Automation)
+- `task commit` - AI-generated commit messages
+- `task create-pr` - AI-generated pull requests
+- `task update-pr` - Update PR descriptions
+- `task setup-ai` - Configure AI command
 
 ## Usage
 
-After installation, reload your shell:
+After installation:
+
 ```bash
+# Reload shell
 exec zsh
-```
 
-View all aliases:
-```bash
+# View all aliases
 show-aliases
+
+# Use AI-powered git tasks (from any directory)
+task commit
+task create-pr
 ```
 
-## Alias Naming Convention
+## AI Configuration
 
-- **Docker:** `d-*` (e.g., `d-ps`, `d-logs`, `d-exec`)
-- **Kubernetes:** `k-*` (e.g., `k-pods`, `k-logs`, `k-exec`)
-- **Gradle:** `gw-*` (e.g., `gw-build`, `gw-test`)
-- **Git:** Short forms (`gs`, `ga`, `gc`) + explicit (`git-status`, `git-add`)
+The global Taskfile supports multiple AI tools. Configure your preference:
+
+```bash
+# Edit the config file
+nano ~/.config/task/taskfile.env
+
+# Examples:
+AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
+AI_COMMAND=copilot --agent ci-cd -p
+```
+
+Projects can override with local `.taskfile/taskfile.env` if needed.
+
+## Customization
+
+### Per-Project Taskfile
+Create a local `Taskfile.yml` in your project to add project-specific tasks or override global ones.
+
+### Local AI Config
+Create `.taskfile/taskfile.env` in a project to use a different AI command for that project.
 
 ## Requirements
 
-- ZSH
 - macOS (some utilities are macOS-specific)
+- ZSH
+- [Task](https://taskfile.dev) (auto-installed by installer)
 - Docker (for container utilities)
 - AWS CLI (for AWS utilities)
-
-## AI Configuration (Not Included)
-
-AI coding guidelines and Taskfiles are **project-specific** and not included in this dotfiles repo.
-
-### Kiro CLI Guidelines
-
-For consistent AI behavior, create guidelines in your projects:
-
-```bash
-# Project-specific (recommended)
-my-project/.kiro/steering/general.md
-
-# User-level defaults
-~/.kiro/steering/general.md
-```
-
-See: https://gist.github.com/isaacgarza (ai-coding-guidelines)
-
-### Taskfile
-
-For git automation, add `Taskfile.yml` per project:
-
-```bash
-my-project/Taskfile.yml
-```
-
-See: https://gist.github.com/isaacgarza (Taskfile.yml)
+- AI tool of choice (Kiro CLI, GitHub Copilot, etc.)
 
 ## Updating
 
-To get the latest changes:
-
 ```bash
-cd ~/dotfiles
+cd ~/workbench
 git pull
-./install.sh  # Re-run to update symlinks
-```
-
-## Updating
-
-To get the latest changes:
-
-```bash
-cd ~/dotfiles
-git pull
-./install.sh  # Re-run to update symlinks
-```
-
-## New Machine Setup
-
-```bash
-# 1. Clone dotfiles
-git clone https://github.com/isaacgarza/dotfiles ~/dotfiles
-
-# 2. Install
-cd ~/dotfiles
 ./install.sh
-
-# 3. Reload shell
-exec zsh
 ```
 
-## Related Resources (Not Included)
+## File Locations
 
-Some configurations are intentionally **not included** because they're project-specific:
-
-### AI Coding Guidelines
-- **Location:** Project-specific (`.kiro/steering/`) or user-level (`~/.kiro/steering/`)
-- **Why not included:** Guidelines vary per project and are still evolving
-- **See:** https://gist.github.com/isaacgarza (ai-coding-guidelines)
-
-### Taskfile
-- **Location:** Project-specific (`Taskfile.yml` in project root)
-- **Why not included:** Tasks are unique to each project
-- **See:** https://gist.github.com/isaacgarza (Taskfile.yml)
-
-These are kept separate to avoid conflicts and maintain flexibility across different projects and machines.
-
-## Updating
-
-To get the latest changes:
-
-```bash
-cd ~/dotfiles
-git pull
-./install.sh  # Re-run to update symlinks
-```
-
-## New Machine Setup
-
-```bash
-# 1. Clone dotfiles
-git clone https://github.com/isaacgarza/dotfiles ~/dotfiles
-
-# 2. Install
-cd ~/dotfiles
-./install.sh
-
-# 3. Reload shell
-exec zsh
-```
+- Scripts: `~/.local/bin/`
+- ZSH configs: `~/.config/zsh/config.d/`
+- Git config: `~/.gitconfig`
+- Global Taskfile: `~/.config/task/Taskfile.yml`
+- AI config: `~/.config/task/taskfile.env`

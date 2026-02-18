@@ -1,5 +1,5 @@
 # Global Taskfile for AI-powered Git automation
-# Managed by dotfiles repo: https://github.com/isaacgarza/dotfiles
+# Managed by workbench repo: https://github.com/isaacgarza/workbench
 # Installed location: ~/.config/task/Taskfile.yml
 # 
 # To customize per-project: Create a local Taskfile.yml in your project
@@ -328,7 +328,7 @@ tasks:
         if [ "$IS_GLOBAL" = true ]; then
           echo "📍 Using global Taskfile"
           echo "   Location: ~/.config/task/Taskfile.yml"
-          echo "   Managed by: https://github.com/isaacgarza/dotfiles"
+          echo "   Managed by: https://github.com/isaacgarza/workbench"
           echo ""
         fi
         

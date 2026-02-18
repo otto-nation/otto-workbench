@@ -1,85 +1,70 @@
+# Global Taskfile for AI-powered Git automation
+# Managed by dotfiles repo: https://github.com/isaacgarza/dotfiles
+# Installed location: ~/.config/task/Taskfile.yml
+# 
+# To customize per-project: Create a local Taskfile.yml in your project
+# To edit global config: Edit ~/.config/task/taskfile.env
+
 version: "3"
 
 tasks:
-  # SYNC:START:git-automation
   # ============================================================================
   # GIT AUTOMATION
   # ============================================================================
   setup-ai:
-    desc: "⚙️  Setup AI configuration for taskfile automation"
+    desc: "Setup AI configuration"
     silent: true
     cmds:
       - |
-        TASKFILE_DIR=".taskfile"
-        ENV_FILE="$TASKFILE_DIR/taskfile.env"
-        EXAMPLE_FILE="$TASKFILE_DIR/taskfile.env.example"
-        GITIGNORE_FILE="$TASKFILE_DIR/.gitignore"
+        CONFIG_DIR="$HOME/.config/task"
+        ENV_FILE="$CONFIG_DIR/taskfile.env"
         
-        echo "⚙️  Setting up AI configuration..."
+        mkdir -p "$CONFIG_DIR"
         
-        # Create directory
-        mkdir -p "$TASKFILE_DIR"
-        
-        # Create .gitignore
-        if [ ! -f "$GITIGNORE_FILE" ]; then
-          echo "# Taskfile local configuration" > "$GITIGNORE_FILE"
-          echo "taskfile.env" >> "$GITIGNORE_FILE"
-          echo "✅ Created $GITIGNORE_FILE"
-        fi
-        
-        # Create example file
-        if [ ! -f "$EXAMPLE_FILE" ]; then
-          echo "# Taskfile AI Configuration" > "$EXAMPLE_FILE"
-          echo "# Copy this file to taskfile.env and configure your AI command" >> "$EXAMPLE_FILE"
-          echo "" >> "$EXAMPLE_FILE"
-          echo "# AI command for commit messages and PR generation" >> "$EXAMPLE_FILE"
-          echo "# Examples:" >> "$EXAMPLE_FILE"
-          echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$EXAMPLE_FILE"
-          echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$EXAMPLE_FILE"
-          echo "AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$EXAMPLE_FILE"
-          echo "✅ Created $EXAMPLE_FILE"
-        fi
-        
-        # Create env file if it doesn't exist
         if [ ! -f "$ENV_FILE" ]; then
-          cp "$EXAMPLE_FILE" "$ENV_FILE"
+          echo "# Taskfile AI Configuration" > "$ENV_FILE"
+          echo "# Uncomment and configure one of the examples below or add your own" >> "$ENV_FILE"
+          echo "" >> "$ENV_FILE"
+          echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$ENV_FILE"
+          echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$ENV_FILE"
+          echo "" >> "$ENV_FILE"
           echo "✅ Created $ENV_FILE"
-          echo ""
-          echo "📝 Please edit $ENV_FILE to configure your AI command"
-          echo "   Example: AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd"
+          echo "📝 Please edit the file to configure your AI command"
         else
           echo "ℹ️  $ENV_FILE already exists"
         fi
-        
-        echo ""
-        echo "✅ AI configuration setup complete!"
 
   check-ai:
-    desc: "🤖 Check AI command availability (internal helper)"
     internal: true
     silent: true
     cmds:
       - |
-        ENV_FILE=".taskfile/taskfile.env"
+        LOCAL_ENV=".taskfile/taskfile.env"
+        GLOBAL_ENV="$HOME/.config/task/taskfile.env"
         
-        if [ -f "$ENV_FILE" ] && grep -q "^AI_COMMAND=" "$ENV_FILE"; then
-          AI_COMMAND=$(grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2-)
-          AI_CMD=$(echo "$AI_COMMAND" | cut -d' ' -f1)
-          
-          if ! command -v "$AI_CMD" >/dev/null 2>&1; then
-            echo "❌ AI command not found: $AI_CMD" >&2
-            exit 1
-          fi
-          
-          mkdir -p /tmp/task-ai
-          echo "$AI_COMMAND" > /tmp/task-ai/command
+        if [ -f "$LOCAL_ENV" ]; then
+          ENV_FILE="$LOCAL_ENV"
+        elif [ -f "$GLOBAL_ENV" ]; then
+          ENV_FILE="$GLOBAL_ENV"
         else
-          echo "❌ AI not configured." >&2
-          echo "   Run: task setup-ai" >&2
-          echo "   Then edit: $ENV_FILE" >&2
+          echo "❌ AI not configured"
+          echo "   Run task setup-ai"
           exit 1
         fi
-
+        
+        if grep -q "^AI_COMMAND=" "$ENV_FILE"; then
+          AI_CMD=$(grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- | cut -d' ' -f1)
+          if command -v "$AI_CMD" >/dev/null 2>&1; then
+            mkdir -p /tmp/task-ai
+            grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- > /tmp/task-ai/command
+          else
+            echo "AI command not found"
+            exit 1
+          fi
+        else
+          echo "❌ AI_COMMAND not set in $ENV_FILE"
+          exit 1
+        fi
   commit:
     desc: "🤖 Generate AI-powered commit message based on staged changes"
     silent: true
@@ -99,34 +84,38 @@ tasks:
         # Prepare diff and file list
         DIFF_CONTENT=$(git diff --cached --no-color)
         FILE_LIST=$(echo "$STAGED_FILES" | tr '\n' ', ' | sed 's/,$//')
-        
-        # Commit rules
-        COMMIT_RULES="Follow these conventional commit rules:
-- Header (first line) must be ≤72 characters (no exceptions)
-- Use conventional commit format: type(scope): description
-- Types: feat, fix, perf, deps, revert, docs, style, refactor, test, build, ci, chore
-- No period at end of subject
-- Use semicolon (;) to separate multiple changes in header
-- Separate header and body with blank line
-- Body lines must be ≤100 characters each
-- Use bullet points for multiple changes in body"
+
+        # Determine commit rules (use commitlint if exists, otherwise defaults)
+        if [ -f .github/.commitlintrc.json ]; then
+          COMMIT_RULES="Follow the rules in this commitlint configuration: $(cat .github/.commitlintrc.json)"
+        else
+          COMMIT_RULES="Follow these conventional commit rules
+            - Header (first line) must be ≤72 characters (no exceptions)
+            - Use conventional commit format: type(scope): description
+            - Types: feat, fix, perf, deps, revert, docs, style, refactor, test, build, ci, chore
+            - No period at end of subject
+            - Use semicolon (;) to separate multiple changes in header
+            - Separate header and body with blank line
+            - Body lines must be ≤100 characters each
+            - Use bullet points for multiple changes in body"
+        fi
 
         # Build AI prompt
         AI_PROMPT="Generate a conventional commit message based on the changes.
 
-$COMMIT_RULES
+        $COMMIT_RULES
 
-Files changed: $FILE_LIST
+        Files changed: $FILE_LIST
 
-Diff:
-$DIFF_CONTENT
+        Diff:
+        $DIFF_CONTENT
 
-Return only the commit message, nothing else."
+        Return only the commit message, nothing else."
 
         # Get AI command and generate commit message
         AI_COMMAND=$(cat /tmp/task-ai/command)
         COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g')
-        
+
         # Display and commit
         echo "✨ AI Analysis Complete"
         echo ""
@@ -152,7 +141,7 @@ Return only the commit message, nothing else."
 
         # Extract issue number from branch name (e.g., feature/ISSUE-123-description)
         ISSUE_NUMBER=$(echo "$BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1)
-        
+
         # If no issue in branch name, prompt for it
         if [ -z "$ISSUE_NUMBER" ]; then
           echo "🔍 No issue number found in branch name: $BRANCH"
@@ -166,16 +155,18 @@ Return only the commit message, nothing else."
         COMMITS=$(git log --oneline origin/main..HEAD)
         COMMIT_COUNT=$(git rev-list --count origin/main..$BRANCH)
         CHANGED_FILES=$(git diff --name-only origin/main..$BRANCH)
-        
+
         # Use PR template if exists, otherwise use simple format
         if [ -f .github/pull_request_template.md ]; then
           PR_TEMPLATE=$(cat .github/pull_request_template.md)
         else
           PR_TEMPLATE="## Summary
 
-## Changes
+          ## Changes
 
-## Testing"
+          ## Testing"
+          # Remove leading whitespace from each line
+          PR_TEMPLATE=$(echo "$PR_TEMPLATE" | sed 's/^[[:space:]]*//')
         fi
 
         AI_PROMPT="Generate a professional PR title and fill out this template based on the changes:
@@ -206,16 +197,16 @@ Return only the commit message, nothing else."
 
         if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
         if [ -z "$PR_DESCRIPTION" ]; then PR_DESCRIPTION="## Summary\n\nBranch: $BRANCH\nCommits: $COMMIT_COUNT"; fi
-        
+
         # Add issue number to description if provided
         if [ -n "$ISSUE_NUMBER" ]; then
           PR_DESCRIPTION="Closes $ISSUE_NUMBER\n\n$PR_DESCRIPTION"
         fi
-        
+
         mkdir -p /tmp/task-pr
         echo "$PR_TITLE" > /tmp/task-pr/title
         echo "$PR_DESCRIPTION" > /tmp/task-pr/description
-        
+
         echo "📝 Title: $PR_TITLE"
         echo "📄 Description:"
         echo "$PR_DESCRIPTION"
@@ -226,16 +217,16 @@ Return only the commit message, nothing else."
     cmds:
       - |
         BRANCH=$(git branch --show-current)
-        
+
         # Check if remote branch exists
         if git ls-remote --heads origin $BRANCH | grep -q $BRANCH; then
           # Remote exists, check for divergence
           git fetch origin $BRANCH --quiet
-          
+
           LOCAL=$(git rev-parse @)
           REMOTE=$(git rev-parse @{u})
           BASE=$(git merge-base @ @{u})
-          
+
           if [ "$LOCAL" = "$REMOTE" ]; then
             echo "✅ Branch is up to date with remote"
           elif [ "$LOCAL" = "$BASE" ]; then
@@ -261,13 +252,13 @@ Return only the commit message, nothing else."
             exit 1
           fi
         fi
-        
+
         echo "🤖 Analyzing branch changes with AI: $BRANCH"
       - task: pr-content
       - |
         PR_TITLE=$(cat /tmp/task-pr/title)
         PR_DESCRIPTION=$(cat /tmp/task-pr/description)
-        
+
         echo "✨ AI Analysis Complete"
         echo "🚀 Creating PR..."
 
@@ -294,7 +285,7 @@ Return only the commit message, nothing else."
 
         echo "🔍 Checking for existing PR..."
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
-        
+
         if [ -z "$PR_NUMBER" ]; then
           echo "❌ No PR found for branch: $BRANCH"
           echo "💡 Use 'task create-pr' to create a new PR"
@@ -306,7 +297,7 @@ Return only the commit message, nothing else."
       - |
         PR_DESCRIPTION=$(cat /tmp/task-pr/description)
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
-        
+
         echo "✨ AI Analysis Complete"
         echo "🔄 Updating PR #$PR_NUMBER..."
 
@@ -314,62 +305,37 @@ Return only the commit message, nothing else."
 
         echo "✅ PR description updated!"
         echo "🔗 View: $(gh pr view --json url -q .url)"
-  # SYNC:END:git-automation
-
   # ============================================================================
   # UTILITY
   # ============================================================================
-  
-  sync-taskfile:
-    desc: "🔄 Sync Taskfile sections from gist"
-    silent: true
-    cmds:
-      - |
-        GIST_URL="https://gist.github.com/isaacgarza/6985f3cadb4eb3bb20e116700aefba88/raw"
-        TEMP_FILE="/tmp/taskfile-gist.yml"
-        
-        echo "📥 Downloading latest Taskfile from gist..."
-        if ! curl -sL "$GIST_URL" -o "$TEMP_FILE"; then
-          echo "❌ Failed to download gist"
-          exit 1
-        fi
-        
-        echo "🔄 Syncing marked sections..."
-        
-        # Extract sections between SYNC markers from gist
-        awk '/# SYNC:START:git-automation/,/# SYNC:END:git-automation/' "$TEMP_FILE" > /tmp/sync-section.txt
-        
-        # Replace section in local file
-        awk '
-          /# SYNC:START:git-automation/ { 
-            print
-            system("cat /tmp/sync-section.txt | sed \"1d;\\$d\"")
-            skip=1
-            next
-          }
-          /# SYNC:END:git-automation/ { skip=0 }
-          !skip
-        ' Taskfile.yml > /tmp/taskfile-new.yml
-        
-        mv /tmp/taskfile-new.yml Taskfile.yml
-        rm -f "$TEMP_FILE" /tmp/sync-section.txt
-        
-        echo "✅ Taskfile synced successfully!"
-        echo "💡 Review changes with: git diff Taskfile.yml"
+
 
   help:
     desc: "❓ Show this help message"
     silent: true
     cmds:
-      - echo "🛠️  Dotfiles Task Runner"
-      - echo ""
-      - echo "🤖 AI-Powered Git Automation:"
-      - echo "   setup-ai       - Setup AI configuration (first-time setup)"
-      - echo "   commit         - AI-generated commit messages"
-      - echo "   create-pr      - AI-generated PR (auto-pushes if needed)"
-      - echo "   update-pr      - Update existing PR description"
-      - echo ""
-      - echo "🔄 Maintenance:"
-      - echo "   sync-taskfile  - Sync git automation tasks from gist"
-      - echo ""
-      - echo "ℹ️  For detailed task list: task --list"
+      - |
+        TASKFILE_PATH="${TASKFILE}"
+        IS_GLOBAL=false
+        
+        if [[ "$TASKFILE_PATH" == *".config/task/Taskfile.yml"* ]]; then
+          IS_GLOBAL=true
+        fi
+        
+        echo "🛠️  Task Runner"
+        echo ""
+        
+        if [ "$IS_GLOBAL" = true ]; then
+          echo "📍 Using global Taskfile"
+          echo "   Location: ~/.config/task/Taskfile.yml"
+          echo "   Managed by: https://github.com/isaacgarza/dotfiles"
+          echo ""
+        fi
+        
+        echo "🤖 AI-Powered Git Automation:"
+        echo "   setup-ai       - Setup AI configuration (first-time setup)"
+        echo "   commit         - AI-generated commit messages"
+        echo "   create-pr      - AI-generated PR (auto-pushes if needed)"
+        echo "   update-pr      - Update existing PR description"
+        echo ""
+        echo "ℹ️  For detailed task list: task --list"

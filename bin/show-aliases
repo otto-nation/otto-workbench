@@ -124,6 +124,41 @@ if [[ -z "$FILTER" ]] || [[ "git" =~ "$FILTER" ]]; then
   fi
 fi
 
+# Auto-discover custom scripts from ~/.local/bin
+if [[ -d "$HOME/.local/bin" ]]; then
+  typeset -a script_items=()
+  
+  for script in "$HOME/.local/bin"/*; do
+    [[ ! -f "$script" ]] && continue
+    [[ ! -x "$script" ]] && continue
+    
+    local script_name=$(basename "$script")
+    
+    # Skip system/external tools
+    [[ "$script_name" =~ ^(aws|bash|fish|nu|kiro|pyrsa|rst2|rstpep|zsh|q|qchat|qterm|task) ]] && continue
+    [[ "$script_name" =~ \.(py|cmd)$ ]] && continue
+    
+    matches_filter "$script_name" || continue
+    
+    # Extract description from second line if it starts with "# " and capital letter
+    local desc="Custom script"
+    local second_line=$(sed -n '2p' "$script" 2>/dev/null)
+    if [[ "$second_line" =~ ^#\ ([A-Z].*) ]]; then
+      desc="${match[1]}"
+    fi
+    
+    script_items+=("script|$script_name|$desc")
+  done
+  
+  if [[ ${#script_items[@]} -gt 0 ]]; then
+    print_header "Custom Scripts"
+    for item in "${script_items[@]}"; do
+      IFS='|' read -r type name value <<< "$item"
+      print_item "$type" "$name" "$value"
+    done
+  fi
+fi
+
 # Usage hint
 if [[ -z "$FILTER" ]]; then
   echo -e "\n${DIM}Usage: aliases [filter]${RESET}"

@@ -2,7 +2,7 @@
 
 set -e
 
-DOTFILES_DIR="$HOME/dotfiles"
+DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOLD='\033[1m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -46,6 +46,25 @@ install_symlink() {
 
 echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}\n"
 
+# Check if task is installed
+if ! command -v task >/dev/null 2>&1; then
+  echo -e "${YELLOW}⚠️  Task (task runner) is not installed${NC}"
+  read -p "Would you like to install it? [Y/n] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      echo "Installing task via Homebrew..."
+      brew install go-task/tap/go-task
+    elif command -v apt-get >/dev/null 2>&1; then
+      echo "Installing task via apt..."
+      sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+    else
+      echo -e "${RED}Unable to auto-install. Please install manually: https://taskfile.dev/installation/${NC}"
+    fi
+  fi
+fi
+echo ""
+
 # Create directories
 mkdir -p ~/.local/bin
 mkdir -p ~/.config/zsh/config.d
@@ -66,6 +85,11 @@ done
 echo -e "\n${GREEN}→${NC} Installing gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 
+# Install global Taskfile
+echo -e "\n${GREEN}→${NC} Installing global Taskfile"
+mkdir -p ~/.config/task
+install_symlink "$DOTFILES_DIR/Taskfile.yml" ~/.config/task/Taskfile.yml
+
 # Add ~/.local/bin to PATH
 SHELL_RC=""
 if [ -n "$ZSH_VERSION" ]; then
@@ -83,4 +107,21 @@ if [ -n "$SHELL_RC" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHEL
 fi
 
 echo -e "\n${BOLD}${GREEN}✓ Installation complete!${NC}"
+
+# Setup AI configuration for Taskfile
+if command -v task >/dev/null 2>&1; then
+  echo -e "\n${GREEN}→${NC} Setting up AI configuration for Taskfile..."
+  task setup-ai
+  
+  echo ""
+  read -p "Would you like to configure your AI command now? [Y/n] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    ${EDITOR:-nano} ~/.config/task/taskfile.env
+    echo -e "${GREEN}✓${NC} AI configuration updated"
+  else
+    echo -e "${YELLOW}⚠️${NC}  Remember to edit ~/.config/task/taskfile.env before using AI tasks"
+  fi
+fi
+
 echo -e "\nReload your shell: ${BOLD}exec $(basename $SHELL)${NC}"

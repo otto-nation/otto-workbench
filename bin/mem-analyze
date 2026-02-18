@@ -1,4 +1,5 @@
 #!/bin/bash
+# Analyze memory usage and generate report
 
 set -e
 
@@ -47,8 +48,9 @@ swap_info=$(sysctl vm.swapusage | sed 's/vm.swapusage: //')
 echo "  $swap_info"
 swap_used=$(echo "$swap_info" | grep -oE 'used = [0-9.]+' | awk '{print $3}')
 swap_total=$(echo "$swap_info" | grep -oE 'total = [0-9.]+' | awk '{print $3}')
-if (( $(echo "$swap_used > 10" | bc -l) )); then
-    echo -e "  ${RED}⚠️  High swap usage (>${swap_used}GB)${NC}"
+swap_used_gb=$(echo "scale=1; $swap_used / 1024" | bc)
+if (( $(echo "$swap_used > 10240" | bc -l) )); then
+    echo -e "  ${RED}⚠️  High swap usage: ${swap_used_gb}GB used${NC}"
 fi
 echo ""
 
@@ -84,7 +86,7 @@ echo ""
 # Memory Hogs (>500MB)
 echo -e "${BOLD}${BLUE}━━━ Processes Using >500MB ━━━${NC}"
 printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
-ps aux | awk '$6 > 500000' | while read user pid cpu mem vsz rss tt stat started time cmd; do
+ps aux | awk 'NR>1 && $6 > 500000' | while read user pid cpu mem vsz rss tt stat started time cmd; do
     full_cmd="$cmd"
     for arg in "$@"; do full_cmd="$full_cmd $arg"; done
     
@@ -108,7 +110,7 @@ ps aux | awk '$6 > 500000' | while read user pid cpu mem vsz rss tt stat started
     mem_mb=$(echo "scale=2; $rss/1024" | bc)
     printf "  %10.2f MB  %6s%%  %-60s\n" "$mem_mb" "$mem" "$app"
 done | sort -nrk 1
-[ -z "$(ps aux | awk '$6 > 500000')" ] && echo "  None found"
+[ -z "$(ps aux | awk 'NR>1 && $6 > 500000')" ] && echo "  None found"
 echo ""
 
 # Memory by User
@@ -139,7 +141,7 @@ elif echo "$mem_pressure_status" | grep -qi "warn"; then
     echo "    • Quit background applications"
     echo "    • Run: sudo purge (to clear caches)"
     echo "    • Stop unused Gradle/Java processes"
-elif (( $(echo "$swap_used > 10" | bc -l) )); then
+elif (( $(echo "$swap_used > 10240" | bc -l) )); then
     echo -e "  ${YELLOW}${BOLD}⚠️  High Swap Usage Detected:${NC}"
     echo "    • System is using disk instead of RAM (slow)"
     echo "    • Close memory-intensive applications"

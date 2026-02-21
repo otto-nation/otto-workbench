@@ -5,7 +5,7 @@ Personal development environment with shell configuration, utilities, and AI-pow
 ## Quick Start
 
 ```bash
-git clone https://github.com/isaacgarza/workbench ~/workbench
+git clone https://github.com/otto-nation/otto-workbench ~/workbench
 cd ~/workbench
 ./install.sh
 ```

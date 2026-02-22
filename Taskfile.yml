@@ -68,6 +68,7 @@ tasks:
   commit:
     desc: "🤖 Generate AI-powered commit message based on staged changes"
     silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     deps: [check-ai]
     cmds:
       - |
@@ -130,6 +131,7 @@ tasks:
     desc: "🤖 Generate AI-powered PR content (internal helper)"
     internal: true
     silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     deps: [check-ai]
     cmds:
       - |
@@ -214,6 +216,7 @@ tasks:
   create-pr:
     desc: "🤖 Create AI-powered pull request with smart title and description"
     silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         BRANCH=$(git branch --show-current)
@@ -275,6 +278,7 @@ tasks:
   update-pr:
     desc: "🔄 Update current PR description with AI-generated content"
     silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         BRANCH=$(git branch --show-current)

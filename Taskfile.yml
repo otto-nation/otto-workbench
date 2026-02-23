@@ -167,8 +167,10 @@ tasks:
         CHANGED_FILES=$(git diff --name-only origin/main..$BRANCH)
 
         # Use PR template if exists, otherwise use simple format
+        HAS_TEMPLATE=false
         if [ -f .github/pull_request_template.md ]; then
           PR_TEMPLATE=$(cat .github/pull_request_template.md)
+          HAS_TEMPLATE=true
         else
           PR_TEMPLATE="## Summary
 
@@ -208,9 +210,18 @@ tasks:
         if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
         if [ -z "$PR_DESCRIPTION" ]; then PR_DESCRIPTION="## Summary\n\nBranch: $BRANCH\nCommits: $COMMIT_COUNT"; fi
 
-        # Add issue number to description if provided
-        if [ -n "$ISSUE_NUMBER" ]; then
-          PR_DESCRIPTION="Closes $ISSUE_NUMBER\n\n$PR_DESCRIPTION"
+        # Only add "Closes" if no PR template and user confirms (GitHub issues only)
+        if [ "$HAS_TEMPLATE" = "false" ] && [ -n "$ISSUE_NUMBER" ]; then
+          # Check if it's a GitHub issue (numeric with optional #)
+          CLEAN_ISSUE=$(echo "$ISSUE_NUMBER" | sed 's/^#//')
+          if echo "$CLEAN_ISSUE" | grep -qE '^[0-9]+$'; then
+            # It's a GitHub issue
+            echo ""
+            read -p "❓ Close issue #$CLEAN_ISSUE when PR merges? (y/N): " CLOSE_ISSUE
+            if [ "$CLOSE_ISSUE" = "y" ] || [ "$CLOSE_ISSUE" = "Y" ]; then
+              PR_DESCRIPTION="Closes #$CLEAN_ISSUE\n\n$PR_DESCRIPTION"
+            fi
+          fi
         fi
 
         mkdir -p /tmp/task-pr

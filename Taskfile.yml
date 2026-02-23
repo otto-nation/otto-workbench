@@ -104,6 +104,14 @@ tasks:
         # Build AI prompt
         AI_PROMPT="Generate a conventional commit message based on the changes.
 
+        CRITICAL REQUIREMENTS:
+        - Header MUST be ≤72 characters total (type + scope + colon + space + subject)
+        - MUST use format: type(scope): subject
+        - Subject must be concise - focus on WHAT changed, not HOW
+        - If multiple changes, use semicolon in subject or list in body
+        - NEVER omit type or scope
+        - Count characters carefully before responding
+
         $COMMIT_RULES
 
         Files changed: $FILE_LIST

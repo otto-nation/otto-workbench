@@ -3,18 +3,7 @@
 set -e
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BOLD='\033[1m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-DIM='\033[2m'
-NC='\033[0m'
-
-info()    { echo -e "${BLUE}→${NC} $*"; }
-success() { echo -e "${GREEN}✓${NC} $*"; }
-warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
-err()     { echo -e "${RED}✗${NC} $*"; }
+. "$DOTFILES_DIR/lib/ui.sh"
 
 prompt_overwrite() {
   local file=$1

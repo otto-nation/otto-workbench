@@ -8,26 +8,29 @@
 
 set -euo pipefail
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
 GLOBAL_TASKFILE="$HOME/.config/task/Taskfile.yml"
 
 # Find the real task binary (skip this wrapper)
 TASK_BIN=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$HOME/.local/bin$" | tr '\n' ':') which task 2>/dev/null || true)
 
 if [ -z "$TASK_BIN" ]; then
-    echo "Error: task binary not found in PATH" >&2
-    exit 1
+  err "task binary not found in PATH"
+  exit 1
 fi
 
 # Check if local Taskfile exists
 if [ -f "Taskfile.yml" ] || [ -f "Taskfile.yaml" ]; then
-    # Use local Taskfile
-    exec "$TASK_BIN" "$@"
+  # Use local Taskfile
+  exec "$TASK_BIN" "$@"
 else
-    # Use global Taskfile
-    if [ -f "$GLOBAL_TASKFILE" ]; then
-        exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "$@"
-    else
-        echo "Error: No local Taskfile found and global Taskfile not found at $GLOBAL_TASKFILE" >&2
-        exit 1
-    fi
+  # Use global Taskfile
+  if [ -f "$GLOBAL_TASKFILE" ]; then
+    exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "$@"
+  else
+    err "No local Taskfile found and global Taskfile not found at $GLOBAL_TASKFILE"
+    exit 1
+  fi
 fi

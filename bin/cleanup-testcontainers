@@ -54,6 +54,7 @@ VOLUMES=$(docker volume ls --filter "label=org.testcontainers=true" -q)
 IMAGES=$(docker images --filter "label=org.testcontainers=true" -q)
 
 # Count items
+# grep -c exits 1 when there are no matches, which would abort under set -e; || echo 0 handles the empty case
 CONTAINER_COUNT=$(echo "$CONTAINERS" | grep -c . || echo 0)
 NETWORK_COUNT=$(echo "$NETWORKS" | grep -c . || echo 0)
 VOLUME_COUNT=$(echo "$VOLUMES" | grep -c . || echo 0)

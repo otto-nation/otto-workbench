@@ -25,6 +25,7 @@ print_item() {
 }
 
 should_skip_file() {
+  # Space-padding both sides prevents partial matches — e.g., "aws" matching "aws-sso-set.zsh"
   [[ " ${SKIP_FILES[@]} " =~ " $1 " ]]
 }
 
@@ -39,7 +40,8 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
   filename=$(basename "$config_file")
   should_skip_file "$filename" && continue
 
-  # Skip if filtering and file doesn't match
+  # Two-phase filter: first check filename, then search file contents — allows matching
+  # by alias/function name even when the config file name doesn't contain the filter term
   if [[ -n "$FILTER" ]] && [[ ! "$filename" =~ "$FILTER" ]]; then
     grep -qiE "^(alias|function) .*$FILTER" "$config_file" 2>/dev/null || continue
   fi
@@ -65,6 +67,8 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
   done < <(grep "^alias " "$config_file" 2>/dev/null)
 
   # Extract functions
+  # prev_line captures the comment directly above a function definition to use as its description;
+  # it resets on any non-comment, non-function line so unrelated comments are not carried over
   local prev_line=""
   while IFS= read -r line; do
     if [[ "$line" =~ ^#\ *(.+)$ ]]; then
@@ -98,6 +102,8 @@ done
 if [[ -z "$FILTER" ]] || [[ "git" =~ "$FILTER" ]]; then
   typeset -a git_items=()
 
+  # Double-pipe pattern: the first while runs in a subshell and cannot modify git_items directly;
+  # piping its output to a second while lets us populate the array in the current shell
   git config --get-regexp '^alias\.' 2>/dev/null | while IFS= read -r line; do
     line="${line#alias.}"
     name="${line%% *}"

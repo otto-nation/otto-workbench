@@ -21,6 +21,7 @@ prompt_secret() {
 SELECTED_TOOLS=()
 
 tool_selected() {
+  # Bash arrays have no built-in membership test; iterate to check for a match
   local tool=$1
   local t
   for t in "${SELECTED_TOOLS[@]}"; do
@@ -293,7 +294,7 @@ step_kiro_agents() {
   local default_url="https://gist.githubusercontent.com/isaacgarza/ec26eec595ddc845c24f1c7d29994fea/raw/default.json"
   local cicd_url="https://gist.githubusercontent.com/isaacgarza/ec26eec595ddc845c24f1c7d29994fea/raw/ci-cd.json"
 
-  # Detect uvx path; fall back to bare name if not found
+  # Detect the full uvx path; fall back to the bare name so PATH lookup happens at execution time
   local uvx_path
   uvx_path=$(command -v uvx 2>/dev/null || echo "uvx")
 
@@ -333,6 +334,7 @@ run_steps() {
   local step name fn
 
   for step in "${STEPS[@]}"; do
+    # Steps are stored as "display name|function name" — split on | to get each part
     name="${step%%|*}"
     fn="${step##*|}"
 

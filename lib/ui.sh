@@ -25,6 +25,7 @@ err()     { echo -e "${RED}✗${NC} $*" >&2; }
 skip() { echo -e "${DIM}⊘ ${1:-Skipped}${NC}"; }
 
 # Prompt helpers — bash only
+# read -n 1 behaves differently in zsh; these are skipped silently when sourced from a zsh script
 if [[ -n "${BASH_VERSION:-}" ]]; then
   # confirm "msg" — [Y/n]; returns 0 for yes (default), 1 for no
   confirm() {

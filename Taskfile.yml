@@ -29,17 +29,17 @@ tasks:
           echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$ENV_FILE"
           echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$ENV_FILE"
           echo "" >> "$ENV_FILE"
-          echo "✅ Created $ENV_FILE"
-          echo "📝 Please edit the file to configure your AI command"
+          printf "  \033[0;32m✓\033[0m Created %s\n" "$ENV_FILE"
+          printf "  \033[2m→ Edit to configure your AI command\033[0m\n"
         else
-          echo "ℹ️  $ENV_FILE already exists"
+          printf "\033[0;34m→\033[0m %s already exists\n" "$ENV_FILE"
           if ! grep -q "AI_COMMAND=claude" "$ENV_FILE"; then
-            printf "  Add Claude example to $ENV_FILE? [Y/n] "
+            printf "  Add Claude example? [Y/n] "
             read -r REPLY
             if [[ ! $REPLY =~ ^[Nn]$ ]]; then
               echo "" >> "$ENV_FILE"
               echo "# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config" >> "$ENV_FILE"
-              echo "  ✓ Added Claude example"
+              printf "  \033[0;32m✓\033[0m Added Claude example\n"
             fi
           fi
         fi
@@ -57,8 +57,7 @@ tasks:
         elif [ -f "$GLOBAL_ENV" ]; then
           ENV_FILE="$GLOBAL_ENV"
         else
-          echo "❌ AI not configured"
-          echo "   Run task setup-ai"
+          printf "\033[0;31m✗\033[0m AI not configured. Run: task setup-ai\n"
           exit 1
         fi
         
@@ -68,11 +67,11 @@ tasks:
             mkdir -p /tmp/task-ai
             grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- > /tmp/task-ai/command
           else
-            echo "AI command not found"
+            printf "\033[0;31m✗\033[0m AI command not found: %s\n" "$AI_CMD"
             exit 1
           fi
         else
-          echo "❌ AI_COMMAND not set in $ENV_FILE"
+          printf "\033[0;31m✗\033[0m AI_COMMAND not set in %s\n" "$ENV_FILE"
           exit 1
         fi
   commit:

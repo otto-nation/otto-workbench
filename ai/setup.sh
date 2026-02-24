@@ -3,41 +3,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors ───────────────────────────────────────────────────────────────────
-BOLD='\033[1m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-DIM='\033[2m'
-NC='\033[0m'
-
-# ─── Output helpers ───────────────────────────────────────────────────────────
-info()    { echo -e "${BLUE}→${NC} $*"; }
-success() { echo -e "${GREEN}✓${NC} $*"; }
-skip()    { echo -e "${DIM}⊘ Skipped${NC}"; }
-warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
-err()     { echo -e "${RED}✗${NC} $*"; }
+. "$SCRIPT_DIR/../lib/ui.sh"
 
 # ─── Prompt helpers ───────────────────────────────────────────────────────────
-
-# confirm "msg" — [Y/n], returns 0 for yes (default), 1 for no
-confirm() {
-  local msg=$1
-  read -r -n 1 -p "$msg [Y/n] " REPLY
-  echo
-  [[ ! $REPLY =~ ^[Nn]$ ]]
-}
-
-# confirm_n "msg" — [y/N], returns 0 for yes, 1 for no (default)
-confirm_n() {
-  local msg=$1
-  read -r -n 1 -p "$msg [y/N] " REPLY
-  echo
-  [[ $REPLY =~ ^[Yy]$ ]]
-}
 
 # prompt_secret "label" var — hidden read into named variable
 prompt_secret() {
@@ -245,7 +213,6 @@ step_claude_skills() {
     local target="$skills_dst/$skill"
 
     if [[ -L "$target" ]]; then
-      # Already a symlink — update silently
       ln -sf "$skill_dir" "$target"
       success "$skill (updated symlink)"
     elif [[ -d "$target" ]]; then

@@ -3,12 +3,8 @@
 
 set -e
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../lib/ui.sh"
 
 # Parse arguments
 DRY_RUN=false
@@ -25,7 +21,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      echo "Usage: $0 [OPTIONS]"
+      echo "Usage: $(basename "$0") [OPTIONS]"
       echo ""
       echo "Clean up Docker testcontainers, networks, volumes, and images"
       echo ""
@@ -36,19 +32,18 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Unknown option: $1"
-      echo "Use --help for usage information"
+      err "Unknown option: $1"
+      echo "Use --help for usage information" >&2
       exit 1
       ;;
   esac
 done
 
-echo -e "${BLUE}🧹 Testcontainers Cleanup${NC}"
-echo ""
+echo -e "${BOLD}${BLUE}Testcontainers Cleanup${NC}\n"
 
 # Check if Docker is running
 if ! docker info >/dev/null 2>&1; then
-  echo -e "${RED}❌ Docker is not running${NC}"
+  err "Docker is not running"
   exit 1
 fi
 
@@ -73,71 +68,69 @@ echo ""
 
 # Exit if nothing to clean
 if [ "$CONTAINER_COUNT" -eq 0 ] && [ "$NETWORK_COUNT" -eq 0 ] && [ "$VOLUME_COUNT" -eq 0 ] && [ "$IMAGE_COUNT" -eq 0 ]; then
-  echo -e "${GREEN}✅ Nothing to clean up${NC}"
+  success "Nothing to clean up"
   exit 0
 fi
 
 # Dry run mode
 if [ "$DRY_RUN" = true ]; then
-  echo -e "${YELLOW}🔍 Dry run mode - showing what would be deleted:${NC}"
+  warn "Dry run mode — showing what would be deleted:"
   echo ""
-  
+
   if [ "$CONTAINER_COUNT" -gt 0 ]; then
     echo "Containers:"
     docker ps -a --filter "label=org.testcontainers=true" --format "  • {{.Names}} ({{.Image}})"
   fi
-  
+
   if [ "$NETWORK_COUNT" -gt 0 ]; then
     echo "Networks:"
     docker network ls --filter "label=org.testcontainers=true" --format "  • {{.Name}}"
   fi
-  
+
   if [ "$VOLUME_COUNT" -gt 0 ]; then
     echo "Volumes:"
     docker volume ls --filter "label=org.testcontainers=true" --format "  • {{.Name}}"
   fi
-  
+
   exit 0
 fi
 
 # Confirmation prompt
 if [ "$FORCE" = false ]; then
-  echo -e "${YELLOW}⚠️  This will permanently delete all testcontainers resources${NC}"
-  read -p "Continue? (y/N): " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  warn "This will permanently delete all testcontainers resources"
+  if ! confirm_n "Continue?"; then
     echo "Cancelled"
     exit 0
   fi
 fi
 
 # Cleanup
-echo "Cleaning up..."
+info "Cleaning up..."
 echo ""
 
 if [ "$CONTAINER_COUNT" -gt 0 ]; then
-  echo "🗑️  Removing containers..."
+  info "Removing $CONTAINER_COUNT containers..."
   echo "$CONTAINERS" | xargs docker rm -f
-  echo -e "${GREEN}✓ Removed $CONTAINER_COUNT containers${NC}"
+  success "Removed $CONTAINER_COUNT containers"
 fi
 
 if [ "$NETWORK_COUNT" -gt 0 ]; then
-  echo "🗑️  Removing networks..."
+  info "Removing $NETWORK_COUNT networks..."
   echo "$NETWORKS" | xargs docker network rm
-  echo -e "${GREEN}✓ Removed $NETWORK_COUNT networks${NC}"
+  success "Removed $NETWORK_COUNT networks"
 fi
 
 if [ "$VOLUME_COUNT" -gt 0 ]; then
-  echo "🗑️  Removing volumes..."
+  info "Removing $VOLUME_COUNT volumes..."
   echo "$VOLUMES" | xargs docker volume rm
-  echo -e "${GREEN}✓ Removed $VOLUME_COUNT volumes${NC}"
+  success "Removed $VOLUME_COUNT volumes"
 fi
 
 if [ "$IMAGE_COUNT" -gt 0 ]; then
-  echo "🗑️  Pruning dangling images..."
+  info "Pruning $IMAGE_COUNT dangling images..."
   docker image prune -f --filter "label=org.testcontainers=true" >/dev/null
-  echo -e "${GREEN}✓ Pruned $IMAGE_COUNT images${NC}"
+  success "Pruned $IMAGE_COUNT images"
 fi
 
 echo ""
-echo -e "${GREEN}✅ Testcontainers cleanup complete${NC}"
+success "Testcontainers cleanup complete"

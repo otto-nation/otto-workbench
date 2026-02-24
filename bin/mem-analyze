@@ -3,20 +3,11 @@
 
 set -e
 
-# Enable echo -e interpretation
-shopt -s xpg_echo 2>/dev/null || true
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../lib/ui.sh"
 
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-echo -e "${BOLD}${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${BLUE}║     Memory Analysis Report             ║${NC}"
-echo -e "${BOLD}${BLUE}╚════════════════════════════════════════╝${NC}"
-echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+echo -e "${BOLD}${BLUE}Memory Analysis Report${NC}"
+echo -e "${DIM}Generated: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 echo ""
 
 # System Overview
@@ -28,11 +19,11 @@ echo ""
 echo -e "${BOLD}${BLUE}━━━ Memory Pressure Status ━━━${NC}"
 mem_pressure_status=$(memory_pressure 2>&1 | grep "System-wide memory" || echo "normal")
 if echo "$mem_pressure_status" | grep -qi "critical"; then
-    echo -e "  ${RED}🔴 CRITICAL${NC} - System under severe memory pressure"
+  echo -e "  ${RED}${BOLD}CRITICAL${NC} — System under severe memory pressure"
 elif echo "$mem_pressure_status" | grep -qi "warn"; then
-    echo -e "  ${YELLOW}🟡 WARNING${NC} - System under memory pressure"
+  echo -e "  ${YELLOW}${BOLD}WARNING${NC} — System under memory pressure"
 else
-    echo -e "  ${GREEN}🟢 NORMAL${NC} - Memory pressure is healthy"
+  echo -e "  ${GREEN}${BOLD}NORMAL${NC} — Memory pressure is healthy"
 fi
 echo ""
 
@@ -50,7 +41,7 @@ swap_used=$(echo "$swap_info" | grep -oE 'used = [0-9.]+' | awk '{print $3}')
 swap_total=$(echo "$swap_info" | grep -oE 'total = [0-9.]+' | awk '{print $3}')
 swap_used_gb=$(echo "scale=1; $swap_used / 1024" | bc)
 if (( $(echo "$swap_used > 10240" | bc -l) )); then
-    echo -e "  ${RED}⚠️  High swap usage: ${swap_used_gb}GB used${NC}"
+  warn "High swap usage: ${swap_used_gb}GB used"
 fi
 echo ""
 
@@ -58,28 +49,28 @@ echo ""
 echo -e "${BOLD}${BLUE}━━━ Top 10 Memory Consuming Processes ━━━${NC}"
 printf "  ${BOLD}%-8s %6s %10s  %-50s${NC}\n" "PID" "%MEM" "MEMORY" "APPLICATION"
 ps aux | sort -nrk 4 | head -11 | tail -10 | while read user pid cpu mem vsz rss tt stat started time cmd; do
-    full_cmd="$cmd"
-    for arg in "$@"; do full_cmd="$full_cmd $arg"; done
-    
-    if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
-        app="IntelliJ IDEA"
-        proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
-        [ -n "$proj" ] && app="$app ($proj)"
-    elif echo "$full_cmd" | grep -q "\.app/Contents"; then
-        app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
-    elif echo "$full_cmd" | grep -qi "java.*gradle"; then
-        app="Gradle/Java"
-        proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
-        [ -n "$proj" ] && app="$app ($proj)"
-    elif echo "$full_cmd" | grep -q "Virtualization"; then
-        app="macOS VM"
-    else
-        app=$(basename "$cmd")
-    fi
-    
-    [ ${#app} -gt 50 ] && app="${app:0:47}..."
-    mem_mb=$(echo "scale=0; $rss/1024" | bc)
-    printf "  %-8s %6s %10s MB  %-50s\n" "$pid" "$mem" "$mem_mb" "$app"
+  full_cmd="$cmd"
+  for arg in "$@"; do full_cmd="$full_cmd $arg"; done
+
+  if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
+    app="IntelliJ IDEA"
+    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
+    [ -n "$proj" ] && app="$app ($proj)"
+  elif echo "$full_cmd" | grep -q "\.app/Contents"; then
+    app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
+  elif echo "$full_cmd" | grep -qi "java.*gradle"; then
+    app="Gradle/Java"
+    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
+    [ -n "$proj" ] && app="$app ($proj)"
+  elif echo "$full_cmd" | grep -q "Virtualization"; then
+    app="macOS VM"
+  else
+    app=$(basename "$cmd")
+  fi
+
+  [ ${#app} -gt 50 ] && app="${app:0:47}..."
+  mem_mb=$(echo "scale=0; $rss/1024" | bc)
+  printf "  %-8s %6s %10s MB  %-50s\n" "$pid" "$mem" "$mem_mb" "$app"
 done
 echo ""
 
@@ -87,28 +78,28 @@ echo ""
 echo -e "${BOLD}${BLUE}━━━ Processes Using >500MB ━━━${NC}"
 printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
 ps aux | awk 'NR>1 && $6 > 500000' | while read user pid cpu mem vsz rss tt stat started time cmd; do
-    full_cmd="$cmd"
-    for arg in "$@"; do full_cmd="$full_cmd $arg"; done
-    
-    if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
-        app="IntelliJ IDEA"
-        proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
-        [ -n "$proj" ] && app="$app ($proj)"
-    elif echo "$full_cmd" | grep -q "\.app/Contents"; then
-        app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
-    elif echo "$full_cmd" | grep -qi "java.*gradle"; then
-        app="Gradle/Java"
-        proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
-        [ -n "$proj" ] && app="$app ($proj)"
-    elif echo "$full_cmd" | grep -q "Virtualization"; then
-        app="macOS VM"
-    else
-        app=$(basename "$cmd")
-    fi
-    
-    [ ${#app} -gt 60 ] && app="${app:0:57}..."
-    mem_mb=$(echo "scale=2; $rss/1024" | bc)
-    printf "  %10.2f MB  %6s%%  %-60s\n" "$mem_mb" "$mem" "$app"
+  full_cmd="$cmd"
+  for arg in "$@"; do full_cmd="$full_cmd $arg"; done
+
+  if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
+    app="IntelliJ IDEA"
+    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
+    [ -n "$proj" ] && app="$app ($proj)"
+  elif echo "$full_cmd" | grep -q "\.app/Contents"; then
+    app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
+  elif echo "$full_cmd" | grep -qi "java.*gradle"; then
+    app="Gradle/Java"
+    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
+    [ -n "$proj" ] && app="$app ($proj)"
+  elif echo "$full_cmd" | grep -q "Virtualization"; then
+    app="macOS VM"
+  else
+    app=$(basename "$cmd")
+  fi
+
+  [ ${#app} -gt 60 ] && app="${app:0:57}..."
+  mem_mb=$(echo "scale=2; $rss/1024" | bc)
+  printf "  %10.2f MB  %6s%%  %-60s\n" "$mem_mb" "$mem" "$app"
 done | sort -nrk 1
 [ -z "$(ps aux | awk 'NR>1 && $6 > 500000')" ] && echo "  None found"
 echo ""
@@ -130,24 +121,24 @@ echo "  Free Memory: ${free_mb} MB"
 echo ""
 
 if echo "$mem_pressure_status" | grep -qi "critical"; then
-    echo -e "  ${RED}${BOLD}⚠️  CRITICAL - Immediate Action Required:${NC}"
-    echo "    • Close unnecessary applications immediately"
-    echo "    • Kill memory-intensive processes"
-    echo "    • Restart your system"
-    echo "    • Consider upgrading RAM"
+  echo -e "  ${RED}${BOLD}CRITICAL — Immediate Action Required:${NC}"
+  echo "    • Close unnecessary applications immediately"
+  echo "    • Kill memory-intensive processes"
+  echo "    • Restart your system"
+  echo "    • Consider upgrading RAM"
 elif echo "$mem_pressure_status" | grep -qi "warn"; then
-    echo -e "  ${YELLOW}${BOLD}⚠️  WARNING - Action Recommended:${NC}"
-    echo "    • Close unused browser tabs"
-    echo "    • Quit background applications"
-    echo "    • Run: sudo purge (to clear caches)"
-    echo "    • Stop unused Gradle/Java processes"
+  echo -e "  ${YELLOW}${BOLD}WARNING — Action Recommended:${NC}"
+  echo "    • Close unused browser tabs"
+  echo "    • Quit background applications"
+  echo "    • Run: sudo purge (to clear caches)"
+  echo "    • Stop unused Gradle/Java processes"
 elif (( $(echo "$swap_used > 10240" | bc -l) )); then
-    echo -e "  ${YELLOW}${BOLD}⚠️  High Swap Usage Detected:${NC}"
-    echo "    • System is using disk instead of RAM (slow)"
-    echo "    • Close memory-intensive applications"
-    echo "    • Restart to clear swap"
+  echo -e "  ${YELLOW}${BOLD}High Swap Usage Detected:${NC}"
+  echo "    • System is using disk instead of RAM (slow)"
+  echo "    • Close memory-intensive applications"
+  echo "    • Restart to clear swap"
 else
-    echo -e "  ${GREEN}${BOLD}✓ System Memory is Healthy${NC}"
+  success "System Memory is Healthy"
 fi
 
 echo ""

@@ -105,15 +105,23 @@ if [ -n "$SHELL_RC" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHEL
   echo "  ✓ Updated $SHELL_RC"
 fi
 
-echo -e "\n${BOLD}${GREEN}✓ Installation complete!${NC}"
+echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
-# Setup AI configuration for Taskfile
+# AI Tools Setup (install agents before configuring which one to use)
+echo -e "\n${GREEN}→${NC} AI tools setup"
+read -p "Configure AI tools (MCPs, agents, guidelines)? [Y/n] " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+  bash "$DOTFILES_DIR/ai/setup.sh"
+fi
+
+# Taskfile AI command (configure after agents are installed)
 if command -v task >/dev/null 2>&1; then
-  echo -e "\n${GREEN}→${NC} Setting up AI configuration for Taskfile..."
+  echo -e "\n${GREEN}→${NC} Taskfile AI command"
   task setup-ai
-  
+
   echo ""
-  read -p "Would you like to configure your AI command now? [Y/n] " -n 1 -r
+  read -p "Configure your AI command now? [Y/n] " -n 1 -r
   echo
   if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     ${EDITOR:-nano} ~/.config/task/taskfile.env

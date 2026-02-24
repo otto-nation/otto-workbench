@@ -81,6 +81,57 @@ Create a local `Taskfile.yml` in your project to add project-specific tasks or o
 ### Local AI Config
 Create `.taskfile/taskfile.env` in a project to use a different AI command for that project.
 
+## AI Tools Setup
+
+The `ai/setup.sh` script installs MCP servers for Claude Code, deploys shared AI coding guidelines, and configures AI agent profiles. It can be run standalone or is prompted automatically at the end of `install.sh`.
+
+```bash
+bash ai/setup.sh
+```
+
+At startup it asks which tools to configure:
+
+```
+Which AI tools do you want to set up?
+  [1] Claude Code
+  [2] Kiro
+```
+
+Every step is individually confirmable — answer `n` to skip any step.
+
+### What gets installed
+
+**Claude Code:**
+- MCP: Serena — code intelligence and semantic navigation
+- MCP: Sequential Thinking — structured multi-step reasoning
+- MCP: Context7 — up-to-date library documentation (requires Upstash API key)
+- `~/.claude/CLAUDE.md` — AI coding guidelines (backup / append / skip if file exists)
+
+**Kiro:**
+- `~/.kiro/steering/general.md` and `language-specific.md` — AI coding guidelines
+- `~/.kiro/agents/default.json` and `ci-cd.json` — agent configs with correct `uvx` path
+
+**Both selected:** the guidelines step runs once and installs to all selected targets.
+
+### Verify after install
+
+```bash
+# Claude Code
+claude mcp list          # → serena, sequential-thinking, context7
+cat ~/.claude/CLAUDE.md  # → guidelines content
+
+# Kiro
+ls ~/.kiro/steering/     # → general.md, language-specific.md
+ls ~/.kiro/agents/       # → default.json, ci-cd.json
+cat ~/.kiro/agents/default.json | grep command  # → actual uvx path
+```
+
+### Adding a new AI tool
+
+1. Add an entry to the tool selector in `select_tools()` (e.g., `[3] Copilot`)
+2. Add a `tool_selected "copilot"` block in the main section that calls `register_step` for each step
+3. Implement the step functions following the existing patterns
+
 ## Requirements
 
 - macOS (some utilities are macOS-specific)

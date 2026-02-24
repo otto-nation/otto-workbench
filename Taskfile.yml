@@ -128,11 +128,11 @@ tasks:
         Diff:
         $DIFF_CONTENT
 
-        Return only the commit message, nothing else."
+        Return only the raw commit message text. No markdown, no code blocks, no backticks, no explanation."
 
         # Get AI command and generate commit message
         AI_COMMAND=$(cat /tmp/task-ai/command)
-        COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g')
+        COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g' | sed '/^```/d')
 
         # Display and commit
         echo "✨ AI Analysis Complete"

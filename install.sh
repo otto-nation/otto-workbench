@@ -28,6 +28,8 @@ install_symlink() {
   local name
   name=$(basename "$source")
 
+  # Only prompt if target is a real file — existing symlinks are silently updated since
+  # they were almost certainly installed by a previous run of this script
   if [ -e "$target" ] && [ ! -L "$target" ]; then
     if prompt_overwrite "$target"; then
       ln -sf "$source" "$target"
@@ -84,7 +86,8 @@ install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 
 # Install global Taskfile
 echo; info "Installing global Taskfile"
-install_symlink "$DOTFILES_DIR/Taskfile.yml" ~/Taskfile.yml
+mkdir -p ~/.config/task
+install_symlink "$DOTFILES_DIR/Taskfile.yml" ~/.config/task/Taskfile.yml
 
 # Add ~/.local/bin to PATH
 SHELL_RC=""

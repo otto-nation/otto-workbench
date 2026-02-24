@@ -17,6 +17,8 @@ echo ""
 
 # Memory Pressure Status
 echo -e "${BOLD}${BLUE}━━━ Memory Pressure Status ━━━${NC}"
+# memory_pressure is macOS-only; stderr redirect catches systems where it is unavailable,
+# and the fallback to "normal" prevents the pressure-based recommendations from triggering
 mem_pressure_status=$(memory_pressure 2>&1 | grep "System-wide memory" || echo "normal")
 if echo "$mem_pressure_status" | grep -qi "critical"; then
   echo -e "  ${RED}${BOLD}CRITICAL${NC} — System under severe memory pressure"
@@ -29,7 +31,10 @@ echo ""
 
 # Memory Statistics
 echo -e "${BOLD}${BLUE}━━━ Memory Statistics ━━━${NC}"
+# Captured before the pipeline so the value can be shell-interpolated into the perl script below
+# and reused in the summary section — variables set inside pipelines are lost to the parent shell
 page_size=$(vm_stat | grep "page size" | awk '{print $8}')
+# Regex extracts page type name and count; multiplies by page_size (shell-interpolated) to get MB
 vm_stat | perl -ne '/Pages\s+([^:]+)[^\d]+(\d+)/ and printf("  %-25s %10.2f MB\n", "$1:", $2 * '$page_size' / 1048576);'
 echo ""
 
@@ -52,6 +57,7 @@ ps aux | sort -nrk 4 | head -11 | tail -10 | while read user pid cpu mem vsz rss
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
+  # Match known app patterns for a readable name; fall back to the binary basename
   if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
     app="IntelliJ IDEA"
     proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)

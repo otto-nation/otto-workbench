@@ -14,7 +14,8 @@ The installer will:
 - Install [Task](https://taskfile.dev) if needed
 - Symlink scripts to `~/.local/bin/`
 - Symlink zsh configs to `~/.config/zsh/config.d/`
-- Install global Taskfile for AI-powered git automation
+- Install the global Taskfile to `~/.config/task/`
+- Optionally run `ai/setup.sh` to configure AI tools (MCPs, agents, guidelines)
 - Prompt you to configure your AI command
 
 ## What's Included
@@ -37,10 +38,10 @@ The installer will:
 - Useful git aliases and settings
 
 ### Global Taskfile (AI-Powered Git Automation)
-- `task --global commit` - AI-generated commit messages
-- `task --global create-pr` - AI-generated pull requests
-- `task --global update-pr` - Update PR descriptions
-- `task --global setup-ai` - Configure AI command
+- `task commit` — AI-generated commit messages
+- `task create-pr` — AI-generated pull requests
+- `task update-pr` — Update PR descriptions
+- `task setup-ai` — Configure AI command
 
 ## Usage
 
@@ -54,8 +55,8 @@ exec zsh
 show-aliases
 
 # Use AI-powered git tasks (from any directory)
-task --global commit
-task --global create-pr
+task commit
+task create-pr
 ```
 
 ## AI Configuration
@@ -67,6 +68,7 @@ The global Taskfile supports multiple AI tools. Configure your preference:
 nano ~/.config/task/taskfile.env
 
 # Examples:
+AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config
 AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
 AI_COMMAND=copilot --agent ci-cd -p
 ```
@@ -106,6 +108,8 @@ Every step is individually confirmable — answer `n` to skip any step.
 - MCP: Sequential Thinking — structured multi-step reasoning
 - MCP: Context7 — up-to-date library documentation (requires Upstash API key)
 - `~/.claude/CLAUDE.md` — AI coding guidelines (backup / append / skip if file exists)
+- `~/.claude/skills/` — skill definitions symlinked from `ai/claude/skills/`
+- `~/.claude/agents/ci-cd` — commit message and PR generation agent
 
 **Kiro:**
 - `~/.kiro/steering/general.md` and `language-specific.md` — AI coding guidelines
@@ -139,7 +143,7 @@ cat ~/.kiro/agents/default.json | grep command  # → actual uvx path
 - [Task](https://taskfile.dev) (auto-installed by installer)
 - Docker (for container utilities)
 - AWS CLI (for AWS utilities)
-- AI tool of choice (Kiro CLI, GitHub Copilot, etc.)
+- AI tool of choice (Claude CLI, Kiro CLI, GitHub Copilot, etc.)
 
 ## Updating
 

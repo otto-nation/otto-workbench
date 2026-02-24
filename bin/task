@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Task wrapper - automatically uses global Taskfile when no local one exists
-# Description: Smart task runner that falls back to global tasks
+# Task wrapper — falls back to the global Taskfile when no local one exists.
+# Installed to ~/.local/bin/task, which takes precedence over the real task binary.
+# This wrapper detects whether a local Taskfile exists; if not, it injects the global
+# one via --taskfile so task commands work from any directory without per-project setup.
 #
 # Usage: task [command] [args...]
-#   - If Taskfile.yml exists locally, uses it
-#   - Otherwise, uses ~/.config/task/Taskfile.yml
+#   - Uses ./Taskfile.yml or ./Taskfile.yaml if present in the current directory
+#   - Falls back to ~/.config/task/Taskfile.yml
 
 set -euo pipefail
 
@@ -13,7 +15,9 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 GLOBAL_TASKFILE="$HOME/.config/task/Taskfile.yml"
 
-# Find the real task binary (skip this wrapper)
+# Find the real task binary by temporarily removing ~/.local/bin from PATH — without this,
+# `which task` would find this wrapper script and exec would recurse infinitely.
+# || true prevents set -e from aborting; an empty TASK_BIN is handled explicitly below.
 TASK_BIN=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$HOME/.local/bin$" | tr '\n' ':') which task 2>/dev/null || true)
 
 if [ -z "$TASK_BIN" ]; then

@@ -25,6 +25,7 @@ tasks:
           echo "# Taskfile AI Configuration" > "$ENV_FILE"
           echo "# Uncomment and configure one of the examples below or add your own" >> "$ENV_FILE"
           echo "" >> "$ENV_FILE"
+          echo "# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config" >> "$ENV_FILE"
           echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$ENV_FILE"
           echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$ENV_FILE"
           echo "" >> "$ENV_FILE"
@@ -32,6 +33,15 @@ tasks:
           echo "📝 Please edit the file to configure your AI command"
         else
           echo "ℹ️  $ENV_FILE already exists"
+          if ! grep -q "AI_COMMAND=claude" "$ENV_FILE"; then
+            printf "  Add Claude example to $ENV_FILE? [Y/n] "
+            read -r REPLY
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+              echo "" >> "$ENV_FILE"
+              echo "# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config" >> "$ENV_FILE"
+              echo "  ✓ Added Claude example"
+            fi
+          fi
         fi
 
   check-ai:

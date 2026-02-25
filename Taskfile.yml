@@ -294,14 +294,18 @@ tasks:
         echo "✓ AI analysis complete"
         echo "→ Creating PR..."
 
-        PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1)
-        PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com[^[:space:]]*')
+        # || true prevents --assignee @me from aborting the script when it fails on repos
+        # where the user lacks triage access; success is determined by whether a URL came back
+        PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
+        PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com[^[:space:]]*' || true)
 
-        echo "✓ Pull request created"
         if [ -n "$PR_URL" ]; then
+          echo "✓ Pull request created"
           echo "$PR_URL"
         else
+          echo "✗ PR creation failed"
           echo "$PR_OUTPUT"
+          exit 1
         fi
 
   update-pr:

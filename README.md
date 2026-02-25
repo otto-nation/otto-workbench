@@ -38,10 +38,10 @@ The installer will:
 - Useful git aliases and settings
 
 ### Global Taskfile (AI-Powered Git Automation)
-- `task commit` — AI-generated commit messages
-- `task create-pr` — AI-generated pull requests
-- `task update-pr` — Update PR descriptions
-- `task setup-ai` — Configure AI command
+- `task --global commit` — AI-generated commit messages
+- `task --global create-pr` — AI-generated pull requests
+- `task --global update-pr` — Update PR descriptions
+- `task --global setup-ai` — Configure AI command
 
 ## Usage
 
@@ -55,8 +55,8 @@ exec zsh
 show-aliases
 
 # Use AI-powered git tasks (from any directory)
-task commit
-task create-pr
+task --global commit
+task --global create-pr
 ```
 
 ## AI Configuration

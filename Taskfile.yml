@@ -214,7 +214,7 @@ tasks:
         RAW_RESPONSE=$(echo "$AI_PROMPT" | $AI_COMMAND)
         AI_RESPONSE=$(echo "$RAW_RESPONSE" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed 's/\x1b\[[0-9;]*R//g' | tr -d '\033\007\015' | sed 's/^[> ]*//g')
 
-        PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r')
+        PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
         PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
 
         if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
@@ -290,13 +290,25 @@ tasks:
       - |
         PR_TITLE=$(cat /tmp/task-pr/title)
         PR_DESCRIPTION=$(cat /tmp/task-pr/description)
+        BRANCH=$(git branch --show-current)
 
         echo "✓ AI analysis complete"
         echo "→ Creating PR..."
 
-        # || true prevents --assignee @me from aborting the script when it fails on repos
-        # where the user lacks triage access; success is determined by whether a URL came back
+        # Detect cross-fork scenario (origin is a fork of a parent repo) and fail early
+        # with a clear message rather than letting gh produce a cryptic GraphQL error
+        PARENT_REPO=$(gh repo view --json parent -q '.parent.nameWithOwner' 2>/dev/null || true)
+
+        if [ -n "$PARENT_REPO" ]; then
+          ORIGIN_URL=$(git remote get-url origin)
+          echo "✗ Cross-fork PR detected — update your remote to point directly to the target repo"
+          echo "  origin: $ORIGIN_URL"
+          echo "  target: $(gh repo view "$PARENT_REPO" --json url -q '.url' 2>/dev/null || echo "$PARENT_REPO")"
+          exit 1
+        fi
+
         PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
+
         PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com[^[:space:]]*' || true)
 
         if [ -n "$PR_URL" ]; then

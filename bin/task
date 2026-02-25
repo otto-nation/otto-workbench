@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Task wrapper — falls back to the global Taskfile when no local one exists.
-# Installed to ~/.local/bin/task, which takes precedence over the real task binary.
-# This wrapper detects whether a local Taskfile exists; if not, it injects the global
-# one via --taskfile so task commands work from any directory without per-project setup.
+# Task wrapper — installed to ~/.local/bin/task, which takes precedence over the real binary.
+# Handles two cases:
+#   1. Local Taskfile exists → pass through to the real task binary unchanged
+#   2. --global flag → strip the flag and use ~/.config/task/Taskfile.yml explicitly
 #
-# Usage: task [command] [args...]
-#   - Uses ./Taskfile.yml or ./Taskfile.yaml if present in the current directory
-#   - Falls back to ~/.config/task/Taskfile.yml
+# Usage: task [--global] [command] [args...]
+#   task commit              Uses ./Taskfile.yml in the current directory
+#   task --global commit     Uses ~/.config/task/Taskfile.yml from anywhere
 
 set -euo pipefail
 
@@ -25,16 +25,28 @@ if [ -z "$TASK_BIN" ]; then
   exit 1
 fi
 
-# Check if local Taskfile exists
-if [ -f "Taskfile.yml" ] || [ -f "Taskfile.yaml" ]; then
-  # Use local Taskfile
-  exec "$TASK_BIN" "$@"
-else
-  # Use global Taskfile
-  if [ -f "$GLOBAL_TASKFILE" ]; then
-    exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "$@"
+# Check for --global flag; collect remaining args without it
+USE_GLOBAL=false
+FILTERED_ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "--global" ]; then
+    USE_GLOBAL=true
   else
-    err "No local Taskfile found and global Taskfile not found at $GLOBAL_TASKFILE"
+    FILTERED_ARGS+=("$arg")
+  fi
+done
+
+if [ "$USE_GLOBAL" = true ]; then
+  if [ ! -f "$GLOBAL_TASKFILE" ]; then
+    err "Global Taskfile not found at $GLOBAL_TASKFILE"
+    err "Run: task --global setup-ai"
     exit 1
   fi
+  exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "${FILTERED_ARGS[@]}"
+elif [ -f "Taskfile.yml" ] || [ -f "Taskfile.yaml" ]; then
+  exec "$TASK_BIN" "$@"
+else
+  err "No local Taskfile found in current directory"
+  echo "  Use --global to run global tasks: task --global <command>" >&2
+  exit 1
 fi

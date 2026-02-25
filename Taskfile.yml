@@ -1,7 +1,7 @@
 # Global Taskfile for AI-powered Git automation
 # Managed by workbench repo: https://github.com/otto-nation/otto-workbench
 # Installed location: ~/.config/task/Taskfile.yml
-# 
+#
 # To customize per-project: Create a local Taskfile.yml in your project
 # To edit global config: Edit ~/.config/task/taskfile.env
 
@@ -18,9 +18,9 @@ tasks:
       - |
         CONFIG_DIR="$HOME/.config/task"
         ENV_FILE="$CONFIG_DIR/taskfile.env"
-        
+
         mkdir -p "$CONFIG_DIR"
-        
+
         if [ ! -f "$ENV_FILE" ]; then
           echo "# Taskfile AI Configuration" > "$ENV_FILE"
           echo "# Uncomment and configure one of the examples below or add your own" >> "$ENV_FILE"
@@ -29,17 +29,17 @@ tasks:
           echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$ENV_FILE"
           echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$ENV_FILE"
           echo "" >> "$ENV_FILE"
-          printf "  \033[0;32m✓\033[0m Created %s\n" "$ENV_FILE"
-          printf "  \033[2m→ Edit to configure your AI command\033[0m\n"
+          printf "  ✓ Created %s\n" "$ENV_FILE"
+          echo "→ Edit to configure your AI command"
         else
-          printf "\033[0;34m→\033[0m %s already exists\n" "$ENV_FILE"
+          printf "→ %s already exists\n" "$ENV_FILE"
           if ! grep -q "AI_COMMAND=claude" "$ENV_FILE"; then
             printf "  Add Claude example? [Y/n] "
             read -r REPLY
             if [[ ! $REPLY =~ ^[Nn]$ ]]; then
               echo "" >> "$ENV_FILE"
               echo "# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config" >> "$ENV_FILE"
-              printf "  \033[0;32m✓\033[0m Added Claude example\n"
+              printf "  ✓ Added Claude example\n"
             fi
           fi
         fi
@@ -51,31 +51,32 @@ tasks:
       - |
         LOCAL_ENV=".taskfile/taskfile.env"
         GLOBAL_ENV="$HOME/.config/task/taskfile.env"
-        
+
         if [ -f "$LOCAL_ENV" ]; then
           ENV_FILE="$LOCAL_ENV"
         elif [ -f "$GLOBAL_ENV" ]; then
           ENV_FILE="$GLOBAL_ENV"
         else
-          printf "\033[0;31m✗\033[0m AI not configured. Run: task setup-ai\n"
+          echo "✗ AI not configured. Run: task setup-ai"
           exit 1
         fi
-        
+
         if grep -q "^AI_COMMAND=" "$ENV_FILE"; then
           AI_CMD=$(grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- | cut -d' ' -f1)
           if command -v "$AI_CMD" >/dev/null 2>&1; then
             mkdir -p /tmp/task-ai
             grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- > /tmp/task-ai/command
           else
-            printf "\033[0;31m✗\033[0m AI command not found: %s\n" "$AI_CMD"
+            printf "✗ AI command not found: %s\n" "$AI_CMD"
             exit 1
           fi
         else
-          printf "\033[0;31m✗\033[0m AI_COMMAND not set in %s\n" "$ENV_FILE"
+          printf "✗ AI_COMMAND not set in %s\n" "$ENV_FILE"
           exit 1
         fi
+
   commit:
-    desc: "🤖 Generate AI-powered commit message based on staged changes"
+    desc: "Generate AI-powered commit message based on staged changes"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     deps: [check-ai]
@@ -84,11 +85,11 @@ tasks:
         # Validate staged changes exist
         STAGED_FILES=$(git diff --cached --name-only)
         if [ -z "$STAGED_FILES" ]; then
-          echo "❌ No staged changes found. Use 'git add' first."
+          echo "✗ No staged changes found. Use 'git add' first."
           exit 1
         fi
 
-        echo "🤖 Analyzing staged changes with AI..."
+        echo "→ Analyzing staged changes with AI..."
         echo ""
 
         # Prepare diff and file list
@@ -135,17 +136,17 @@ tasks:
         COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g' | sed '/^```/d')
 
         # Display and commit
-        echo "✨ AI Analysis Complete"
+        echo "✓ AI analysis complete"
         echo ""
-        echo "📝 Generated commit message:"
+        echo "→ Generated commit message:"
         echo "   $COMMIT_MSG"
         echo ""
-        echo "🚀 Committing..."
+        echo "→ Committing..."
         git commit -m "$COMMIT_MSG"
-        echo "✅ Committed successfully!"
+        echo "✓ Committed successfully"
 
   pr-content:
-    desc: "🤖 Generate AI-powered PR content (internal helper)"
+    desc: "Generate AI-powered PR content (internal helper)"
     internal: true
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
@@ -154,7 +155,7 @@ tasks:
       - |
         BRANCH=$(git branch --show-current)
         if [ "$BRANCH" = "main" ]; then
-          echo "❌ Cannot create PR from main branch"
+          echo "✗ Cannot create PR from main branch"
           exit 1
         fi
 
@@ -163,12 +164,12 @@ tasks:
 
         # If no issue in branch name, prompt for it
         if [ -z "$ISSUE_NUMBER" ]; then
-          echo "🔍 No issue number found in branch name: $BRANCH"
+          echo "→ No issue number found in branch name: $BRANCH"
           echo ""
-          read -p "📋 Enter issue number (e.g., ISSUE-123) or press Enter to skip: " USER_ISSUE
+          read -p "Enter issue number (e.g., ISSUE-123) or press Enter to skip: " USER_ISSUE
           ISSUE_NUMBER="$USER_ISSUE"
         else
-          echo "✅ Found issue number: $ISSUE_NUMBER"
+          echo "✓ Found issue number: $ISSUE_NUMBER"
         fi
 
         COMMITS=$(git log --oneline origin/main..HEAD)
@@ -226,7 +227,7 @@ tasks:
           if echo "$CLEAN_ISSUE" | grep -qE '^[0-9]+$'; then
             # It's a GitHub issue
             echo ""
-            read -p "❓ Close issue #$CLEAN_ISSUE when PR merges? (y/N): " CLOSE_ISSUE
+            read -p "Close issue #$CLEAN_ISSUE when PR merges? (y/N): " CLOSE_ISSUE
             if [ "$CLOSE_ISSUE" = "y" ] || [ "$CLOSE_ISSUE" = "Y" ]; then
               PR_DESCRIPTION="Closes #$CLEAN_ISSUE\n\n$PR_DESCRIPTION"
             fi
@@ -237,12 +238,12 @@ tasks:
         echo "$PR_TITLE" > /tmp/task-pr/title
         echo "$PR_DESCRIPTION" > /tmp/task-pr/description
 
-        echo "📝 Title: $PR_TITLE"
-        echo "📄 Description:"
+        echo "Title: $PR_TITLE"
+        echo "Description:"
         echo "$PR_DESCRIPTION"
 
   create-pr:
-    desc: "🤖 Create AI-powered pull request with smart title and description"
+    desc: "Create AI-powered pull request with smart title and description"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
@@ -259,115 +260,115 @@ tasks:
           BASE=$(git merge-base @ @{u})
 
           if [ "$LOCAL" = "$REMOTE" ]; then
-            echo "✅ Branch is up to date with remote"
+            echo "✓ Branch is up to date with remote"
           elif [ "$LOCAL" = "$BASE" ]; then
-            echo "⚠️  Remote has commits not in local branch"
-            echo "❌ Cannot create PR - please pull first: git pull"
+            echo "! Remote has commits not in local branch"
+            echo "✗ Cannot create PR - please pull first: git pull"
             exit 1
           elif [ "$REMOTE" = "$BASE" ]; then
-            echo "📤 Local has unpushed commits, pushing..."
+            echo "→ Local has unpushed commits, pushing..."
             if ! git push origin $BRANCH; then
-              echo "❌ Push failed"
+              echo "✗ Push failed"
               exit 1
             fi
           else
-            echo "❌ Branch has diverged from remote"
-            echo "💡 Fix with: git pull --rebase or git reset"
+            echo "✗ Branch has diverged from remote"
+            echo "→ Fix with: git pull --rebase or git reset"
             exit 1
           fi
         else
           # Remote doesn't exist, push it
-          echo "📤 Pushing new branch to remote..."
+          echo "→ Pushing new branch to remote..."
           if ! git push -u origin $BRANCH; then
-            echo "❌ Push failed"
+            echo "✗ Push failed"
             exit 1
           fi
         fi
 
-        echo "🤖 Analyzing branch changes with AI: $BRANCH"
+        echo "→ Analyzing changes with AI: $BRANCH"
       - task: pr-content
       - |
         PR_TITLE=$(cat /tmp/task-pr/title)
         PR_DESCRIPTION=$(cat /tmp/task-pr/description)
 
-        echo "✨ AI Analysis Complete"
-        echo "🚀 Creating PR..."
+        echo "✓ AI analysis complete"
+        echo "→ Creating PR..."
 
         PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1)
         PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com[^[:space:]]*')
 
-        echo "✅ Pull request created!"
+        echo "✓ Pull request created"
         if [ -n "$PR_URL" ]; then
-          echo "🔗 $PR_URL"
+          echo "$PR_URL"
         else
           echo "$PR_OUTPUT"
         fi
 
   update-pr:
-    desc: "🔄 Update current PR description with AI-generated content"
+    desc: "Update current PR description with AI-generated content"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         BRANCH=$(git branch --show-current)
         if [ "$BRANCH" = "main" ]; then
-          echo "❌ Cannot update PR from main branch"
+          echo "✗ Cannot update PR from main branch"
           exit 1
         fi
 
-        echo "🔍 Checking for existing PR..."
+        echo "→ Checking for existing PR..."
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
 
         if [ -z "$PR_NUMBER" ]; then
-          echo "❌ No PR found for branch: $BRANCH"
-          echo "💡 Use 'task create-pr' to create a new PR"
+          echo "✗ No PR found for branch: $BRANCH"
+          echo "→ Use 'task create-pr' to create a new PR"
           exit 1
         fi
 
-        echo "🤖 Analyzing branch changes with AI: $BRANCH"
+        echo "→ Analyzing changes with AI: $BRANCH"
       - task: pr-content
       - |
         PR_DESCRIPTION=$(cat /tmp/task-pr/description)
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
 
-        echo "✨ AI Analysis Complete"
-        echo "🔄 Updating PR #$PR_NUMBER..."
+        echo "✓ AI analysis complete"
+        echo "→ Updating PR #$PR_NUMBER..."
 
         gh pr edit $PR_NUMBER --body "$PR_DESCRIPTION"
 
-        echo "✅ PR description updated!"
-        echo "🔗 View: $(gh pr view --json url -q .url)"
+        echo "✓ PR description updated"
+        echo "→ View: $(gh pr view --json url -q .url)"
+
   # ============================================================================
   # UTILITY
   # ============================================================================
 
-
   help:
-    desc: "❓ Show this help message"
+    desc: "Show this help message"
     silent: true
     cmds:
       - |
         TASKFILE_PATH="${TASKFILE}"
         IS_GLOBAL=false
-        
+
         if [[ "$TASKFILE_PATH" == *".config/task/Taskfile.yml"* ]]; then
           IS_GLOBAL=true
         fi
-        
-        echo "🛠️  Task Runner"
+
+        echo "workbench  task runner"
         echo ""
-        
+
         if [ "$IS_GLOBAL" = true ]; then
-          echo "📍 Using global Taskfile"
+          echo "Using global Taskfile"
           echo "   Location: ~/.config/task/Taskfile.yml"
           echo "   Managed by: https://github.com/otto-nation/otto-workbench"
           echo ""
         fi
-        
-        echo "🤖 AI-Powered Git Automation:"
-        echo "   setup-ai       - Setup AI configuration (first-time setup)"
-        echo "   commit         - AI-generated commit messages"
-        echo "   create-pr      - AI-generated PR (auto-pushes if needed)"
-        echo "   update-pr      - Update existing PR description"
+
+        echo "AI-Powered Git Automation:"
+        echo "   setup-ai       Setup AI configuration (first-time setup)"
+        echo "   commit         AI-generated commit messages"
+        echo "   create-pr      AI-generated PR (auto-pushes if needed)"
+        echo "   update-pr      Update existing PR description"
         echo ""
-        echo "ℹ️  For detailed task list: task --list"
+        echo "For all tasks: task --list"

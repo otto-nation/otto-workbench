@@ -41,7 +41,7 @@ load_ai_command() {
   elif [ -f "$global_env" ]; then
     env_file="$global_env"
   else
-    echo "✗ AI not configured. Run: task --global setup-ai"
+    echo "✗ AI not configured. Run: task --global ai:setup"
     return 1
   fi
 

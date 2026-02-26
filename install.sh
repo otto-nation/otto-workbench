@@ -100,13 +100,13 @@ mkdir -p ~/.config/zsh/config.d
 # Install scripts
 info "Installing scripts to ~/.local/bin/"
 for script in "$DOTFILES_DIR"/bin/*; do
-  install_symlink "$script" ~/.local/bin/$(basename "$script")
+  install_symlink "$script" "$HOME/.local/bin/$(basename "$script")"
 done
 
 # Install zsh configs
 echo; info "Installing zsh configs to ~/.config/zsh/config.d/"
 for config in "$DOTFILES_DIR"/zsh/*.zsh; do
-  install_symlink "$config" ~/.config/zsh/config.d/$(basename "$config")
+  install_symlink "$config" "$HOME/.config/zsh/config.d/$(basename "$config")"
 done
 
 # Install gitconfig
@@ -133,4 +133,4 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then bash "$DOTFILES_DIR/ai/setup.sh"; fi
 # Taskfile AI command (configure after agents are installed)
 configure_ai_command
 
-echo -e "\nReload your shell: ${BOLD}exec $(basename $SHELL)${NC}"
+echo -e "\nReload your shell: ${BOLD}exec $(basename "$SHELL")${NC}"

@@ -82,6 +82,7 @@ build_commit_rules() {
 # Sets AI_RESPONSE.
 run_ai() {
   local prompt="$1"
+  # shellcheck disable=SC2086  # $AI_COMMAND holds "binary [flags]"; word-splitting is intentional
   AI_RESPONSE=$(echo "$prompt" | $AI_COMMAND | \
     tr -d '\033\007\015' | \
     sed 's/\[[0-9;]*[a-zA-Z]//g' | \
@@ -199,7 +200,9 @@ push_branch() {
 
   local local_sha remote_sha base_sha
   local_sha=$(git rev-parse @)
+  # shellcheck disable=SC1083  # @{u} is git's upstream shorthand, not a shell construct
   remote_sha=$(git rev-parse @{u})
+  # shellcheck disable=SC1083
   base_sha=$(git merge-base @ @{u})
 
   if [ "$local_sha" = "$remote_sha" ]; then

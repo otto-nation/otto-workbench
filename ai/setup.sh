@@ -138,7 +138,7 @@ ${lang_content}"
 
   if [[ -f "$target" ]]; then
     echo
-    warn "~/.claude/CLAUDE.md already exists. What would you like to do?"
+    warn "$HOME/.claude/CLAUDE.md already exists. What would you like to do?"
     echo "  [1] Backup and overwrite  (~/.claude/CLAUDE.md.backup)"
     echo "  [2] Append to existing"
     echo "  [3] Skip"
@@ -217,7 +217,7 @@ step_claude_skills() {
       ln -sf "$skill_dir" "$target"
       success "$skill (updated symlink)"
     elif [[ -d "$target" ]]; then
-      if confirm_n "~/.claude/skills/$skill already exists as a real directory. Overwrite with symlink?"; then
+      if confirm_n "$HOME/.claude/skills/$skill already exists as a real directory. Overwrite with symlink?"; then
         rm -rf "$target"
         ln -sf "$skill_dir" "$target"
         success "$skill"
@@ -254,7 +254,7 @@ step_claude_agents() {
       ln -sf "$agent_file" "$target"
       success "${agent_name%.md} (updated symlink)"
     elif [[ -f "$target" ]]; then
-      if confirm_n "~/.claude/agents/$agent_name already exists. Overwrite with symlink?"; then
+      if confirm_n "$HOME/.claude/agents/$agent_name already exists. Overwrite with symlink?"; then
         rm -f "$target"
         ln -sf "$agent_file" "$target"
         success "${agent_name%.md}"

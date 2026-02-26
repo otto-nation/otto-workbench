@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        run: |
+          shellcheck --severity=warning \
+            install.sh \
+            ai/setup.sh \
+            lib/ui.sh \
+            lib/ai-commit.sh \
+            bin/task \
+            bin/cleanup-testcontainers \
+            bin/get-secret \
+            bin/mem-analyze
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
+          /tmp/bats-core/install.sh /usr/local
+
+      - name: Verify Taskfile parses
+        run: |
+          npm install -g @go-task/cli 2>/dev/null || true
+          # Validate YAML structure directly
+          python3 -c "import yaml, sys; yaml.safe_load(open('Taskfile.yml'))" && echo "Taskfile.yml: valid YAML"
+
+      - name: Run tests
+        run: bats tests/ --recursive --timing

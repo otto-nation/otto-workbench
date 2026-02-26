@@ -43,7 +43,6 @@ echo -e "${BOLD}${BLUE}━━━ Swap Usage ━━━${NC}"
 swap_info=$(sysctl vm.swapusage | sed 's/vm.swapusage: //')
 echo "  $swap_info"
 swap_used=$(echo "$swap_info" | grep -oE 'used = [0-9.]+' | awk '{print $3}')
-swap_total=$(echo "$swap_info" | grep -oE 'total = [0-9.]+' | awk '{print $3}')
 swap_used_gb=$(echo "scale=1; $swap_used / 1024" | bc)
 if (( $(echo "$swap_used > 10240" | bc -l) )); then
   warn "High swap usage: ${swap_used_gb}GB used"
@@ -53,7 +52,7 @@ echo ""
 # Top Memory Consumers
 echo -e "${BOLD}${BLUE}━━━ Top 10 Memory Consuming Processes ━━━${NC}"
 printf "  ${BOLD}%-8s %6s %10s  %-50s${NC}\n" "PID" "%MEM" "MEMORY" "APPLICATION"
-ps aux | sort -nrk 4 | head -11 | tail -10 | while read user pid cpu mem vsz rss tt stat started time cmd; do
+ps aux | sort -nrk 4 | head -11 | tail -10 | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
@@ -83,7 +82,8 @@ echo ""
 # Memory Hogs (>500MB)
 echo -e "${BOLD}${BLUE}━━━ Processes Using >500MB ━━━${NC}"
 printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
-ps aux | awk 'NR>1 && $6 > 500000' | while read user pid cpu mem vsz rss tt stat started time cmd; do
+# shellcheck disable=SC2034  # user,cpu,vsz,tt,stat,started,time unused — read to consume positional fields
+ps aux | awk 'NR>1 && $6 > 500000' | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 

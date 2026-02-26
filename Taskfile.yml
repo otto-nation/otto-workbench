@@ -11,7 +11,7 @@ tasks:
   # ============================================================================
   # GIT AUTOMATION
   # ============================================================================
-  setup-ai:
+  ai:setup:
     desc: "Setup AI configuration"
     silent: true
     cmds:
@@ -82,7 +82,7 @@ tasks:
         git commit -m "$AI_MSG"
         echo "✓ Committed successfully"
 
-  reword:
+  commit:reword:
     desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
@@ -174,7 +174,26 @@ tasks:
           fi
         fi
 
-  create-pr:
+  pr:content:
+    desc: "Preview AI-generated PR title and description without creating or updating a PR"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        load_pr_context || exit 1
+
+        echo "→ Analyzing changes with AI: $BRANCH"
+        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
+        echo "✓ AI analysis complete"
+        echo ""
+        echo "→ PR Title:"
+        echo "   $PR_TITLE"
+        echo ""
+        echo "→ PR Description:"
+        echo "$PR_DESCRIPTION"
+
+  pr:create:
     desc: "Create AI-powered pull request with smart title and description"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
@@ -201,7 +220,7 @@ tasks:
           exit 1
         fi
 
-  update-pr:
+  pr:update:
     desc: "Update current PR description with AI-generated content"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
@@ -215,7 +234,7 @@ tasks:
 
         if [ -z "$PR_NUMBER" ]; then
           echo "✗ No PR found for branch: $BRANCH"
-          echo "→ Use 'task create-pr' to create a new PR"
+          echo "→ Use 'task pr:create' to create a new PR"
           exit 1
         fi
 
@@ -256,10 +275,11 @@ tasks:
         fi
 
         echo "AI-Powered Git Automation:"
-        echo "   setup-ai       Setup AI configuration (first-time setup)"
-        echo "   commit         AI-generated commit messages"
-        echo "   reword         AI reword of a commit (default: HEAD; or: task reword -- SHA)"
-        echo "   create-pr      AI-generated PR (auto-pushes if needed)"
-        echo "   update-pr      Update existing PR description"
+        echo "   ai:setup          Setup AI configuration (first-time setup)"
+        echo "   commit            AI-generated commit messages"
+        echo "   commit:reword     AI reword of a commit (default: HEAD; or: task commit:reword -- SHA)"
+        echo "   pr:content        Preview AI-generated PR title and description"
+        echo "   pr:create         AI-generated PR (auto-pushes if needed)"
+        echo "   pr:update         Update existing PR description"
         echo ""
         echo "For all tasks: task --list"

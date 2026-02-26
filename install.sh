@@ -84,10 +84,11 @@ done
 echo; info "Installing gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 
-# Install global Taskfile
+# Install global Taskfile and libs
 echo; info "Installing global Taskfile"
 mkdir -p ~/.config/task
 install_symlink "$DOTFILES_DIR/Taskfile.yml" ~/.config/task/Taskfile.yml
+install_symlink "$DOTFILES_DIR/lib" ~/.config/task/lib
 
 # Add ~/.local/bin to PATH
 SHELL_RC=""

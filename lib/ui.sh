@@ -7,6 +7,7 @@
 #   bin/* (bash)      _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"; . "$(dirname "$_SELF")/../lib/ui.sh"
 #   bin/* (zsh)       _SELF="$(readlink "$0" 2>/dev/null || echo "$0")"; . "$(dirname "$_SELF")/../lib/ui.sh"
 
+# shellcheck disable=SC2034  # All color variables are used by sourcing scripts
 BOLD='\033[1m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'

@@ -82,7 +82,8 @@ tasks:
     deps: [check-ai]
     cmds:
       - |
-        # Validate staged changes exist
+        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+
         STAGED_FILES=$(git diff --cached --name-only)
         if [ -z "$STAGED_FILES" ]; then
           echo "✗ No staged changes found. Use 'git add' first."
@@ -92,58 +93,118 @@ tasks:
         echo "→ Analyzing staged changes with AI..."
         echo ""
 
-        # Prepare diff and file list
         DIFF_CONTENT=$(git diff --cached --no-color)
         FILE_LIST=$(echo "$STAGED_FILES" | tr '\n' ', ' | sed 's/,$//')
-
-        # Determine commit rules (use commitlint if exists, otherwise defaults)
-        if [ -f .github/.commitlintrc.json ]; then
-          COMMIT_RULES="Follow the rules in this commitlint configuration: $(cat .github/.commitlintrc.json)"
-        else
-          COMMIT_RULES="Follow these conventional commit rules
-            - Header (first line) must be ≤72 characters (no exceptions)
-            - Use conventional commit format: type(scope): description
-            - Types: feat, fix, perf, deps, revert, docs, style, refactor, test, build, ci, chore
-            - No period at end of subject
-            - Use semicolon (;) to separate multiple changes in header
-            - Separate header and body with blank line
-            - Body lines must be ≤100 characters each
-            - Use bullet points for multiple changes in body"
-        fi
-
-        # Build AI prompt
-        AI_PROMPT="Generate a conventional commit message based on the changes.
-
-        CRITICAL REQUIREMENTS:
-        - Header MUST be ≤72 characters total (type + scope + colon + space + subject)
-        - MUST use format: type(scope): subject
-        - Subject must be concise - focus on WHAT changed, not HOW
-        - If multiple changes, use semicolon in subject or list in body
-        - NEVER omit type or scope
-        - Count characters carefully before responding
-
-        $COMMIT_RULES
-
-        Files changed: $FILE_LIST
-
-        Diff:
-        $DIFF_CONTENT
-
-        Return only the raw commit message text. No markdown, no code blocks, no backticks, no explanation."
-
-        # Get AI command and generate commit message
         AI_COMMAND=$(cat /tmp/task-ai/command)
-        COMMIT_MSG=$(echo "$AI_PROMPT" | $AI_COMMAND | tr -d '\033' | sed 's/\[[0-9;]*m//g' | sed 's/^[> ]*//g' | sed '/^```/d')
 
-        # Display and commit
+        find_commitlint_config
+        build_commit_rules
+        generate_commit_msg "$DIFF_CONTENT" "$FILE_LIST"
+
         echo "✓ AI analysis complete"
         echo ""
         echo "→ Generated commit message:"
-        echo "   $COMMIT_MSG"
+        echo "   $AI_MSG"
         echo ""
+
+        validate_commit_msg "$AI_MSG" || exit 1
+
         echo "→ Committing..."
-        git commit -m "$COMMIT_MSG"
+        git commit -m "$AI_MSG"
         echo "✓ Committed successfully"
+
+  reword:
+    desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    deps: [check-ai]
+    cmds:
+      - |
+        # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
+        RAW_ARG="{{.CLI_ARGS}}"
+        COMMIT_SHA="${RAW_ARG// /}"
+        COMMIT_SHA="${COMMIT_SHA:-HEAD}"
+
+        # Resolve to full SHA; catch invalid refs before doing anything else
+        TARGET_SHA=$(git rev-parse "$COMMIT_SHA" 2>/dev/null) || {
+          echo "✗ Invalid commit: $COMMIT_SHA"
+          exit 1
+        }
+
+        # Auto-stash tracked changes so rebase has a clean working tree
+        STASHED=false
+        if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+          echo "→ Stashing uncommitted changes..."
+          git stash push -m "task-reword-stash"
+          STASHED=true
+        fi
+
+        TMPFILE=$(mktemp)
+        EDITOR_SCRIPT=$(mktemp)
+        SEQ_EDITOR=$(mktemp)
+
+        # Always pop stash and remove temp files on exit, even if something fails
+        cleanup() {
+          rm -f "$TMPFILE" "$EDITOR_SCRIPT" "$SEQ_EDITOR" 2>/dev/null || true
+          if [ "$STASHED" = true ]; then
+            echo "→ Restoring stashed changes..."
+            git stash pop || true
+          fi
+        }
+        trap cleanup EXIT
+
+        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+
+        echo "→ Analyzing commit with AI..."
+        FULL_DIFF=$(git show "$TARGET_SHA" --no-color)
+        AI_COMMAND=$(cat /tmp/task-ai/command)
+
+        find_commitlint_config
+        build_commit_rules
+        generate_commit_msg "$FULL_DIFF"
+
+        echo "✓ AI analysis complete"
+        echo ""
+        echo "→ Generated commit message:"
+        echo "   $AI_MSG"
+        echo ""
+
+        validate_commit_msg "$AI_MSG" || exit 1
+
+        HEAD_SHA=$(git rev-parse HEAD)
+
+        if [ "$TARGET_SHA" = "$HEAD_SHA" ]; then
+          # HEAD is a simple amend — no rebase needed
+          echo "→ Amending HEAD commit..."
+          NO_VERIFY=1 git commit --amend --no-verify -m "$AI_MSG"
+          echo "✓ Commit amended"
+        else
+          echo "→ Rewording via rebase (history will be rewritten from this commit forward)..."
+
+          # GIT_EDITOR: injects our generated message into git's commit message buffer
+          echo "$AI_MSG" > "$TMPFILE"
+          printf '#!/bin/bash\ncp "%s" "$1"\n' "$TMPFILE" > "$EDITOR_SCRIPT"
+          chmod +x "$EDITOR_SCRIPT"
+
+          # GIT_SEQUENCE_EDITOR: marks only the target commit as reword; all others stay as pick
+          SHORT_SHA=$(git rev-parse --short "$TARGET_SHA")
+          printf '#!/bin/bash\nsed "s/^pick %s /reword %s /" "$1" > "$1.tmp" && mv "$1.tmp" "$1"\n' \
+            "$SHORT_SHA" "$SHORT_SHA" > "$SEQ_EDITOR"
+          chmod +x "$SEQ_EDITOR"
+
+          # core.hooksPath=/dev/null disables all git hooks during rebase; NO_VERIFY=1 for hook scripts that check the env var
+          NO_VERIFY=1 GIT_SEQUENCE_EDITOR="$SEQ_EDITOR" GIT_EDITOR="$EDITOR_SCRIPT" \
+            git -c core.hooksPath=/dev/null rebase -i "${TARGET_SHA}^"
+
+          echo "✓ Commit reworded"
+
+          # History was rewritten — warn if the branch is already published
+          CURRENT_BRANCH=$(git branch --show-current)
+          if git ls-remote --heads origin "$CURRENT_BRANCH" 2>/dev/null | grep -q .; then
+            echo ""
+            echo "⚠  History rewritten — force push required: git push --force-with-lease"
+          fi
+        fi
 
   pr-content:
     desc: "Generate AI-powered PR content (internal helper)"
@@ -309,7 +370,7 @@ tasks:
 
         PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
 
-        PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com[^[:space:]]*' || true)
+        PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github[^[:space:]]*' || true)
 
         if [ -n "$PR_URL" ]; then
           echo "✓ Pull request created"
@@ -384,6 +445,7 @@ tasks:
         echo "AI-Powered Git Automation:"
         echo "   setup-ai       Setup AI configuration (first-time setup)"
         echo "   commit         AI-generated commit messages"
+        echo "   reword         AI reword of a commit (default: HEAD; or: task reword -- SHA)"
         echo "   create-pr      AI-generated PR (auto-pushes if needed)"
         echo "   update-pr      Update existing PR description"
         echo ""

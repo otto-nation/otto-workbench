@@ -1,4 +1,19 @@
 #!/bin/bash
+# Bootstrap script for workbench dotfiles.
+#
+# Usage: bash install.sh
+#
+# What it does:
+#   1. Installs the `task` runner if not present
+#   2. Symlinks all bin/ scripts to ~/.local/bin/
+#   3. Symlinks all zsh/*.zsh configs to ~/.config/zsh/config.d/
+#   4. Symlinks git/.gitconfig to ~/.gitconfig
+#   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
+#   6. Adds ~/.local/bin to PATH in your shell rc file if needed
+#   7. Runs ai/setup.sh to configure MCPs, agents, and guidelines (optional)
+#   8. Opens the Taskfile AI command configuration in $EDITOR (optional)
+#
+# Re-running is safe — existing symlinks are updated silently; real files prompt before overwrite.
 
 set -e
 

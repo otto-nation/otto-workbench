@@ -1,4 +1,18 @@
 #!/bin/bash
+# AI tools setup wizard.
+#
+# Usage: bash ai/setup.sh
+#        (also called automatically by install.sh)
+#
+# What it does:
+#   1. Prompts you to select which AI tools to configure (Claude Code, Kiro)
+#   2. Downloads and installs AI coding guidelines (CLAUDE.md / Kiro steering)
+#   3. Registers MCP servers for Claude Code (Serena, Sequential Thinking, Context7)
+#   4. Installs Claude Code skills and agent definitions from ai/claude/
+#   5. Downloads and installs Kiro agent configs (default + ci-cd)
+#
+# Each step is individually confirmable — skip anything you don't need.
+# Re-running is safe: existing symlinks are updated; real files prompt before overwrite.
 
 set -e
 

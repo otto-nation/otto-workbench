@@ -2,9 +2,31 @@
 # Shared helpers for AI-powered git automation.
 # Sourced by tasks via: . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
 #
-# Call load_ai_command first to set AI_COMMAND, then call other functions as needed.
+# Typical call sequence:
+#   load_ai_command          → sets AI_COMMAND
+#   find_commitlint_config   → sets COMMITLINT_CONFIG
+#   build_commit_rules       → sets COMMIT_RULES (derived from COMMITLINT_CONFIG)
+#   generate_commit_msg DIFF → sets AI_MSG
+#   validate_commit_msg MSG  → validates; returns 1 on failure
+#   generate_pr_content BRANCH DEFAULT → sets PR_TITLE, PR_DESCRIPTION
+#
 # State set by functions: AI_COMMAND, COMMITLINT_CONFIG, COMMIT_RULES,
 #                         AI_RESPONSE, AI_MSG, PR_TITLE, PR_DESCRIPTION
+
+# ─── Configuration ────────────────────────────────────────────────────────────
+# Maximum length of the commit header (type + optional scope + colon + space + subject).
+# Enforced in both the AI prompt and the fallback validator.
+COMMIT_HEADER_MAX_LEN=72
+
+# Maximum length of each line in the commit body.
+# Referenced in the AI prompt only — not machine-validated locally.
+COMMIT_BODY_MAX_LEN=100
+
+# Space-separated list of allowed commit types.
+# Used to build the AI prompt rules and the fallback format validator.
+# To add a type, append it here — no other changes needed.
+COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
+# ──────────────────────────────────────────────────────────────────────────────
 
 # load_ai_command
 # Finds the AI config and validates the binary exists.
@@ -62,14 +84,17 @@ find_commitlint_config() {
 
 # build_commit_rules
 # Requires COMMITLINT_CONFIG (set by find_commitlint_config).
-# Sets COMMIT_RULES.
+# Sets COMMIT_RULES. Uses COMMIT_TYPES for the allowed-types list.
 build_commit_rules() {
   if [ -n "$COMMITLINT_CONFIG" ]; then
     COMMIT_RULES="Follow the rules in this commitlint configuration: $(cat "$COMMITLINT_CONFIG")"
   else
+    # Build a comma-separated display string from the space-separated COMMIT_TYPES constant
+    local types_display
+    types_display=$(echo "$COMMIT_TYPES" | tr ' ' ',')
     COMMIT_RULES="Follow these conventional commit rules:
 - Use conventional commit format: type(scope): description
-- Types: feat, fix, perf, deps, revert, docs, style, refactor, test, build, ci, chore
+- Types: $types_display
 - No period at end of subject
 - Use semicolon (;) to separate multiple changes in header
 - Separate header and body with blank line
@@ -100,8 +125,8 @@ _build_commit_prompt() {
   local ai_prompt="${retry_preamble}Generate a conventional commit message based on the changes.
 
 CRITICAL REQUIREMENTS:
-- Header MUST be ≤72 characters total (type + scope + colon + space + subject)
-- Each body line MUST be ≤100 characters (wrap long lines)
+- Header MUST be ≤${COMMIT_HEADER_MAX_LEN} characters total (type + scope + colon + space + subject)
+- Each body line MUST be ≤${COMMIT_BODY_MAX_LEN} characters (wrap long lines)
 - Type is required; scope is optional
 - Subject must be concise - focus on WHAT changed, not HOW
 - If multiple changes, use semicolon in subject or list in body
@@ -120,7 +145,7 @@ Return only the raw commit message text. No markdown, no code blocks, no backtic
 
 # generate_commit_msg DIFF [FILE_LIST]
 # Requires AI_COMMAND and COMMIT_RULES.
-# Sets AI_MSG. Retries once if the generated header exceeds 72 characters.
+# Sets AI_MSG. Retries once if the generated header exceeds COMMIT_HEADER_MAX_LEN.
 generate_commit_msg() {
   local diff_content="$1"
   local file_list="${2:-}"
@@ -138,9 +163,9 @@ generate_commit_msg() {
   header=$(echo "$AI_MSG" | head -1)
   header_len=${#header}
 
-  if [ "$header_len" -gt 72 ]; then
+  if [ "$header_len" -gt "$COMMIT_HEADER_MAX_LEN" ]; then
     echo "→ Header too long ($header_len chars), retrying with stricter constraints..."
-    local retry_preamble="PREVIOUS ATTEMPT PRODUCED AN INVALID HEADER: '$header' is $header_len characters — $(( header_len - 72 )) over the 72-character limit. You MUST shorten the subject. Do not use the same wording. Count characters carefully.
+    local retry_preamble="PREVIOUS ATTEMPT PRODUCED AN INVALID HEADER: '$header' is $header_len characters — $(( header_len - COMMIT_HEADER_MAX_LEN )) over the ${COMMIT_HEADER_MAX_LEN}-character limit. You MUST shorten the subject. Do not use the same wording. Count characters carefully.
 
 "
     _build_commit_prompt "$diff_content" "$files_section" "$retry_preamble"
@@ -165,11 +190,14 @@ validate_commit_msg() {
     local header
     header=$(echo "$msg" | head -1)
     local header_len=${#header}
-    if [ "$header_len" -gt 72 ]; then
-      echo "✗ Header is $header_len characters (max 72): $header"
+    if [ "$header_len" -gt "$COMMIT_HEADER_MAX_LEN" ]; then
+      echo "✗ Header is $header_len characters (max ${COMMIT_HEADER_MAX_LEN}): $header"
       return 1
     fi
-    local commit_pattern="^(feat|fix|perf|deps|revert|docs|style|refactor|test|build|ci|chore)(\(.+\))?: .+"
+    # Build regex from COMMIT_TYPES so it stays in sync with build_commit_rules
+    local types_regex
+    types_regex=$(echo "$COMMIT_TYPES" | tr ' ' '|')
+    local commit_pattern="^(${types_regex})(\(.+\))?: .+"
     if ! echo "$header" | grep -qE "$commit_pattern"; then
       echo "✗ Header does not follow conventional commit format: $header"
       echo "  Expected: type(scope): description"

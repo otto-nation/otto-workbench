@@ -145,7 +145,10 @@ Return only the raw commit message text. No markdown, no code blocks, no backtic
 
 # generate_commit_msg DIFF [FILE_LIST]
 # Requires AI_COMMAND and COMMIT_RULES.
-# Sets AI_MSG. Retries once if the generated header exceeds COMMIT_HEADER_MAX_LEN.
+# Sets AI_MSG. Retries once with a precise character budget if the header exceeds
+# COMMIT_HEADER_MAX_LEN. Returns 1 if the retry also fails — LLMs cannot reliably
+# count characters, so the caller should surface the failure rather than proceeding
+# with an invalid message.
 generate_commit_msg() {
   local diff_content="$1"
   local file_list="${2:-}"
@@ -164,11 +167,27 @@ generate_commit_msg() {
   header_len=${#header}
 
   if [ "$header_len" -gt "$COMMIT_HEADER_MAX_LEN" ]; then
-    echo "→ Header too long ($header_len chars), retrying with stricter constraints..."
-    local retry_preamble="PREVIOUS ATTEMPT PRODUCED AN INVALID HEADER: '$header' is $header_len characters — $(( header_len - COMMIT_HEADER_MAX_LEN )) over the ${COMMIT_HEADER_MAX_LEN}-character limit. You MUST shorten the subject. Do not use the same wording. Count characters carefully.
+    # Extract the prefix the AI chose (e.g. "feat(auth): ") to give an exact subject budget
+    local prefix subject_budget
+    prefix=$(echo "$header" | grep -oE '^[^:]+: ')
+    subject_budget=$(( COMMIT_HEADER_MAX_LEN - ${#prefix} ))
+
+    echo "→ Header too long ($header_len chars), retrying with exact budget..."
+    local retry_preamble="PREVIOUS ATTEMPT FAILED: '${header}' is ${header_len} characters — $(( header_len - COMMIT_HEADER_MAX_LEN )) over the limit.
+
+You used the prefix '${prefix}' (${#prefix} chars). That leaves EXACTLY ${subject_budget} characters for the subject. Write a subject of ${subject_budget} characters or fewer. Count every character. Use the same prefix unless it genuinely does not fit.
 
 "
     _build_commit_prompt "$diff_content" "$files_section" "$retry_preamble"
+
+    header=$(echo "$AI_MSG" | head -1)
+    header_len=${#header}
+    if [ "$header_len" -gt "$COMMIT_HEADER_MAX_LEN" ]; then
+      err "Could not generate a valid commit message after 2 attempts."
+      echo "  Last attempt ($header_len chars): $header"
+      echo "  Edit and commit manually: git commit -m \"<message>\""
+      return 1
+    fi
   fi
 }
 
@@ -244,6 +263,23 @@ push_branch() {
   else
     echo "✗ Branch has diverged from remote"
     echo "→ Fix with: git pull --rebase or git reset"
+    return 1
+  fi
+}
+
+# load_pr_context
+# Loads the AI command and resolves the current branch context.
+# Must be called before generate_pr_content or push_branch.
+# Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure.
+load_pr_context() {
+  load_ai_command || return 1
+
+  BRANCH=$(git branch --show-current)
+  DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+  DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+
+  if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+    echo "✗ PR operations cannot be run from the $DEFAULT_BRANCH branch"
     return 1
   fi
 }

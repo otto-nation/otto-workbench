@@ -68,7 +68,7 @@ tasks:
 
         find_commitlint_config
         build_commit_rules
-        generate_commit_msg "$DIFF_CONTENT" "$FILE_LIST"
+        generate_commit_msg "$DIFF_CONTENT" "$FILE_LIST" || exit 1
 
         echo "✓ AI analysis complete"
         echo ""
@@ -129,7 +129,7 @@ tasks:
 
         find_commitlint_config
         build_commit_rules
-        generate_commit_msg "$FULL_DIFF"
+        generate_commit_msg "$FULL_DIFF" || exit 1
 
         echo "✓ AI analysis complete"
         echo ""
@@ -181,22 +181,11 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_ai_command || exit 1
-
-        BRANCH=$(git branch --show-current)
-        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
-
-        if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
-          echo "✗ Cannot create PR from $DEFAULT_BRANCH branch"
-          exit 1
-        fi
-
+        load_pr_context || exit 1
         push_branch "$BRANCH" || exit 1
 
         echo "→ Analyzing changes with AI: $BRANCH"
         generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-
         echo "✓ AI analysis complete"
         echo "→ Creating PR..."
 
@@ -219,16 +208,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_ai_command || exit 1
-
-        BRANCH=$(git branch --show-current)
-        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
-
-        if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
-          echo "✗ Cannot update PR from $DEFAULT_BRANCH branch"
-          exit 1
-        fi
+        load_pr_context || exit 1
 
         echo "→ Checking for existing PR..."
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
@@ -241,7 +221,6 @@ tasks:
 
         echo "→ Analyzing changes with AI: $BRANCH"
         generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-
         echo "✓ AI analysis complete"
         echo "→ Updating PR #$PR_NUMBER..."
 

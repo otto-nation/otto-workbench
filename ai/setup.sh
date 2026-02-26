@@ -1,4 +1,18 @@
 #!/bin/bash
+# AI tools setup wizard.
+#
+# Usage: bash ai/setup.sh
+#        (also called automatically by install.sh)
+#
+# What it does:
+#   1. Prompts you to select which AI tools to configure (Claude Code, Kiro)
+#   2. Downloads and installs AI coding guidelines (CLAUDE.md / Kiro steering)
+#   3. Registers MCP servers for Claude Code (Serena, Sequential Thinking, Context7)
+#   4. Installs Claude Code skills and agent definitions from ai/claude/
+#   5. Downloads and installs Kiro agent configs (default + ci-cd)
+#
+# Each step is individually confirmable — skip anything you don't need.
+# Re-running is safe: existing symlinks are updated; real files prompt before overwrite.
 
 set -e
 
@@ -50,7 +64,7 @@ select_tools() {
 
   if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]]; then
     err "No tools selected. Exiting."
-    exit 0
+    exit 1
   fi
 
   echo -ne "Setting up: "
@@ -138,7 +152,7 @@ ${lang_content}"
 
   if [[ -f "$target" ]]; then
     echo
-    warn "~/.claude/CLAUDE.md already exists. What would you like to do?"
+    warn "$HOME/.claude/CLAUDE.md already exists. What would you like to do?"
     echo "  [1] Backup and overwrite  (~/.claude/CLAUDE.md.backup)"
     echo "  [2] Append to existing"
     echo "  [3] Skip"
@@ -195,6 +209,31 @@ _install_file() {
   fi
 }
 
+# _install_claude_symlink SOURCE TARGET LABEL
+# Installs SOURCE as a symlink at TARGET, printing LABEL in status output.
+# Existing symlinks are updated silently. Existing real files/dirs prompt before overwrite.
+_install_claude_symlink() {
+  local source=$1
+  local target=$2
+  local label=$3
+
+  if [[ -L "$target" ]]; then
+    ln -sf "$source" "$target"
+    success "$label (updated symlink)"
+  elif [[ -e "$target" ]]; then
+    if confirm_n "$target already exists. Overwrite with symlink?"; then
+      rm -rf "$target"
+      ln -sf "$source" "$target"
+      success "$label"
+    else
+      skip
+    fi
+  else
+    ln -sf "$source" "$target"
+    success "$label"
+  fi
+}
+
 # ─── Step: Claude Code skills ────────────────────────────────────────────────
 step_claude_skills() {
   local skills_src="$SCRIPT_DIR/claude/skills"
@@ -208,26 +247,10 @@ step_claude_skills() {
   mkdir -p "$skills_dst"
   info "Installing Claude Code skills to ~/.claude/skills/"
 
-  local skill
+  local skill_dir skill
   for skill_dir in "$skills_src"/*/; do
     skill=$(basename "$skill_dir")
-    local target="$skills_dst/$skill"
-
-    if [[ -L "$target" ]]; then
-      ln -sf "$skill_dir" "$target"
-      success "$skill (updated symlink)"
-    elif [[ -d "$target" ]]; then
-      if confirm_n "~/.claude/skills/$skill already exists as a real directory. Overwrite with symlink?"; then
-        rm -rf "$target"
-        ln -sf "$skill_dir" "$target"
-        success "$skill"
-      else
-        skip
-      fi
-    else
-      ln -sf "$skill_dir" "$target"
-      success "$skill"
-    fi
+    _install_claude_symlink "$skill_dir" "$skills_dst/$skill" "$skill"
   done
 }
 
@@ -248,23 +271,7 @@ step_claude_agents() {
   for agent_file in "$agents_src"/*.md; do
     [[ -e "$agent_file" ]] || continue
     agent_name=$(basename "$agent_file")
-    local target="$agents_dst/$agent_name"
-
-    if [[ -L "$target" ]]; then
-      ln -sf "$agent_file" "$target"
-      success "${agent_name%.md} (updated symlink)"
-    elif [[ -f "$target" ]]; then
-      if confirm_n "~/.claude/agents/$agent_name already exists. Overwrite with symlink?"; then
-        rm -f "$target"
-        ln -sf "$agent_file" "$target"
-        success "${agent_name%.md}"
-      else
-        skip
-      fi
-    else
-      ln -sf "$agent_file" "$target"
-      success "${agent_name%.md}"
-    fi
+    _install_claude_symlink "$agent_file" "$agents_dst/$agent_name" "${agent_name%.md}"
   done
 }
 
@@ -273,14 +280,22 @@ step_claude_agent_info() {
   echo
   info "Claude Code configuration summary"
   echo
+
   echo -e "  ${CYAN}Agents${NC} ${DIM}(~/.claude/agents/)${NC}"
-  echo -e "  ${DIM}  • ci-cd  — commit message and PR generation (used by task automation)${NC}"
+  local agents_dir="$HOME/.claude/agents"
+  local agent_file found=false
+  for agent_file in "$agents_dir"/*.md; do
+    [[ -e "$agent_file" ]] || continue
+    echo -e "  ${DIM}  • $(basename "${agent_file%.md}")${NC}"
+    found=true
+  done
+  [[ "$found" == false ]] && echo -e "  ${DIM}  (none installed)${NC}"
   echo
+
   echo -e "  ${CYAN}MCP servers${NC} ${DIM}(user scope)${NC}"
-  echo -e "  ${DIM}  • Serena             — semantic code navigation and editing${NC}"
-  echo -e "  ${DIM}  • Sequential Thinking — structured multi-step reasoning${NC}"
-  echo -e "  ${DIM}  • Context7           — up-to-date library documentation${NC}"
+  echo -e "  ${DIM}  Run: claude mcp list${NC}"
   echo
+
   echo -e "  ${CYAN}~/.claude/CLAUDE.md${NC} ${DIM}— persistent coding guidelines and preferences${NC}"
 }
 
@@ -362,12 +377,16 @@ select_tools
 register_step "Deploy AI coding guidelines" step_guidelines
 
 if tool_selected "claude"; then
-  register_step "MCP: Serena" step_mcp_serena
-  register_step "MCP: Sequential Thinking" step_mcp_sequential_thinking
-  register_step "MCP: Context7" step_mcp_context7
-  register_step "Claude Code skills" step_claude_skills
-  register_step "Claude Code agents" step_claude_agents
-  register_step "Claude Code agent info" step_claude_agent_info
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "Claude Code (claude) not found in PATH — skipping Claude setup steps"
+  else
+    register_step "MCP: Serena" step_mcp_serena
+    register_step "MCP: Sequential Thinking" step_mcp_sequential_thinking
+    register_step "MCP: Context7" step_mcp_context7
+    register_step "Claude Code skills" step_claude_skills
+    register_step "Claude Code agents" step_claude_agents
+    register_step "Claude Code agent info" step_claude_agent_info
+  fi
 fi
 
 if tool_selected "kiro"; then

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        # Auto-discover scripts by shebang so new files are checked automatically
+        run: |
+          grep -rlE '^#!.*/(ba)?sh' . \
+            | grep -v '^\./\.git/' \
+            | sort \
+            | xargs shellcheck --severity=warning
+
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get install -y bats
+
+      - name: Install task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Taskfile parses
+        run: task --list
+
+      - name: Run tests
+        run: bats tests/ --recursive --timing

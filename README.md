@@ -39,6 +39,7 @@ The installer will:
 
 ### Global Taskfile (AI-Powered Git Automation)
 - `task --global commit` — AI-generated commit messages
+- `task --global reword` — AI reword of a commit (default: HEAD; or pass `-- SHA`)
 - `task --global create-pr` — AI-generated pull requests
 - `task --global update-pr` — Update PR descriptions
 - `task --global setup-ai` — Configure AI command
@@ -56,6 +57,8 @@ show-aliases
 
 # Use AI-powered git tasks (from any directory)
 task --global commit
+task --global reword            # amend HEAD
+task --global reword -- abc123  # reword specified commit
 task --global create-pr
 ```
 

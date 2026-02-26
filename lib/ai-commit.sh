@@ -89,9 +89,37 @@ run_ai() {
     sed '/^```/d')
 }
 
+# _build_commit_prompt DIFF FILES_SECTION [RETRY_PREAMBLE]
+# Internal helper. Builds and runs the AI prompt; sets AI_MSG.
+_build_commit_prompt() {
+  local diff_content="$1"
+  local files_section="$2"
+  local retry_preamble="${3:-}"
+
+  local ai_prompt="${retry_preamble}Generate a conventional commit message based on the changes.
+
+CRITICAL REQUIREMENTS:
+- Header MUST be ≤72 characters total (type + scope + colon + space + subject)
+- Each body line MUST be ≤100 characters (wrap long lines)
+- Type is required; scope is optional
+- Subject must be concise - focus on WHAT changed, not HOW
+- If multiple changes, use semicolon in subject or list in body
+- Count every character in the header before responding
+
+$COMMIT_RULES
+
+${files_section}Diff:
+$diff_content
+
+Return only the raw commit message text. No markdown, no code blocks, no backticks, no explanation."
+
+  run_ai "$ai_prompt"
+  AI_MSG="$AI_RESPONSE"
+}
+
 # generate_commit_msg DIFF [FILE_LIST]
 # Requires AI_COMMAND and COMMIT_RULES.
-# Sets AI_MSG.
+# Sets AI_MSG. Retries once if the generated header exceeds 72 characters.
 generate_commit_msg() {
   local diff_content="$1"
   local file_list="${2:-}"
@@ -103,25 +131,19 @@ generate_commit_msg() {
 "
   fi
 
-  local ai_prompt="Generate a conventional commit message based on the changes.
+  _build_commit_prompt "$diff_content" "$files_section"
 
-CRITICAL REQUIREMENTS:
-- Header MUST be ≤72 characters total (type + scope + colon + space + subject)
-- Each body line MUST be ≤100 characters (wrap long lines)
-- Type is required; scope is optional
-- Subject must be concise - focus on WHAT changed, not HOW
-- If multiple changes, use semicolon in subject or list in body
-- Count characters carefully before responding
+  local header header_len
+  header=$(echo "$AI_MSG" | head -1)
+  header_len=${#header}
 
-$COMMIT_RULES
+  if [ "$header_len" -gt 72 ]; then
+    echo "→ Header too long ($header_len chars), retrying with stricter constraints..."
+    local retry_preamble="PREVIOUS ATTEMPT PRODUCED AN INVALID HEADER: '$header' is $header_len characters — $(( header_len - 72 )) over the 72-character limit. You MUST shorten the subject. Do not use the same wording. Count characters carefully.
 
-${files_section}Diff:
-$diff_content
-
-Return only the raw commit message text. No markdown, no code blocks, no backticks, no explanation."
-
-  run_ai "$ai_prompt"
-  AI_MSG="$AI_RESPONSE"
+"
+    _build_commit_prompt "$diff_content" "$files_section" "$retry_preamble"
+  fi
 }
 
 # validate_commit_msg MSG
@@ -144,6 +166,12 @@ validate_commit_msg() {
     local header_len=${#header}
     if [ "$header_len" -gt 72 ]; then
       echo "✗ Header is $header_len characters (max 72): $header"
+      return 1
+    fi
+    local commit_pattern="^(feat|fix|perf|deps|revert|docs|style|refactor|test|build|ci|chore)(\(.+\))?: .+"
+    if ! echo "$header" | grep -qE "$commit_pattern"; then
+      echo "✗ Header does not follow conventional commit format: $header"
+      echo "  Expected: type(scope): description"
       return 1
     fi
   fi

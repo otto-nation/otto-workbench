@@ -8,11 +8,13 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 prompt_overwrite() {
   local file=$1
   warn "$file already exists"
-  read -p "  Overwrite? [y/N] " -n 1 -r
+  printf "  Overwrite? [y/N] "
+  read -n 1 -r REPLY
   echo
-  [[ ! $REPLY =~ ^[Yy]$ ]] && return 1
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then return 1; fi
 
-  read -p "  Create backup? [Y/n] " -n 1 -r
+  printf "  Create backup? [Y/n] "
+  read -n 1 -r REPLY
   echo
   if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     cp "$file" "${file}.backup"
@@ -25,7 +27,7 @@ install_task() {
   printf "  Install it? [Y/n] "
   read -n 1 -r REPLY
   echo
-  [[ "$REPLY" =~ ^[Nn]$ ]] && return
+  if [[ "$REPLY" =~ ^[Nn]$ ]]; then return; fi
 
   if [[ "$OSTYPE" == "darwin"* ]]; then
     info "Installing task via Homebrew..."
@@ -40,10 +42,10 @@ install_task() {
 
 update_path_in_shell_rc() {
   local shell_rc=""
-  [ -n "$ZSH_VERSION" ] && shell_rc=~/.zshrc
-  [ -n "$BASH_VERSION" ] && shell_rc=~/.bashrc
-  [ -z "$shell_rc" ] && return
-  grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$shell_rc" 2>/dev/null && return
+  if [ -n "$ZSH_VERSION" ]; then shell_rc=~/.zshrc; fi
+  if [ -n "$BASH_VERSION" ]; then shell_rc=~/.bashrc; fi
+  if [ -z "$shell_rc" ]; then return; fi
+  if grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$shell_rc" 2>/dev/null; then return; fi
 
   echo; info "Adding ~/.local/bin to PATH in $shell_rc"
   echo '' >> "$shell_rc"
@@ -126,7 +128,7 @@ echo; info "AI tools setup"
 printf "  Configure AI tools (MCPs, agents, guidelines)? [Y/n] "
 read -n 1 -r REPLY
 echo
-[[ ! $REPLY =~ ^[Nn]$ ]] && bash "$DOTFILES_DIR/ai/setup.sh"
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then bash "$DOTFILES_DIR/ai/setup.sh"; fi
 
 # Taskfile AI command (configure after agents are installed)
 configure_ai_command

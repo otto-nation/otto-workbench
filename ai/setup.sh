@@ -50,7 +50,7 @@ select_tools() {
 
   if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]]; then
     err "No tools selected. Exiting."
-    exit 0
+    exit 1
   fi
 
   echo -ne "Setting up: "
@@ -362,12 +362,16 @@ select_tools
 register_step "Deploy AI coding guidelines" step_guidelines
 
 if tool_selected "claude"; then
-  register_step "MCP: Serena" step_mcp_serena
-  register_step "MCP: Sequential Thinking" step_mcp_sequential_thinking
-  register_step "MCP: Context7" step_mcp_context7
-  register_step "Claude Code skills" step_claude_skills
-  register_step "Claude Code agents" step_claude_agents
-  register_step "Claude Code agent info" step_claude_agent_info
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "Claude Code (claude) not found in PATH — skipping Claude setup steps"
+  else
+    register_step "MCP: Serena" step_mcp_serena
+    register_step "MCP: Sequential Thinking" step_mcp_sequential_thinking
+    register_step "MCP: Context7" step_mcp_context7
+    register_step "Claude Code skills" step_claude_skills
+    register_step "Claude Code agents" step_claude_agents
+    register_step "Claude Code agent info" step_claude_agent_info
+  fi
 fi
 
 if tool_selected "kiro"; then

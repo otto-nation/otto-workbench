@@ -80,7 +80,7 @@ configure_ai_command() {
   command -v task >/dev/null 2>&1 || return
 
   echo; info "Taskfile AI command"
-  task setup-ai
+  task ai:setup
 
   echo
   printf "  Configure your AI command now? [Y/n] "

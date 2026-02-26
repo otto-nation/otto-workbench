@@ -209,6 +209,31 @@ _install_file() {
   fi
 }
 
+# _install_claude_symlink SOURCE TARGET LABEL
+# Installs SOURCE as a symlink at TARGET, printing LABEL in status output.
+# Existing symlinks are updated silently. Existing real files/dirs prompt before overwrite.
+_install_claude_symlink() {
+  local source=$1
+  local target=$2
+  local label=$3
+
+  if [[ -L "$target" ]]; then
+    ln -sf "$source" "$target"
+    success "$label (updated symlink)"
+  elif [[ -e "$target" ]]; then
+    if confirm_n "$target already exists. Overwrite with symlink?"; then
+      rm -rf "$target"
+      ln -sf "$source" "$target"
+      success "$label"
+    else
+      skip
+    fi
+  else
+    ln -sf "$source" "$target"
+    success "$label"
+  fi
+}
+
 # ─── Step: Claude Code skills ────────────────────────────────────────────────
 step_claude_skills() {
   local skills_src="$SCRIPT_DIR/claude/skills"
@@ -222,26 +247,10 @@ step_claude_skills() {
   mkdir -p "$skills_dst"
   info "Installing Claude Code skills to ~/.claude/skills/"
 
-  local skill
+  local skill_dir skill
   for skill_dir in "$skills_src"/*/; do
     skill=$(basename "$skill_dir")
-    local target="$skills_dst/$skill"
-
-    if [[ -L "$target" ]]; then
-      ln -sf "$skill_dir" "$target"
-      success "$skill (updated symlink)"
-    elif [[ -d "$target" ]]; then
-      if confirm_n "$HOME/.claude/skills/$skill already exists as a real directory. Overwrite with symlink?"; then
-        rm -rf "$target"
-        ln -sf "$skill_dir" "$target"
-        success "$skill"
-      else
-        skip
-      fi
-    else
-      ln -sf "$skill_dir" "$target"
-      success "$skill"
-    fi
+    _install_claude_symlink "$skill_dir" "$skills_dst/$skill" "$skill"
   done
 }
 
@@ -262,23 +271,7 @@ step_claude_agents() {
   for agent_file in "$agents_src"/*.md; do
     [[ -e "$agent_file" ]] || continue
     agent_name=$(basename "$agent_file")
-    local target="$agents_dst/$agent_name"
-
-    if [[ -L "$target" ]]; then
-      ln -sf "$agent_file" "$target"
-      success "${agent_name%.md} (updated symlink)"
-    elif [[ -f "$target" ]]; then
-      if confirm_n "$HOME/.claude/agents/$agent_name already exists. Overwrite with symlink?"; then
-        rm -f "$target"
-        ln -sf "$agent_file" "$target"
-        success "${agent_name%.md}"
-      else
-        skip
-      fi
-    else
-      ln -sf "$agent_file" "$target"
-      success "${agent_name%.md}"
-    fi
+    _install_claude_symlink "$agent_file" "$agents_dst/$agent_name" "${agent_name%.md}"
   done
 }
 
@@ -287,14 +280,22 @@ step_claude_agent_info() {
   echo
   info "Claude Code configuration summary"
   echo
+
   echo -e "  ${CYAN}Agents${NC} ${DIM}(~/.claude/agents/)${NC}"
-  echo -e "  ${DIM}  • ci-cd  — commit message and PR generation (used by task automation)${NC}"
+  local agents_dir="$HOME/.claude/agents"
+  local agent_file found=false
+  for agent_file in "$agents_dir"/*.md; do
+    [[ -e "$agent_file" ]] || continue
+    echo -e "  ${DIM}  • $(basename "${agent_file%.md}")${NC}"
+    found=true
+  done
+  [[ "$found" == false ]] && echo -e "  ${DIM}  (none installed)${NC}"
   echo
+
   echo -e "  ${CYAN}MCP servers${NC} ${DIM}(user scope)${NC}"
-  echo -e "  ${DIM}  • Serena             — semantic code navigation and editing${NC}"
-  echo -e "  ${DIM}  • Sequential Thinking — structured multi-step reasoning${NC}"
-  echo -e "  ${DIM}  • Context7           — up-to-date library documentation${NC}"
+  echo -e "  ${DIM}  Run: claude mcp list${NC}"
   echo
+
   echo -e "  ${CYAN}~/.claude/CLAUDE.md${NC} ${DIM}— persistent coding guidelines and preferences${NC}"
 }
 

@@ -48,6 +48,10 @@ install_task() {
     info "Installing task via Homebrew..."
     brew install go-task/tap/go-task
   elif command -v apt-get >/dev/null 2>&1; then
+    if ! command -v curl >/dev/null 2>&1; then
+      err "curl is required to install task. Install curl first: sudo apt-get install curl"
+      return 1
+    fi
     info "Installing task via apt..."
     sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
   else
@@ -56,10 +60,13 @@ install_task() {
 }
 
 update_path_in_shell_rc() {
-  local shell_rc=""
-  if [ -n "$ZSH_VERSION" ]; then shell_rc=~/.zshrc; fi
-  if [ -n "$BASH_VERSION" ]; then shell_rc=~/.bashrc; fi
-  if [ -z "$shell_rc" ]; then return; fi
+  local shell_rc="" shell_name
+  shell_name=$(basename "$SHELL")
+  case "$shell_name" in
+    zsh)  shell_rc="$HOME/.zshrc" ;;
+    bash) shell_rc="$HOME/.bashrc" ;;
+    *)    return ;;
+  esac
   if grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$shell_rc" 2>/dev/null; then return; fi
 
   echo; info "Adding ~/.local/bin to PATH in $shell_rc"

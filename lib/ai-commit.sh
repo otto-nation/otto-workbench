@@ -274,9 +274,20 @@ generate_pr_content() {
   changed_files=$(git diff --name-only "origin/$default_branch..$branch")
 
   local has_template=false
-  local pr_template
-  if [ -f .github/pull_request_template.md ]; then
-    pr_template=$(cat .github/pull_request_template.md)
+  local pr_template pr_template_file=""
+  # Check all locations GitHub recognises, in priority order
+  for _candidate in \
+    ".github/pull_request_template.md" \
+    ".github/PULL_REQUEST_TEMPLATE.md" \
+    "pull_request_template.md" \
+    "PULL_REQUEST_TEMPLATE.md"; do
+    if [ -f "$_candidate" ]; then
+      pr_template_file="$_candidate"
+      break
+    fi
+  done
+  if [ -n "$pr_template_file" ]; then
+    pr_template=$(cat "$pr_template_file")
     has_template=true
   else
     pr_template="## Summary
@@ -310,7 +321,9 @@ DESCRIPTION: <filled template>"
   PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
 
   if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
-  if [ -z "$PR_DESCRIPTION" ]; then PR_DESCRIPTION="## Summary\n\nBranch: $branch\nCommits: $commit_count"; fi
+  if [ -z "$PR_DESCRIPTION" ]; then
+    PR_DESCRIPTION="## Summary"$'\n\n'"Branch: $branch"$'\n'"Commits: $commit_count"
+  fi
 
   # Only add "Closes" if no PR template and issue is a GitHub numeric issue
   if [ "$has_template" = "false" ] && [ -n "$issue_number" ]; then
@@ -321,7 +334,7 @@ DESCRIPTION: <filled template>"
       printf "  Close issue #%s when PR merges? [y/N] " "$clean_issue"
       read -r close_issue
       if [[ "$close_issue" =~ ^[Yy]$ ]]; then
-        PR_DESCRIPTION="Closes #$clean_issue\n\n$PR_DESCRIPTION"
+        PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"
       fi
     fi
   fi

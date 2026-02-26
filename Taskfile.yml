@@ -245,7 +245,7 @@ tasks:
         echo "✓ AI analysis complete"
         echo "→ Updating PR #$PR_NUMBER..."
 
-        gh pr edit "$PR_NUMBER" --body "$PR_DESCRIPTION"
+        gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body "$PR_DESCRIPTION"
 
         echo "✓ PR description updated"
         echo "→ View: $(gh pr view --json url -q .url)"

@@ -108,9 +108,11 @@ build_commit_rules() {
 run_ai() {
   local prompt="$1"
   # shellcheck disable=SC2086  # $AI_COMMAND holds "binary [flags]"; word-splitting is intentional
+  # Strip complete ANSI sequences (ESC + '[' + params + letter) before removing bare control chars.
+  # Anchoring to \033 prevents the pattern from eating markdown checkboxes like [x] or [ ].
   AI_RESPONSE=$(echo "$prompt" | $AI_COMMAND | \
+    sed 's/\033\[[0-9;]*[a-zA-Z]//g' | \
     tr -d '\033\007\015' | \
-    sed 's/\[[0-9;]*[a-zA-Z]//g' | \
     sed 's/^[> ]*//g' | \
     sed '/^```/d')
 }

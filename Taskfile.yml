@@ -22,13 +22,14 @@ tasks:
         mkdir -p "$CONFIG_DIR"
 
         if [ ! -f "$ENV_FILE" ]; then
-          echo "# Taskfile AI Configuration" > "$ENV_FILE"
-          echo "# Uncomment and configure one of the examples below or add your own" >> "$ENV_FILE"
-          echo "" >> "$ENV_FILE"
-          echo "# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config" >> "$ENV_FILE"
-          echo "# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd" >> "$ENV_FILE"
-          echo "# AI_COMMAND=copilot --agent ci-cd -p" >> "$ENV_FILE"
-          echo "" >> "$ENV_FILE"
+          {
+            printf '# Taskfile AI Configuration\n'
+            printf '# Uncomment and configure one of the examples below or add your own\n'
+            printf '\n'
+            printf '# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config\n'
+            printf '# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd\n'
+            printf '# AI_COMMAND=copilot --agent ci-cd -p\n'
+          } > "$ENV_FILE"
           printf "  ✓ Created %s\n" "$ENV_FILE"
           echo "→ Edit to configure your AI command"
         else
@@ -44,45 +45,14 @@ tasks:
           fi
         fi
 
-  check-ai:
-    internal: true
-    silent: true
-    cmds:
-      - |
-        LOCAL_ENV=".taskfile/taskfile.env"
-        GLOBAL_ENV="$HOME/.config/task/taskfile.env"
-
-        if [ -f "$LOCAL_ENV" ]; then
-          ENV_FILE="$LOCAL_ENV"
-        elif [ -f "$GLOBAL_ENV" ]; then
-          ENV_FILE="$GLOBAL_ENV"
-        else
-          echo "✗ AI not configured. Run: task setup-ai"
-          exit 1
-        fi
-
-        if grep -q "^AI_COMMAND=" "$ENV_FILE"; then
-          AI_CMD=$(grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- | cut -d' ' -f1)
-          if command -v "$AI_CMD" >/dev/null 2>&1; then
-            mkdir -p /tmp/task-ai
-            grep "^AI_COMMAND=" "$ENV_FILE" | cut -d'=' -f2- > /tmp/task-ai/command
-          else
-            printf "✗ AI command not found: %s\n" "$AI_CMD"
-            exit 1
-          fi
-        else
-          printf "✗ AI_COMMAND not set in %s\n" "$ENV_FILE"
-          exit 1
-        fi
-
   commit:
     desc: "Generate AI-powered commit message based on staged changes"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    deps: [check-ai]
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        load_ai_command || exit 1
 
         STAGED_FILES=$(git diff --cached --name-only)
         if [ -z "$STAGED_FILES" ]; then
@@ -95,7 +65,6 @@ tasks:
 
         DIFF_CONTENT=$(git diff --cached --no-color)
         FILE_LIST=$(echo "$STAGED_FILES" | tr '\n' ', ' | sed 's/,$//')
-        AI_COMMAND=$(cat /tmp/task-ai/command)
 
         find_commitlint_config
         build_commit_rules
@@ -117,9 +86,11 @@ tasks:
     desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    deps: [check-ai]
     cmds:
       - |
+        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        load_ai_command || exit 1
+
         # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
         RAW_ARG="{{.CLI_ARGS}}"
         COMMIT_SHA="${RAW_ARG// /}"
@@ -153,11 +124,8 @@ tasks:
         }
         trap cleanup EXIT
 
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-
         echo "→ Analyzing commit with AI..."
         FULL_DIFF=$(git show "$TARGET_SHA" --no-color)
-        AI_COMMAND=$(cat /tmp/task-ai/command)
 
         find_commitlint_config
         build_commit_rules
@@ -200,108 +168,11 @@ tasks:
 
           # History was rewritten — warn if the branch is already published
           CURRENT_BRANCH=$(git branch --show-current)
-          if git ls-remote --heads origin "$CURRENT_BRANCH" 2>/dev/null | grep -q .; then
+          if git rev-parse "origin/$CURRENT_BRANCH" &>/dev/null; then
             echo ""
             echo "⚠  History rewritten — force push required: git push --force-with-lease"
           fi
         fi
-
-  pr-content:
-    desc: "Generate AI-powered PR content (internal helper)"
-    internal: true
-    silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    deps: [check-ai]
-    cmds:
-      - |
-        BRANCH=$(git branch --show-current)
-        if [ "$BRANCH" = "main" ]; then
-          echo "✗ Cannot create PR from main branch"
-          exit 1
-        fi
-
-        # Extract issue number from branch name (e.g., feature/ISSUE-123-description)
-        ISSUE_NUMBER=$(echo "$BRANCH" | grep -oE '[A-Z]+-[0-9]+' | head -1)
-
-        # If no issue in branch name, prompt for it
-        if [ -z "$ISSUE_NUMBER" ]; then
-          echo "→ No issue number found in branch name: $BRANCH"
-          echo ""
-          read -p "Enter issue number (e.g., ISSUE-123) or press Enter to skip: " USER_ISSUE
-          ISSUE_NUMBER="$USER_ISSUE"
-        else
-          echo "✓ Found issue number: $ISSUE_NUMBER"
-        fi
-
-        COMMITS=$(git log --oneline origin/main..HEAD)
-        COMMIT_COUNT=$(git rev-list --count origin/main..$BRANCH)
-        CHANGED_FILES=$(git diff --name-only origin/main..$BRANCH)
-
-        # Use PR template if exists, otherwise use simple format
-        HAS_TEMPLATE=false
-        if [ -f .github/pull_request_template.md ]; then
-          PR_TEMPLATE=$(cat .github/pull_request_template.md)
-          HAS_TEMPLATE=true
-        else
-          PR_TEMPLATE="## Summary
-
-          ## Changes
-
-          ## Testing"
-          # Remove leading whitespace from each line
-          PR_TEMPLATE=$(echo "$PR_TEMPLATE" | sed 's/^[[:space:]]*//')
-        fi
-
-        AI_PROMPT="Generate a professional PR title and fill out this template based on the changes:
-
-        Template:
-        $PR_TEMPLATE
-
-        Branch: $BRANCH
-        Issue: ${ISSUE_NUMBER:-None}
-        Commits: $COMMIT_COUNT
-
-        Recent commits:
-        $COMMITS
-
-        Changed files:
-        $CHANGED_FILES
-
-        Return: TITLE: <title>
-        DESCRIPTION: <filled template>"
-
-        AI_COMMAND=$(cat /tmp/task-ai/command)
-
-        RAW_RESPONSE=$(echo "$AI_PROMPT" | $AI_COMMAND)
-        AI_RESPONSE=$(echo "$RAW_RESPONSE" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed 's/\x1b\[[0-9;]*R//g' | tr -d '\033\007\015' | sed 's/^[> ]*//g')
-
-        PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
-        PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
-
-        if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
-        if [ -z "$PR_DESCRIPTION" ]; then PR_DESCRIPTION="## Summary\n\nBranch: $BRANCH\nCommits: $COMMIT_COUNT"; fi
-
-        # Only add "Closes" if no PR template and user confirms (GitHub issues only)
-        if [ "$HAS_TEMPLATE" = "false" ] && [ -n "$ISSUE_NUMBER" ]; then
-          # Check if it's a GitHub issue (numeric with optional #)
-          CLEAN_ISSUE=$(echo "$ISSUE_NUMBER" | sed 's/^#//')
-          if echo "$CLEAN_ISSUE" | grep -qE '^[0-9]+$'; then
-            # It's a GitHub issue
-            echo ""
-            read -p "Close issue #$CLEAN_ISSUE when PR merges? (y/N): " CLOSE_ISSUE
-            if [ "$CLOSE_ISSUE" = "y" ] || [ "$CLOSE_ISSUE" = "Y" ]; then
-              PR_DESCRIPTION="Closes #$CLEAN_ISSUE\n\n$PR_DESCRIPTION"
-            fi
-          fi
-        fi
-
-        mkdir -p /tmp/task-pr
-        echo "$PR_TITLE" > /tmp/task-pr/title
-        echo "$PR_DESCRIPTION" > /tmp/task-pr/description
-
-        echo "Title: $PR_TITLE"
-        echo "Description:"
-        echo "$PR_DESCRIPTION"
 
   create-pr:
     desc: "Create AI-powered pull request with smart title and description"
@@ -309,67 +180,27 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
+        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        load_ai_command || exit 1
+
         BRANCH=$(git branch --show-current)
+        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 
-        # Check if remote branch exists
-        if git ls-remote --heads origin $BRANCH | grep -q $BRANCH; then
-          # Remote exists, check for divergence
-          git fetch origin $BRANCH --quiet
-
-          LOCAL=$(git rev-parse @)
-          REMOTE=$(git rev-parse @{u})
-          BASE=$(git merge-base @ @{u})
-
-          if [ "$LOCAL" = "$REMOTE" ]; then
-            echo "✓ Branch is up to date with remote"
-          elif [ "$LOCAL" = "$BASE" ]; then
-            echo "! Remote has commits not in local branch"
-            echo "✗ Cannot create PR - please pull first: git pull"
-            exit 1
-          elif [ "$REMOTE" = "$BASE" ]; then
-            echo "→ Local has unpushed commits, pushing..."
-            if ! git push origin $BRANCH; then
-              echo "✗ Push failed"
-              exit 1
-            fi
-          else
-            echo "✗ Branch has diverged from remote"
-            echo "→ Fix with: git pull --rebase or git reset"
-            exit 1
-          fi
-        else
-          # Remote doesn't exist, push it
-          echo "→ Pushing new branch to remote..."
-          if ! git push -u origin $BRANCH; then
-            echo "✗ Push failed"
-            exit 1
-          fi
+        if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+          echo "✗ Cannot create PR from $DEFAULT_BRANCH branch"
+          exit 1
         fi
 
+        push_branch "$BRANCH" || exit 1
+
         echo "→ Analyzing changes with AI: $BRANCH"
-      - task: pr-content
-      - |
-        PR_TITLE=$(cat /tmp/task-pr/title)
-        PR_DESCRIPTION=$(cat /tmp/task-pr/description)
-        BRANCH=$(git branch --show-current)
+        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
 
         echo "✓ AI analysis complete"
         echo "→ Creating PR..."
 
-        # Detect cross-fork scenario (origin is a fork of a parent repo) and fail early
-        # with a clear message rather than letting gh produce a cryptic GraphQL error
-        PARENT_REPO=$(gh repo view --json parent -q '.parent.nameWithOwner' 2>/dev/null || true)
-
-        if [ -n "$PARENT_REPO" ]; then
-          ORIGIN_URL=$(git remote get-url origin)
-          echo "✗ Cross-fork PR detected — update your remote to point directly to the target repo"
-          echo "  origin: $ORIGIN_URL"
-          echo "  target: $(gh repo view "$PARENT_REPO" --json url -q '.url' 2>/dev/null || echo "$PARENT_REPO")"
-          exit 1
-        fi
-
         PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
-
         PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github[^[:space:]]*' || true)
 
         if [ -n "$PR_URL" ]; then
@@ -387,9 +218,15 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
+        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        load_ai_command || exit 1
+
         BRANCH=$(git branch --show-current)
-        if [ "$BRANCH" = "main" ]; then
-          echo "✗ Cannot update PR from main branch"
+        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+
+        if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+          echo "✗ Cannot update PR from $DEFAULT_BRANCH branch"
           exit 1
         fi
 
@@ -403,15 +240,12 @@ tasks:
         fi
 
         echo "→ Analyzing changes with AI: $BRANCH"
-      - task: pr-content
-      - |
-        PR_DESCRIPTION=$(cat /tmp/task-pr/description)
-        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
+        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
 
         echo "✓ AI analysis complete"
         echo "→ Updating PR #$PR_NUMBER..."
 
-        gh pr edit $PR_NUMBER --body "$PR_DESCRIPTION"
+        gh pr edit "$PR_NUMBER" --body "$PR_DESCRIPTION"
 
         echo "✓ PR description updated"
         echo "→ View: $(gh pr view --json url -q .url)"

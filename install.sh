@@ -10,16 +10,64 @@ prompt_overwrite() {
   warn "$file already exists"
   read -p "  Overwrite? [y/N] " -n 1 -r
   echo
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "  Create backup? [Y/n] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      cp "$file" "${file}.backup"
-      echo -e "  ${GREEN}✓${NC} Backed up to ${file}.backup"
-    fi
-    return 0
+  [[ ! $REPLY =~ ^[Yy]$ ]] && return 1
+
+  read -p "  Create backup? [Y/n] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    cp "$file" "${file}.backup"
+    echo -e "  ${GREEN}✓${NC} Backed up to ${file}.backup"
   fi
-  return 1
+}
+
+install_task() {
+  warn "Task (task runner) is not installed"
+  printf "  Install it? [Y/n] "
+  read -n 1 -r REPLY
+  echo
+  [[ "$REPLY" =~ ^[Nn]$ ]] && return
+
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    info "Installing task via Homebrew..."
+    brew install go-task/tap/go-task
+  elif command -v apt-get >/dev/null 2>&1; then
+    info "Installing task via apt..."
+    sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+  else
+    err "Unable to auto-install. See: https://taskfile.dev/installation/"
+  fi
+}
+
+update_path_in_shell_rc() {
+  local shell_rc=""
+  [ -n "$ZSH_VERSION" ] && shell_rc=~/.zshrc
+  [ -n "$BASH_VERSION" ] && shell_rc=~/.bashrc
+  [ -z "$shell_rc" ] && return
+  grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$shell_rc" 2>/dev/null && return
+
+  echo; info "Adding ~/.local/bin to PATH in $shell_rc"
+  echo '' >> "$shell_rc"
+  echo '# Add local bin to PATH' >> "$shell_rc"
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$shell_rc"
+  echo -e "  ${GREEN}✓${NC} Updated $shell_rc"
+}
+
+configure_ai_command() {
+  command -v task >/dev/null 2>&1 || return
+
+  echo; info "Taskfile AI command"
+  task setup-ai
+
+  echo
+  printf "  Configure your AI command now? [Y/n] "
+  read -n 1 -r REPLY
+  echo
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    ${EDITOR:-nano} ~/.config/task/taskfile.env
+    success "AI configuration updated"
+  else
+    warn "Remember to edit ~/.config/task/taskfile.env before using AI tasks"
+  fi
 }
 
 install_symlink() {
@@ -31,37 +79,16 @@ install_symlink() {
   # Only prompt if target is a real file — existing symlinks are silently updated since
   # they were almost certainly installed by a previous run of this script
   if [ -e "$target" ] && [ ! -L "$target" ]; then
-    if prompt_overwrite "$target"; then
-      ln -sf "$source" "$target"
-      echo -e "  ${GREEN}✓${NC} $name"
-    else
-      echo -e "  ${DIM}⊘ Skipped $name${NC}"
-    fi
-  else
-    ln -sf "$source" "$target"
-    echo -e "  ${GREEN}✓${NC} $name"
+    prompt_overwrite "$target" || { echo -e "  ${DIM}⊘ Skipped $name${NC}"; return; }
   fi
+
+  ln -sf "$source" "$target"
+  echo -e "  ${GREEN}✓${NC} $name"
 }
 
 echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}\n"
 
-# Check if task is installed
-if ! command -v task >/dev/null 2>&1; then
-  warn "Task (task runner) is not installed"
-  read -p "  Install it? [Y/n] " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      info "Installing task via Homebrew..."
-      brew install go-task/tap/go-task
-    elif command -v apt-get >/dev/null 2>&1; then
-      info "Installing task via apt..."
-      sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-    else
-      err "Unable to auto-install. See: https://taskfile.dev/installation/"
-    fi
-  fi
-fi
+command -v task >/dev/null 2>&1 || install_task
 echo
 
 # Create directories
@@ -90,46 +117,18 @@ mkdir -p ~/.config/task
 install_symlink "$DOTFILES_DIR/Taskfile.yml" ~/.config/task/Taskfile.yml
 install_symlink "$DOTFILES_DIR/lib" ~/.config/task/lib
 
-# Add ~/.local/bin to PATH
-SHELL_RC=""
-if [ -n "$ZSH_VERSION" ]; then
-  SHELL_RC=~/.zshrc
-elif [ -n "$BASH_VERSION" ]; then
-  SHELL_RC=~/.bashrc
-fi
-
-if [ -n "$SHELL_RC" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHELL_RC" 2>/dev/null; then
-  echo; info "Adding ~/.local/bin to PATH in $SHELL_RC"
-  echo '' >> "$SHELL_RC"
-  echo '# Add local bin to PATH' >> "$SHELL_RC"
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
-  echo -e "  ${GREEN}✓${NC} Updated $SHELL_RC"
-fi
+update_path_in_shell_rc
 
 echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
 # AI Tools Setup (install agents before configuring which one to use)
 echo; info "AI tools setup"
-read -p "  Configure AI tools (MCPs, agents, guidelines)? [Y/n] " -n 1 -r
+printf "  Configure AI tools (MCPs, agents, guidelines)? [Y/n] "
+read -n 1 -r REPLY
 echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-  bash "$DOTFILES_DIR/ai/setup.sh"
-fi
+[[ ! $REPLY =~ ^[Nn]$ ]] && bash "$DOTFILES_DIR/ai/setup.sh"
 
 # Taskfile AI command (configure after agents are installed)
-if command -v task >/dev/null 2>&1; then
-  echo; info "Taskfile AI command"
-  task setup-ai
-
-  echo
-  read -p "  Configure your AI command now? [Y/n] " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    ${EDITOR:-nano} ~/.config/task/taskfile.env
-    success "AI configuration updated"
-  else
-    warn "Remember to edit ~/.config/task/taskfile.env before using AI tasks"
-  fi
-fi
+configure_ai_command
 
 echo -e "\nReload your shell: ${BOLD}exec $(basename $SHELL)${NC}"

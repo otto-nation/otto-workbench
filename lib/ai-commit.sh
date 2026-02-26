@@ -125,12 +125,16 @@ _build_commit_prompt() {
   local ai_prompt="${retry_preamble}Generate a conventional commit message based on the changes.
 
 CRITICAL REQUIREMENTS:
-- Header MUST be ≤${COMMIT_HEADER_MAX_LEN} characters total (type + scope + colon + space + subject)
+- Header MUST be ≤${COMMIT_HEADER_MAX_LEN} characters total
+- Header = type + optional \"\(scope\)\" + \": \" + subject
+- Subject budget = ${COMMIT_HEADER_MAX_LEN} minus your prefix length
+  Example: \"feat\(auth\): \" is 12 chars -> subject must be <=60 chars
+  Example: \"fix: \" is 5 chars -> subject must be <=67 chars
+  Example: \"refactor\(payments\): \" is 20 chars -> subject must be <=52 chars
+- Before writing, count your prefix length, subtract from ${COMMIT_HEADER_MAX_LEN}, then write a subject within that budget
 - Each body line MUST be ≤${COMMIT_BODY_MAX_LEN} characters (wrap long lines)
-- Type is required; scope is optional
-- Subject must be concise - focus on WHAT changed, not HOW
+- Subject must be concise — focus on WHAT changed, not HOW
 - If multiple changes, use semicolon in subject or list in body
-- Count every character in the header before responding
 
 $COMMIT_RULES
 

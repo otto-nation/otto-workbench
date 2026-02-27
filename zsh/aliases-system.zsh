@@ -105,8 +105,7 @@ alias edit-hosts='subl /etc/hosts'
 alias edit-zshrc='subl ~/.zshrc'
 alias edit-aws='subl ~/.config/zsh/config.d/aws.zsh'
 
-# Alias discovery
-alias aliases='~/.config/zsh/scripts/show-aliases.zsh'
+# Alias discovery — 'aliases' is a script in ~/.local/bin; no alias needed
 alias help-aliases='aliases'
 
 # ============================================================================

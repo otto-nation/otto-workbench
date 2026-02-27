@@ -7,20 +7,10 @@
 alias nom='rm -rf node_modules/ && npm cache verify && npm install'
 
 # ============================================================================
-# Gradle
-# ============================================================================
-
-alias gw='./gradlew'
-alias gw-build='./gradlew build'
-alias gw-test='./gradlew test'
-alias gw-clean='./gradlew clean'
-alias gw-clean-build='./gradlew clean build'
-
-# ============================================================================
 # Git
 # ============================================================================
 
-# Standard short forms (industry convention)
+# Short forms (g* prefix; complex operations live in ~/.gitconfig)
 alias gs='git status'
 alias ga='git add'
 alias gc='git commit'
@@ -29,16 +19,6 @@ alias gl='git log --oneline --graph --decorate'
 alias gco='git checkout'
 alias gb='git branch'
 alias gd='git diff'
-
-# Explicit alternatives for clarity
-alias git-status='git status'
-alias git-add='git add'
-alias git-commit='git commit'
-alias git-push='git push'
-alias git-log='git log --oneline --graph --decorate'
-alias git-checkout='git checkout'
-alias git-branch='git branch'
-alias git-diff='git diff'
 
 # ============================================================================
 # Utilities

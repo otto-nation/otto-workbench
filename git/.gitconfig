@@ -5,8 +5,7 @@
         st = status
         unstage = reset HEAD --
         discard = checkout --
-        plog = log --pretty=oneline --abbrev-commit
-        newBranches = fetch --all
+        fetch-all = fetch --all
         graph-log = log --graph --decorate --pretty=oneline --abbrev-commit
         fixup = "!func() { git commit --fixup=$1 && git stash && git rebase -i --autosquash $1^1; }; func"
         wip = !git add . && git commit -m 'wip'

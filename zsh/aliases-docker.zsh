@@ -36,12 +36,5 @@ alias d-psa='docker ps -a'
 alias d-images='docker images'
 alias d-exec='docker exec -it'
 alias d-logs='docker logs -f'
-alias d-stop='docker stop $(docker ps -q)'
+alias d-stop-all='docker stop $(docker ps -q)'
 alias d-clean='docker system prune -af --volumes'
-
-# ============================================================================
-# MySQL Container (Legacy)
-# ============================================================================
-
-alias docker-run-mysql='docker run --name=mysql1 -d mysql/mysql-server'
-alias docker-exec-mysql='docker logs mysql1 2>&1 | grep GENERATED && docker exec -it mysql1 mysql -uroot -p'

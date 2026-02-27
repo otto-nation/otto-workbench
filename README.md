@@ -21,11 +21,10 @@ The installer will:
 ## What's Included
 
 ### Custom Scripts
-- `task` - Task runner (installed if not present)
+- `aliases` - Display all configured aliases and functions
 - `cleanup-testcontainers` - Clean up Docker testcontainers
 - `get-secret` - Interactive AWS Secrets Manager retrieval
 - `mem-analyze` - System memory analysis report
-- `show-aliases` - Display all configured aliases and functions
 
 ### ZSH Configuration
 - Docker and container aliases (`d-*`)
@@ -47,46 +46,31 @@ The installer will:
 
 ## Usage
 
-After installation:
+After installation, reload your shell:
 
 ```bash
-# Reload shell
 exec zsh
+```
 
-# View all aliases
-show-aliases
+### Discover what's available
 
-# Use AI-powered git tasks (from any directory)
+```bash
+aliases                  # all custom shell aliases and functions
+task --global help       # all AI git automation tasks
+```
+
+### AI-powered git tasks
+
+`--global` tells Task to use the globally installed Taskfile from `~/.config/task/` rather than a local project one.
+
+```bash
 task --global commit
 task --global commit:reword            # amend HEAD
 task --global commit:reword -- abc123  # reword specified commit
 task --global pr:content               # preview PR title + description
-task --global pr:create
+task --global pr:create                # create PR (auto-pushes if needed)
+task --global pr:update                # update existing PR description
 ```
-
-## AI Configuration
-
-The global Taskfile supports multiple AI tools. Configure your preference:
-
-```bash
-# Edit the config file
-nano ~/.config/task/taskfile.env
-
-# Examples:
-AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config
-AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
-AI_COMMAND=copilot --agent ci-cd -p
-```
-
-Projects can override with local `.taskfile/taskfile.env` if needed.
-
-## Customization
-
-### Per-Project Taskfile
-Create a local `Taskfile.yml` in your project to add project-specific tasks or override global ones.
-
-### Local AI Config
-Create `.taskfile/taskfile.env` in a project to use a different AI command for that project.
 
 ## AI Tools Setup
 
@@ -141,13 +125,38 @@ cat ~/.kiro/agents/default.json | grep command  # → actual uvx path
 2. Add a `tool_selected "copilot"` block in the main section that calls `register_step` for each step
 3. Implement the step functions following the existing patterns
 
+## AI Configuration
+
+The global Taskfile supports multiple AI tools. Configure your preference after running `ai/setup.sh` (which creates the config file):
+
+```bash
+# Edit the config file
+nano ~/.config/task/taskfile.env
+
+# Examples:
+AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config
+AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
+AI_COMMAND=copilot --agent ci-cd -p
+```
+
+Projects can override with local `.taskfile/taskfile.env` if needed.
+
+## Customization
+
+### Per-Project Taskfile
+Create a local `Taskfile.yml` in your project to add project-specific tasks or override global ones.
+
+### Local AI Config
+Create `.taskfile/taskfile.env` in a project to use a different AI command for that project.
+
 ## Requirements
 
 - macOS (some utilities are macOS-specific)
 - ZSH
 - [Task](https://taskfile.dev) (auto-installed by installer)
-- Docker (for container utilities)
-- AWS CLI (for AWS utilities)
+- [gh](https://cli.github.com) — GitHub CLI (for `pr:create` and `pr:update`)
+- Docker (optional — for container utilities)
+- AWS CLI (optional — for AWS utilities)
 - AI tool of choice (Claude CLI, Kiro CLI, GitHub Copilot, etc.)
 
 ## Updating

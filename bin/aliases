@@ -16,7 +16,13 @@ FILTER="${1:-}"
 SKIP_FILES=("aws-sso-set.zsh" "aws-sso-set-blackbird.zsh" "aws-sso-set-cache.zsh" "aws-sso-set-eks.zsh" "aws-sso-set-logging.zsh" "aws-sso-set-ssm.zsh" "aws-sso-set-upgrade.zsh" "aliases-git.zsh")
 
 print_header() {
-  echo -e "\n${BOLD}${BLUE}$1${NC}"
+  local title=$1 filter_key=${2:-}
+  # Show filter hint only when not already filtering — redundant otherwise
+  if [[ -n "$filter_key" && -z "$FILTER" ]]; then
+    echo -e "\n${BOLD}${BLUE}${title}${NC}  ${DIM}aliases ${filter_key}${NC}"
+  else
+    echo -e "\n${BOLD}${BLUE}${title}${NC}"
+  fi
   echo -e "${DIM}$(printf '─%.0s' {1..80})${NC}"
 }
 
@@ -52,6 +58,9 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
   fi
 
   header=$(grep -m1 "^# .*Configuration" "$config_file" 2>/dev/null | sed 's/^# //' || echo "${filename%.zsh}")
+  # Derive filter key: strip "aliases-" prefix and ".zsh" suffix (e.g. aliases-docker.zsh → docker)
+  local section_key="${filename#aliases-}"
+  section_key="${section_key%.zsh}"
 
   typeset -a items=()
 
@@ -95,7 +104,7 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
 
   # Print section if we have items
   if [[ ${#items[@]} -gt 0 ]]; then
-    print_header "$header"
+    print_header "$header" "$section_key"
     for item in "${items[@]}"; do
       IFS='|' read -r type name value <<< "$item"
       print_item "$type" "$name" "$value"
@@ -150,7 +159,7 @@ done | while IFS='|' read -r type name value; do
 done
 
 if [[ ${#git_items[@]} -gt 0 ]]; then
-  print_header "Git"
+  print_header "Git" "git"
   for item in "${git_items[@]}"; do
     IFS='|' read -r type name value <<< "$item"
     print_item "$type" "$name" "$value"

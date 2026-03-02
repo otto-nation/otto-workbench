@@ -26,10 +26,12 @@ The installer will:
 - `get-secret` - Interactive AWS Secrets Manager retrieval
 - `mem-analyze` - System memory analysis report
 
+> Scripts in `bin/` are auto-discovered by the `aliases` command. To add a description to a new script, make line 2 a comment starting with a capital letter: `# Your description here`.
+
 ### ZSH Configuration
 - Docker and container aliases (`d-*`)
 - Kubernetes aliases (`k-*`)
-- Git and development tools (`gw-*`, `gs`, `ga`, `gc`)
+- Git short forms (`gs`, `ga`, `gc`, `gp`, `gl`, `gco`, `gb`, `gd`) and development utilities
 - AWS utilities
 - System utilities and macOS helpers
 

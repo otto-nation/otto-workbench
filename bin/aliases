@@ -12,10 +12,17 @@ CONFIG_DIR="$HOME/.config/zsh/config.d"
 FILTER="${1:-}"
 
 # Skip these files (deprecated/internal)
-SKIP_FILES=("aws-sso-set.zsh" "aws-sso-set-blackbird.zsh" "aws-sso-set-cache.zsh" "aws-sso-set-eks.zsh" "aws-sso-set-logging.zsh" "aws-sso-set-ssm.zsh" "aws-sso-set-upgrade.zsh")
+# aliases-git.zsh is excluded from the normal loop and merged with gitconfig into one section below
+SKIP_FILES=("aws-sso-set.zsh" "aws-sso-set-blackbird.zsh" "aws-sso-set-cache.zsh" "aws-sso-set-eks.zsh" "aws-sso-set-logging.zsh" "aws-sso-set-ssm.zsh" "aws-sso-set-upgrade.zsh" "aliases-git.zsh")
 
 print_header() {
-  echo -e "\n${BOLD}${BLUE}$1${NC}"
+  local title=$1 filter_key=${2:-}
+  # Show filter hint only when not already filtering — redundant otherwise
+  if [[ -n "$filter_key" && -z "$FILTER" ]]; then
+    echo -e "\n${BOLD}${BLUE}${title}${NC}  ${DIM}aliases ${filter_key}${NC}"
+  else
+    echo -e "\n${BOLD}${BLUE}${title}${NC}"
+  fi
   echo -e "${DIM}$(printf '─%.0s' {1..80})${NC}"
 }
 
@@ -51,6 +58,9 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
   fi
 
   header=$(grep -m1 "^# .*Configuration" "$config_file" 2>/dev/null | sed 's/^# //' || echo "${filename%.zsh}")
+  # Derive filter key: strip "aliases-" prefix and ".zsh" suffix (e.g. aliases-docker.zsh → docker)
+  local section_key="${filename#aliases-}"
+  section_key="${section_key%.zsh}"
 
   typeset -a items=()
 
@@ -94,7 +104,7 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
 
   # Print section if we have items
   if [[ ${#items[@]} -gt 0 ]]; then
-    print_header "$header"
+    print_header "$header" "$section_key"
     for item in "${items[@]}"; do
       IFS='|' read -r type name value <<< "$item"
       print_item "$type" "$name" "$value"
@@ -102,30 +112,58 @@ for config_file in "$CONFIG_DIR"/*.zsh; do
   fi
 done
 
-# Extract git aliases
-if [[ -z "$FILTER" ]] || [[ "git" =~ "$FILTER" ]]; then
-  typeset -a git_items=()
+# Combined git section: ZSH short forms/functions (aliases-git.zsh) + gitconfig aliases
+typeset -a git_items=()
 
-  # Double-pipe pattern: the first while runs in a subshell and cannot modify git_items directly;
-  # piping its output to a second while lets us populate the array in the current shell
-  git config --get-regexp '^alias\.' 2>/dev/null | while IFS= read -r line; do
-    line="${line#alias.}"
-    name="${line%% *}"
-    value="${line#* }"
+GIT_ZSH_FILE="$CONFIG_DIR/aliases-git.zsh"
+if [[ -f "$GIT_ZSH_FILE" ]]; then
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^alias\ +([^=]+)=(.+)$ ]]; then
+      name="${match[1]}"
+      name="${name## }"; name="${name%% }"
+      value="${match[2]}"
+      value="${value#\'}"; value="${value%\'}"; value="${value#\"}"; value="${value%\"}"
+      matches_filter "$name" || matches_filter "$value" || continue
+      git_items+=("alias|$name|$value")
+    fi
+  done < <(grep "^alias " "$GIT_ZSH_FILE")
 
-    matches_filter "$name" || matches_filter "$value" || continue
-    echo "alias|$name|$value"
-  done | while IFS='|' read -r type name value; do
-    git_items+=("$type|$name|$value")
+  local prev_line=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^#\ *(.+)$ ]]; then
+      prev_line="${match[1]}"
+    elif [[ "$line" =~ "^(function +)?([a-zA-Z0-9_-]+) *[(][)] *[{]" ]]; then
+      local fname="${match[2]}"
+      [[ "$fname" =~ ^_ ]] && continue
+      matches_filter "$fname" || continue
+      local desc="Function"
+      [[ -n "$prev_line" && ! "$prev_line" =~ ^=+ ]] && desc="$prev_line"
+      git_items+=("function|$fname|$desc")
+      prev_line=""
+    else
+      prev_line=""
+    fi
+  done < "$GIT_ZSH_FILE"
+fi
+
+# Double-pipe pattern: the first while runs in a subshell and cannot modify git_items directly;
+# piping its output to a second while lets us populate the array in the current shell
+git config --get-regexp '^alias\.' 2>/dev/null | while IFS= read -r line; do
+  line="${line#alias.}"
+  name="${line%% *}"
+  value="${line#* }"
+  matches_filter "$name" || matches_filter "$value" || continue
+  echo "alias|$name|$value"
+done | while IFS='|' read -r type name value; do
+  git_items+=("$type|$name|$value")
+done
+
+if [[ ${#git_items[@]} -gt 0 ]]; then
+  print_header "Git" "git"
+  for item in "${git_items[@]}"; do
+    IFS='|' read -r type name value <<< "$item"
+    print_item "$type" "$name" "$value"
   done
-
-  if [[ ${#git_items[@]} -gt 0 ]]; then
-    print_header "Git Configuration"
-    for item in "${git_items[@]}"; do
-      IFS='|' read -r type name value <<< "$item"
-      print_item "$type" "$name" "$value"
-    done
-  fi
 fi
 
 # List custom scripts from this workbench's bin/ directory.

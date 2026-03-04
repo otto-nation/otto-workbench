@@ -83,10 +83,7 @@ configure_ai_command() {
   task ai:setup
 
   echo
-  printf "  Configure your AI command now? [Y/n] "
-  read -n 1 -r REPLY
-  echo
-  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+  if confirm "  Configure your AI command now?"; then
     ${EDITOR:-nano} ~/.config/task/taskfile.env
     success "AI configuration updated"
   else
@@ -183,10 +180,7 @@ fi
 
 # AI Tools Setup (install agents before configuring which one to use)
 echo; info "AI tools setup"
-printf "  Configure AI tools (MCPs, agents, guidelines)? [Y/n] "
-read -n 1 -r REPLY
-echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then bash "$DOTFILES_DIR/ai/setup.sh"; fi
+if confirm "  Configure AI tools (MCPs, agents, guidelines)?"; then bash "$DOTFILES_DIR/ai/setup.sh"; fi
 
 # Taskfile AI command (configure after agents are installed)
 configure_ai_command

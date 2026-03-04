@@ -135,6 +135,17 @@ done
 echo; info "Installing gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 
+# Install .zshrc template
+echo; info "ZSH configuration"
+if [ ! -f "$HOME/.zshrc" ]; then
+  cp "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
+  success "Copied .zshrc to ~/.zshrc"
+  info "Add secrets and machine-specific config to ~/.env.local (sourced automatically, never committed)"
+else
+  info "~/.zshrc already exists — skipping"
+  echo -e "  ${DIM}Template: $DOTFILES_DIR/zsh/.zshrc${NC}"
+fi
+
 # Install global Taskfile and libs
 echo; info "Installing global Taskfile"
 mkdir -p ~/.config/task

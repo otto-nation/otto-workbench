@@ -145,6 +145,31 @@ update_path_in_shell_rc
 
 echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
+# Homebrew packages
+echo; info "Homebrew packages"
+if command -v brew >/dev/null 2>&1; then
+  # _brew_install FILE LABEL DEFAULT(y|n)
+  # Shows what would be installed, then prompts. DEFAULT controls [Y/n] vs [y/N].
+  _brew_install() {
+    local file=$1 label=$2 default=${3:-y}
+    echo
+    info "Packages to install from $label:"
+    brew bundle check --file="$file" --verbose 2>/dev/null | grep "needs to be installed" | sed 's/→ /  · /' || echo "  (all packages already installed)"
+    echo
+    if [[ "$default" == "y" ]]; then
+      confirm "  Install $label packages?" && brew bundle --file="$file" --no-lock && success "$label packages installed"
+    else
+      confirm_n "  Install $label packages?" && brew bundle --file="$file" --no-lock && success "$label packages installed"
+    fi
+  }
+
+  _brew_install "$DOTFILES_DIR/brew/Brewfile" "core" "y"
+  echo
+  _brew_install "$DOTFILES_DIR/brew/Brewfile.work" "work" "n"
+else
+  warn "Homebrew not found — skipping package install"
+fi
+
 # AI Tools Setup (install agents before configuring which one to use)
 echo; info "AI tools setup"
 printf "  Configure AI tools (MCPs, agents, guidelines)? [Y/n] "

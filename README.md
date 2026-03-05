@@ -15,7 +15,7 @@ The installer will:
 - Symlink scripts to `~/.local/bin/`
 - Symlink zsh configs to `~/.config/zsh/config.d/`
 - Install the global Taskfile to `~/.config/task/`
-- Optionally install Homebrew packages from `brew/Brewfile` and `brew/Brewfile.work`
+- Optionally install Homebrew packages from `brew/Brewfile` (and `brew/work/` for work-specific stacks)
 - Optionally run `ai/setup.sh` to configure AI tools (MCPs, agents, guidelines)
 - Prompt you to configure your AI command
 
@@ -33,7 +33,7 @@ The installer will:
 
 `zsh/.zshrc` is a template copied to `~/.zshrc` on first install. It sets up:
 - oh-my-zsh with `git`, `dotenv`, `macos` plugins
-- Lazy-loading for pyenv, nvm, chruby, SDKMAN
+- Lazy-loading for pyenv, nvm, SDKMAN
 - Arch-aware Homebrew prefix (Apple Silicon / Intel)
 - Modular config loading from `~/.config/zsh/config.d/`
 - Starship prompt
@@ -58,21 +58,23 @@ The alias and function files (`zsh/*.zsh`) are symlinked to `~/.config/zsh/confi
 
 ### Homebrew Packages
 
-- `brew/Brewfile` — core packages that belong on any personal dev machine (shell tools, language version managers, containers, productivity casks)
-- `brew/Brewfile.work` — work/project-specific packages (AWS, Java, Terraform, Kubernetes, databases, service tooling)
+- `brew/Brewfile` — core packages for any personal dev machine (shell tools, language version managers, containers, productivity casks)
+- `brew/work/` — opt-in per stack: `aws.Brewfile`, `java.Brewfile`, `terraform.Brewfile`, `kubernetes.Brewfile`, `jira.Brewfile`
 
 Bootstrap from scratch:
 
 ```bash
 brew bundle --file=brew/Brewfile
-brew bundle --file=brew/Brewfile.work  # optional: work packages
+
+# Add work stacks as needed:
+brew bundle --file=brew/work/aws.Brewfile
+brew bundle --file=brew/work/kubernetes.Brewfile
 ```
 
-Keep Brewfiles current after installing or removing packages:
+Keep the core Brewfile current after installing or removing packages:
 
 ```bash
-task --global brew:dump           # regenerate Brewfile
-WORK=1 task --global brew:dump    # regenerate Brewfile.work
+task --global brew:dump
 ```
 
 ### Global Taskfile (AI-Powered Git Automation)
@@ -208,6 +210,21 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/too
 
 # SDKMAN (Java version manager)
 curl -s "https://get.sdkman.io" | bash
+```
+
+## Contributing
+
+After cloning, activate the pre-push hook:
+
+```bash
+task dev:setup
+```
+
+This runs ShellCheck and the bats test suite before every push. You can also run them manually:
+
+```bash
+task lint   # ShellCheck all shell scripts
+task test   # run bats test suite
 ```
 
 ## Updating

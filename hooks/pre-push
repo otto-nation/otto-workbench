@@ -1,0 +1,30 @@
+#!/bin/bash
+# Pre-push hook: runs shellcheck and bats tests before any push.
+# Installed via: git config core.hooksPath hooks
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# ── ShellCheck ────────────────────────────────────────────────────────────────
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "✗ shellcheck not found — run: brew install shellcheck"
+  exit 1
+fi
+
+echo "→ Running ShellCheck..."
+grep -rlE '^#!.*/(ba)?sh' "$REPO_ROOT" \
+  | grep -v "$REPO_ROOT/.git/" \
+  | sort \
+  | xargs shellcheck --severity=warning
+echo "✓ ShellCheck passed"
+
+# ── Bats tests ────────────────────────────────────────────────────────────────
+if ! command -v bats >/dev/null 2>&1; then
+  echo "✗ bats not found — run: brew install bats-core"
+  exit 1
+fi
+
+echo "→ Running tests..."
+bats "$REPO_ROOT/tests/" --recursive --timing
+echo "✓ Tests passed"

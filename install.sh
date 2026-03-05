@@ -167,6 +167,10 @@ echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 # Homebrew packages
 bash "$DOTFILES_DIR/brew/setup.sh"
 
+# iTerm2 setup (import color schemes, font instructions)
+echo; info "iTerm2 setup"
+if confirm "  Configure iTerm2 (import Gruvbox themes, show font instructions)?"; then bash "$DOTFILES_DIR/iterm/setup.sh"; fi
+
 # AI Tools Setup (install agents before configuring which one to use)
 echo; info "AI tools setup"
 if confirm "  Configure AI tools (MCPs, agents, guidelines)?"; then bash "$DOTFILES_DIR/ai/setup.sh"; fi

@@ -69,7 +69,7 @@ update_path_in_shell_rc() {
   esac
   if grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$shell_rc" 2>/dev/null; then return; fi
 
-  echo; info "Adding ~/.local/bin to PATH in $shell_rc"
+  echo; info "Adding $HOME/.local/bin to PATH in $shell_rc"
   echo '' >> "$shell_rc"
   echo '# Add local bin to PATH' >> "$shell_rc"
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$shell_rc"
@@ -87,7 +87,7 @@ configure_ai_command() {
     ${EDITOR:-nano} ~/.config/task/taskfile.env
     success "AI configuration updated"
   else
-    warn "Remember to edit ~/.config/task/taskfile.env before using AI tasks"
+    warn "Remember to edit $HOME/.config/task/taskfile.env before using AI tasks"
   fi
 }
 
@@ -136,17 +136,17 @@ install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 echo; info "ZSH configuration"
 if [ ! -f "$HOME/.zshrc" ]; then
   cp "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
-  success "Copied .zshrc to ~/.zshrc"
-  info "Add secrets and machine-specific config to ~/.env.local (sourced automatically, never committed)"
+  success "Copied .zshrc to $HOME/.zshrc"
+  info "Add secrets and machine-specific config to $HOME/.env.local (sourced automatically, never committed)"
 else
-  info "~/.zshrc already exists — skipping"
+  info "$HOME/.zshrc already exists — skipping"
   echo -e "  ${DIM}Template: $DOTFILES_DIR/zsh/.zshrc${NC}"
 fi
 
 # Install global Taskfile and libs
 echo; info "Installing global Taskfile"
 mkdir -p ~/.config/task
-install_symlink "$DOTFILES_DIR/Taskfile.yml" ~/.config/task/Taskfile.yml
+install_symlink "$DOTFILES_DIR/Taskfile.global.yml" ~/.config/task/Taskfile.yml
 install_symlink "$DOTFILES_DIR/lib" ~/.config/task/lib
 
 update_path_in_shell_rc

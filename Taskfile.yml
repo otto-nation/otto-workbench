@@ -1,315 +1,37 @@
-# Global Taskfile for AI-powered Git automation
-# Managed by workbench repo: https://github.com/otto-nation/otto-workbench
-# Installed location: ~/.config/task/Taskfile.yml
+# Workbench repo — local development tasks
+# These tasks are only relevant when contributing to this repo.
 #
-# To customize per-project: Create a local Taskfile.yml in your project
-# To edit global config: Edit ~/.config/task/taskfile.env
+# Global AI/git automation tasks live in Taskfile.global.yml and are
+# installed to ~/.config/task/Taskfile.global.yml by install.sh.
+# Run them from anywhere with: task --global commit, task --global pr:create, etc.
 
 version: "3"
 
+includes:
+  global:
+    taskfile: ./Taskfile.global.yml
+
 tasks:
-  # ============================================================================
-  # GIT AUTOMATION
-  # ============================================================================
-  ai:setup:
-    desc: "Setup AI configuration"
+  test:
+    desc: "Run bats test suite"
+    silent: true
+    cmds:
+      - bats tests/ --recursive --timing
+
+  lint:
+    desc: "Run ShellCheck on all shell scripts"
     silent: true
     cmds:
       - |
-        CONFIG_DIR="$HOME/.config/task"
-        ENV_FILE="$CONFIG_DIR/taskfile.env"
+        grep -rlE '^#!.*/(ba)?sh' . \
+          | grep -v '^\./\.git/' \
+          | sort \
+          | xargs shellcheck --severity=warning
+        echo "✓ ShellCheck passed"
 
-        mkdir -p "$CONFIG_DIR"
-
-        if [ ! -f "$ENV_FILE" ]; then
-          {
-            printf '# Taskfile AI Configuration\n'
-            printf '# Uncomment and configure one of the examples below or add your own\n'
-            printf '\n'
-            printf '# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config\n'
-            printf '# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd\n'
-            printf '# AI_COMMAND=copilot --agent ci-cd -p\n'
-          } > "$ENV_FILE"
-          printf "  ✓ Created %s\n" "$ENV_FILE"
-          echo "→ Edit to configure your AI command"
-        else
-          printf "→ %s already exists\n" "$ENV_FILE"
-        fi
-
-  commit:
-    desc: "Generate AI-powered commit message based on staged changes"
-    silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    cmds:
-      - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_ai_command || exit 1
-
-        STAGED_FILES=$(git diff --cached --name-only)
-        if [ -z "$STAGED_FILES" ]; then
-          echo "✗ No staged changes found. Use 'git add' first."
-          exit 1
-        fi
-
-        echo "→ Analyzing staged changes with AI..."
-        echo ""
-
-        DIFF_CONTENT=$(git diff --cached --no-color)
-        FILE_LIST=$(echo "$STAGED_FILES" | tr '\n' ', ' | sed 's/,$//')
-
-        find_commitlint_config
-        build_commit_rules
-        generate_commit_msg "$DIFF_CONTENT" "$FILE_LIST" || exit 1
-
-        echo "✓ AI analysis complete"
-        echo ""
-        echo "→ Generated commit message:"
-        echo "   $AI_MSG"
-        echo ""
-
-        validate_commit_msg "$AI_MSG" || exit 1
-
-        echo "→ Committing..."
-        git commit -m "$AI_MSG"
-        echo "✓ Committed successfully"
-
-  commit:reword:
-    desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
-    silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    cmds:
-      - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_ai_command || exit 1
-
-        # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
-        RAW_ARG="{{.CLI_ARGS}}"
-        COMMIT_SHA="${RAW_ARG// /}"
-        COMMIT_SHA="${COMMIT_SHA:-HEAD}"
-
-        # Resolve to full SHA; catch invalid refs before doing anything else
-        TARGET_SHA=$(git rev-parse "$COMMIT_SHA" 2>/dev/null) || {
-          echo "✗ Invalid commit: $COMMIT_SHA"
-          exit 1
-        }
-
-        # Auto-stash tracked changes so rebase has a clean working tree
-        STASHED=false
-        if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-          echo "→ Stashing uncommitted changes..."
-          git stash push -m "task-reword-stash"
-          STASHED=true
-        fi
-
-        TMPFILE=$(mktemp)
-        EDITOR_SCRIPT=$(mktemp)
-        SEQ_EDITOR=$(mktemp)
-
-        # Always pop stash and remove temp files on exit, even if something fails
-        cleanup() {
-          rm -f "$TMPFILE" "$EDITOR_SCRIPT" "$SEQ_EDITOR" 2>/dev/null || true
-          if [ "$STASHED" = true ]; then
-            echo "→ Restoring stashed changes..."
-            git stash pop || true
-          fi
-        }
-        trap cleanup EXIT
-
-        echo "→ Analyzing commit with AI..."
-        FULL_DIFF=$(git show "$TARGET_SHA" --no-color)
-
-        find_commitlint_config
-        build_commit_rules
-        generate_commit_msg "$FULL_DIFF" || exit 1
-
-        echo "✓ AI analysis complete"
-        echo ""
-        echo "→ Generated commit message:"
-        echo "   $AI_MSG"
-        echo ""
-
-        validate_commit_msg "$AI_MSG" || exit 1
-
-        HEAD_SHA=$(git rev-parse HEAD)
-
-        if [ "$TARGET_SHA" = "$HEAD_SHA" ]; then
-          # HEAD is a simple amend — no rebase needed
-          echo "→ Amending HEAD commit..."
-          NO_VERIFY=1 git commit --amend --no-verify -m "$AI_MSG"
-          echo "✓ Commit amended"
-        else
-          echo "→ Rewording via rebase (history will be rewritten from this commit forward)..."
-
-          # GIT_EDITOR: injects our generated message into git's commit message buffer
-          echo "$AI_MSG" > "$TMPFILE"
-          printf '#!/bin/bash\ncp "%s" "$1"\n' "$TMPFILE" > "$EDITOR_SCRIPT"
-          chmod +x "$EDITOR_SCRIPT"
-
-          # GIT_SEQUENCE_EDITOR: marks only the target commit as reword; all others stay as pick
-          SHORT_SHA=$(git rev-parse --short "$TARGET_SHA")
-          printf '#!/bin/bash\nsed "s/^pick %s /reword %s /" "$1" > "$1.tmp" && mv "$1.tmp" "$1"\n' \
-            "$SHORT_SHA" "$SHORT_SHA" > "$SEQ_EDITOR"
-          chmod +x "$SEQ_EDITOR"
-
-          # core.hooksPath=/dev/null disables all git hooks during rebase; NO_VERIFY=1 for hook scripts that check the env var
-          NO_VERIFY=1 GIT_SEQUENCE_EDITOR="$SEQ_EDITOR" GIT_EDITOR="$EDITOR_SCRIPT" \
-            git -c core.hooksPath=/dev/null rebase -i "${TARGET_SHA}^"
-
-          echo "✓ Commit reworded"
-
-          # History was rewritten — warn if the branch is already published
-          CURRENT_BRANCH=$(git branch --show-current)
-          if git rev-parse "origin/$CURRENT_BRANCH" &>/dev/null; then
-            echo ""
-            echo "⚠  History rewritten — force push required: git push --force-with-lease"
-          fi
-        fi
-
-  pr:content:
-    desc: "Preview AI-generated PR title and description without creating or updating a PR"
-    silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    cmds:
-      - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_pr_context || exit 1
-
-        echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-        echo "✓ Content ready"
-        echo ""
-        echo "→ PR Title:"
-        echo "   $PR_TITLE"
-        echo ""
-        echo "→ PR Description:"
-        echo "$PR_DESCRIPTION"
-
-  pr:create:
-    desc: "Create AI-powered pull request with smart title and description"
-    silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    cmds:
-      - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_pr_context || exit 1
-        push_branch "$BRANCH" || exit 1
-
-        echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-        echo "✓ Content ready"
-        echo "→ Creating PR..."
-
-        PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
-        PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github[^[:space:]]*' || true)
-
-        if [ -n "$PR_URL" ]; then
-          echo "✓ Pull request created"
-          echo "$PR_URL"
-        else
-          echo "✗ PR creation failed"
-          echo "$PR_OUTPUT"
-          exit 1
-        fi
-
-  pr:update:
-    desc: "Update current PR description with AI-generated content"
-    silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    cmds:
-      - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_pr_context || exit 1
-
-        echo "→ Checking for existing PR..."
-        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
-
-        if [ -z "$PR_NUMBER" ]; then
-          echo "✗ No PR found for branch: $BRANCH"
-          echo "→ Use 'task pr:create' to create a new PR"
-          exit 1
-        fi
-
-        echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-        echo "✓ Content ready"
-        echo "→ Updating PR #$PR_NUMBER..."
-
-        gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body "$PR_DESCRIPTION"
-
-        echo "✓ PR description updated"
-        echo "→ View: $(gh pr view --json url -q .url)"
-
-  # ============================================================================
-  # HOMEBREW
-  # ============================================================================
-  brew:install:
-    desc: "Install core Homebrew packages from brew/Brewfile"
+  dev:setup:
+    desc: "Activate git hooks for workbench development (run once after cloning)"
     silent: true
     cmds:
-      - |
-        BREWFILE="{{.TASKFILE_DIR}}/brew/Brewfile"
-
-        if [ ! -f "$BREWFILE" ]; then
-          echo "✗ Brewfile not found: $BREWFILE"
-          exit 1
-        fi
-
-        echo "→ Installing core packages..."
-        brew bundle --file="$BREWFILE"
-        echo "✓ Core packages installed"
-        echo ""
-        echo "→ Work-specific Brewfiles available in brew/work/:"
-        for f in "{{.TASKFILE_DIR}}"/brew/work/*.Brewfile; do
-          echo "   brew bundle --file=${f#{{.TASKFILE_DIR}}/}"
-        done
-
-  brew:dump:
-    desc: "Regenerate brew/Brewfile from current state"
-    silent: true
-    cmds:
-      - |
-        TARGET="{{.TASKFILE_DIR}}/brew/Brewfile"
-        echo "→ Updating Brewfile from current state..."
-        brew bundle dump --force --describe --file="$TARGET"
-        echo "✓ Saved to $TARGET"
-        echo "→ Review changes: git diff $TARGET"
-
-  # ============================================================================
-  # UTILITY
-  # ============================================================================
-
-  help:
-    desc: "Show this help message"
-    silent: true
-    cmds:
-      - |
-        TASKFILE_PATH="${TASKFILE}"
-        IS_GLOBAL=false
-
-        if [[ "$TASKFILE_PATH" == *".config/task/Taskfile.yml"* ]]; then
-          IS_GLOBAL=true
-        fi
-
-        echo "workbench  task runner"
-        echo ""
-
-        if [ "$IS_GLOBAL" = true ]; then
-          echo "Using global Taskfile"
-          echo "   Location: ~/.config/task/Taskfile.yml"
-          echo "   Managed by: https://github.com/otto-nation/otto-workbench"
-          echo ""
-        fi
-
-        echo "AI-Powered Git Automation:"
-        echo "   ai:setup          Setup AI configuration (first-time setup)"
-        echo "   commit            AI-generated commit messages"
-        echo "   commit:reword     AI reword of a commit (default: HEAD; or: task commit:reword -- SHA)"
-        echo "   pr:content        Preview AI-generated PR title and description"
-        echo "   pr:create         AI-generated PR (auto-pushes if needed)"
-        echo "   pr:update         Update existing PR description"
-        echo ""
-        echo "Homebrew:"
-        echo "   brew:install      Install core packages from brew/Brewfile"
-        echo "   brew:dump         Regenerate brew/Brewfile from current state"
-        echo ""
-        echo "For all tasks: task --list"
+      - git config core.hooksPath hooks
+      - echo "✓ Git hooks activated (hooks/pre-push runs lint + test before every push)"

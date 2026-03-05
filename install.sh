@@ -114,7 +114,9 @@ install_symlink() {
     prompt_overwrite "$target" || { echo -e "  ${DIM}⊘ Skipped $name${NC}"; return; }
   fi
 
-  ln -sf "$source" "$target"
+  # -h prevents BSD ln from following an existing symlink at $target (macOS default behaviour
+  # would dereference it, corrupting repo files or creating nested symlinks on re-runs)
+  ln -sfh "$source" "$target"
   echo -e "  ${GREEN}✓${NC} $name"
 }
 

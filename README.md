@@ -214,18 +214,7 @@ curl -s "https://get.sdkman.io" | bash
 
 ## Contributing
 
-After cloning, activate the pre-push hook:
-
-```bash
-task dev:setup
-```
-
-This runs ShellCheck and the bats test suite before every push. You can also run them manually:
-
-```bash
-task lint   # ShellCheck all shell scripts
-task test   # run bats test suite
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, dev dependencies, testing, and coverage.
 
 ## Updating
 

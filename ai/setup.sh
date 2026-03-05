@@ -84,8 +84,18 @@ register_step() {
   STEPS+=("${name}|${fn}")
 }
 
+# _mcp_is_registered NAME — returns 0 if NAME is already in the user-scope MCP list.
+_mcp_is_registered() {
+  local name="$1"
+  claude mcp list 2>/dev/null | grep -q "^${name}"
+}
+
 # ─── Step: MCP — Serena ───────────────────────────────────────────────────────
 step_mcp_serena() {
+  if _mcp_is_registered "serena"; then
+    success "Serena MCP already registered"
+    return
+  fi
   info "Installing Serena MCP server (user scope)"
   claude mcp add serena --scope user -- \
     uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
@@ -94,6 +104,10 @@ step_mcp_serena() {
 
 # ─── Step: MCP — Sequential Thinking ─────────────────────────────────────────
 step_mcp_sequential_thinking() {
+  if _mcp_is_registered "sequential-thinking"; then
+    success "Sequential Thinking MCP already registered"
+    return
+  fi
   info "Installing Sequential Thinking MCP server (user scope)"
   claude mcp add sequential-thinking --scope user -- \
     npx -y @modelcontextprotocol/server-sequential-thinking
@@ -102,6 +116,10 @@ step_mcp_sequential_thinking() {
 
 # ─── Step: MCP — Context7 ────────────────────────────────────────────────────
 step_mcp_context7() {
+  if _mcp_is_registered "context7"; then
+    success "Context7 MCP already registered"
+    return
+  fi
   info "Installing Context7 MCP server (user scope)"
   echo
   warn "Context7 requires an Upstash API key (leave blank to skip)."

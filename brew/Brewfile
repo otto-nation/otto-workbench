@@ -12,7 +12,6 @@ tap "otto-nation/tap"
 # Shell & terminal
 # ---------------------------------------------------------------------------
 brew "bash"
-brew "dos2unix"
 brew "jq"
 brew "starship"
 brew "yq"
@@ -23,11 +22,9 @@ brew "zoxide"
 # ---------------------------------------------------------------------------
 brew "act"
 brew "bats-core"
-brew "commitizen"
 brew "gh"
 brew "go-task/tap/go-task"
 brew "otto-nation/tap/otto-stack"
-brew "pre-commit"
 brew "prettier"
 brew "shellcheck"
 
@@ -40,12 +37,8 @@ brew "pinentry-mac"
 # ---------------------------------------------------------------------------
 # Language version managers
 # ---------------------------------------------------------------------------
-brew "chruby"
 brew "nvm"
-brew "pipenv"
 brew "pipx"
-brew "pyenv-virtualenv"
-brew "ruby-install"
 brew "uv"
 
 # ---------------------------------------------------------------------------
@@ -56,7 +49,6 @@ brew "colima"
 # ---------------------------------------------------------------------------
 # Casks — Productivity
 # ---------------------------------------------------------------------------
-cask "caffeine"
 cask "hiddenbar"
 cask "maccy"
 cask "rectangle"
@@ -68,12 +60,6 @@ cask "1password-cli"
 cask "bruno"
 cask "git-credential-manager"
 cask "sublime-text"
-
-# ---------------------------------------------------------------------------
-# Casks — AI / CLI tools
-# ---------------------------------------------------------------------------
-cask "copilot-cli"
-cask "kiro-cli"
 
 # ---------------------------------------------------------------------------
 # Casks — Security

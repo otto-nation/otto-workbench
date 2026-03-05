@@ -120,14 +120,14 @@ step_mcp_context7() {
 
 # ─── Step: Guidelines (shared — installs to all selected tools) ───────────────
 step_guidelines() {
-  info "Downloading AI coding guidelines"
+  info "Installing AI coding guidelines"
 
-  local general_url="https://gist.githubusercontent.com/isaacgarza/f72abdf85a8a30dad9476ab93049a362/raw/ai-coding-guidelines-general.md"
-  local lang_url="https://gist.githubusercontent.com/isaacgarza/f72abdf85a8a30dad9476ab93049a362/raw/ai-coding-guidelines-language-specific.md"
+  local general_file="$SCRIPT_DIR/guidelines/general.md"
+  local lang_file="$SCRIPT_DIR/guidelines/language-specific.md"
 
   local general_content lang_content
-  general_content=$(curl -fsSL "$general_url") || { err "Failed to download general guidelines"; return 1; }
-  lang_content=$(curl -fsSL "$lang_url") || { err "Failed to download language-specific guidelines"; return 1; }
+  general_content=$(cat "$general_file") || { err "Missing: $general_file"; return 1; }
+  lang_content=$(cat "$lang_file") || { err "Missing: $lang_file"; return 1; }
 
   if tool_selected "claude"; then
     _install_claude_guidelines "$general_content" "$lang_content"
@@ -301,30 +301,27 @@ step_claude_agent_info() {
 
 # ─── Step: Kiro agent configs ─────────────────────────────────────────────────
 step_kiro_agents() {
-  info "Downloading Kiro agent configs"
+  info "Installing Kiro agent configs"
 
   local agents_dir="$HOME/.kiro/agents"
   mkdir -p "$agents_dir"
-
-  local default_url="https://gist.githubusercontent.com/isaacgarza/ec26eec595ddc845c24f1c7d29994fea/raw/default.json"
-  local cicd_url="https://gist.githubusercontent.com/isaacgarza/ec26eec595ddc845c24f1c7d29994fea/raw/ci-cd.json"
 
   # Detect the full uvx path; fall back to the bare name so PATH lookup happens at execution time
   local uvx_path
   uvx_path=$(command -v uvx 2>/dev/null || echo "uvx")
 
-  _install_kiro_agent "$agents_dir/default.json" "$default_url" "$uvx_path" "default.json"
-  _install_kiro_agent "$agents_dir/ci-cd.json" "$cicd_url" "$uvx_path" "ci-cd.json"
+  _install_kiro_agent "$agents_dir/default.json" "$SCRIPT_DIR/kiro/agents/default.json" "$uvx_path" "default.json"
+  _install_kiro_agent "$agents_dir/ci-cd.json" "$SCRIPT_DIR/kiro/agents/ci-cd.json" "$uvx_path" "ci-cd.json"
 }
 
 _install_kiro_agent() {
   local target=$1
-  local url=$2
+  local source=$2
   local uvx_path=$3
   local label=$4
 
   local content
-  content=$(curl -fsSL "$url") || { err "Failed to download $label"; return 1; }
+  content=$(cat "$source") || { err "Missing: $source"; return 1; }
 
   # Replace hardcoded Homebrew path with the detected uvx location
   content=$(echo "$content" | sed "s|/opt/homebrew/bin/uvx|${uvx_path}|g")
@@ -385,7 +382,6 @@ if tool_selected "claude"; then
     register_step "MCP: Context7" step_mcp_context7
     register_step "Claude Code skills" step_claude_skills
     register_step "Claude Code agents" step_claude_agents
-    register_step "Claude Code agent info" step_claude_agent_info
   fi
 fi
 
@@ -399,6 +395,5 @@ echo
 echo -e "${BOLD}${GREEN}✓ AI tools setup complete!${NC}"
 
 if tool_selected "claude"; then
-  echo
-  echo -e "  Verify MCPs: ${CYAN}claude mcp list${NC}"
+  step_claude_agent_info
 fi

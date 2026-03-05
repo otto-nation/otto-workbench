@@ -7,6 +7,16 @@
 alias nom='rm -rf node_modules/ && npm cache verify && npm install'
 
 # ============================================================================
+# Gradle
+# ============================================================================
+
+alias gw='./gradlew'
+alias gw-build='./gradlew build'
+alias gw-test='./gradlew test'
+alias gw-clean='./gradlew clean'
+alias gw-clean-build='./gradlew clean build'
+
+# ============================================================================
 # Utilities
 # ============================================================================
 

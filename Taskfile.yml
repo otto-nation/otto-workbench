@@ -34,15 +34,6 @@ tasks:
           echo "→ Edit to configure your AI command"
         else
           printf "→ %s already exists\n" "$ENV_FILE"
-          if ! grep -q "AI_COMMAND=claude" "$ENV_FILE"; then
-            printf "  Add Claude example? [Y/n] "
-            read -r REPLY
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-              echo "" >> "$ENV_FILE"
-              echo "# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config" >> "$ENV_FILE"
-              printf "  ✓ Added Claude example\n"
-            fi
-          fi
         fi
 
   commit:
@@ -183,9 +174,9 @@ tasks:
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
         load_pr_context || exit 1
 
-        echo "→ Analyzing changes with AI: $BRANCH"
+        echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-        echo "✓ AI analysis complete"
+        echo "✓ Content ready"
         echo ""
         echo "→ PR Title:"
         echo "   $PR_TITLE"
@@ -203,9 +194,9 @@ tasks:
         load_pr_context || exit 1
         push_branch "$BRANCH" || exit 1
 
-        echo "→ Analyzing changes with AI: $BRANCH"
+        echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-        echo "✓ AI analysis complete"
+        echo "✓ Content ready"
         echo "→ Creating PR..."
 
         PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
@@ -238,15 +229,50 @@ tasks:
           exit 1
         fi
 
-        echo "→ Analyzing changes with AI: $BRANCH"
+        echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
-        echo "✓ AI analysis complete"
+        echo "✓ Content ready"
         echo "→ Updating PR #$PR_NUMBER..."
 
         gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body "$PR_DESCRIPTION"
 
         echo "✓ PR description updated"
         echo "→ View: $(gh pr view --json url -q .url)"
+
+  # ============================================================================
+  # HOMEBREW
+  # ============================================================================
+  brew:install:
+    desc: "Install core Homebrew packages from brew/Brewfile"
+    silent: true
+    cmds:
+      - |
+        BREWFILE="{{.TASKFILE_DIR}}/brew/Brewfile"
+
+        if [ ! -f "$BREWFILE" ]; then
+          echo "✗ Brewfile not found: $BREWFILE"
+          exit 1
+        fi
+
+        echo "→ Installing core packages..."
+        brew bundle --file="$BREWFILE" --no-lock
+        echo "✓ Core packages installed"
+        echo ""
+        echo "→ Work-specific Brewfiles available in brew/work/:"
+        for f in "{{.TASKFILE_DIR}}"/brew/work/*.Brewfile; do
+          echo "   brew bundle --file=${f#{{.TASKFILE_DIR}}/}"
+        done
+
+  brew:dump:
+    desc: "Regenerate brew/Brewfile from current state"
+    silent: true
+    cmds:
+      - |
+        TARGET="{{.TASKFILE_DIR}}/brew/Brewfile"
+        echo "→ Updating Brewfile from current state..."
+        brew bundle dump --force --describe --file="$TARGET"
+        echo "✓ Saved to $TARGET"
+        echo "→ Review changes: git diff $TARGET"
 
   # ============================================================================
   # UTILITY
@@ -281,5 +307,9 @@ tasks:
         echo "   pr:content        Preview AI-generated PR title and description"
         echo "   pr:create         AI-generated PR (auto-pushes if needed)"
         echo "   pr:update         Update existing PR description"
+        echo ""
+        echo "Homebrew:"
+        echo "   brew:install      Install core packages from brew/Brewfile"
+        echo "   brew:dump         Regenerate brew/Brewfile from current state"
         echo ""
         echo "For all tasks: task --list"

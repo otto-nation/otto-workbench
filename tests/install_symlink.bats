@@ -5,6 +5,9 @@
 # symlinks (directory symlinks) on re-runs of install.sh.
 
 setup() {
+  # ln -sfh is BSD-specific (macOS); GNU ln does not follow symlinks by default
+  # so these regression tests are only meaningful on macOS
+  [[ "$OSTYPE" == "darwin"* ]] || skip "macOS only"
   TMPDIR="$(mktemp -d)"
 }
 

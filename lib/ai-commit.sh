@@ -22,6 +22,12 @@ COMMIT_HEADER_MAX_LEN=72
 # Referenced in the AI prompt only — not machine-validated locally.
 COMMIT_BODY_MAX_LEN=100
 
+# Maximum characters of diff content sent to the AI.
+# Large diffs cause the AI CLI to reject the prompt entirely.
+# When exceeded, complete per-file diffs are included greedily (smallest first);
+# omitted files are listed by name so the AI still knows the full scope of changes.
+DIFF_MAX_CHARS=8000
+
 # Space-separated list of allowed commit types.
 # Used to build the AI prompt rules and the fallback format validator.
 # To add a type, append it here — no other changes needed.
@@ -117,12 +123,82 @@ run_ai() {
     sed '/^```/d')
 }
 
+# _compact_diff FULL_DIFF
+# Splits a diff into per-file chunks and greedily includes complete file diffs
+# within DIFF_MAX_CHARS (smallest files first, maximising coverage).
+# Files that don't fit are listed by name in a trailing note.
+_compact_diff() {
+  local full_diff="$1"
+
+  # Split diff into per-file chunks on "diff --git" boundaries
+  local chunks=()
+  local current=""
+  while IFS= read -r line; do
+    if [[ "$line" == "diff --git "* && -n "$current" ]]; then
+      chunks+=("$current")
+      current=""
+    fi
+    current+="${line}"$'\n'
+  done <<< "$full_diff"
+  [[ -n "$current" ]] && chunks+=("$current")
+
+  local total=${#chunks[@]}
+  if [[ $total -eq 0 ]]; then
+    printf '%s' "${full_diff:0:$DIFF_MAX_CHARS}"
+    return
+  fi
+
+  # Build "SIZE INDEX" pairs and sort ascending so smallest files are tried first
+  local i size_index_pairs=""
+  for (( i=0; i<total; i++ )); do
+    size_index_pairs+="${#chunks[$i]} $i"$'\n'
+  done
+
+  local budget=$DIFF_MAX_CHARS
+  local included_indices=()
+  local omitted_names=()
+  local size idx fname
+
+  while IFS=' ' read -r size idx; do
+    [[ -z "$size" ]] && continue
+    if (( size <= budget )); then
+      included_indices+=("$idx")
+      (( budget -= size ))
+    else
+      fname=$(printf '%s' "${chunks[$idx]}" | head -1 | grep -oE ' b/.+$' | sed 's/^ b\///')
+      omitted_names+=("${fname:-<file>}")
+    fi
+  done < <(printf '%s' "$size_index_pairs" | sort -n)
+
+  # Reconstruct in original diff order
+  local result=""
+  while IFS= read -r idx; do
+    [[ -z "$idx" ]] && continue
+    result+="${chunks[$idx]}"
+  done < <(printf '%s\n' "${included_indices[@]}" | sort -n)
+
+  if [[ ${#omitted_names[@]} -gt 0 ]]; then
+    local omitted_list
+    omitted_list=$(printf '%s\n' "${omitted_names[@]}" | paste -sd ',' -)
+    result+="
+[${#omitted_names[@]} file(s) omitted — diff too large: $omitted_list]"
+  fi
+
+  printf '%s' "$result"
+}
+
 # _build_commit_prompt DIFF FILES_SECTION [RETRY_PREAMBLE]
 # Internal helper. Builds and runs the AI prompt; sets AI_MSG.
 _build_commit_prompt() {
   local diff_content="$1"
   local files_section="$2"
   local retry_preamble="${3:-}"
+
+  # When the diff exceeds the budget, include as many complete per-file diffs
+  # as fit (smallest files first) so the AI always sees whole-file context.
+  if [ "${#diff_content}" -gt "$DIFF_MAX_CHARS" ]; then
+    diff_content=$(_compact_diff "$diff_content")
+  fi
 
   local ai_prompt="${retry_preamble}Generate a conventional commit message based on the changes.
 
@@ -339,7 +415,29 @@ generate_pr_content() {
 ## Testing"
   fi
 
-  local ai_prompt="Generate a professional PR title and fill out this template based on the changes:
+  if [[ "$commit_count" -eq 1 ]]; then
+    echo "→ Single commit — skipping AI, using commit message directly"
+    local commit_subject commit_body
+    commit_subject=$(git log -1 --format="%s")
+    commit_body=$(git log -1 --format="%b" | sed '/^[[:space:]]*$/d')
+
+    PR_TITLE="$commit_subject"
+
+    if [[ -n "$commit_body" ]]; then
+      PR_DESCRIPTION="$commit_body"
+    elif [[ "$has_template" = "true" ]]; then
+      PR_DESCRIPTION="$pr_template"
+    else
+      PR_DESCRIPTION="## Summary
+
+## Changes
+
+$(echo "$changed_files" | sed 's/^/- /')
+
+## Testing"
+    fi
+  else
+    local ai_prompt="Generate a professional PR title and fill out this template based on the changes:
 
 Template:
 $pr_template
@@ -357,14 +455,15 @@ $changed_files
 Return: TITLE: <title>
 DESCRIPTION: <filled template>"
 
-  run_ai "$ai_prompt"
+    run_ai "$ai_prompt"
 
-  PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
-  PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
+    PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
+    PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
 
-  if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
-  if [ -z "$PR_DESCRIPTION" ]; then
-    PR_DESCRIPTION="## Summary"$'\n\n'"Branch: $branch"$'\n'"Commits: $commit_count"
+    if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
+    if [ -z "$PR_DESCRIPTION" ]; then
+      PR_DESCRIPTION="## Summary"$'\n\n'"Branch: $branch"$'\n'"Commits: $commit_count"
+    fi
   fi
 
   # Only add "Closes" if no PR template and issue is a GitHub numeric issue

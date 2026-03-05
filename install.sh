@@ -83,10 +83,7 @@ configure_ai_command() {
   task ai:setup
 
   echo
-  printf "  Configure your AI command now? [Y/n] "
-  read -n 1 -r REPLY
-  echo
-  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+  if confirm "  Configure your AI command now?"; then
     ${EDITOR:-nano} ~/.config/task/taskfile.env
     success "AI configuration updated"
   else
@@ -135,6 +132,17 @@ done
 echo; info "Installing gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 
+# Install .zshrc template
+echo; info "ZSH configuration"
+if [ ! -f "$HOME/.zshrc" ]; then
+  cp "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
+  success "Copied .zshrc to ~/.zshrc"
+  info "Add secrets and machine-specific config to ~/.env.local (sourced automatically, never committed)"
+else
+  info "~/.zshrc already exists — skipping"
+  echo -e "  ${DIM}Template: $DOTFILES_DIR/zsh/.zshrc${NC}"
+fi
+
 # Install global Taskfile and libs
 echo; info "Installing global Taskfile"
 mkdir -p ~/.config/task
@@ -145,12 +153,37 @@ update_path_in_shell_rc
 
 echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
+# Homebrew packages
+echo; info "Homebrew packages"
+if command -v brew >/dev/null 2>&1; then
+  # _brew_install FILE LABEL DEFAULT(y|n)
+  # Shows what would be installed, then prompts. DEFAULT controls [Y/n] vs [y/N].
+  _brew_install() {
+    local file=$1 label=$2 default=${3:-y}
+    echo
+    info "Packages to install from $label:"
+    brew bundle check --file="$file" --verbose 2>/dev/null | grep "needs to be installed" | sed 's/→ /  · /' || echo "  (all packages already installed)"
+    echo
+    if [[ "$default" == "y" ]]; then
+      confirm "  Install $label packages?" && brew bundle --file="$file" --no-lock && success "$label packages installed"
+    else
+      confirm_n "  Install $label packages?" && brew bundle --file="$file" --no-lock && success "$label packages installed"
+    fi
+  }
+
+  _brew_install "$DOTFILES_DIR/brew/Brewfile" "core" "y"
+  echo
+  info "Work-specific Brewfiles available in brew/work/ — install as needed:"
+  for f in "$DOTFILES_DIR"/brew/work/*.Brewfile; do
+    echo -e "  ${DIM}brew bundle --file=${f#$DOTFILES_DIR/}${NC}"
+  done
+else
+  warn "Homebrew not found — skipping package install"
+fi
+
 # AI Tools Setup (install agents before configuring which one to use)
 echo; info "AI tools setup"
-printf "  Configure AI tools (MCPs, agents, guidelines)? [Y/n] "
-read -n 1 -r REPLY
-echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then bash "$DOTFILES_DIR/ai/setup.sh"; fi
+if confirm "  Configure AI tools (MCPs, agents, guidelines)?"; then bash "$DOTFILES_DIR/ai/setup.sh"; fi
 
 # Taskfile AI command (configure after agents are installed)
 configure_ai_command

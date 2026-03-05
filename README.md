@@ -15,6 +15,7 @@ The installer will:
 - Symlink scripts to `~/.local/bin/`
 - Symlink zsh configs to `~/.config/zsh/config.d/`
 - Install the global Taskfile to `~/.config/task/`
+- Optionally install Homebrew packages from `brew/Brewfile` and `brew/Brewfile.work`
 - Optionally run `ai/setup.sh` to configure AI tools (MCPs, agents, guidelines)
 - Prompt you to configure your AI command
 
@@ -29,14 +30,50 @@ The installer will:
 > Scripts in `bin/` are auto-discovered by the `aliases` command. To add a description to a new script, make line 2 a comment starting with a capital letter: `# Your description here`.
 
 ### ZSH Configuration
+
+`zsh/.zshrc` is a template copied to `~/.zshrc` on first install. It sets up:
+- oh-my-zsh with `git`, `dotenv`, `macos` plugins
+- Lazy-loading for pyenv, nvm, chruby, SDKMAN
+- Arch-aware Homebrew prefix (Apple Silicon / Intel)
+- Modular config loading from `~/.config/zsh/config.d/`
+- Starship prompt
+
+**Secrets and machine-specific config** go in `~/.env.local` — sourced automatically, never committed:
+
+```bash
+# ~/.env.local
+export JIRA_API_TOKEN=your-token
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+The alias and function files (`zsh/*.zsh`) are symlinked to `~/.config/zsh/config.d/`:
 - Docker and container aliases (`d-*`)
 - Kubernetes aliases (`k-*`)
-- Git short forms (`gs`, `ga`, `gc`, `gp`, `gl`, `gco`, `gb`, `gd`) and development utilities
+- Git short forms (`gs`, `ga`, `gc`, `gp`, `gl`, `gco`, `gb`, `gd`)
 - AWS utilities
 - System utilities and macOS helpers
 
 ### Git Configuration
 - Useful git aliases and settings
+
+### Homebrew Packages
+
+- `brew/Brewfile` — core packages that belong on any personal dev machine (shell tools, language version managers, containers, productivity casks)
+- `brew/Brewfile.work` — work/project-specific packages (AWS, Java, Terraform, Kubernetes, databases, service tooling)
+
+Bootstrap from scratch:
+
+```bash
+brew bundle --file=brew/Brewfile
+brew bundle --file=brew/Brewfile.work  # optional: work packages
+```
+
+Keep Brewfiles current after installing or removing packages:
+
+```bash
+task --global brew:dump           # regenerate Brewfile
+WORK=1 task --global brew:dump    # regenerate Brewfile.work
+```
 
 ### Global Taskfile (AI-Powered Git Automation)
 - `task --global commit` — AI-generated commit messages
@@ -160,6 +197,18 @@ Create `.taskfile/taskfile.env` in a project to use a different AI command for t
 - Docker (optional — for container utilities)
 - AWS CLI (optional — for AWS utilities)
 - AI tool of choice (Claude CLI, Kiro CLI, GitHub Copilot, etc.)
+
+### Manual installs (not managed by Homebrew)
+
+These are installed via their own scripts — run once on a new machine:
+
+```bash
+# oh-my-zsh (required for .zshrc template)
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+
+# SDKMAN (Java version manager)
+curl -s "https://get.sdkman.io" | bash
+```
 
 ## Updating
 

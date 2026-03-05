@@ -20,6 +20,7 @@ brew "zoxide"
 # ---------------------------------------------------------------------------
 # Dev workflow
 # ---------------------------------------------------------------------------
+brew "bats-core"
 brew "gh"
 brew "go-task/tap/go-task"
 brew "otto-nation/tap/otto-stack"

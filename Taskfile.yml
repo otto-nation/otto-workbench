@@ -255,7 +255,7 @@ tasks:
         fi
 
         echo "→ Installing core packages..."
-        brew bundle --file="$BREWFILE" --no-lock
+        brew bundle --file="$BREWFILE"
         echo "✓ Core packages installed"
         echo ""
         echo "→ Work-specific Brewfiles available in brew/work/:"

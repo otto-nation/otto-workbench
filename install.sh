@@ -165,9 +165,9 @@ if command -v brew >/dev/null 2>&1; then
     brew bundle check --file="$file" --verbose 2>/dev/null | grep "needs to be installed" | sed 's/→ /  · /' || echo "  (all packages already installed)"
     echo
     if [[ "$default" == "y" ]]; then
-      confirm "  Install $label packages?" && brew bundle --file="$file" --no-lock && success "$label packages installed"
+      confirm "  Install $label packages?" && brew bundle --file="$file" && success "$label packages installed"
     else
-      confirm_n "  Install $label packages?" && brew bundle --file="$file" --no-lock && success "$label packages installed"
+      confirm_n "  Install $label packages?" && brew bundle --file="$file" && success "$label packages installed"
     fi
   }
 

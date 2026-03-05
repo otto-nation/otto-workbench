@@ -82,13 +82,13 @@ update_path_in_shell_rc() {
   echo -e "  ${GREEN}✓${NC} Updated $shell_rc"
 }
 
-# configure_ai_command — runs `task ai:setup` to create ~/.config/task/taskfile.env, then
+# configure_ai_command — runs `task --global ai:setup` to create ~/.config/task/taskfile.env, then
 # optionally opens that file in $EDITOR so the user can set their AI_COMMAND preference.
 configure_ai_command() {
   command -v task >/dev/null 2>&1 || return
 
   echo; info "Taskfile AI command"
-  task ai:setup
+  task --global ai:setup
 
   echo
   if confirm "  Configure your AI command now?"; then

@@ -1,0 +1,107 @@
+#!/bin/bash
+# Interactive Homebrew package installer.
+# Sourced by install.sh; can also be run standalone: bash brew/setup.sh
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/../lib/ui.sh"
+
+if ! command -v brew >/dev/null 2>&1; then
+  warn "Homebrew not found — skipping package install"
+  exit 0
+fi
+
+# Cache installed formulae and casks once for fast per-package lookups
+_INSTALLED_FORMULAE=$(brew list --formula 2>/dev/null)
+_INSTALLED_CASKS=$(brew list --cask 2>/dev/null)
+
+# _brew_pkg_url TYPE NAME
+# Generates a Homebrew URL. Tap packages link to the tap on GitHub.
+_brew_pkg_url() {
+  local type="$1" name="$2"
+  if [[ "$name" == *"/"* ]]; then
+    echo "https://github.com/$(echo "$name" | cut -d'/' -f1)/$(echo "$name" | cut -d'/' -f2)"
+  elif [[ "$type" == "cask" ]]; then
+    echo "https://formulae.brew.sh/cask/$name"
+  else
+    echo "https://formulae.brew.sh/formula/$name"
+  fi
+}
+
+# _brew_is_installed TYPE SHORT_NAME
+_brew_is_installed() {
+  local type="$1" name="$2"
+  if [[ "$type" == "cask" ]]; then
+    echo "$_INSTALLED_CASKS" | grep -qx "$name"
+  else
+    echo "$_INSTALLED_FORMULAE" | grep -qx "$name"
+  fi
+}
+
+# _brew_show_packages FILE
+# Prints each package with install status (✓/+) and URL.
+_brew_show_packages() {
+  local file="$1"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
+    local type="${BASH_REMATCH[1]}" full_name="${BASH_REMATCH[2]}"
+    local short_name="${full_name##*/}"
+    local url
+    url=$(_brew_pkg_url "$type" "$full_name")
+    if _brew_is_installed "$type" "$short_name"; then
+      echo -e "  ${DIM}✓ $(printf '%-28s' "$short_name") $url${NC}"
+    else
+      echo -e "  ${GREEN}+${NC} $(printf '%-28s' "$short_name") ${DIM}$url${NC}"
+    fi
+  done < "$file"
+}
+
+# _brew_install_file FILE LABEL
+# Shows packages with status + URL, prompts, then installs.
+_brew_install_file() {
+  local file="$1" label="$2"
+  echo
+  info "$label:"
+  _brew_show_packages "$file"
+  echo
+  confirm "  Install $label?" && brew bundle --file="$file" && success "$label installed"
+}
+
+# _brew_select_work_stacks WORK_DIR
+# Shows available stacks with their packages, lets user pick by number.
+_brew_select_work_stacks() {
+  local work_dir="$1"
+  local stack_files=() stack_names=()
+
+  for f in "$work_dir"/*.Brewfile; do
+    [[ -f "$f" ]] || continue
+    stack_files+=("$f")
+    stack_names+=("$(basename "$f" .Brewfile)")
+  done
+
+  [[ ${#stack_files[@]} -eq 0 ]] && return
+
+  echo; info "Work stacks (brew/work/):"
+  for i in "${!stack_names[@]}"; do
+    local pkgs
+    pkgs=$(grep -E '^(brew|cask) ' "${stack_files[$i]}" \
+      | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' | paste -sd ', ' -)
+    printf "  [%d] %-15s ${DIM}%s${NC}\n" "$((i+1))" "${stack_names[$i]}" "$pkgs"
+  done
+
+  echo
+  printf "  Select stacks to install (e.g. 1 3) or Enter to skip: "
+  read -r selection
+  [[ -z "$selection" ]] && return
+
+  for num in $selection; do
+    local idx=$((num - 1))
+    if [[ $idx -ge 0 && $idx -lt ${#stack_files[@]} ]]; then
+      _brew_install_file "${stack_files[$idx]}" "${stack_names[$idx]} stack"
+    fi
+  done
+}
+
+_brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
+_brew_select_work_stacks "$SCRIPT_DIR/work"

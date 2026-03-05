@@ -1,5 +1,17 @@
 #!/bin/bash
-# Analyze memory usage and generate report
+# macOS memory analysis report.
+#
+# Prints a formatted report with:
+#   • System information (model, installed RAM)
+#   • Memory pressure status (normal / warning / critical)
+#   • Memory page breakdown (vm_stat categories converted to MB)
+#   • Swap usage (total / used / free) with a warning above 10 GB used
+#   • Top 10 processes by memory consumption
+#   • All processes using more than 500 MB
+#   • Memory totals per user
+#   • Summary with actionable recommendations based on pressure + swap state
+#
+# macOS-only — requires: system_profiler, memory_pressure, vm_stat, sysctl, bc, perl
 
 set -e
 
@@ -42,8 +54,10 @@ echo ""
 echo -e "${BOLD}${BLUE}━━━ Swap Usage ━━━${NC}"
 swap_info=$(sysctl vm.swapusage | sed 's/vm.swapusage: //')
 echo "  $swap_info"
+# sysctl outputs in MB; divide by 1024 for a human-readable GB figure in the warning
 swap_used=$(echo "$swap_info" | grep -oE 'used = [0-9.]+' | awk '{print $3}')
 swap_used_gb=$(echo "scale=1; $swap_used / 1024" | bc)
+# 10240 MB = 10 GB threshold — above this, swap is likely causing noticeable slowdowns
 if (( $(echo "$swap_used > 10240" | bc -l) )); then
   warn "High swap usage: ${swap_used_gb}GB used"
 fi
@@ -52,6 +66,7 @@ echo ""
 # Top Memory Consumers
 echo -e "${BOLD}${BLUE}━━━ Top 10 Memory Consuming Processes ━━━${NC}"
 printf "  ${BOLD}%-8s %6s %10s  %-50s${NC}\n" "PID" "%MEM" "MEMORY" "APPLICATION"
+# sort -nrk 4: numeric, reverse, by column 4 (%MEM in ps aux output); skip the header row (head -11 | tail -10)
 ps aux | sort -nrk 4 | head -11 | tail -10 | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
@@ -82,11 +97,14 @@ echo ""
 # Memory Hogs (>500MB)
 echo -e "${BOLD}${BLUE}━━━ Processes Using >500MB ━━━${NC}"
 printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
+# $6 is RSS (resident set size) in KB; 500000 KB ≈ 488 MB
 # shellcheck disable=SC2034  # user,cpu,vsz,tt,stat,started,time unused — read to consume positional fields
 ps aux | awk 'NR>1 && $6 > 500000' | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
+  # App name extraction — same pattern as the Top 10 section above;
+  # repeated here because each section runs in its own pipeline subshell and cannot share variables
   if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
     app="IntelliJ IDEA"
     proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)

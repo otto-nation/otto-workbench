@@ -20,6 +20,8 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DOTFILES_DIR/lib/ui.sh"
 
+# prompt_overwrite FILE — warns that FILE already exists and asks whether to overwrite it.
+# Offers an optional backup step before overwriting. Returns 1 (skip) if the user declines.
 prompt_overwrite() {
   local file=$1
   warn "$file already exists"
@@ -37,6 +39,8 @@ prompt_overwrite() {
   fi
 }
 
+# install_task — prompts to install the go-task runner if it is not already present.
+# Uses Homebrew on macOS, apt on Debian/Ubuntu, or prints a manual install URL otherwise.
 install_task() {
   warn "Task (task runner) is not installed"
   printf "  Install it? [Y/n] "
@@ -59,6 +63,8 @@ install_task() {
   fi
 }
 
+# update_path_in_shell_rc — appends ~/.local/bin to PATH in the user's shell rc file
+# (~/.zshrc or ~/.bashrc) if the entry is not already present. No-op on unsupported shells.
 update_path_in_shell_rc() {
   local shell_rc="" shell_name
   shell_name=$(basename "$SHELL")
@@ -76,6 +82,8 @@ update_path_in_shell_rc() {
   echo -e "  ${GREEN}✓${NC} Updated $shell_rc"
 }
 
+# configure_ai_command — runs `task ai:setup` to create ~/.config/task/taskfile.env, then
+# optionally opens that file in $EDITOR so the user can set their AI_COMMAND preference.
 configure_ai_command() {
   command -v task >/dev/null 2>&1 || return
 
@@ -91,6 +99,9 @@ configure_ai_command() {
   fi
 }
 
+# install_symlink SOURCE TARGET — creates or updates a symlink at TARGET pointing to SOURCE.
+# Real files at TARGET trigger prompt_overwrite; existing symlinks are silently replaced
+# (they were almost certainly left by a previous run of this script).
 install_symlink() {
   local source=$1
   local target=$2
@@ -154,32 +165,7 @@ update_path_in_shell_rc
 echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
 # Homebrew packages
-echo; info "Homebrew packages"
-if command -v brew >/dev/null 2>&1; then
-  # _brew_install FILE LABEL DEFAULT(y|n)
-  # Shows what would be installed, then prompts. DEFAULT controls [Y/n] vs [y/N].
-  _brew_install() {
-    local file=$1 label=$2 default=${3:-y}
-    echo
-    info "Packages to install from $label:"
-    brew bundle check --file="$file" --verbose 2>/dev/null | grep "needs to be installed" | sed 's/→ /  · /' || echo "  (all packages already installed)"
-    echo
-    if [[ "$default" == "y" ]]; then
-      confirm "  Install $label packages?" && brew bundle --file="$file" && success "$label packages installed"
-    else
-      confirm_n "  Install $label packages?" && brew bundle --file="$file" && success "$label packages installed"
-    fi
-  }
-
-  _brew_install "$DOTFILES_DIR/brew/Brewfile" "core" "y"
-  echo
-  info "Work-specific Brewfiles available in brew/work/ — install as needed:"
-  for f in "$DOTFILES_DIR"/brew/work/*.Brewfile; do
-    echo -e "  ${DIM}brew bundle --file=${f#$DOTFILES_DIR/}${NC}"
-  done
-else
-  warn "Homebrew not found — skipping package install"
-fi
+bash "$DOTFILES_DIR/brew/setup.sh"
 
 # AI Tools Setup (install agents before configuring which one to use)
 echo; info "AI tools setup"

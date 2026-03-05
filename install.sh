@@ -173,7 +173,10 @@ if command -v brew >/dev/null 2>&1; then
 
   _brew_install "$DOTFILES_DIR/brew/Brewfile" "core" "y"
   echo
-  _brew_install "$DOTFILES_DIR/brew/Brewfile.work" "work" "n"
+  info "Work-specific Brewfiles available in brew/work/ — install as needed:"
+  for f in "$DOTFILES_DIR"/brew/work/*.Brewfile; do
+    echo -e "  ${DIM}brew bundle --file=${f#$DOTFILES_DIR/}${NC}"
+  done
 else
   warn "Homebrew not found — skipping package install"
 fi

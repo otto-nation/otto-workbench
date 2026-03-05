@@ -243,7 +243,7 @@ tasks:
   # HOMEBREW
   # ============================================================================
   brew:install:
-    desc: "Install Homebrew packages from Brewfile (set WORK=1 to include Brewfile.work)"
+    desc: "Install core Homebrew packages from brew/Brewfile"
     silent: true
     cmds:
       - |
@@ -257,31 +257,19 @@ tasks:
         echo "→ Installing core packages..."
         brew bundle --file="$BREWFILE" --no-lock
         echo "✓ Core packages installed"
-
-        if [ "${WORK:-0}" = "1" ]; then
-          BREWFILE_WORK="{{.TASKFILE_DIR}}/brew/Brewfile.work"
-          if [ ! -f "$BREWFILE_WORK" ]; then
-            echo "✗ Brewfile.work not found: $BREWFILE_WORK"
-            exit 1
-          fi
-          echo "→ Installing work packages..."
-          brew bundle --file="$BREWFILE_WORK" --no-lock
-          echo "✓ Work packages installed"
-        fi
+        echo ""
+        echo "→ Work-specific Brewfiles available in brew/work/:"
+        for f in "{{.TASKFILE_DIR}}"/brew/work/*.Brewfile; do
+          echo "   brew bundle --file=${f#{{.TASKFILE_DIR}}/}"
+        done
 
   brew:dump:
-    desc: "Regenerate Brewfile(s) from current state (set WORK=1 to target Brewfile.work)"
+    desc: "Regenerate brew/Brewfile from current state"
     silent: true
     cmds:
       - |
-        if [ "${WORK:-0}" = "1" ]; then
-          TARGET="{{.TASKFILE_DIR}}/brew/Brewfile.work"
-          echo "→ Updating Brewfile.work from current state..."
-        else
-          TARGET="{{.TASKFILE_DIR}}/brew/Brewfile"
-          echo "→ Updating Brewfile from current state..."
-        fi
-
+        TARGET="{{.TASKFILE_DIR}}/brew/Brewfile"
+        echo "→ Updating Brewfile from current state..."
         brew bundle dump --force --describe --file="$TARGET"
         echo "✓ Saved to $TARGET"
         echo "→ Review changes: git diff $TARGET"
@@ -321,7 +309,7 @@ tasks:
         echo "   pr:update         Update existing PR description"
         echo ""
         echo "Homebrew:"
-        echo "   brew:install      Install packages from Brewfile (WORK=1 includes Brewfile.work)"
-        echo "   brew:dump         Regenerate Brewfile from current state (WORK=1 targets Brewfile.work)"
+        echo "   brew:install      Install core packages from brew/Brewfile"
+        echo "   brew:dump         Regenerate brew/Brewfile from current state"
         echo ""
         echo "For all tasks: task --list"

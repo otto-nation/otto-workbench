@@ -22,13 +22,23 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
   exit 0
 fi
 
+# _theme_installed NAME — returns 0 if NAME already exists in iTerm2's Color Presets plist.
+_theme_installed() {
+  local name="$1"
+  defaults read com.googlecode.iterm2 "Custom Color Presets" 2>/dev/null | grep -q "\"$name\""
+}
+
 # _import_theme FILE — registers a .itermcolors file as an iTerm2 color preset.
 # `open` hands the file to iTerm2 via its registered file-type handler; iTerm2
-# adds it to the Color Presets list without opening a new window.
+# adds it to the Color Presets list without opening a new window. No-op if already installed.
 _import_theme() {
   local file="$1"
   local name
   name=$(basename "$file" .itermcolors)
+  if _theme_installed "$name"; then
+    echo -e "  ${DIM}✓ $name (already installed)${NC}"
+    return
+  fi
   if open "$file" 2>/dev/null; then
     success "Imported color preset: $name"
   else

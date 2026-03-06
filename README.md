@@ -1,6 +1,6 @@
 # Workbench
 
-Personal development environment with shell configuration, utilities, and AI-powered git automation.
+Personal development environment — shell config, utilities, and AI-powered git automation.
 
 ## Quick Start
 
@@ -8,67 +8,47 @@ Personal development environment with shell configuration, utilities, and AI-pow
 git clone https://github.com/otto-nation/otto-workbench ~/workbench
 cd ~/workbench
 ./install.sh
+exec zsh
 ```
 
-The installer will:
-- Install [Task](https://taskfile.dev) if needed
-- Symlink scripts to `~/.local/bin/`
-- Symlink zsh configs to `~/.config/zsh/config.d/`
-- Install the global Taskfile to `~/.config/task/`
-- Optionally install Homebrew packages from `brew/Brewfile` (and `brew/work/` for work-specific stacks)
-- Optionally run `ai/setup.sh` to configure AI tools (MCPs, agents, guidelines)
-- Prompt you to configure your AI command
+The installer symlinks scripts, zsh configs, and the global Taskfile, optionally installs Homebrew packages, and prompts to configure AI tools.
 
 ## What's Included
 
-### Custom Scripts
-- `aliases` - Display all configured aliases and functions
-- `cleanup-testcontainers` - Clean up Docker testcontainers
-- `get-secret` - Interactive AWS Secrets Manager retrieval
-- `mem-analyze` - System memory analysis report
+### Scripts (`bin/`)
 
-> Scripts in `bin/` are auto-discovered by the `aliases` command. To add a description to a new script, make line 2 a comment starting with a capital letter: `# Your description here`.
+| Script | Description |
+|--------|-------------|
+| `aliases` | Display all configured aliases and functions |
+| `cleanup-testcontainers` | Clean up Docker testcontainers |
+| `get-secret` | Interactive AWS Secrets Manager retrieval |
+| `mem-analyze` | System memory analysis report |
+
+Add a description to any new script by making line 2 a comment starting with a capital letter.
 
 ### ZSH Configuration
 
-`zsh/.zshrc` is a template copied to `~/.zshrc` on first install. It sets up:
-- oh-my-zsh with `git`, `dotenv`, `macos` plugins
-- Lazy-loading for pyenv, nvm, SDKMAN
-- Arch-aware Homebrew prefix (Apple Silicon / Intel)
-- Modular config loading from `~/.config/zsh/config.d/`
-- Starship prompt
+`zsh/.zshrc` is copied to `~/.zshrc` on first install. It sets up oh-my-zsh, lazy-loading for pyenv/nvm/SDKMAN, arch-aware Homebrew prefix, and modular config loading from `~/.config/zsh/config.d/`.
 
 **Secrets and machine-specific config** go in `~/.env.local` — sourced automatically, never committed:
 
 ```bash
-# ~/.env.local
 export JIRA_API_TOKEN=your-token
-export AWS_DEFAULT_REGION=us-east-1
+export CONTEXT7_API_KEY=ctx7sk-your-key
 ```
 
-The alias and function files (`zsh/*.zsh`) are symlinked to `~/.config/zsh/config.d/`:
-- Docker and container aliases (`d-*`)
-- Kubernetes aliases (`k-*`)
-- Git short forms (`gs`, `ga`, `gc`, `gp`, `gl`, `gco`, `gb`, `gd`)
-- AWS utilities
-- System utilities and macOS helpers
-
 ### Git Configuration
-- Useful git aliases and settings
+
+Useful aliases and settings in `git/.gitconfig`.
 
 ### Homebrew Packages
 
-- `brew/Brewfile` — core packages for any personal dev machine (shell tools, language version managers, containers, productivity casks)
-- `brew/work/` — opt-in per stack: `aws.Brewfile`, `java.Brewfile`, `terraform.Brewfile`, `kubernetes.Brewfile`, `jira.Brewfile`
-
-Bootstrap from scratch:
+- `brew/Brewfile` — core packages for any personal dev machine
+- `brew/work/` — opt-in per stack: `aws`, `java`, `terraform`, `kubernetes`, `jira`
 
 ```bash
 brew bundle --file=brew/Brewfile
-
-# Add work stacks as needed:
-brew bundle --file=brew/work/aws.Brewfile
-brew bundle --file=brew/work/kubernetes.Brewfile
+brew bundle --file=brew/work/aws.Brewfile  # add work stacks as needed
 ```
 
 Keep the core Brewfile current after installing or removing packages:
@@ -77,135 +57,65 @@ Keep the core Brewfile current after installing or removing packages:
 task --global brew:dump
 ```
 
-### Global Taskfile (AI-Powered Git Automation)
-- `task --global commit` — AI-generated commit messages
-- `task --global commit:reword` — AI reword of a commit (default: HEAD; or pass `-- SHA`)
-- `task --global pr:content` — Preview AI-generated PR title and description
-- `task --global pr:create` — AI-generated pull requests
-- `task --global pr:update` — Update PR descriptions
-- `task --global ai:setup` — Configure AI command
-
-## Usage
-
-After installation, reload your shell:
+### Global Taskfile — AI Git Automation
 
 ```bash
-exec zsh
+task --global commit           # AI-generated commit message
+task --global commit:reword    # reword HEAD (or pass -- SHA)
+task --global pr:content       # preview AI-generated PR title + body
+task --global pr:create        # create PR (auto-pushes if needed)
+task --global pr:update        # update existing PR description
+task --global ai:setup         # configure AI command
 ```
 
-### Discover what's available
-
-```bash
-aliases                  # all custom shell aliases and functions
-task --global help       # all AI git automation tasks
-```
-
-### AI-powered git tasks
-
-`--global` tells Task to use the globally installed Taskfile from `~/.config/task/` rather than a local project one.
-
-```bash
-task --global commit
-task --global commit:reword            # amend HEAD
-task --global commit:reword -- abc123  # reword specified commit
-task --global pr:content               # preview PR title + description
-task --global pr:create                # create PR (auto-pushes if needed)
-task --global pr:update                # update existing PR description
-```
+Use `--global` to run tasks from `~/.config/task/` rather than a local project Taskfile.
 
 ## AI Tools Setup
-
-The `ai/setup.sh` script installs MCP servers for Claude Code, deploys shared AI coding guidelines, and configures AI agent profiles. It can be run standalone or is prompted automatically at the end of `install.sh`.
 
 ```bash
 bash ai/setup.sh
 ```
 
-At startup it asks which tools to configure:
-
-```
-Which AI tools do you want to set up?
-  [1] Claude Code
-  [2] Kiro
-```
-
-Every step is individually confirmable — answer `n` to skip any step.
+Prompts which tools to configure (Claude Code, Kiro), then runs each step with individual confirmation. Safe to re-run.
 
 ### What gets installed
 
 **Claude Code:**
-- MCP: Serena — code intelligence and semantic navigation
-- MCP: Sequential Thinking — structured multi-step reasoning
-- MCP: Context7 — up-to-date library documentation (requires Upstash API key)
-- `~/.claude/CLAUDE.md` — AI coding guidelines (backup / append / skip if file exists)
-- `~/.claude/skills/` — skill definitions symlinked from `ai/claude/skills/`
-- `~/.claude/agents/ci-cd` — commit message and PR generation agent
+- `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
+- `~/.claude/CLAUDE.md` — coding guidelines
+- `~/.claude/skills/` — skill definitions
+- `~/.claude/agents/ci-cd` — commit and PR agent
+- MCP servers: Serena, Sequential Thinking, Context7
 
 **Kiro:**
-- `~/.kiro/steering/general.md` and `language-specific.md` — AI coding guidelines
-- `~/.kiro/agents/default.json` and `ci-cd.json` — agent configs with correct `uvx` path
+- `~/.kiro/steering/` — coding guidelines
+- `~/.kiro/agents/default.json` and `ci-cd.json` — agent configs with Serena, Sequential Thinking, and Context7
 
-**Both selected:** the guidelines step runs once and installs to all selected targets.
+**Context7** reads `CONTEXT7_API_KEY` from the environment at runtime — add it to `~/.env.local`.
 
-### Verify after install
+### AI command configuration
 
-```bash
-# Claude Code
-claude mcp list          # → serena, sequential-thinking, context7
-cat ~/.claude/CLAUDE.md  # → guidelines content
-
-# Kiro
-ls ~/.kiro/steering/     # → general.md, language-specific.md
-ls ~/.kiro/agents/       # → default.json, ci-cd.json
-cat ~/.kiro/agents/default.json | grep command  # → actual uvx path
-```
-
-### Adding a new AI tool
-
-1. Add an entry to the tool selector in `select_tools()` (e.g., `[3] Copilot`)
-2. Add a `tool_selected "copilot"` block in the main section that calls `register_step` for each step
-3. Implement the step functions following the existing patterns
-
-## AI Configuration
-
-The global Taskfile supports multiple AI tools. Configure your preference after running `ai/setup.sh` (which creates the config file):
+After setup, configure which AI tool the global Taskfile uses:
 
 ```bash
-# Edit the config file
-nano ~/.config/task/taskfile.env
-
-# Examples:
+# ~/.config/task/taskfile.env
 AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config
 AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
-AI_COMMAND=copilot --agent ci-cd -p
 ```
 
-Projects can override with local `.taskfile/taskfile.env` if needed.
-
-## Customization
-
-### Per-Project Taskfile
-Create a local `Taskfile.yml` in your project to add project-specific tasks or override global ones.
-
-### Local AI Config
-Create `.taskfile/taskfile.env` in a project to use a different AI command for that project.
+Override per-project with `.taskfile/taskfile.env` in a project root.
 
 ## Requirements
 
-- macOS (some utilities are macOS-specific)
-- ZSH
-- [Task](https://taskfile.dev) (auto-installed by installer)
-- [gh](https://cli.github.com) — GitHub CLI (for `pr:create` and `pr:update`)
-- Docker (optional — for container utilities)
-- AWS CLI (optional — for AWS utilities)
-- AI tool of choice (Claude CLI, Kiro CLI, GitHub Copilot, etc.)
+- macOS, ZSH
+- [Task](https://taskfile.dev) — auto-installed by `install.sh`
+- [gh](https://cli.github.com) — for `pr:create` and `pr:update`
+- Docker, AWS CLI — optional, for container and AWS utilities
 
-### Manual installs (not managed by Homebrew)
-
-These are installed via their own scripts — run once on a new machine:
+**Manual installs** (run once on a new machine):
 
 ```bash
-# oh-my-zsh (required for .zshrc template)
+# oh-my-zsh
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
 
 # SDKMAN (Java version manager)
@@ -214,20 +124,4 @@ curl -s "https://get.sdkman.io" | bash
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, dev dependencies, testing, and coverage.
-
-## Updating
-
-```bash
-cd ~/workbench
-git pull
-./install.sh
-```
-
-## File Locations
-
-- Scripts: `~/.local/bin/`
-- ZSH configs: `~/.config/zsh/config.d/`
-- Git config: `~/.gitconfig`
-- Global Taskfile: `~/.config/task/Taskfile.yml`
-- AI config: `~/.config/task/taskfile.env`
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, testing, and code conventions.

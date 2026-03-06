@@ -1,0 +1,27 @@
+{
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "mcp__serena__*",
+      "mcp__sequential-thinking__*",
+      "mcp__context7__*",
+      "mcp__datadog__*",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(head:*)",
+      "Bash(command:*)",
+      "Bash(task:*)",
+      "Bash(gh:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:gist.github.com)"
+    ],
+    "deny": [
+      "Bash(git reset:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)"
+    ]
+  }
+}

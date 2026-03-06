@@ -12,6 +12,19 @@
         "False"
       ],
       "disabled": false
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "disabled": false
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+      },
+      "disabled": false
     }
   },
   "tools": ["*"],
@@ -20,6 +33,11 @@
     "shell",
 
     "@git/git_status",
+
+    "@sequential-thinking/sequentialthinking",
+
+    "@context7/resolve-library-id",
+    "@context7/query-docs",
 
     "@serena/activate_project",
     "@serena/check_onboarding_performed",

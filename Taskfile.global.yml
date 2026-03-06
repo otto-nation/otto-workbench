@@ -166,13 +166,13 @@ tasks:
         fi
 
   pr:content:
-    desc: "Preview AI-generated PR title and description without creating or updating a PR"
+    desc: "Preview AI-generated PR title and description (pass -- --no-issue to skip issue prompts)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_pr_context || exit 1
+        load_pr "{{.CLI_ARGS}}" || exit 1
 
         echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
@@ -185,13 +185,13 @@ tasks:
         echo "$PR_DESCRIPTION"
 
   pr:create:
-    desc: "Create AI-powered pull request with smart title and description"
+    desc: "Create AI-powered pull request with smart title and description (pass -- --no-issue to skip issue prompts)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_pr_context || exit 1
+        load_pr "{{.CLI_ARGS}}" || exit 1
         push_branch "$BRANCH" || exit 1
 
         echo "→ Analyzing changes: $BRANCH"
@@ -212,13 +212,13 @@ tasks:
         fi
 
   pr:update:
-    desc: "Update current PR description with AI-generated content"
+    desc: "Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
-        load_pr_context || exit 1
+        load_pr "{{.CLI_ARGS}}" || exit 1
 
         echo "→ Checking for existing PR..."
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
@@ -307,6 +307,7 @@ tasks:
         echo "   pr:content        Preview AI-generated PR title and description"
         echo "   pr:create         AI-generated PR (auto-pushes if needed)"
         echo "   pr:update         Update existing PR description"
+        echo "   Pass -- --no-issue to any pr:* task to skip issue prompts"
         echo ""
         echo "Homebrew:"
         echo "   brew:install      Install core packages from brew/Brewfile"

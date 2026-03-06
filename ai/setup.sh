@@ -6,41 +6,39 @@
 #
 # What it does:
 #   1. Prompts you to select which AI tools to configure (Claude Code, Kiro)
-#   2. Downloads and installs AI coding guidelines (CLAUDE.md / Kiro steering)
-#   3. Registers MCP servers for Claude Code (Serena, Sequential Thinking, Context7)
-#   4. Installs Claude Code skills and agent definitions from ai/claude/
-#   5. Downloads and installs Kiro agent configs (default + ci-cd)
+#   2. Installs AI coding guidelines (CLAUDE.md / Kiro steering)
+#   3. Syncs Claude Code settings (~/.claude/settings.json) from repo template
+#   4. Registers MCP servers (Serena, Sequential Thinking, Context7)
+#   5. Installs Claude Code skills and agents from ai/claude/
+#   6. Installs Kiro agent configs from ai/kiro/
 #
 # Each step is individually confirmable — skip anything you don't need.
-# Re-running is safe: existing symlinks are updated; real files prompt before overwrite.
+# Re-running is safe: symlinks are updated silently; real files prompt before overwrite.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib/ui.sh"
+. "$SCRIPT_DIR/claude/steps.sh"
+. "$SCRIPT_DIR/kiro/steps.sh"
 
-# ─── Prompt helpers ───────────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
-# prompt_secret "label" var — hidden read into named variable
+# prompt_secret LABEL VAR — hidden read into a named variable.
 prompt_secret() {
-  local label=$1
-  local var=$2
-  local value
+  local label=$1 var=$2 value
   read -rsp "${label}: " value
   echo
   printf -v "$var" '%s' "$value"
 }
 
 # ─── Tool selection ───────────────────────────────────────────────────────────
+
 SELECTED_TOOLS=()
 
 tool_selected() {
-  # Bash arrays have no built-in membership test; iterate to check for a match
-  local tool=$1
   local t
-  for t in "${SELECTED_TOOLS[@]}"; do
-    [[ "$t" == "$tool" ]] && return 0
-  done
+  for t in "${SELECTED_TOOLS[@]}"; do [[ "$t" == "$1" ]] && return 0; done
   return 1
 }
 
@@ -57,317 +55,32 @@ select_tools() {
   for num in $selection; do
     case $num in
       1) SELECTED_TOOLS+=("claude") ;;
-      2) SELECTED_TOOLS+=("kiro") ;;
+      2) SELECTED_TOOLS+=("kiro")   ;;
       *) warn "Unknown option: $num — ignored" ;;
     esac
   done
 
-  if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]]; then
-    err "No tools selected. Exiting."
-    exit 1
-  fi
+  [[ ${#SELECTED_TOOLS[@]} -eq 0 ]] && { err "No tools selected. Exiting."; exit 1; }
 
   echo -ne "Setting up: "
   local t
-  for t in "${SELECTED_TOOLS[@]}"; do
-    echo -ne "${BOLD}${t}${NC}  "
-  done
+  for t in "${SELECTED_TOOLS[@]}"; do echo -ne "${BOLD}${t}${NC}  "; done
   echo
-}
-
-# ─── Step registration ────────────────────────────────────────────────────────
-STEPS=()
-
-register_step() {
-  local name=$1
-  local fn=$2
-  STEPS+=("${name}|${fn}")
-}
-
-# _mcp_is_registered NAME — returns 0 if NAME is already in the user-scope MCP list.
-_mcp_is_registered() {
-  local name="$1"
-  claude mcp list 2>/dev/null | grep -q "^${name}"
-}
-
-# ─── Step: MCP — Serena ───────────────────────────────────────────────────────
-step_mcp_serena() {
-  if _mcp_is_registered "serena"; then
-    success "Serena MCP already registered"
-    return
-  fi
-  info "Installing Serena MCP server (user scope)"
-  claude mcp add serena --scope user -- \
-    uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
-  success "Serena MCP installed"
-}
-
-# ─── Step: MCP — Sequential Thinking ─────────────────────────────────────────
-step_mcp_sequential_thinking() {
-  if _mcp_is_registered "sequential-thinking"; then
-    success "Sequential Thinking MCP already registered"
-    return
-  fi
-  info "Installing Sequential Thinking MCP server (user scope)"
-  claude mcp add sequential-thinking --scope user -- \
-    npx -y @modelcontextprotocol/server-sequential-thinking
-  success "Sequential Thinking MCP installed"
-}
-
-# ─── Step: MCP — Context7 ────────────────────────────────────────────────────
-step_mcp_context7() {
-  if _mcp_is_registered "context7"; then
-    success "Context7 MCP already registered"
-    return
-  fi
-  info "Installing Context7 MCP server (user scope)"
-  echo
-  warn "Context7 requires an Upstash API key (leave blank to skip)."
-  local api_key=""
-  prompt_secret "Upstash API key" api_key
-
-  if [[ -z "$api_key" ]]; then
-    skip
-    return
-  fi
-
-  claude mcp add --scope user context7 -- \
-    npx -y @upstash/context7-mcp --api-key "$api_key"
-  success "Context7 MCP installed"
-}
-
-# ─── Step: Guidelines (shared — installs to all selected tools) ───────────────
-step_guidelines() {
-  info "Installing AI coding guidelines"
-
-  local general_file="$SCRIPT_DIR/guidelines/general.md"
-  local lang_file="$SCRIPT_DIR/guidelines/language-specific.md"
-
-  local general_content lang_content
-  general_content=$(cat "$general_file") || { err "Missing: $general_file"; return 1; }
-  lang_content=$(cat "$lang_file") || { err "Missing: $lang_file"; return 1; }
-
-  if tool_selected "claude"; then
-    _install_claude_guidelines "$general_content" "$lang_content"
-  fi
-
-  if tool_selected "kiro"; then
-    _install_kiro_guidelines "$general_content" "$lang_content"
-  fi
-}
-
-_install_claude_guidelines() {
-  local general_content=$1
-  local lang_content=$2
-  local target="$HOME/.claude/CLAUDE.md"
-  local combined="${general_content}
-
----
-
-${lang_content}"
-
-  mkdir -p "$HOME/.claude"
-
-  if [[ -f "$target" ]]; then
-    echo
-    warn "$HOME/.claude/CLAUDE.md already exists. What would you like to do?"
-    echo "  [1] Backup and overwrite  (~/.claude/CLAUDE.md.backup)"
-    echo "  [2] Append to existing"
-    echo "  [3] Skip"
-    echo
-    read -r -n 1 -p "  Choice [1/2/3]: " choice
-    echo
-
-    case $choice in
-      1)
-        cp "$target" "${target}.backup"
-        success "Backed up to ~/.claude/CLAUDE.md.backup"
-        printf '%s\n' "$combined" > "$target"
-        success "Guidelines written to ~/.claude/CLAUDE.md"
-        ;;
-      2)
-        printf '\n\n---\n\n%s\n' "$combined" >> "$target"
-        success "Guidelines appended to ~/.claude/CLAUDE.md"
-        ;;
-      *)
-        skip
-        ;;
-    esac
-  else
-    printf '%s\n' "$combined" > "$target"
-    success "Guidelines written to ~/.claude/CLAUDE.md"
-  fi
-}
-
-_install_kiro_guidelines() {
-  local general_content=$1
-  local lang_content=$2
-  local steering_dir="$HOME/.kiro/steering"
-
-  mkdir -p "$steering_dir"
-  _install_file "$steering_dir/general.md" "$general_content" "general.md"
-  _install_file "$steering_dir/language-specific.md" "$lang_content" "language-specific.md"
-}
-
-_install_file() {
-  local target=$1
-  local content=$2
-  local label=$3
-
-  if [[ -f "$target" ]]; then
-    if confirm_n "$target already exists. Overwrite?"; then
-      printf '%s\n' "$content" > "$target"
-      success "Wrote $label"
-    else
-      skip
-    fi
-  else
-    printf '%s\n' "$content" > "$target"
-    success "Wrote $label"
-  fi
-}
-
-# _install_claude_symlink SOURCE TARGET LABEL
-# Installs SOURCE as a symlink at TARGET, printing LABEL in status output.
-# Existing symlinks are updated silently. Existing real files/dirs prompt before overwrite.
-_install_claude_symlink() {
-  local source=$1
-  local target=$2
-  local label=$3
-
-  if [[ -L "$target" ]]; then
-    ln -sf "$source" "$target"
-    success "$label (updated symlink)"
-  elif [[ -e "$target" ]]; then
-    if confirm_n "$target already exists. Overwrite with symlink?"; then
-      rm -rf "$target"
-      ln -sf "$source" "$target"
-      success "$label"
-    else
-      skip
-    fi
-  else
-    ln -sf "$source" "$target"
-    success "$label"
-  fi
-}
-
-# ─── Step: Claude Code skills ────────────────────────────────────────────────
-step_claude_skills() {
-  local skills_src="$SCRIPT_DIR/claude/skills"
-  local skills_dst="$HOME/.claude/skills"
-
-  if [[ ! -d "$skills_src" ]]; then
-    warn "No skills found in $skills_src — skipping"
-    return
-  fi
-
-  mkdir -p "$skills_dst"
-  info "Installing Claude Code skills to ~/.claude/skills/"
-
-  local skill_dir skill
-  for skill_dir in "$skills_src"/*/; do
-    skill=$(basename "$skill_dir")
-    _install_claude_symlink "$skill_dir" "$skills_dst/$skill" "$skill"
-  done
-}
-
-# ─── Step: Claude Code agents ────────────────────────────────────────────────
-step_claude_agents() {
-  local agents_src="$SCRIPT_DIR/claude/agents"
-  local agents_dst="$HOME/.claude/agents"
-
-  if [[ ! -d "$agents_src" ]]; then
-    warn "No agent definitions found in $agents_src — skipping"
-    return
-  fi
-
-  mkdir -p "$agents_dst"
-  info "Installing Claude Code agents to ~/.claude/agents/"
-
-  local agent_file agent_name
-  for agent_file in "$agents_src"/*.md; do
-    [[ -e "$agent_file" ]] || continue
-    agent_name=$(basename "$agent_file")
-    _install_claude_symlink "$agent_file" "$agents_dst/$agent_name" "${agent_name%.md}"
-  done
-}
-
-# ─── Step: Claude Code agent info ────────────────────────────────────────────
-step_claude_agent_info() {
-  echo
-  info "Claude Code configuration summary"
-  echo
-
-  echo -e "  ${CYAN}Agents${NC} ${DIM}(~/.claude/agents/)${NC}"
-  local agents_dir="$HOME/.claude/agents"
-  local agent_file found=false
-  for agent_file in "$agents_dir"/*.md; do
-    [[ -e "$agent_file" ]] || continue
-    echo -e "  ${DIM}  • $(basename "${agent_file%.md}")${NC}"
-    found=true
-  done
-  [[ "$found" == false ]] && echo -e "  ${DIM}  (none installed)${NC}"
-  echo
-
-  echo -e "  ${CYAN}MCP servers${NC} ${DIM}(user scope)${NC}"
-  echo -e "  ${DIM}  Run: claude mcp list${NC}"
-  echo
-
-  echo -e "  ${CYAN}~/.claude/CLAUDE.md${NC} ${DIM}— persistent coding guidelines and preferences${NC}"
-}
-
-# ─── Step: Kiro agent configs ─────────────────────────────────────────────────
-step_kiro_agents() {
-  info "Installing Kiro agent configs"
-
-  local agents_dir="$HOME/.kiro/agents"
-  mkdir -p "$agents_dir"
-
-  # Detect the full uvx path; fall back to the bare name so PATH lookup happens at execution time
-  local uvx_path
-  uvx_path=$(command -v uvx 2>/dev/null || echo "uvx")
-
-  _install_kiro_agent "$agents_dir/default.json" "$SCRIPT_DIR/kiro/agents/default.json" "$uvx_path" "default.json"
-  _install_kiro_agent "$agents_dir/ci-cd.json" "$SCRIPT_DIR/kiro/agents/ci-cd.json" "$uvx_path" "ci-cd.json"
-}
-
-_install_kiro_agent() {
-  local target=$1
-  local source=$2
-  local uvx_path=$3
-  local label=$4
-
-  local content
-  content=$(cat "$source") || { err "Missing: $source"; return 1; }
-
-  # Replace hardcoded Homebrew path with the detected uvx location
-  content=$(echo "$content" | sed "s|/opt/homebrew/bin/uvx|${uvx_path}|g")
-
-  if [[ -f "$target" ]]; then
-    if confirm_n "$target already exists. Overwrite?"; then
-      printf '%s\n' "$content" > "$target"
-      success "Wrote $label"
-    else
-      skip
-    fi
-  else
-    printf '%s\n' "$content" > "$target"
-    success "Wrote $label"
-  fi
 }
 
 # ─── Step runner ──────────────────────────────────────────────────────────────
+
+STEPS=()
+
+register_step() { STEPS+=("${1}|${2}"); }
+
 run_steps() {
-  local total=${#STEPS[@]}
-  local index=1 ran=0 skipped=0
+  local total=${#STEPS[@]} index=1 ran=0 skipped=0
   local step name fn
 
   for step in "${STEPS[@]}"; do
-    # Steps are stored as "display name|function name" — split on | to get each part
     name="${step%%|*}"
     fn="${step##*|}"
-
     echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}$name${NC}"
 
     if confirm "  Run this step?"; then
@@ -385,33 +98,40 @@ run_steps() {
   echo -e "${DIM}$ran run · $skipped skipped${NC}"
 }
 
+# ─── Shared step ──────────────────────────────────────────────────────────────
+
+step_guidelines() {
+  info "Installing AI coding guidelines"
+  local general lang
+  general=$(cat "$SCRIPT_DIR/guidelines/general.md")          || { err "Missing general.md"; return 1; }
+  lang=$(cat    "$SCRIPT_DIR/guidelines/language-specific.md") || { err "Missing language-specific.md"; return 1; }
+  tool_selected "claude" && _install_claude_guidelines "$general" "$lang"
+  tool_selected "kiro"   && _install_kiro_guidelines   "$general" "$lang"
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
 select_tools
 
-# Guidelines step runs once and installs to all selected tools internally
 register_step "Deploy AI coding guidelines" step_guidelines
 
 if tool_selected "claude"; then
   if ! command -v claude >/dev/null 2>&1; then
     warn "Claude Code (claude) not found in PATH — skipping Claude setup steps"
   else
-    register_step "MCP: Serena" step_mcp_serena
+    register_step "Claude Code settings"     step_claude_settings
+    register_step "MCP: Serena"              step_mcp_serena
     register_step "MCP: Sequential Thinking" step_mcp_sequential_thinking
-    register_step "MCP: Context7" step_mcp_context7
-    register_step "Claude Code skills" step_claude_skills
-    register_step "Claude Code agents" step_claude_agents
+    register_step "MCP: Context7"            step_mcp_context7
+    register_step "Claude Code skills"       step_claude_skills
+    register_step "Claude Code agents"       step_claude_agents
   fi
 fi
 
-if tool_selected "kiro"; then
-  register_step "Kiro agent configs" step_kiro_agents
-fi
+tool_selected "kiro" && register_step "Kiro agent configs" step_kiro_agents
 
 run_steps
 
 echo
 echo -e "${BOLD}${GREEN}✓ AI tools setup complete!${NC}"
-
-if tool_selected "claude"; then
-  step_claude_agent_info
-fi
+tool_selected "claude" && print_claude_summary

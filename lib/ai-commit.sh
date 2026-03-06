@@ -8,10 +8,12 @@
 #   build_commit_rules       → sets COMMIT_RULES (derived from COMMITLINT_CONFIG)
 #   generate_commit_msg DIFF → sets AI_MSG
 #   validate_commit_msg MSG  → validates; returns 1 on failure
+#   load_pr [ARGS]           → parses PR flags, sets AI_COMMAND, BRANCH, DEFAULT_BRANCH
 #   generate_pr_content BRANCH DEFAULT → sets PR_TITLE, PR_DESCRIPTION
 #
 # State set by functions: AI_COMMAND, COMMITLINT_CONFIG, COMMIT_RULES,
-#                         AI_RESPONSE, AI_MSG, PR_TITLE, PR_DESCRIPTION
+#                         AI_RESPONSE, AI_MSG, PR_TITLE, PR_DESCRIPTION,
+#                         BRANCH, DEFAULT_BRANCH, SKIP_ISSUE
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 # Maximum length of the commit header (type + optional scope + colon + space + subject).
@@ -32,6 +34,10 @@ DIFF_MAX_CHARS=8000
 # Used to build the AI prompt rules and the fallback format validator.
 # To add a type, append it here — no other changes needed.
 COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
+
+# When true, skips both issue-related prompts in generate_pr_content.
+# Set by parse_pr_flags; pass --no-issue after -- in task invocations.
+SKIP_ISSUE=false
 # ──────────────────────────────────────────────────────────────────────────────
 
 # load_ai_command
@@ -366,6 +372,30 @@ load_pr_context() {
   fi
 }
 
+# parse_pr_flags ARGS
+# Parses PR-specific flags from the CLI_ARGS string.
+# Sets SKIP_ISSUE. Returns 1 on unknown flag.
+parse_pr_flags() {
+  local args="$1"
+  SKIP_ISSUE=false
+  local arg
+  for arg in $args; do
+    case "$arg" in
+      --no-issue) SKIP_ISSUE=true ;;
+      *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
+    esac
+  done
+}
+
+# load_pr [ARGS]
+# Parses PR flags from ARGS, then loads the PR context.
+# Sets SKIP_ISSUE, AI_COMMAND, BRANCH, DEFAULT_BRANCH. Returns 1 on failure.
+load_pr() {
+  local args="${1:-}"
+  parse_pr_flags "$args" || return 1
+  load_pr_context || return 1
+}
+
 # generate_pr_content BRANCH DEFAULT_BRANCH
 # Requires AI_COMMAND.
 # Sets PR_TITLE and PR_DESCRIPTION.
@@ -378,10 +408,12 @@ generate_pr_content() {
   issue_number=$(echo "$branch" | grep -oE '[A-Z]+-[0-9]+' | head -1)
 
   if [ -z "$issue_number" ]; then
-    echo "→ No issue number found in branch name: $branch"
-    echo ""
-    printf "  Enter issue number (e.g., ISSUE-123) or press Enter to skip: "
-    read -r issue_number
+    if [[ "$SKIP_ISSUE" = "false" ]]; then
+      echo "→ No issue number found in branch name: $branch"
+      echo ""
+      printf "  Enter issue number (e.g., ISSUE-123) or press Enter to skip: "
+      read -r issue_number
+    fi
   else
     echo "✓ Found issue number: $issue_number"
   fi
@@ -466,8 +498,8 @@ DESCRIPTION: <filled template>"
     fi
   fi
 
-  # Only add "Closes" if no PR template and issue is a GitHub numeric issue
-  if [ "$has_template" = "false" ] && [ -n "$issue_number" ]; then
+  # Only add "Closes" if no PR template, issue is a GitHub numeric issue, and not skipped
+  if [ "$has_template" = "false" ] && [ -n "$issue_number" ] && [[ "$SKIP_ISSUE" = "false" ]]; then
     local clean_issue
     clean_issue=$(echo "$issue_number" | sed 's/^#//')
     if echo "$clean_issue" | grep -qE '^[0-9]+$'; then

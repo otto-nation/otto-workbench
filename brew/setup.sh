@@ -57,14 +57,29 @@ _brew_show_packages() {
   done < "$file"
 }
 
+# _brew_all_installed FILE — returns 0 if every package in FILE is already installed.
+_brew_all_installed() {
+  local file="$1"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
+    local type="${BASH_REMATCH[1]}" full_name="${BASH_REMATCH[2]}"
+    _brew_is_installed "$type" "${full_name##*/}" || return 1
+  done < "$file"
+  return 0
+}
+
 # _brew_install_file FILE LABEL
-# Shows packages with status + URL, prompts, then installs.
+# Shows packages with status + URL. Skips the prompt if all are already installed.
 _brew_install_file() {
   local file="$1" label="$2"
   echo
   info "$label:"
   _brew_show_packages "$file"
   echo
+  if _brew_all_installed "$file"; then
+    echo -e "  ${DIM}All packages already installed — skipping${NC}"
+    return
+  fi
   confirm "  Install $label?" && brew bundle --file="$file" && success "$label installed"
 }
 

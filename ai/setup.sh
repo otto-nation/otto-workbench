@@ -144,3 +144,24 @@ for _tool in "${SELECTED_TOOLS[@]}"; do
   declare -f "print_${_tool}_summary" > /dev/null && "print_${_tool}_summary"
 done
 unset _tool
+
+# ─── AI command configuration ─────────────────────────────────────────────────
+
+# configure_ai_command — runs `task --global ai:setup` to create ~/.config/task/taskfile.env,
+# then optionally opens that file in $EDITOR so the user can set their AI_COMMAND preference.
+configure_ai_command() {
+  command -v task >/dev/null 2>&1 || return
+
+  echo; info "Taskfile AI command"
+  task --global ai:setup
+
+  echo
+  if confirm "  Configure your AI command now?"; then
+    ${EDITOR:-nano} ~/.config/task/taskfile.env
+    success "AI configuration updated"
+  else
+    warn "Remember to edit $HOME/.config/task/taskfile.env before using AI tasks"
+  fi
+}
+
+configure_ai_command

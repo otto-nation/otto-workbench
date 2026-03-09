@@ -10,8 +10,9 @@
 #   4. Symlinks git/.gitconfig to ~/.gitconfig
 #   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
 #   6. Adds ~/.local/bin to PATH in your shell rc file if needed
-#   7. Runs ai/setup.sh to configure MCPs, agents, and guidelines (optional)
-#   8. Opens the Taskfile AI command configuration in $EDITOR (optional)
+#   7. Runs docker/setup.sh to configure Colima socket and testcontainers
+#   8. Runs ai/setup.sh to configure MCPs, agents, and guidelines (optional)
+#   9. Opens the Taskfile AI command configuration in $EDITOR (optional)
 #
 # Re-running is safe — existing symlinks are updated silently; real files prompt before overwrite.
 
@@ -144,6 +145,9 @@ done
 # Install gitconfig
 echo; info "Installing gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
+
+# Docker / Colima setup
+echo; bash "$DOTFILES_DIR/docker/setup.sh"
 
 # Install .zshrc template
 echo; info "ZSH configuration"

@@ -38,14 +38,27 @@ COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
 # When true, skips both issue-related prompts in generate_pr_content.
 # Set by parse_pr_flags; pass --no-issue after -- in task invocations.
 SKIP_ISSUE=false
+
+# Git remote name used for push/fetch/range operations.
+GIT_REMOTE="origin"
+
+# Paths searched for the AI command configuration, local taking priority over global.
+# AI_GLOBAL_ENV_SUBPATH is relative to $HOME and expanded at call time, not source time.
+AI_LOCAL_ENV_PATH=".taskfile/taskfile.env"
+AI_GLOBAL_ENV_SUBPATH=".config/task/taskfile.env"
+
+# Markers the AI must use when returning PR content.
+# Must stay in sync with the prompt in generate_pr_content.
+PR_TITLE_MARKER="TITLE:"
+PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # load_ai_command
 # Finds the AI config and validates the binary exists.
 # Sets AI_COMMAND. Returns 1 on failure.
 load_ai_command() {
-  local local_env=".taskfile/taskfile.env"
-  local global_env="$HOME/.config/task/taskfile.env"
+  local local_env="$AI_LOCAL_ENV_PATH"
+  local global_env="$HOME/$AI_GLOBAL_ENV_SUBPATH"
   local env_file
 
   if [ -f "$local_env" ]; then
@@ -319,17 +332,17 @@ validate_commit_msg() {
 push_branch() {
   local branch="$1"
 
-  if ! git ls-remote --heads origin "$branch" | grep -q "$branch"; then
+  if ! git ls-remote --heads "$GIT_REMOTE" "$branch" | grep -q "$branch"; then
     echo "→ Pushing new branch to remote..."
-    git push -u origin "$branch" || { echo "✗ Push failed"; return 1; }
+    git push -u "$GIT_REMOTE" "$branch" || { echo "✗ Push failed"; return 1; }
     return 0
   fi
 
-  git fetch origin "$branch" --quiet
+  git fetch "$GIT_REMOTE" "$branch" --quiet
 
   # If no tracking branch configured, just push
   if ! git rev-parse --verify "@{u}" &>/dev/null 2>&1; then
-    git push origin "$branch" || { echo "✗ Push failed"; return 1; }
+    git push "$GIT_REMOTE" "$branch" || { echo "✗ Push failed"; return 1; }
     return 0
   fi
 
@@ -347,7 +360,7 @@ push_branch() {
     return 1
   elif [ "$remote_sha" = "$base_sha" ]; then
     echo "→ Local has unpushed commits, pushing..."
-    git push origin "$branch" || { echo "✗ Push failed"; return 1; }
+    git push "$GIT_REMOTE" "$branch" || { echo "✗ Push failed"; return 1; }
   else
     echo "✗ Branch has diverged from remote"
     echo "→ Fix with: git pull --rebase or git reset"
@@ -363,7 +376,7 @@ load_pr_context() {
   load_ai_command || return 1
 
   BRANCH=$(git branch --show-current)
-  DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+  DEFAULT_BRANCH=$(git rev-parse --abbrev-ref "$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^$GIT_REMOTE/@@")
   DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 
   if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
@@ -419,9 +432,9 @@ generate_pr_content() {
   fi
 
   local commits commit_count changed_files
-  commits=$(git log --oneline "origin/$default_branch..HEAD")
-  commit_count=$(git rev-list --count "origin/$default_branch..$branch")
-  changed_files=$(git diff --name-only "origin/$default_branch..$branch")
+  commits=$(git log --oneline "$GIT_REMOTE/$default_branch..HEAD")
+  commit_count=$(git rev-list --count "$GIT_REMOTE/$default_branch..$branch")
+  changed_files=$(git diff --name-only "$GIT_REMOTE/$default_branch..$branch")
 
   local has_template=false
   local pr_template pr_template_file=""
@@ -484,13 +497,13 @@ $commits
 Changed files:
 $changed_files
 
-Return: TITLE: <title>
-DESCRIPTION: <filled template>"
+Return: $PR_TITLE_MARKER <title>
+$PR_DESCRIPTION_MARKER <filled template>"
 
     run_ai "$ai_prompt"
 
-    PR_TITLE=$(echo "$AI_RESPONSE" | grep "^TITLE:" | sed 's/^TITLE: //' | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
-    PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n '/^DESCRIPTION:/,$ p' | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
+    PR_TITLE=$(echo "$AI_RESPONSE" | grep "^$PR_TITLE_MARKER" | sed "s/^$PR_TITLE_MARKER //" | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
+    PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n "/^$PR_DESCRIPTION_MARKER/,$ p" | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
 
     if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
     if [ -z "$PR_DESCRIPTION" ]; then

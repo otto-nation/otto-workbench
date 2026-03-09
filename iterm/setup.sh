@@ -22,10 +22,13 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
   exit 0
 fi
 
+ITERM_BUNDLE_ID="com.googlecode.iterm2"
+ITERM_PRESETS_KEY="Custom Color Presets"
+
 # _theme_installed NAME — returns 0 if NAME already exists in iTerm2's Color Presets plist.
 _theme_installed() {
   local name="$1"
-  defaults read com.googlecode.iterm2 "Custom Color Presets" 2>/dev/null | grep -q "\"$name\""
+  defaults read "$ITERM_BUNDLE_ID" "$ITERM_PRESETS_KEY" 2>/dev/null | grep -q "\"$name\""
 }
 
 # _import_theme FILE — registers a .itermcolors file as an iTerm2 color preset.

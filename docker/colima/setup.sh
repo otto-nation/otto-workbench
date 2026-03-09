@@ -9,4 +9,4 @@ COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 
 mkdir -p "$HOME/.docker/run"
 ln -sf "$HOME/.colima/$COLIMA_PROFILE/docker.sock" "$HOME/.docker/run/docker.sock"
-success "~/.docker/run/docker.sock → ~/.colima/$COLIMA_PROFILE/docker.sock"
+success "$HOME/.docker/run/docker.sock → $HOME/.colima/$COLIMA_PROFILE/docker.sock"

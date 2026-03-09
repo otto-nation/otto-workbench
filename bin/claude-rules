@@ -1,0 +1,301 @@
+#!/bin/bash
+# Manage local Claude Code rule additions.
+#
+# Usage: claude-rules <command> [args]
+#
+# Commands:
+#   sync                  Re-symlink workbench rules and regenerate workbench.md
+#   add <domain> "rule"   Append a rule to ~/.claude/rules/<domain>.local.md
+#   list                  List all local rule files with line counts
+#   status                Show local rules not tracked in workbench
+#   open [domain]         Open a local rule file in $EDITOR
+#
+# Local rule files (*.local.md) are never touched by workbench setup or sync.
+# They complement workbench-managed symlinks for machine-specific additions.
+# Run 'claude-rules status' to review before contributing back to the workbench.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+RULES_DIR="$HOME/.claude/rules"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+
+# ─── Frontmatter ──────────────────────────────────────────────────────────────
+
+# _write_frontmatter FILE DOMAIN — creates FILE with the correct YAML path-scope
+# frontmatter for the given domain. No-op if FILE already exists.
+_write_frontmatter() {
+  local file="$1" domain="$2"
+  [[ -f "$file" ]] && return
+
+  case "$domain" in
+    kotlin)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.kt"
+  - "**/*.kts"
+---
+
+EOF
+      ;;
+    java)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.java"
+---
+
+EOF
+      ;;
+    go)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.go"
+---
+
+EOF
+      ;;
+    typescript|ts|js)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.js"
+  - "**/*.jsx"
+---
+
+EOF
+      ;;
+    python|py)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.py"
+---
+
+EOF
+      ;;
+    bash|sh|shell)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.sh"
+---
+
+EOF
+      ;;
+    docker)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/Dockerfile"
+  - "**/Dockerfile.*"
+  - "**/compose.yml"
+  - "**/docker-compose.yml"
+---
+
+EOF
+      ;;
+    yaml|yml)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.yml"
+  - "**/*.yaml"
+---
+
+EOF
+      ;;
+    sql)
+      cat > "$file" <<'EOF'
+---
+paths:
+  - "**/*.sql"
+---
+
+EOF
+      ;;
+    general|*)
+      touch "$file"
+      ;;
+  esac
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_sync() {
+  local rules_src="$WORKBENCH_DIR/ai/guidelines/rules"
+  [[ -d "$rules_src" ]] || { err "Rules not found at $rules_src"; exit 1; }
+
+  mkdir -p "$RULES_DIR"
+
+  info "Syncing workbench rules → $RULES_DIR"
+  local file name
+  for file in "$rules_src"/*.md; do
+    [[ -e "$file" ]] || continue
+    name=$(basename "$file")
+    ln -sfh "$file" "$RULES_DIR/$name"
+    success "${name%.md}"
+  done
+
+  # Regenerate workbench.md with current path (in case repo moved)
+  echo
+  info "Regenerating workbench.md"
+  local target="$RULES_DIR/workbench.md"
+  cat > "$target" <<EOF
+# Workbench
+
+Your developer environment is managed at: $WORKBENCH_DIR
+
+What it owns: Claude config (\`ai/claude/\`), coding rules (\`ai/guidelines/rules/\`),
+bin scripts (\`bin/\`), zsh config (\`zsh/\`), git config (\`git/\`),
+Docker setup (\`docker/\`), Brew packages (\`brew/\`).
+
+When modifying Claude config (MCPs, agents, skills, settings), bin scripts, zsh config,
+git config, or developer tooling — make the change in the workbench repo and re-run
+the relevant setup script. Do not edit \`~/\` directly.
+
+Re-run AI setup:   bash $WORKBENCH_DIR/ai/setup.sh
+Add a local rule:  claude-rules add <domain> "rule text"
+Edit local rules:  claude-rules open [domain]
+Review untracked:  claude-rules status
+EOF
+  success "workbench.md"
+
+  # Warn about any untracked local additions
+  local found=false
+  for file in "$RULES_DIR"/*.local.md; do
+    [[ -e "$file" ]] || continue
+    if [[ "$found" == false ]]; then
+      echo
+      warn "Local rule additions not tracked in workbench:"
+    fi
+    local lines
+    lines=$(wc -l < "$file" | tr -d ' ')
+    echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}"
+    found=true
+  done
+  if [[ "$found" == true ]]; then
+    echo -e "  ${DIM}  Run 'claude-rules status' to review${NC}"
+  fi
+}
+
+cmd_add() {
+  local domain="${1:-}" rule="${2:-}"
+  if [[ -z "$domain" || -z "$rule" ]]; then
+    err "Usage: claude-rules add <domain> \"rule text\""
+    echo "Domains: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql" >&2
+    exit 1
+  fi
+
+  mkdir -p "$RULES_DIR"
+  local file="$RULES_DIR/${domain}.local.md"
+  _write_frontmatter "$file" "$domain"
+  printf -- '- %s\n' "$rule" >> "$file"
+  success "Added to ${domain}.local.md"
+  echo -e "  ${DIM}$file${NC}"
+}
+
+cmd_list() {
+  local found=false file lines
+  if [[ ! -d "$RULES_DIR" ]]; then
+    echo -e "  ${DIM}No rules directory found at $RULES_DIR${NC}"
+    return
+  fi
+
+  for file in "$RULES_DIR"/*.local.md; do
+    [[ -e "$file" ]] || continue
+    lines=$(wc -l < "$file" | tr -d ' ')
+    echo -e "  ${CYAN}$(basename "$file")${NC}  ${DIM}$lines lines${NC}"
+    found=true
+  done
+  if [[ "$found" == false ]]; then
+    echo -e "  ${DIM}No local rule files in $RULES_DIR${NC}"
+  fi
+}
+
+cmd_status() {
+  local found=false file lines
+  echo
+  info "Local rule additions (not tracked in workbench)"
+
+  if [[ ! -d "$RULES_DIR" ]]; then
+    echo -e "\n  ${DIM}No rules directory found at $RULES_DIR${NC}"
+    return
+  fi
+
+  for file in "$RULES_DIR"/*.local.md; do
+    [[ -e "$file" ]] || continue
+    lines=$(wc -l < "$file" | tr -d ' ')
+    echo
+    echo -e "  ${CYAN}$(basename "$file")${NC}  ${DIM}$lines lines${NC}"
+    local in_frontmatter=false frontmatter_done=false
+    while IFS= read -r line; do
+      # Skip the opening --- frontmatter block
+      if [[ "$frontmatter_done" == false && "$line" == "---" ]]; then
+        if [[ "$in_frontmatter" == false ]]; then
+          in_frontmatter=true; continue
+        else
+          in_frontmatter=false; frontmatter_done=true; continue
+        fi
+      fi
+      [[ "$in_frontmatter" == true ]] && continue
+      [[ -z "$line" ]] && continue
+      echo -e "  ${DIM}  $line${NC}"
+    done < "$file"
+    found=true
+  done
+
+  if [[ "$found" == false ]]; then
+    echo -e "\n  ${DIM}No untracked local rules${NC}"
+    return
+  fi
+
+  echo
+  echo -e "  ${DIM}To formalize: edit $WORKBENCH_DIR/ai/guidelines/rules/<domain>.md${NC}"
+}
+
+cmd_open() {
+  local domain="${1:-}"
+  local file
+
+  mkdir -p "$RULES_DIR"
+
+  if [[ -n "$domain" ]]; then
+    file="$RULES_DIR/${domain}.local.md"
+    _write_frontmatter "$file" "$domain"
+  else
+    file="$RULES_DIR"
+  fi
+
+  ${EDITOR:-nano} "$file"
+}
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+  sync)   cmd_sync ;;
+  add)    shift; cmd_add "$@" ;;
+  list)   cmd_list ;;
+  status) cmd_status ;;
+  open)   shift; cmd_open "$@" ;;
+  *)
+    echo "Usage: claude-rules <command>"
+    echo
+    echo "Commands:"
+    echo "  sync                   Re-symlink workbench rules and regenerate workbench.md"
+    echo "  add <domain> \"rule\"   Append a rule to ~/.claude/rules/<domain>.local.md"
+    echo "  list                   List all local rule files with line counts"
+    echo "  status                 Show local rules not tracked in workbench"
+    echo "  open [domain]          Open a local rule file in \$EDITOR"
+    echo
+    echo "Domains: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql"
+    exit 1
+    ;;
+esac

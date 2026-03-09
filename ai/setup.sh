@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source all tool step files — any subdirectory containing steps.sh is a tool
 for _dir in "$SCRIPT_DIR"/*/; do
+  # shellcheck source=/dev/null
   [[ -f "${_dir}steps.sh" ]] && . "${_dir}steps.sh"
 done
 unset _dir

@@ -67,12 +67,12 @@ update_path_in_shell_rc() {
     bash) shell_rc="$HOME/.bashrc" ;;
     *)    return ;;
   esac
+  # shellcheck disable=SC2016  # single quotes intentional — literal $HOME written to rc file
   if grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$shell_rc" 2>/dev/null; then return; fi
 
   echo; info "Adding $HOME/.local/bin to PATH in $shell_rc"
-  echo '' >> "$shell_rc"
-  echo '# Add local bin to PATH' >> "$shell_rc"
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$shell_rc"
+  # shellcheck disable=SC2016  # single quotes intentional — literal $HOME written to rc file
+  { echo ''; echo '# Add local bin to PATH'; echo 'export PATH="$HOME/.local/bin:$PATH"'; } >> "$shell_rc"
   echo -e "  ${GREEN}✓${NC} Updated $shell_rc"
 }
 

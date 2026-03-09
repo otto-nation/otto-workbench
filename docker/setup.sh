@@ -58,6 +58,7 @@ select_runtime
 
 info "Runtime: $DOCKER_RUNTIME"
 # Source the runtime-specific setup so it shares helpers defined above
+# shellcheck source=/dev/null
 . "$SCRIPT_DIR/$DOCKER_RUNTIME/setup.sh"
 
 # Testcontainers reads ~/.testcontainers.properties before checking DOCKER_HOST, so Gradle

@@ -44,8 +44,16 @@ step_kiro_agents() {
   local uvx_path
   uvx_path=$(command -v uvx 2>/dev/null || echo "uvx")
 
-  _install_kiro_agent "$dir/default.json" "$SCRIPT_DIR/kiro/agents/default.json" "$uvx_path" "default.json"
-  _install_kiro_agent "$dir/ci-cd.json"   "$SCRIPT_DIR/kiro/agents/ci-cd.json"   "$uvx_path" "ci-cd.json"
+  local file name
+  for file in "$SCRIPT_DIR/kiro/agents"/*.json; do
+    [[ -e "$file" ]] || continue
+    name=$(basename "$file")
+    _install_kiro_agent "$dir/$name" "$file" "$uvx_path" "$name"
+  done
 
   echo -e "  ${DIM}Set CONTEXT7_API_KEY in ~/.env.local to enable context7${NC}"
+}
+
+register_kiro_steps() {
+  register_step "Kiro agent configs" step_kiro_agents
 }

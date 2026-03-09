@@ -1,10 +1,22 @@
 # Docker & Container Configuration
 
 # ============================================================================
+# Colima Configuration
+# Override any of these in ~/.env.local before this file is sourced.
+# ============================================================================
+
+: "${COLIMA_PROFILE:=default}"
+: "${COLIMA_ARCH:=x86_64}"
+: "${COLIMA_VM_TYPE:=vz}"
+: "${COLIMA_ROSETTA:=true}"
+: "${COLIMA_CPU:=2}"
+: "${COLIMA_MEMORY:=4}"
+
+# ============================================================================
 # Environment Setup
 # ============================================================================
 
-export DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock
+export DOCKER_HOST="unix://${HOME}/.colima/${COLIMA_PROFILE}/docker.sock"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 export TESTCONTAINERS_HOST_OVERRIDE=localhost
 
@@ -16,7 +28,9 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 docker() {
   if ! command docker info >/dev/null 2>&1; then
     echo "Starting Colima..."
-    colima start --arch x86_64 --vm-type=vz --vz-rosetta --cpu 2 --memory 4
+    local -a colima_args=(--arch "$COLIMA_ARCH" --vm-type="$COLIMA_VM_TYPE" --cpu "$COLIMA_CPU" --memory "$COLIMA_MEMORY")
+    [[ "$COLIMA_ROSETTA" == "true" ]] && colima_args+=(--vz-rosetta)
+    colima start "${colima_args[@]}"
     docker context use colima
   fi
   command docker "$@"

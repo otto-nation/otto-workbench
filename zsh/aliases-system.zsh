@@ -98,7 +98,18 @@ alias update='brew cleanup; brew upgrade; brew update; npm update -g; npm instal
 # ============================================================================
 
 alias reload='exec ${SHELL} -l'
-alias copy-ssh='pbcopy < $HOME/.ssh/id-rsa.pub'
+copy-ssh() {
+  local key
+  for key in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ecdsa.pub" "$HOME/.ssh/id_dsa.pub"; do
+    if [[ -f "$key" ]]; then
+      pbcopy < "$key"
+      echo "Copied $(basename "$key") to clipboard"
+      return
+    fi
+  done
+  echo "No SSH public key found in ~/.ssh/" >&2
+  return 1
+}
 
 # Quick edit config files
 alias edit-hosts='subl /etc/hosts'

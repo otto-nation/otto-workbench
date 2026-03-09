@@ -1,0 +1,133 @@
+#!/bin/bash
+# Manage your workbench developer environment.
+#
+# Usage: workbench <command>
+#
+# Commands:
+#   sync   Re-apply all workbench configuration to ~/
+#
+# What sync does:
+#   - Re-symlinks bin/, zsh/, git/.gitconfig, Taskfile, lib/
+#   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
+#
+# What sync does NOT do (one-time setup operations):
+#   - Install Homebrew packages
+#   - Configure Docker runtime
+#   - Install iTerm themes
+#
+# To run first-time setup or those components: bash <workbench>/install.sh
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+
+# SCRIPT_DIR is expected by ai/claude/steps.sh functions (they look for
+# $SCRIPT_DIR/claude/, $SCRIPT_DIR/guidelines/, etc.)
+# shellcheck disable=SC2034
+SCRIPT_DIR="$WORKBENCH_DIR/ai"
+
+# Source Claude step functions to reuse them directly
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/ai/claude/steps.sh"
+
+# sync_symlink SOURCE TARGET — non-interactive symlink update for workbench sync.
+# Existing symlinks are silently replaced. Real files are skipped with a warning
+# (user may have customized them; run install.sh to manage them interactively).
+sync_symlink() {
+  local source="$1" target="$2" name
+  name=$(basename "$source")
+  if [[ -e "$target" && ! -L "$target" ]]; then
+    warn "$name: real file at $target — skipping (run install.sh to overwrite)"
+    return
+  fi
+  ln -sfh "$source" "$target"
+  echo -e "  ${GREEN}✓${NC} $name"
+}
+
+# Override _install_claude_symlink with the same non-interactive behaviour so
+# step_claude_* functions don't prompt during sync.
+_install_claude_symlink() {
+  local source=$1 target=$2 label=$3
+  if [[ -e "$target" && ! -L "$target" ]]; then
+    warn "$label: real file at $target — skipping (run install.sh to overwrite)"
+    return
+  fi
+  ln -sfh "$source" "$target"
+  success "$label"
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_sync() {
+  echo -e "${BOLD}${BLUE}Workbench sync${NC}"
+  echo
+
+  # ─── Core ──────────────────────────────────────────────────────────────────
+
+  info "bin scripts → ~/.local/bin/"
+  mkdir -p "$HOME/.local/bin"
+  local _f
+  for _f in "$WORKBENCH_DIR"/bin/*; do
+    sync_symlink "$_f" "$HOME/.local/bin/$(basename "$_f")"
+  done
+
+  echo
+  info "zsh configs → ~/.config/zsh/config.d/"
+  mkdir -p "$HOME/.config/zsh/config.d"
+  for _f in "$WORKBENCH_DIR"/zsh/*.zsh; do
+    sync_symlink "$_f" "$HOME/.config/zsh/config.d/$(basename "$_f")"
+  done
+  unset _f
+
+  echo
+  info "git, taskfile, lib"
+  mkdir -p "$HOME/.config/task"
+  sync_symlink "$WORKBENCH_DIR/git/.gitconfig"       "$HOME/.gitconfig"
+  sync_symlink "$WORKBENCH_DIR/Taskfile.global.yml"  "$HOME/.config/task/Taskfile.yml"
+  sync_symlink "$WORKBENCH_DIR/lib"                  "$HOME/.config/task/lib"
+
+  # ─── Claude ────────────────────────────────────────────────────────────────
+
+  echo
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "claude not found in PATH — skipping Claude steps"
+  else
+    info "Claude settings"
+    step_claude_settings
+
+    echo
+    info "Claude guidelines + rules"
+    step_claude_guidelines
+    step_claude_rules
+
+    echo
+    info "Claude MCPs"
+    step_claude_mcps
+
+    echo
+    info "Claude skills + agents"
+    step_claude_skills
+    step_claude_agents
+  fi
+
+  echo
+  echo -e "${BOLD}${GREEN}✓ Workbench synced!${NC}"
+  echo -e "  ${DIM}Reload your shell: exec $(basename "$SHELL")${NC}"
+}
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+  sync) cmd_sync ;;
+  *)
+    echo "Usage: workbench <command>"
+    echo
+    echo "Commands:"
+    echo "  sync   Re-apply all workbench configuration to ~/"
+    exit 1
+    ;;
+esac

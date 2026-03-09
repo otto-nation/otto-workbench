@@ -119,12 +119,15 @@ run_steps() {
 # ─── Shared step ──────────────────────────────────────────────────────────────
 
 step_guidelines() {
+  # Claude guidelines are installed via dedicated Claude steps (step_claude_guidelines,
+  # step_claude_rules) registered in register_claude_steps — nothing to do here for Claude.
+  tool_selected "kiro" || return 0
+
   info "Installing AI coding guidelines"
   local general lang
   general=$(cat "$SCRIPT_DIR/guidelines/general.md")          || { err "Missing general.md"; return 1; }
   lang=$(cat    "$SCRIPT_DIR/guidelines/language-specific.md") || { err "Missing language-specific.md"; return 1; }
-  tool_selected "claude" && _install_claude_guidelines "$general" "$lang"
-  tool_selected "kiro"   && _install_kiro_guidelines   "$general" "$lang"
+  _install_kiro_guidelines "$general" "$lang"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

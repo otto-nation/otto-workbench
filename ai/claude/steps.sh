@@ -44,47 +44,50 @@ _install_claude_symlink() {
   fi
 }
 
-_install_claude_guidelines() {
-  local general_content=$1 lang_content=$2
-  local target="$HOME/.claude/CLAUDE.md"
-  local combined="${general_content}
+_install_workbench_rule() {
+  local workbench_path
+  workbench_path="$(cd "$SCRIPT_DIR/.." && pwd)"
+  local target="$HOME/.claude/rules/workbench.md"
 
----
+  mkdir -p "$HOME/.claude/rules"
+  cat > "$target" <<EOF
+# Workbench
 
-${lang_content}"
+Your developer environment is managed at: $workbench_path
 
-  mkdir -p "$HOME/.claude"
+What it owns: Claude config (\`ai/claude/\`), coding rules (\`ai/guidelines/rules/\`),
+bin scripts (\`bin/\`), zsh config (\`zsh/\`), git config (\`git/\`),
+Docker setup (\`docker/\`), Brew packages (\`brew/\`).
 
-  if [[ ! -f "$target" ]]; then
-    printf '%s\n' "$combined" > "$target"
-    success "Guidelines written to ~/.claude/CLAUDE.md"
-    return
+When modifying Claude config (MCPs, agents, skills, settings), bin scripts, zsh config,
+git config, or developer tooling — make the change in the workbench repo and re-run
+the relevant setup script. Do not edit \`~/\` directly.
+
+Re-run AI setup:   bash $workbench_path/ai/setup.sh
+Add a local rule:  claude-rules add <domain> "rule text"
+Edit local rules:  claude-rules open [domain]
+Review untracked:  claude-rules status
+EOF
+  success "workbench.md"
+}
+
+# _check_local_rules DIR — warns about any *.local.md files found in DIR that
+# are not tracked in the workbench. Called at the end of step_claude_rules.
+_check_local_rules() {
+  local rules_dst="$1" found=false file lines
+  for file in "$rules_dst"/*.local.md; do
+    [[ -e "$file" ]] || continue
+    lines=$(wc -l < "$file" | tr -d ' ')
+    if [[ "$found" == false ]]; then
+      echo
+      warn "Local rule additions not tracked in workbench:"
+    fi
+    echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}"
+    found=true
+  done
+  if [[ "$found" == true ]]; then
+    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $SCRIPT_DIR/guidelines/rules/ to formalize${NC}"
   fi
-
-  echo
-  warn "$HOME/.claude/CLAUDE.md already exists. What would you like to do?"
-  echo "  [1] Backup and overwrite  (~/.claude/CLAUDE.md.backup)"
-  echo "  [2] Append to existing"
-  echo "  [3] Skip"
-  echo
-  read -r -n 1 -p "  Choice [1/2/3]: " choice
-  echo
-
-  case $choice in
-    1)
-      cp "$target" "${target}.backup"
-      success "Backed up to ~/.claude/CLAUDE.md.backup"
-      printf '%s\n' "$combined" > "$target"
-      success "Guidelines written to ~/.claude/CLAUDE.md"
-      ;;
-    2)
-      printf '\n\n---\n\n%s\n' "$combined" >> "$target"
-      success "Guidelines appended to ~/.claude/CLAUDE.md"
-      ;;
-    *)
-      skip
-      ;;
-  esac
 }
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
@@ -115,6 +118,33 @@ step_claude_mcps() {
   done
 }
 
+step_claude_guidelines() {
+  local src="$SCRIPT_DIR/claude/CLAUDE.md"
+  [[ -f "$src" ]] || { err "Missing $src"; return 1; }
+  mkdir -p "$HOME/.claude"
+  _install_claude_symlink "$src" "$HOME/.claude/CLAUDE.md" "CLAUDE.md"
+}
+
+step_claude_rules() {
+  local rules_src="$SCRIPT_DIR/guidelines/rules"
+  local rules_dst="$HOME/.claude/rules"
+  [[ -d "$rules_src" ]] || { warn "No rules found in $rules_src — skipping"; return; }
+
+  mkdir -p "$rules_dst"
+  info "Installing rules to ~/.claude/rules/"
+  local file
+  for file in "$rules_src"/*.md; do
+    [[ -e "$file" ]] || continue
+    _install_claude_symlink "$file" "$rules_dst/$(basename "$file")" "$(basename "${file%.md}")"
+  done
+
+  echo
+  info "Generating workbench.md"
+  _install_workbench_rule
+
+  _check_local_rules "$rules_dst"
+}
+
 step_claude_settings() {
   local src="$SCRIPT_DIR/claude/settings.json"
   local target="$HOME/.claude/settings.json"
@@ -133,7 +163,7 @@ step_claude_settings() {
     || { err "Failed to sync settings.json"; return 1; }
 
   printf '%s\n' "$result" > "$target"
-  [[ "$existing" == "{}" ]] && success "settings.json written" || success "settings.json synced"
+  if [[ "$existing" == "{}" ]]; then success "settings.json written"; else success "settings.json synced"; fi
 }
 
 step_claude_skills() {
@@ -165,10 +195,12 @@ register_claude_steps() {
     warn "Claude Code (claude) not found in PATH — skipping Claude setup steps"
     return
   fi
-  register_step "Claude Code settings" step_claude_settings
-  register_step "MCP servers"          step_claude_mcps
-  register_step "Claude Code skills"   step_claude_skills
-  register_step "Claude Code agents"   step_claude_agents
+  register_step "Claude Code settings"    step_claude_settings
+  register_step "Claude Code guidelines"  step_claude_guidelines
+  register_step "Claude Code rules"       step_claude_rules
+  register_step "MCP servers"             step_claude_mcps
+  register_step "Claude Code skills"      step_claude_skills
+  register_step "Claude Code agents"      step_claude_agents
 }
 
 print_claude_summary() {

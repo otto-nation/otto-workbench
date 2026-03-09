@@ -43,4 +43,42 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     echo
     [[ $REPLY =~ ^[Yy]$ ]]
   }
+
+  # prompt_overwrite FILE — warns that FILE already exists and asks whether to overwrite it.
+  # Offers an optional backup step before overwriting. Returns 1 (skip) if the user declines.
+  prompt_overwrite() {
+    local file=$1
+    warn "$file already exists"
+    printf "  Overwrite? [y/N] "
+    read -n 1 -r REPLY
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then return 1; fi
+
+    printf "  Create backup? [Y/n] "
+    read -n 1 -r REPLY
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      cp "$file" "${file}.backup"
+      echo -e "  ${GREEN}✓${NC} Backed up to ${file}.backup"
+    fi
+  }
+
+  # install_symlink SOURCE TARGET — creates or updates a symlink at TARGET pointing to SOURCE.
+  # Real files at TARGET trigger prompt_overwrite; existing symlinks are silently replaced
+  # (they were almost certainly left by a previous run of this script).
+  install_symlink() {
+    local source=$1 target=$2 name
+    name=$(basename "$source")
+
+    # Only prompt if target is a real file — existing symlinks are silently updated since
+    # they were almost certainly installed by a previous run of this script
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+      prompt_overwrite "$target" || { echo -e "  ${DIM}⊘ Skipped $name${NC}"; return; }
+    fi
+
+    # -h prevents BSD ln from following an existing symlink at $target (macOS default behaviour
+    # would dereference it, corrupting repo files or creating nested symlinks on re-runs)
+    ln -sfh "$source" "$target"
+    echo -e "  ${GREEN}✓${NC} $name"
+  }
 fi

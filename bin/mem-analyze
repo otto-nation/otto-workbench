@@ -18,6 +18,22 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
+# Thresholds — override via environment variable if needed
+SWAP_WARN_THRESHOLD_MB="${SWAP_WARN_THRESHOLD_MB:-10240}"      # 10 GB
+PROCESS_WARN_THRESHOLD_KB="${PROCESS_WARN_THRESHOLD_KB:-500000}"  # ~488 MB
+
+# Display counts
+TOP_PROCESSES_COUNT=10
+TOP_USERS_COUNT=5
+
+# App name column widths — truncated with "..." when exceeded
+APP_NAME_MAX_WIDTH=50
+APP_NAME_DETAIL_MAX_WIDTH=60
+
+# Conversion constants
+BYTES_PER_MB=1048576  # 1024 * 1024
+MB_PER_GB=1024
+
 echo -e "${BOLD}${BLUE}Memory Analysis Report${NC}"
 echo -e "${DIM}Generated: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 echo ""
@@ -47,7 +63,7 @@ echo -e "${BOLD}${BLUE}━━━ Memory Statistics ━━━${NC}"
 # and reused in the summary section — variables set inside pipelines are lost to the parent shell
 page_size=$(vm_stat | grep "page size" | awk '{print $8}')
 # Regex extracts page type name and count; multiplies by page_size (shell-interpolated) to get MB
-vm_stat | perl -ne '/Pages\s+([^:]+)[^\d]+(\d+)/ and printf("  %-25s %10.2f MB\n", "$1:", $2 * '$page_size' / 1048576);'
+vm_stat | perl -ne '/Pages\s+([^:]+)[^\d]+(\d+)/ and printf("  %-25s %10.2f MB\n", "$1:", $2 * '$page_size' / '$BYTES_PER_MB');'
 echo ""
 
 # Swap Usage
@@ -56,9 +72,8 @@ swap_info=$(sysctl vm.swapusage | sed 's/vm.swapusage: //')
 echo "  $swap_info"
 # sysctl outputs in MB; divide by 1024 for a human-readable GB figure in the warning
 swap_used=$(echo "$swap_info" | grep -oE 'used = [0-9.]+' | awk '{print $3}')
-swap_used_gb=$(echo "scale=1; $swap_used / 1024" | bc)
-# 10240 MB = 10 GB threshold — above this, swap is likely causing noticeable slowdowns
-if (( $(echo "$swap_used > 10240" | bc -l) )); then
+swap_used_gb=$(echo "scale=1; $swap_used / $MB_PER_GB" | bc)
+if (( $(echo "$swap_used > $SWAP_WARN_THRESHOLD_MB" | bc -l) )); then
   warn "High swap usage: ${swap_used_gb}GB used"
 fi
 echo ""
@@ -66,8 +81,8 @@ echo ""
 # Top Memory Consumers
 echo -e "${BOLD}${BLUE}━━━ Top 10 Memory Consuming Processes ━━━${NC}"
 printf "  ${BOLD}%-8s %6s %10s  %-50s${NC}\n" "PID" "%MEM" "MEMORY" "APPLICATION"
-# sort -nrk 4: numeric, reverse, by column 4 (%MEM in ps aux output); skip the header row (head -11 | tail -10)
-ps aux | sort -nrk 4 | head -11 | tail -10 | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
+# sort -nrk 4: numeric, reverse, by column 4 (%MEM in ps aux output); +1 on head skips the header row
+ps aux | sort -nrk 4 | head -$(( TOP_PROCESSES_COUNT + 1 )) | tail -$TOP_PROCESSES_COUNT | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
@@ -88,7 +103,7 @@ ps aux | sort -nrk 4 | head -11 | tail -10 | while read -r user pid cpu mem vsz 
     app=$(basename "$cmd")
   fi
 
-  [ ${#app} -gt 50 ] && app="${app:0:47}..."
+  [ ${#app} -gt $APP_NAME_MAX_WIDTH ] && app="${app:0:$(( APP_NAME_MAX_WIDTH - 3 ))}..."
   mem_mb=$(echo "scale=0; $rss/1024" | bc)
   printf "  %-8s %6s %10s MB  %-50s\n" "$pid" "$mem" "$mem_mb" "$app"
 done
@@ -97,9 +112,9 @@ echo ""
 # Memory Hogs (>500MB)
 echo -e "${BOLD}${BLUE}━━━ Processes Using >500MB ━━━${NC}"
 printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
-# $6 is RSS (resident set size) in KB; 500000 KB ≈ 488 MB
+# $6 is RSS (resident set size) in KB
 # shellcheck disable=SC2034  # user,cpu,vsz,tt,stat,started,time unused — read to consume positional fields
-ps aux | awk 'NR>1 && $6 > 500000' | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
+ps aux | awk -v threshold="$PROCESS_WARN_THRESHOLD_KB" 'NR>1 && $6 > threshold' | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
   for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
@@ -121,24 +136,24 @@ ps aux | awk 'NR>1 && $6 > 500000' | while read -r user pid cpu mem vsz rss tt s
     app=$(basename "$cmd")
   fi
 
-  [ ${#app} -gt 60 ] && app="${app:0:57}..."
+  [ ${#app} -gt $APP_NAME_DETAIL_MAX_WIDTH ] && app="${app:0:$(( APP_NAME_DETAIL_MAX_WIDTH - 3 ))}..."
   mem_mb=$(echo "scale=2; $rss/1024" | bc)
   printf "  %10.2f MB  %6s%%  %-60s\n" "$mem_mb" "$mem" "$app"
 done | sort -nrk 1
-[ -z "$(ps aux | awk 'NR>1 && $6 > 500000')" ] && echo "  None found"
+[ -z "$(ps aux | awk -v threshold="$PROCESS_WARN_THRESHOLD_KB" 'NR>1 && $6 > threshold')" ] && echo "  None found"
 echo ""
 
 # Memory by User
 echo -e "${BOLD}${BLUE}━━━ Memory Usage by User ━━━${NC}"
 printf "  ${BOLD}%-20s %12s${NC}\n" "USER" "TOTAL MEMORY"
-ps aux | awk '{user[$1]+=$6} END {for (u in user) printf "  %-20s %10.2f MB\n", u, user[u]/1024}' | sort -nrk 2 | head -5
+ps aux | awk -v mb="$MB_PER_GB" '{user[$1]+=$6} END {for (u in user) printf "  %-20s %10.2f MB\n", u, user[u]/mb}' | sort -nrk 2 | head -$TOP_USERS_COUNT
 echo ""
 
 # Summary & Recommendations
 echo -e "${BOLD}${BLUE}━━━ Summary & Recommendations ━━━${NC}"
 total_mem=$(sysctl hw.memsize | awk '{print $2/1073741824}')
 free_mem=$(vm_stat | grep "Pages free" | awk '{print $3}' | tr -d '.')
-free_mb=$((free_mem * page_size / 1048576))
+free_mb=$((free_mem * page_size / BYTES_PER_MB))
 
 echo "  Total RAM: ${total_mem} GB"
 echo "  Free Memory: ${free_mb} MB"
@@ -156,7 +171,7 @@ elif echo "$mem_pressure_status" | grep -qi "warn"; then
   echo "    • Quit background applications"
   echo "    • Run: sudo purge (to clear caches)"
   echo "    • Stop unused Gradle/Java processes"
-elif (( $(echo "$swap_used > 10240" | bc -l) )); then
+elif (( $(echo "$swap_used > $SWAP_WARN_THRESHOLD_MB" | bc -l) )); then
   echo -e "  ${YELLOW}${BOLD}High Swap Usage Detected:${NC}"
   echo "    • System is using disk instead of RAM (slow)"
   echo "    • Close memory-intensive applications"

@@ -89,19 +89,30 @@ ${lang_content}"
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
-step_mcp_serena() {
-  _mcp_install serena \
-    uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
-}
+# step_claude_mcps — installs all MCP servers discovered from ai/claude/mcps/*.json.
+# Each manifest declares the MCP name (filename without .json), a display label,
+# the install command array, and an optional post-install note.
+step_claude_mcps() {
+  local mcp_dir="$SCRIPT_DIR/claude/mcps"
+  [[ -d "$mcp_dir" ]] || { warn "No MCP configs found in $mcp_dir — skipping"; return; }
 
-step_mcp_sequential_thinking() {
-  _mcp_install sequential-thinking \
-    npx -y @modelcontextprotocol/server-sequential-thinking
-}
-
-step_mcp_context7() {
-  _mcp_install context7 npx -y @upstash/context7-mcp
-  echo -e "  ${DIM}Set CONTEXT7_API_KEY in ~/.env.local to enable${NC}"
+  local file name note
+  local cmd_args=()
+  for file in "$mcp_dir"/*.json; do
+    [[ -e "$file" ]] || continue
+    name=$(basename "$file" .json)
+    local url
+    url=$(jq -r '.url // empty' "$file")
+    [[ -z "$url" ]] && { err "$name: manifest is missing required field: url"; return 1; }
+    echo -e "  ${DIM}$url${NC}"
+    cmd_args=()
+    while IFS= read -r arg; do
+      cmd_args+=("$arg")
+    done < <(jq -r '.command[]' "$file")
+    _mcp_install "$name" "${cmd_args[@]}"
+    note=$(jq -r '.note // empty' "$file")
+    [[ -n "$note" ]] && echo -e "  ${DIM}$note${NC}"
+  done
 }
 
 step_claude_settings() {
@@ -147,6 +158,17 @@ step_claude_agents() {
     name=$(basename "$file")
     _install_claude_symlink "$file" "$dst/$name" "${name%.md}"
   done
+}
+
+register_claude_steps() {
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "Claude Code (claude) not found in PATH — skipping Claude setup steps"
+    return
+  fi
+  register_step "Claude Code settings" step_claude_settings
+  register_step "MCP servers"          step_claude_mcps
+  register_step "Claude Code skills"   step_claude_skills
+  register_step "Claude Code agents"   step_claude_agents
 }
 
 print_claude_summary() {

@@ -48,8 +48,10 @@ _import_theme() {
 
 echo
 info "iTerm2 color schemes:"
-_import_theme "$SCRIPT_DIR/themes/gruvbox-dark.itermcolors"
-_import_theme "$SCRIPT_DIR/themes/gruvbox-light.itermcolors"
+for _theme_file in "$SCRIPT_DIR/themes"/*.itermcolors; do
+  [[ -e "$_theme_file" ]] || continue
+  _import_theme "$_theme_file"
+done
 
 echo
 info "Font setup (manual step required):"

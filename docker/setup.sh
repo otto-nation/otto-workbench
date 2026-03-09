@@ -39,15 +39,12 @@ select_runtime() {
     i=$(( i + 1 ))
   done
   echo
-  read -rp "Enter number: " selection
-  echo
 
-  if [[ ! "$selection" =~ ^[0-9]+$ ]] || (( selection < 1 || selection > ${#runtimes[@]} )); then
-    err "Invalid selection: $selection"
-    exit 1
-  fi
+  local _sel
+  select_menu _sel "${#runtimes[@]}" --default skip --single
+  [[ -z "$_sel" ]] && { DOCKER_RUNTIME=""; return; }
 
-  DOCKER_RUNTIME="${runtimes[$((selection - 1))]}"
+  DOCKER_RUNTIME="${runtimes[$((_sel - 1))]}"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -55,6 +52,11 @@ select_runtime() {
 echo -e "${BOLD}${BLUE}Docker setup${NC}\n"
 
 select_runtime
+
+if [[ -z "$DOCKER_RUNTIME" ]]; then
+  skip "Docker runtime setup"
+  exit 0
+fi
 
 info "Runtime: $DOCKER_RUNTIME"
 # Source the runtime-specific setup so it shares helpers defined above

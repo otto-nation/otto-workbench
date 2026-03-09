@@ -176,7 +176,7 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
         warn "$label: real file exists at $target — skipping (run install.sh to manage)"
         return
       fi
-      prompt_overwrite "$target" || { echo -e "  ${DIM}⊘ Skipped $label${NC}"; return; }
+      prompt_overwrite "$target" || { skip "$label"; return; }
     fi
 
     ln -sfh "$source" "$target"

@@ -11,6 +11,11 @@ _SELF="$(readlink "$_CMD" 2>/dev/null || echo "$_CMD")"
 CONFIG_DIR="$HOME/.config/zsh/config.d"
 FILTER="${1:-}"
 
+# Display layout
+DIVIDER_WIDTH=80
+ITEM_NAME_WIDTH=25
+ITEM_VALUE_MAX_WIDTH=60
+
 # Skip these files (deprecated/internal)
 # aliases-git.zsh is excluded from the normal loop and merged with gitconfig into one section below
 SKIP_FILES=("aws-sso-set.zsh" "aws-sso-set-blackbird.zsh" "aws-sso-set-cache.zsh" "aws-sso-set-eks.zsh" "aws-sso-set-logging.zsh" "aws-sso-set-ssm.zsh" "aws-sso-set-upgrade.zsh" "aliases-git.zsh")
@@ -23,7 +28,7 @@ print_header() {
   else
     echo -e "\n${BOLD}${BLUE}${title}${NC}"
   fi
-  echo -e "${DIM}$(printf '─%.0s' {1..80})${NC}"
+  echo -e "${DIM}$(printf '─%.0s' {1..$DIVIDER_WIDTH})${NC}"
 }
 
 print_item() {
@@ -31,8 +36,8 @@ print_item() {
   local color=$GREEN
   [[ "$type" == "function" ]] && color=$CYAN
 
-  value=$(echo "$value" | sed "s/^['\"]//;s/['\"]$//" | cut -c1-60)
-  printf "  ${color}%-25s${NC} ${DIM}→${NC} %s\n" "$name" "$value"
+  value=$(echo "$value" | sed "s/^['\"]//;s/['\"]$//" | cut -c1-$ITEM_VALUE_MAX_WIDTH)
+  printf "  ${color}%-${ITEM_NAME_WIDTH}s${NC} ${DIM}→${NC} %s\n" "$name" "$value"
 }
 
 should_skip_file() {

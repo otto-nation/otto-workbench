@@ -1,0 +1,7 @@
+# Components are run in the order listed here.
+# Each entry must match a directory name containing setup.sh and setup.conf.
+# Add a new component by creating the directory with those two files, then adding it here.
+brew
+docker
+iterm
+ai

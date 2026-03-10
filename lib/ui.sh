@@ -63,22 +63,148 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     fi
   }
 
-  # install_symlink SOURCE TARGET — creates or updates a symlink at TARGET pointing to SOURCE.
-  # Real files at TARGET trigger prompt_overwrite; existing symlinks are silently replaced
-  # (they were almost certainly left by a previous run of this script).
-  install_symlink() {
-    local source=$1 target=$2 name
-    name=$(basename "$source")
+  # select_menu RESULT_VAR COUNT [--default all|skip|require] [--single]
+  #
+  # Displays a numbered selection prompt and writes the result back to RESULT_VAR.
+  # Validates input against 1..COUNT; warns and ignores out-of-range numbers.
+  # 0 always means explicit skip regardless of --default.
+  #
+  # --default all     Empty input selects all indices (default for multi-select menus)
+  # --default skip    Empty input skips and returns "" (default for optional sub-menus)
+  # --default require Empty input is rejected; caller should check return code and exit
+  # --single          Accept only one number; stops after the first valid entry
+  #
+  # Result: space-separated 1-based indices written to RESULT_VAR, or "" for skip.
+  select_menu() {
+    local _result_var=$1 _count=$2
+    shift 2
+    local _default="skip" _single=false
 
-    # Only prompt if target is a real file — existing symlinks are silently updated since
-    # they were almost certainly installed by a previous run of this script
-    if [ -e "$target" ] && [ ! -L "$target" ]; then
-      prompt_overwrite "$target" || { echo -e "  ${DIM}⊘ Skipped $name${NC}"; return; }
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --default) _default="$2"; shift 2 ;;
+        --single)  _single=true;  shift   ;;
+        *)                        shift   ;;
+      esac
+    done
+
+    local _number_hint _default_hint
+    if [[ "$_single" == true ]]; then
+      _number_hint="Enter number"
+    else
+      _number_hint="Numbers (e.g. 1 3)"
     fi
 
-    # -h prevents BSD ln from following an existing symlink at $target (macOS default behaviour
-    # would dereference it, corrupting repo files or creating nested symlinks on re-runs)
+    case "$_default" in
+      all)     _default_hint=", Enter for all, or 0 to skip" ;;
+      skip)    _default_hint=", or Enter to skip"            ;;
+      require) _default_hint=""                              ;;
+    esac
+
+    local _raw
+    read -rp "  ${_number_hint}${_default_hint}: " _raw
+    echo
+
+    if [[ -z "$_raw" ]]; then
+      case "$_default" in
+        all)
+          local _all="" _i
+          for (( _i=1; _i<=_count; _i++ )); do _all+="$_i "; done
+          printf -v "$_result_var" '%s' "${_all% }"
+          return 0 ;;
+        skip)
+          printf -v "$_result_var" '%s' ""
+          skip
+          return 0 ;;
+        require)
+          printf -v "$_result_var" '%s' ""
+          return 1 ;;
+      esac
+    fi
+
+    if [[ "$_raw" == "0" ]]; then
+      printf -v "$_result_var" '%s' ""
+      skip
+      return 0
+    fi
+
+    local _selected="" _num
+    for _num in $_raw; do
+      if [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )); then
+        _selected+="$_num "
+        [[ "$_single" == true ]] && break
+      else
+        warn "Unknown option: $_num — ignored"
+      fi
+    done
+
+    printf -v "$_result_var" '%s' "${_selected% }"
+  }
+
+  # require_command NAME [MESSAGE] — returns 1 with a warning if NAME is not in PATH.
+  # Caller decides whether to exit or return: require_command foo "msg" || exit 0
+  require_command() {
+    local name=$1 msg="${2:-$1 not found in PATH — skipping}"
+    command -v "$name" >/dev/null 2>&1 && return 0
+    warn "$msg"
+    return 1
+  }
+
+  # install_symlink SOURCE TARGET [LABEL] [--no-prompt]
+  # Creates or updates a symlink at TARGET pointing to SOURCE.
+  # Existing symlinks are silently replaced. Real files at TARGET:
+  #   default (or SYMLINK_MODE unset): prompt before overwriting
+  #   --no-prompt or SYMLINK_MODE=no-prompt: warn and skip (for non-interactive sync)
+  # LABEL defaults to basename of SOURCE.
+  # -h prevents BSD ln from dereferencing an existing directory symlink on re-runs.
+  install_symlink() {
+    local source=$1 target=$2
+    shift 2
+    local label="" no_prompt=false
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --no-prompt) no_prompt=true; shift ;;
+        *)           label="$1";     shift ;;
+      esac
+    done
+
+    [[ -z "$label" ]] && label=$(basename "$source")
+
+    if [[ -e "$target" && ! -L "$target" ]]; then
+      if [[ "$no_prompt" == true || "${SYMLINK_MODE:-}" == "no-prompt" ]]; then
+        warn "$label: real file exists at $target — skipping (run install.sh to manage)"
+        return
+      fi
+      prompt_overwrite "$target" || { skip "$label"; return; }
+    fi
+
     ln -sfh "$source" "$target"
-    echo -e "  ${GREEN}✓${NC} $name"
+    echo -e "  ${GREEN}✓${NC} $label"
+  }
+
+  # symlink_dir SRC DST [GLOB] [--strip-ext]
+  # Symlinks all items matching GLOB in SRC into DST, preserving filenames.
+  # GLOB defaults to '*'. --strip-ext removes the file extension from the display label.
+  # Inherits SYMLINK_MODE from the environment (pass-through to install_symlink).
+  symlink_dir() {
+    local src=$1 dst=$2
+    shift 2
+    local glob="*" strip_ext=false
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --strip-ext) strip_ext=true; shift ;;
+        *)           glob="$1";      shift ;;
+      esac
+    done
+
+    local item label
+    for item in "$src"/$glob; do
+      [[ -e "$item" ]] || continue
+      label=$(basename "$item")
+      [[ "$strip_ext" == true ]] && label="${label%.*}"
+      install_symlink "$item" "$dst/$(basename "$item")" "$label"
+    done
   }
 fi

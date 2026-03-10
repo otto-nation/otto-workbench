@@ -183,21 +183,14 @@ select_components() {
     printf "  [%d] %-22s ${DIM}%s${NC}\n" "$(( i + 1 ))" "${eligible_labels[$i]}" "${eligible_descs[$i]}"
   done
   echo
-  read -rp "  Numbers to run (e.g. \"1 3\"), or Enter for all: " _selection
-  echo
 
-  if [[ -z "$_selection" ]]; then
-    SELECTED_COMPONENTS=("${eligible_dirs[@]}")
-    return
-  fi
+  local _sel
+  select_menu _sel "${#eligible_dirs[@]}" --default all
+  [[ -z "$_sel" ]] && return
 
   local num
-  for num in $_selection; do
-    if (( num >= 1 && num <= ${#eligible_dirs[@]} )); then
-      SELECTED_COMPONENTS+=("${eligible_dirs[$((num - 1))]}")
-    else
-      warn "Unknown option: $num — ignored"
-    fi
+  for num in $_sel; do
+    SELECTED_COMPONENTS+=("${eligible_dirs[$((num - 1))]}")
   done
 }
 
@@ -208,6 +201,47 @@ run_components() {
     echo
     bash "$DOTFILES_DIR/$component/setup.sh"
   done
+}
+
+# print_install_summary — prints a structured summary after all components run.
+# Sources each selected component's summary.sh (if present) and calls its
+# print_<component>_summary() function, following the same discovery pattern
+# used by ai/setup.sh for per-tool summaries.
+print_install_summary() {
+  local shell_name readme
+  shell_name=$(basename "$SHELL")
+  readme="$DOTFILES_DIR/README.md"
+
+  echo
+  echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
+  echo
+
+  echo -e "  ${CYAN}Installed${NC}"
+  echo -e "  ${DIM}  • bin scripts      → ~/.local/bin/${NC}"
+  echo -e "  ${DIM}  • zsh configs      → ~/.config/zsh/config.d/${NC}"
+  echo -e "  ${DIM}  • gitconfig        → ~/.gitconfig${NC}"
+  echo -e "  ${DIM}  • global Taskfile  → ~/.config/task/${NC}"
+  local component
+  for component in "${SELECTED_COMPONENTS[@]}"; do
+    local label
+    label=$(conf_get "$DOTFILES_DIR/$component/setup.conf" label)
+    echo -e "  ${DIM}  • ${label:-$component}${NC}"
+  done
+
+  echo
+  echo -e "  ${CYAN}Next steps${NC}"
+  echo -e "  ${DIM}  1. Reload your shell:${NC}  ${BOLD}exec $shell_name${NC}"
+
+  for component in "${SELECTED_COMPONENTS[@]}"; do
+    local summary_file="$DOTFILES_DIR/$component/summary.sh"
+    # shellcheck source=/dev/null
+    [[ -f "$summary_file" ]] && . "$summary_file"
+    declare -f "print_${component}_summary" > /dev/null && "print_${component}_summary"
+  done
+
+  echo
+  echo -e "  ${DIM}Day-to-day reference:  $readme${NC}"
+  echo
 }
 
 # ─── Core installation ────────────────────────────────────────────────────────
@@ -221,16 +255,10 @@ mkdir -p ~/.local/bin
 mkdir -p ~/.config/zsh/config.d
 
 info "Installing scripts to ~/.local/bin/"
-for _script in "$DOTFILES_DIR"/bin/*; do
-  install_symlink "$_script" "$HOME/.local/bin/$(basename "$_script")"
-done
-unset _script
+symlink_dir "$DOTFILES_DIR/bin" "$HOME/.local/bin"
 
 echo; info "Installing zsh configs to ~/.config/zsh/config.d/"
-for _config in "$DOTFILES_DIR"/zsh/*.zsh; do
-  install_symlink "$_config" "$HOME/.config/zsh/config.d/$(basename "$_config")"
-done
-unset _config
+symlink_dir "$DOTFILES_DIR/zsh" "$HOME/.config/zsh/config.d" "*.zsh"
 
 echo; info "Installing gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
@@ -262,4 +290,4 @@ discover_components  "$REGISTRY"
 select_components
 run_components
 
-echo -e "\nReload your shell: ${BOLD}exec $(basename "$SHELL")${NC}"
+print_install_summary

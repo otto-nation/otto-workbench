@@ -30,35 +30,14 @@ WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
 # shellcheck disable=SC2034
 SCRIPT_DIR="$WORKBENCH_DIR/ai"
 
+# Non-interactive mode: all install_symlink calls warn and skip real files rather
+# than prompting. Users who need interactive overwrite should run install.sh instead.
+# shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
+SYMLINK_MODE=no-prompt
+
 # Source Claude step functions to reuse them directly
 # shellcheck source=/dev/null
 . "$WORKBENCH_DIR/ai/claude/steps.sh"
-
-# sync_symlink SOURCE TARGET — non-interactive symlink update for workbench sync.
-# Existing symlinks are silently replaced. Real files are skipped with a warning
-# (user may have customized them; run install.sh to manage them interactively).
-sync_symlink() {
-  local source="$1" target="$2" name
-  name=$(basename "$source")
-  if [[ -e "$target" && ! -L "$target" ]]; then
-    warn "$name: real file at $target — skipping (run install.sh to overwrite)"
-    return
-  fi
-  ln -sfh "$source" "$target"
-  echo -e "  ${GREEN}✓${NC} $name"
-}
-
-# Override _install_claude_symlink with the same non-interactive behaviour so
-# step_claude_* functions don't prompt during sync.
-_install_claude_symlink() {
-  local source=$1 target=$2 label=$3
-  if [[ -e "$target" && ! -L "$target" ]]; then
-    warn "$label: real file at $target — skipping (run install.sh to overwrite)"
-    return
-  fi
-  ln -sfh "$source" "$target"
-  success "$label"
-}
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
@@ -70,25 +49,19 @@ cmd_sync() {
 
   info "bin scripts → ~/.local/bin/"
   mkdir -p "$HOME/.local/bin"
-  local _f
-  for _f in "$WORKBENCH_DIR"/bin/*; do
-    sync_symlink "$_f" "$HOME/.local/bin/$(basename "$_f")"
-  done
+  symlink_dir "$WORKBENCH_DIR/bin" "$HOME/.local/bin"
 
   echo
   info "zsh configs → ~/.config/zsh/config.d/"
   mkdir -p "$HOME/.config/zsh/config.d"
-  for _f in "$WORKBENCH_DIR"/zsh/*.zsh; do
-    sync_symlink "$_f" "$HOME/.config/zsh/config.d/$(basename "$_f")"
-  done
-  unset _f
+  symlink_dir "$WORKBENCH_DIR/zsh" "$HOME/.config/zsh/config.d" "*.zsh"
 
   echo
   info "git, taskfile, lib"
   mkdir -p "$HOME/.config/task"
-  sync_symlink "$WORKBENCH_DIR/git/.gitconfig"       "$HOME/.gitconfig"
-  sync_symlink "$WORKBENCH_DIR/Taskfile.global.yml"  "$HOME/.config/task/Taskfile.yml"
-  sync_symlink "$WORKBENCH_DIR/lib"                  "$HOME/.config/task/lib"
+  install_symlink "$WORKBENCH_DIR/git/.gitconfig"       "$HOME/.gitconfig"
+  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"  "$HOME/.config/task/Taskfile.yml"
+  install_symlink "$WORKBENCH_DIR/lib"                  "$HOME/.config/task/lib"
 
   # ─── Claude ────────────────────────────────────────────────────────────────
 

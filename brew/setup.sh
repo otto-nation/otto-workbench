@@ -7,10 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib/ui.sh"
 
-if ! command -v brew >/dev/null 2>&1; then
-  warn "Homebrew not found — skipping package install"
-  exit 0
-fi
+require_command brew "Homebrew not found — skipping package install" || exit 0
 
 # Cache installed formulae and casks once for fast per-package lookups
 _INSTALLED_FORMULAE=$(brew list --formula 2>/dev/null)
@@ -104,17 +101,15 @@ _brew_select_work_stacks() {
       | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' | paste -sd ', ' -)
     printf "  [%d] %-15s ${DIM}%s${NC}\n" "$((i+1))" "${stack_names[$i]}" "$pkgs"
   done
-
   echo
-  printf "  Select stacks to install (e.g. 1 3) or Enter to skip: "
-  read -r selection
-  [[ -z "$selection" ]] && return
 
-  for num in $selection; do
-    local idx=$((num - 1))
-    if [[ $idx -ge 0 && $idx -lt ${#stack_files[@]} ]]; then
-      _brew_install_file "${stack_files[$idx]}" "${stack_names[$idx]} stack"
-    fi
+  local _sel
+  select_menu _sel "${#stack_files[@]}" --default skip
+  [[ -z "$_sel" ]] && return
+
+  local num
+  for num in $_sel; do
+    _brew_install_file "${stack_files[$((num - 1))]}" "${stack_names[$((num - 1))]} stack"
   done
 }
 

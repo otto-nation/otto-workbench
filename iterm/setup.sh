@@ -57,9 +57,5 @@ for _theme_file in "$SCRIPT_DIR/themes"/*.itermcolors; do
 done
 
 echo
-info "Font setup (manual step required):"
-echo -e "  ${DIM}1. Open iTerm2 → Settings → Profiles → Text → Font${NC}"
-echo -e "  ${DIM}2. Set font to: FiraCodeNFM-Reg  (size 13 recommended)${NC}"
-echo -e "  ${DIM}3. Enable: Use ligatures${NC}"
-echo
-echo -e "  ${DIM}Install font first if not already done: brew install --cask font-fira-code-nerd-font${NC}"
+info "Font setup (manual step required — see post-install summary):"
+echo -e "  ${DIM}  Settings → Profiles → Text → Font → FiraCodeNFM-Reg (size 13, ligatures on)${NC}"

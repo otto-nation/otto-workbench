@@ -20,29 +20,6 @@ _mcp_install() {
   success "$name installed"
 }
 
-# _install_claude_symlink SOURCE TARGET LABEL
-# Creates or updates a symlink at TARGET. Existing symlinks are silently updated;
-# real files/dirs prompt before overwrite. Uses -h to prevent BSD ln from
-# dereferencing an existing directory symlink on re-runs.
-_install_claude_symlink() {
-  local source=$1 target=$2 label=$3
-
-  if [[ -L "$target" ]]; then
-    ln -sfh "$source" "$target"
-    success "$label (updated symlink)"
-  elif [[ -e "$target" ]]; then
-    if confirm_n "$target already exists. Overwrite with symlink?"; then
-      rm -rf "$target"
-      ln -sfh "$source" "$target"
-      success "$label"
-    else
-      skip
-    fi
-  else
-    ln -sfh "$source" "$target"
-    success "$label"
-  fi
-}
 
 _install_workbench_rule() {
   local workbench_path
@@ -122,7 +99,7 @@ step_claude_guidelines() {
   local src="$SCRIPT_DIR/claude/CLAUDE.md"
   [[ -f "$src" ]] || { err "Missing $src"; return 1; }
   mkdir -p "$HOME/.claude"
-  _install_claude_symlink "$src" "$HOME/.claude/CLAUDE.md" "CLAUDE.md"
+  install_symlink "$src" "$HOME/.claude/CLAUDE.md" "CLAUDE.md"
 }
 
 step_claude_rules() {
@@ -132,11 +109,7 @@ step_claude_rules() {
 
   mkdir -p "$rules_dst"
   info "Installing rules to ~/.claude/rules/"
-  local file
-  for file in "$rules_src"/*.md; do
-    [[ -e "$file" ]] || continue
-    _install_claude_symlink "$file" "$rules_dst/$(basename "$file")" "$(basename "${file%.md}")"
-  done
+  symlink_dir "$rules_src" "$rules_dst" "*.md" --strip-ext
 
   echo
   info "Generating workbench.md"
@@ -171,10 +144,7 @@ step_claude_skills() {
   [[ -d "$src" ]] || { warn "No skills found in $src — skipping"; return; }
   mkdir -p "$dst"
   info "Installing Claude Code skills to ~/.claude/skills/"
-  local dir
-  for dir in "$src"/*/; do
-    _install_claude_symlink "$dir" "$dst/$(basename "$dir")" "$(basename "$dir")"
-  done
+  symlink_dir "$src" "$dst" "*/"
 }
 
 step_claude_agents() {
@@ -182,19 +152,11 @@ step_claude_agents() {
   [[ -d "$src" ]] || { warn "No agents found in $src — skipping"; return; }
   mkdir -p "$dst"
   info "Installing Claude Code agents to ~/.claude/agents/"
-  local file name
-  for file in "$src"/*.md; do
-    [[ -e "$file" ]] || continue
-    name=$(basename "$file")
-    _install_claude_symlink "$file" "$dst/$name" "${name%.md}"
-  done
+  symlink_dir "$src" "$dst" "*.md" --strip-ext
 }
 
 register_claude_steps() {
-  if ! command -v claude >/dev/null 2>&1; then
-    warn "Claude Code (claude) not found in PATH — skipping Claude setup steps"
-    return
-  fi
+  require_command claude "Claude Code (claude) not found in PATH — skipping Claude setup steps" || return
   register_step "Claude Code settings"    step_claude_settings
   register_step "Claude Code guidelines"  step_claude_guidelines
   register_step "Claude Code rules"       step_claude_rules

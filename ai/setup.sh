@@ -66,19 +66,16 @@ select_tools() {
     i=$(( i + 1 ))
   done
   echo
-  read -rp "Space-separated numbers (e.g. \"1 2\"): " selection
-  echo
+
+  local _sel
+  select_menu _sel "${#tools[@]}" --default require \
+    || { err "No tools selected. Exiting."; exit 1; }
+  [[ -z "$_sel" ]] && { err "No tools selected. Exiting."; exit 1; }
 
   local num
-  for num in $selection; do
-    if (( num >= 1 && num <= ${#tools[@]} )); then
-      SELECTED_TOOLS+=("${tools[$((num - 1))]}")
-    else
-      warn "Unknown option: $num — ignored"
-    fi
+  for num in $_sel; do
+    SELECTED_TOOLS+=("${tools[$((num - 1))]}")
   done
-
-  [[ ${#SELECTED_TOOLS[@]} -eq 0 ]] && { err "No tools selected. Exiting."; exit 1; }
 
   echo -ne "Setting up: "
   local t

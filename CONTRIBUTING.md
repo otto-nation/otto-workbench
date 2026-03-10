@@ -53,6 +53,18 @@ Functions follow the pattern:
 function_name() { ... }
 ```
 
+## Adding a Component
+
+Register the component in `install.components`, then create a directory with:
+
+| File | Required | Purpose |
+|------|----------|---------|
+| `setup.conf` | yes | metadata: `label`, `description`, `platforms` |
+| `setup.sh` | yes | imperative — does the installation work |
+| `summary.sh` | optional | defines `print_<name>_summary()`, sourced by `install.sh` post-install |
+
+`summary.sh` must contain only function definitions — no top-level execution. `install.sh` sources it after all components have run and calls `print_<name>_summary()` if defined. This mirrors the `print_<tool>_summary()` pattern used by `ai/setup.sh`.
+
 ## Code Conventions
 
 - Quote all variables: `"$VAR"` not `$VAR`.

@@ -13,6 +13,17 @@ exec zsh
 
 The installer symlinks scripts, zsh configs, and the global Taskfile, optionally installs Homebrew packages, and prompts to configure AI tools.
 
+## After Install
+
+1. **Reload your shell**: `exec zsh`
+2. **iTerm2** (if installed): Settings → Profiles → Text → Font → `FiraCodeNFM-Reg`
+3. **Docker** (if installed): start your runtime — `colima start` or launch OrbStack
+4. **AI tools** (if installed): edit `~/.config/task/taskfile.env` to set your `AI_COMMAND`
+
+Secrets and machine-specific env vars go in `~/.env.local` — sourced automatically, never committed.
+
+Re-run any component independently: `bash <component>/setup.sh` (e.g. `bash ai/setup.sh`)
+
 ## What's Included
 
 ### Scripts (`bin/`)

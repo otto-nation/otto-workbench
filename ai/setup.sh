@@ -86,6 +86,7 @@ select_tools() {
 # ─── Step runner ──────────────────────────────────────────────────────────────
 # register_step and run_steps are defined in lib/ui.sh
 
+# shellcheck disable=SC2034  # consumed by register_step/run_steps in lib/ui.sh
 STEPS=()
 
 # ─── Shared step ──────────────────────────────────────────────────────────────

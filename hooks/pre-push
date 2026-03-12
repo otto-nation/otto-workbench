@@ -32,8 +32,7 @@ if ! command -v shellcheck >/dev/null 2>&1; then
 fi
 
 echo "→ Running ShellCheck..."
-grep -rlE '^#!.*/(ba)?sh' "$REPO_ROOT" \
-  | grep -v "$REPO_ROOT/.git/" \
+grep -rlE '^#!.*/(ba)?sh' "$REPO_ROOT" --exclude-dir='.git' \
   | sort \
   | xargs shellcheck --severity=warning
 echo "✓ ShellCheck passed"

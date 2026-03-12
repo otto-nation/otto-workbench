@@ -69,9 +69,8 @@ select_tools() {
   echo
 
   local _sel
-  select_menu _sel "${#tools[@]}" --default require \
-    || { err "No tools selected. Exiting."; exit 1; }
-  [[ -z "$_sel" ]] && { err "No tools selected. Exiting."; exit 1; }
+  select_menu _sel "${#tools[@]}" --default all
+  [[ -z "$_sel" ]] && { info "No tools selected — exiting."; exit 0; }
 
   local num
   for num in $_sel; do
@@ -85,34 +84,9 @@ select_tools() {
 }
 
 # ─── Step runner ──────────────────────────────────────────────────────────────
+# register_step and run_steps are defined in lib/ui.sh
 
 STEPS=()
-
-register_step() { STEPS+=("${1}|${2}"); }
-
-run_steps() {
-  local total=${#STEPS[@]} index=1 ran=0 skipped=0
-  local step name fn
-
-  for step in "${STEPS[@]}"; do
-    name="${step%%|*}"
-    fn="${step##*|}"
-    echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}$name${NC}"
-
-    if confirm "  Run this step?"; then
-      $fn
-      ran=$(( ran + 1 ))
-    else
-      echo -e "  ${DIM}⊘ Skipped${NC}"
-      skipped=$(( skipped + 1 ))
-    fi
-
-    index=$(( index + 1 ))
-  done
-
-  echo
-  echo -e "${DIM}$ran run · $skipped skipped${NC}"
-}
 
 # ─── Shared step ──────────────────────────────────────────────────────────────
 

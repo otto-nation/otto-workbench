@@ -3,21 +3,45 @@
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-# _mcp_is_registered NAME — returns 0 if NAME is in the user-scope MCP list.
+# _mcp_is_registered NAME — returns 0 if NAME is already in ~/.claude.json mcpServers.
+# Reads the config file directly to avoid `claude mcp list`, which probes all servers
+# (triggering health checks that start MCP processes like Serena).
 _mcp_is_registered() {
-  claude mcp list 2>/dev/null | grep -q "^${1}"
+  jq -e ".mcpServers | has(\"$1\")" "$HOME/.claude.json" > /dev/null 2>&1
 }
 
-# _mcp_install NAME COMMAND... — adds an MCP server at user scope if not already registered.
+# _mcp_registered_cmd NAME — prints the registered command + args joined by spaces.
+_mcp_registered_cmd() {
+  jq -r --arg n "$1" \
+    '[.mcpServers[$n].command] + (.mcpServers[$n].args // []) | join(" ")' \
+    "$HOME/.claude.json" 2>/dev/null
+}
+
+# _mcp_install NAME COMMAND... — registers an MCP server at user scope.
+# Skips if already registered with the same command. Updates if the command has drifted
+# (e.g. a hardcoded API key was previously baked in but has since been removed from the manifest).
 _mcp_install() {
   local name="$1"; shift
+  local expected="$*"
+
   if _mcp_is_registered "$name"; then
-    success "$name already registered"
-    return
+    local registered
+    registered=$(_mcp_registered_cmd "$name")
+    if [[ "$registered" == "$expected" ]]; then
+      success "$name already registered"
+      return
+    fi
+    info "Updating $name (command changed)"
+    local tmp
+    tmp=$(mktemp)
+    jq --arg n "$name" 'del(.mcpServers[$n])' "$HOME/.claude.json" > "$tmp" \
+      && mv "$tmp" "$HOME/.claude.json"
+  else
+    info "Installing $name (user scope)"
   fi
-  info "Installing $name (user scope)"
+
   claude mcp add "$name" --scope user -- "$@"
-  success "$name installed"
+  success "$name registered"
 }
 
 
@@ -91,7 +115,7 @@ step_claude_mcps() {
     done < <(jq -r '.command[]' "$file")
     _mcp_install "$name" "${cmd_args[@]}"
     note=$(jq -r '.note // empty' "$file")
-    [[ -n "$note" ]] && echo -e "  ${DIM}$note${NC}"
+    if [[ -n "$note" ]]; then echo -e "  ${DIM}$note${NC}"; fi
   done
 }
 
@@ -189,7 +213,7 @@ print_claude_summary() {
     echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
     found=true
   done
-  [[ "$found" == false ]] && echo -e "  ${DIM}  (none installed)${NC}"
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none installed)${NC}"; fi
   echo
 
   echo -e "  ${CYAN}MCP servers${NC} ${DIM}(user scope — run: claude mcp list)${NC}"

@@ -57,11 +57,12 @@ cmd_sync() {
   symlink_dir "$WORKBENCH_DIR/zsh" "$HOME/.config/zsh/config.d" "*.zsh"
 
   echo
-  info "git, taskfile, lib"
+  info "git, taskfile, lib, starship"
   mkdir -p "$HOME/.config/task"
-  install_symlink "$WORKBENCH_DIR/git/.gitconfig"       "$HOME/.gitconfig"
-  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"  "$HOME/.config/task/Taskfile.yml"
-  install_symlink "$WORKBENCH_DIR/lib"                  "$HOME/.config/task/lib"
+  install_symlink "$WORKBENCH_DIR/git/.gitconfig"            "$HOME/.gitconfig"
+  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"       "$HOME/.config/task/Taskfile.yml"
+  install_symlink "$WORKBENCH_DIR/lib"                       "$HOME/.config/task/lib"
+  install_symlink "$WORKBENCH_DIR/zsh/starship.toml"         "$HOME/.config/starship.toml"
 
   # ─── Claude ────────────────────────────────────────────────────────────────
 

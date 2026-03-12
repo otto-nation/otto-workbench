@@ -8,7 +8,7 @@
 _install_file() {
   local target=$1 content=$2 label=$3
   if [[ -f "$target" ]]; then
-    confirm_n "$target already exists. Overwrite?" || { skip; return; }
+    prompt_overwrite "$target" || { skip; return; }
   fi
   printf '%s\n' "$content" > "$target"
   success "Wrote $label"

@@ -155,8 +155,20 @@ step_claude_agents() {
   symlink_dir "$src" "$dst" "*.md" --strip-ext
 }
 
+step_generate_tools() {
+  local generator
+  generator="$(cd "$SCRIPT_DIR/.." && pwd)/bin/generate-tool-context"
+  if [[ ! -x "$generator" ]]; then
+    warn "generate-tool-context not found — skipping tool context generation"
+    return
+  fi
+  info "Generating tool context"
+  bash "$generator"
+}
+
 register_claude_steps() {
   require_command claude "Claude Code (claude) not found in PATH — skipping Claude setup steps" || return
+  register_step "Tool context"            step_generate_tools
   register_step "Claude Code settings"    step_claude_settings
   register_step "Claude Code guidelines"  step_claude_guidelines
   register_step "Claude Code rules"       step_claude_rules

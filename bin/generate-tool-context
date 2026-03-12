@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Generate ai/guidelines/rules/tools.generated.md from domain registries.
+#
+# Reads:     brew/registry.yml  bin/registry.yml  zsh/registry.yml
+# Writes:    ai/guidelines/rules/tools.generated.md
+#
+# Run automatically via pre-push hook and workbench sync.
+# Never edit tools.generated.md directly — edit the source registries instead.
+#
+# Environment overrides (used in tests):
+#   BREW_REGISTRY          path to brew registry YAML  (default: brew/registry.yml)
+#   BIN_REGISTRY           path to bin registry YAML   (default: bin/registry.yml)
+#   ZSH_REGISTRY           path to zsh registry YAML   (default: zsh/registry.yml)
+#   TOOL_CONTEXT_OUTPUT    output file path             (default: ai/guidelines/rules/tools.generated.md)
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+
+# shellcheck source=../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
+BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
+ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
+OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/ai/guidelines/rules/tools.generated.md"}"
+
+if ! command -v yq >/dev/null 2>&1; then
+  err "yq not found — run: brew install yq"
+  exit 1
+fi
+
+# _render_registry FILE TITLE
+# Emits a markdown section for every tool entry in FILE.
+# Silently skips if FILE is empty, missing, or has no tools.
+_render_registry() {
+  local file="$1"
+  local title="$2"
+
+  [[ -f "$file" ]] || return 0
+
+  local count
+  count=$(yq '.tools | length' "$file")
+  [[ "$count" -gt 0 ]] || return 0
+
+  printf '\n## %s\n' "$title"
+
+  local i=0 name description when_to_use usage docs
+  while [[ "$i" -lt "$count" ]]; do
+    name=$(yq ".tools[$i].name" "$file")
+    description=$(yq ".tools[$i].description" "$file")
+    when_to_use=$(yq ".tools[$i].when_to_use" "$file")
+    usage=$(yq ".tools[$i].usage // \"\"" "$file")
+    docs=$(yq ".tools[$i].docs // \"\"" "$file")
+
+    printf '\n### %s\n' "$name"
+    printf '%s\n' "$description"
+    printf -- '- **When to use**: %s\n' "$when_to_use"
+    [[ -n "$usage" && "$usage" != "null" ]] && printf -- '- **Usage**: `%s`\n' "$usage"
+    [[ -n "$docs"  && "$docs"  != "null" ]] && printf -- '- **Docs**: %s\n'   "$docs"
+    i=$(( i + 1 ))
+  done
+}
+
+{
+  printf '# Environment Tools\n'
+  printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
+  printf '<!-- Sources: brew/registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
+  printf '<!-- Regenerate: bin/generate-tool-context -->\n'
+  _render_registry "$BREW_REGISTRY" "Brew Tools"
+  _render_registry "$BIN_REGISTRY"  "Workbench Scripts"
+  _render_registry "$ZSH_REGISTRY"  "Shell Aliases"
+} > "$OUTPUT"
+
+success "Generated $(basename "$OUTPUT")"

@@ -1,0 +1,175 @@
+#!/usr/bin/env bats
+
+setup() {
+  load 'test_helper'
+  ORIG_DIR="$PWD"
+  TMPDIR="$(mktemp -d)"
+
+  # Mirror minimum required repo structure in TMPDIR
+  mkdir -p "$TMPDIR/bin" "$TMPDIR/brew" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
+  cp "$REPO_ROOT/lib/ui.sh" "$TMPDIR/lib/ui.sh"
+
+  # Stub bin scripts referenced in tests
+  touch "$TMPDIR/bin/mytool" && chmod +x "$TMPDIR/bin/mytool"
+  touch "$TMPDIR/bin/othertool" && chmod +x "$TMPDIR/bin/othertool"
+
+  # Install validator pointing at TMPDIR via a wrapper that overrides REPO_ROOT
+  VALIDATOR="$TMPDIR/validate-registries"
+  sed "s|REPO_ROOT=.*|REPO_ROOT=\"$TMPDIR\"|" \
+    "$REPO_ROOT/bin/validate-registries" > "$VALIDATOR"
+  chmod +x "$VALIDATOR"
+}
+
+teardown() {
+  cd "$ORIG_DIR"
+  rm -rf "$TMPDIR"
+}
+
+_write_valid_brew() {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+tools:
+  - name: mytool
+    description: "A test tool"
+    when_to_use: "When testing"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+}
+
+_write_valid_bin() {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+tools:
+  - name: mytool
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+}
+
+_write_valid_zsh() {
+  cat > "$TMPDIR/zsh/registry.yml" << 'EOF'
+tools:
+  - name: "Git aliases"
+    description: "Git shortcuts"
+    when_to_use: "Always"
+EOF
+  printf '# Git aliases Configuration\nalias gs="git status"\n' \
+    > "$TMPDIR/zsh/config.d/aliases-git.zsh"
+}
+
+# ── Schema validation ─────────────────────────────────────────────────────────
+
+@test "passes when all registries are valid" {
+  _write_valid_brew
+  _write_valid_bin
+  _write_valid_zsh
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when brew entry is missing description" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+tools:
+  - name: mytool
+    when_to_use: "When testing"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: description"* ]]
+}
+
+@test "fails when brew entry is missing when_to_use" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+tools:
+  - name: mytool
+    description: "A tool"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: when_to_use"* ]]
+}
+
+@test "fails on duplicate tool names in brew registry" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+tools:
+  - name: mytool
+    description: "First"
+    when_to_use: "Always"
+  - name: mytool
+    description: "Second"
+    when_to_use: "Always"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"duplicate tool name: mytool"* ]]
+}
+
+# ── Cross-file validation ─────────────────────────────────────────────────────
+
+@test "fails when brew registry entry not in Brewfile" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+tools:
+  - name: missing-formula
+    description: "Not in Brewfile"
+    when_to_use: "Never"
+EOF
+  printf 'brew "something-else"\n' > "$TMPDIR/brew/Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not found in brew/Brewfile"* ]]
+}
+
+@test "passes when brew entry matches a cask in Brewfile" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+tools:
+  - name: mycask
+    description: "A cask"
+    when_to_use: "For GUI tools"
+EOF
+  printf 'cask "mycask"\n' > "$TMPDIR/brew/Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when bin registry entry has no matching file in bin/" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+tools:
+  - name: no-such-script
+    description: "Missing"
+    when_to_use: "Never"
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not found in bin/"* ]]
+}
+
+@test "fails when zsh registry entry has no matching comment in zsh/" {
+  cat > "$TMPDIR/zsh/registry.yml" << 'EOF'
+tools:
+  - name: "Nomatch aliases"
+    description: "Nothing matches"
+    when_to_use: "Never"
+EOF
+  # No matching comment in any zsh file
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no matching comment found"* ]]
+}
+
+# ── Missing registries ────────────────────────────────────────────────────────
+
+@test "succeeds and warns when registries are missing" {
+  # No registry files written
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}

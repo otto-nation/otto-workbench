@@ -1,0 +1,82 @@
+# Brew tool registry — AI context for Claude/Kiro.
+# Add an entry here whenever you add a formula or cask to the Brewfile.
+# Regenerate: bin/generate-tool-context
+
+tools:
+  - name: jq
+    description: "JSON processor for querying, filtering, and transforming JSON data"
+    when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"
+    usage: "jq '.field' file.json  |  echo '{}' | jq '.key'"
+    docs: "https://jqlang.github.io/jq/manual/"
+
+  - name: yq
+    description: "YAML/JSON/TOML processor — like jq but for YAML"
+    when_to_use: "Reading or modifying YAML files (Taskfile.yml, docker-compose.yml, k8s manifests)"
+    usage: "yq '.key' file.yaml  |  yq -i '.key = \"value\"' file.yaml"
+    docs: "https://mikefarah.gitbook.io/yq/"
+
+  - name: gh
+    description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
+    when_to_use: "Creating/viewing PRs, checking CI status, managing issues, cloning repos, viewing runs"
+    usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"
+    docs: "https://cli.github.com/manual/"
+
+  - name: go-task
+    description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
+    when_to_use: "Running defined dev workflows: commits, PRs, brew management"
+    usage: "task commit  |  task pr:create  |  task --global <cmd>"
+    docs: "https://taskfile.dev"
+
+  - name: shellcheck
+    description: "Static analysis tool for shell scripts — catches bugs and style issues"
+    when_to_use: "Before committing any .sh file; run automatically in pre-push and CI"
+    usage: "shellcheck script.sh"
+    docs: "https://www.shellcheck.net/"
+
+  - name: bats-core
+    description: "Bash Automated Testing System — unit testing framework for shell scripts"
+    when_to_use: "Writing or running tests for bash scripts in this repo"
+    usage: "bats tests/  |  bats tests/foo.bats"
+    docs: "https://bats-core.readthedocs.io/"
+
+  - name: zoxide
+    description: "Smarter cd — learns frequently-visited directories and jumps to them by partial name"
+    when_to_use: "Navigating to frequently-used directories faster than cd"
+    usage: "z workbench  |  z src"
+    docs: "https://github.com/ajeetdsouza/zoxide"
+
+  - name: uv
+    description: "Fast Python package and project manager (Rust-based pip/venv replacement)"
+    when_to_use: "Installing Python tools, managing venvs, running Python scripts without installing"
+    usage: "uv pip install <pkg>  |  uvx <tool>"
+    docs: "https://docs.astral.sh/uv/"
+
+  - name: pipx
+    description: "Install and run Python CLI tools in isolated environments"
+    when_to_use: "Installing Python-based CLI tools globally (e.g. Serena, pre-commit)"
+    usage: "pipx install <tool>  |  pipx run <tool>"
+    docs: "https://pipx.pypa.io/"
+
+  - name: nvm
+    description: "Node Version Manager — install and switch between Node.js versions"
+    when_to_use: "Switching Node versions per project; installing a specific Node version"
+    usage: "nvm use <version>  |  nvm install <version>  |  nvm ls"
+    docs: "https://github.com/nvm-sh/nvm"
+
+  - name: colima
+    description: "Lightweight container runtime for macOS (Docker-compatible, no Docker Desktop needed)"
+    when_to_use: "Running Docker containers locally"
+    usage: "colima start  |  colima stop  |  colima status"
+    docs: "https://github.com/abiosoft/colima"
+
+  - name: 1password-cli
+    description: "1Password CLI (op) — access secrets, SSH keys, and vaults from the terminal"
+    when_to_use: "Retrieving secrets in scripts; signing git commits via SSH agent"
+    usage: "op read 'op://vault/item/field'  |  op run -- <cmd>"
+    docs: "https://developer.1password.com/docs/cli/"
+
+  - name: gnupg
+    description: "GNU Privacy Guard — GPG encryption and signing"
+    when_to_use: "Signing git commits with GPG; encrypting/decrypting files"
+    usage: "gpg --sign  |  gpg --verify"
+    docs: "https://gnupg.org/documentation/"

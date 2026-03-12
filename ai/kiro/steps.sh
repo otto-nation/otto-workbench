@@ -54,6 +54,19 @@ step_kiro_agents() {
   echo -e "  ${DIM}Set CONTEXT7_API_KEY in ~/.env.local to enable context7${NC}"
 }
 
+step_kiro_tools() {
+  local src="$SCRIPT_DIR/guidelines/rules/tools.generated.md"
+  local dst="$HOME/.kiro/steering/tools.md"
+  if [[ ! -f "$src" ]]; then
+    warn "tools.generated.md not found — run bin/generate-tool-context first"
+    return
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+  success "tools.md → ~/.kiro/steering/"
+}
+
 register_kiro_steps() {
-  register_step "Kiro agent configs" step_kiro_agents
+  register_step "Kiro agent configs"  step_kiro_agents
+  register_step "Kiro tool context"   step_kiro_tools
 }

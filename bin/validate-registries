@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Validate tool registries against schema and cross-check with their source files.
+#
+# Checks performed per registry:
+#   - Required fields present: name, description, when_to_use
+#   - No duplicate tool names
+#   - brew/registry.yml: every tool name exists as a formula/cask in brew/Brewfile
+#   - bin/registry.yml:  every tool name exists as an executable in bin/
+#   - zsh/registry.yml:  every tool name has a matching header comment in zsh/config.d/
+#
+# Usage: bin/validate-registries
+# Exit code: 0 if all checks pass, 1 if any fail.
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+
+# shellcheck source=../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+ERRORS=0
+
+# _fail MSG — records an error and prints it; does not exit immediately so all
+# errors in a registry are reported before aborting.
+_fail() {
+  echo -e "  ${RED}✗${NC} $*" >&2
+  ERRORS=$(( ERRORS + 1 ))
+}
+
+# _check_required_fields FILE INDEX
+# Validates that the entry at INDEX in FILE has all required fields.
+_check_required_fields() {
+  local file="$1"
+  local i="$2"
+  local name description when_to_use
+  name=$(yq ".tools[$i].name // \"\"" "$file")
+  description=$(yq ".tools[$i].description // \"\"" "$file")
+  when_to_use=$(yq ".tools[$i].when_to_use // \"\"" "$file")
+
+  [[ -n "$name" && "$name" != "null" ]]        || _fail "$(basename "$file") [$i]: missing required field: name"
+  [[ -n "$description" && "$description" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: description"
+  [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use"
+}
+
+# _check_no_duplicates FILE
+# Fails if any tool name appears more than once.
+_check_no_duplicates() {
+  local file="$1"
+  local dupes
+  dupes=$(yq '.tools[].name' "$file" | sort | uniq -d)
+  if [[ -n "$dupes" ]]; then
+    while IFS= read -r name; do
+      _fail "$(basename "$file"): duplicate tool name: $name"
+    done <<< "$dupes"
+  fi
+}
+
+# _validate_schema FILE
+# Runs required-field and duplicate checks for every entry in FILE.
+_validate_schema() {
+  local file="$1"
+  [[ -f "$file" ]] || { warn "$(basename "$file") not found — skipping"; return; }
+
+  local count i=0
+  count=$(yq '.tools | length' "$file")
+  while [[ "$i" -lt "$count" ]]; do
+    _check_required_fields "$file" "$i"
+    i=$(( i + 1 ))
+  done
+  _check_no_duplicates "$file"
+}
+
+# _validate_brew_entries
+# Every name in brew/registry.yml must appear in the Brewfile (as formula or cask).
+_validate_brew_entries() {
+  local file="$REPO_ROOT/brew/registry.yml"
+  local brewfile="$REPO_ROOT/brew/Brewfile"
+  [[ -f "$file" ]]     || return 0
+  [[ -f "$brewfile" ]] || { warn "brew/Brewfile not found — skipping cross-check"; return; }
+
+  local count i=0 name
+  count=$(yq '.tools | length' "$file")
+  while [[ "$i" -lt "$count" ]]; do
+    name=$(yq ".tools[$i].name" "$file")
+    if ! grep -qE "^(brew|cask) [\"']?${name}[\"']?" "$brewfile"; then
+      _fail "brew/registry.yml: '$name' not found in brew/Brewfile"
+    fi
+    i=$(( i + 1 ))
+  done
+}
+
+# _validate_bin_entries
+# Every name in bin/registry.yml must exist as a file in bin/.
+_validate_bin_entries() {
+  local file="$REPO_ROOT/bin/registry.yml"
+  [[ -f "$file" ]] || return 0
+
+  local count i=0 name
+  count=$(yq '.tools | length' "$file")
+  while [[ "$i" -lt "$count" ]]; do
+    name=$(yq ".tools[$i].name" "$file")
+    if [[ ! -f "$REPO_ROOT/bin/$name" ]]; then
+      _fail "bin/registry.yml: '$name' not found in bin/"
+    fi
+    i=$(( i + 1 ))
+  done
+}
+
+# _validate_zsh_entries
+# Every name in zsh/registry.yml must match a section header comment in one of
+# the zsh/config.d/*.zsh files (e.g. "# Git aliases Configuration").
+_validate_zsh_entries() {
+  local file="$REPO_ROOT/zsh/registry.yml"
+  [[ -f "$file" ]] || return 0
+
+  local count i=0 name
+  count=$(yq '.tools | length' "$file")
+  while [[ "$i" -lt "$count" ]]; do
+    name=$(yq ".tools[$i].name" "$file")
+    # Extract the first word of the name (e.g. "Git" from "Git aliases") for matching
+    local keyword
+    keyword=$(echo "$name" | cut -d' ' -f1)
+    if ! grep -rqi "# ${keyword}" "$REPO_ROOT/zsh/" 2>/dev/null; then
+      _fail "zsh/registry.yml: '$name' — no matching comment found in zsh/ for keyword '${keyword}'"
+    fi
+    i=$(( i + 1 ))
+  done
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+if ! command -v yq >/dev/null 2>&1; then
+  err "yq not found — run: brew install yq"
+  exit 1
+fi
+
+echo "→ Validating registries..."
+
+info "Schema: brew/registry.yml"
+_validate_schema "$REPO_ROOT/brew/registry.yml"
+_validate_brew_entries
+
+echo
+info "Schema: bin/registry.yml"
+_validate_schema "$REPO_ROOT/bin/registry.yml"
+_validate_bin_entries
+
+echo
+info "Schema: zsh/registry.yml"
+_validate_schema "$REPO_ROOT/zsh/registry.yml"
+_validate_zsh_entries
+
+echo
+if [[ "$ERRORS" -gt 0 ]]; then
+  err "$ERRORS error(s) found"
+  exit 1
+fi
+
+success "All registries valid"

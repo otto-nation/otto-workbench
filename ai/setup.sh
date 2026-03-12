@@ -58,11 +58,12 @@ select_tools() {
     exit 1
   fi
 
-  echo -e "${BOLD}${BLUE}AI Tools Setup${NC}\n"
-  echo "Which AI tools do you want to set up?"
+  echo -e "${BOLD}${BLUE}AI Tools Setup${NC}"
+  echo
+  info "Which AI tools do you want to set up?"
   local i=1
   for tool in "${tools[@]}"; do
-    echo "  [$i] $tool"
+    echo -e "  ${CYAN}[$i]${NC} $tool"
     i=$(( i + 1 ))
   done
   echo
@@ -77,10 +78,10 @@ select_tools() {
     SELECTED_TOOLS+=("${tools[$((num - 1))]}")
   done
 
-  echo -ne "Setting up: "
+  local tools_display=""
   local t
-  for t in "${SELECTED_TOOLS[@]}"; do echo -ne "${BOLD}${t}${NC}  "; done
-  echo
+  for t in "${SELECTED_TOOLS[@]}"; do tools_display+="${BOLD}${t}${NC}  "; done
+  info "Setting up:  ${tools_display}"
 }
 
 # ─── Step runner ──────────────────────────────────────────────────────────────

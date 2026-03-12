@@ -1,17 +1,17 @@
-# Workbench
+# otto-workbench
 
 Personal development environment — shell config, utilities, and AI-powered git automation.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/otto-nation/otto-workbench ~/workbench
-cd ~/workbench
+git clone https://github.com/otto-nation/otto-workbench ~/otto-workbench
+cd ~/otto-workbench
 ./install.sh
 exec zsh
 ```
 
-The installer symlinks scripts, zsh configs, and the global Taskfile, optionally installs Homebrew packages, and prompts to configure AI tools.
+The installer symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu (Homebrew, Docker, iTerm2, AI tools).
 
 ## After Install
 
@@ -22,7 +22,17 @@ The installer symlinks scripts, zsh configs, and the global Taskfile, optionally
 
 Secrets and machine-specific env vars go in `~/.env.local` — sourced automatically, never committed.
 
-Re-run any component independently: `bash <component>/setup.sh` (e.g. `bash ai/setup.sh`)
+## Keeping in Sync
+
+After pulling updates or when config drifts:
+
+```bash
+workbench sync
+```
+
+Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Safe to run at any time.
+
+Re-run a single component independently: `bash <component>/setup.sh` (e.g. `bash ai/setup.sh`)
 
 ## What's Included
 
@@ -30,16 +40,20 @@ Re-run any component independently: `bash <component>/setup.sh` (e.g. `bash ai/s
 
 | Script | Description |
 |--------|-------------|
+| `workbench` | Re-apply all workbench configuration to `~/` |
+| `claude-rules` | Manage Claude Code rule additions |
 | `aliases` | Display all configured aliases and functions |
-| `cleanup-testcontainers` | Clean up Docker testcontainers |
 | `get-secret` | Interactive AWS Secrets Manager retrieval |
+| `cleanup-testcontainers` | Clean up Docker testcontainers |
 | `mem-analyze` | System memory analysis report |
-
-Add a description to any new script by making line 2 a comment starting with a capital letter.
+| `generate-tool-context` | Regenerate `tools.generated.md` from registries |
+| `validate-registries` | Validate all tool registry YAML files |
 
 ### ZSH Configuration
 
 `zsh/.zshrc` is copied to `~/.zshrc` on first install. It sets up oh-my-zsh, lazy-loading for pyenv/nvm/SDKMAN, arch-aware Homebrew prefix, and modular config loading from `~/.config/zsh/config.d/`.
+
+`zsh/starship.toml` is symlinked to `~/.config/starship.toml`.
 
 **Secrets and machine-specific config** go in `~/.env.local` — sourced automatically, never committed:
 
@@ -50,7 +64,17 @@ export CONTEXT7_API_KEY=ctx7sk-your-key
 
 ### Git Configuration
 
-Useful aliases and settings in `git/.gitconfig`.
+Useful aliases and settings in `git/.gitconfig`. `core.fsmonitor` and `core.untrackedCache` are enabled globally for fast `git status`.
+
+### Tool Registry
+
+Each tooling directory owns a `registry.yml` describing the tools it provides — name, description, when to use, usage, and docs URL. These are combined into `ai/guidelines/rules/tools.generated.md` and auto-loaded into every Claude session.
+
+Update the registry after adding or removing a tool, then regenerate:
+
+```bash
+generate-tool-context   # or: workbench sync
+```
 
 ### Homebrew Packages
 
@@ -87,20 +111,21 @@ Use `--global` to run tasks from `~/.config/task/` rather than a local project T
 bash ai/setup.sh
 ```
 
-Prompts which tools to configure (Claude Code, Kiro), then runs each step with individual confirmation. Safe to re-run.
+Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, then runs each with individual confirmation. Safe to re-run.
 
 ### What gets installed
 
 **Claude Code:**
 - `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
 - `~/.claude/CLAUDE.md` — coding guidelines
+- `~/.claude/rules/` — language and tool-specific rules (symlinked)
 - `~/.claude/skills/` — skill definitions
-- `~/.claude/agents/ci-cd` — commit and PR agent
+- `~/.claude/agents/` — agent configs
 - MCP servers: Serena, Sequential Thinking, Context7
 
 **Kiro:**
-- `~/.kiro/steering/` — coding guidelines
-- `~/.kiro/agents/default.json` and `ci-cd.json` — agent configs with Serena, Sequential Thinking, and Context7
+- `~/.kiro/steering/` — coding guidelines and tool context
+- `~/.kiro/agents/` — agent configs with Serena, Sequential Thinking, and Context7
 
 **Context7** reads `CONTEXT7_API_KEY` from the environment at runtime — add it to `~/.env.local`.
 

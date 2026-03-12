@@ -23,6 +23,7 @@
 set -e
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
@@ -194,12 +195,27 @@ select_components() {
   done
 }
 
-# run_components — executes setup.sh for each selected component in order.
+# run_components — executes setup.sh for each selected component.
+# If setup.conf defines a `check` command, runs it first; skips the component if it exits 0.
+# DOTFILES_DIR is exported so check commands can reference it.
 run_components() {
-  local component
+  [[ ${#SELECTED_COMPONENTS[@]} -eq 0 ]] && return
+
+  local total=${#SELECTED_COMPONENTS[@]} index=1 component label check_cmd
+
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    echo
-    bash "$DOTFILES_DIR/$component/setup.sh"
+    label=$(conf_get "$DOTFILES_DIR/$component/setup.conf" label)
+    check_cmd=$(conf_get "$DOTFILES_DIR/$component/setup.conf" check)
+    echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}${label:-$component}${NC}"
+
+    # shellcheck disable=SC2086
+    if [[ -n "$check_cmd" ]] && bash -c "$check_cmd" > /dev/null 2>&1; then
+      success "already configured"
+    else
+      bash "$DOTFILES_DIR/$component/setup.sh"
+    fi
+
+    index=$(( index + 1 ))
   done
 }
 
@@ -246,7 +262,9 @@ print_install_summary() {
 
 # ─── Core installation ────────────────────────────────────────────────────────
 
-echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}\n"
+echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}"
+echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
+echo
 
 command -v task >/dev/null 2>&1 || install_task
 echo
@@ -254,26 +272,71 @@ echo
 mkdir -p ~/.local/bin
 mkdir -p ~/.config/zsh/config.d
 
-info "Installing scripts to ~/.local/bin/"
+# _step_zshrc — copies the workbench .zshrc template if absent; if it differs,
+# shows a compact diff and offers update / keep / view-full choices.
+_step_zshrc() {
+  local template="$DOTFILES_DIR/zsh/.zshrc"
+  if [ ! -f "$HOME/.zshrc" ]; then
+    cp "$template" "$HOME/.zshrc"
+    success "Copied .zshrc"
+    info "Add secrets and machine-specific config to $HOME/.env.local (sourced automatically, never committed)"
+  elif diff -q "$template" "$HOME/.zshrc" > /dev/null 2>&1; then
+    success ".zshrc matches workbench template — up to date"
+  else
+    warn ".zshrc differs from workbench template"
+    echo
+    diff -u "$template" "$HOME/.zshrc" | tail -n +3 | head -30
+    local diff_lines
+    diff_lines=$(diff -u "$template" "$HOME/.zshrc" | tail -n +3 | wc -l | tr -d ' ')
+    if [[ "$diff_lines" -gt 30 ]]; then echo -e "  ${DIM}... $diff_lines diff lines total${NC}"; fi
+    echo
+    echo -e "  ${DIM}Machine-specific config belongs in $HOME/.env.local (never committed)${NC}"
+    echo
+    local _choice
+    read -rp "  [u]pdate from template / [k]eep mine / [v]iew full diff [k]: " _choice
+    case "${_choice:-k}" in
+      u|U)
+        cp "$HOME/.zshrc" "$HOME/.zshrc.backup"
+        echo -e "  ${GREEN}✓${NC} Backed up to $HOME/.zshrc.backup"
+        cp "$template" "$HOME/.zshrc"
+        success "Updated .zshrc from workbench template"
+        ;;
+      v|V)
+        diff -u "$template" "$HOME/.zshrc" | "${PAGER:-less}"
+        echo
+        read -rp "  [u]pdate from template / [k]eep mine [k]: " _choice
+        if [[ "${_choice:-k}" =~ ^[Uu]$ ]]; then
+          cp "$HOME/.zshrc" "$HOME/.zshrc.backup"
+          echo -e "  ${GREEN}✓${NC} Backed up to $HOME/.zshrc.backup"
+          cp "$template" "$HOME/.zshrc"
+          success "Updated .zshrc from workbench template"
+        else
+          info "Keeping existing .zshrc"
+        fi
+        ;;
+      *)
+        info "Keeping existing .zshrc"
+        ;;
+    esac
+  fi
+}
+
+echo; info "bin scripts → ~/.local/bin/"
 symlink_dir "$DOTFILES_DIR/bin" "$HOME/.local/bin"
 
-echo; info "Installing zsh configs to ~/.config/zsh/config.d/"
+echo; info "zsh configs → ~/.config/zsh/config.d/"
 symlink_dir "$DOTFILES_DIR/zsh" "$HOME/.config/zsh/config.d" "*.zsh"
 
-echo; info "Installing gitconfig"
+echo; info "git config → ~/.gitconfig"
 install_symlink "$DOTFILES_DIR/git/.gitconfig" ~/.gitconfig
 
-echo; info "ZSH configuration"
-if [ ! -f "$HOME/.zshrc" ]; then
-  cp "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
-  success "Copied .zshrc to $HOME/.zshrc"
-  info "Add secrets and machine-specific config to $HOME/.env.local (sourced automatically, never committed)"
-else
-  info "$HOME/.zshrc already exists — skipping"
-  echo -e "  ${DIM}Template: $DOTFILES_DIR/zsh/.zshrc${NC}"
-fi
+echo; info "starship → ~/.config/starship.toml"
+install_symlink "$DOTFILES_DIR/zsh/starship.toml" ~/.config/starship.toml
 
-echo; info "Installing global Taskfile"
+echo; info "ZSH configuration (.zshrc)"
+_step_zshrc
+
+echo; info "global Taskfile → ~/.config/task/"
 mkdir -p ~/.config/task
 install_symlink "$DOTFILES_DIR/Taskfile.global.yml" ~/.config/task/Taskfile.yml
 install_symlink "$DOTFILES_DIR/lib" ~/.config/task/lib

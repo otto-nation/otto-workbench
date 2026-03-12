@@ -1,0 +1,6 @@
+# Starship prompt configuration
+# https://starship.rs/config/
+
+# Raise timeout for git status commands — prevents intermittent
+# "[WARN] Executing command timed out" on large repos or under load.
+command_timeout = 2000

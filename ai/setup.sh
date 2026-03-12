@@ -58,60 +58,36 @@ select_tools() {
     exit 1
   fi
 
-  echo -e "${BOLD}${BLUE}AI Tools Setup${NC}\n"
-  echo "Which AI tools do you want to set up?"
+  echo -e "${BOLD}${BLUE}AI Tools Setup${NC}"
+  echo
+  info "Which AI tools do you want to set up?"
   local i=1
   for tool in "${tools[@]}"; do
-    echo "  [$i] $tool"
+    echo -e "  ${CYAN}[$i]${NC} $tool"
     i=$(( i + 1 ))
   done
   echo
 
   local _sel
-  select_menu _sel "${#tools[@]}" --default require \
-    || { err "No tools selected. Exiting."; exit 1; }
-  [[ -z "$_sel" ]] && { err "No tools selected. Exiting."; exit 1; }
+  select_menu _sel "${#tools[@]}" --default all
+  [[ -z "$_sel" ]] && { info "No tools selected — exiting."; exit 0; }
 
   local num
   for num in $_sel; do
     SELECTED_TOOLS+=("${tools[$((num - 1))]}")
   done
 
-  echo -ne "Setting up: "
+  local tools_display=""
   local t
-  for t in "${SELECTED_TOOLS[@]}"; do echo -ne "${BOLD}${t}${NC}  "; done
-  echo
+  for t in "${SELECTED_TOOLS[@]}"; do tools_display+="${BOLD}${t}${NC}  "; done
+  info "Setting up:  ${tools_display}"
 }
 
 # ─── Step runner ──────────────────────────────────────────────────────────────
+# register_step and run_steps are defined in lib/ui.sh
 
+# shellcheck disable=SC2034  # consumed by register_step/run_steps in lib/ui.sh
 STEPS=()
-
-register_step() { STEPS+=("${1}|${2}"); }
-
-run_steps() {
-  local total=${#STEPS[@]} index=1 ran=0 skipped=0
-  local step name fn
-
-  for step in "${STEPS[@]}"; do
-    name="${step%%|*}"
-    fn="${step##*|}"
-    echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}$name${NC}"
-
-    if confirm "  Run this step?"; then
-      $fn
-      ran=$(( ran + 1 ))
-    else
-      echo -e "  ${DIM}⊘ Skipped${NC}"
-      skipped=$(( skipped + 1 ))
-    fi
-
-    index=$(( index + 1 ))
-  done
-
-  echo
-  echo -e "${DIM}$ran run · $skipped skipped${NC}"
-}
 
 # ─── Shared step ──────────────────────────────────────────────────────────────
 

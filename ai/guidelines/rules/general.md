@@ -12,6 +12,9 @@
 
 ## Planning
 
+- Before making any code changes, file edits, or multi-step modifications: present
+  a plan with options, pros/cons, and a recommendation — then explicitly wait for
+  approval. Never proceed to implementation until the user has chosen an option.
 - Plans describe *what* changes and *why*. They do not contain code snippets,
   pseudo-code, or implementation details — those come from reading the actual
   codebase during implementation.

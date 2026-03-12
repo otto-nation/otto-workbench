@@ -461,18 +461,35 @@ generate_pr_content() {
   fi
 
   if [[ "$commit_count" -eq 1 ]]; then
-    echo "→ Single commit — skipping AI, using commit message directly"
     local commit_subject commit_body
     commit_subject=$(git log -1 --format="%s")
     commit_body=$(git log -1 --format="%b" | sed '/^[[:space:]]*$/d')
 
     PR_TITLE="$commit_subject"
 
-    if [[ -n "$commit_body" ]]; then
+    if [[ "$has_template" = "true" ]]; then
+      echo "→ Single commit — using commit message as title, AI filling template"
+      local ai_prompt="Fill out this PR template based on the commit below. Return only the filled template body — no title, no markers, no extra commentary.
+
+Template:
+$pr_template
+
+Commit subject: $commit_subject
+Commit body: ${commit_body:-<none>}
+
+Changed files:
+$changed_files"
+
+      run_ai "$ai_prompt"
+      PR_DESCRIPTION="$AI_RESPONSE"
+      if [ -z "$PR_DESCRIPTION" ]; then
+        PR_DESCRIPTION="$pr_template"
+      fi
+    elif [[ -n "$commit_body" ]]; then
+      echo "→ Single commit — skipping AI, using commit message directly"
       PR_DESCRIPTION="$commit_body"
-    elif [[ "$has_template" = "true" ]]; then
-      PR_DESCRIPTION="$pr_template"
     else
+      echo "→ Single commit — skipping AI, using commit message directly"
       PR_DESCRIPTION="## Summary
 
 ## Changes

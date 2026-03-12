@@ -44,23 +44,92 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     [[ $REPLY =~ ^[Yy]$ ]]
   }
 
-  # prompt_overwrite FILE — warns that FILE already exists and asks whether to overwrite it.
-  # Offers an optional backup step before overwriting. Returns 1 (skip) if the user declines.
+  # confirm_step RESULT_VAR MSG — [Y/n/a]; writes "yes", "no", or "all" to RESULT_VAR.
+  # "a" means accept this step and all remaining steps without prompting.
+  confirm_step() {
+    local _result_var=$1 _msg=$2
+    read -r -n 1 -p "$_msg [Y/n/a] " REPLY
+    echo
+    case "$REPLY" in
+      [Nn]) printf -v "$_result_var" '%s' "no"  ;;
+      [Aa]) printf -v "$_result_var" '%s' "all" ;;
+      *)    printf -v "$_result_var" '%s' "yes" ;;
+    esac
+  }
+
+  # register_step NAME FN — appends a step to the STEPS array.
+  # STEPS must be declared as an array in the calling script before register_step is used.
+  register_step() { STEPS+=("${1}|${2}"); }
+
+  # run_steps — prints all registered steps upfront, then runs each with [Y/n/a] confirmation.
+  # Steps are read from the global STEPS array (populated via register_step).
+  # Prints a summary of ran/skipped counts when complete.
+  run_steps() {
+    local total=${#STEPS[@]} index=1 ran=0 skipped=0
+    local step name fn _accept_all=false _decision
+
+    echo -e "  ${DIM}Steps:${NC}"
+    local _i=1
+    for step in "${STEPS[@]}"; do
+      name="${step%%|*}"
+      echo -e "  ${DIM}[$_i/$total] $name${NC}"
+      _i=$(( _i + 1 ))
+    done
+    echo -e "  ${DIM}Y = run · N = skip · A = accept all remaining${NC}"
+
+    for step in "${STEPS[@]}"; do
+      name="${step%%|*}"
+      fn="${step##*|}"
+      echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}$name${NC}"
+
+      if [[ "$_accept_all" == true ]]; then
+        $fn
+        ran=$(( ran + 1 ))
+      else
+        confirm_step _decision "  Run this step?"
+        case "$_decision" in
+          all)
+            _accept_all=true
+            $fn
+            ran=$(( ran + 1 ))
+            ;;
+          yes)
+            $fn
+            ran=$(( ran + 1 ))
+            ;;
+          no)
+            echo -e "  ${DIM}⊘ Skipped${NC}"
+            skipped=$(( skipped + 1 ))
+            ;;
+        esac
+      fi
+
+      index=$(( index + 1 ))
+    done
+
+    echo
+    echo -e "${DIM}$ran run · $skipped skipped${NC}"
+  }
+
+  # prompt_overwrite FILE — warns that FILE already exists and presents a single combined prompt.
+  # [o]verwrite / [b]ackup and overwrite / [s]kip (default: skip)
+  # Creates a .backup copy before overwriting when b is chosen.
+  # Returns 1 if the user skips, 0 if they choose to overwrite (with or without backup).
   prompt_overwrite() {
     local file=$1
     warn "$file already exists"
-    printf "  Overwrite? [y/N] "
-    read -n 1 -r REPLY
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then return 1; fi
-
-    printf "  Create backup? [Y/n] "
-    read -n 1 -r REPLY
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-      cp "$file" "${file}.backup"
-      echo -e "  ${GREEN}✓${NC} Backed up to ${file}.backup"
-    fi
+    local _choice
+    read -rp "  [o]verwrite / [b]ackup and overwrite / [s]kip [s]: " _choice
+    case "${_choice:-s}" in
+      o|O) ;;
+      b|B)
+        cp "$file" "${file}.backup"
+        echo -e "  ${GREEN}✓${NC} Backed up to ${file}.backup"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
   }
 
   # select_menu RESULT_VAR COUNT [--default all|skip|require] [--single]
@@ -97,7 +166,7 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
 
     case "$_default" in
       all)     _default_hint=", Enter for all, or 0 to skip" ;;
-      skip)    _default_hint=", or Enter to skip"            ;;
+      skip)    _default_hint=", or 0 to skip"                ;;
       require) _default_hint=""                              ;;
     esac
 
@@ -170,6 +239,11 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     done
 
     [[ -z "$label" ]] && label=$(basename "$source")
+
+    if [[ -L "$target" ]] && [[ "$(readlink "$target")" == "$source" ]]; then
+      echo -e "  ${DIM}✓ $label${NC}"
+      return
+    fi
 
     if [[ -e "$target" && ! -L "$target" ]]; then
       if [[ "$no_prompt" == true || "${SYMLINK_MODE:-}" == "no-prompt" ]]; then

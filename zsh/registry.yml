@@ -1,0 +1,29 @@
+# Zsh alias registry — AI context for Claude/Kiro.
+# Add an entry here whenever you add a new alias group to zsh/config.d/.
+# Regenerate: bin/generate-tool-context
+
+tools:
+  - name: "Git aliases"
+    description: "Short forms for common git operations (gs, ga, gc, gp, gl, gco, gb, gd)"
+    when_to_use: "Any git workflow"
+    usage: "gs (status)  ga (add)  gc (commit)  gp (push)  gl (log)  gco (checkout)  gb (branch)  gd (diff)"
+
+  - name: "Docker aliases"
+    description: "Short forms for docker and docker compose operations (d, dc, d-ps, d-logs, d-exec, d-clean)"
+    when_to_use: "Managing local Docker containers and images"
+    usage: "d (docker)  dc (compose)  d-ps (ps)  d-logs (logs -f)  d-exec (exec -it)  d-clean (prune)"
+
+  - name: "Kubernetes aliases"
+    description: "Short forms for kubectl operations (k, k-pods, k-svc, k-deploy, k-logs, k-exec, k-ns)"
+    when_to_use: "Managing Kubernetes resources"
+    usage: "k (kubectl)  k-pods  k-svc  k-deploy  k-logs  k-exec  k-ns <namespace>"
+
+  - name: "Development aliases"
+    description: "Shortcuts for Gradle, Node, and Serena (gw, gw-build, gw-test, nom, serena)"
+    when_to_use: "Running Gradle builds/tests, resetting node_modules, launching Serena"
+    usage: "gw (./gradlew)  gw-build  gw-test  gw-clean  nom (reset node_modules)  serena"
+
+  - name: "System aliases"
+    description: "macOS and shell utilities (update, reload, list-ports, ip, flush-dns, afk)"
+    when_to_use: "System maintenance, network diagnostics, shell management"
+    usage: "update (brew+npm)  reload (restart shell)  list-ports  ip (external IP)  flush-dns  afk (lock screen)"

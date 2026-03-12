@@ -19,6 +19,32 @@ jobs:
             | sort \
             | xargs shellcheck --severity=warning
 
+  tools-freshness:
+    name: Tool Context Freshness
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          YQ_VERSION="v4.44.3"
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Validate registries
+        run: bash bin/validate-registries
+
+      - name: Verify tools.generated.md is up to date
+        run: |
+          bash bin/generate-tool-context
+          if ! git diff --exit-code ai/guidelines/rules/tools.generated.md; then
+            echo ""
+            echo "tools.generated.md is out of date."
+            echo "Run bin/generate-tool-context locally and commit the result."
+            exit 1
+          fi
+
   test:
     name: Tests
     runs-on: ubuntu-24.04
@@ -27,6 +53,13 @@ jobs:
 
       - name: Install bats
         run: sudo apt-get install -y bats
+
+      - name: Install yq
+        run: |
+          YQ_VERSION="v4.44.3"
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Install task
         uses: arduino/setup-task@v2

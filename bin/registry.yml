@@ -1,0 +1,45 @@
+# Bin script registry — AI context for Claude/Kiro.
+# Add an entry here whenever you add a script to bin/.
+# Regenerate: bin/generate-tool-context
+
+tools:
+  - name: task
+    description: "AI-powered Git automation runner; wraps go-task with global/local Taskfile routing"
+    when_to_use: "Running any dev workflow — commits, PRs, brew management"
+    usage: "task commit  |  task pr:create  |  task --global <cmd>"
+    docs: "https://taskfile.dev"
+
+  - name: aliases
+    description: "Lists all custom shell aliases and functions with optional keyword filtering"
+    when_to_use: "Discovering available aliases; answering 'what shortcut exists for X?'"
+    usage: "aliases  |  aliases docker  |  aliases git"
+
+  - name: claude-rules
+    description: "Manages local Claude Code rule additions not tracked in the workbench"
+    when_to_use: "Adding machine-specific or project-specific Claude instructions"
+    usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
+
+  - name: workbench
+    description: "Re-applies all workbench configuration to ~/ (symlinks, settings, rules)"
+    when_to_use: "After pulling workbench updates or when config gets out of sync"
+    usage: "workbench sync"
+
+  - name: generate-tool-context
+    description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
+    when_to_use: "After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync"
+    usage: "bin/generate-tool-context"
+
+  - name: mem-analyze
+    description: "macOS memory analysis report — pressure, swap usage, top processes, per-user totals"
+    when_to_use: "Diagnosing memory issues, high swap, or identifying memory-hungry processes"
+    usage: "mem-analyze"
+
+  - name: get-secret
+    description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"
+    when_to_use: "Fetching credentials or config values stored in Secrets Manager"
+    usage: "get-secret"
+
+  - name: cleanup-testcontainers
+    description: "Stops and removes stale Testcontainers Docker resources left by test runs"
+    when_to_use: "After test runs that left orphaned containers; when freeing Docker resources"
+    usage: "cleanup-testcontainers"

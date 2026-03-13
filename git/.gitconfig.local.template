@@ -1,0 +1,30 @@
+# Machine-specific git configuration — NOT committed to the workbench.
+# Copy to ~/.gitconfig.local and fill in your values.
+# This file is included automatically by ~/.gitconfig.
+
+[user]
+	name = Your Name
+	email = you@example.com
+	# GPG key fingerprint (gpg --list-secret-keys --keyid-format LONG)
+	# or SSH public key path for SSH signing (e.g. ~/.ssh/id_ed25519.pub)
+	signingKey = YOUR_SIGNING_KEY
+
+[gpg]
+	# openpgp for GPG keys, ssh for SSH signing
+	format = openpgp
+	# macOS Homebrew (Apple Silicon): /opt/homebrew/bin/gpg
+	# macOS Homebrew (Intel):         /usr/local/bin/gpg
+	program = /opt/homebrew/bin/gpg
+
+[gpg "ssh"]
+	program =
+	allowedSignersFile =
+
+[credential]
+	helper =
+	# macOS Homebrew (Apple Silicon): /opt/homebrew/share/gcm-core/git-credential-manager
+	# macOS Homebrew (Intel):         /usr/local/share/gcm-core/git-credential-manager
+	helper = /opt/homebrew/share/gcm-core/git-credential-manager
+
+[credential "https://dev.azure.com"]
+	useHttpPath = true

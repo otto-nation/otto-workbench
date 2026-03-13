@@ -1,0 +1,19 @@
+# Gitleaks configuration for otto-workbench
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+title = "otto-workbench"
+
+[extend]
+# Extend the default ruleset
+useDefault = true
+
+[allowlist]
+description = "Workbench false positives"
+regexTarget = "line"
+regexes = [
+  # GPG key fingerprint in gitconfig — public key, not a secret
+  '''signingKey\s*=\s*[0-9A-F]{40}''',
+  # Placeholder values in templates
+  '''YOUR_SIGNING_KEY|YOUR_NAME|YOUR_GPG|your-username|you@example\.com''',
+  # Git credential helper path — not a credential
+  '''helper\s*=\s*/.*git-credential''',
+]

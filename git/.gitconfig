@@ -33,8 +33,8 @@
         required = true
         clean = git-lfs clean -- %f
 [user]
-	email = your-email@example.com
-	name = Your Name
+	email = YOUR_EMAIL
+	name = YOUR_NAME
 	signingKey = YOUR_GPG_KEY_ID
 [init]
 	defaultBranch = main
@@ -51,8 +51,10 @@
 	autoSetupRemote = true
 	username = your-username
 [gpg "ssh"]
-	program = 
-	allowedSignersFile = 
+	program =
+	allowedSignersFile =
 [credential]
-	helper = 
+	helper =
 	helper = /usr/local/share/gcm-core/git-credential-manager
+[credential "https://dev.azure.com"]
+	useHttpPath = true

@@ -6,6 +6,9 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
+# shellcheck source=../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
 # ── Tool context ──────────────────────────────────────────────────────────────
 if ! command -v yq >/dev/null 2>&1; then
   echo "✗ yq not found — run: brew install yq"
@@ -17,13 +20,23 @@ bash "$REPO_ROOT/bin/validate-registries"
 
 echo "→ Regenerating tool context..."
 bash "$REPO_ROOT/bin/generate-tool-context"
-if ! git -C "$REPO_ROOT" diff --quiet "ai/guidelines/rules/tools.generated.md"; then
+if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then
   echo "✗ tools.generated.md was updated — commit it before pushing:"
-  echo "  git add ai/guidelines/rules/tools.generated.md"
+  echo "  git add $TOOLS_GENERATED_RELPATH"
   echo "  git commit -m \"chore: regenerate tool context\""
   exit 1
 fi
 echo "✓ Tool context up to date"
+
+echo "→ Regenerating git rules..."
+bash "$REPO_ROOT/bin/generate-git-rules"
+if ! git -C "$REPO_ROOT" diff --quiet "$GIT_GENERATED_RELPATH"; then
+  echo "✗ git.generated.md was updated — commit it before pushing:"
+  echo "  git add $GIT_GENERATED_RELPATH"
+  echo "  git commit -m \"chore: regenerate git rules\""
+  exit 1
+fi
+echo "✓ Git rules up to date"
 
 # ── ShellCheck ────────────────────────────────────────────────────────────────
 if ! command -v shellcheck >/dev/null 2>&1; then

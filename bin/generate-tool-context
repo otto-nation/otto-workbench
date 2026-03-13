@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
-OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/ai/guidelines/rules/tools.generated.md"}"
+OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
 
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
@@ -57,6 +57,7 @@ _render_registry() {
     printf '\n### %s\n' "$name"
     printf '%s\n' "$description"
     printf -- '- **When to use**: %s\n' "$when_to_use"
+    # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
     [[ -n "$usage" && "$usage" != "null" ]] && printf -- '- **Usage**: `%s`\n' "$usage"
     [[ -n "$docs"  && "$docs"  != "null" ]] && printf -- '- **Docs**: %s\n'   "$docs"
     i=$(( i + 1 ))

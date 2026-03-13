@@ -8,6 +8,7 @@ setup() {
   # Mirror minimum required repo structure in TMPDIR
   mkdir -p "$TMPDIR/bin" "$TMPDIR/brew" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
   cp "$REPO_ROOT/lib/ui.sh" "$TMPDIR/lib/ui.sh"
+  cp "$REPO_ROOT/lib/constants.sh" "$TMPDIR/lib/constants.sh"
 
   # Stub bin scripts referenced in tests
   touch "$TMPDIR/bin/mytool" && chmod +x "$TMPDIR/bin/mytool"

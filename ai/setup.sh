@@ -7,7 +7,7 @@
 # What it does:
 #   1. Discovers available AI tools from ai/*/steps.sh
 #   2. Prompts you to select which tools to configure
-#   3. Installs AI coding guidelines (CLAUDE.md / Kiro steering)
+#   3. Runs each selected tool's registered setup steps (rules symlinked per tool)
 #   4. Runs each selected tool's registered setup steps
 #
 # Adding a new tool: create ai/<toolname>/steps.sh with a register_<toolname>_steps function.
@@ -89,25 +89,9 @@ select_tools() {
 # shellcheck disable=SC2034  # consumed by register_step/run_steps in lib/ui.sh
 STEPS=()
 
-# ─── Shared step ──────────────────────────────────────────────────────────────
-
-step_guidelines() {
-  # Claude guidelines are installed via dedicated Claude steps (step_claude_guidelines,
-  # step_claude_rules) registered in register_claude_steps — nothing to do here for Claude.
-  tool_selected "kiro" || return 0
-
-  info "Installing AI coding guidelines"
-  local general lang
-  general=$(cat "$SCRIPT_DIR/guidelines/general.md")          || { err "Missing general.md"; return 1; }
-  lang=$(cat    "$SCRIPT_DIR/guidelines/language-specific.md") || { err "Missing language-specific.md"; return 1; }
-  _install_kiro_guidelines "$general" "$lang"
-}
-
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 select_tools
-
-register_step "Deploy AI coding guidelines" step_guidelines
 
 for _tool in "${SELECTED_TOOLS[@]}"; do
   "register_${_tool}_steps"

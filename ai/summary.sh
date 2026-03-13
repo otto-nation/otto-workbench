@@ -24,5 +24,5 @@ print_ai_summary() {
   echo
   echo -e "  ${CYAN}AI Tasks${NC}"
   echo -e "  ${DIM}  Set your AI command for task automation:${NC}"
-  echo -e "  ${DIM}  \$ \${EDITOR:-nano} ~/.config/task/taskfile.env${NC}"
+  echo -e "  ${DIM}  \$ \${EDITOR:-nano} $TASK_CONFIG_DIR/taskfile.env${NC}"
 }

@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 . "$REPO_ROOT/lib/ui.sh"
 
 AI_COMMIT_SH="${AI_COMMIT_SH:-"$REPO_ROOT/lib/ai-commit.sh"}"
-OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/ai/guidelines/rules/git.generated.md"}"
+OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 
 # Extract constants directly from the source file
 _extract_const() {

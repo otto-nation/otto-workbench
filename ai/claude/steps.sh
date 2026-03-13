@@ -7,14 +7,14 @@
 # Reads the config file directly to avoid `claude mcp list`, which probes all servers
 # (triggering health checks that start MCP processes like Serena).
 _mcp_is_registered() {
-  jq -e ".mcpServers | has(\"$1\")" "$HOME/.claude.json" > /dev/null 2>&1
+  jq -e ".mcpServers | has(\"$1\")" "$CLAUDE_CONFIG_FILE" > /dev/null 2>&1
 }
 
 # _mcp_registered_cmd NAME — prints the registered command + args joined by spaces.
 _mcp_registered_cmd() {
   jq -r --arg n "$1" \
     '[.mcpServers[$n].command] + (.mcpServers[$n].args // []) | join(" ")' \
-    "$HOME/.claude.json" 2>/dev/null
+    "$CLAUDE_CONFIG_FILE" 2>/dev/null
 }
 
 # _mcp_install NAME COMMAND... — registers an MCP server at user scope.
@@ -34,8 +34,8 @@ _mcp_install() {
     info "Updating $name (command changed)"
     local tmp
     tmp=$(mktemp)
-    jq --arg n "$name" 'del(.mcpServers[$n])' "$HOME/.claude.json" > "$tmp" \
-      && mv "$tmp" "$HOME/.claude.json"
+    jq --arg n "$name" 'del(.mcpServers[$n])' "$CLAUDE_CONFIG_FILE" > "$tmp" \
+      && mv "$tmp" "$CLAUDE_CONFIG_FILE"
   else
     info "Installing $name (user scope)"
   fi
@@ -48,9 +48,9 @@ _mcp_install() {
 _install_workbench_rule() {
   local workbench_path
   workbench_path="$(cd "$SCRIPT_DIR/.." && pwd)"
-  local target="$HOME/.claude/rules/workbench.md"
+  local target="$CLAUDE_RULES_DIR/workbench.md"
 
-  mkdir -p "$HOME/.claude/rules"
+  mkdir -p "$CLAUDE_RULES_DIR"
   cat > "$target" <<EOF
 # Workbench
 
@@ -122,17 +122,17 @@ step_claude_mcps() {
 step_claude_guidelines() {
   local src="$SCRIPT_DIR/claude/CLAUDE.md"
   [[ -f "$src" ]] || { err "Missing $src"; return 1; }
-  mkdir -p "$HOME/.claude"
-  install_symlink "$src" "$HOME/.claude/CLAUDE.md" "CLAUDE.md"
+  mkdir -p "$CLAUDE_DIR"
+  install_symlink "$src" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 }
 
 step_claude_rules() {
   local rules_src="$SCRIPT_DIR/guidelines/rules"
-  local rules_dst="$HOME/.claude/rules"
+  local rules_dst="$CLAUDE_RULES_DIR"
   [[ -d "$rules_src" ]] || { warn "No rules found in $rules_src — skipping"; return; }
 
   mkdir -p "$rules_dst"
-  info "Installing rules to ~/.claude/rules/"
+  info "Installing rules to $CLAUDE_RULES_DIR/"
   symlink_dir "$rules_src" "$rules_dst" "*.md" --strip-ext
 
   echo
@@ -144,10 +144,10 @@ step_claude_rules() {
 
 step_claude_settings() {
   local src="$SCRIPT_DIR/claude/settings.json"
-  local target="$HOME/.claude/settings.json"
+  local target="$CLAUDE_DIR/settings.json"
   local filter="$SCRIPT_DIR/claude/sync-settings.jq"
 
-  mkdir -p "$HOME/.claude"
+  mkdir -p "$CLAUDE_DIR"
 
   local existing="{}" content
   if [[ -f "$target" ]]; then
@@ -164,18 +164,18 @@ step_claude_settings() {
 }
 
 step_claude_skills() {
-  local src="$SCRIPT_DIR/claude/skills" dst="$HOME/.claude/skills"
+  local src="$SCRIPT_DIR/claude/skills" dst="$CLAUDE_SKILLS_DIR"
   [[ -d "$src" ]] || { warn "No skills found in $src — skipping"; return; }
   mkdir -p "$dst"
-  info "Installing Claude Code skills to ~/.claude/skills/"
+  info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/"
   symlink_dir "$src" "$dst" "*/"
 }
 
 step_claude_agents() {
-  local src="$SCRIPT_DIR/claude/agents" dst="$HOME/.claude/agents"
+  local src="$SCRIPT_DIR/claude/agents" dst="$CLAUDE_AGENTS_DIR"
   [[ -d "$src" ]] || { warn "No agents found in $src — skipping"; return; }
   mkdir -p "$dst"
-  info "Installing Claude Code agents to ~/.claude/agents/"
+  info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/"
   symlink_dir "$src" "$dst" "*.md" --strip-ext
 }
 
@@ -210,19 +210,19 @@ print_claude_summary() {
 
   echo -e "  ${CYAN}MCP servers${NC}"
   found=false
-  if [[ -f "$HOME/.claude.json" ]]; then
+  if [[ -f "$CLAUDE_CONFIG_FILE" ]]; then
     local mcp_name
     while IFS= read -r mcp_name; do
       echo -e "  ${DIM}  • $mcp_name${NC}"
       found=true
-    done < <(jq -r '.mcpServers | keys[]' "$HOME/.claude.json" 2>/dev/null)
+    done < <(jq -r '.mcpServers | keys[]' "$CLAUDE_CONFIG_FILE" 2>/dev/null)
   fi
   if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
-  echo -e "  ${CYAN}Skills${NC} ${DIM}(~/.claude/skills/)${NC}"
+  echo -e "  ${CYAN}Skills${NC} ${DIM}($CLAUDE_SKILLS_DIR/)${NC}"
   found=false
-  for file in "$HOME/.claude/skills"/*/; do
+  for file in "$CLAUDE_SKILLS_DIR"/*/; do
     [[ -e "$file" ]] || continue
     echo -e "  ${DIM}  • $(basename "$file")${NC}"
     found=true
@@ -230,9 +230,9 @@ print_claude_summary() {
   if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
-  echo -e "  ${CYAN}Agents${NC} ${DIM}(~/.claude/agents/)${NC}"
+  echo -e "  ${CYAN}Agents${NC} ${DIM}($CLAUDE_AGENTS_DIR/)${NC}"
   found=false
-  for file in "$HOME/.claude/agents"/*.md; do
+  for file in "$CLAUDE_AGENTS_DIR"/*.md; do
     [[ -e "$file" ]] || continue
     echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
     found=true
@@ -240,9 +240,9 @@ print_claude_summary() {
   if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
-  echo -e "  ${CYAN}Rules${NC} ${DIM}(~/.claude/rules/)${NC}"
+  echo -e "  ${CYAN}Rules${NC} ${DIM}($CLAUDE_RULES_DIR/)${NC}"
   found=false
-  for file in "$HOME/.claude/rules"/*.md; do
+  for file in "$CLAUDE_RULES_DIR"/*.md; do
     [[ -e "$file" ]] || continue
     echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
     found=true
@@ -250,6 +250,6 @@ print_claude_summary() {
   if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
-  echo -e "  ${DIM}  ~/.claude/CLAUDE.md       — persistent guidelines${NC}"
-  echo -e "  ${DIM}  ~/.claude/settings.json   — permissions and config${NC}"
+  echo -e "  ${DIM}  $CLAUDE_DIR/CLAUDE.md       — persistent guidelines${NC}"
+  echo -e "  ${DIM}  $CLAUDE_DIR/settings.json   — permissions and config${NC}"
 }

@@ -35,7 +35,9 @@ SCRIPT_DIR="$WORKBENCH_DIR/ai"
 # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
 SYMLINK_MODE=no-prompt
 
-# Source Claude step functions to reuse them directly
+# Source step functions for git and Claude
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/git/setup.sh"
 # shellcheck source=/dev/null
 . "$WORKBENCH_DIR/ai/claude/steps.sh"
 
@@ -59,35 +61,14 @@ cmd_sync() {
   echo
   info "git, taskfile, lib, starship"
   mkdir -p "$TASK_CONFIG_DIR"
-  local shared="$WORKBENCH_DIR/git/.gitconfig"
-  local include_line="path = $shared"
-  local local_config="$HOME/.gitconfig.local"
-  local local_include_line="path = $local_config"
-  if [[ ! -f "$GITCONFIG_FILE" ]]; then
-    printf '[include]\n\t%s\n\n[include]\n\t%s\n' "$include_line" "$local_include_line" > "$GITCONFIG_FILE"
-    success "Created $GITCONFIG_FILE with workbench include"
-  else
-    if ! grep -qF "$include_line" "$GITCONFIG_FILE"; then
-      printf '\n[include]\n\t%s\n' "$include_line" >> "$GITCONFIG_FILE"
-      success "Added workbench include to $GITCONFIG_FILE"
-    else
-      success "gitconfig include up to date"
-    fi
-    if ! grep -qF "$local_include_line" "$GITCONFIG_FILE"; then
-      printf '\n[include]\n\t%s\n' "$local_include_line" >> "$GITCONFIG_FILE"
-      success "Added local include to $GITCONFIG_FILE"
-    fi
-  fi
+  step_gitconfig
   install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"       "$TASK_CONFIG_DIR/Taskfile.yml"
   install_symlink "$WORKBENCH_DIR/lib"                       "$TASK_CONFIG_DIR/lib"
   install_symlink "$WORKBENCH_DIR/zsh/starship.toml"         "$STARSHIP_CONFIG_FILE"
 
   echo
-  info "global git hooks → ~/.git-hooks/"
-  mkdir -p "$HOME/.git-hooks"
-  install_symlink "$WORKBENCH_DIR/hooks/pre-commit" "$HOME/.git-hooks/pre-commit"
-  git config --global core.hooksPath "$HOME/.git-hooks"
-  success "global core.hooksPath → $HOME/.git-hooks"
+  info "global git hooks → $GIT_HOOKS_DIR"
+  step_global_hooks
 
   # ─── Claude ────────────────────────────────────────────────────────────────
 

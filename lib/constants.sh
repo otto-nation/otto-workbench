@@ -13,6 +13,7 @@ BASHRC_FILE="$HOME/.bashrc"
 ENV_LOCAL_FILE="$HOME/.env.local"
 GITCONFIG_FILE="$HOME/.gitconfig"
 GITCONFIG_LOCAL_FILE="$HOME/.gitconfig.local"
+GIT_HOOKS_DIR="$HOME/.git-hooks"
 
 # ─── XDG-style config and local dirs ─────────────────────────────────────────
 LOCAL_BIN_DIR="$HOME/.local/bin"

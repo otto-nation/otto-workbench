@@ -7,7 +7,7 @@
 #   1. Installs the `task` runner if not present
 #   2. Symlinks all bin/ scripts to ~/.local/bin/
 #   3. Symlinks all zsh/*.zsh configs to ~/.config/zsh/config.d/
-#   4. Symlinks git/.gitconfig to ~/.gitconfig
+#   4. Sets up ~/.gitconfig includes and global git hooks (via git/setup.sh)
 #   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
 #   6. Adds ~/.local/bin to PATH in your shell rc file if needed
 #
@@ -25,6 +25,8 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
+# shellcheck source=git/setup.sh
+. "$DOTFILES_DIR/git/setup.sh"
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
 
@@ -272,60 +274,6 @@ echo
 mkdir -p "$LOCAL_BIN_DIR"
 mkdir -p "$ZSH_CONFIG_DIR"
 
-# _step_gitconfig DOTFILES_DIR — sets up ~/.gitconfig to include the workbench
-# shared config. Unlike other dotfiles, ~/.gitconfig is a real file (not a symlink)
-# so that `git config --global` writes safely without touching the tracked repo file.
-#
-# On a new machine:
-#   1. Creates ~/.gitconfig with [include] pointing to the workbench gitconfig
-#   2. Creates ~/.gitconfig.local from the template if absent (machine-specific values)
-#
-# On an existing machine:
-#   Ensures the [include] line is present (idempotent).
-_step_gitconfig() {
-  local dotfiles="$1"
-  local shared="$dotfiles/git/.gitconfig"
-  local template="$dotfiles/git/.gitconfig.local.template"
-  local target="$GITCONFIG_FILE"
-  local local_config="$HOME/.gitconfig.local"
-  local include_line="path = $shared"
-  local local_include_line="path = $local_config"
-
-  # Ensure ~/.gitconfig exists and contains the shared workbench include
-  if [[ ! -f "$target" ]]; then
-    printf '[include]\n\t%s\n\n[include]\n\t%s\n' "$include_line" "$local_include_line" > "$target"
-    success "Created $target with workbench include"
-  else
-    if ! grep -qF "$include_line" "$target"; then
-      printf '\n[include]\n\t%s\n' "$include_line" >> "$target"
-      success "Added workbench include to $target"
-    else
-      success "gitconfig include already present"
-    fi
-    if ! grep -qF "$local_include_line" "$target"; then
-      printf '\n[include]\n\t%s\n' "$local_include_line" >> "$target"
-      success "Added local include to $target"
-    fi
-  fi
-
-  # Bootstrap ~/.gitconfig.local from template if absent
-  if [[ ! -f "$local_config" ]]; then
-    cp "$template" "$local_config"
-    warn "Created $local_config from template — edit it to set your identity and credential helpers"
-  else
-    success ".gitconfig.local already exists"
-  fi
-}
-
-# _step_global_hooks DOTFILES_DIR — installs a global git pre-commit hook for
-# secret scanning with gitleaks. Applies to every git repo on this machine.
-_step_global_hooks() {
-  local src="$1/hooks" dst="$HOME/.git-hooks"
-  mkdir -p "$dst"
-  install_symlink "$src/pre-commit" "$dst/pre-commit"
-  git config --global core.hooksPath "$dst"
-  success "global core.hooksPath → $dst"
-}
 
 # _step_zshrc — copies the workbench .zshrc template if absent; if it differs,
 # shows a compact diff and offers update / keep / view-full choices.
@@ -383,10 +331,10 @@ echo; info "zsh configs → $ZSH_CONFIG_DIR/"
 symlink_dir "$DOTFILES_DIR/zsh" "$ZSH_CONFIG_DIR" "*.zsh"
 
 echo; info "git config → $GITCONFIG_FILE"
-_step_gitconfig "$DOTFILES_DIR"
+step_gitconfig
 
-echo; info "global git hooks → ~/.git-hooks/"
-_step_global_hooks "$DOTFILES_DIR"
+echo; info "global git hooks → $GIT_HOOKS_DIR"
+step_global_hooks
 
 echo; info "starship → $STARSHIP_CONFIG_FILE"
 install_symlink "$DOTFILES_DIR/zsh/starship.toml" "$STARSHIP_CONFIG_FILE"

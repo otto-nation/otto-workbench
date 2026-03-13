@@ -1,12 +1,12 @@
 #!/bin/bash
 # Pre-push hook: runs shellcheck and bats tests before any push.
-# Installed via: git config core.hooksPath hooks
+# Installed via: task dev:setup  (sets core.hooksPath to git/hooks/)
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-# shellcheck source=../lib/ui.sh
+# shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 
 # ── Secret scan ───────────────────────────────────────────────────────────────

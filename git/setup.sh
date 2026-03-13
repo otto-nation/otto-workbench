@@ -63,6 +63,7 @@ step_global_hooks() {
   local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
   mkdir -p "$GIT_HOOKS_DIR"
   install_symlink "$repo/hooks/pre-commit" "$GIT_HOOKS_DIR/pre-commit"
+  install_symlink "$repo/hooks/pre-push-global" "$GIT_HOOKS_DIR/pre-push"
   git config --global core.hooksPath "$GIT_HOOKS_DIR"
   success "global core.hooksPath → $GIT_HOOKS_DIR"
 }

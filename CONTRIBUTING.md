@@ -8,7 +8,7 @@ cd ~/otto-workbench
 task dev:setup
 ```
 
-`task dev:setup` activates the pre-push hook, which runs ShellCheck, validates registries, and regenerates tool context before every push.
+`task dev:setup` activates the git hooks in `git/hooks/`, which run ShellCheck, validate registries, and regenerate tool context before every push.
 
 This runs ShellCheck and the bats test suite before every push.
 

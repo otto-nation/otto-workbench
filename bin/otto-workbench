@@ -1,7 +1,7 @@
 #!/bin/bash
 # Manage your workbench developer environment.
 #
-# Usage: workbench <command>
+# Usage: otto-workbench <command>
 #
 # Commands:
 #   sync   Re-apply all workbench configuration to ~/
@@ -47,22 +47,22 @@ cmd_sync() {
 
   # ─── Core ──────────────────────────────────────────────────────────────────
 
-  info "bin scripts → ~/.local/bin/"
-  mkdir -p "$HOME/.local/bin"
-  symlink_dir "$WORKBENCH_DIR/bin" "$HOME/.local/bin"
+  info "bin scripts → $LOCAL_BIN_DIR/"
+  mkdir -p "$LOCAL_BIN_DIR"
+  symlink_dir "$WORKBENCH_DIR/bin" "$LOCAL_BIN_DIR" --prune
 
   echo
-  info "zsh configs → ~/.config/zsh/config.d/"
-  mkdir -p "$HOME/.config/zsh/config.d"
-  symlink_dir "$WORKBENCH_DIR/zsh" "$HOME/.config/zsh/config.d" "*.zsh"
+  info "zsh configs → $ZSH_CONFIG_DIR/"
+  mkdir -p "$ZSH_CONFIG_DIR"
+  symlink_dir "$WORKBENCH_DIR/zsh" "$ZSH_CONFIG_DIR" "*.zsh" --prune
 
   echo
   info "git, taskfile, lib, starship"
-  mkdir -p "$HOME/.config/task"
-  install_symlink "$WORKBENCH_DIR/git/.gitconfig"            "$HOME/.gitconfig"
-  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"       "$HOME/.config/task/Taskfile.yml"
-  install_symlink "$WORKBENCH_DIR/lib"                       "$HOME/.config/task/lib"
-  install_symlink "$WORKBENCH_DIR/zsh/starship.toml"         "$HOME/.config/starship.toml"
+  mkdir -p "$TASK_CONFIG_DIR"
+  install_symlink "$WORKBENCH_DIR/git/.gitconfig"            "$GITCONFIG_FILE"
+  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"       "$TASK_CONFIG_DIR/Taskfile.yml"
+  install_symlink "$WORKBENCH_DIR/lib"                       "$TASK_CONFIG_DIR/lib"
+  install_symlink "$WORKBENCH_DIR/zsh/starship.toml"         "$STARSHIP_CONFIG_FILE"
 
   # ─── Claude ────────────────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ cmd_sync() {
 case "${1:-}" in
   sync) cmd_sync ;;
   *)
-    echo "Usage: workbench <command>"
+    echo "Usage: otto-workbench <command>"
     echo
     echo "Commands:"
     echo "  sync   Re-apply all workbench configuration to ~/"

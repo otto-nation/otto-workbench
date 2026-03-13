@@ -290,7 +290,7 @@ tasks:
           IS_GLOBAL=true
         fi
 
-        echo "workbench  task runner"
+        echo "otto-workbench  task runner"
         echo ""
 
         if [ "$IS_GLOBAL" = true ]; then

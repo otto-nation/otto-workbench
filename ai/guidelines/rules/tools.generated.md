@@ -101,10 +101,10 @@ Manages local Claude Code rule additions not tracked in the workbench
 - **When to use**: Adding machine-specific or project-specific Claude instructions
 - **Usage**: `claude-rules add <domain> "rule"  |  claude-rules list  |  claude-rules status`
 
-### workbench
+### otto-workbench
 Re-applies all workbench configuration to ~/ (symlinks, settings, rules)
 - **When to use**: After pulling workbench updates or when config gets out of sync
-- **Usage**: `workbench sync`
+- **Usage**: `otto-workbench sync`
 
 ### generate-tool-context
 Generates ai/guidelines/rules/tools.generated.md from the domain registries
@@ -125,6 +125,16 @@ Interactively retrieves a secret from AWS Secrets Manager by listing and selecti
 Stops and removes stale Testcontainers Docker resources left by test runs
 - **When to use**: After test runs that left orphaned containers; when freeing Docker resources
 - **Usage**: `cleanup-testcontainers`
+
+### generate-git-rules
+Regenerates git.generated.md from lib/ai-commit.sh constants
+- **When to use**: After changing commit types, header length, or PR conventions in lib/ai-commit.sh
+- **Usage**: `bin/generate-git-rules`
+
+### validate-registries
+Validates all tool registry YAML files for schema correctness and cross-file consistency
+- **When to use**: After adding or editing any registry.yml; runs automatically on pre-push
+- **Usage**: `bin/validate-registries`
 
 ## Shell Aliases
 

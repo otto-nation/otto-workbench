@@ -12,6 +12,8 @@
 #   BIN_REGISTRY           path to bin registry YAML   (default: bin/registry.yml)
 #   ZSH_REGISTRY           path to zsh registry YAML   (default: zsh/registry.yml)
 #   TOOL_CONTEXT_OUTPUT    output file path             (default: ai/guidelines/rules/tools.generated.md)
+#   README_PATH            path to README.md            (default: README.md)
+#   TASKFILE_PATH          path to Taskfile.global.yml  (default: Taskfile.global.yml)
 
 set -euo pipefail
 
@@ -25,6 +27,8 @@ BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
+README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
+TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
 
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
@@ -75,3 +79,79 @@ _render_registry() {
 } > "$OUTPUT"
 
 success "Generated $(basename "$OUTPUT")"
+
+# _update_readme_scripts README REGISTRY
+# Regenerates the scripts table in README between <!-- SCRIPTS-TABLE-START --> and
+# <!-- SCRIPTS-TABLE-END --> markers from REGISTRY. No-ops if markers are absent.
+_update_readme_scripts() {
+  local readme="$1" registry="$2"
+  [[ -f "$readme" ]]   || return 0
+  [[ -f "$registry" ]] || return 0
+
+  local tmp_table tmp_out
+  tmp_table=$(mktemp)
+  tmp_out=$(mktemp)
+
+  {
+    printf '| Script | Description |\n'
+    printf '|--------|-------------|\n'
+    local count i name description
+    count=$(yq '.tools | length' "$registry")
+    for (( i=0; i<count; i++ )); do
+      name=$(yq ".tools[$i].name" "$registry")
+      description=$(yq ".tools[$i].description" "$registry")
+      printf '| `%s` | %s |\n' "$name" "$description"
+    done
+  } > "$tmp_table"
+
+  awk -v tf="$tmp_table" '
+    /<!-- SCRIPTS-TABLE-START -->/ { print; while ((getline line < tf) > 0) print line; skip=1; next }
+    /<!-- SCRIPTS-TABLE-END -->/   { skip=0 }
+    !skip                          { print }
+  ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
+
+  rm -f "$tmp_table"
+  success "Updated README scripts table"
+}
+
+_update_readme_scripts "$README_PATH" "$BIN_REGISTRY"
+
+# _update_readme_tasks README TASKFILE
+# Regenerates the tasks code block in README between <!-- TASKS-BLOCK-START --> and
+# <!-- TASKS-BLOCK-END --> markers from TASKFILE. Excludes brew:* and help tasks.
+# No-ops if markers are absent.
+_update_readme_tasks() {
+  local readme="$1" taskfile="$2"
+  [[ -f "$readme" ]]   || return 0
+  [[ -f "$taskfile" ]] || return 0
+
+  local tmp_block tmp_out
+  tmp_block=$(mktemp)
+  tmp_out=$(mktemp)
+
+  {
+    printf '```bash\n'
+    local count i key desc
+    count=$(yq '.tasks | to_entries | length' "$taskfile")
+    for (( i=0; i<count; i++ )); do
+      key=$(yq ".tasks | to_entries[$i].key" "$taskfile")
+      desc=$(yq ".tasks | to_entries[$i].value.desc // \"\"" "$taskfile")
+      [[ "$key" == brew:* ]] && continue
+      [[ "$key" == "help"  ]] && continue
+      [[ -z "$desc" || "$desc" == "null" ]] && continue
+      printf 'task --global %-20s # %s\n' "$key" "$desc"
+    done
+    printf '```\n'
+  } > "$tmp_block"
+
+  awk -v tf="$tmp_block" '
+    /<!-- TASKS-BLOCK-START -->/ { print; while ((getline line < tf) > 0) print line; skip=1; next }
+    /<!-- TASKS-BLOCK-END -->/   { skip=0 }
+    !skip                        { print }
+  ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
+
+  rm -f "$tmp_block"
+  success "Updated README tasks block"
+}
+
+_update_readme_tasks "$README_PATH" "$TASKFILE_PATH"

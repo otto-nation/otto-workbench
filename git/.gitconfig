@@ -33,9 +33,9 @@
         required = true
         clean = git-lfs clean -- %f
 [user]
-	email = your-email@example.com
-	name = Your Name
-	signingKey = YOUR_GPG_KEY_ID
+	email = isaacgarza432@gmail.com
+	name = Isaac Garza
+	signingKey = 086D5EE14C2DF309B18942F95604185775B456BE
 [init]
 	defaultBranch = main
 [pull]

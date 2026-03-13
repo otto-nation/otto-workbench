@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Generate ai/guidelines/rules/tools.generated.md from domain registries.
+# Regenerates generated files and README sections from source registries and config.
 #
-# Reads:     brew/registry.yml  bin/registry.yml  zsh/registry.yml
-# Writes:    ai/guidelines/rules/tools.generated.md
+# Writes:
+#   ai/guidelines/rules/tools.generated.md  — tool context for AI sessions
+#   README.md sections                      — scripts table, tasks block, AI installs
 #
-# Run automatically via pre-push hook and workbench sync.
-# Never edit tools.generated.md directly — edit the source registries instead.
+# Run automatically via pre-push hook and otto-workbench sync.
+# Never edit generated content directly — edit the source files instead.
 #
-# Environment overrides (used in tests):
-#   BREW_REGISTRY          path to brew registry YAML  (default: brew/registry.yml)
-#   BIN_REGISTRY           path to bin registry YAML   (default: bin/registry.yml)
-#   ZSH_REGISTRY           path to zsh registry YAML   (default: zsh/registry.yml)
-#   TOOL_CONTEXT_OUTPUT    output file path             (default: ai/guidelines/rules/tools.generated.md)
+# Environment overrides (for tests):
+#   BREW_REGISTRY        brew/registry.yml
+#   BIN_REGISTRY         bin/registry.yml
+#   ZSH_REGISTRY         zsh/registry.yml
+#   TOOL_CONTEXT_OUTPUT  tools.generated.md path
+#   README_PATH          README.md path
+#   TASKFILE_PATH        Taskfile.global.yml path
+#   AI_DIR               ai/ directory
 
 set -euo pipefail
 
@@ -25,43 +29,85 @@ BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
+README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
+TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
+AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
 
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
   exit 1
 fi
 
-# _render_registry FILE TITLE
-# Emits a markdown section for every tool entry in FILE.
-# Silently skips if FILE is empty, missing, or has no tools.
-_render_registry() {
-  local file="$1"
-  local title="$2"
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
+# _join SEP ITEMS... — joins items with SEP
+_join() {
+  local sep=$1; shift
+  local result="" item
+  for item in "$@"; do
+    [[ -n "$result" ]] && result+="$sep"
+    result+="$item"
+  done
+  printf '%s' "$result"
+}
+
+# _splice_readme README MARKER
+# Reads new section content from stdin and replaces the region between
+# <!-- MARKER-START --> and <!-- MARKER-END --> in README. No-ops if absent.
+_splice_readme() {
+  local readme="$1" marker="$2"
+  [[ -f "$readme" ]] || return 0
+  local tmp_content tmp_out
+  tmp_content=$(mktemp)
+  tmp_out=$(mktemp)
+  cat > "$tmp_content"
+  awk -v tf="$tmp_content" \
+      -v s="<!-- ${marker}-START -->" \
+      -v e="<!-- ${marker}-END -->" '
+    $0 == s { print; while ((getline line < tf) > 0) print line; skip=1; next }
+    $0 == e { skip=0 }
+    !skip   { print }
+  ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
+  rm -f "$tmp_content"
+}
+
+# _iter_tools FILE CALLBACK
+# Calls CALLBACK name description when_to_use usage docs for each tool in FILE.
+_iter_tools() {
+  local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
+  local count i
+  count=$(yq '.tools | length' "$file")
+  for (( i=0; i<count; i++ )); do
+    "$cb" \
+      "$(yq ".tools[$i].name"          "$file")" \
+      "$(yq ".tools[$i].description"   "$file")" \
+      "$(yq ".tools[$i].when_to_use"   "$file")" \
+      "$(yq ".tools[$i].usage // \"\""  "$file")" \
+      "$(yq ".tools[$i].docs  // \"\""  "$file")"
+  done
+}
 
+# ── tools.generated.md ────────────────────────────────────────────────────────
+
+_tool_md_entry() {
+  local name="$1" description="$2" when_to_use="$3" usage="$4" docs="$5"
+  printf '\n### %s\n' "$name"
+  printf '%s\n' "$description"
+  printf -- '- **When to use**: %s\n' "$when_to_use"
+  # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
+  if [[ -n "$usage" && "$usage" != "null" ]]; then printf -- '- **Usage**: `%s`\n' "$usage"; fi
+  if [[ -n "$docs"  && "$docs"  != "null" ]]; then printf -- '- **Docs**: %s\n'   "$docs";  fi
+}
+
+_render_registry() {
+  local file="$1" title="$2"
+  [[ -f "$file" ]] || return 0
   local count
   count=$(yq '.tools | length' "$file")
   [[ "$count" -gt 0 ]] || return 0
-
   printf '\n## %s\n' "$title"
-
-  local i=0 name description when_to_use usage docs
-  while [[ "$i" -lt "$count" ]]; do
-    name=$(yq ".tools[$i].name" "$file")
-    description=$(yq ".tools[$i].description" "$file")
-    when_to_use=$(yq ".tools[$i].when_to_use" "$file")
-    usage=$(yq ".tools[$i].usage // \"\"" "$file")
-    docs=$(yq ".tools[$i].docs // \"\"" "$file")
-
-    printf '\n### %s\n' "$name"
-    printf '%s\n' "$description"
-    printf -- '- **When to use**: %s\n' "$when_to_use"
-    # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
-    [[ -n "$usage" && "$usage" != "null" ]] && printf -- '- **Usage**: `%s`\n' "$usage"
-    [[ -n "$docs"  && "$docs"  != "null" ]] && printf -- '- **Docs**: %s\n'   "$docs"
-    i=$(( i + 1 ))
-  done
+  _iter_tools "$file" _tool_md_entry
 }
 
 {
@@ -73,5 +119,79 @@ _render_registry() {
   _render_registry "$BIN_REGISTRY"  "Workbench Scripts"
   _render_registry "$ZSH_REGISTRY"  "Shell Aliases"
 } > "$OUTPUT"
-
 success "Generated $(basename "$OUTPUT")"
+
+# ── README sections ───────────────────────────────────────────────────────────
+
+_tool_readme_row() { printf '| `%s` | %s |\n' "$1" "$2"; }
+
+_readme_scripts() {
+  printf '| Script | Description |\n'
+  printf '|--------|-------------|\n'
+  _iter_tools "$BIN_REGISTRY" _tool_readme_row
+}
+
+_readme_tasks() {
+  local count i key desc
+  printf '```bash\n'
+  count=$(yq '.tasks | to_entries | length' "$TASKFILE_PATH")
+  for (( i=0; i<count; i++ )); do
+    key=$(yq ".tasks | to_entries[$i].key" "$TASKFILE_PATH")
+    desc=$(yq ".tasks | to_entries[$i].value.desc // \"\"" "$TASKFILE_PATH")
+    # Exclude utility/infrastructure tasks; only surface user-facing AI tasks
+    [[ "$key" == brew:* || "$key" == "help" ]] && continue
+    [[ -z "$desc" || "$desc" == "null" ]] && continue
+    printf 'task --global %-20s # %s\n' "$key" "$desc"
+  done
+  printf '```\n'
+}
+
+_readme_ai_installs() {
+  # Derive display paths from constants, replacing $HOME prefix with ~
+  local claude_home="~${CLAUDE_DIR#"$HOME"}"
+  local claude_rules="~${CLAUDE_RULES_DIR#"$HOME"}"
+  local kiro_steering="~${KIRO_STEERING_DIR#"$HOME"}"
+
+  # Source dirs within the repo
+  local claude_skills_src="$AI_DIR/claude/skills"
+  local claude_agents_src="$AI_DIR/claude/agents"
+  local claude_mcps_src="$AI_DIR/claude/mcps"
+  local kiro_agents_src="$AI_DIR/kiro/agents"
+
+  printf '**Claude Code:**\n'
+  printf -- '- `%s/settings.json` — permissions and deny rules (merged, not overwritten)\n' "$claude_home"
+  printf -- '- `%s/CLAUDE.md` — coding guidelines\n' "$claude_home"
+  printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
+
+  local skills=()
+  for d in "$claude_skills_src"/*/; do
+    [[ -d "$d" ]] && skills+=("$(basename "$d")")
+  done
+  [[ ${#skills[@]} -gt 0 ]] && printf -- '- Skills: %s\n' "$(_join ', ' "${skills[@]}")"
+
+  local agents=()
+  for f in "$claude_agents_src"/*.md; do
+    [[ -f "$f" ]] && agents+=("$(basename "${f%.md}")")
+  done
+  [[ ${#agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join ', ' "${agents[@]}")"
+
+  local mcps=()
+  for f in "$claude_mcps_src"/*.json; do
+    [[ -f "$f" ]] && mcps+=("$(yq '.name // ""' "$f" | tr -d '"')")
+  done
+  [[ ${#mcps[@]} -gt 0 ]] && printf -- '- MCPs: %s\n' "$(_join ', ' "${mcps[@]}")"
+
+  printf '\n'
+  printf '**Kiro:**\n'
+  printf -- '- `%s/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)\n' "$kiro_steering"
+
+  local kiro_agents=()
+  for f in "$kiro_agents_src"/*.json; do
+    [[ -f "$f" ]] && kiro_agents+=("$(basename "${f%.json}")")
+  done
+  [[ ${#kiro_agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join ', ' "${kiro_agents[@]}")"
+}
+
+[[ -f "$BIN_REGISTRY" ]]  && { _readme_scripts    | _splice_readme "$README_PATH" "SCRIPTS-TABLE"; success "Updated README scripts table"; }
+[[ -f "$TASKFILE_PATH" ]] && { _readme_tasks       | _splice_readme "$README_PATH" "TASKS-BLOCK";   success "Updated README tasks block";   }
+[[ -d "$AI_DIR" ]]        && { _readme_ai_installs | _splice_readme "$README_PATH" "AI-INSTALLS";   success "Updated README AI installs";   }

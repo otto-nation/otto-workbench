@@ -27,7 +27,7 @@ Secrets and machine-specific env vars go in `~/.env.local` — sourced automatic
 After pulling updates or when config drifts:
 
 ```bash
-workbench sync
+otto-workbench sync
 ```
 
 Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Safe to run at any time.
@@ -38,17 +38,20 @@ Re-run a single component independently: `bash <component>/setup.sh` (e.g. `bash
 
 ### Scripts (`bin/`)
 
+<!-- SCRIPTS-TABLE-START -->
 | Script | Description |
 |--------|-------------|
-| `workbench` | Re-apply all workbench configuration to `~/` |
-| `claude-rules` | Manage Claude Code rule additions |
-| `aliases` | Display all configured aliases and functions |
-| `get-secret` | Interactive AWS Secrets Manager retrieval |
-| `cleanup-testcontainers` | Clean up Docker testcontainers |
-| `mem-analyze` | System memory analysis report |
-| `generate-tool-context` | Regenerate `tools.generated.md` from registries |
-| `generate-git-rules` | Regenerate `git.generated.md` from `lib/ai-commit.sh` constants |
-| `validate-registries` | Validate all tool registry YAML files |
+| `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
+| `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
+| `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
+| `otto-workbench` | Re-applies all workbench configuration to ~/ (symlinks, settings, rules) |
+| `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
+| `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
+| `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
+| `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
+| `generate-git-rules` | Regenerates git.generated.md from lib/ai-commit.sh constants |
+| `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
+<!-- SCRIPTS-TABLE-END -->
 
 ### ZSH Configuration
 
@@ -77,7 +80,7 @@ Update the registry after adding or removing a tool, then regenerate:
 
 ```bash
 generate-tool-context   # regenerates tools.generated.md
-generate-git-rules      # regenerates git.generated.md (or: workbench sync)
+generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 ```
 
 ### Homebrew Packages
@@ -98,14 +101,16 @@ task --global brew:dump
 
 ### Global Taskfile — AI Git Automation
 
+<!-- TASKS-BLOCK-START -->
 ```bash
-task --global commit           # AI-generated commit message
-task --global commit:reword    # reword HEAD (or pass -- SHA)
-task --global pr:content       # preview AI-generated PR title + body
-task --global pr:create        # create PR (auto-pushes if needed)
-task --global pr:update        # update existing PR description
-task --global ai:setup         # configure AI command
+task --global ai:setup             # Setup AI configuration
+task --global commit               # Generate AI-powered commit message based on staged changes
+task --global commit:reword        # Reword a commit message with AI (default: HEAD; or: task reword -- SHA)
+task --global pr:content           # Preview AI-generated PR title and description (pass -- --no-issue to skip issue prompts)
+task --global pr:create            # Create AI-powered pull request with smart title and description (pass -- --no-issue to skip issue prompts)
+task --global pr:update            # Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)
 ```
+<!-- TASKS-BLOCK-END -->
 
 Use `--global` to run tasks from `~/.config/task/` rather than a local project Taskfile.
 
@@ -119,17 +124,19 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 
 ### What gets installed
 
+<!-- AI-INSTALLS-START -->
 **Claude Code:**
 - `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
-- `~/.claude/skills/` — skill definitions
-- `~/.claude/agents/` — agent configs
-- MCP servers: Serena, Sequential Thinking, Context7, Datadog
+- Skills: go
+- Agents: ci-cd
+- MCPs: Context7, Sequential Thinking, Serena
 
 **Kiro:**
 - `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)
-- `~/.kiro/agents/` — agent configs with Serena, Sequential Thinking, and Context7
+- Agents: ci-cd, default
+<!-- AI-INSTALLS-END -->
 
 **Context7** reads `CONTEXT7_API_KEY` from the environment at runtime — add it to `~/.env.local`.
 

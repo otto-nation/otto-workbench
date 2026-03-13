@@ -5,12 +5,15 @@ setup() {
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
 
-  # Point all registries at nonexistent paths by default so the generator
-  # never falls back to the real workbench registries during tests.
+  # Point all generator inputs/outputs at temp paths so tests never touch
+  # real workbench files (registry data, tools.generated.md, README.md).
   export BREW_REGISTRY="$TMPDIR/brew.yml"
   export BIN_REGISTRY="$TMPDIR/bin.yml"
   export ZSH_REGISTRY="$TMPDIR/zsh.yml"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
+  export README_PATH="$TMPDIR/README.md"
+  export TASKFILE_PATH="$TMPDIR/Taskfile.yml"
+  export AI_DIR="$TMPDIR/ai"
 
   GENERATOR="$REPO_ROOT/bin/generate-tool-context"
 }

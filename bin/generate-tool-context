@@ -14,6 +14,7 @@
 #   TOOL_CONTEXT_OUTPUT    output file path             (default: ai/guidelines/rules/tools.generated.md)
 #   README_PATH            path to README.md            (default: README.md)
 #   TASKFILE_PATH          path to Taskfile.global.yml  (default: Taskfile.global.yml)
+#   AI_DIR                 path to ai/                  (default: ai/)
 
 set -euo pipefail
 
@@ -29,6 +30,7 @@ ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
 TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
+AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
 
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
@@ -155,3 +157,76 @@ _update_readme_tasks() {
 }
 
 _update_readme_tasks "$README_PATH" "$TASKFILE_PATH"
+
+# _join_array SEP ARRAY... — joins array elements with SEP
+_join_array() {
+  local sep=$1; shift
+  local result="" item
+  for item in "$@"; do
+    [[ -n "$result" ]] && result+="$sep"
+    result+="$item"
+  done
+  printf '%s' "$result"
+}
+
+# _update_readme_ai README AI_DIR
+# Regenerates the "What gets installed" block between <!-- AI-INSTALLS-START --> and
+# <!-- AI-INSTALLS-END --> markers from the ai/ directory structure. No-ops if absent.
+_update_readme_ai() {
+  local readme="$1" ai_dir="$2"
+  [[ -f "$readme" ]] || return 0
+  [[ -d "$ai_dir"  ]] || return 0
+
+  local tmp_block tmp_out
+  tmp_block=$(mktemp)
+  tmp_out=$(mktemp)
+
+  {
+    printf '**Claude Code:**\n'
+    printf -- '- `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)\n'
+    printf -- '- `~/.claude/CLAUDE.md` — coding guidelines\n'
+    printf -- '- `~/.claude/rules/` — language and tool-specific rules (symlinked)\n'
+
+    local skills=()
+    for d in "$ai_dir/claude/skills"/*/; do
+      [[ -d "$d" ]] && skills+=("$(basename "$d")")
+    done
+    [[ ${#skills[@]} -gt 0 ]] && printf -- '- Skills: %s\n' "$(_join_array ', ' "${skills[@]}")"
+
+    local agents=()
+    for f in "$ai_dir/claude/agents"/*.md; do
+      [[ -f "$f" ]] && agents+=("$(basename "${f%.md}")")
+    done
+    [[ ${#agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join_array ', ' "${agents[@]}")"
+
+    local mcps=() label
+    for f in "$ai_dir/claude/mcps"/*.json; do
+      [[ -f "$f" ]] || continue
+      label=$(yq '.label // ""' "$f" | tr -d '"')
+      label="${label#MCP: }"
+      [[ -n "$label" ]] && mcps+=("$label")
+    done
+    [[ ${#mcps[@]} -gt 0 ]] && printf -- '- MCPs: %s\n' "$(_join_array ', ' "${mcps[@]}")"
+
+    printf '\n'
+    printf '**Kiro:**\n'
+    printf -- '- `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)\n'
+
+    local kiro_agents=()
+    for f in "$ai_dir/kiro/agents"/*.json; do
+      [[ -f "$f" ]] && kiro_agents+=("$(basename "${f%.json}")")
+    done
+    [[ ${#kiro_agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join_array ', ' "${kiro_agents[@]}")"
+  } > "$tmp_block"
+
+  awk -v tf="$tmp_block" '
+    /<!-- AI-INSTALLS-START -->/ { print; while ((getline line < tf) > 0) print line; skip=1; next }
+    /<!-- AI-INSTALLS-END -->/   { skip=0 }
+    !skip                        { print }
+  ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
+
+  rm -f "$tmp_block"
+  success "Updated README AI installs section"
+}
+
+_update_readme_ai "$README_PATH" "$AI_DIR"

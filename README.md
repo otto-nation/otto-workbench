@@ -124,17 +124,19 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 
 ### What gets installed
 
+<!-- AI-INSTALLS-START -->
 **Claude Code:**
 - `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
-- `~/.claude/skills/` — skill definitions
-- `~/.claude/agents/` — agent configs
-- MCP servers: Serena, Sequential Thinking, Context7, Datadog
+- Skills: go
+- Agents: ci-cd
+- MCPs: Context7, Sequential Thinking, Serena
 
 **Kiro:**
 - `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)
-- `~/.kiro/agents/` — agent configs with Serena, Sequential Thinking, and Context7
+- Agents: ci-cd, default
+<!-- AI-INSTALLS-END -->
 
 **Context7** reads `CONTEXT7_API_KEY` from the environment at runtime — add it to `~/.env.local`.
 

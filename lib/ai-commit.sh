@@ -133,9 +133,11 @@ build_commit_rules() {
 run_ai() {
   local prompt="$1"
   # shellcheck disable=SC2086  # $AI_COMMAND holds "binary [flags]"; word-splitting is intentional
+  # Redirect stderr to /dev/null — MCP server errors and CLI noise must not pollute
+  # the captured response. load_ai_command already validated the binary exists.
   # Strip complete ANSI sequences (ESC + '[' + params + letter) before removing bare control chars.
   # Anchoring to \033 prevents the pattern from eating markdown checkboxes like [x] or [ ].
-  AI_RESPONSE=$(echo "$prompt" | $AI_COMMAND | \
+  AI_RESPONSE=$(echo "$prompt" | $AI_COMMAND 2>/dev/null | \
     sed 's/\033\[[0-9;]*[a-zA-Z]//g' | \
     tr -d '\033\007\015' | \
     sed 's/^[> ]*//g' | \
@@ -284,10 +286,17 @@ You used the prefix '${prefix}' (${#prefix} chars). That leaves EXACTLY ${subjec
     header=$(echo "$AI_MSG" | head -1)
     header_len=${#header}
     if [ "$header_len" -gt "$COMMIT_HEADER_MAX_LEN" ]; then
-      err "Could not generate a valid commit message after 2 attempts."
-      echo "  Last attempt ($header_len chars): $header"
-      echo "  Edit and commit manually: git commit -m \"<message>\""
-      return 1
+      local over=$(( header_len - COMMIT_HEADER_MAX_LEN ))
+      # LLMs cannot reliably count characters. Accept messages that are marginally
+      # over the limit (≤3 chars) when no commitlint config enforces it strictly.
+      if [ "$over" -le 3 ] && [ -z "$COMMITLINT_CONFIG" ]; then
+        echo "→ Header is ${header_len} chars (${over} over limit) — accepting without commitlint"
+      else
+        err "Could not generate a valid commit message after 2 attempts."
+        echo "  Last attempt ($header_len chars): $header"
+        echo "  Edit and commit manually: git commit -m \"<message>\""
+        return 1
+      fi
     fi
   fi
 }

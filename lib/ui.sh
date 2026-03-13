@@ -264,21 +264,36 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     echo -e "  ${GREEN}✓${NC} $label"
   }
 
-  # symlink_dir SRC DST [GLOB] [--strip-ext]
+  # symlink_dir SRC DST [GLOB] [--strip-ext] [--prune]
   # Symlinks all items matching GLOB in SRC into DST, preserving filenames.
   # GLOB defaults to '*'. --strip-ext removes the file extension from the display label.
+  # --prune removes stale symlinks in DST that point into SRC but whose source is gone.
   # Inherits SYMLINK_MODE from the environment (pass-through to install_symlink).
   symlink_dir() {
     local src=$1 dst=$2
     shift 2
-    local glob="*" strip_ext=false
+    local glob="*" strip_ext=false prune=false
 
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --strip-ext) strip_ext=true; shift ;;
+        --prune)     prune=true;     shift ;;
         *)           glob="$1";      shift ;;
       esac
     done
+
+    if [[ "$prune" == true ]]; then
+      local item target
+      for item in "$dst"/$glob; do
+        [[ -L "$item" ]] || continue
+        target=$(readlink "$item")
+        [[ "$target" == "$src"/* ]] || continue
+        if [[ ! -e "$target" ]]; then
+          rm "$item"
+          echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"
+        fi
+      done
+    fi
 
     local item label
     for item in "$src"/$glob; do

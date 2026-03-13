@@ -19,10 +19,10 @@ tools:
     when_to_use: "Adding machine-specific or project-specific Claude instructions"
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
-  - name: workbench
+  - name: otto-workbench
     description: "Re-applies all workbench configuration to ~/ (symlinks, settings, rules)"
     when_to_use: "After pulling workbench updates or when config gets out of sync"
-    usage: "workbench sync"
+    usage: "otto-workbench sync"
 
   - name: generate-tool-context
     description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
@@ -43,3 +43,13 @@ tools:
     description: "Stops and removes stale Testcontainers Docker resources left by test runs"
     when_to_use: "After test runs that left orphaned containers; when freeing Docker resources"
     usage: "cleanup-testcontainers"
+
+  - name: generate-git-rules
+    description: "Regenerates git.generated.md from lib/ai-commit.sh constants"
+    when_to_use: "After changing commit types, header length, or PR conventions in lib/ai-commit.sh"
+    usage: "bin/generate-git-rules"
+
+  - name: validate-registries
+    description: "Validates all tool registry YAML files for schema correctness and cross-file consistency"
+    when_to_use: "After adding or editing any registry.yml; runs automatically on pre-push"
+    usage: "bin/validate-registries"

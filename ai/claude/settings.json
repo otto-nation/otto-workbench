@@ -33,6 +33,8 @@
       "Bash(command:*)",
       "Bash(task:*)",
       "Bash(gh:*)",
+      "Bash(gradle:*)",
+      "Bash(./gradlew:*)",
       "Bash(brew:*)",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:gist.github.com)"

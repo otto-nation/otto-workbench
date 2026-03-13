@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Pre-commit hook: scans staged changes for secrets before they enter history.
+# Installed via: task hooks:install  (sets core.hooksPath to this hooks/ dir)
+#
+# For global protection (all repos), the workbench install also configures
+# a global hooks dir at ~/.git-hooks/ — see bin/otto-workbench and install.sh.
+
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "✗ gitleaks not found — run: brew install gitleaks"
+  exit 1
+fi
+
+_repo_root="$(git rev-parse --show-toplevel)"
+_config_flag=""
+[[ -f "$_repo_root/.gitleaks.toml" ]] && _config_flag="--config $_repo_root/.gitleaks.toml"
+
+# shellcheck disable=SC2086  # word splitting intentional for optional flag
+gitleaks protect --staged $_config_flag 2>&1 \
+  || { echo "✗ gitleaks found potential secrets — review the output above before committing"; exit 1; }

@@ -75,6 +75,12 @@ tools:
     usage: "op read 'op://vault/item/field'  |  op run -- <cmd>"
     docs: "https://developer.1password.com/docs/cli/"
 
+  - name: gitleaks
+    description: "Secret scanner — detects committed credentials, tokens, and keys"
+    when_to_use: "Automatically on every commit and push via git hooks; run manually to audit history"
+    usage: "gitleaks protect --staged  |  gitleaks detect"
+    docs: "https://github.com/gitleaks/gitleaks"
+
   - name: gnupg
     description: "GNU Privacy Guard — GPG encryption and signing"
     when_to_use: "Signing git commits with GPG; encrypting/decrypting files"

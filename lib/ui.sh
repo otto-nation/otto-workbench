@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared UI helpers — sourced by all workbench scripts
+# Shared UI helpers and path constants — sourced by all workbench scripts
 #
 # Sourcing patterns:
 #   install.sh        . "$DOTFILES_DIR/lib/ui.sh"
@@ -7,12 +7,19 @@
 #   bin/* (bash)      _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"; . "$(dirname "$_SELF")/../lib/ui.sh"
 #   bin/* (zsh)       _SELF="$(readlink "$0" 2>/dev/null || echo "$0")"; . "$(dirname "$_SELF")/../lib/ui.sh"
 
-# shellcheck disable=SC2034  # All color variables are used by sourcing scripts
+# Source path and filename constants — resolved relative to this file in bash
+if [[ -n "${BASH_VERSION:-}" ]]; then
+  # shellcheck source=./constants.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/constants.sh"
+fi
+
+# shellcheck disable=SC2034  # All color/style variables are used by sourcing scripts
 BOLD='\033[1m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+# shellcheck disable=SC2034
 CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'

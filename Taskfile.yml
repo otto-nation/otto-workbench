@@ -33,5 +33,5 @@ tasks:
     desc: "Activate git hooks for workbench development (run once after cloning)"
     silent: true
     cmds:
-      - git config core.hooksPath hooks
-      - echo "✓ Git hooks activated (hooks/pre-push runs lint + test before every push)"
+      - git config core.hooksPath git/hooks
+      - echo "✓ Git hooks activated (git/hooks/pre-push runs lint + test before every push)"

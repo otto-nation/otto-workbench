@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Global pre-push hook: delegates to the repo-local .git/hooks/pre-push if present.
+# Installed via step_global_hooks in git/setup.sh (symlinked to ~/.git-hooks/pre-push).
+#
+# When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
+# This hook restores that delegation so per-repo pre-push checks still run.
+
+set -euo pipefail
+
+_repo_root="$(git rev-parse --show-toplevel)"
+_local_hook="$_repo_root/.git/hooks/pre-push"
+
+if [[ -x "$_local_hook" ]]; then
+  exec "$_local_hook" "$@"
+fi

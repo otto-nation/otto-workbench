@@ -77,6 +77,12 @@ Lightweight container runtime for macOS (Docker-compatible, no Docker Desktop ne
 - **Usage**: `op read 'op://vault/item/field'  |  op run -- <cmd>`
 - **Docs**: https://developer.1password.com/docs/cli/
 
+### gitleaks
+Secret scanner — detects committed credentials, tokens, and keys
+- **When to use**: Automatically on every commit and push via git hooks; run manually to audit history
+- **Usage**: `gitleaks protect --staged  |  gitleaks detect`
+- **Docs**: https://github.com/gitleaks/gitleaks
+
 ### gnupg
 GNU Privacy Guard — GPG encryption and signing
 - **When to use**: Signing git commits with GPG; encrypting/decrypting files

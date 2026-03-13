@@ -9,6 +9,21 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 
+# ── Secret scan ───────────────────────────────────────────────────────────────
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "✗ gitleaks not found — run: brew install gitleaks"
+  exit 1
+fi
+
+echo "→ Scanning for secrets..."
+_config_flag=""
+[[ -f "$REPO_ROOT/.gitleaks.toml" ]] && _config_flag="--config $REPO_ROOT/.gitleaks.toml"
+# shellcheck disable=SC2086  # word splitting intentional for optional flag
+gitleaks protect --staged $_config_flag 2>&1 \
+  || { echo "✗ gitleaks found potential secrets — commit blocked"; exit 1; }
+echo "✓ No secrets detected"
+
 # ── Tool context ──────────────────────────────────────────────────────────────
 if ! command -v yq >/dev/null 2>&1; then
   echo "✗ yq not found — run: brew install yq"

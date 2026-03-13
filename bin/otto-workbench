@@ -35,7 +35,9 @@ SCRIPT_DIR="$WORKBENCH_DIR/ai"
 # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
 SYMLINK_MODE=no-prompt
 
-# Source Claude step functions to reuse them directly
+# Source step functions for git and Claude
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/git/setup.sh"
 # shellcheck source=/dev/null
 . "$WORKBENCH_DIR/ai/claude/steps.sh"
 
@@ -59,10 +61,14 @@ cmd_sync() {
   echo
   info "git, taskfile, lib, starship"
   mkdir -p "$TASK_CONFIG_DIR"
-  install_symlink "$WORKBENCH_DIR/git/.gitconfig"            "$GITCONFIG_FILE"
+  step_gitconfig
   install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"       "$TASK_CONFIG_DIR/Taskfile.yml"
   install_symlink "$WORKBENCH_DIR/lib"                       "$TASK_CONFIG_DIR/lib"
   install_symlink "$WORKBENCH_DIR/zsh/starship.toml"         "$STARSHIP_CONFIG_FILE"
+
+  echo
+  info "global git hooks → $GIT_HOOKS_DIR"
+  step_global_hooks
 
   # ─── Claude ────────────────────────────────────────────────────────────────
 

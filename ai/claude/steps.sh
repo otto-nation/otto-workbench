@@ -203,21 +203,53 @@ register_claude_steps() {
 
 print_claude_summary() {
   echo
-  info "Claude Code configuration summary"
+  info "Claude Code"
+  echo
+
+  local file found
+
+  echo -e "  ${CYAN}MCP servers${NC}"
+  found=false
+  if [[ -f "$HOME/.claude.json" ]]; then
+    local mcp_name
+    while IFS= read -r mcp_name; do
+      echo -e "  ${DIM}  • $mcp_name${NC}"
+      found=true
+    done < <(jq -r '.mcpServers | keys[]' "$HOME/.claude.json" 2>/dev/null)
+  fi
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
+  echo
+
+  echo -e "  ${CYAN}Skills${NC} ${DIM}(~/.claude/skills/)${NC}"
+  found=false
+  for file in "$HOME/.claude/skills"/*/; do
+    [[ -e "$file" ]] || continue
+    echo -e "  ${DIM}  • $(basename "$file")${NC}"
+    found=true
+  done
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
   echo -e "  ${CYAN}Agents${NC} ${DIM}(~/.claude/agents/)${NC}"
-  local file found=false
+  found=false
   for file in "$HOME/.claude/agents"/*.md; do
     [[ -e "$file" ]] || continue
     echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
     found=true
   done
-  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none installed)${NC}"; fi
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
-  echo -e "  ${CYAN}MCP servers${NC} ${DIM}(user scope — run: claude mcp list)${NC}"
+  echo -e "  ${CYAN}Rules${NC} ${DIM}(~/.claude/rules/)${NC}"
+  found=false
+  for file in "$HOME/.claude/rules"/*.md; do
+    [[ -e "$file" ]] || continue
+    echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
+    found=true
+  done
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
-  echo -e "  ${CYAN}~/.claude/settings.json${NC} ${DIM}— permissions, deny rules, plugin config${NC}"
-  echo -e "  ${CYAN}~/.claude/CLAUDE.md${NC} ${DIM}— persistent coding guidelines${NC}"
+
+  echo -e "  ${DIM}  ~/.claude/CLAUDE.md       — persistent guidelines${NC}"
+  echo -e "  ${DIM}  ~/.claude/settings.json   — permissions and config${NC}"
 }

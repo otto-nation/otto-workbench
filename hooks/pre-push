@@ -25,6 +25,16 @@ if ! git -C "$REPO_ROOT" diff --quiet "ai/guidelines/rules/tools.generated.md"; 
 fi
 echo "✓ Tool context up to date"
 
+echo "→ Regenerating git rules..."
+bash "$REPO_ROOT/bin/generate-git-rules"
+if ! git -C "$REPO_ROOT" diff --quiet "ai/guidelines/rules/git.generated.md"; then
+  echo "✗ git.generated.md was updated — commit it before pushing:"
+  echo "  git add ai/guidelines/rules/git.generated.md"
+  echo "  git commit -m \"chore: regenerate git rules\""
+  exit 1
+fi
+echo "✓ Git rules up to date"
+
 # ── ShellCheck ────────────────────────────────────────────────────────────────
 if ! command -v shellcheck >/dev/null 2>&1; then
   echo "✗ shellcheck not found — run: brew install shellcheck"

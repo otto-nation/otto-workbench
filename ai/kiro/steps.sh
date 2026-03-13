@@ -14,14 +14,6 @@ _install_file() {
   success "Wrote $label"
 }
 
-_install_kiro_guidelines() {
-  local general_content=$1 lang_content=$2
-  local dir="$HOME/.kiro/steering"
-  mkdir -p "$dir"
-  _install_file "$dir/general.md"           "$general_content" "general.md"
-  _install_file "$dir/language-specific.md" "$lang_content"    "language-specific.md"
-}
-
 # _install_kiro_agent TARGET SOURCE UVX_PATH LABEL
 # Processes SOURCE via jq (substituting the uvx path) then writes to TARGET.
 # context7 reads CONTEXT7_API_KEY from the environment at runtime — no key needed at install time.
@@ -54,19 +46,42 @@ step_kiro_agents() {
   echo -e "  ${DIM}Set CONTEXT7_API_KEY in ~/.env.local to enable context7${NC}"
 }
 
-step_kiro_tools() {
-  local src="$SCRIPT_DIR/guidelines/rules/tools.generated.md"
-  local dst="$HOME/.kiro/steering/tools.md"
-  if [[ ! -f "$src" ]]; then
-    warn "tools.generated.md not found — run bin/generate-tool-context first"
-    return
-  fi
-  mkdir -p "$(dirname "$dst")"
-  cp "$src" "$dst"
-  success "tools.md → ~/.kiro/steering/"
+step_kiro_rules() {
+  local rules_src="$SCRIPT_DIR/guidelines/rules"
+  local rules_dst="$HOME/.kiro/steering"
+  info "Installing rules to ~/.kiro/steering/"
+  mkdir -p "$rules_dst"
+  symlink_dir "$rules_src" "$rules_dst" "*.md"
 }
 
 register_kiro_steps() {
-  register_step "Kiro agent configs"  step_kiro_agents
-  register_step "Kiro tool context"   step_kiro_tools
+  register_step "Kiro agent configs" step_kiro_agents
+  register_step "Kiro rules"         step_kiro_rules
+}
+
+print_kiro_summary() {
+  echo
+  info "Kiro"
+  echo
+
+  local file found
+
+  echo -e "  ${CYAN}Agents${NC} ${DIM}(~/.kiro/agents/)${NC}"
+  found=false
+  for file in "$HOME/.kiro/agents"/*.json; do
+    [[ -e "$file" ]] || continue
+    echo -e "  ${DIM}  • $(basename "${file%.json}")${NC}"
+    found=true
+  done
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
+  echo
+
+  echo -e "  ${CYAN}Steering rules${NC} ${DIM}(~/.kiro/steering/)${NC}"
+  found=false
+  for file in "$HOME/.kiro/steering"/*.md; do
+    [[ -e "$file" ]] || continue
+    echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
+    found=true
+  done
+  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
 }

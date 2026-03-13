@@ -47,6 +47,7 @@ Re-run a single component independently: `bash <component>/setup.sh` (e.g. `bash
 | `cleanup-testcontainers` | Clean up Docker testcontainers |
 | `mem-analyze` | System memory analysis report |
 | `generate-tool-context` | Regenerate `tools.generated.md` from registries |
+| `generate-git-rules` | Regenerate `git.generated.md` from `lib/ai-commit.sh` constants |
 | `validate-registries` | Validate all tool registry YAML files |
 
 ### ZSH Configuration
@@ -68,12 +69,15 @@ Useful aliases and settings in `git/.gitconfig`. `core.fsmonitor` and `core.untr
 
 ### Tool Registry
 
-Each tooling directory owns a `registry.yml` describing the tools it provides — name, description, when to use, usage, and docs URL. These are combined into `ai/guidelines/rules/tools.generated.md` and auto-loaded into every Claude session.
+Each tooling directory owns a `registry.yml` describing the tools it provides — name, description, when to use, usage, and docs URL. These are combined into `ai/guidelines/rules/tools.generated.md` and auto-loaded into every Claude and Kiro session.
+
+`ai/guidelines/rules/git.generated.md` is generated from the commit/PR constants in `lib/ai-commit.sh` — commit types, header length limit, PR template, and branch naming conventions. Never edit generated files directly.
 
 Update the registry after adding or removing a tool, then regenerate:
 
 ```bash
-generate-tool-context   # or: workbench sync
+generate-tool-context   # regenerates tools.generated.md
+generate-git-rules      # regenerates git.generated.md (or: workbench sync)
 ```
 
 ### Homebrew Packages
@@ -121,10 +125,10 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 - `~/.claude/skills/` — skill definitions
 - `~/.claude/agents/` — agent configs
-- MCP servers: Serena, Sequential Thinking, Context7
+- MCP servers: Serena, Sequential Thinking, Context7, Datadog
 
 **Kiro:**
-- `~/.kiro/steering/` — coding guidelines and tool context
+- `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)
 - `~/.kiro/agents/` — agent configs with Serena, Sequential Thinking, and Context7
 
 **Context7** reads `CONTEXT7_API_KEY` from the environment at runtime — add it to `~/.env.local`.

@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Generate ai/guidelines/rules/git.generated.md from constants in lib/ai-commit.sh.
+#
+# Reads:     lib/ai-commit.sh   (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
+# Writes:    ai/guidelines/rules/git.generated.md
+#
+# Run automatically via pre-push hook and workbench sync.
+# Never edit git.generated.md directly — edit lib/ai-commit.sh or this script instead.
+#
+# Environment overrides (used in tests):
+#   AI_COMMIT_SH        path to ai-commit.sh    (default: lib/ai-commit.sh)
+#   GIT_RULES_OUTPUT    output file path         (default: ai/guidelines/rules/git.generated.md)
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+
+# shellcheck source=../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+AI_COMMIT_SH="${AI_COMMIT_SH:-"$REPO_ROOT/lib/ai-commit.sh"}"
+OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/ai/guidelines/rules/git.generated.md"}"
+
+# Extract constants directly from the source file
+_extract_const() {
+  grep -E "^${1}=" "$AI_COMMIT_SH" | head -1 | cut -d'=' -f2- | tr -d '"'
+}
+
+COMMIT_TYPES=$(_extract_const "COMMIT_TYPES")
+COMMIT_HEADER_MAX_LEN=$(_extract_const "COMMIT_HEADER_MAX_LEN")
+COMMIT_BODY_MAX_LEN=$(_extract_const "COMMIT_BODY_MAX_LEN")
+
+if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" ]]; then
+  err "Could not extract constants from $AI_COMMIT_SH"
+  exit 1
+fi
+
+# Build comma-separated and bullet-list type displays
+TYPES_DISPLAY=$(echo "$COMMIT_TYPES" | tr ' ' ', ')
+# shellcheck disable=SC2016  # & is a sed back-reference, not a shell variable
+TYPES_BULLETS=$(echo "$COMMIT_TYPES" | tr ' ' '\n' | sed 's/.*/- `&`/')
+
+# Build one header budget example line
+_budget_line() {
+  local prefix="$1"
+  local prefix_len=${#prefix}
+  local budget=$(( COMMIT_HEADER_MAX_LEN - prefix_len ))
+  printf '%s\n' "- \`${prefix}\` is ${prefix_len} chars → subject ≤ ${budget} chars"
+}
+
+{
+  printf '%s\n' \
+    "# Git — Commits & Pull Requests" \
+    "<!-- AUTO-GENERATED — do not edit directly -->" \
+    "<!-- Source: lib/ai-commit.sh -->" \
+    "<!-- Regenerate: bin/generate-git-rules -->" \
+    "" \
+    "## Conventional Commits" \
+    "" \
+    "- Format: \`type(scope): subject\`" \
+    "- Scope is optional"
+  printf '%s\n' "- Allowed types: ${TYPES_DISPLAY}"
+  printf '%s\n' "- Header (type + scope + subject) must be ≤ ${COMMIT_HEADER_MAX_LEN} characters total"
+  printf '%s\n' \
+    "- No period at the end of the subject" \
+    "- Use a semicolon (\`;\`) to separate multiple changes in the header" \
+    "- Separate header and body with a blank line"
+  printf '%s\n' "- Each body line must be ≤ ${COMMIT_BODY_MAX_LEN} characters — wrap long lines"
+  printf '%s\n' \
+    "- Use bullet points for multiple changes in the body" \
+    "- Subject should be concise and focus on *what* changed, not *how*" \
+    "- Never add a co-author trailer (e.g. \`Co-Authored-By:\`)" \
+    "" \
+    "### Allowed types" \
+    ""
+  printf '%s\n' "$TYPES_BULLETS"
+  printf '%s\n' \
+    "" \
+    "### Header length budgeting" \
+    ""
+  printf '%s\n' "Before writing, calculate available subject characters (header max is ${COMMIT_HEADER_MAX_LEN}):"
+  printf '%s\n' ""
+  _budget_line "feat(auth): "
+  _budget_line "fix: "
+  _budget_line "refactor(payments): "
+  printf '%s\n' \
+    "" \
+    "### Examples" \
+    "" \
+    '```' \
+    "feat(auth): add OAuth2 login flow" \
+    "" \
+    "- Support Google and GitHub providers" \
+    "- Store tokens in encrypted session cookie" \
+    '```' \
+    "" \
+    '```' \
+    "fix: resolve race condition in cache eviction; update TTL default" \
+    '```' \
+    "" \
+    "## Pull Requests" \
+    "" \
+    "### Title" \
+    ""
+  printf '%s\n' "- Must follow conventional commit format (same as commit header)"
+  printf '%s\n' "- ≤ ${COMMIT_HEADER_MAX_LEN} characters"
+  printf '%s\n' \
+    "" \
+    "### Description template" \
+    "" \
+    "Use this structure when no project-level PR template exists:" \
+    "" \
+    '```markdown' \
+    "## Summary" \
+    "" \
+    "## Changes" \
+    "" \
+    "## Testing" \
+    '```' \
+    "" \
+    "### Single-commit PRs" \
+    "" \
+    "- Use the commit subject as the PR title" \
+    "- Use the commit body as the description when present" \
+    "" \
+    "### Issue linking" \
+    "" \
+    "- Extract issue number from branch name (e.g. \`feature/PROJ-123-description\`)" \
+    "- Add \`Closes #<number>\` at the top of the description only for numeric GitHub issues" \
+    "- Omit issue linking for Jira-style keys (\`PROJ-123\`) — they do not auto-close on GitHub merge" \
+    "" \
+    "### Footer" \
+    "" \
+    "- Never append an AI-generated footer (e.g. 'Generated with Claude Code') — use only the PR template content" \
+    "" \
+    "## Branch Naming" \
+    "" \
+    "- Format: \`type/ISSUE-description-in-kebab-case\`" \
+    "- Examples: \`feat/AUTH-42-oauth-login\`, \`fix/PROJ-7-cache-race\`" \
+    "- Use the same type vocabulary as conventional commits"
+} > "$OUTPUT"
+
+success "Generated $(basename "$OUTPUT")"

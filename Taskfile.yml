@@ -17,6 +17,16 @@ tasks:
     silent: true
     cmds:
       - bats tests/ --recursive --timing
+  test:*:
+    desc: "Run a single test suite by filename"
+    vars:
+      FILENAME: '{{index .MATCH 0}}.bats'
+    silent: true
+    preconditions:
+      - sh: 'test -f tests/{{.FILENAME}}'
+        msg: "File not found: tests/{{.FILENAME}}"
+    cmds:
+      - bats tests/{{.FILENAME}} --recursive --timing --show-output-of-passing-tests
 
   lint:
     desc: "Run ShellCheck on all shell scripts"

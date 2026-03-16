@@ -87,17 +87,16 @@ load_ai_command() {
 
 # find_commitlint_config
 # Sets COMMITLINT_CONFIG to the first config found, or empty string if none.
+# configuration files picked from: https://github.com/conventional-changelog/commitlint?tab=readme-ov-file#config
 find_commitlint_config() {
   COMMITLINT_CONFIG=""
-  local configs=(
-    "commitlint.config.js"
-    "commitlint.config.mjs"
-    "commitlint.config.cjs"
-    ".github/.commitlintrc.mjs"
-    ".github/.commitlintrc.json"
-    ".commitlintrc.mjs"
-    ".commitlintrc.json"
-    ".commitlintrc.js"
+  local configs
+  configs=(
+    commitlint.config.{js,cjs,mjs,ts,cts,mts}
+    .github/.commitlintrc
+    .github/.commitlintrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}
+    .commitlintrc
+    .commitlintrc.{json,yaml,yml,js,cjs,mjs,ts,cts,mts}
   )
   for cfg in "${configs[@]}"; do
     if [ -f "$cfg" ]; then

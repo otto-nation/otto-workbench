@@ -18,48 +18,56 @@ teardown() {
   [ -z "$COMMITLINT_CONFIG" ]
 }
 
-@test "finds commitlint.config.js" {
-  touch commitlint.config.js
-  find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = "commitlint.config.js" ]
+@test "finds commitlint.config.{ext}" {
+  for ext in js cjs mjs ts cts mts; do
+    local filename="commitlint.config.$ext"
+    touch $filename
+    find_commitlint_config
+    [ "$COMMITLINT_CONFIG" = $filename ]
+  
+    #cleanup
+    rm $filename 
+  done
 }
 
-@test "finds commitlint.config.mjs" {
-  touch commitlint.config.mjs
-  find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = "commitlint.config.mjs" ]
-}
-
-@test "finds commitlint.config.cjs" {
-  touch commitlint.config.cjs
-  find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = "commitlint.config.cjs" ]
-}
-
-@test "finds .github/.commitlintrc.mjs" {
+@test "finds .github/.commitlintrc.{ext}" {
   mkdir -p .github
-  touch .github/.commitlintrc.mjs
-  find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = ".github/.commitlintrc.mjs" ]
+  for ext in json yaml yml js cjs mjs ts cts mts; do
+    local filename=".github/.commitlintrc.$ext"
+    touch $filename 
+    find_commitlint_config
+    [ "$COMMITLINT_CONFIG" = "$filename" ]
+
+    #cleanup
+    rm $filename 
+  done
 }
 
-@test "finds .github/.commitlintrc.json" {
+@test "finds .github/.commitlintrc" {
   mkdir -p .github
-  touch .github/.commitlintrc.json
+  local filename=".github/.commitlintrc"
+  touch $filename 
   find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = ".github/.commitlintrc.json" ]
+  [ "$COMMITLINT_CONFIG" = "$filename" ]
 }
 
 @test "finds .commitlintrc.json" {
-  touch .commitlintrc.json
-  find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = ".commitlintrc.json" ]
+  for ext in json yaml yml js cjs mjs ts cts mts; do
+    local filename=".commitlintrc.$ext"
+    touch $filename 
+    find_commitlint_config
+    [ "$COMMITLINT_CONFIG" = "$filename" ]
+
+    #cleanup
+    rm $filename 
+  done
 }
 
-@test "finds .commitlintrc.js" {
-  touch .commitlintrc.js
+@test "finds .commitlintrc" {
+  local filename=".commitlintrc"
+  touch $filename 
   find_commitlint_config
-  [ "$COMMITLINT_CONFIG" = ".commitlintrc.js" ]
+  [ "$COMMITLINT_CONFIG" = "$filename" ]
 }
 
 @test "commitlint.config.js takes priority over .commitlintrc.json" {

@@ -1,6 +1,6 @@
 # Environment Tools
 <!-- AUTO-GENERATED — do not edit directly -->
-<!-- Sources: brew/registry.yml  bin/registry.yml  zsh/registry.yml -->
+<!-- Sources: brew/registry.yml  brew/work/*.registry.yml  bin/registry.yml  zsh/registry.yml -->
 <!-- Regenerate: bin/generate-tool-context -->
 
 ## Brew Tools
@@ -88,6 +88,62 @@ GNU Privacy Guard — GPG encryption and signing
 - **When to use**: Signing git commits with GPG; encrypting/decrypting files
 - **Usage**: `gpg --sign  |  gpg --verify`
 - **Docs**: https://gnupg.org/documentation/
+
+## Work Stack Tools
+
+### aws
+AWS CLI — manage AWS resources, services, and credentials from the terminal
+- **When to use**: Interacting with AWS services (S3, EC2, Lambda, Secrets Manager, etc.); managing IAM and credentials
+- **Usage**: `aws s3 ls  |  aws secretsmanager get-secret-value --secret-id <name>  |  aws sts get-caller-identity`
+- **Docs**: https://docs.aws.amazon.com/cli/
+
+### aws-sso-util
+Utilities for AWS SSO — simplifies login and credential management for SSO-based AWS accounts
+- **When to use**: Logging in via AWS SSO; configuring SSO profiles; refreshing SSO credentials
+- **Usage**: `aws-sso-util login  |  aws-sso-util configure populate`
+- **Docs**: https://github.com/benkehoe/aws-sso-util
+
+### gradle
+Gradle build tool — build, test, and publish JVM projects
+- **When to use**: Building, testing, or running Gradle-based projects when no wrapper (gradlew) is present
+- **Usage**: `gradle build  |  gradle test  |  gradle dependencies`
+- **Docs**: https://docs.gradle.org/
+
+### jenv
+Java version manager — switch between multiple JDK versions per project
+- **When to use**: Switching Java versions globally or per-directory; managing multiple JDKs
+- **Usage**: `jenv versions  |  jenv local 17  |  jenv global 21`
+- **Docs**: https://www.jenv.be/
+
+### mvn
+Apache Maven — build and dependency management for Java projects
+- **When to use**: Building, testing, or packaging Maven-based projects
+- **Usage**: `mvn clean install  |  mvn test  |  mvn dependency:tree`
+- **Docs**: https://maven.apache.org/guides/
+
+### jira
+Jira CLI (ankitpokhrel/jira-cli) — manage Jira tickets from the terminal
+- **When to use**: Viewing, moving, or commenting on Jira tickets; checking ticket status; assigning issues
+- **Usage**: `jira issue view PROJ-123 --plain  |  jira issue list -P PROJ --plain  |  jira issue move PROJ-123 "In Progress"`
+- **Docs**: https://github.com/ankitpokhrel/jira-cli
+
+### kubectl
+Kubernetes CLI — manage clusters, deployments, pods, and services
+- **When to use**: Inspecting or modifying Kubernetes resources; debugging pods; applying manifests
+- **Usage**: `kubectl get pods  |  kubectl describe pod <name>  |  kubectl apply -f manifest.yml  |  kubectl logs <pod>`
+- **Docs**: https://kubernetes.io/docs/reference/kubectl/
+
+### tfenv
+Terraform version manager — install and switch between Terraform versions
+- **When to use**: Switching Terraform versions per project; installing a specific Terraform version
+- **Usage**: `tfenv list  |  tfenv install 1.7.0  |  tfenv use 1.7.0`
+- **Docs**: https://github.com/tfutils/tfenv
+
+### terraform-docs
+Generate documentation from Terraform module inputs and outputs
+- **When to use**: Auto-generating or updating README documentation for Terraform modules
+- **Usage**: `terraform-docs markdown table . > README.md  |  terraform-docs --config .terraform-docs.yml .`
+- **Docs**: https://terraform-docs.io/
 
 ## Workbench Scripts
 

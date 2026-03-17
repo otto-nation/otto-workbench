@@ -71,6 +71,47 @@ _validate_schema() {
   _check_no_duplicates "$file"
 }
 
+# _validate_work_registries
+# For each brew/work/*.registry.yml:
+#   - validates schema (required fields, no duplicates)
+#   - cross-checks each tool's name (or optional formula field) against the
+#     matching brew/work/<stack>.Brewfile using substring match, to accommodate
+#     tap-prefixed formulae (e.g. ankitpokhrel/jira-cli/jira-cli) and cases
+#     where the binary name differs from the formula (e.g. kubectl vs kubernetes-cli).
+_validate_work_registries() {
+  local work_dir="$REPO_ROOT/brew/work"
+  [[ -d "$work_dir" ]] || return 0
+  local found=0
+  for registry in "$work_dir"/*.registry.yml; do
+    [[ -f "$registry" ]] || continue
+    found=1
+    local stack_name
+    stack_name=$(basename "${registry%.registry.yml}")
+    local brewfile="$work_dir/${stack_name}.Brewfile"
+    echo
+    info "Schema: brew/work/${stack_name}.registry.yml"
+    _validate_schema "$registry"
+    if [[ ! -f "$brewfile" ]]; then
+      warn "brew/work/${stack_name}.Brewfile not found — skipping cross-check"
+      continue
+    fi
+    local count i=0 name formula
+    count=$(yq '.tools | length' "$registry")
+    while [[ "$i" -lt "$count" ]]; do
+      name=$(yq ".tools[$i].name" "$registry")
+      formula=$(yq ".tools[$i].formula // \"\"" "$registry")
+      [[ -z "$formula" || "$formula" == "null" ]] && formula="$name"
+      if ! grep -qE "^(brew|cask) .*\"[^\"]*${formula}" "$brewfile"; then
+        _fail "brew/work/${stack_name}.registry.yml: '$name' (formula: '$formula') not found in brew/work/${stack_name}.Brewfile"
+      fi
+      i=$(( i + 1 ))
+    done
+  done
+  if [[ "$found" -eq 0 ]]; then
+    warn "No work stack registries found in brew/work/ — skipping"
+  fi
+}
+
 # _validate_brew_entries
 # Every name in brew/registry.yml must appear in the Brewfile (as formula or cask).
 _validate_brew_entries() {
@@ -140,6 +181,8 @@ echo "→ Validating registries..."
 info "Schema: brew/registry.yml"
 _validate_schema "$REPO_ROOT/brew/registry.yml"
 _validate_brew_entries
+
+_validate_work_registries
 
 echo
 info "Schema: bin/registry.yml"

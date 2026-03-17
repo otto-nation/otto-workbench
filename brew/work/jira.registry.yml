@@ -1,0 +1,10 @@
+# Jira work stack registry — AI context for Claude/Kiro.
+# Paired with jira.Brewfile. Regenerate: bin/generate-tool-context
+
+tools:
+  - name: jira
+    formula: jira-cli
+    description: "Jira CLI (ankitpokhrel/jira-cli) — manage Jira tickets from the terminal"
+    when_to_use: "Viewing, moving, or commenting on Jira tickets; checking ticket status; assigning issues"
+    usage: "jira issue view PROJ-123 --plain  |  jira issue list -P PROJ --plain  |  jira issue move PROJ-123 \"In Progress\""
+    docs: "https://github.com/ankitpokhrel/jira-cli"

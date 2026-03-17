@@ -28,6 +28,7 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
+WORK_DIR="${WORK_DIR:-"$REPO_ROOT/brew/work"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
 TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
@@ -110,12 +111,49 @@ _render_registry() {
   _iter_tools "$file" _tool_md_entry
 }
 
+# _render_work_registries DIR
+# Scans brew/work/*.registry.yml and renders only tools that are currently
+# installed (checked via command -v), grouped by stack under "## Work Stack Tools".
+_render_work_registries() {
+  local work_dir="$1"
+  [[ -d "$work_dir" ]] || return 0
+  local header_printed=0
+  for registry in "$work_dir"/*.registry.yml; do
+    [[ -f "$registry" ]] || continue
+    local stack_name count i installed=()
+    stack_name=$(basename "${registry%.registry.yml}")
+    count=$(yq '.tools | length' "$registry")
+    [[ "$count" -gt 0 ]] || continue
+    # Collect indices of tools that are installed on this machine
+    for (( i=0; i<count; i++ )); do
+      local name
+      name=$(yq ".tools[$i].name" "$registry")
+      command -v "$name" >/dev/null 2>&1 && installed+=("$i")
+    done
+    [[ "${#installed[@]}" -gt 0 ]] || continue
+    # Print the section header once across all stacks
+    if [[ "$header_printed" -eq 0 ]]; then
+      printf '\n## Work Stack Tools\n'
+      header_printed=1
+    fi
+    for i in "${installed[@]}"; do
+      _tool_md_entry \
+        "$(yq ".tools[$i].name"           "$registry")" \
+        "$(yq ".tools[$i].description"    "$registry")" \
+        "$(yq ".tools[$i].when_to_use"    "$registry")" \
+        "$(yq ".tools[$i].usage // \"\""  "$registry")" \
+        "$(yq ".tools[$i].docs  // \"\""  "$registry")"
+    done
+  done
+}
+
 {
   printf '# Environment Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Sources: brew/registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
+  printf '<!-- Sources: brew/registry.yml  brew/work/*.registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
   printf '<!-- Regenerate: bin/generate-tool-context -->\n'
   _render_registry "$BREW_REGISTRY" "Brew Tools"
+  _render_work_registries "$WORK_DIR"
   _render_registry "$BIN_REGISTRY"  "Workbench Scripts"
   _render_registry "$ZSH_REGISTRY"  "Shell Aliases"
 } > "$OUTPUT"

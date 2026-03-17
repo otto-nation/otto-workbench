@@ -1,0 +1,15 @@
+# Terraform work stack registry — AI context for Claude/Kiro.
+# Paired with terraform.Brewfile. Regenerate: bin/generate-tool-context
+
+tools:
+  - name: tfenv
+    description: "Terraform version manager — install and switch between Terraform versions"
+    when_to_use: "Switching Terraform versions per project; installing a specific Terraform version"
+    usage: "tfenv list  |  tfenv install 1.7.0  |  tfenv use 1.7.0"
+    docs: "https://github.com/tfutils/tfenv"
+
+  - name: terraform-docs
+    description: "Generate documentation from Terraform module inputs and outputs"
+    when_to_use: "Auto-generating or updating README documentation for Terraform modules"
+    usage: "terraform-docs markdown table . > README.md  |  terraform-docs --config .terraform-docs.yml ."
+    docs: "https://terraform-docs.io/"

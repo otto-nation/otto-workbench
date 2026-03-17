@@ -1,0 +1,22 @@
+# Kubernetes work stack registry — AI context for Claude/Kiro.
+# Paired with kubernetes.Brewfile. Regenerate: bin/generate-tool-context
+
+tools:
+  - name: kubectl
+    formula: kubernetes-cli
+    description: "Kubernetes CLI — manage clusters, deployments, pods, and services"
+    when_to_use: "Inspecting or modifying Kubernetes resources; debugging pods; applying manifests"
+    usage: "kubectl get pods  |  kubectl describe pod <name>  |  kubectl apply -f manifest.yml  |  kubectl logs <pod>"
+    docs: "https://kubernetes.io/docs/reference/kubectl/"
+
+  - name: k9s
+    description: "Terminal UI for Kubernetes — browse and manage cluster resources interactively"
+    when_to_use: "Browsing cluster state, tailing logs, exec-ing into pods, or monitoring resources in real time"
+    usage: "k9s  |  k9s --namespace <ns>  |  k9s --context <ctx>"
+    docs: "https://k9scli.io/"
+
+  - name: kubectx
+    description: "Fast Kubernetes context and namespace switcher"
+    when_to_use: "Switching between Kubernetes clusters or namespaces quickly"
+    usage: "kubectx  |  kubectx <context>  |  kubens <namespace>"
+    docs: "https://github.com/ahmetb/kubectx"

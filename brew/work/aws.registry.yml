@@ -1,0 +1,16 @@
+# AWS work stack registry — AI context for Claude/Kiro.
+# Paired with aws.Brewfile. Regenerate: bin/generate-tool-context
+
+tools:
+  - name: aws
+    formula: awscli
+    description: "AWS CLI — manage AWS resources, services, and credentials from the terminal"
+    when_to_use: "Interacting with AWS services (S3, EC2, Lambda, Secrets Manager, etc.); managing IAM and credentials"
+    usage: "aws s3 ls  |  aws secretsmanager get-secret-value --secret-id <name>  |  aws sts get-caller-identity"
+    docs: "https://docs.aws.amazon.com/cli/"
+
+  - name: aws-sso-util
+    description: "Utilities for AWS SSO — simplifies login and credential management for SSO-based AWS accounts"
+    when_to_use: "Logging in via AWS SSO; configuring SSO profiles; refreshing SSO credentials"
+    usage: "aws-sso-util login  |  aws-sso-util configure populate"
+    docs: "https://github.com/benkehoe/aws-sso-util"

@@ -26,9 +26,15 @@ teardown() {
   unset BREW_REGISTRY BIN_REGISTRY ZSH_REGISTRY WORK_DIR TOOL_CONTEXT_OUTPUT
 }
 
+# _write_registry FILE SECTION — writes a single-tool registry with the given section title
 _write_registry() {
-  local file="$1"
-  cat > "$file" << 'EOF'
+  local file="$1" section="${2:-Tools}"
+  cat > "$file" << EOF
+meta:
+  section: "$section"
+  install_check: false
+  validation: none
+
 tools:
   - name: mytool
     description: "A test tool"
@@ -38,13 +44,35 @@ tools:
 EOF
 }
 
+# _write_minimal_registry FILE — writes a registry with no optional fields
 _write_minimal_registry() {
   local file="$1"
   cat > "$file" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
 tools:
   - name: minimal
     description: "No optional fields"
     when_to_use: "Always"
+EOF
+}
+
+# _write_install_checked_registry FILE TOOL_NAME — writes a registry with install_check: true
+_write_install_checked_registry() {
+  local file="$1" tool_name="$2"
+  cat > "$file" << EOF
+meta:
+  section: "Work Tools"
+  install_check: true
+  validation: none
+
+tools:
+  - name: $tool_name
+    description: "An install-checked tool"
+    when_to_use: "When installed"
 EOF
 }
 
@@ -67,22 +95,22 @@ EOF
 
 # ── Section rendering ─────────────────────────────────────────────────────────
 
-@test "renders Brew Tools section from BREW_REGISTRY" {
-  _write_registry "$BREW_REGISTRY"
+@test "renders section title from meta.section in BREW_REGISTRY" {
+  _write_registry "$BREW_REGISTRY" "Brew Tools"
 
   bash "$GENERATOR"
   grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
 }
 
-@test "renders Workbench Scripts section from BIN_REGISTRY" {
-  _write_registry "$BIN_REGISTRY"
+@test "renders section title from meta.section in BIN_REGISTRY" {
+  _write_registry "$BIN_REGISTRY" "Workbench Scripts"
 
   bash "$GENERATOR"
   grep -q "## Workbench Scripts" "$TOOL_CONTEXT_OUTPUT"
 }
 
-@test "renders Shell Aliases section from ZSH_REGISTRY" {
-  _write_registry "$ZSH_REGISTRY"
+@test "renders section title from meta.section in ZSH_REGISTRY" {
+  _write_registry "$ZSH_REGISTRY" "Shell Aliases"
 
   bash "$GENERATOR"
   grep -q "## Shell Aliases" "$TOOL_CONTEXT_OUTPUT"
@@ -141,6 +169,39 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# ── install_check filtering ───────────────────────────────────────────────────
+
+@test "includes install-checked tool when it is in PATH" {
+  # sh is always available; use it as the tool name so command -v succeeds
+  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "sh"
+
+  bash "$GENERATOR"
+  grep -q "### sh" "$TOOL_CONTEXT_OUTPUT"
+}
+
+@test "excludes install-checked tool when it is not in PATH" {
+  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "definitely-not-a-real-tool-xyzzy"
+
+  bash "$GENERATOR"
+  run grep "### definitely-not-a-real-tool-xyzzy" "$TOOL_CONTEXT_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+@test "omits section header when all install-checked tools are absent" {
+  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "definitely-not-a-real-tool-xyzzy"
+
+  bash "$GENERATOR"
+  run grep "## Work Tools" "$TOOL_CONTEXT_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+@test "renders work registry section when tool is installed" {
+  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "sh"
+
+  bash "$GENERATOR"
+  grep -q "## Work Tools" "$TOOL_CONTEXT_OUTPUT"
+}
+
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds when all registries are missing" {
@@ -149,7 +210,7 @@ EOF
 }
 
 @test "skips section for missing registry file" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$BREW_REGISTRY" "Brew Tools"
 
   bash "$GENERATOR"
   grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
@@ -161,6 +222,11 @@ EOF
 
 @test "renders multiple tool entries" {
   cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
 tools:
   - name: tool-a
     description: "First tool"

@@ -1,5 +1,12 @@
-# Terraform work stack registry — AI context for Claude/Kiro.
-# Paired with terraform.Brewfile. Regenerate: bin/generate-tool-context
+# Terraform stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/work/terraform.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Terraform Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/work/terraform.Brewfile
 
 tools:
   - name: tfenv

@@ -8,10 +8,24 @@
 # Run automatically via pre-push hook and otto-workbench sync.
 # Never edit generated content directly — edit the source files instead.
 #
+# Registry discovery:
+#   Top-level:  brew/registry.yml  bin/registry.yml  zsh/registry.yml
+#   Work stacks: brew/work/*.registry.yml  (rendered only for installed tools)
+#   Adding a new work stack: create brew/work/<name>.registry.yml with a meta block.
+#   Adding a new top-level registry: add one _render_registry call in the output block.
+#
+# Each registry file must contain a `meta` block:
+#   meta:
+#     section:       "Section Title"   # H2 heading in generated output
+#     install_check: false             # if true, omit tools not found in PATH
+#     validation:    brewfile          # brewfile | bindir | zsh-comments | none
+#     source:        brew/Brewfile     # relative path used by validate-registries
+#
 # Environment overrides (for tests):
 #   BREW_REGISTRY        brew/registry.yml
 #   BIN_REGISTRY         bin/registry.yml
 #   ZSH_REGISTRY         zsh/registry.yml
+#   WORK_DIR             brew/work/ directory
 #   TOOL_CONTEXT_OUTPUT  tools.generated.md path
 #   README_PATH          README.md path
 #   TASKFILE_PATH        Taskfile.global.yml path
@@ -72,16 +86,23 @@ _splice_readme() {
   rm -f "$tmp_content"
 }
 
-# _iter_tools FILE CALLBACK
+# _is_installed NAME — returns 0 if NAME is found in PATH
+_is_installed() { command -v "$1" >/dev/null 2>&1; }
+
+# _iter_tools FILE CALLBACK [FILTER]
 # Calls CALLBACK name description when_to_use usage docs for each tool in FILE.
+# If FILTER is provided (a function name), skips tools for which FILTER NAME fails.
 _iter_tools() {
-  local file="$1" cb="$2"
+  local file="$1" cb="$2" filter="${3:-}"
   [[ -f "$file" ]] || return 0
   local count i
   count=$(yq '.tools | length' "$file")
   for (( i=0; i<count; i++ )); do
+    local name
+    name=$(yq ".tools[$i].name" "$file")
+    if [[ -n "$filter" ]] && ! "$filter" "$name"; then continue; fi
     "$cb" \
-      "$(yq ".tools[$i].name"          "$file")" \
+      "$name" \
       "$(yq ".tools[$i].description"   "$file")" \
       "$(yq ".tools[$i].when_to_use"   "$file")" \
       "$(yq ".tools[$i].usage // \"\""  "$file")" \
@@ -101,50 +122,28 @@ _tool_md_entry() {
   if [[ -n "$docs"  && "$docs"  != "null" ]]; then printf -- '- **Docs**: %s\n'   "$docs";  fi
 }
 
+# _render_registry FILE
+# Reads meta.section and meta.install_check from FILE, then renders all matching
+# tools as a markdown section. Skips the section entirely if no tools pass the filter.
 _render_registry() {
-  local file="$1" title="$2"
+  local file="$1"
   [[ -f "$file" ]] || return 0
   local count
   count=$(yq '.tools | length' "$file")
   [[ "$count" -gt 0 ]] || return 0
-  printf '\n## %s\n' "$title"
-  _iter_tools "$file" _tool_md_entry
-}
 
-# _render_work_registries DIR
-# Scans brew/work/*.registry.yml and renders only tools that are currently
-# installed (checked via command -v), grouped by stack under "## Work Stack Tools".
-_render_work_registries() {
-  local work_dir="$1"
-  [[ -d "$work_dir" ]] || return 0
-  local header_printed=0
-  for registry in "$work_dir"/*.registry.yml; do
-    [[ -f "$registry" ]] || continue
-    local stack_name count i installed=()
-    stack_name=$(basename "${registry%.registry.yml}")
-    count=$(yq '.tools | length' "$registry")
-    [[ "$count" -gt 0 ]] || continue
-    # Collect indices of tools that are installed on this machine
-    for (( i=0; i<count; i++ )); do
-      local name
-      name=$(yq ".tools[$i].name" "$registry")
-      command -v "$name" >/dev/null 2>&1 && installed+=("$i")
-    done
-    [[ "${#installed[@]}" -gt 0 ]] || continue
-    # Print the section header once across all stacks
-    if [[ "$header_printed" -eq 0 ]]; then
-      printf '\n## Work Stack Tools\n'
-      header_printed=1
-    fi
-    for i in "${installed[@]}"; do
-      _tool_md_entry \
-        "$(yq ".tools[$i].name"           "$registry")" \
-        "$(yq ".tools[$i].description"    "$registry")" \
-        "$(yq ".tools[$i].when_to_use"    "$registry")" \
-        "$(yq ".tools[$i].usage // \"\""  "$registry")" \
-        "$(yq ".tools[$i].docs  // \"\""  "$registry")"
-    done
-  done
+  local section install_check filter=""
+  section=$(yq '.meta.section // "Tools"' "$file")
+  install_check=$(yq '.meta.install_check // false' "$file")
+  [[ "$install_check" == "true" ]] && filter="_is_installed"
+
+  # Accumulate tool entries first; skip the section header if nothing renders
+  local content
+  content=$( _iter_tools "$file" _tool_md_entry "$filter" )
+  [[ -n "$content" ]] || return 0
+
+  printf '\n## %s\n' "$section"
+  printf '%s\n' "$content"
 }
 
 {
@@ -152,10 +151,12 @@ _render_work_registries() {
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
   printf '<!-- Sources: brew/registry.yml  brew/work/*.registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
   printf '<!-- Regenerate: bin/generate-tool-context -->\n'
-  _render_registry "$BREW_REGISTRY" "Brew Tools"
-  _render_work_registries "$WORK_DIR"
-  _render_registry "$BIN_REGISTRY"  "Workbench Scripts"
-  _render_registry "$ZSH_REGISTRY"  "Shell Aliases"
+  _render_registry "$BREW_REGISTRY"
+  for registry in "$WORK_DIR"/*.registry.yml; do
+    [[ -f "$registry" ]] && _render_registry "$registry"
+  done
+  _render_registry "$BIN_REGISTRY"
+  _render_registry "$ZSH_REGISTRY"
 } > "$OUTPUT"
 success "Generated $(basename "$OUTPUT")"
 

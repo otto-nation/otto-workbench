@@ -1,5 +1,12 @@
-# Java work stack registry — AI context for Claude/Kiro.
-# Paired with java.Brewfile. Regenerate: bin/generate-tool-context
+# Java stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/work/java.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Java Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/work/java.Brewfile
 
 tools:
   - name: gradle
@@ -15,7 +22,7 @@ tools:
     docs: "https://www.jenv.be/"
 
   - name: mvn
-    formula: maven
+    brew_name: maven
     description: "Apache Maven — build and dependency management for Java projects"
     when_to_use: "Building, testing, or packaging Maven-based projects"
     usage: "mvn clean install  |  mvn test  |  mvn dependency:tree"

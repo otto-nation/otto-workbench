@@ -4,9 +4,15 @@
 # Checks performed per registry:
 #   - Required fields present: name, description, when_to_use
 #   - No duplicate tool names
-#   - brew/registry.yml: every tool name exists as a formula/cask in brew/Brewfile
-#   - bin/registry.yml:  every tool name exists as an executable in bin/
-#   - zsh/registry.yml:  every tool name has a matching header comment in zsh/config.d/
+#   - Cross-file check based on meta.validation:
+#       brewfile      — every tool name (or brew_name override) exists in meta.source Brewfile
+#       bindir        — every tool name exists as a file in meta.source directory
+#       zsh-comments  — every tool name has a matching header comment under meta.source
+#       none          — schema-only, no cross-check
+#
+# Registry discovery:
+#   Top-level:  <repo>/*/registry.yml
+#   Work stacks: <repo>/brew/work/*.registry.yml
 #
 # Usage: bin/validate-registries
 # Exit code: 0 if all checks pass, 1 if any fail.
@@ -29,22 +35,19 @@ _fail() {
 }
 
 # _check_required_fields FILE INDEX
-# Validates that the entry at INDEX in FILE has all required fields.
 _check_required_fields() {
-  local file="$1"
-  local i="$2"
+  local file="$1" i="$2"
   local name description when_to_use
   name=$(yq ".tools[$i].name // \"\"" "$file")
   description=$(yq ".tools[$i].description // \"\"" "$file")
   when_to_use=$(yq ".tools[$i].when_to_use // \"\"" "$file")
 
-  [[ -n "$name" && "$name" != "null" ]]        || _fail "$(basename "$file") [$i]: missing required field: name"
+  [[ -n "$name" && "$name" != "null" ]]             || _fail "$(basename "$file") [$i]: missing required field: name"
   [[ -n "$description" && "$description" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: description"
   [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use"
 }
 
 # _check_no_duplicates FILE
-# Fails if any tool name appears more than once.
 _check_no_duplicates() {
   local file="$1"
   local dupes
@@ -61,7 +64,6 @@ _check_no_duplicates() {
 _validate_schema() {
   local file="$1"
   [[ -f "$file" ]] || { warn "$(basename "$file") not found — skipping"; return; }
-
   local count i=0
   count=$(yq '.tools | length' "$file")
   while [[ "$i" -lt "$count" ]]; do
@@ -71,102 +73,78 @@ _validate_schema() {
   _check_no_duplicates "$file"
 }
 
-# _validate_work_registries
-# For each brew/work/*.registry.yml:
-#   - validates schema (required fields, no duplicates)
-#   - cross-checks each tool's name (or optional formula field) against the
-#     matching brew/work/<stack>.Brewfile using substring match, to accommodate
-#     tap-prefixed formulae (e.g. ankitpokhrel/jira-cli/jira-cli) and cases
-#     where the binary name differs from the formula (e.g. kubectl vs kubernetes-cli).
-_validate_work_registries() {
-  local work_dir="$REPO_ROOT/brew/work"
-  [[ -d "$work_dir" ]] || return 0
-  local found=0
-  for registry in "$work_dir"/*.registry.yml; do
-    [[ -f "$registry" ]] || continue
-    found=1
-    local stack_name
-    stack_name=$(basename "${registry%.registry.yml}")
-    local brewfile="$work_dir/${stack_name}.Brewfile"
-    echo
-    info "Schema: brew/work/${stack_name}.registry.yml"
-    _validate_schema "$registry"
-    if [[ ! -f "$brewfile" ]]; then
-      warn "brew/work/${stack_name}.Brewfile not found — skipping cross-check"
-      continue
-    fi
-    local count i=0 name formula
-    count=$(yq '.tools | length' "$registry")
-    while [[ "$i" -lt "$count" ]]; do
-      name=$(yq ".tools[$i].name" "$registry")
-      formula=$(yq ".tools[$i].formula // \"\"" "$registry")
-      [[ -z "$formula" || "$formula" == "null" ]] && formula="$name"
-      if ! grep -qE "^(brew|cask) .*\"[^\"]*${formula}" "$brewfile"; then
-        _fail "brew/work/${stack_name}.registry.yml: '$name' (formula: '$formula') not found in brew/work/${stack_name}.Brewfile"
-      fi
-      i=$(( i + 1 ))
-    done
-  done
-  if [[ "$found" -eq 0 ]]; then
-    warn "No work stack registries found in brew/work/ — skipping"
-  fi
-}
-
-# _validate_brew_entries
-# Every name in brew/registry.yml must appear in the Brewfile (as formula or cask).
-_validate_brew_entries() {
-  local file="$REPO_ROOT/brew/registry.yml"
-  local brewfile="$REPO_ROOT/brew/Brewfile"
-  [[ -f "$file" ]]     || return 0
-  [[ -f "$brewfile" ]] || { warn "brew/Brewfile not found — skipping cross-check"; return; }
-
-  local count i=0 name
+# _validate_against_brewfile REGISTRY BREWFILE
+# Every tool name (or brew_name override) must appear in BREWFILE.
+_validate_against_brewfile() {
+  local file="$1" brewfile="$2"
+  [[ -f "$brewfile" ]] || { warn "$(basename "$brewfile") not found — skipping cross-check"; return; }
+  local count i=0 name brew_name check_name
   count=$(yq '.tools | length' "$file")
   while [[ "$i" -lt "$count" ]]; do
     name=$(yq ".tools[$i].name" "$file")
-    if ! grep -qE "^(brew|cask) [\"']?${name}[\"']?" "$brewfile"; then
-      _fail "brew/registry.yml: '$name' not found in brew/Brewfile"
+    brew_name=$(yq ".tools[$i].brew_name // \"\"" "$file")
+    check_name="${brew_name:-$name}"
+    if ! grep -qE "^(brew|cask) [\"']?${check_name}[\"']?" "$brewfile"; then
+      _fail "$(basename "$file"): '$name' not found in ${brewfile#"$REPO_ROOT/"}"
     fi
     i=$(( i + 1 ))
   done
 }
 
-# _validate_bin_entries
-# Every name in bin/registry.yml must exist as a file in bin/.
-_validate_bin_entries() {
-  local file="$REPO_ROOT/bin/registry.yml"
-  [[ -f "$file" ]] || return 0
-
+# _validate_against_bindir REGISTRY DIR
+# Every tool name must exist as a file in DIR.
+_validate_against_bindir() {
+  local file="$1" dir="$2"
   local count i=0 name
   count=$(yq '.tools | length' "$file")
   while [[ "$i" -lt "$count" ]]; do
     name=$(yq ".tools[$i].name" "$file")
-    if [[ ! -f "$REPO_ROOT/bin/$name" ]]; then
-      _fail "bin/registry.yml: '$name' not found in bin/"
+    if [[ ! -f "$dir/$name" ]]; then
+      _fail "$(basename "$file"): '$name' not found in ${dir#"$REPO_ROOT/"}/"
     fi
     i=$(( i + 1 ))
   done
 }
 
-# _validate_zsh_entries
-# Every name in zsh/registry.yml must match a section header comment in one of
-# the zsh/config.d/*.zsh files (e.g. "# Git aliases Configuration").
-_validate_zsh_entries() {
-  local file="$REPO_ROOT/zsh/registry.yml"
-  [[ -f "$file" ]] || return 0
-
-  local count i=0 name
+# _validate_against_zsh REGISTRY DIR
+# Every tool name must have a matching header comment somewhere under DIR.
+_validate_against_zsh() {
+  local file="$1" dir="$2"
+  local count i=0 name keyword
   count=$(yq '.tools | length' "$file")
   while [[ "$i" -lt "$count" ]]; do
     name=$(yq ".tools[$i].name" "$file")
-    # Extract the first word of the name (e.g. "Git" from "Git aliases") for matching
-    local keyword
     keyword=$(echo "$name" | cut -d' ' -f1)
-    if ! grep -rqi "# ${keyword}" "$REPO_ROOT/zsh/" 2>/dev/null; then
-      _fail "zsh/registry.yml: '$name' — no matching comment found in zsh/ for keyword '${keyword}'"
+    if ! grep -rqi "# ${keyword}" "$dir" 2>/dev/null; then
+      _fail "$(basename "$file"): '$name' — no matching comment found in ${dir#"$REPO_ROOT/"}/ for keyword '${keyword}'"
     fi
     i=$(( i + 1 ))
   done
+}
+
+# _validate_registry FILE
+# Dispatches cross-validation based on meta.validation and meta.source in FILE.
+_validate_registry() {
+  local file="$1"
+  local validation source
+  validation=$(yq '.meta.validation // "none"' "$file")
+  source=$(yq '.meta.source // ""' "$file")
+
+  case "$validation" in
+    brewfile)
+      [[ -n "$source" ]] && _validate_against_brewfile "$file" "$REPO_ROOT/$source"
+      ;;
+    bindir)
+      [[ -n "$source" ]] && _validate_against_bindir "$file" "$REPO_ROOT/$source"
+      ;;
+    zsh-comments)
+      [[ -n "$source" ]] && _validate_against_zsh "$file" "$REPO_ROOT/$source"
+      ;;
+    none|install-check) ;;
+    *)
+      warn "$(basename "$file"): unknown validation type '$validation' — skipping cross-check"
+      ;;
+  esac
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -176,23 +154,28 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 1
 fi
 
+# Collect all registries: top-level (one per domain dir) + work stacks
+declare -a all_registries=()
+for f in "$REPO_ROOT"/*/registry.yml; do
+  [[ -f "$f" ]] && all_registries+=("$f")
+done
+for f in "$REPO_ROOT"/brew/work/*.registry.yml; do
+  [[ -f "$f" ]] && all_registries+=("$f")
+done
+
+if [[ "${#all_registries[@]}" -eq 0 ]]; then
+  warn "No registry files found — skipping"
+  exit 0
+fi
+
 echo "→ Validating registries..."
 
-info "Schema: brew/registry.yml"
-_validate_schema "$REPO_ROOT/brew/registry.yml"
-_validate_brew_entries
-
-_validate_work_registries
-
-echo
-info "Schema: bin/registry.yml"
-_validate_schema "$REPO_ROOT/bin/registry.yml"
-_validate_bin_entries
-
-echo
-info "Schema: zsh/registry.yml"
-_validate_schema "$REPO_ROOT/zsh/registry.yml"
-_validate_zsh_entries
+for registry in "${all_registries[@]}"; do
+  echo
+  info "Schema: ${registry#"$REPO_ROOT/"}"
+  _validate_schema "$registry"
+  _validate_registry "$registry"
+done
 
 echo
 if [[ "$ERRORS" -gt 0 ]]; then

@@ -2,6 +2,12 @@
 # Add an entry here whenever you add a new alias group to zsh/config.d/.
 # Regenerate: bin/generate-tool-context
 
+meta:
+  section: "Shell Aliases"
+  install_check: false
+  validation: zsh-comments
+  source: zsh
+
 tools:
   - name: "Git aliases"
     description: "Short forms for common git operations (gs, ga, gc, gp, gl, gco, gb, gd)"

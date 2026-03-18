@@ -2,6 +2,12 @@
 # Add an entry here whenever you add a formula or cask to the Brewfile.
 # Regenerate: bin/generate-tool-context
 
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: jq
     description: "JSON processor for querying, filtering, and transforming JSON data"

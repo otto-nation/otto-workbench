@@ -1,0 +1,29 @@
+# Java stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/work/java.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Java Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/work/java.Brewfile
+
+tools:
+  - name: gradle
+    description: "Gradle build tool — build, test, and publish JVM projects"
+    when_to_use: "Building, testing, or running Gradle-based projects when no wrapper (gradlew) is present"
+    usage: "gradle build  |  gradle test  |  gradle dependencies"
+    docs: "https://docs.gradle.org/"
+
+  - name: jenv
+    description: "Java version manager — switch between multiple JDK versions per project"
+    when_to_use: "Switching Java versions globally or per-directory; managing multiple JDKs"
+    usage: "jenv versions  |  jenv local 17  |  jenv global 21"
+    docs: "https://www.jenv.be/"
+
+  - name: mvn
+    brew_name: maven
+    description: "Apache Maven — build and dependency management for Java projects"
+    when_to_use: "Building, testing, or packaging Maven-based projects"
+    usage: "mvn clean install  |  mvn test  |  mvn dependency:tree"
+    docs: "https://maven.apache.org/guides/"

@@ -6,7 +6,7 @@
 # What it does (core — always runs):
 #   1. Installs the `task` runner if not present
 #   2. Symlinks all bin/ scripts to ~/.local/bin/
-#   3. Symlinks all zsh/*.zsh configs to ~/.config/zsh/config.d/
+#   3. Deploys zsh snippets to ~/.config/zsh/config.d/{framework,tools,aliases,prompt}/
 #   4. Sets up ~/.gitconfig includes and global git hooks (via git/setup.sh)
 #   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
 #   6. Adds ~/.local/bin to PATH in your shell rc file if needed
@@ -27,6 +27,8 @@ export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
 # shellcheck source=git/setup.sh
 . "$DOTFILES_DIR/git/setup.sh"
+# shellcheck source=zsh/setup.sh
+. "$DOTFILES_DIR/zsh/setup.sh"
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
 
@@ -236,7 +238,7 @@ print_install_summary() {
 
   echo -e "  ${CYAN}Installed${NC}"
   echo -e "  ${DIM}  • bin scripts      → $LOCAL_BIN_DIR/${NC}"
-  echo -e "  ${DIM}  • zsh configs      → $ZSH_CONFIG_DIR/${NC}"
+  echo -e "  ${DIM}  • zsh snippets     → $ZSH_CONFIG_DIR/{framework,tools,aliases,prompt}/${NC}"
   echo -e "  ${DIM}  • gitconfig        → $GITCONFIG_FILE (includes git/.gitconfig + ~/.gitconfig.local)${NC}"
   echo -e "  ${DIM}  • global Taskfile  → $TASK_CONFIG_DIR/${NC}"
   local component
@@ -274,61 +276,11 @@ echo
 mkdir -p "$LOCAL_BIN_DIR"
 mkdir -p "$ZSH_CONFIG_DIR"
 
-
-# _step_zshrc — copies the workbench .zshrc template if absent; if it differs,
-# shows a compact diff and offers update / keep / view-full choices.
-_step_zshrc() {
-  local template="$DOTFILES_DIR/zsh/.zshrc"
-  if [ ! -f "$ZSHRC_FILE" ]; then
-    cp "$template" "$ZSHRC_FILE"
-    success "Copied .zshrc"
-    info "Add secrets and machine-specific config to $ENV_LOCAL_FILE (sourced automatically, never committed)"
-  elif diff -q "$template" "$ZSHRC_FILE" > /dev/null 2>&1; then
-    success ".zshrc matches workbench template — up to date"
-  else
-    warn ".zshrc differs from workbench template"
-    echo
-    diff -u "$template" "$ZSHRC_FILE" | tail -n +3 | head -30
-    local diff_lines
-    diff_lines=$(diff -u "$template" "$ZSHRC_FILE" | tail -n +3 | wc -l | tr -d ' ')
-    if [[ "$diff_lines" -gt 30 ]]; then echo -e "  ${DIM}... $diff_lines diff lines total${NC}"; fi
-    echo
-    echo -e "  ${DIM}Machine-specific config belongs in $ENV_LOCAL_FILE (never committed)${NC}"
-    echo
-    local _choice
-    read -rp "  [u]pdate from template / [k]eep mine / [v]iew full diff [k]: " _choice
-    case "${_choice:-k}" in
-      u|U)
-        cp "$ZSHRC_FILE" "${ZSHRC_FILE}.backup"
-        echo -e "  ${GREEN}✓${NC} Backed up to ${ZSHRC_FILE}.backup"
-        cp "$template" "$ZSHRC_FILE"
-        success "Updated .zshrc from workbench template"
-        ;;
-      v|V)
-        diff -u "$template" "$ZSHRC_FILE" | "${PAGER:-less}"
-        echo
-        read -rp "  [u]pdate from template / [k]eep mine [k]: " _choice
-        if [[ "${_choice:-k}" =~ ^[Uu]$ ]]; then
-          cp "$ZSHRC_FILE" "${ZSHRC_FILE}.backup"
-          echo -e "  ${GREEN}✓${NC} Backed up to ${ZSHRC_FILE}.backup"
-          cp "$template" "$ZSHRC_FILE"
-          success "Updated .zshrc from workbench template"
-        else
-          info "Keeping existing .zshrc"
-        fi
-        ;;
-      *)
-        info "Keeping existing .zshrc"
-        ;;
-    esac
-  fi
-}
-
 echo; info "bin scripts → $LOCAL_BIN_DIR/"
 symlink_dir "$DOTFILES_DIR/bin" "$LOCAL_BIN_DIR"
 
 echo; info "zsh configs → $ZSH_CONFIG_DIR/"
-symlink_dir "$DOTFILES_DIR/zsh" "$ZSH_CONFIG_DIR" "*.zsh"
+step_zsh
 
 echo; info "git config → $GITCONFIG_FILE"
 step_gitconfig
@@ -340,7 +292,7 @@ echo; info "starship → $STARSHIP_CONFIG_FILE"
 install_symlink "$DOTFILES_DIR/zsh/starship.toml" "$STARSHIP_CONFIG_FILE"
 
 echo; info "ZSH configuration (.zshrc)"
-_step_zshrc
+step_zshrc
 
 echo; info "global Taskfile → $TASK_CONFIG_DIR/"
 mkdir -p "$TASK_CONFIG_DIR"

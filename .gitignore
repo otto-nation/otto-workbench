@@ -12,6 +12,9 @@ Thumbs.db
 # Claude Code local overrides
 .claude/
 
+# Machine-specific generated files
+ai/guidelines/rules/tools.generated.md
+
 # Editor files
 .vscode/
 .idea/

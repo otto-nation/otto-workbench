@@ -23,6 +23,16 @@ print_ai_summary() {
 
   echo
   echo -e "  ${CYAN}AI Tasks${NC}"
-  echo -e "  ${DIM}  Set your AI command for task automation:${NC}"
-  echo -e "  ${DIM}  \$ \${EDITOR:-nano} $TASK_CONFIG_DIR/taskfile.env${NC}"
+
+  # Show the active AI_COMMAND if configured, otherwise prompt the user to set one.
+  # "Active" means an uncommented AI_COMMAND= line — matches load_ai_command() in lib/ai-commit.sh.
+  local _active_cmd
+  _active_cmd=$(grep -m1 '^AI_COMMAND=' "$TASK_CONFIG_DIR/taskfile.env" 2>/dev/null | sed 's/^AI_COMMAND=//')
+
+  if [[ -n "$_active_cmd" ]]; then
+    echo -e "  ${DIM}  AI command: ${_active_cmd}${NC}"
+  else
+    echo -e "  ${DIM}  Set your AI command for task automation:${NC}"
+    echo -e "  ${DIM}  \$ \${EDITOR:-nano} $TASK_CONFIG_DIR/taskfile.env${NC}"
+  fi
 }

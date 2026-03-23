@@ -2,6 +2,12 @@
 # Add an entry here whenever you add a script to bin/.
 # Regenerate: bin/generate-tool-context
 
+meta:
+  section: "Workbench Scripts"
+  install_check: false
+  validation: bindir
+  source: bin
+
 tools:
   - name: task
     description: "AI-powered Git automation runner; wraps go-task with global/local Taskfile routing"

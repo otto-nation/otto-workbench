@@ -6,7 +6,7 @@ setup() {
   TMPDIR="$(mktemp -d)"
 
   # Mirror minimum required repo structure in TMPDIR
-  mkdir -p "$TMPDIR/bin" "$TMPDIR/brew" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
+  mkdir -p "$TMPDIR/bin" "$TMPDIR/brew/work" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
   cp "$REPO_ROOT/lib/ui.sh" "$TMPDIR/lib/ui.sh"
   cp "$REPO_ROOT/lib/constants.sh" "$TMPDIR/lib/constants.sh"
 
@@ -28,6 +28,12 @@ teardown() {
 
 _write_valid_brew() {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: mytool
     description: "A test tool"
@@ -38,6 +44,12 @@ EOF
 
 _write_valid_bin() {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Workbench Scripts"
+  install_check: false
+  validation: bindir
+  source: bin
+
 tools:
   - name: mytool
     description: "A script"
@@ -47,6 +59,12 @@ EOF
 
 _write_valid_zsh() {
   cat > "$TMPDIR/zsh/registry.yml" << 'EOF'
+meta:
+  section: "Shell Aliases"
+  install_check: false
+  validation: zsh-comments
+  source: zsh
+
 tools:
   - name: "Git aliases"
     description: "Git shortcuts"
@@ -54,6 +72,22 @@ tools:
 EOF
   printf '# Git aliases Configuration\nalias gs="git status"\n' \
     > "$TMPDIR/zsh/config.d/aliases-git.zsh"
+}
+
+_write_valid_work() {
+  cat > "$TMPDIR/brew/work/mystack.registry.yml" << 'EOF'
+meta:
+  section: "My Stack Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/work/mystack.Brewfile
+
+tools:
+  - name: mytool
+    description: "A work tool"
+    when_to_use: "When working"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 }
 
 # ── Schema validation ─────────────────────────────────────────────────────────
@@ -69,6 +103,12 @@ EOF
 
 @test "fails when brew entry is missing description" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: mytool
     when_to_use: "When testing"
@@ -82,6 +122,12 @@ EOF
 
 @test "fails when brew entry is missing when_to_use" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: mytool
     description: "A tool"
@@ -95,6 +141,12 @@ EOF
 
 @test "fails on duplicate tool names in brew registry" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: mytool
     description: "First"
@@ -114,6 +166,12 @@ EOF
 
 @test "fails when brew registry entry not in Brewfile" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: missing-formula
     description: "Not in Brewfile"
@@ -128,6 +186,12 @@ EOF
 
 @test "passes when brew entry matches a cask in Brewfile" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
 tools:
   - name: mycask
     description: "A cask"
@@ -139,8 +203,34 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "passes when brew_name override matches Brewfile entry" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: brewfile
+  source: brew/Brewfile
+
+tools:
+  - name: mvn
+    brew_name: maven
+    description: "Maven build tool"
+    when_to_use: "Building Maven projects"
+EOF
+  printf 'brew "maven"\n' > "$TMPDIR/brew/Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
 @test "fails when bin registry entry has no matching file in bin/" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Workbench Scripts"
+  install_check: false
+  validation: bindir
+  source: bin
+
 tools:
   - name: no-such-script
     description: "Missing"
@@ -154,6 +244,12 @@ EOF
 
 @test "fails when zsh registry entry has no matching comment in zsh/" {
   cat > "$TMPDIR/zsh/registry.yml" << 'EOF'
+meta:
+  section: "Shell Aliases"
+  install_check: false
+  validation: zsh-comments
+  source: zsh
+
 tools:
   - name: "Nomatch aliases"
     description: "Nothing matches"
@@ -164,6 +260,55 @@ EOF
   run bash "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no matching comment found"* ]]
+}
+
+# ── Work registry validation ──────────────────────────────────────────────────
+
+@test "validates work registry schema" {
+  _write_valid_work
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when work registry entry not in its Brewfile" {
+  cat > "$TMPDIR/brew/work/mystack.registry.yml" << 'EOF'
+meta:
+  section: "My Stack Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/work/mystack.Brewfile
+
+tools:
+  - name: missing-work-tool
+    description: "Not in Brewfile"
+    when_to_use: "Never"
+EOF
+  printf 'brew "something-else"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not found in brew/work/mystack.Brewfile"* ]]
+}
+
+@test "passes work registry with brew_name override" {
+  cat > "$TMPDIR/brew/work/mystack.registry.yml" << 'EOF'
+meta:
+  section: "My Stack Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/work/mystack.Brewfile
+
+tools:
+  - name: kubectl
+    brew_name: kubernetes-cli
+    description: "Kubernetes CLI"
+    when_to_use: "Managing clusters"
+EOF
+  printf 'brew "kubernetes-cli"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
 }
 
 # ── Missing registries ────────────────────────────────────────────────────────

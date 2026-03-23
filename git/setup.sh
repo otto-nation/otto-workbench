@@ -33,8 +33,25 @@ step_gitconfig() {
   local template="$repo/git/.gitconfig.local.template"
 
   if [[ ! -f "$GITCONFIG_FILE" ]]; then
-    printf '[include]\n\tpath = %s\n\n[include]\n\tpath = %s\n' \
-      "$shared" "$GITCONFIG_LOCAL_FILE" > "$GITCONFIG_FILE"
+    cat > "$GITCONFIG_FILE" <<EOF
+# ~/.gitconfig — global git config for this machine.
+#
+# This file is NOT tracked by any repo and intentionally contains no settings directly.
+#
+# Architecture:
+#   git/.gitconfig     → shared aliases, colors, and behavior (version-controlled in workbench)
+#   ~/.gitconfig.local → machine-specific identity, GPG, and credentials (never committed)
+#
+# To change shared settings: edit git/.gitconfig in the workbench repo and commit.
+# To change machine-specific settings: edit ~/.gitconfig.local.
+# If you move the workbench repo, re-run install.sh to update the path below.
+
+[include]
+	path = $shared
+
+[include]
+	path = $GITCONFIG_LOCAL_FILE
+EOF
     success "Created $GITCONFIG_FILE"
   else
     if ! grep -qF "path = $shared" "$GITCONFIG_FILE"; then

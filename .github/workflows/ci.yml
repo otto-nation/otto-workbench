@@ -35,6 +35,9 @@ jobs:
       - name: Validate registries
         run: bash bin/validate-registries
 
+      - name: Validate component framework
+        run: bash bin/validate-components
+
       - name: Verify tools.generated.md is up to date
         run: |
           bash bin/generate-tool-context

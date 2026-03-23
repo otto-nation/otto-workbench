@@ -32,7 +32,9 @@ otto-workbench sync
 
 Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Safe to run at any time.
 
-Re-run a single component independently: `bash <component>/setup.sh` (e.g. `bash ai/setup.sh`)
+Re-run a single component independently:
+- Optional components (interactive): `bash <component>/setup.sh` — e.g. `bash ai/setup.sh`
+- Core components (idempotent): `bash <component>/steps.sh` — e.g. `bash git/steps.sh`
 
 ## What's Included
 

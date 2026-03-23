@@ -1,9 +1,6 @@
 #!/bin/bash
 # Claude Code setup steps — sourced by ai/setup.sh and bin/otto-workbench.
-
-# Derive the ai/ directory from this file's own location so callers don't
-# need to inject SCRIPT_DIR. Works whether sourced or executed directly.
-_AI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -48,17 +45,14 @@ _mcp_install() {
   success "$name registered"
 }
 
-
 _install_workbench_rule() {
-  local workbench_path
-  workbench_path="$(cd "$_AI_DIR/.." && pwd)"
   local target="$CLAUDE_RULES_DIR/workbench.md"
 
   mkdir -p "$CLAUDE_RULES_DIR"
   cat > "$target" <<EOF
 # Workbench
 
-Your developer environment is managed at: $workbench_path
+Your developer environment is managed at: $WORKBENCH_DIR
 
 What it owns: Claude config (\`ai/claude/\`), coding rules (\`ai/guidelines/rules/\`),
 bin scripts (\`bin/\`), zsh config (\`zsh/\`), git config (\`git/\`),
@@ -68,7 +62,7 @@ When modifying Claude config (MCPs, agents, skills, settings), bin scripts, zsh 
 git config, or developer tooling — make the change in the workbench repo and re-run
 the relevant setup script. Do not edit \`~/\` directly.
 
-Re-run AI setup:   bash $workbench_path/ai/setup.sh
+Re-run AI setup:   bash $AI_SRC_DIR/setup.sh
 Add a local rule:  claude-rules add <domain> "rule text"
 Edit local rules:  claude-rules open [domain]
 Review untracked:  claude-rules status
@@ -91,7 +85,7 @@ _check_local_rules() {
     found=true
   done
   if [[ "$found" == true ]]; then
-    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $_AI_DIR/guidelines/rules/ to formalize${NC}"
+    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}"
   fi
 }
 
@@ -101,12 +95,11 @@ _check_local_rules() {
 # Each manifest declares the MCP name (filename without .json), a display label,
 # the install command array, and an optional post-install note.
 step_claude_mcps() {
-  local mcp_dir="$_AI_DIR/claude/mcps"
-  [[ -d "$mcp_dir" ]] || { warn "No MCP configs found in $mcp_dir — skipping"; return; }
+  [[ -d "$CLAUDE_MCPS_SRC_DIR" ]] || { warn "No MCP configs found in $CLAUDE_MCPS_SRC_DIR — skipping"; return; }
 
   local file name note
   local cmd_args=()
-  for file in "$mcp_dir"/*.json; do
+  for file in "$CLAUDE_MCPS_SRC_DIR"/*.json; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file" .json)
     local url
@@ -124,68 +117,58 @@ step_claude_mcps() {
 }
 
 step_claude_guidelines() {
-  local src="$_AI_DIR/claude/CLAUDE.md"
-  [[ -f "$src" ]] || { err "Missing $src"; return 1; }
+  [[ -f "$CLAUDE_GUIDELINES_SRC" ]] || { err "Missing $CLAUDE_GUIDELINES_SRC"; return 1; }
   mkdir -p "$CLAUDE_DIR"
-  install_symlink "$src" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
+  install_symlink "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 }
 
 step_claude_rules() {
-  local rules_src="$_AI_DIR/guidelines/rules"
-  local rules_dst="$CLAUDE_RULES_DIR"
-  [[ -d "$rules_src" ]] || { warn "No rules found in $rules_src — skipping"; return; }
+  [[ -d "$GUIDELINES_RULES_SRC_DIR" ]] || { warn "No rules found in $GUIDELINES_RULES_SRC_DIR — skipping"; return; }
 
-  mkdir -p "$rules_dst"
+  mkdir -p "$CLAUDE_RULES_DIR"
   info "Installing rules to $CLAUDE_RULES_DIR/"
-  symlink_dir "$rules_src" "$rules_dst" "*.md" --strip-ext
+  symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$CLAUDE_RULES_DIR" "*.md" --strip-ext
 
   echo
   info "Generating workbench.md"
   _install_workbench_rule
 
-  _check_local_rules "$rules_dst"
+  _check_local_rules "$CLAUDE_RULES_DIR"
 }
 
 step_claude_settings() {
-  local src="$_AI_DIR/claude/settings.json"
-  local target="$CLAUDE_DIR/settings.json"
-  local filter="$_AI_DIR/claude/sync-settings.jq"
-
   mkdir -p "$CLAUDE_DIR"
 
   local existing="{}" content
-  if [[ -f "$target" ]]; then
-    content=$(cat "$target")
+  if [[ -f "$CLAUDE_DIR/settings.json" ]]; then
+    content=$(cat "$CLAUDE_DIR/settings.json")
     [[ -n "$content" ]] && existing="$content"
   fi
 
   local result
-  result=$(jq -n --argjson t "$(cat "$src")" --argjson e "$existing" -f "$filter") \
+  result=$(jq -n --argjson t "$(cat "$CLAUDE_SETTINGS_SRC")" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }
 
-  printf '%s\n' "$result" > "$target"
+  printf '%s\n' "$result" > "$CLAUDE_DIR/settings.json"
   if [[ "$existing" == "{}" ]]; then success "settings.json written"; else success "settings.json synced"; fi
 }
 
 step_claude_skills() {
-  local src="$_AI_DIR/claude/skills" dst="$CLAUDE_SKILLS_DIR"
-  [[ -d "$src" ]] || { warn "No skills found in $src — skipping"; return; }
-  mkdir -p "$dst"
+  [[ -d "$CLAUDE_SKILLS_SRC_DIR" ]] || { warn "No skills found in $CLAUDE_SKILLS_SRC_DIR — skipping"; return; }
+  mkdir -p "$CLAUDE_SKILLS_DIR"
   info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/"
-  symlink_dir "$src" "$dst" "*/"
+  symlink_dir "$CLAUDE_SKILLS_SRC_DIR" "$CLAUDE_SKILLS_DIR" "*/"
 }
 
 step_claude_agents() {
-  local src="$_AI_DIR/claude/agents" dst="$CLAUDE_AGENTS_DIR"
-  [[ -d "$src" ]] || { warn "No agents found in $src — skipping"; return; }
-  mkdir -p "$dst"
+  [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
+  mkdir -p "$CLAUDE_AGENTS_DIR"
   info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/"
-  symlink_dir "$src" "$dst" "*.md" --strip-ext
+  symlink_dir "$CLAUDE_AGENTS_SRC_DIR" "$CLAUDE_AGENTS_DIR" "*.md" --strip-ext
 }
 
 step_generate_tools() {
-  local generator
-  generator="$(cd "$_AI_DIR/.." && pwd)/bin/generate-tool-context"
+  local generator="$BIN_SRC_DIR/generate-tool-context"
   if [[ ! -x "$generator" ]]; then
     warn "generate-tool-context not found — skipping tool context generation"
     return

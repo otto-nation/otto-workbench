@@ -17,9 +17,9 @@
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -e
-  _SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  DOTFILES_DIR="$(cd "$_SETUP_DIR/.." && pwd)"
-  . "$DOTFILES_DIR/lib/ui.sh"
+  _D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  . "$_D/../lib/ui.sh"
+  unset _D
 fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
@@ -39,9 +39,6 @@ fi
 # All snippets guard against missing tools — it is safe to deploy them all
 # regardless of which tools are installed on this machine.
 step_zsh() {
-  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
-  local src="$repo/zsh/config.d"
-
   # Create layer directories
   mkdir -p \
     "$ZSH_CONFIG_DIR/framework" \
@@ -51,17 +48,16 @@ step_zsh() {
 
   # Deploy snippets — all layers are symlinked from the workbench repo.
   # Each snippet is self-guarding (returns 0 if its tool is not installed).
-  symlink_dir "$src/framework" "$ZSH_CONFIG_DIR/framework" "*.zsh" --prune
-  symlink_dir "$src/tools"     "$ZSH_CONFIG_DIR/tools"     "*.zsh" --prune
-  symlink_dir "$src/aliases"   "$ZSH_CONFIG_DIR/aliases"   "*.zsh" --prune
-  symlink_dir "$src/prompt"    "$ZSH_CONFIG_DIR/prompt"    "*.zsh" --prune
+  symlink_dir "$ZSH_CONFIG_SRC_DIR/framework" "$ZSH_CONFIG_DIR/framework" "*.zsh" --prune
+  symlink_dir "$ZSH_CONFIG_SRC_DIR/tools"     "$ZSH_CONFIG_DIR/tools"     "*.zsh" --prune
+  symlink_dir "$ZSH_CONFIG_SRC_DIR/aliases"   "$ZSH_CONFIG_DIR/aliases"   "*.zsh" --prune
+  symlink_dir "$ZSH_CONFIG_SRC_DIR/prompt"    "$ZSH_CONFIG_DIR/prompt"    "*.zsh" --prune
 
   # Copy loader.zsh as a real file — never a symlink. This ensures the shell
   # continues to work even if the workbench repo is moved or deleted.
-  local loader_src="$src/loader.zsh"
   local loader_dst="$ZSH_CONFIG_DIR/loader.zsh"
-  if [[ ! -f "$loader_dst" ]] || ! diff -q "$loader_src" "$loader_dst" &>/dev/null; then
-    cp "$loader_src" "$loader_dst"
+  if [[ ! -f "$loader_dst" ]] || ! diff -q "$ZSH_CONFIG_SRC_DIR/loader.zsh" "$loader_dst" &>/dev/null; then
+    cp "$ZSH_CONFIG_SRC_DIR/loader.zsh" "$loader_dst"
     success "loader.zsh updated"
   else
     echo -e "  ${DIM}✓ loader.zsh${NC}"
@@ -90,12 +86,10 @@ step_zsh() {
 # The workbench owns only one line in ~/.zshrc: the loader source. Everything
 # else in the file is yours. Re-running setup never overwrites your config.
 step_zshrc() {
-  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
-  local template="$repo/zsh/.zshrc"
   local marker="config.d/loader.zsh"
 
   if [[ ! -f "$ZSHRC_FILE" ]]; then
-    cp "$template" "$ZSHRC_FILE"
+    cp "$ZSH_ZSHRC_TEMPLATE" "$ZSHRC_FILE"
     success "Created $ZSHRC_FILE from template"
     info "Add secrets and machine-specific config to $ENV_LOCAL_FILE (sourced automatically, never committed)"
   elif grep -qF "$marker" "$ZSHRC_FILE" 2>/dev/null; then
@@ -127,7 +121,6 @@ EOF
   #   # duplicate-check-label: <label>     — optional display name (default: filename)
   #
   # Adding a new snippet with a duplicate-check line automatically enrolls it.
-  local snip_src="$repo/zsh/config.d"
   local -a dupes=()
   local snip pat label rel
   while IFS= read -r snip; do
@@ -136,9 +129,9 @@ EOF
     grep -qE "$pat" "$ZSHRC_FILE" 2>/dev/null || continue
     label=$(sed -n 's/^# duplicate-check-label:[[:space:]]*//p' "$snip" 2>/dev/null | head -1)
     [[ -z "$label" ]] && label=$(basename "$snip" .zsh)
-    rel="${snip#"$snip_src/"}"
+    rel="${snip#"$ZSH_CONFIG_SRC_DIR/"}"
     dupes+=("${label}  →  config.d/${rel}")
-  done < <(find "$snip_src" -name '*.zsh' 2>/dev/null | sort)
+  done < <(find "$ZSH_CONFIG_SRC_DIR" -name '*.zsh' 2>/dev/null | sort)
 
   if [[ ${#dupes[@]} -gt 0 ]]; then
     echo
@@ -154,12 +147,10 @@ EOF
 # sync_zsh — runs all zsh sync steps non-interactively, including starship.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_zsh() {
-  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
-
   echo; info "zsh configs → $ZSH_CONFIG_DIR/"
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
-  install_symlink "$repo/zsh/starship.toml" "$STARSHIP_CONFIG_FILE"
+  install_symlink "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

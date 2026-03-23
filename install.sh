@@ -26,9 +26,9 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
 # shellcheck source=git/steps.sh
-. "$DOTFILES_DIR/git/steps.sh"
+. "$GIT_SRC_DIR/steps.sh"
 # shellcheck source=zsh/steps.sh
-. "$DOTFILES_DIR/zsh/steps.sh"
+. "$ZSH_SRC_DIR/steps.sh"
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
 
@@ -118,16 +118,16 @@ validate_components() {
 
   while IFS= read -r component; do
     [[ -z "$component" || "$component" =~ ^# ]] && continue
-    if [[ ! -d "$DOTFILES_DIR/$component" ]]; then
+    if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
       err "install.components: '$component' — directory not found"
       errors=$(( errors + 1 ))
-    elif [[ ! -f "$DOTFILES_DIR/$component/setup.conf" ]]; then
+    elif [[ ! -f "$WORKBENCH_DIR/$component/setup.conf" ]]; then
       err "install.components: '$component' — missing setup.conf"
       errors=$(( errors + 1 ))
     fi
   done < "$registry"
 
-  for conf in "$DOTFILES_DIR"/*/setup.conf; do
+  for conf in "$WORKBENCH_DIR"/*/setup.conf; do
     [[ -f "$conf" ]] || continue
     dir=$(basename "$(dirname "$conf")")
     if ! grep -qx "$dir" "$registry" 2>/dev/null; then
@@ -149,7 +149,7 @@ discover_components() {
 
   while IFS= read -r component; do
     [[ -z "$component" || "$component" =~ ^# ]] && continue
-    conf="$DOTFILES_DIR/$component/setup.conf"
+    conf="$WORKBENCH_DIR/$component/setup.conf"
     COMPONENT_DIRS+=("$component")
     COMPONENT_LABELS+=("$(conf_get "$conf" label)")
     COMPONENT_DESCS+=("$(conf_get "$conf" description)")
@@ -208,15 +208,15 @@ run_components() {
   local total=${#SELECTED_COMPONENTS[@]} index=1 component label check_cmd
 
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    label=$(conf_get "$DOTFILES_DIR/$component/setup.conf" label)
-    check_cmd=$(conf_get "$DOTFILES_DIR/$component/setup.conf" check)
+    label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
+    check_cmd=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" check)
     echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}${label:-$component}${NC}"
 
     # shellcheck disable=SC2086
     if [[ -n "$check_cmd" ]] && bash -c "$check_cmd" > /dev/null 2>&1; then
       success "already configured"
     else
-      bash "$DOTFILES_DIR/$component/setup.sh"
+      bash "$WORKBENCH_DIR/$component/setup.sh"
     fi
 
     index=$(( index + 1 ))
@@ -230,7 +230,7 @@ run_components() {
 print_install_summary() {
   local shell_name readme
   shell_name=$(basename "$SHELL")
-  readme="$DOTFILES_DIR/README.md"
+  readme="$WORKBENCH_DIR/README.md"
 
   echo
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
@@ -244,7 +244,7 @@ print_install_summary() {
   local component
   for component in "${SELECTED_COMPONENTS[@]}"; do
     local label
-    label=$(conf_get "$DOTFILES_DIR/$component/setup.conf" label)
+    label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
     echo -e "  ${DIM}  • ${label:-$component}${NC}"
   done
 
@@ -253,7 +253,7 @@ print_install_summary() {
   echo -e "  ${DIM}  1. Reload your shell:${NC}  ${BOLD}exec $shell_name${NC}"
 
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    local summary_file="$DOTFILES_DIR/$component/summary.sh"
+    local summary_file="$WORKBENCH_DIR/$component/summary.sh"
     # shellcheck source=/dev/null
     [[ -f "$summary_file" ]] && . "$summary_file"
     declare -f "print_${component}_summary" > /dev/null && "print_${component}_summary"
@@ -277,7 +277,7 @@ mkdir -p "$LOCAL_BIN_DIR"
 mkdir -p "$ZSH_CONFIG_DIR"
 
 echo; info "bin scripts → $LOCAL_BIN_DIR/"
-symlink_dir "$DOTFILES_DIR/bin" "$LOCAL_BIN_DIR"
+symlink_dir "$BIN_SRC_DIR" "$LOCAL_BIN_DIR"
 
 echo; info "zsh configs → $ZSH_CONFIG_DIR/"
 step_zsh
@@ -289,15 +289,15 @@ echo; info "global git hooks → $GIT_HOOKS_DIR"
 step_global_hooks
 
 echo; info "starship → $STARSHIP_CONFIG_FILE"
-install_symlink "$DOTFILES_DIR/zsh/starship.toml" "$STARSHIP_CONFIG_FILE"
+install_symlink "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE"
 
 echo; info "ZSH configuration (.zshrc)"
 step_zshrc
 
 echo; info "global Taskfile → $TASK_CONFIG_DIR/"
 mkdir -p "$TASK_CONFIG_DIR"
-install_symlink "$DOTFILES_DIR/Taskfile.global.yml" "$TASK_CONFIG_DIR/Taskfile.yml"
-install_symlink "$DOTFILES_DIR/lib" "$TASK_CONFIG_DIR/lib"
+install_symlink "$TASKFILE_SRC"  "$TASK_CONFIG_DIR/Taskfile.yml"
+install_symlink "$LIB_SRC_DIR"   "$TASK_CONFIG_DIR/lib"
 
 update_path_in_shell_rc
 
@@ -305,7 +305,7 @@ echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
 # ─── Components ───────────────────────────────────────────────────────────────
 
-REGISTRY="$DOTFILES_DIR/install.components"
+REGISTRY="$WORKBENCH_DIR/install.components"
 validate_components "$REGISTRY"
 discover_components  "$REGISTRY"
 select_components

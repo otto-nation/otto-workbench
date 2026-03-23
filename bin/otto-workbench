@@ -50,13 +50,13 @@ cmd_sync() {
 
   info "bin scripts → $LOCAL_BIN_DIR/"
   mkdir -p "$LOCAL_BIN_DIR"
-  symlink_dir "$WORKBENCH_DIR/bin" "$LOCAL_BIN_DIR" --prune
+  symlink_dir "$BIN_SRC_DIR" "$LOCAL_BIN_DIR" --prune
 
   echo
   info "global Taskfile + lib → $TASK_CONFIG_DIR/"
   mkdir -p "$TASK_CONFIG_DIR"
-  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"  "$TASK_CONFIG_DIR/Taskfile.yml"
-  install_symlink "$WORKBENCH_DIR/lib"                  "$TASK_CONFIG_DIR/lib"
+  install_symlink "$TASKFILE_SRC"  "$TASK_CONFIG_DIR/Taskfile.yml"
+  install_symlink "$LIB_SRC_DIR"   "$TASK_CONFIG_DIR/lib"
 
   # ─── Components ─────────────────────────────────────────────────────────────
   # Auto-discovers sync_<component>() from */steps.sh and ai/*/steps.sh.

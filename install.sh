@@ -25,10 +25,10 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
-# shellcheck source=git/setup.sh
-. "$DOTFILES_DIR/git/setup.sh"
-# shellcheck source=zsh/setup.sh
-. "$DOTFILES_DIR/zsh/setup.sh"
+# shellcheck source=git/steps.sh
+. "$DOTFILES_DIR/git/steps.sh"
+# shellcheck source=zsh/steps.sh
+. "$DOTFILES_DIR/zsh/steps.sh"
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
 

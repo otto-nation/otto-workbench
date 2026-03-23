@@ -1,7 +1,7 @@
 #!/bin/bash
 # Git configuration setup.
 #
-# Usage: bash git/setup.sh
+# Usage: bash git/steps.sh
 #        (also sourced by install.sh and bin/otto-workbench for step functions)
 #
 # What it does:
@@ -17,9 +17,9 @@
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -e
-  _SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  DOTFILES_DIR="$(cd "$_SETUP_DIR/.." && pwd)"
-  . "$DOTFILES_DIR/lib/ui.sh"
+  _D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  . "$_D/../lib/ui.sh"
+  unset _D
 fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
@@ -28,10 +28,6 @@ fi
 # workbench config and ~/.gitconfig.local. Bootstraps the local file from
 # template on a new machine.
 step_gitconfig() {
-  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
-  local shared="$repo/git/.gitconfig"
-  local template="$repo/git/.gitconfig.local.template"
-
   if [[ ! -f "$GITCONFIG_FILE" ]]; then
     cat > "$GITCONFIG_FILE" <<EOF
 # ~/.gitconfig — global git config for this machine.
@@ -47,15 +43,15 @@ step_gitconfig() {
 # If you move the workbench repo, re-run install.sh to update the path below.
 
 [include]
-	path = $shared
+	path = $GIT_SHARED_CONFIG
 
 [include]
 	path = $GITCONFIG_LOCAL_FILE
 EOF
     success "Created $GITCONFIG_FILE"
   else
-    if ! grep -qF "path = $shared" "$GITCONFIG_FILE"; then
-      printf '\n[include]\n\tpath = %s\n' "$shared" >> "$GITCONFIG_FILE"
+    if ! grep -qF "path = $GIT_SHARED_CONFIG" "$GITCONFIG_FILE"; then
+      printf '\n[include]\n\tpath = %s\n' "$GIT_SHARED_CONFIG" >> "$GITCONFIG_FILE"
       success "Added shared gitconfig include"
     else
       success "gitconfig include up to date"
@@ -67,7 +63,7 @@ EOF
   fi
 
   if [[ ! -f "$GITCONFIG_LOCAL_FILE" ]]; then
-    cp "$template" "$GITCONFIG_LOCAL_FILE"
+    cp "$GIT_LOCAL_CONFIG_TEMPLATE" "$GITCONFIG_LOCAL_FILE"
     warn "Created $GITCONFIG_LOCAL_FILE from template — edit it to set your identity and credential helpers"
   else
     success ".gitconfig.local already exists"
@@ -77,12 +73,21 @@ EOF
 # step_global_hooks — symlinks the workbench pre-commit hook into $GIT_HOOKS_DIR
 # and sets git's global core.hooksPath so every repo on this machine is protected.
 step_global_hooks() {
-  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
   mkdir -p "$GIT_HOOKS_DIR"
-  install_symlink "$repo/hooks/pre-commit" "$GIT_HOOKS_DIR/pre-commit"
-  install_symlink "$repo/hooks/pre-push-global" "$GIT_HOOKS_DIR/pre-push"
+  install_symlink "$GIT_HOOKS_SRC_DIR/pre-commit"      "$GIT_HOOKS_DIR/pre-commit"
+  install_symlink "$GIT_HOOKS_SRC_DIR/pre-push-global" "$GIT_HOOKS_DIR/pre-push"
   git config --global core.hooksPath "$GIT_HOOKS_DIR"
   success "global core.hooksPath → $GIT_HOOKS_DIR"
+}
+
+# sync_git — runs all git sync steps non-interactively.
+# Called automatically by otto-workbench sync via the sync_<component> convention.
+sync_git() {
+  echo; info "git config → $GITCONFIG_FILE"
+  step_gitconfig
+
+  echo; info "global git hooks → $GIT_HOOKS_DIR"
+  step_global_hooks
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

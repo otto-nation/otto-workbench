@@ -1,11 +1,19 @@
 #!/bin/bash
 # Shared path and filename constants — sourced automatically via lib/ui.sh.
 #
-# All paths are derived from $HOME so they work on any machine.
-# Add a constant here when a path or filename is referenced in more than one file.
-# Never set DOTFILES_DIR or SCRIPT_DIR here — those are set by each script.
+# HOME-relative paths work on any machine without any caller setup.
+# Workbench source paths are derived from this file's own location so callers
+# never need to set WORKBENCH_DIR, DOTFILES_DIR, SCRIPT_DIR, or _AI_DIR.
+# Any caller may set WORKBENCH_DIR before sourcing to override the derived path.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
+
+# ─── Workbench root ───────────────────────────────────────────────────────────
+# Auto-derived from this file's location (lib/constants.sh → workbench root).
+# Respects DOTFILES_DIR (set by install.sh) and WORKBENCH_DIR if already set.
+if [[ -z "${WORKBENCH_DIR:-}" ]]; then
+  WORKBENCH_DIR="${DOTFILES_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}"
+fi
 
 # ─── Shell dotfiles ───────────────────────────────────────────────────────────
 ZSHRC_FILE="$HOME/.zshrc"
@@ -20,10 +28,18 @@ LOCAL_BIN_DIR="$HOME/.local/bin"
 ZSH_CONFIG_DIR="$HOME/.config/zsh/config.d"
 STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
 TASK_CONFIG_DIR="$HOME/.config/task"
+TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
+
+# ─── Docker / Colima ──────────────────────────────────────────────────────────
+DOCKER_RUN_DIR="$HOME/.docker/run"
+COLIMA_DIR="$HOME/.colima"
+TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_CONFIG_FILE="$HOME/.claude.json"
+CLAUDE_GUIDELINES_FILE="$CLAUDE_DIR/CLAUDE.md"
+CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
@@ -32,6 +48,52 @@ CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 KIRO_AGENTS_DIR="$HOME/.kiro/agents"
 KIRO_STEERING_DIR="$HOME/.kiro/steering"
 
-# ─── Generated rule files (repo-relative — prefix with $REPO_ROOT for full paths) ───
+# ─── Workbench source — root ──────────────────────────────────────────────────
+BIN_SRC_DIR="$WORKBENCH_DIR/bin"
+LIB_SRC_DIR="$WORKBENCH_DIR/lib"
+TASKFILE_SRC="$WORKBENCH_DIR/Taskfile.global.yml"
+
+# ─── Workbench source — docker ────────────────────────────────────────────────
+DOCKER_SRC_DIR="$WORKBENCH_DIR/docker"
+TESTCONTAINERS_SRC="$WORKBENCH_DIR/docker/testcontainers.properties"
+
+# ─── Workbench source — iterm ─────────────────────────────────────────────────
+ITERM_SRC_DIR="$WORKBENCH_DIR/iterm"
+ITERM_THEMES_SRC_DIR="$WORKBENCH_DIR/iterm/themes"
+
+# ─── Workbench source — git ───────────────────────────────────────────────────
+GIT_SRC_DIR="$WORKBENCH_DIR/git"
+GIT_SHARED_CONFIG="$WORKBENCH_DIR/git/.gitconfig"
+GIT_LOCAL_CONFIG_TEMPLATE="$WORKBENCH_DIR/git/.gitconfig.local.template"
+GIT_HOOKS_SRC_DIR="$WORKBENCH_DIR/git/hooks"
+
+# ─── Workbench source — zsh ───────────────────────────────────────────────────
+ZSH_SRC_DIR="$WORKBENCH_DIR/zsh"
+ZSH_CONFIG_SRC_DIR="$WORKBENCH_DIR/zsh/config.d"
+ZSH_ZSHRC_TEMPLATE="$WORKBENCH_DIR/zsh/.zshrc"
+STARSHIP_SRC_FILE="$WORKBENCH_DIR/zsh/starship.toml"
+ZSH_LOADER_SRC="$ZSH_CONFIG_SRC_DIR/loader.zsh"
+ZSH_LOADER_DST="$ZSH_CONFIG_DIR/loader.zsh"
+ZSH_SNIPPET_GLOB="*.zsh"
+
+# ─── Workbench source — AI ────────────────────────────────────────────────────
+AI_SRC_DIR="$WORKBENCH_DIR/ai"
+GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
+RULES_GLOB="*.md"
+
+CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
+CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
+CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
+CLAUDE_SETTINGS_SRC="$WORKBENCH_DIR/ai/claude/settings.json"
+CLAUDE_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/ai/claude/sync-settings.jq"
+CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
+CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
+
+KIRO_SRC_DIR="$WORKBENCH_DIR/ai/kiro"
+KIRO_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/kiro/agents"
+
+# ─── Generated rule files ─────────────────────────────────────────────────────
 TOOLS_GENERATED_RELPATH="ai/guidelines/rules/tools.generated.md"
 GIT_GENERATED_RELPATH="ai/guidelines/rules/git.generated.md"
+TOOLS_GENERATED_FILE="$WORKBENCH_DIR/$TOOLS_GENERATED_RELPATH"
+GIT_GENERATED_FILE="$WORKBENCH_DIR/$GIT_GENERATED_RELPATH"

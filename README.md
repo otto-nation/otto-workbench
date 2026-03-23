@@ -32,7 +32,9 @@ otto-workbench sync
 
 Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Safe to run at any time.
 
-Re-run a single component independently: `bash <component>/setup.sh` (e.g. `bash ai/setup.sh`)
+Re-run a single component independently:
+- Optional components (interactive): `bash <component>/setup.sh` — e.g. `bash ai/setup.sh`
+- Core components (idempotent): `bash <component>/steps.sh` — e.g. `bash git/steps.sh`
 
 ## What's Included
 
@@ -51,6 +53,7 @@ Re-run a single component independently: `bash <component>/setup.sh` (e.g. `bash
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-git-rules` | Regenerates git.generated.md from lib/ai-commit.sh constants |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
+| `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 <!-- SCRIPTS-TABLE-END -->
 
 ### ZSH Configuration

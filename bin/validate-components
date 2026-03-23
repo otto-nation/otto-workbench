@@ -1,0 +1,117 @@
+#!/bin/bash
+# Validate the component framework contracts for all workbench components.
+#
+# Usage: bin/validate-components
+#
+# Checks:
+#   Tier 1 (Core — steps.sh only):
+#     - Every steps.sh at workbench root level defines sync_<name>()
+#
+#   Tier 2 (Optional — setup.conf + setup.sh):
+#     - Every entry in install.components has a matching directory
+#     - Every entry in install.components has setup.conf and setup.sh
+#     - Every setup.conf has non-empty label and description fields
+#     - No orphan: directory has setup.conf but is not registered
+#
+#   Cross-tier:
+#     - Every optional component's steps.sh (if present) defines sync_<name>()
+#
+# Exit code: 0 if all checks pass, 1 if any fail.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+ERRORS=0
+CHECKS=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+# ─── Tier 1: steps.sh files define sync_<name>() ─────────────────────────────
+
+echo; info "Tier 1 — Core components (steps.sh → sync_<name>)"
+
+for steps_file in "$WORKBENCH_DIR"/*/steps.sh; do
+  [[ -f "$steps_file" ]] || continue
+  name=$(basename "$(dirname "$steps_file")")
+  if grep -qE "^sync_${name}[[:space:]]*\(\)" "$steps_file"; then
+    _pass "$name/steps.sh defines sync_${name}()"
+  else
+    _fail "$name/steps.sh is missing sync_${name}()"
+  fi
+done
+
+# ─── Tier 2: install.components registry ─────────────────────────────────────
+
+echo; info "Tier 2 — Optional components (install.components registry)"
+
+REGISTRY="$WORKBENCH_DIR/install.components"
+if [[ ! -f "$REGISTRY" ]]; then
+  _fail "install.components not found at $REGISTRY"
+else
+  while IFS= read -r component; do
+    [[ -z "$component" || "$component" =~ ^# ]] && continue
+
+    # Directory exists
+    if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
+      _fail "$component: directory not found"
+      continue
+    fi
+
+    # setup.conf exists with required fields
+    conf="$WORKBENCH_DIR/$component/setup.conf"
+    if [[ ! -f "$conf" ]]; then
+      _fail "$component: missing setup.conf"
+    else
+      label=$(grep -m1 '^label[[:space:]]*=' "$conf" | sed 's/^label[[:space:]]*=[[:space:]]*//')
+      desc=$(grep -m1 '^description[[:space:]]*=' "$conf" | sed 's/^description[[:space:]]*=[[:space:]]*//')
+      if [[ -n "$label" ]]; then _pass "$component/setup.conf: label present"
+      else                       _fail "$component/setup.conf: missing label"; fi
+      if [[ -n "$desc" ]];  then _pass "$component/setup.conf: description present"
+      else                       _fail "$component/setup.conf: missing description"; fi
+    fi
+
+    # setup.sh exists
+    if [[ ! -f "$WORKBENCH_DIR/$component/setup.sh" ]]; then
+      _fail "$component: missing setup.sh"
+    else
+      _pass "$component/setup.sh: present"
+    fi
+
+    # If steps.sh exists, it must define sync_<name>()
+    optional_steps="$WORKBENCH_DIR/$component/steps.sh"
+    if [[ -f "$optional_steps" ]]; then
+      if grep -qE "^sync_${component}[[:space:]]*\(\)" "$optional_steps"; then
+        _pass "$component/steps.sh defines sync_${component}()"
+      else
+        _fail "$component/steps.sh is missing sync_${component}()"
+      fi
+    fi
+  done < "$REGISTRY"
+
+  # Reverse check: no orphaned setup.conf
+  echo; info "Reverse check — no orphaned setup.conf"
+  for conf in "$WORKBENCH_DIR"/*/setup.conf; do
+    [[ -f "$conf" ]] || continue
+    dir=$(basename "$(dirname "$conf")")
+    if grep -qx "$dir" "$REGISTRY" 2>/dev/null; then
+      _pass "$dir: registered in install.components"
+    else
+      _fail "$dir: has setup.conf but is not registered in install.components"
+    fi
+  done
+fi
+
+# ─── Summary ──────────────────────────────────────────────────────────────────
+
+echo
+if (( ERRORS == 0 )); then
+  success "$CHECKS checks passed"
+  exit 0
+else
+  err "$ERRORS of $CHECKS checks failed"
+  exit 1
+fi

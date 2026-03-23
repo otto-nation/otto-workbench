@@ -59,3 +59,8 @@ tools:
     description: "Validates all tool registry YAML files for schema correctness and cross-file consistency"
     when_to_use: "After adding or editing any registry.yml; runs automatically on pre-push"
     usage: "bin/validate-registries"
+
+  - name: validate-components
+    description: "Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency"
+    when_to_use: "After adding or modifying any component (steps.sh, setup.conf, install.components)"
+    usage: "bin/validate-components"

@@ -32,7 +32,7 @@ select_runtime() {
     exit 1
   fi
 
-  echo "Which docker runtime are you using?"
+  info "Which docker runtime are you using?"
   local i=1
   for runtime in "${runtimes[@]}"; do
     echo "  [$i] $runtime"

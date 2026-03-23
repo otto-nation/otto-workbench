@@ -28,6 +28,7 @@ info()    { echo -e "${BLUE}→${NC} $*"; }
 success() { echo -e "${GREEN}✓${NC} $*"; }
 warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
 err()     { echo -e "${RED}✗${NC} $*" >&2; }
+title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 
 # skip [label] — print a skip line with optional label
 skip() { echo -e "${DIM}⊘ ${1:-Skipped}${NC}"; }

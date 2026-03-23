@@ -3,7 +3,7 @@
 # Installed via: task dev:setup  (sets core.hooksPath to git/hooks/)
 #
 # For global protection (all repos), the workbench install configures
-# a global hooks dir at ~/.git-hooks/ — see git/setup.sh.
+# a global hooks dir at ~/.git-hooks/ — see git/steps.sh.
 
 set -euo pipefail
 

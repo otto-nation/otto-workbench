@@ -20,8 +20,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
-RULES_DIR="$HOME/.claude/rules"
-WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+RULES_DIR="$CLAUDE_RULES_DIR"
 
 # ─── Frontmatter ──────────────────────────────────────────────────────────────
 
@@ -130,7 +129,7 @@ EOF
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_sync() {
-  local rules_src="$WORKBENCH_DIR/ai/guidelines/rules"
+  local rules_src="$GUIDELINES_RULES_SRC_DIR"
   [[ -d "$rules_src" ]] || { err "Rules not found at $rules_src"; exit 1; }
 
   mkdir -p "$RULES_DIR"
@@ -140,7 +139,7 @@ cmd_sync() {
   for file in "$rules_src"/*.md; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file")
-    ln -sfh "$file" "$RULES_DIR/$name"
+    install_symlink "$file" "$RULES_DIR/$name"
     success "${name%.md}"
   done
 
@@ -258,7 +257,7 @@ cmd_status() {
   fi
 
   echo
-  echo -e "  ${DIM}To formalize: edit $WORKBENCH_DIR/ai/guidelines/rules/<domain>.md${NC}"
+  echo -e "  ${DIM}To formalize: edit $GUIDELINES_RULES_SRC_DIR/<domain>.md${NC}"
 }
 
 cmd_open() {

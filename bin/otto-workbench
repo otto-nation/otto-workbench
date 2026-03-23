@@ -25,81 +25,39 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
 
-# SCRIPT_DIR is expected by ai/claude/steps.sh functions (they look for
-# $SCRIPT_DIR/claude/, $SCRIPT_DIR/guidelines/, etc.)
-# shellcheck disable=SC2034
-SCRIPT_DIR="$WORKBENCH_DIR/ai"
-
 # Non-interactive mode: all install_symlink calls warn and skip real files rather
 # than prompting. Users who need interactive overwrite should run install.sh instead.
 # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
 SYMLINK_MODE=no-prompt
 
-# Source step functions for git and Claude
-# shellcheck source=/dev/null
-. "$WORKBENCH_DIR/git/setup.sh"
-# shellcheck source=/dev/null
-. "$WORKBENCH_DIR/ai/claude/steps.sh"
+# Auto-discover and source all steps.sh files — top-level dirs first, then ai/ subdirs.
+# Each steps.sh self-derives its own paths; no external variables need to be injected.
+# Adding a new component with a steps.sh automatically makes its functions available here.
+for _f in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/ai/*/steps.sh; do
+  # shellcheck source=/dev/null
+  [[ -f "$_f" ]] && . "$_f"
+done
+unset _f
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_sync() {
-  echo -e "${BOLD}${BLUE}Workbench sync${NC}"
+  title "Workbench sync"
   echo
 
-  # ─── Core ──────────────────────────────────────────────────────────────────
-
-  info "bin scripts → $LOCAL_BIN_DIR/"
-  mkdir -p "$LOCAL_BIN_DIR"
-  symlink_dir "$WORKBENCH_DIR/bin" "$LOCAL_BIN_DIR" --prune
-
-  echo
-  info "zsh configs → $ZSH_CONFIG_DIR/"
-  mkdir -p "$ZSH_CONFIG_DIR"
-  symlink_dir "$WORKBENCH_DIR/zsh" "$ZSH_CONFIG_DIR" "*.zsh" --prune
-
-  echo
-  info "git, taskfile, lib, starship"
-  mkdir -p "$TASK_CONFIG_DIR"
-  step_gitconfig
-  install_symlink "$WORKBENCH_DIR/Taskfile.global.yml"       "$TASK_CONFIG_DIR/Taskfile.yml"
-  install_symlink "$WORKBENCH_DIR/lib"                       "$TASK_CONFIG_DIR/lib"
-  install_symlink "$WORKBENCH_DIR/zsh/starship.toml"         "$STARSHIP_CONFIG_FILE"
+  # Auto-discovers sync_<component>() from */steps.sh and ai/*/steps.sh.
+  # Glob order is alphabetical: bin → docker → git → iterm → task → zsh →
+  #                              ai/claude → ai/kiro → …
+  # Adding any component with a sync_<name>() function includes it automatically.
+  for _f in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/ai/*/steps.sh; do
+    [[ -f "$_f" ]] || continue
+    _c=$(basename "$(dirname "$_f")")
+    declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
+  done
+  unset _f _c
 
   echo
-  info "global git hooks → $GIT_HOOKS_DIR"
-  step_global_hooks
-
-  # ─── Claude ────────────────────────────────────────────────────────────────
-
-  echo
-  if ! command -v claude >/dev/null 2>&1; then
-    warn "claude not found in PATH — skipping Claude steps"
-  else
-    info "Claude settings"
-    step_claude_settings
-
-    echo
-    info "Tool context"
-    step_generate_tools
-
-    echo
-    info "Claude guidelines + rules"
-    step_claude_guidelines
-    step_claude_rules
-
-    echo
-    info "Claude MCPs"
-    step_claude_mcps
-
-    echo
-    info "Claude skills + agents"
-    step_claude_skills
-    step_claude_agents
-  fi
-
-  echo
-  echo -e "${BOLD}${GREEN}✓ Workbench synced!${NC}"
+  success "Workbench synced!"
   echo -e "  ${DIM}Reload your shell: exec $(basename "$SHELL")${NC}"
 }
 

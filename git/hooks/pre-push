@@ -33,6 +33,9 @@ fi
 echo "→ Validating registries..."
 bash "$REPO_ROOT/bin/validate-registries"
 
+echo "→ Validating component framework..."
+bash "$REPO_ROOT/bin/validate-components"
+
 echo "→ Regenerating tool context..."
 bash "$REPO_ROOT/bin/generate-tool-context"
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then

@@ -7,7 +7,7 @@
 #   1. Installs the `task` runner if not present
 #   2. Symlinks all bin/ scripts to ~/.local/bin/
 #   3. Deploys zsh snippets to ~/.config/zsh/config.d/{framework,tools,aliases,prompt}/
-#   4. Sets up ~/.gitconfig includes and global git hooks (via git/setup.sh)
+#   4. Sets up ~/.gitconfig includes and global git hooks (via git/steps.sh)
 #   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
 #   6. Adds ~/.local/bin to PATH in your shell rc file if needed
 #
@@ -25,10 +25,15 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
-# shellcheck source=git/setup.sh
-. "$DOTFILES_DIR/git/setup.sh"
-# shellcheck source=zsh/setup.sh
-. "$DOTFILES_DIR/zsh/setup.sh"
+# Export WORKBENCH_DIR so it is available in setup.conf check commands (bash -c context).
+export WORKBENCH_DIR
+
+# Auto-source all core steps.sh files (bin, git, task, zsh and any future additions).
+# shellcheck source=/dev/null
+for _f in "$WORKBENCH_DIR"/*/steps.sh; do
+  [[ -f "$_f" ]] && . "$_f"
+done
+unset _f
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
 
@@ -37,30 +42,6 @@ for _arg in "$@"; do [[ "$_arg" == "--all" ]] && INSTALL_ALL=true; done
 unset _arg
 
 # ─── Core helpers ─────────────────────────────────────────────────────────────
-
-# install_task — prompts to install the go-task runner if it is not already present.
-# Uses Homebrew on macOS, apt on Debian/Ubuntu, or prints a manual install URL otherwise.
-install_task() {
-  warn "Task (task runner) is not installed"
-  printf "  Install it? [Y/n] "
-  read -n 1 -r REPLY
-  echo
-  if [[ "$REPLY" =~ ^[Nn]$ ]]; then return; fi
-
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    info "Installing task via Homebrew..."
-    brew install go-task/tap/go-task
-  elif command -v apt-get >/dev/null 2>&1; then
-    if ! command -v curl >/dev/null 2>&1; then
-      err "curl is required to install task. Install curl first: sudo apt-get install curl"
-      return 1
-    fi
-    info "Installing task via apt..."
-    sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-  else
-    err "Unable to auto-install. See: https://taskfile.dev/installation/"
-  fi
-}
 
 # update_path_in_shell_rc — appends ~/.local/bin to PATH in the user's shell rc file
 # (~/.zshrc or ~/.bashrc) if the entry is not already present. No-op on unsupported shells.
@@ -118,16 +99,16 @@ validate_components() {
 
   while IFS= read -r component; do
     [[ -z "$component" || "$component" =~ ^# ]] && continue
-    if [[ ! -d "$DOTFILES_DIR/$component" ]]; then
+    if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
       err "install.components: '$component' — directory not found"
       errors=$(( errors + 1 ))
-    elif [[ ! -f "$DOTFILES_DIR/$component/setup.conf" ]]; then
+    elif [[ ! -f "$WORKBENCH_DIR/$component/setup.conf" ]]; then
       err "install.components: '$component' — missing setup.conf"
       errors=$(( errors + 1 ))
     fi
   done < "$registry"
 
-  for conf in "$DOTFILES_DIR"/*/setup.conf; do
+  for conf in "$WORKBENCH_DIR"/*/setup.conf; do
     [[ -f "$conf" ]] || continue
     dir=$(basename "$(dirname "$conf")")
     if ! grep -qx "$dir" "$registry" 2>/dev/null; then
@@ -149,7 +130,7 @@ discover_components() {
 
   while IFS= read -r component; do
     [[ -z "$component" || "$component" =~ ^# ]] && continue
-    conf="$DOTFILES_DIR/$component/setup.conf"
+    conf="$WORKBENCH_DIR/$component/setup.conf"
     COMPONENT_DIRS+=("$component")
     COMPONENT_LABELS+=("$(conf_get "$conf" label)")
     COMPONENT_DESCS+=("$(conf_get "$conf" description)")
@@ -208,15 +189,15 @@ run_components() {
   local total=${#SELECTED_COMPONENTS[@]} index=1 component label check_cmd
 
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    label=$(conf_get "$DOTFILES_DIR/$component/setup.conf" label)
-    check_cmd=$(conf_get "$DOTFILES_DIR/$component/setup.conf" check)
+    label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
+    check_cmd=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" check)
     echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}${label:-$component}${NC}"
 
     # shellcheck disable=SC2086
     if [[ -n "$check_cmd" ]] && bash -c "$check_cmd" > /dev/null 2>&1; then
       success "already configured"
     else
-      bash "$DOTFILES_DIR/$component/setup.sh"
+      bash "$WORKBENCH_DIR/$component/setup.sh"
     fi
 
     index=$(( index + 1 ))
@@ -230,7 +211,7 @@ run_components() {
 print_install_summary() {
   local shell_name readme
   shell_name=$(basename "$SHELL")
-  readme="$DOTFILES_DIR/README.md"
+  readme="$WORKBENCH_DIR/README.md"
 
   echo
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
@@ -244,7 +225,7 @@ print_install_summary() {
   local component
   for component in "${SELECTED_COMPONENTS[@]}"; do
     local label
-    label=$(conf_get "$DOTFILES_DIR/$component/setup.conf" label)
+    label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
     echo -e "  ${DIM}  • ${label:-$component}${NC}"
   done
 
@@ -253,7 +234,7 @@ print_install_summary() {
   echo -e "  ${DIM}  1. Reload your shell:${NC}  ${BOLD}exec $shell_name${NC}"
 
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    local summary_file="$DOTFILES_DIR/$component/summary.sh"
+    local summary_file="$WORKBENCH_DIR/$component/summary.sh"
     # shellcheck source=/dev/null
     [[ -f "$summary_file" ]] && . "$summary_file"
     declare -f "print_${component}_summary" > /dev/null && "print_${component}_summary"
@@ -270,34 +251,17 @@ echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}"
 echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
 echo
 
-command -v task >/dev/null 2>&1 || install_task
+step_task_install
 echo
 
-mkdir -p "$LOCAL_BIN_DIR"
-mkdir -p "$ZSH_CONFIG_DIR"
-
-echo; info "bin scripts → $LOCAL_BIN_DIR/"
-symlink_dir "$DOTFILES_DIR/bin" "$LOCAL_BIN_DIR"
-
-echo; info "zsh configs → $ZSH_CONFIG_DIR/"
-step_zsh
-
-echo; info "git config → $GITCONFIG_FILE"
-step_gitconfig
-
-echo; info "global git hooks → $GIT_HOOKS_DIR"
-step_global_hooks
-
-echo; info "starship → $STARSHIP_CONFIG_FILE"
-install_symlink "$DOTFILES_DIR/zsh/starship.toml" "$STARSHIP_CONFIG_FILE"
+sync_bin
+sync_git
+sync_zsh
 
 echo; info "ZSH configuration (.zshrc)"
 step_zshrc
 
-echo; info "global Taskfile → $TASK_CONFIG_DIR/"
-mkdir -p "$TASK_CONFIG_DIR"
-install_symlink "$DOTFILES_DIR/Taskfile.global.yml" "$TASK_CONFIG_DIR/Taskfile.yml"
-install_symlink "$DOTFILES_DIR/lib" "$TASK_CONFIG_DIR/lib"
+sync_task
 
 update_path_in_shell_rc
 
@@ -305,7 +269,7 @@ echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
 # ─── Components ───────────────────────────────────────────────────────────────
 
-REGISTRY="$DOTFILES_DIR/install.components"
+REGISTRY="$WORKBENCH_DIR/install.components"
 validate_components "$REGISTRY"
 discover_components  "$REGISTRY"
 select_components

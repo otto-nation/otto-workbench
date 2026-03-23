@@ -1,5 +1,6 @@
 #!/bin/bash
-# Kiro setup steps — sourced by ai/setup.sh, do not run directly.
+# Kiro setup steps — sourced by ai/setup.sh and bin/otto-workbench.
+# All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,33 +31,38 @@ _install_kiro_agent() {
 
 step_kiro_agents() {
   info "Installing Kiro agent configs"
-  local dir="$KIRO_AGENTS_DIR"
-  mkdir -p "$dir"
+  mkdir -p "$KIRO_AGENTS_DIR"
 
   local uvx_path
   uvx_path=$(command -v uvx 2>/dev/null || echo "uvx")
 
   local file name
-  for file in "$SCRIPT_DIR/kiro/agents"/*.json; do
+  for file in "$KIRO_AGENTS_SRC_DIR"/*.json; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file")
-    _install_kiro_agent "$dir/$name" "$file" "$uvx_path" "$name"
+    _install_kiro_agent "$KIRO_AGENTS_DIR/$name" "$file" "$uvx_path" "$name"
   done
 
   echo -e "  ${DIM}Set CONTEXT7_API_KEY in $ENV_LOCAL_FILE to enable context7${NC}"
 }
 
 step_kiro_rules() {
-  local rules_src="$SCRIPT_DIR/guidelines/rules"
-  local rules_dst="$KIRO_STEERING_DIR"
   info "Installing rules to $KIRO_STEERING_DIR/"
-  mkdir -p "$rules_dst"
-  symlink_dir "$rules_src" "$rules_dst" "*.md"
+  mkdir -p "$KIRO_STEERING_DIR"
+  symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$KIRO_STEERING_DIR" "$RULES_GLOB"
 }
 
 register_kiro_steps() {
   register_step "Kiro agent configs" step_kiro_agents
   register_step "Kiro rules"         step_kiro_rules
+}
+
+# sync_kiro — runs all Kiro sync steps non-interactively.
+# Called automatically by otto-workbench sync via the sync_<tool> convention.
+sync_kiro() {
+  echo; info "Kiro agents + rules"
+  step_kiro_agents
+  step_kiro_rules
 }
 
 print_kiro_summary() {

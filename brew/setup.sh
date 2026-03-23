@@ -98,7 +98,7 @@ _brew_select_work_stacks() {
   for i in "${!stack_names[@]}"; do
     local pkgs
     pkgs=$(grep -E '^(brew|cask) ' "${stack_files[$i]}" \
-      | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' | paste -sd ', ' -)
+      | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' | paste -sd ',' - | sed 's/,/, /g')
     printf "  [%d] %-15s ${DIM}%s${NC}\n" "$((i+1))" "${stack_names[$i]}" "$pkgs"
   done
   echo

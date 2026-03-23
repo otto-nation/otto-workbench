@@ -39,7 +39,7 @@ step_zsh() {
     [[ -d "$layer" ]] || continue
     name=$(basename "$layer")
     mkdir -p "$ZSH_CONFIG_DIR/$name"
-    symlink_dir "$layer" "$ZSH_CONFIG_DIR/$name" "*.zsh" --prune
+    symlink_dir "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB" --prune
   done
 
   # Migration: prune stale aliases-*.zsh symlinks left at the config.d root
@@ -59,12 +59,11 @@ step_zsh() {
 # Note: loader.zsh controls layer load order — its _wb_load lines must be
 # maintained manually when adding new layers (order matters: framework first, prompt last).
 step_zsh_loader() {
-  local loader_dst="$ZSH_CONFIG_DIR/loader.zsh"
-  if [[ ! -f "$loader_dst" ]] || ! diff -q "$ZSH_CONFIG_SRC_DIR/loader.zsh" "$loader_dst" &>/dev/null; then
-    cp "$ZSH_CONFIG_SRC_DIR/loader.zsh" "$loader_dst"
-    success "loader.zsh updated"
+  if [[ ! -f "$ZSH_LOADER_DST" ]] || ! diff -q "$ZSH_LOADER_SRC" "$ZSH_LOADER_DST" &>/dev/null; then
+    cp "$ZSH_LOADER_SRC" "$ZSH_LOADER_DST"
+    success "$(basename "$ZSH_LOADER_SRC") updated"
   else
-    echo -e "  ${DIM}✓ loader.zsh${NC}"
+    echo -e "  ${DIM}✓ $(basename "$ZSH_LOADER_SRC")${NC}"
   fi
 }
 
@@ -81,7 +80,10 @@ step_zsh_loader() {
 # The workbench owns only one line in ~/.zshrc: the loader source. Everything
 # else in the file is yours. Re-running setup never overwrites your config.
 step_zshrc() {
-  local marker="config.d/loader.zsh"
+  # Derive the loader path relative to $HOME for writing into .zshrc at shell-start time.
+  # Using the relative form (\$HOME/...) keeps .zshrc portable across user accounts.
+  local loader_rel="${ZSH_LOADER_DST#"$HOME/"}"
+  local marker="$loader_rel"
 
   if [[ ! -f "$ZSHRC_FILE" ]]; then
     cp "$ZSH_ZSHRC_TEMPLATE" "$ZSHRC_FILE"
@@ -90,15 +92,16 @@ step_zshrc() {
   elif grep -qF "$marker" "$ZSHRC_FILE" 2>/dev/null; then
     success ".zshrc integration block present — up to date"
   else
-    # Append the integration block to the existing file
-    cat >> "$ZSHRC_FILE" <<'EOF'
+    # Append the integration block. Uses an unquoted heredoc so $loader_rel is
+    # expanded at install time; \$HOME is escaped so it expands at shell-start time.
+    cat >> "$ZSHRC_FILE" <<EOF
 
 # ─── WORKBENCH INTEGRATION — added by install.sh ─────────────────────────────
 # Loads workbench aliases, tools, and prompt via the config.d loader.
 # Machine-specific config goes below this block or in ~/.env.local.
 
-if [[ -f "$HOME/.config/zsh/config.d/loader.zsh" ]]; then
-  source "$HOME/.config/zsh/config.d/loader.zsh"
+if [[ -f "\$HOME/$loader_rel" ]]; then
+  source "\$HOME/$loader_rel"
 else
   echo "⚠  workbench not connected — run install.sh to restore" >&2
 fi
@@ -125,8 +128,8 @@ EOF
     label=$(sed -n 's/^# duplicate-check-label:[[:space:]]*//p' "$snip" 2>/dev/null | head -1)
     [[ -z "$label" ]] && label=$(basename "$snip" .zsh)
     rel="${snip#"$ZSH_CONFIG_SRC_DIR/"}"
-    dupes+=("${label}  →  config.d/${rel}")
-  done < <(find "$ZSH_CONFIG_SRC_DIR" -name '*.zsh' 2>/dev/null | sort)
+    dupes+=("${label}  →  $(basename "$ZSH_CONFIG_SRC_DIR")/${rel}")
+  done < <(find "$ZSH_CONFIG_SRC_DIR" -name "$ZSH_SNIPPET_GLOB" 2>/dev/null | sort)
 
   if [[ ${#dupes[@]} -gt 0 ]]; then
     echo

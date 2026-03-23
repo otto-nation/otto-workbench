@@ -119,7 +119,7 @@ step_claude_mcps() {
 step_claude_guidelines() {
   [[ -f "$CLAUDE_GUIDELINES_SRC" ]] || { err "Missing $CLAUDE_GUIDELINES_SRC"; return 1; }
   mkdir -p "$CLAUDE_DIR"
-  install_symlink "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
+  install_symlink "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
 }
 
 step_claude_rules() {
@@ -127,7 +127,7 @@ step_claude_rules() {
 
   mkdir -p "$CLAUDE_RULES_DIR"
   info "Installing rules to $CLAUDE_RULES_DIR/"
-  symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$CLAUDE_RULES_DIR" "*.md" --strip-ext
+  symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$CLAUDE_RULES_DIR" "$RULES_GLOB" --strip-ext
 
   echo
   info "Generating workbench.md"
@@ -140,8 +140,8 @@ step_claude_settings() {
   mkdir -p "$CLAUDE_DIR"
 
   local existing="{}" content
-  if [[ -f "$CLAUDE_DIR/settings.json" ]]; then
-    content=$(cat "$CLAUDE_DIR/settings.json")
+  if [[ -f "$CLAUDE_SETTINGS_FILE" ]]; then
+    content=$(cat "$CLAUDE_SETTINGS_FILE")
     [[ -n "$content" ]] && existing="$content"
   fi
 
@@ -149,7 +149,7 @@ step_claude_settings() {
   result=$(jq -n --argjson t "$(cat "$CLAUDE_SETTINGS_SRC")" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }
 
-  printf '%s\n' "$result" > "$CLAUDE_DIR/settings.json"
+  printf '%s\n' "$result" > "$CLAUDE_SETTINGS_FILE"
   if [[ "$existing" == "{}" ]]; then success "settings.json written"; else success "settings.json synced"; fi
 }
 
@@ -261,6 +261,6 @@ print_claude_summary() {
   if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
   echo
 
-  echo -e "  ${DIM}  $CLAUDE_DIR/CLAUDE.md       — persistent guidelines${NC}"
-  echo -e "  ${DIM}  $CLAUDE_DIR/settings.json   — persistent permissions${NC}"
+  echo -e "  ${DIM}  $CLAUDE_GUIDELINES_FILE   — persistent guidelines${NC}"
+  echo -e "  ${DIM}  $CLAUDE_SETTINGS_FILE     — persistent permissions${NC}"
 }

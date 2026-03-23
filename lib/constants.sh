@@ -28,10 +28,17 @@ LOCAL_BIN_DIR="$HOME/.local/bin"
 ZSH_CONFIG_DIR="$HOME/.config/zsh/config.d"
 STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
 TASK_CONFIG_DIR="$HOME/.config/task"
+TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
+
+# ─── Docker / Colima ──────────────────────────────────────────────────────────
+DOCKER_RUN_DIR="$HOME/.docker/run"
+COLIMA_DIR="$HOME/.colima"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_CONFIG_FILE="$HOME/.claude.json"
+CLAUDE_GUIDELINES_FILE="$CLAUDE_DIR/CLAUDE.md"
+CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
@@ -56,10 +63,14 @@ ZSH_SRC_DIR="$WORKBENCH_DIR/zsh"
 ZSH_CONFIG_SRC_DIR="$WORKBENCH_DIR/zsh/config.d"
 ZSH_ZSHRC_TEMPLATE="$WORKBENCH_DIR/zsh/.zshrc"
 STARSHIP_SRC_FILE="$WORKBENCH_DIR/zsh/starship.toml"
+ZSH_LOADER_SRC="$ZSH_CONFIG_SRC_DIR/loader.zsh"
+ZSH_LOADER_DST="$ZSH_CONFIG_DIR/loader.zsh"
+ZSH_SNIPPET_GLOB="*.zsh"
 
 # ─── Workbench source — AI ────────────────────────────────────────────────────
 AI_SRC_DIR="$WORKBENCH_DIR/ai"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
+RULES_GLOB="*.md"
 
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"

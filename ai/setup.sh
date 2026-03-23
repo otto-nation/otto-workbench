@@ -115,7 +115,7 @@ unset _tool
 configure_ai_command() {
   command -v task >/dev/null 2>&1 || return
 
-  local env_file="$HOME/.config/task/taskfile.env"
+  local env_file="$TASKFILE_ENV"
   local active_cmd
   active_cmd=$(grep -m1 '^AI_COMMAND=' "$env_file" 2>/dev/null | sed 's/^AI_COMMAND=//')
 

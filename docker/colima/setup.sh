@@ -7,5 +7,5 @@
 
 COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 
-mkdir -p "$HOME/.docker/run"
-install_symlink "$HOME/.colima/$COLIMA_PROFILE/docker.sock" "$HOME/.docker/run/docker.sock"
+mkdir -p "$DOCKER_RUN_DIR"
+install_symlink "$COLIMA_DIR/$COLIMA_PROFILE/docker.sock" "$DOCKER_RUN_DIR/docker.sock"

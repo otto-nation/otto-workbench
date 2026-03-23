@@ -8,7 +8,7 @@ _CMD="${$(whence -p "${0:t}" 2>/dev/null):-$0}"
 _SELF="$(readlink "$_CMD" 2>/dev/null || echo "$_CMD")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
-ALIASES_DIR="$HOME/.config/zsh/config.d"
+ALIASES_DIR="$ZSH_CONFIG_DIR"
 FILTER="${1:-}"
 
 # Display layout

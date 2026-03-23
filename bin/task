@@ -13,12 +13,12 @@ set -euo pipefail
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
-GLOBAL_TASKFILE="$HOME/.config/task/Taskfile.yml"
+GLOBAL_TASKFILE="$TASK_CONFIG_DIR/Taskfile.yml"
 
-# Find the real task binary by temporarily removing ~/.local/bin from PATH — without this,
+# Find the real task binary by temporarily removing $LOCAL_BIN_DIR from PATH — without this,
 # `which task` would find this wrapper script and exec would recurse infinitely.
 # || true prevents set -e from aborting; an empty TASK_BIN is handled explicitly below.
-TASK_BIN=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$HOME/.local/bin$" | tr '\n' ':') which task 2>/dev/null || true)
+TASK_BIN=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$LOCAL_BIN_DIR$" | tr '\n' ':') which task 2>/dev/null || true)
 
 if [ -z "$TASK_BIN" ]; then
   err "task binary not found in PATH"

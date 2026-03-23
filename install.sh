@@ -25,10 +25,13 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
-# shellcheck source=git/steps.sh
-. "$GIT_SRC_DIR/steps.sh"
-# shellcheck source=zsh/steps.sh
-. "$ZSH_SRC_DIR/steps.sh"
+
+# Auto-source all core steps.sh files (bin, git, task, zsh and any future additions).
+# shellcheck source=/dev/null
+for _f in "$WORKBENCH_DIR"/*/steps.sh; do
+  [[ -f "$_f" ]] && . "$_f"
+done
+unset _f
 
 # ─── Flags ────────────────────────────────────────────────────────────────────
 
@@ -37,30 +40,6 @@ for _arg in "$@"; do [[ "$_arg" == "--all" ]] && INSTALL_ALL=true; done
 unset _arg
 
 # ─── Core helpers ─────────────────────────────────────────────────────────────
-
-# install_task — prompts to install the go-task runner if it is not already present.
-# Uses Homebrew on macOS, apt on Debian/Ubuntu, or prints a manual install URL otherwise.
-install_task() {
-  warn "Task (task runner) is not installed"
-  printf "  Install it? [Y/n] "
-  read -n 1 -r REPLY
-  echo
-  if [[ "$REPLY" =~ ^[Nn]$ ]]; then return; fi
-
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    info "Installing task via Homebrew..."
-    brew install go-task/tap/go-task
-  elif command -v apt-get >/dev/null 2>&1; then
-    if ! command -v curl >/dev/null 2>&1; then
-      err "curl is required to install task. Install curl first: sudo apt-get install curl"
-      return 1
-    fi
-    info "Installing task via apt..."
-    sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-  else
-    err "Unable to auto-install. See: https://taskfile.dev/installation/"
-  fi
-}
 
 # update_path_in_shell_rc — appends ~/.local/bin to PATH in the user's shell rc file
 # (~/.zshrc or ~/.bashrc) if the entry is not already present. No-op on unsupported shells.
@@ -270,34 +249,17 @@ echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}"
 echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
 echo
 
-command -v task >/dev/null 2>&1 || install_task
+step_task_install
 echo
 
-mkdir -p "$LOCAL_BIN_DIR"
-mkdir -p "$ZSH_CONFIG_DIR"
-
-echo; info "bin scripts → $LOCAL_BIN_DIR/"
-symlink_dir "$BIN_SRC_DIR" "$LOCAL_BIN_DIR"
-
-echo; info "zsh configs → $ZSH_CONFIG_DIR/"
-step_zsh
-
-echo; info "git config → $GITCONFIG_FILE"
-step_gitconfig
-
-echo; info "global git hooks → $GIT_HOOKS_DIR"
-step_global_hooks
-
-echo; info "starship → $STARSHIP_CONFIG_FILE"
-install_symlink "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE"
+sync_bin
+sync_git
+sync_zsh
 
 echo; info "ZSH configuration (.zshrc)"
 step_zshrc
 
-echo; info "global Taskfile → $TASK_CONFIG_DIR/"
-mkdir -p "$TASK_CONFIG_DIR"
-install_symlink "$TASKFILE_SRC"  "$TASK_CONFIG_DIR/Taskfile.yml"
-install_symlink "$LIB_SRC_DIR"   "$TASK_CONFIG_DIR/lib"
+sync_task
 
 update_path_in_shell_rc
 

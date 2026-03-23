@@ -8,8 +8,9 @@
 #
 # If you use fnm or mise instead of nvm, disable this snippet.
 #
-# Install: brew install nvm  (follow the post-install instructions for NVM_DIR)
-# Docs:    https://github.com/nvm-sh/nvm
+# Install:         brew install nvm  (follow the post-install instructions for NVM_DIR)
+# Docs:            https://github.com/nvm-sh/nvm
+# duplicate-check: [[:space:]]nvm\.sh
 
 export NVM_DIR="$HOME/.nvm"
 

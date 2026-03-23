@@ -30,6 +30,9 @@
 #
 # This file is managed by the workbench. Re-running install.sh updates it.
 # Machine-specific config belongs in ~/.zshrc (after the source line) or ~/.env.local.
+#
+# duplicate-check:       config\.d/\*\.zsh
+# duplicate-check-label: config.d glob
 
 _wb_load() {
   local dir="$HOME/.config/zsh/config.d/$1"

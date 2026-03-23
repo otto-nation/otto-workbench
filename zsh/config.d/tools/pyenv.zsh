@@ -9,8 +9,9 @@
 #
 # If you use mise instead of pyenv, disable this snippet and enable tools/mise.zsh.
 #
-# Install: brew install pyenv
-# Docs:    https://github.com/pyenv/pyenv
+# Install:         brew install pyenv
+# Docs:            https://github.com/pyenv/pyenv
+# duplicate-check: pyenv init
 
 command -v pyenv &>/dev/null || return 0
 

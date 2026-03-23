@@ -7,7 +7,8 @@
 # Supports both Apple Silicon (/opt/homebrew) and Intel (/usr/local) Macs.
 # No-op if Homebrew is not installed.
 #
-# Install: https://brew.sh
+# Install:         https://brew.sh
+# duplicate-check: brew shellenv
 
 if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"

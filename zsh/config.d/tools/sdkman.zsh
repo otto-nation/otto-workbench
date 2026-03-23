@@ -5,8 +5,9 @@
 #
 # If you use mise instead of SDKMAN, disable this snippet.
 #
-# Install: https://sdkman.io/install
-# Docs:    https://sdkman.io/usage
+# Install:         https://sdkman.io/install
+# Docs:            https://sdkman.io/usage
+# duplicate-check: sdkman-init\.sh
 
 export SDKMAN_DIR="$HOME/.sdkman"
 

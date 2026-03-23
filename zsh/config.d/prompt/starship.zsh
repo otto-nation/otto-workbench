@@ -9,8 +9,9 @@
 #
 # No-op if starship is not installed.
 #
-# Install: brew install starship
-# Docs:    https://starship.rs
+# Install:         brew install starship
+# Docs:            https://starship.rs
+# duplicate-check: starship init
 
 command -v starship &>/dev/null || return 0
 

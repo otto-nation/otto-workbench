@@ -10,8 +10,9 @@
 # To add/remove plugins, edit this file in the workbench repo and commit.
 # Machine-specific plugin overrides can go in ~/.zshrc after the loader source.
 #
-# Install: https://ohmyz.sh/
-# Docs:    https://github.com/ohmyzsh/ohmyzsh/wiki
+# Install:         https://ohmyz.sh/
+# Docs:            https://github.com/ohmyzsh/ohmyzsh/wiki
+# duplicate-check: source[[:space:]].*oh-my-zsh\.sh
 
 [[ -d "$HOME/.oh-my-zsh" ]] || return 0
 

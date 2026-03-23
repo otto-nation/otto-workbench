@@ -1,5 +1,9 @@
 #!/bin/bash
-# Kiro setup steps — sourced by ai/setup.sh, do not run directly.
+# Kiro setup steps — sourced by ai/setup.sh and bin/otto-workbench.
+
+# Derive the ai/ directory from this file's own location so callers don't
+# need to inject SCRIPT_DIR. Works whether sourced or executed directly.
+_AI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,7 +41,7 @@ step_kiro_agents() {
   uvx_path=$(command -v uvx 2>/dev/null || echo "uvx")
 
   local file name
-  for file in "$SCRIPT_DIR/kiro/agents"/*.json; do
+  for file in "$_AI_DIR/kiro/agents"/*.json; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file")
     _install_kiro_agent "$dir/$name" "$file" "$uvx_path" "$name"
@@ -47,7 +51,7 @@ step_kiro_agents() {
 }
 
 step_kiro_rules() {
-  local rules_src="$SCRIPT_DIR/guidelines/rules"
+  local rules_src="$_AI_DIR/guidelines/rules"
   local rules_dst="$KIRO_STEERING_DIR"
   info "Installing rules to $KIRO_STEERING_DIR/"
   mkdir -p "$rules_dst"
@@ -57,6 +61,14 @@ step_kiro_rules() {
 register_kiro_steps() {
   register_step "Kiro agent configs" step_kiro_agents
   register_step "Kiro rules"         step_kiro_rules
+}
+
+# sync_kiro — runs all Kiro sync steps non-interactively.
+# Called automatically by otto-workbench sync via the sync_<tool> convention.
+sync_kiro() {
+  echo; info "Kiro agents + rules"
+  step_kiro_agents
+  step_kiro_rules
 }
 
 print_kiro_summary() {

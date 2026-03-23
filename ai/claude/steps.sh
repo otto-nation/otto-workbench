@@ -1,5 +1,9 @@
 #!/bin/bash
-# Claude Code setup steps — sourced by ai/setup.sh, do not run directly.
+# Claude Code setup steps — sourced by ai/setup.sh and bin/otto-workbench.
+
+# Derive the ai/ directory from this file's own location so callers don't
+# need to inject SCRIPT_DIR. Works whether sourced or executed directly.
+_AI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,7 +51,7 @@ _mcp_install() {
 
 _install_workbench_rule() {
   local workbench_path
-  workbench_path="$(cd "$SCRIPT_DIR/.." && pwd)"
+  workbench_path="$(cd "$_AI_DIR/.." && pwd)"
   local target="$CLAUDE_RULES_DIR/workbench.md"
 
   mkdir -p "$CLAUDE_RULES_DIR"
@@ -87,7 +91,7 @@ _check_local_rules() {
     found=true
   done
   if [[ "$found" == true ]]; then
-    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $SCRIPT_DIR/guidelines/rules/ to formalize${NC}"
+    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $_AI_DIR/guidelines/rules/ to formalize${NC}"
   fi
 }
 
@@ -97,7 +101,7 @@ _check_local_rules() {
 # Each manifest declares the MCP name (filename without .json), a display label,
 # the install command array, and an optional post-install note.
 step_claude_mcps() {
-  local mcp_dir="$SCRIPT_DIR/claude/mcps"
+  local mcp_dir="$_AI_DIR/claude/mcps"
   [[ -d "$mcp_dir" ]] || { warn "No MCP configs found in $mcp_dir — skipping"; return; }
 
   local file name note
@@ -120,14 +124,14 @@ step_claude_mcps() {
 }
 
 step_claude_guidelines() {
-  local src="$SCRIPT_DIR/claude/CLAUDE.md"
+  local src="$_AI_DIR/claude/CLAUDE.md"
   [[ -f "$src" ]] || { err "Missing $src"; return 1; }
   mkdir -p "$CLAUDE_DIR"
   install_symlink "$src" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 }
 
 step_claude_rules() {
-  local rules_src="$SCRIPT_DIR/guidelines/rules"
+  local rules_src="$_AI_DIR/guidelines/rules"
   local rules_dst="$CLAUDE_RULES_DIR"
   [[ -d "$rules_src" ]] || { warn "No rules found in $rules_src — skipping"; return; }
 
@@ -143,9 +147,9 @@ step_claude_rules() {
 }
 
 step_claude_settings() {
-  local src="$SCRIPT_DIR/claude/settings.json"
+  local src="$_AI_DIR/claude/settings.json"
   local target="$CLAUDE_DIR/settings.json"
-  local filter="$SCRIPT_DIR/claude/sync-settings.jq"
+  local filter="$_AI_DIR/claude/sync-settings.jq"
 
   mkdir -p "$CLAUDE_DIR"
 
@@ -164,7 +168,7 @@ step_claude_settings() {
 }
 
 step_claude_skills() {
-  local src="$SCRIPT_DIR/claude/skills" dst="$CLAUDE_SKILLS_DIR"
+  local src="$_AI_DIR/claude/skills" dst="$CLAUDE_SKILLS_DIR"
   [[ -d "$src" ]] || { warn "No skills found in $src — skipping"; return; }
   mkdir -p "$dst"
   info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/"
@@ -172,7 +176,7 @@ step_claude_skills() {
 }
 
 step_claude_agents() {
-  local src="$SCRIPT_DIR/claude/agents" dst="$CLAUDE_AGENTS_DIR"
+  local src="$_AI_DIR/claude/agents" dst="$CLAUDE_AGENTS_DIR"
   [[ -d "$src" ]] || { warn "No agents found in $src — skipping"; return; }
   mkdir -p "$dst"
   info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/"
@@ -181,7 +185,7 @@ step_claude_agents() {
 
 step_generate_tools() {
   local generator
-  generator="$(cd "$SCRIPT_DIR/.." && pwd)/bin/generate-tool-context"
+  generator="$(cd "$_AI_DIR/.." && pwd)/bin/generate-tool-context"
   if [[ ! -x "$generator" ]]; then
     warn "generate-tool-context not found — skipping tool context generation"
     return
@@ -199,6 +203,30 @@ register_claude_steps() {
   register_step "MCP servers"             step_claude_mcps
   register_step "Claude Code skills"      step_claude_skills
   register_step "Claude Code agents"      step_claude_agents
+}
+
+# sync_claude — runs all Claude sync steps non-interactively.
+# Called automatically by otto-workbench sync via the sync_<tool> convention.
+# Skips silently if claude is not installed on this machine.
+sync_claude() {
+  command -v claude >/dev/null 2>&1 || { warn "claude not found in PATH — skipping"; return; }
+
+  echo; info "Claude settings"
+  step_claude_settings
+
+  echo; info "Tool context"
+  step_generate_tools
+
+  echo; info "Claude guidelines + rules"
+  step_claude_guidelines
+  step_claude_rules
+
+  echo; info "Claude MCPs"
+  step_claude_mcps
+
+  echo; info "Claude skills + agents"
+  step_claude_skills
+  step_claude_agents
 }
 
 print_claude_summary() {
@@ -251,5 +279,5 @@ print_claude_summary() {
   echo
 
   echo -e "  ${DIM}  $CLAUDE_DIR/CLAUDE.md       — persistent guidelines${NC}"
-  echo -e "  ${DIM}  $CLAUDE_DIR/settings.json   — permissions and config${NC}"
+  echo -e "  ${DIM}  $CLAUDE_DIR/settings.json   — persistent permissions${NC}"
 }

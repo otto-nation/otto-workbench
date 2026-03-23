@@ -151,6 +151,17 @@ EOF
   fi
 }
 
+# sync_zsh — runs all zsh sync steps non-interactively, including starship.
+# Called automatically by otto-workbench sync via the sync_<component> convention.
+sync_zsh() {
+  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
+
+  echo; info "zsh configs → $ZSH_CONFIG_DIR/"
+  mkdir -p "$ZSH_CONFIG_DIR"
+  step_zsh
+  install_symlink "$repo/zsh/starship.toml" "$STARSHIP_CONFIG_FILE"
+}
+
 # ─── Standalone execution ─────────────────────────────────────────────────────
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

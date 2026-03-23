@@ -45,6 +45,16 @@ jobs:
             exit 1
           fi
 
+      - name: Verify git.generated.md is up to date
+        run: |
+          bash bin/generate-git-rules
+          if ! git diff --exit-code ai/guidelines/rules/git.generated.md; then
+            echo ""
+            echo "git.generated.md is out of date."
+            echo "Run bin/generate-git-rules locally and commit the result."
+            exit 1
+          fi
+
   test:
     name: Tests
     runs-on: ubuntu-24.04

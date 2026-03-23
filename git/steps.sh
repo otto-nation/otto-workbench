@@ -85,6 +85,16 @@ step_global_hooks() {
   success "global core.hooksPath → $GIT_HOOKS_DIR"
 }
 
+# sync_git — runs all git sync steps non-interactively.
+# Called automatically by otto-workbench sync via the sync_<component> convention.
+sync_git() {
+  echo; info "git config → $GITCONFIG_FILE"
+  step_gitconfig
+
+  echo; info "global git hooks → $GIT_HOOKS_DIR"
+  step_global_hooks
+}
+
 # ─── Standalone execution ─────────────────────────────────────────────────────
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

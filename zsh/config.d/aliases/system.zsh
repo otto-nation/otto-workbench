@@ -114,7 +114,7 @@ copy-ssh() {
 # Quick edit config files
 alias edit-hosts='subl /etc/hosts'
 alias edit-zshrc='subl ~/.zshrc'
-alias edit-aws='subl ~/.config/zsh/config.d/aws.zsh'
+alias edit-aws='subl ~/.config/zsh/config.d/aliases/aws.zsh'
 
 # Alias discovery — 'aliases' is a script in ~/.local/bin; no alias needed
 alias help-aliases='aliases'

@@ -104,7 +104,7 @@ _brew_select_work_stacks() {
   echo
 
   local _sel
-  select_menu _sel "${#stack_files[@]}" --default skip
+  select_menu _sel "${#stack_files[@]}" --default all
   [[ -z "$_sel" ]] && return
 
   local num

@@ -383,6 +383,11 @@ push_branch() {
 load_pr_context() {
   load_ai_command || return 1
 
+  if ! gh auth status &>/dev/null; then
+    echo "✗ GitHub CLI is not authenticated — run: gh auth login"
+    return 1
+  fi
+
   BRANCH=$(git branch --show-current)
   DEFAULT_BRANCH=$(git rev-parse --abbrev-ref "$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^$GIT_REMOTE/@@")
   DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"

@@ -6,7 +6,7 @@
 # What it does (core — always runs):
 #   1. Installs the `task` runner if not present
 #   2. Symlinks all bin/ scripts to ~/.local/bin/
-#   3. Symlinks all zsh/*.zsh configs to ~/.config/zsh/config.d/
+#   3. Deploys zsh snippets to ~/.config/zsh/config.d/{framework,tools,aliases,prompt}/
 #   4. Sets up ~/.gitconfig includes and global git hooks (via git/setup.sh)
 #   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
 #   6. Adds ~/.local/bin to PATH in your shell rc file if needed
@@ -236,7 +236,7 @@ print_install_summary() {
 
   echo -e "  ${CYAN}Installed${NC}"
   echo -e "  ${DIM}  • bin scripts      → $LOCAL_BIN_DIR/${NC}"
-  echo -e "  ${DIM}  • zsh configs      → $ZSH_CONFIG_DIR/${NC}"
+  echo -e "  ${DIM}  • zsh snippets     → $ZSH_CONFIG_DIR/{framework,tools,aliases,prompt}/${NC}"
   echo -e "  ${DIM}  • gitconfig        → $GITCONFIG_FILE (includes git/.gitconfig + ~/.gitconfig.local)${NC}"
   echo -e "  ${DIM}  • global Taskfile  → $TASK_CONFIG_DIR/${NC}"
   local component
@@ -275,52 +275,92 @@ mkdir -p "$LOCAL_BIN_DIR"
 mkdir -p "$ZSH_CONFIG_DIR"
 
 
-# _step_zshrc — copies the workbench .zshrc template if absent; if it differs,
-# shows a compact diff and offers update / keep / view-full choices.
+# _step_zsh — sets up the zsh config.d directory structure and deploys all
+# workbench-managed snippets. Safe to re-run: symlinks are updated silently,
+# and loader.zsh is only copied when its content has changed.
+#
+# Layout deployed to $ZSH_CONFIG_DIR (~/.config/zsh/config.d/):
+#   framework/  — shell framework snippets (oh-my-zsh, etc.)
+#   tools/      — version manager snippets (pyenv, nvm, sdkman, etc.)
+#   aliases/    — command shortcut snippets — always deployed
+#   prompt/     — prompt snippets (starship)
+#   loader.zsh  — load-order definition; copied as a real file (not a symlink)
+#                 so it survives if the workbench repo is moved or deleted
+#
+# All snippets guard against missing tools — it is safe to deploy them all
+# regardless of which tools are installed on this machine.
+_step_zsh() {
+  local repo="${DOTFILES_DIR:-"$WORKBENCH_DIR"}"
+  local src="$repo/zsh/config.d"
+
+  # Create layer directories
+  mkdir -p \
+    "$ZSH_CONFIG_DIR/framework" \
+    "$ZSH_CONFIG_DIR/tools" \
+    "$ZSH_CONFIG_DIR/aliases" \
+    "$ZSH_CONFIG_DIR/prompt"
+
+  # Deploy snippets — all layers are symlinked from the workbench repo.
+  # Each snippet is self-guarding (returns 0 if its tool is not installed).
+  symlink_dir "$src/framework" "$ZSH_CONFIG_DIR/framework" "*.zsh" --prune
+  symlink_dir "$src/tools"     "$ZSH_CONFIG_DIR/tools"     "*.zsh" --prune
+  symlink_dir "$src/aliases"   "$ZSH_CONFIG_DIR/aliases"   "*.zsh" --prune
+  symlink_dir "$src/prompt"    "$ZSH_CONFIG_DIR/prompt"    "*.zsh" --prune
+
+  # Copy loader.zsh as a real file — never a symlink. This ensures the shell
+  # continues to work even if the workbench repo is moved or deleted.
+  local loader_src="$src/loader.zsh"
+  local loader_dst="$ZSH_CONFIG_DIR/loader.zsh"
+  if [[ ! -f "$loader_dst" ]] || ! diff -q "$loader_src" "$loader_dst" &>/dev/null; then
+    cp "$loader_src" "$loader_dst"
+    success "loader.zsh updated"
+  else
+    echo -e "  ${DIM}✓ loader.zsh${NC}"
+  fi
+
+  # Migration: prune stale aliases-*.zsh symlinks from the config.d root.
+  # These were the pre-restructure locations; they are now in aliases/.
+  local stale
+  for stale in "$ZSH_CONFIG_DIR"/aliases-*.zsh; do
+    [[ -L "$stale" ]] || continue
+    rm "$stale"
+    echo -e "  ${DIM}⊘ pruned $(basename "$stale") (moved to aliases/)${NC}"
+  done
+}
+
+# _step_zshrc — ensures ~/.zshrc exists and contains the workbench integration
+# block. On a new machine, copies the template. On an existing machine, checks
+# for the loader source line and appends the integration block if it is absent.
+#
+# The workbench owns only one line in ~/.zshrc: the loader source. Everything
+# else in the file is yours. Re-running install.sh never overwrites your config.
 _step_zshrc() {
   local template="$DOTFILES_DIR/zsh/.zshrc"
-  if [ ! -f "$ZSHRC_FILE" ]; then
+  local marker="config.d/loader.zsh"
+
+  if [[ ! -f "$ZSHRC_FILE" ]]; then
     cp "$template" "$ZSHRC_FILE"
-    success "Copied .zshrc"
+    success "Created $ZSHRC_FILE from template"
     info "Add secrets and machine-specific config to $ENV_LOCAL_FILE (sourced automatically, never committed)"
-  elif diff -q "$template" "$ZSHRC_FILE" > /dev/null 2>&1; then
-    success ".zshrc matches workbench template — up to date"
+  elif grep -qF "$marker" "$ZSHRC_FILE" 2>/dev/null; then
+    success ".zshrc integration block present — up to date"
   else
-    warn ".zshrc differs from workbench template"
-    echo
-    diff -u "$template" "$ZSHRC_FILE" | tail -n +3 | head -30
-    local diff_lines
-    diff_lines=$(diff -u "$template" "$ZSHRC_FILE" | tail -n +3 | wc -l | tr -d ' ')
-    if [[ "$diff_lines" -gt 30 ]]; then echo -e "  ${DIM}... $diff_lines diff lines total${NC}"; fi
-    echo
-    echo -e "  ${DIM}Machine-specific config belongs in $ENV_LOCAL_FILE (never committed)${NC}"
-    echo
-    local _choice
-    read -rp "  [u]pdate from template / [k]eep mine / [v]iew full diff [k]: " _choice
-    case "${_choice:-k}" in
-      u|U)
-        cp "$ZSHRC_FILE" "${ZSHRC_FILE}.backup"
-        echo -e "  ${GREEN}✓${NC} Backed up to ${ZSHRC_FILE}.backup"
-        cp "$template" "$ZSHRC_FILE"
-        success "Updated .zshrc from workbench template"
-        ;;
-      v|V)
-        diff -u "$template" "$ZSHRC_FILE" | "${PAGER:-less}"
-        echo
-        read -rp "  [u]pdate from template / [k]eep mine [k]: " _choice
-        if [[ "${_choice:-k}" =~ ^[Uu]$ ]]; then
-          cp "$ZSHRC_FILE" "${ZSHRC_FILE}.backup"
-          echo -e "  ${GREEN}✓${NC} Backed up to ${ZSHRC_FILE}.backup"
-          cp "$template" "$ZSHRC_FILE"
-          success "Updated .zshrc from workbench template"
-        else
-          info "Keeping existing .zshrc"
-        fi
-        ;;
-      *)
-        info "Keeping existing .zshrc"
-        ;;
-    esac
+    # Append the integration block to the existing file
+    cat >> "$ZSHRC_FILE" <<'EOF'
+
+# ─── WORKBENCH INTEGRATION — added by install.sh ─────────────────────────────
+# Loads workbench aliases, tools, and prompt via the config.d loader.
+# Machine-specific config goes below this block or in ~/.env.local.
+
+if [[ -f "$HOME/.config/zsh/config.d/loader.zsh" ]]; then
+  source "$HOME/.config/zsh/config.d/loader.zsh"
+else
+  echo "⚠  workbench not connected — run install.sh to restore" >&2
+fi
+# ─── END WORKBENCH INTEGRATION ───────────────────────────────────────────────
+EOF
+    success "Added workbench integration block to $ZSHRC_FILE"
+    info "Review the block at the bottom of $ZSHRC_FILE and move it if needed"
   fi
 }
 
@@ -328,7 +368,7 @@ echo; info "bin scripts → $LOCAL_BIN_DIR/"
 symlink_dir "$DOTFILES_DIR/bin" "$LOCAL_BIN_DIR"
 
 echo; info "zsh configs → $ZSH_CONFIG_DIR/"
-symlink_dir "$DOTFILES_DIR/zsh" "$ZSH_CONFIG_DIR" "*.zsh"
+_step_zsh
 
 echo; info "git config → $GITCONFIG_FILE"
 step_gitconfig

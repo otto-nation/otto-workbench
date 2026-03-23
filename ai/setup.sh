@@ -108,20 +108,34 @@ unset _tool
 
 # ─── AI command configuration ─────────────────────────────────────────────────
 
-# configure_ai_command — runs `task --global ai:setup` to create ~/.config/task/taskfile.env,
-# then optionally opens that file in $EDITOR so the user can set their AI_COMMAND preference.
+# configure_ai_command — ensures ~/.config/task/taskfile.env exists and contains
+# an active AI_COMMAND. Skips all prompts if a command is already configured.
+#
+# "Active" means an uncommented AI_COMMAND= line — same definition used by
+# load_ai_command() in lib/ai-commit.sh at runtime.
 configure_ai_command() {
   command -v task >/dev/null 2>&1 || return
 
+  local env_file="$HOME/.config/task/taskfile.env"
+  local active_cmd
+  active_cmd=$(grep -m1 '^AI_COMMAND=' "$env_file" 2>/dev/null | sed 's/^AI_COMMAND=//')
+
   echo; info "Taskfile AI command"
+
+  if [[ -n "$active_cmd" ]]; then
+    success "AI command already configured: ${active_cmd}"
+    return
+  fi
+
+  # File absent or all examples commented out — create it and offer to configure
   task --global ai:setup
 
   echo
   if confirm "  Configure your AI command now?"; then
-    ${EDITOR:-nano} ~/.config/task/taskfile.env
+    ${EDITOR:-nano} "$env_file"
     success "AI configuration updated"
   else
-    warn "Remember to edit $HOME/.config/task/taskfile.env before using AI tasks"
+    warn "Remember to edit $env_file before using AI tasks"
   fi
 }
 

@@ -33,6 +33,7 @@ TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 # ─── Docker / Colima ──────────────────────────────────────────────────────────
 DOCKER_RUN_DIR="$HOME/.docker/run"
 COLIMA_DIR="$HOME/.colima"
+TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
@@ -51,6 +52,14 @@ KIRO_STEERING_DIR="$HOME/.kiro/steering"
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
 TASKFILE_SRC="$WORKBENCH_DIR/Taskfile.global.yml"
+
+# ─── Workbench source — docker ────────────────────────────────────────────────
+DOCKER_SRC_DIR="$WORKBENCH_DIR/docker"
+TESTCONTAINERS_SRC="$WORKBENCH_DIR/docker/testcontainers.properties"
+
+# ─── Workbench source — iterm ─────────────────────────────────────────────────
+ITERM_SRC_DIR="$WORKBENCH_DIR/iterm"
+ITERM_THEMES_SRC_DIR="$WORKBENCH_DIR/iterm/themes"
 
 # ─── Workbench source — git ───────────────────────────────────────────────────
 GIT_SRC_DIR="$WORKBENCH_DIR/git"

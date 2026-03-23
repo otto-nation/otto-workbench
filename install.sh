@@ -7,7 +7,7 @@
 #   1. Installs the `task` runner if not present
 #   2. Symlinks all bin/ scripts to ~/.local/bin/
 #   3. Deploys zsh snippets to ~/.config/zsh/config.d/{framework,tools,aliases,prompt}/
-#   4. Sets up ~/.gitconfig includes and global git hooks (via git/setup.sh)
+#   4. Sets up ~/.gitconfig includes and global git hooks (via git/steps.sh)
 #   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
 #   6. Adds ~/.local/bin to PATH in your shell rc file if needed
 #
@@ -25,6 +25,8 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
+# Export WORKBENCH_DIR so it is available in setup.conf check commands (bash -c context).
+export WORKBENCH_DIR
 
 # Auto-source all core steps.sh files (bin, git, task, zsh and any future additions).
 # shellcheck source=/dev/null

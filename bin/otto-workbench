@@ -45,24 +45,10 @@ cmd_sync() {
   title "Workbench sync"
   echo
 
-  # ─── Workbench root ─────────────────────────────────────────────────────────
-  # Items at the repo root with no owning component steps.sh.
-
-  info "bin scripts → $LOCAL_BIN_DIR/"
-  mkdir -p "$LOCAL_BIN_DIR"
-  symlink_dir "$BIN_SRC_DIR" "$LOCAL_BIN_DIR" --prune
-
-  echo
-  info "global Taskfile + lib → $TASK_CONFIG_DIR/"
-  mkdir -p "$TASK_CONFIG_DIR"
-  install_symlink "$TASKFILE_SRC"  "$TASK_CONFIG_DIR/Taskfile.yml"
-  install_symlink "$LIB_SRC_DIR"   "$TASK_CONFIG_DIR/lib"
-
-  # ─── Components ─────────────────────────────────────────────────────────────
   # Auto-discovers sync_<component>() from */steps.sh and ai/*/steps.sh.
-  # Glob order (alphabetical) gives: git → zsh → ai/claude → ai/kiro → …
+  # Glob order is alphabetical: bin → docker → git → iterm → task → zsh →
+  #                              ai/claude → ai/kiro → …
   # Adding any component with a sync_<name>() function includes it automatically.
-
   for _f in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/ai/*/steps.sh; do
     [[ -f "$_f" ]] || continue
     _c=$(basename "$(dirname "$_f")")

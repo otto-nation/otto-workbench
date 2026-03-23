@@ -33,7 +33,7 @@ yaml2json() { python -c 'import sys, yaml, json; print(json.dumps(yaml.safe_load
 # Convert YAML to JSON (pretty-printed)
 yaml2json_pretty() { python -c 'import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin.read()), indent=2, sort_keys=False))'; }
 # Validate JSON syntax
-json_validate() { python -c 'import sys, yaml, json; json.loads(sys.stdin.read())'; }
+json_validate() { python -c 'import sys, json; json.loads(sys.stdin.read())'; }
 # Convert JSON to YAML
 json2yaml() { python -c 'import sys, yaml, json; print(yaml.dump(json.loads(sys.stdin.read())))'; }
 

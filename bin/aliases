@@ -8,7 +8,7 @@ _CMD="${$(whence -p "${0:t}" 2>/dev/null):-$0}"
 _SELF="$(readlink "$_CMD" 2>/dev/null || echo "$_CMD")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
-CONFIG_DIR="$HOME/.config/zsh/config.d"
+ALIASES_DIR="$HOME/.config/zsh/config.d"
 FILTER="${1:-}"
 
 # Display layout
@@ -18,7 +18,8 @@ ITEM_VALUE_MAX_WIDTH=60
 
 # Skip these files (deprecated/internal)
 # aliases-git.zsh is excluded from the normal loop and merged with gitconfig into one section below
-SKIP_FILES=("aws-sso-set.zsh" "aws-sso-set-blackbird.zsh" "aws-sso-set-cache.zsh" "aws-sso-set-eks.zsh" "aws-sso-set-logging.zsh" "aws-sso-set-ssm.zsh" "aws-sso-set-upgrade.zsh" "aliases-git.zsh")
+# git.zsh is excluded from the main loop and merged with gitconfig aliases into one section below
+SKIP_FILES=("git.zsh")
 
 print_header() {
   local title=$1 filter_key=${2:-}
@@ -50,7 +51,7 @@ matches_filter() {
 }
 
 # Process each config file
-for config_file in "$CONFIG_DIR"/*.zsh; do
+for config_file in "$ALIASES_DIR"/*.zsh; do
   [[ ! -f "$config_file" ]] && continue
 
   filename=$(basename "$config_file")
@@ -120,7 +121,7 @@ done
 # Combined git section: ZSH short forms/functions (aliases-git.zsh) + gitconfig aliases
 typeset -a git_items=()
 
-GIT_ZSH_FILE="$CONFIG_DIR/aliases-git.zsh"
+GIT_ZSH_FILE="$ALIASES_DIR/git.zsh"
 if [[ -f "$GIT_ZSH_FILE" ]]; then
   while IFS= read -r line; do
     if [[ "$line" =~ ^alias\ +([^=]+)=(.+)$ ]]; then
@@ -211,7 +212,7 @@ fi
 if [[ -z "$FILTER" ]]; then
   echo -e "\n${DIM}Usage: aliases [filter]${NC}"
   echo -e "${DIM}Example: aliases aws, aliases git, aliases docker${NC}"
-  echo -e "${DIM}Add new aliases to: $CONFIG_DIR/*.zsh${NC}"
+  echo -e "${DIM}Add new aliases to: $ALIASES_DIR/*.zsh${NC}"
 else
   echo -e "\n${DIM}Showing results for: ${YELLOW}$FILTER${NC}"
 fi

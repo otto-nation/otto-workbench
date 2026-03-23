@@ -39,7 +39,7 @@ done
 if [ "$USE_GLOBAL" = true ]; then
   if [ ! -f "$GLOBAL_TASKFILE" ]; then
     err "Global Taskfile not found at $GLOBAL_TASKFILE"
-    err "Run: task --global setup-ai"
+    err "Run: task --global ai:setup"
     exit 1
   fi
   exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "${FILTERED_ARGS[@]}"

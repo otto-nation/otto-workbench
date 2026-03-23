@@ -20,5 +20,5 @@ alias gd='git diff'
 
 # Clean up merged git branches (except main/master/development)
 git-clean-branches() {
-  git branch --merged | grep -v '\*\|main\|master\|development' | xargs -n 1 git branch -d
+  git branch --merged | grep -vE '^\*|main|master|development' | xargs -n 1 git branch -d
 }

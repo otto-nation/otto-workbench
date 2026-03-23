@@ -7,8 +7,7 @@
 # What it does:
 #   1. Discovers available AI tools from ai/*/steps.sh
 #   2. Prompts you to select which tools to configure
-#   3. Runs each selected tool's registered setup steps (rules symlinked per tool)
-#   4. Runs each selected tool's registered setup steps
+#   3. Runs each selected tool's registered setup steps
 #
 # Adding a new tool: create ai/<toolname>/steps.sh with a register_<toolname>_steps function.
 # Each step is individually confirmable — skip anything you don't need.
@@ -100,7 +99,7 @@ done
 run_steps
 
 echo
-echo -e "${BOLD}${GREEN}✓ AI tools setup complete!${NC}"
+success "AI tools setup complete!"
 for _tool in "${SELECTED_TOOLS[@]}"; do
   declare -f "print_${_tool}_summary" > /dev/null && "print_${_tool}_summary"
 done

@@ -84,7 +84,6 @@ printf "  ${BOLD}%-8s %6s %10s  %-50s${NC}\n" "PID" "%MEM" "MEMORY" "APPLICATION
 # sort -nrk 4: numeric, reverse, by column 4 (%MEM in ps aux output); +1 on head skips the header row
 ps aux | sort -nrk 4 | head -$(( TOP_PROCESSES_COUNT + 1 )) | tail -$TOP_PROCESSES_COUNT | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
-  for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
   # Match known app patterns for a readable name; fall back to the binary basename
   if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
@@ -116,7 +115,6 @@ printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
 # shellcheck disable=SC2034  # user,cpu,vsz,tt,stat,started,time unused — read to consume positional fields
 ps aux | awk -v threshold="$PROCESS_WARN_THRESHOLD_KB" 'NR>1 && $6 > threshold' | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
   full_cmd="$cmd"
-  for arg in "$@"; do full_cmd="$full_cmd $arg"; done
 
   # App name extraction — same pattern as the Top 10 section above;
   # repeated here because each section runs in its own pipeline subshell and cannot share variables

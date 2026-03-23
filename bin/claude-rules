@@ -140,7 +140,7 @@ cmd_sync() {
   for file in "$rules_src"/*.md; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file")
-    ln -sfh "$file" "$RULES_DIR/$name"
+    install_symlink "$file" "$RULES_DIR/$name"
     success "${name%.md}"
   done
 

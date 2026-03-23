@@ -216,7 +216,7 @@ _readme_ai_installs() {
 
   local mcps=()
   for f in "$claude_mcps_src"/*.json; do
-    [[ -f "$f" ]] && mcps+=("$(yq '.name // ""' "$f" | tr -d '"')")
+    [[ -f "$f" ]] && mcps+=("$(jq -r '.name // ""' "$f")")
   done
   [[ ${#mcps[@]} -gt 0 ]] && printf -- '- MCPs: %s\n' "$(_join ', ' "${mcps[@]}")"
 

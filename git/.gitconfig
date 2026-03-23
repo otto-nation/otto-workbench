@@ -24,7 +24,7 @@
 	wip = !git add . && git commit -m 'wip'
 	nah = !git reset --hard && git clean -df
 	rebase-off-main = !git fetch --all && git stash && git checkout main && git pull && git checkout - && git rebase main
-	deploy-branch = !git checkout main && git pull && git checkout -b your-name/deploy && git rebase main && git commit --allow-empty --no-verify -m 'chore: deploy' && git push --no-verify
+	deploy-branch = !git checkout main && git pull && git checkout -b "$(id -un)/deploy" && git rebase main && git commit --allow-empty --no-verify -m 'chore: deploy' && git push --no-verify
 	deploy-commit = !git commit -m 'chore: deploy' --allow-empty --no-verify && git push --no-verify
 
 [color]

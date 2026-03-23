@@ -5,12 +5,16 @@
 #        (also sourced by install.sh and bin/otto-workbench for step functions)
 #
 # What it does:
-#   1. Deploys workbench snippets to ~/.config/zsh/config.d/{framework,tools,aliases,prompt}/
+#   1. Auto-discovers layer directories from zsh/config.d/ and deploys snippets
+#      to ~/.config/zsh/config.d/<layer>/ — no changes needed here when layers are added
 #   2. Copies loader.zsh as a real file (survives repo move/delete)
 #   3. Ensures ~/.zshrc contains the workbench integration block
-#   4. Warns about any tool initializations in ~/.zshrc that are now managed by
-#      snippets and would run twice — patterns are declared in each snippet via
-#      '# duplicate-check:' so detection stays in sync with the snippets themselves
+#   4. Warns about tool initializations in ~/.zshrc now managed by snippets
+#
+# Adding a new snippet layer:
+#   1. Create zsh/config.d/<layer>/ and add .zsh snippet files
+#   2. Add a _wb_load <layer> call to zsh/config.d/loader.zsh at the right position
+#   step_zsh picks up the new directory automatically — no changes needed here.
 #
 # Re-running is safe — symlinks are updated silently; loader.zsh only copied on change.
 
@@ -24,37 +28,37 @@ fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
-# step_zsh — deploys the zsh config.d directory structure and all workbench-managed
-# snippets. Safe to re-run: symlinks are updated silently, and loader.zsh is only
-# copied when its content has changed.
-#
-# Layout deployed to $ZSH_CONFIG_DIR (~/.config/zsh/config.d/):
-#   framework/  — shell framework snippets (oh-my-zsh, etc.)
-#   tools/      — version manager snippets (pyenv, nvm, sdkman, etc.)
-#   aliases/    — command shortcut snippets — always deployed
-#   prompt/     — prompt snippets (starship)
-#   loader.zsh  — load-order definition; copied as a real file (not a symlink)
-#                 so it survives if the workbench repo is moved or deleted
-#
-# All snippets guard against missing tools — it is safe to deploy them all
-# regardless of which tools are installed on this machine.
+# step_zsh — auto-discovers all layer directories in ZSH_CONFIG_SRC_DIR and
+# deploys their .zsh snippets to matching directories under ZSH_CONFIG_DIR.
+# Safe to re-run: symlinks are updated silently; stale symlinks are pruned.
+# Adding a new config.d layer requires no changes here — just create the directory.
 step_zsh() {
-  # Create layer directories
-  mkdir -p \
-    "$ZSH_CONFIG_DIR/framework" \
-    "$ZSH_CONFIG_DIR/tools" \
-    "$ZSH_CONFIG_DIR/aliases" \
-    "$ZSH_CONFIG_DIR/prompt"
+  local layer name
 
-  # Deploy snippets — all layers are symlinked from the workbench repo.
-  # Each snippet is self-guarding (returns 0 if its tool is not installed).
-  symlink_dir "$ZSH_CONFIG_SRC_DIR/framework" "$ZSH_CONFIG_DIR/framework" "*.zsh" --prune
-  symlink_dir "$ZSH_CONFIG_SRC_DIR/tools"     "$ZSH_CONFIG_DIR/tools"     "*.zsh" --prune
-  symlink_dir "$ZSH_CONFIG_SRC_DIR/aliases"   "$ZSH_CONFIG_DIR/aliases"   "*.zsh" --prune
-  symlink_dir "$ZSH_CONFIG_SRC_DIR/prompt"    "$ZSH_CONFIG_DIR/prompt"    "*.zsh" --prune
+  for layer in "$ZSH_CONFIG_SRC_DIR"/*/; do
+    [[ -d "$layer" ]] || continue
+    name=$(basename "$layer")
+    mkdir -p "$ZSH_CONFIG_DIR/$name"
+    symlink_dir "$layer" "$ZSH_CONFIG_DIR/$name" "*.zsh" --prune
+  done
 
-  # Copy loader.zsh as a real file — never a symlink. This ensures the shell
-  # continues to work even if the workbench repo is moved or deleted.
+  # Migration: prune stale aliases-*.zsh symlinks left at the config.d root
+  # from before the layer-subdirectory restructure. Safe to remove once all
+  # machines have been re-synced past that change.
+  local stale
+  for stale in "$ZSH_CONFIG_DIR"/aliases-*.zsh; do
+    [[ -L "$stale" ]] || continue
+    rm "$stale"
+    echo -e "  ${DIM}⊘ pruned $(basename "$stale") (moved to aliases/)${NC}"
+  done
+}
+
+# step_zsh_loader — copies loader.zsh as a real file (never a symlink) so the
+# shell continues to work even if the workbench repo is moved or deleted.
+# Only copies when content has changed; no-op otherwise.
+# Note: loader.zsh controls layer load order — its _wb_load lines must be
+# maintained manually when adding new layers (order matters: framework first, prompt last).
+step_zsh_loader() {
   local loader_dst="$ZSH_CONFIG_DIR/loader.zsh"
   if [[ ! -f "$loader_dst" ]] || ! diff -q "$ZSH_CONFIG_SRC_DIR/loader.zsh" "$loader_dst" &>/dev/null; then
     cp "$ZSH_CONFIG_SRC_DIR/loader.zsh" "$loader_dst"
@@ -62,15 +66,6 @@ step_zsh() {
   else
     echo -e "  ${DIM}✓ loader.zsh${NC}"
   fi
-
-  # Migration: prune stale aliases-*.zsh symlinks from the config.d root.
-  # These were the pre-restructure locations; they are now in aliases/.
-  local stale
-  for stale in "$ZSH_CONFIG_DIR"/aliases-*.zsh; do
-    [[ -L "$stale" ]] || continue
-    rm "$stale"
-    echo -e "  ${DIM}⊘ pruned $(basename "$stale") (moved to aliases/)${NC}"
-  done
 }
 
 # step_zshrc — ensures ~/.zshrc exists and contains the workbench integration
@@ -150,6 +145,7 @@ sync_zsh() {
   echo; info "zsh configs → $ZSH_CONFIG_DIR/"
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
+  step_zsh_loader
   install_symlink "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE"
 }
 
@@ -162,6 +158,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   echo; info "zsh configs → $ZSH_CONFIG_DIR/"
   step_zsh
+  step_zsh_loader
 
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc

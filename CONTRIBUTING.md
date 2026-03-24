@@ -63,6 +63,11 @@ The workbench uses a two-tier component model. Use this decision rule when addin
 > **Should it appear in the install menu as an opt-in?** → Tier 2 (Optional)
 > **Does it have idempotent operations worth re-applying on sync?** → also add `steps.sh`
 
+**How discovery works:**
+- `install.sh` and `otto-workbench sync` auto-discover core components by globbing `*/steps.sh` and skipping any that have a sibling `setup.conf` (those are optional).
+- Adding a new core component requires **no edits to `install.sh`** — just create the directory with `steps.sh` defining `sync_<name>()`.
+- Adding a new optional component requires creating `setup.conf` + `setup.sh` and adding the name to `install.components`.
+
 Run `bin/validate-components` to check contracts for all existing components.
 
 ---

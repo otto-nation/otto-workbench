@@ -4,16 +4,16 @@
 # Usage: bash install.sh [--all]
 #
 # What it does (core — always runs):
-#   1. Installs the `task` runner if not present
-#   2. Symlinks all bin/ scripts to ~/.local/bin/
-#   3. Deploys zsh snippets to ~/.config/zsh/config.d/{framework,tools,aliases,prompt}/
-#   4. Sets up ~/.gitconfig includes and global git hooks (via git/steps.sh)
-#   5. Symlinks Taskfile.yml and lib/ to ~/.config/task/
-#   6. Adds ~/.local/bin to PATH in your shell rc file if needed
+#   1. Installs the `task` runner if not present  [preflight — explicit]
+#   2. Auto-discovers and calls sync_<name>() for every core component
+#      (core = has steps.sh but no setup.conf; currently: bin, git, task, zsh)
+#      Adding a new core component requires only creating steps.sh — no edits here.
+#   3. Adds ~/.local/bin to PATH in your shell rc file if needed
 #
 # Then presents a menu of optional components (brew, docker, iterm, ai).
 # Each component is defined by a setup.sh + setup.conf in its directory.
 # Components are run in the order listed in install.components.
+# Components that declare `depends` in setup.conf have those deps auto-included.
 #
 # Flags:
 #   --all   Skip the component selection menu and run all eligible components.
@@ -135,6 +135,8 @@ SELECTED_COMPONENTS=()
 # select_components — presents a numbered menu and populates SELECTED_COMPONENTS.
 # Platform-incompatible components are silently skipped.
 # With --all flag or empty selection, all eligible components are selected.
+# Components with `depends` in setup.conf have their deps auto-included and
+# re-sorted into install.components order so deps always run before dependents.
 select_components() {
   local eligible_dirs=() eligible_labels=() eligible_descs=()
 
@@ -150,26 +152,55 @@ select_components() {
     return
   fi
 
+  local desired=()
   if [[ "$INSTALL_ALL" == "true" ]]; then
-    SELECTED_COMPONENTS=("${eligible_dirs[@]}")
-    return
+    desired=("${eligible_dirs[@]}")
+  else
+    echo
+    info "Optional components:"
+    for i in "${!eligible_dirs[@]}"; do
+      printf "  [%d] %-22s ${DIM}%s${NC}\n" "$(( i + 1 ))" "${eligible_labels[$i]}" "${eligible_descs[$i]}"
+    done
+    echo
+
+    local _sel
+    select_menu _sel "${#eligible_dirs[@]}" --default all
+    [[ -z "$_sel" ]] && return
+
+    local num
+    for num in $_sel; do
+      desired+=("${eligible_dirs[$((num - 1))]}")
+    done
   fi
 
-  echo
-  info "Optional components:"
-  for i in "${!eligible_dirs[@]}"; do
-    printf "  [%d] %-22s ${DIM}%s${NC}\n" "$(( i + 1 ))" "${eligible_labels[$i]}" "${eligible_descs[$i]}"
+  # Expand desired set with declared deps (iterate until stable).
+  local _changed=true _comp _deps _dep _found _d
+  while [[ "$_changed" == true ]]; do
+    _changed=false
+    for _comp in "${desired[@]}"; do
+      _deps=$(conf_get "$WORKBENCH_DIR/$_comp/setup.conf" depends)
+      [[ -z "$_deps" ]] && continue
+      for _dep in $_deps; do
+        _found=false
+        for _d in "${desired[@]}"; do [[ "$_d" == "$_dep" ]] && { _found=true; break; }; done
+        if [[ "$_found" == false ]]; then
+          info "Adding $_dep (required by $_comp)"
+          desired+=("$_dep")
+          _changed=true
+        fi
+      done
+    done
   done
-  echo
+  unset _changed _comp _deps _dep _found _d
 
-  local _sel
-  select_menu _sel "${#eligible_dirs[@]}" --default all
-  [[ -z "$_sel" ]] && return
-
-  local num
-  for num in $_sel; do
-    SELECTED_COMPONENTS+=("${eligible_dirs[$((num - 1))]}")
+  # Re-sort by install.components order so deps always precede dependents.
+  local _c _d2
+  for _c in "${COMPONENT_DIRS[@]}"; do
+    for _d2 in "${desired[@]}"; do
+      [[ "$_c" == "$_d2" ]] && { SELECTED_COMPONENTS+=("$_c"); break; }
+    done
   done
+  unset _c _d2
 }
 
 # run_components — executes setup.sh for each selected component.
@@ -239,14 +270,16 @@ echo
 step_task_install
 echo
 
-sync_bin
-sync_git
-sync_zsh
-
-echo; info "ZSH configuration (.zshrc)"
-step_zshrc
-
-sync_task
+# Auto-call sync_<name>() for every core component (steps.sh present, setup.conf absent).
+# Optional components (have setup.conf) are handled via the component menu below.
+# This mirrors otto-workbench sync — new core components are picked up automatically.
+for _f in "$WORKBENCH_DIR"/*/steps.sh; do
+  [[ -f "$_f" ]] || continue
+  _c=$(basename "$(dirname "$_f")")
+  [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
+  declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
+done
+unset _f _c
 
 update_path_in_shell_rc
 

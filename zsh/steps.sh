@@ -137,30 +137,25 @@ step_zshrc() {
   _zshrc_check_duplicates
 }
 
-# sync_zsh — runs all zsh sync steps non-interactively, including starship.
-# Called automatically by otto-workbench sync via the sync_<component> convention.
+# sync_zsh — runs all zsh sync steps non-interactively.
+# Includes .zshrc integration so otto-workbench sync repairs a disconnected shell.
+# Called automatically by install.sh and otto-workbench sync via the sync_<name> convention.
 sync_zsh() {
   echo; info "zsh configs → $ZSH_CONFIG_DIR/"
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
   step_zsh_loader
   install_symlink "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE"
+
+  echo; info "ZSH configuration (.zshrc)"
+  step_zshrc
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   echo -e "${BOLD}${BLUE}ZSH setup${NC}\n"
-
-  mkdir -p "$ZSH_CONFIG_DIR"
-
-  echo; info "zsh configs → $ZSH_CONFIG_DIR/"
-  step_zsh
-  step_zsh_loader
-
-  echo; info "ZSH configuration (.zshrc)"
-  step_zshrc
-
+  sync_zsh
   echo
   success "ZSH setup complete!"
 fi

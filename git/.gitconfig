@@ -30,19 +30,14 @@
 [color]
 	ui = true
 
-[color "diff-highlight"]
-	oldNormal = red bold
-	oldHighlight = red bold 52
-	newNormal = green bold
-	newHighlight = green bold 22
+[interactive]
+	diffFilter = delta --color-only
 
-[color "diff"]
-	meta = yellow
-	frag = magenta bold
-	commit = yellow bold
-	old = red bold
-	new = green bold
-	whitespace = red reverse
+[delta]
+	navigate = true
+	light = false
+	side-by-side = false
+	line-numbers = true
 
 [filter "lfs"]
 	smudge = git-lfs smudge -- %f
@@ -68,4 +63,5 @@
 [core]
 	fsmonitor = true
 	untrackedCache = true
+	pager = delta
 

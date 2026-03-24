@@ -10,6 +10,7 @@ setup() {
   export BREW_REGISTRY="$TMPDIR/brew.yml"
   export BIN_REGISTRY="$TMPDIR/bin.yml"
   export ZSH_REGISTRY="$TMPDIR/zsh.yml"
+  export BREW_STACKS_DIR="$TMPDIR"
   export WORK_DIR="$TMPDIR/work"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
   export README_PATH="$TMPDIR/README.md"
@@ -23,7 +24,7 @@ setup() {
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
-  unset BREW_REGISTRY BIN_REGISTRY ZSH_REGISTRY WORK_DIR TOOL_CONTEXT_OUTPUT
+  unset BREW_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title

@@ -24,12 +24,10 @@ fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
-# step_gitconfig — sets up ~/.gitconfig with [include] lines for the shared
-# workbench config and ~/.gitconfig.local. Bootstraps the local file from
-# template on a new machine.
-step_gitconfig() {
-  if [[ ! -f "$GITCONFIG_FILE" ]]; then
-    cat > "$GITCONFIG_FILE" <<EOF
+# _gitconfig_write — creates a fresh ~/.gitconfig with both include stanzas.
+# Only called when the file does not yet exist.
+_gitconfig_write() {
+  cat > "$GITCONFIG_FILE" <<EOF
 # ~/.gitconfig — global git config for this machine.
 #
 # This file is NOT tracked by any repo and intentionally contains no settings directly.
@@ -48,26 +46,43 @@ step_gitconfig() {
 [include]
 	path = $GITCONFIG_LOCAL_FILE
 EOF
-    success "Created $GITCONFIG_FILE"
-  else
-    if ! grep -qF "path = $GIT_SHARED_CONFIG" "$GITCONFIG_FILE"; then
-      printf '\n[include]\n\tpath = %s\n' "$GIT_SHARED_CONFIG" >> "$GITCONFIG_FILE"
-      success "Added shared gitconfig include"
-    else
-      success "gitconfig include up to date"
-    fi
-    if ! grep -qF "path = $GITCONFIG_LOCAL_FILE" "$GITCONFIG_FILE"; then
-      printf '\n[include]\n\tpath = %s\n' "$GITCONFIG_LOCAL_FILE" >> "$GITCONFIG_FILE"
-      success "Added local gitconfig include"
-    fi
-  fi
+  success "Created $GITCONFIG_FILE"
+}
 
+# _gitconfig_ensure_include PATH — appends an [include] stanza for PATH if not
+# already present. Silent no-op when the include already exists.
+_gitconfig_ensure_include() {
+  local include_path="$1"
+  if ! grep -qF "path = $include_path" "$GITCONFIG_FILE"; then
+    printf '\n[include]\n\tpath = %s\n' "$include_path" >> "$GITCONFIG_FILE"
+    success "Added include: $(basename "$include_path")"
+  fi
+}
+
+# _gitconfig_bootstrap_local — copies the local config template into place when
+# ~/.gitconfig.local does not yet exist. Warns the user to fill in their identity.
+_gitconfig_bootstrap_local() {
   if [[ ! -f "$GITCONFIG_LOCAL_FILE" ]]; then
     cp "$GIT_LOCAL_CONFIG_TEMPLATE" "$GITCONFIG_LOCAL_FILE"
     warn "Created $GITCONFIG_LOCAL_FILE from template — edit it to set your identity and credential helpers"
   else
     success ".gitconfig.local already exists"
   fi
+}
+
+# step_gitconfig — sets up ~/.gitconfig with [include] lines for the shared
+# workbench config and ~/.gitconfig.local. Bootstraps the local file from
+# template on a new machine.
+step_gitconfig() {
+  if [[ ! -f "$GITCONFIG_FILE" ]]; then
+    _gitconfig_write
+  else
+    _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
+    _gitconfig_ensure_include "$GITCONFIG_LOCAL_FILE"
+    success "gitconfig includes up to date"
+  fi
+
+  _gitconfig_bootstrap_local
 }
 
 # step_global_hooks — symlinks the workbench pre-commit hook into $GIT_HOOKS_DIR

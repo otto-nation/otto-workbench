@@ -1,12 +1,12 @@
 # Java stack registry — AI context for Claude/Kiro.
-# Install: brew bundle --file=brew/work/java.Brewfile
+# Install: brew bundle --file=brew/lang/java.Brewfile
 # Regenerate: bin/generate-tool-context
 
 meta:
   section: "Java Tools"
   install_check: true
   validation: brewfile
-  source: brew/work/java.Brewfile
+  source: brew/lang/java.Brewfile
 
 tools:
   - name: gradle

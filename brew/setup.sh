@@ -8,10 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib/ui.sh"
 
 require_command brew "Homebrew not found — skipping package install" || exit 0
+require_command jq  "jq not found — required for brew install status" || exit 1
 
-# Cache installed formulae and casks once for fast per-package lookups
-_INSTALLED_FORMULAE=$(brew list --formula 2>/dev/null)
-_INSTALLED_CASKS=$(brew list --cask 2>/dev/null)
+# Build installed package sets once from brew's own metadata.
+# Using brew info JSON (formula name / cask token) rather than keg names means
+# aliases like delta→git-delta resolve correctly without per-package subprocesses.
+_BREW_INFO=$(brew info --installed --json=v2 2>/dev/null)
+_INSTALLED_FORMULAE=$(printf '%s' "$_BREW_INFO" | jq -r '.formulae[] | (.name, .aliases[])' 2>/dev/null)
+_INSTALLED_CASKS=$(printf '%s' "$_BREW_INFO" | jq -r '.casks[].token' 2>/dev/null)
+unset _BREW_INFO
 
 # _brew_pkg_url TYPE NAME
 # Generates a Homebrew URL. Tap packages link to the tap on GitHub.
@@ -26,43 +31,43 @@ _brew_pkg_url() {
   fi
 }
 
-# _brew_is_installed TYPE SHORT_NAME
+# _brew_is_installed TYPE FULL_NAME — checks the cached brew info sets.
 _brew_is_installed() {
-  local type="$1" name="$2"
+  local type="$1" short_name="${2##*/}"
   if [[ "$type" == "cask" ]]; then
-    echo "$_INSTALLED_CASKS" | grep -qx "$name"
+    echo "$_INSTALLED_CASKS"    | grep -qx "$short_name"
   else
-    echo "$_INSTALLED_FORMULAE" | grep -qx "$name"
+    echo "$_INSTALLED_FORMULAE" | grep -qx "$short_name"
   fi
 }
 
-# _brew_show_packages FILE
+# _brew_all_installed FILE — returns 0 if every dependency in FILE is satisfied.
+# Delegates to brew bundle check so brew's own resolver handles aliases and taps.
+_brew_all_installed() {
+  brew bundle check --file="$1" --no-upgrade &>/dev/null
+}
+
+# _brew_show_packages FILE [--numbered]
 # Prints each package with install status (✓/+) and URL.
+# With --numbered, prepends a bracketed index for use in selection menus.
 _brew_show_packages() {
-  local file="$1"
+  local file="$1" numbered=false
+  [[ "${2:-}" == "--numbered" ]] && numbered=true
+  local index=1
   while IFS= read -r line; do
     [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
     local type="${BASH_REMATCH[1]}" full_name="${BASH_REMATCH[2]}"
     local short_name="${full_name##*/}"
-    local url
+    local prefix="" url
     url=$(_brew_pkg_url "$type" "$full_name")
-    if _brew_is_installed "$type" "$short_name"; then
-      echo -e "  ${DIM}✓ $(printf '%-28s' "$short_name") $url${NC}"
+    [[ "$numbered" == true ]] && prefix="$(printf '[%d] ' "$index")"
+    if _brew_is_installed "$type" "$full_name"; then
+      echo -e "  ${DIM}✓ ${prefix}$(printf '%-28s' "$short_name") $url${NC}"
     else
-      echo -e "  ${GREEN}+${NC} $(printf '%-28s' "$short_name") ${DIM}$url${NC}"
+      echo -e "  ${GREEN}+${NC} ${prefix}$(printf '%-28s' "$short_name") ${DIM}$url${NC}"
     fi
+    index=$(( index + 1 ))
   done < "$file"
-}
-
-# _brew_all_installed FILE — returns 0 if every package in FILE is already installed.
-_brew_all_installed() {
-  local file="$1"
-  while IFS= read -r line; do
-    [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
-    local type="${BASH_REMATCH[1]}" full_name="${BASH_REMATCH[2]}"
-    _brew_is_installed "$type" "${full_name##*/}" || return 1
-  done < "$file"
-  return 0
 }
 
 # _brew_install_file FILE LABEL
@@ -80,13 +85,69 @@ _brew_install_file() {
   confirm "  Install $label?" && brew bundle --file="$file" && success "$label installed"
 }
 
-# _brew_select_work_stacks WORK_DIR
-# Shows available stacks with their packages, lets user pick by number.
-_brew_select_work_stacks() {
-  local work_dir="$1"
+# _brew_pkgs FILE — prints comma-separated short package names from a Brewfile
+_brew_pkgs() {
+  grep -E '^(brew|cask) ' "$1" \
+    | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' \
+    | paste -sd ',' - | sed 's/,/, /g'
+}
+
+# _brew_select_packages FILE LABEL
+# Shows each package numbered with status + URL. Lets user pick a subset, all, or skip.
+# Subset installs packages individually; all uses brew bundle for full dependency handling.
+_brew_select_packages() {
+  local file="$1" label="$2"
+  local pkg_types=() pkg_full=() pkg_short=()
+
+  while IFS= read -r line; do
+    [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
+    pkg_types+=("${BASH_REMATCH[1]}")
+    pkg_full+=("${BASH_REMATCH[2]}")
+    pkg_short+=("${BASH_REMATCH[2]##*/}")
+  done < "$file"
+
+  [[ ${#pkg_full[@]} -eq 0 ]] && return
+
+  echo
+  info "$label:"
+  _brew_show_packages "$file" --numbered
+  echo
+
+  local sel
+  select_menu sel "${#pkg_full[@]}" --default all
+  [[ -z "$sel" ]] && return
+
+  # All indices selected — use brew bundle for proper dependency handling
+  local sel_count
+  sel_count=$(wc -w <<< "$sel")
+  if [[ "$sel_count" -eq "${#pkg_full[@]}" ]]; then
+    brew bundle --file="$file" && success "$label installed"
+    return
+  fi
+
+  # Subset — install individually
+  local num
+  for num in $sel; do
+    local idx=$(( num - 1 ))
+    local type="${pkg_types[$idx]}" full="${pkg_full[$idx]}" short="${pkg_short[$idx]}"
+    if _brew_is_installed "$type" "$full"; then
+      echo -e "  ${DIM}✓ $short already installed${NC}"
+    elif [[ "$type" == "cask" ]]; then
+      brew install --cask "$full" && success "Installed $short"
+    else
+      brew install "$full" && success "Installed $short"
+    fi
+  done
+}
+
+# _brew_select_category CATEGORY_DIR CATEGORY_LABEL
+# Single-stack categories go directly to package selection.
+# Multi-stack categories show a stack menu first.
+_brew_select_category() {
+  local dir="$1" label="$2"
   local stack_files=() stack_names=()
 
-  for f in "$work_dir"/*.Brewfile; do
+  for f in "$dir"/*.Brewfile; do
     [[ -f "$f" ]] || continue
     stack_files+=("$f")
     stack_names+=("$(basename "$f" .Brewfile)")
@@ -94,12 +155,20 @@ _brew_select_work_stacks() {
 
   [[ ${#stack_files[@]} -eq 0 ]] && return
 
-  echo; info "Work stacks (brew/work/):"
+  # Single stack — skip intermediate menu, go straight to package selection
+  if [[ ${#stack_files[@]} -eq 1 ]]; then
+    _SELECTED_FILES+=("${stack_files[0]}")
+    _SELECTED_LABELS+=("$label")
+    return
+  fi
+
+  # Multiple stacks — let user pick which ones
+  echo
+  info "$label:"
   for i in "${!stack_names[@]}"; do
     local pkgs
-    pkgs=$(grep -E '^(brew|cask) ' "${stack_files[$i]}" \
-      | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' | paste -sd ',' - | sed 's/,/, /g')
-    printf "  [%d] %-15s ${DIM}%s${NC}\n" "$((i+1))" "${stack_names[$i]}" "$pkgs"
+    pkgs=$(_brew_pkgs "${stack_files[$i]}")
+    printf "  [%d] %-20s ${DIM}%s${NC}\n" "$((i+1))" "${stack_names[$i]}" "$pkgs"
   done
   echo
 
@@ -109,9 +178,62 @@ _brew_select_work_stacks() {
 
   local num
   for num in $_sel; do
-    _brew_install_file "${stack_files[$((num - 1))]}" "${stack_names[$((num - 1))]} stack"
+    _SELECTED_FILES+=("${stack_files[$((num - 1))]}")
+    _SELECTED_LABELS+=("${stack_names[$((num - 1))]} stack")
+  done
+}
+
+# _brew_select_optional BREW_DIR
+# Discovers category subdirs under BREW_DIR, presents them grouped.
+# User can select entire categories or drill into individual stacks.
+_brew_select_optional() {
+  local brew_dir="$1"
+  local category_dirs=() category_labels=()
+
+  for d in "$brew_dir"/*/; do
+    [[ -d "$d" ]] || continue
+    local has_brewfile=0
+    for f in "$d"*.Brewfile; do [[ -f "$f" ]] && has_brewfile=1 && break; done
+    [[ "$has_brewfile" -eq 1 ]] || continue
+    category_dirs+=("$d")
+    category_labels+=("$(basename "$d")")
+  done
+
+  [[ ${#category_dirs[@]} -eq 0 ]] && return
+
+  echo
+  info "Optional stacks — select categories to install:"
+  local i
+  for i in "${!category_labels[@]}"; do
+    local brewfiles=("${category_dirs[$i]}"*.Brewfile)
+    local description
+    if [[ ${#brewfiles[@]} -eq 1 ]] && [[ -f "${brewfiles[0]}" ]]; then
+      # Single stack — show package names so the user knows what they're getting
+      description=$(_brew_pkgs "${brewfiles[0]}")
+    else
+      # Multiple stacks — show stack names; packages are shown when drilling in
+      description=$(for f in "${category_dirs[$i]}"*.Brewfile; do
+        [[ -f "$f" ]] && basename "$f" .Brewfile
+      done | paste -sd ',' - | sed 's/,/, /g')
+    fi
+    printf "  [%d] %-12s ${DIM}%s${NC}\n" "$((i+1))" "${category_labels[$i]}" "$description"
+  done
+  echo
+
+  local _sel
+  select_menu _sel "${#category_dirs[@]}" --default all
+  [[ -z "$_sel" ]] && return
+
+  local _SELECTED_FILES=() _SELECTED_LABELS=()
+  local num
+  for num in $_sel; do
+    _brew_select_category "${category_dirs[$((num - 1))]}" "${category_labels[$((num - 1))]}"
+  done
+
+  for i in "${!_SELECTED_FILES[@]}"; do
+    _brew_select_packages "${_SELECTED_FILES[$i]}" "${_SELECTED_LABELS[$i]}"
   done
 }
 
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
-_brew_select_work_stacks "$SCRIPT_DIR/work"
+_brew_select_optional "$SCRIPT_DIR"

@@ -18,6 +18,17 @@ _mcp_registered_cmd() {
     "$CLAUDE_CONFIG_FILE" 2>/dev/null
 }
 
+# _mcp_update NAME — removes the existing registration so it can be re-added with
+# a new command. Used when drift is detected between registered and expected command.
+_mcp_update() {
+  local name="$1"
+  info "Updating $name (command changed)"
+  local tmp
+  tmp=$(mktemp)
+  jq --arg n "$name" 'del(.mcpServers[$n])' "$CLAUDE_CONFIG_FILE" > "$tmp" \
+    && mv "$tmp" "$CLAUDE_CONFIG_FILE"
+}
+
 # _mcp_install NAME COMMAND... — registers an MCP server at user scope.
 # Skips if already registered with the same command. Updates if the command has drifted
 # (e.g. a hardcoded API key was previously baked in but has since been removed from the manifest).
@@ -32,11 +43,7 @@ _mcp_install() {
       success "$name already registered"
       return
     fi
-    info "Updating $name (command changed)"
-    local tmp
-    tmp=$(mktemp)
-    jq --arg n "$name" 'del(.mcpServers[$n])' "$CLAUDE_CONFIG_FILE" > "$tmp" \
-      && mv "$tmp" "$CLAUDE_CONFIG_FILE"
+    _mcp_update "$name"
   else
     info "Installing $name (user scope)"
   fi
@@ -45,6 +52,29 @@ _mcp_install() {
   success "$name registered"
 }
 
+# _mcp_install_from_manifest FILE — reads an MCP manifest JSON and calls _mcp_install.
+# Manifest fields: url (required, display only), command[] (required), note (optional).
+_mcp_install_from_manifest() {
+  local file="$1"
+  local name url note
+  local cmd_args=()
+
+  name=$(basename "$file" .json)
+  url=$(jq -r '.url // empty' "$file")
+  [[ -z "$url" ]] && { err "$name: manifest is missing required field: url"; return 1; }
+
+  echo -e "  ${DIM}$url${NC}"
+  while IFS= read -r arg; do
+    cmd_args+=("$arg")
+  done < <(jq -r '.command[]' "$file")
+
+  _mcp_install "$name" "${cmd_args[@]}"
+
+  note=$(jq -r '.note // empty' "$file")
+  [[ -n "$note" ]] && echo -e "  ${DIM}$note${NC}"
+}
+
+# _install_workbench_rule — writes the workbench.md rule file with current paths baked in.
 _install_workbench_rule() {
   local target="$CLAUDE_RULES_DIR/workbench.md"
 
@@ -89,39 +119,46 @@ _check_local_rules() {
   fi
 }
 
+# _print_item_list LABEL DIR GLOB — prints a cyan section header followed by a
+# bulleted list of matching items. Prints "(none)" if no items are found.
+_print_item_list() {
+  local label="$1" dir="$2" glob="$3"
+  local found=false item
+  echo -e "  ${CYAN}${label}${NC}"
+  for item in "$dir"/$glob; do
+    [[ -e "$item" ]] || continue
+    local name
+    name=$(basename "$item")
+    name="${name%.md}"
+    echo -e "  ${DIM}  • $name${NC}"
+    found=true
+  done
+  [[ "$found" == false ]] && echo -e "  ${DIM}  (none)${NC}"
+  echo
+}
+
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
 # step_claude_mcps — installs all MCP servers discovered from ai/claude/mcps/*.json.
-# Each manifest declares the MCP name (filename without .json), a display label,
-# the install command array, and an optional post-install note.
 step_claude_mcps() {
   [[ -d "$CLAUDE_MCPS_SRC_DIR" ]] || { warn "No MCP configs found in $CLAUDE_MCPS_SRC_DIR — skipping"; return; }
 
-  local file name note
-  local cmd_args=()
+  local file
   for file in "$CLAUDE_MCPS_SRC_DIR"/*.json; do
     [[ -e "$file" ]] || continue
-    name=$(basename "$file" .json)
-    local url
-    url=$(jq -r '.url // empty' "$file")
-    [[ -z "$url" ]] && { err "$name: manifest is missing required field: url"; return 1; }
-    echo -e "  ${DIM}$url${NC}"
-    cmd_args=()
-    while IFS= read -r arg; do
-      cmd_args+=("$arg")
-    done < <(jq -r '.command[]' "$file")
-    _mcp_install "$name" "${cmd_args[@]}"
-    note=$(jq -r '.note // empty' "$file")
-    if [[ -n "$note" ]]; then echo -e "  ${DIM}$note${NC}"; fi
+    _mcp_install_from_manifest "$file"
   done
 }
 
+# step_claude_guidelines — symlinks CLAUDE.md into ~/.claude/.
 step_claude_guidelines() {
   [[ -f "$CLAUDE_GUIDELINES_SRC" ]] || { err "Missing $CLAUDE_GUIDELINES_SRC"; return 1; }
   mkdir -p "$CLAUDE_DIR"
   install_symlink "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
 }
 
+# step_claude_rules — symlinks workbench rules into ~/.claude/rules/ and
+# generates workbench.md with current repo paths baked in.
 step_claude_rules() {
   [[ -d "$GUIDELINES_RULES_SRC_DIR" ]] || { warn "No rules found in $GUIDELINES_RULES_SRC_DIR — skipping"; return; }
 
@@ -136,6 +173,8 @@ step_claude_rules() {
   _check_local_rules "$CLAUDE_RULES_DIR"
 }
 
+# step_claude_settings — merges workbench settings.json template into the live
+# settings file, preserving any existing user customisations.
 step_claude_settings() {
   mkdir -p "$CLAUDE_DIR"
 
@@ -153,6 +192,7 @@ step_claude_settings() {
   if [[ "$existing" == "{}" ]]; then success "settings.json written"; else success "settings.json synced"; fi
 }
 
+# step_claude_skills — symlinks each skill directory into ~/.claude/skills/.
 step_claude_skills() {
   [[ -d "$CLAUDE_SKILLS_SRC_DIR" ]] || { warn "No skills found in $CLAUDE_SKILLS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_SKILLS_DIR"
@@ -160,6 +200,7 @@ step_claude_skills() {
   symlink_dir "$CLAUDE_SKILLS_SRC_DIR" "$CLAUDE_SKILLS_DIR" "*/"
 }
 
+# step_claude_agents — symlinks each agent markdown file into ~/.claude/agents/.
 step_claude_agents() {
   [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_AGENTS_DIR"
@@ -167,6 +208,7 @@ step_claude_agents() {
   symlink_dir "$CLAUDE_AGENTS_SRC_DIR" "$CLAUDE_AGENTS_DIR" "*.md" --strip-ext
 }
 
+# step_generate_tools — regenerates the AI tool context markdown from registries.
 step_generate_tools() {
   local generator="$BIN_SRC_DIR/generate-tool-context"
   if [[ ! -x "$generator" ]]; then
@@ -177,8 +219,20 @@ step_generate_tools() {
   bash "$generator"
 }
 
+# step_install_claude — installs claude-code via brew if not already in PATH.
+step_install_claude() {
+  if command -v claude >/dev/null 2>&1; then
+    success "claude already installed"
+    return
+  fi
+  require_command brew "Homebrew not found — install claude-code manually: https://www.anthropic.com/claude-code" || return
+  info "Installing claude-code..."
+  brew install --cask claude-code
+  success "claude-code installed"
+}
+
 register_claude_steps() {
-  require_command claude "Claude Code (claude) not found in PATH — skipping Claude setup steps" || return
+  register_step "Install claude-code"     step_install_claude
   register_step "Tool context"            step_generate_tools
   register_step "Claude Code settings"    step_claude_settings
   register_step "Claude Code guidelines"  step_claude_guidelines
@@ -217,49 +271,20 @@ print_claude_summary() {
   info "Claude Code"
   echo
 
-  local file found
-
-  echo -e "  ${CYAN}MCP servers${NC}"
-  found=false
   if [[ -f "$CLAUDE_CONFIG_FILE" ]]; then
-    local mcp_name
+    echo -e "  ${CYAN}MCP servers${NC}"
+    local found=false mcp_name
     while IFS= read -r mcp_name; do
       echo -e "  ${DIM}  • $mcp_name${NC}"
       found=true
     done < <(jq -r '.mcpServers | keys[]' "$CLAUDE_CONFIG_FILE" 2>/dev/null)
+    [[ "$found" == false ]] && echo -e "  ${DIM}  (none)${NC}"
+    echo
   fi
-  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
-  echo
 
-  echo -e "  ${CYAN}Skills${NC} ${DIM}($CLAUDE_SKILLS_DIR/)${NC}"
-  found=false
-  for file in "$CLAUDE_SKILLS_DIR"/*/; do
-    [[ -e "$file" ]] || continue
-    echo -e "  ${DIM}  • $(basename "$file")${NC}"
-    found=true
-  done
-  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
-  echo
-
-  echo -e "  ${CYAN}Agents${NC} ${DIM}($CLAUDE_AGENTS_DIR/)${NC}"
-  found=false
-  for file in "$CLAUDE_AGENTS_DIR"/*.md; do
-    [[ -e "$file" ]] || continue
-    echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
-    found=true
-  done
-  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
-  echo
-
-  echo -e "  ${CYAN}Rules${NC} ${DIM}($CLAUDE_RULES_DIR/)${NC}"
-  found=false
-  for file in "$CLAUDE_RULES_DIR"/*.md; do
-    [[ -e "$file" ]] || continue
-    echo -e "  ${DIM}  • $(basename "${file%.md}")${NC}"
-    found=true
-  done
-  if [[ "$found" == false ]]; then echo -e "  ${DIM}  (none)${NC}"; fi
-  echo
+  _print_item_list "Skills"  "$CLAUDE_SKILLS_DIR"  "*/"
+  _print_item_list "Agents"  "$CLAUDE_AGENTS_DIR"  "*.md"
+  _print_item_list "Rules"   "$CLAUDE_RULES_DIR"   "*.md"
 
   echo -e "  ${DIM}  $CLAUDE_GUIDELINES_FILE   — persistent guidelines${NC}"
   echo -e "  ${DIM}  $CLAUDE_SETTINGS_FILE     — persistent permissions${NC}"

@@ -1,0 +1,22 @@
+# Apps stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/apps/apps.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Mac Apps"
+  install_check: true
+  validation: brewfile
+  source: brew/apps/apps.Brewfile
+
+tools:
+  - name: 1password-cli
+    description: "1Password CLI (op) — access secrets, SSH keys, and vaults from the terminal"
+    when_to_use: "Retrieving secrets in scripts; signing git commits via SSH agent"
+    usage: "op read 'op://vault/item/field'  |  op run -- <cmd>"
+    docs: "https://developer.1password.com/docs/cli/"
+
+  - name: bruno
+    description: "Open-source API client — test and document REST, GraphQL, and gRPC APIs"
+    when_to_use: "Testing API endpoints; managing API collections in version control"
+    usage: "Launched from Applications or Spotlight"
+    docs: "https://www.usebruno.com/"

@@ -1,0 +1,16 @@
+# Node.js stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/lang/node.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Node.js Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/lang/node.Brewfile
+
+tools:
+  - name: nvm
+    description: "Node Version Manager — install and switch between Node.js versions"
+    when_to_use: "Switching Node versions per project; installing a specific Node version"
+    usage: "nvm use <version>  |  nvm install <version>  |  nvm ls"
+    docs: "https://github.com/nvm-sh/nvm"

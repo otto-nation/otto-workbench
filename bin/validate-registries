@@ -11,8 +11,8 @@
 #       none          — schema-only, no cross-check
 #
 # Registry discovery:
-#   Top-level:  <repo>/*/registry.yml
-#   Work stacks: <repo>/brew/work/*.registry.yml
+#   Top-level:    <repo>/*/registry.yml
+#   Optional stacks: <repo>/brew/{lang,infra,tools}/*.registry.yml
 #
 # Usage: bin/validate-registries
 # Exit code: 0 if all checks pass, 1 if any fail.
@@ -154,14 +154,14 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 1
 fi
 
-# Collect all registries: top-level (one per domain dir) + work stacks
+# Collect all registries: top-level (one per domain dir) + optional stacks
 declare -a all_registries=()
 for f in "$REPO_ROOT"/*/registry.yml; do
   [[ -f "$f" ]] && all_registries+=("$f")
 done
-for f in "$REPO_ROOT"/brew/work/*.registry.yml; do
-  [[ -f "$f" ]] && all_registries+=("$f")
-done
+while IFS= read -r -d '' f; do
+  all_registries+=("$f")
+done < <(find "$REPO_ROOT/brew" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
 
 if [[ "${#all_registries[@]}" -eq 0 ]]; then
   warn "No registry files found — skipping"

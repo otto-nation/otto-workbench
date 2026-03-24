@@ -422,103 +422,110 @@ load_pr() {
   load_pr_context || return 1
 }
 
-# generate_pr_content BRANCH DEFAULT_BRANCH
-# Requires AI_COMMAND.
-# Sets PR_TITLE and PR_DESCRIPTION.
-generate_pr_content() {
+# _pr_resolve_issue BRANCH
+# Extracts an issue number from the branch name (e.g. feat/PROJ-42-desc → PROJ-42).
+# When none is found and SKIP_ISSUE is false, prompts the user to enter one.
+# Sets PR_ISSUE.
+_pr_resolve_issue() {
   local branch="$1"
-  local default_branch="$2"
+  PR_ISSUE=$(echo "$branch" | grep -oE '[A-Z]+-[0-9]+' | head -1)
 
-  # Extract issue number from branch name (e.g., feature/ISSUE-123-description)
-  local issue_number
-  issue_number=$(echo "$branch" | grep -oE '[A-Z]+-[0-9]+' | head -1)
-
-  if [ -z "$issue_number" ]; then
+  if [ -z "$PR_ISSUE" ]; then
     if [[ "$SKIP_ISSUE" = "false" ]]; then
       echo "→ No issue number found in branch name: $branch"
       echo ""
       printf "  Enter issue number (e.g., ISSUE-123) or press Enter to skip: "
-      read -r issue_number
+      read -r PR_ISSUE
     fi
   else
-    echo "✓ Found issue number: $issue_number"
+    echo "✓ Found issue number: $PR_ISSUE"
   fi
+}
 
-  local commits commit_count changed_files
-  commits=$(git log --oneline "$GIT_REMOTE/$default_branch..HEAD")
-  commit_count=$(git rev-list --count "$GIT_REMOTE/$default_branch..$branch")
-  changed_files=$(git diff --name-only "$GIT_REMOTE/$default_branch..$branch")
-
-  local has_template=false
-  local pr_template pr_template_file=""
-  # Check all locations GitHub recognises, in priority order
-  for _candidate in \
+# _pr_load_template
+# Finds a PR template in the GitHub-recognised locations (priority order).
+# Falls back to a minimal Summary/Changes/Testing template when none is found.
+# Sets PR_TEMPLATE and PR_HAS_TEMPLATE.
+_pr_load_template() {
+  PR_HAS_TEMPLATE=false
+  PR_TEMPLATE=""
+  local candidate
+  for candidate in \
     ".github/pull_request_template.md" \
     ".github/PULL_REQUEST_TEMPLATE.md" \
     "pull_request_template.md" \
     "PULL_REQUEST_TEMPLATE.md"; do
-    if [ -f "$_candidate" ]; then
-      pr_template_file="$_candidate"
-      break
+    if [ -f "$candidate" ]; then
+      PR_TEMPLATE=$(cat "$candidate")
+      PR_HAS_TEMPLATE=true
+      return
     fi
   done
-  if [ -n "$pr_template_file" ]; then
-    pr_template=$(cat "$pr_template_file")
-    has_template=true
-  else
-    pr_template="## Summary
+  PR_TEMPLATE="## Summary
 
 ## Changes
 
 ## Testing"
-  fi
+}
 
-  if [[ "$commit_count" -eq 1 ]]; then
-    local commit_subject commit_body
-    commit_subject=$(git log -1 --format="%s")
-    commit_body=$(git log -1 --format="%b" | sed '/^[[:space:]]*$/d')
+# _pr_generate_single_commit CHANGED_FILES
+# Handles the single-commit PR path: title is taken directly from the commit subject.
+# When a PR template exists, AI fills it; otherwise the commit body is used as-is.
+# Reads globals: PR_TEMPLATE, PR_HAS_TEMPLATE.
+# Sets PR_TITLE and PR_DESCRIPTION.
+_pr_generate_single_commit() {
+  local changed_files="$1"
+  local commit_subject commit_body
+  commit_subject=$(git log -1 --format="%s")
+  commit_body=$(git log -1 --format="%b" | sed '/^[[:space:]]*$/d')
 
-    PR_TITLE="$commit_subject"
+  PR_TITLE="$commit_subject"
 
-    if [[ "$has_template" = "true" ]]; then
-      echo "→ Single commit — using commit message as title, AI filling template"
-      local ai_prompt="Fill out this PR template based on the commit below. Return only the filled template body — no title, no markers, no extra commentary.
+  if [[ "$PR_HAS_TEMPLATE" = "true" ]]; then
+    echo "→ Single commit — using commit message as title, AI filling template"
+    local ai_prompt="Fill out this PR template based on the commit below. Return only the filled template body — no title, no markers, no extra commentary.
 
 Template:
-$pr_template
+$PR_TEMPLATE
 
 Commit subject: $commit_subject
 Commit body: ${commit_body:-<none>}
 
 Changed files:
 $changed_files"
-
-      run_ai "$ai_prompt"
-      PR_DESCRIPTION="$AI_RESPONSE"
-      if [ -z "$PR_DESCRIPTION" ]; then
-        PR_DESCRIPTION="$pr_template"
-      fi
-    elif [[ -n "$commit_body" ]]; then
-      echo "→ Single commit — skipping AI, using commit message directly"
-      PR_DESCRIPTION="$commit_body"
-    else
-      echo "→ Single commit — skipping AI, using commit message directly"
-      PR_DESCRIPTION="## Summary
+    run_ai "$ai_prompt"
+    PR_DESCRIPTION="${AI_RESPONSE:-$PR_TEMPLATE}"
+  elif [[ -n "$commit_body" ]]; then
+    echo "→ Single commit — skipping AI, using commit message directly"
+    PR_DESCRIPTION="$commit_body"
+  else
+    echo "→ Single commit — skipping AI, using commit message directly"
+    # shellcheck disable=SC2001  # multi-line prefix; parameter expansion not practical here
+    PR_DESCRIPTION="## Summary
 
 ## Changes
 
 $(echo "$changed_files" | sed 's/^/- /')
 
 ## Testing"
-    fi
-  else
-    local ai_prompt="Generate a professional PR title and fill out this template based on the changes:
+  fi
+}
+
+# _pr_generate_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES
+# Handles the multi-commit PR path: AI generates title and fills the PR template.
+# Falls back to safe defaults when the AI response is missing or malformed.
+# Reads globals: PR_TEMPLATE, PR_TITLE_MARKER, PR_DESCRIPTION_MARKER.
+# Sets PR_TITLE and PR_DESCRIPTION.
+_pr_generate_multi_commit() {
+  local branch="$1" issue="$2" commits="$3" commit_count="$4" changed_files="$5"
+
+  local ai_prompt="Generate a professional PR title and fill out this template based on the changes:
 
 Template:
-$pr_template
+$PR_TEMPLATE
 
 Branch: $branch
-Issue: ${issue_number:-None}
+Issue: ${issue:-None}
 Commits: $commit_count
 
 Recent commits:
@@ -530,28 +537,57 @@ $changed_files
 Return: $PR_TITLE_MARKER <title>
 $PR_DESCRIPTION_MARKER <filled template>"
 
-    run_ai "$ai_prompt"
+  run_ai "$ai_prompt"
 
-    PR_TITLE=$(echo "$AI_RESPONSE" | grep "^$PR_TITLE_MARKER" | sed "s/^$PR_TITLE_MARKER //" | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
-    PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n "/^$PR_DESCRIPTION_MARKER/,$ p" | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
+  # shellcheck disable=SC2016  # backticks in single-quoted sed pattern are literal, not shell expansions
+  PR_TITLE=$(echo "$AI_RESPONSE" | grep "^$PR_TITLE_MARKER" | sed "s/^$PR_TITLE_MARKER //" | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
+  PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n "/^$PR_DESCRIPTION_MARKER/,$ p" | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
 
-    if [ -z "$PR_TITLE" ]; then PR_TITLE="feat: improve codebase"; fi
-    if [ -z "$PR_DESCRIPTION" ]; then
-      PR_DESCRIPTION="## Summary"$'\n\n'"Branch: $branch"$'\n'"Commits: $commit_count"
-    fi
+  [ -z "$PR_TITLE" ] && PR_TITLE="feat: improve codebase"
+  [ -z "$PR_DESCRIPTION" ] && PR_DESCRIPTION="## Summary"$'\n\n'"Branch: $branch"$'\n'"Commits: $commit_count"
+}
+
+# _pr_append_issue_link ISSUE HAS_TEMPLATE
+# Prepends "Closes #N" to PR_DESCRIPTION when the issue is a numeric GitHub issue,
+# no PR template is active (templates handle linking themselves), and the user confirms.
+# Modifies PR_DESCRIPTION in place.
+_pr_append_issue_link() {
+  local issue="$1" has_template="$2"
+  [ "$has_template" = "true" ] || [ -z "$issue" ] || [ "$SKIP_ISSUE" = "true" ] && return
+
+  local clean_issue
+  clean_issue="${issue##\#}"
+  echo "$clean_issue" | grep -qE '^[0-9]+$' || return
+
+  echo ""
+  printf "  Close issue #%s when PR merges? [y/N] " "$clean_issue"
+  local close_issue
+  read -r close_issue
+  if [[ "$close_issue" =~ ^[Yy]$ ]]; then
+    PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"
+  fi
+}
+
+# generate_pr_content BRANCH DEFAULT_BRANCH
+# Requires AI_COMMAND.
+# Sets PR_TITLE and PR_DESCRIPTION.
+generate_pr_content() {
+  local branch="$1"
+  local default_branch="$2"
+
+  _pr_resolve_issue "$branch"
+  _pr_load_template
+
+  local commits commit_count changed_files
+  commits=$(git log --oneline "$GIT_REMOTE/$default_branch..HEAD")
+  commit_count=$(git rev-list --count "$GIT_REMOTE/$default_branch..$branch")
+  changed_files=$(git diff --name-only "$GIT_REMOTE/$default_branch..$branch")
+
+  if [[ "$commit_count" -eq 1 ]]; then
+    _pr_generate_single_commit "$changed_files"
+  else
+    _pr_generate_multi_commit "$branch" "$PR_ISSUE" "$commits" "$commit_count" "$changed_files"
   fi
 
-  # Only add "Closes" if no PR template, issue is a GitHub numeric issue, and not skipped
-  if [ "$has_template" = "false" ] && [ -n "$issue_number" ] && [[ "$SKIP_ISSUE" = "false" ]]; then
-    local clean_issue
-    clean_issue=$(echo "$issue_number" | sed 's/^#//')
-    if echo "$clean_issue" | grep -qE '^[0-9]+$'; then
-      echo ""
-      printf "  Close issue #%s when PR merges? [y/N] " "$clean_issue"
-      read -r close_issue
-      if [[ "$close_issue" =~ ^[Yy]$ ]]; then
-        PR_DESCRIPTION="Closes #$clean_issue"$'\n\n'"$PR_DESCRIPTION"
-      fi
-    fi
-  fi
+  _pr_append_issue_link "$PR_ISSUE" "$PR_HAS_TEMPLATE"
 }

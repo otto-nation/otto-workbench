@@ -67,33 +67,21 @@ step_zsh_loader() {
   fi
 }
 
-# step_zshrc — ensures ~/.zshrc exists and contains the workbench integration
-# block. On a new machine, copies the template. On an existing machine, checks
-# for the loader source line and appends the integration block if it is absent.
-#
-# After ensuring the integration block is present, scans for tool initializations
-# that are now managed by workbench snippets and warns if any are found — these
-# would be loaded twice on every shell start. Detection patterns are declared
-# in each snippet via '# duplicate-check:', so no changes are needed here when
-# snippets are added or removed.
-#
+# _zshrc_ensure_integration LOADER_REL — creates ~/.zshrc from template if absent,
+# or appends the workbench integration block if the loader source line is missing.
 # The workbench owns only one line in ~/.zshrc: the loader source. Everything
 # else in the file is yours. Re-running setup never overwrites your config.
-step_zshrc() {
-  # Derive the loader path relative to $HOME for writing into .zshrc at shell-start time.
-  # Using the relative form (\$HOME/...) keeps .zshrc portable across user accounts.
-  local loader_rel="${ZSH_LOADER_DST#"$HOME/"}"
-  local marker="$loader_rel"
+_zshrc_ensure_integration() {
+  local loader_rel="$1"
 
   if [[ ! -f "$ZSHRC_FILE" ]]; then
     cp "$ZSH_ZSHRC_TEMPLATE" "$ZSHRC_FILE"
     success "Created $ZSHRC_FILE from template"
     info "Add secrets and machine-specific config to $ENV_LOCAL_FILE (sourced automatically, never committed)"
-  elif grep -qF "$marker" "$ZSHRC_FILE" 2>/dev/null; then
+  elif grep -qF "$loader_rel" "$ZSHRC_FILE" 2>/dev/null; then
     success ".zshrc integration block present — up to date"
   else
-    # Append the integration block. Uses an unquoted heredoc so $loader_rel is
-    # expanded at install time; \$HOME is escaped so it expands at shell-start time.
+    # Append integration block. $loader_rel is expanded now; \$HOME expands at shell-start time.
     cat >> "$ZSHRC_FILE" <<EOF
 
 # ─── WORKBENCH INTEGRATION — added by install.sh ─────────────────────────────
@@ -110,15 +98,13 @@ EOF
     success "Added workbench integration block to $ZSHRC_FILE"
     info "Review the block at the bottom of $ZSHRC_FILE and move it if needed"
   fi
+}
 
-  # ── Duplicate detection ────────────────────────────────────────────────────
-  # Reads detection patterns directly from snippet files — no hardcoding here.
-  # Any snippet can opt in by adding these metadata comments to its header:
-  #
-  #   # duplicate-check: <egrep-pattern>   — pattern to look for in ~/.zshrc
-  #   # duplicate-check-label: <label>     — optional display name (default: filename)
-  #
-  # Adding a new snippet with a duplicate-check line automatically enrolls it.
+# _zshrc_check_duplicates — scans ~/.zshrc for tool initializations now managed
+# by workbench snippets and warns if any would be loaded twice.
+# Detection patterns are declared in each snippet via '# duplicate-check:',
+# so no changes are needed here when snippets are added or removed.
+_zshrc_check_duplicates() {
   local -a dupes=()
   local snip pat label rel
   while IFS= read -r snip; do
@@ -140,6 +126,15 @@ EOF
     done
     echo -e "  ${DIM}  These will load twice. Remove the old lines: \${EDITOR:-nano} $ZSHRC_FILE${NC}"
   fi
+}
+
+# step_zshrc — ensures ~/.zshrc is connected to the workbench loader and warns
+# about any tool inits that would now be loaded twice.
+step_zshrc() {
+  # Derive loader path relative to $HOME — keeps .zshrc portable across accounts.
+  local loader_rel="${ZSH_LOADER_DST#"$HOME/"}"
+  _zshrc_ensure_integration "$loader_rel"
+  _zshrc_check_duplicates
 }
 
 # sync_zsh — runs all zsh sync steps non-interactively, including starship.

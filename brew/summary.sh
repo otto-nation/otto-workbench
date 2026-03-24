@@ -9,5 +9,5 @@ print_brew_summary() {
   echo -e "  ${CYAN}Homebrew${NC}"
   echo -e "  ${DIM}  After installing new packages, sync the Brewfile:${NC}"
   echo -e "  ${DIM}  \$ task --global brew:dump${NC}"
-  echo -e "  ${DIM}  Work stacks: brew bundle --file=brew/work/<stack>.Brewfile${NC}"
+  echo -e "  ${DIM}  Optional stacks: brew bundle --file=brew/<category>/<stack>.Brewfile${NC}"
 }

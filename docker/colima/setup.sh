@@ -5,6 +5,13 @@
 # /var/run/docker.sock already symlinks to ~/.docker/run/docker.sock (created by Docker Desktop);
 # we point that second hop at Colima's socket so all tools find Docker without DOCKER_HOST set.
 
+if ! command -v colima >/dev/null 2>&1; then
+  require_command brew "Homebrew not found — install colima manually: https://github.com/abiosoft/colima" || return
+  info "Installing colima..."
+  brew install colima
+  success "colima installed"
+fi
+
 COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 
 mkdir -p "$DOCKER_RUN_DIR"

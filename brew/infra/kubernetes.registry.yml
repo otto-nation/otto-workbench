@@ -1,12 +1,12 @@
 # Kubernetes stack registry — AI context for Claude/Kiro.
-# Install: brew bundle --file=brew/work/kubernetes.Brewfile
+# Install: brew bundle --file=brew/infra/kubernetes.Brewfile
 # Regenerate: bin/generate-tool-context
 
 meta:
   section: "Kubernetes Tools"
   install_check: true
   validation: brewfile
-  source: brew/work/kubernetes.Brewfile
+  source: brew/infra/kubernetes.Brewfile
 
 tools:
   - name: k9s

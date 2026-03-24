@@ -71,3 +71,7 @@ install_symlink "$SCRIPT_DIR/testcontainers.properties" ~/.testcontainers.proper
 
 echo
 success "Docker setup complete!"
+
+# shellcheck source=docker/summary.sh
+. "$SCRIPT_DIR/summary.sh"
+print_docker_summary "$DOCKER_RUNTIME"

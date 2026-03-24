@@ -1,0 +1,16 @@
+# Signing stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/security/signing.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Signing Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/security/signing.Brewfile
+
+tools:
+  - name: gnupg
+    description: "GNU Privacy Guard — GPG encryption and signing"
+    when_to_use: "Signing git commits with GPG; encrypting/decrypting files"
+    usage: "gpg --sign  |  gpg --verify  |  gpg --list-keys"
+    docs: "https://gnupg.org/documentation/"

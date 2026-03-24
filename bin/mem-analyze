@@ -30,6 +30,29 @@ TOP_USERS_COUNT=5
 APP_NAME_MAX_WIDTH=50
 APP_NAME_DETAIL_MAX_WIDTH=60
 
+# _app_name CMD MAX_WIDTH — derives a human-readable application name from a ps command string.
+# Recognises IntelliJ IDEA, .app bundles, Gradle/Java daemons, and macOS VMs; falls back to basename.
+_app_name() {
+  local full_cmd="$1" max_width="$2" app proj
+  if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
+    app="IntelliJ IDEA"
+    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
+    [ -n "$proj" ] && app="$app ($proj)"
+  elif echo "$full_cmd" | grep -q "\.app/Contents"; then
+    app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
+  elif echo "$full_cmd" | grep -qi "java.*gradle"; then
+    app="Gradle/Java"
+    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
+    [ -n "$proj" ] && app="$app ($proj)"
+  elif echo "$full_cmd" | grep -q "Virtualization"; then
+    app="macOS VM"
+  else
+    app=$(basename "$full_cmd")
+  fi
+  [ ${#app} -gt "$max_width" ] && app="${app:0:$(( max_width - 3 ))}..."
+  echo "$app"
+}
+
 # Conversion constants
 BYTES_PER_MB=1048576  # 1024 * 1024
 MB_PER_GB=1024
@@ -81,28 +104,10 @@ echo ""
 # Top Memory Consumers
 echo -e "${BOLD}${BLUE}━━━ Top 10 Memory Consuming Processes ━━━${NC}"
 printf "  ${BOLD}%-8s %6s %10s  %-50s${NC}\n" "PID" "%MEM" "MEMORY" "APPLICATION"
-# sort -nrk 4: numeric, reverse, by column 4 (%MEM in ps aux output); +1 on head skips the header row
-ps aux | sort -nrk 4 | head -$(( TOP_PROCESSES_COUNT + 1 )) | tail -$TOP_PROCESSES_COUNT | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
-  full_cmd="$cmd"
-
-  # Match known app patterns for a readable name; fall back to the binary basename
-  if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
-    app="IntelliJ IDEA"
-    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
-    [ -n "$proj" ] && app="$app ($proj)"
-  elif echo "$full_cmd" | grep -q "\.app/Contents"; then
-    app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
-  elif echo "$full_cmd" | grep -qi "java.*gradle"; then
-    app="Gradle/Java"
-    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
-    [ -n "$proj" ] && app="$app ($proj)"
-  elif echo "$full_cmd" | grep -q "Virtualization"; then
-    app="macOS VM"
-  else
-    app=$(basename "$cmd")
-  fi
-
-  [ ${#app} -gt $APP_NAME_MAX_WIDTH ] && app="${app:0:$(( APP_NAME_MAX_WIDTH - 3 ))}..."
+# tail -n +2 strips the ps header before sorting — numeric sort places the "MEM" header string last,
+# so the head+1/tail trick does not skip it; it drops the top-memory process instead.
+ps aux | tail -n +2 | sort -nrk 4 | head -$TOP_PROCESSES_COUNT | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
+  app=$(_app_name "$cmd" "$APP_NAME_MAX_WIDTH")
   mem_mb=$(echo "scale=0; $rss/1024" | bc)
   printf "  %-8s %6s %10s MB  %-50s\n" "$pid" "$mem" "$mem_mb" "$app"
 done
@@ -114,27 +119,7 @@ printf "  ${BOLD}%12s %8s  %-60s${NC}\n" "MEMORY" "%MEM" "APPLICATION"
 # $6 is RSS (resident set size) in KB
 # shellcheck disable=SC2034  # user,cpu,vsz,tt,stat,started,time unused — read to consume positional fields
 ps aux | awk -v threshold="$PROCESS_WARN_THRESHOLD_KB" 'NR>1 && $6 > threshold' | while read -r user pid cpu mem vsz rss tt stat started time cmd; do
-  full_cmd="$cmd"
-
-  # App name extraction — same pattern as the Top 10 section above;
-  # repeated here because each section runs in its own pipeline subshell and cannot share variables
-  if echo "$full_cmd" | grep -q "IntelliJ IDEA"; then
-    app="IntelliJ IDEA"
-    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects|\.idea)' | head -1 | cut -d'/' -f2)
-    [ -n "$proj" ] && app="$app ($proj)"
-  elif echo "$full_cmd" | grep -q "\.app/Contents"; then
-    app=$(echo "$full_cmd" | grep -oE '/[^/]+\.app' | head -1 | sed 's|.*/||' | sed 's|\.app||')
-  elif echo "$full_cmd" | grep -qi "java.*gradle"; then
-    app="Gradle/Java"
-    proj=$(echo "$full_cmd" | grep -oE '/[^/]+/(build|subprojects)' | head -1 | cut -d'/' -f2)
-    [ -n "$proj" ] && app="$app ($proj)"
-  elif echo "$full_cmd" | grep -q "Virtualization"; then
-    app="macOS VM"
-  else
-    app=$(basename "$cmd")
-  fi
-
-  [ ${#app} -gt $APP_NAME_DETAIL_MAX_WIDTH ] && app="${app:0:$(( APP_NAME_DETAIL_MAX_WIDTH - 3 ))}..."
+  app=$(_app_name "$cmd" "$APP_NAME_DETAIL_MAX_WIDTH")
   mem_mb=$(echo "scale=2; $rss/1024" | bc)
   printf "  %10.2f MB  %6s%%  %-60s\n" "$mem_mb" "$mem" "$app"
 done | sort -nrk 1

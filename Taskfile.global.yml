@@ -68,6 +68,7 @@ tasks:
         echo ""
 
         validate_commit_msg "$AI_MSG" || exit 1
+        [[ -n "$AI_MSG" ]] || { echo "✗ Empty commit message — aborting"; exit 1; }
 
         echo "→ Committing..."
         git commit -m "$AI_MSG"
@@ -101,11 +102,8 @@ tasks:
           STASHED=true
         fi
 
-        TMPFILE=$(mktemp)
-        EDITOR_SCRIPT=$(mktemp)
-        SEQ_EDITOR=$(mktemp)
-
-        # Always pop stash and remove temp files on exit, even if something fails
+        # Register cleanup before mktemp so partial failures still clean up
+        TMPFILE="" EDITOR_SCRIPT="" SEQ_EDITOR=""
         cleanup() {
           rm -f "$TMPFILE" "$EDITOR_SCRIPT" "$SEQ_EDITOR" 2>/dev/null || true
           if [ "$STASHED" = true ]; then
@@ -114,6 +112,10 @@ tasks:
           fi
         }
         trap cleanup EXIT
+
+        TMPFILE=$(mktemp)
+        EDITOR_SCRIPT=$(mktemp)
+        SEQ_EDITOR=$(mktemp)
 
         echo "→ Analyzing commit with AI..."
         FULL_DIFF=$(git show "$TARGET_SHA" --no-color)

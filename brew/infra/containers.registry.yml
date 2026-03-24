@@ -1,0 +1,16 @@
+# Containers stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/infra/containers.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Container Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/infra/containers.Brewfile
+
+tools:
+  - name: colima
+    description: "Lightweight container runtime for macOS (Docker-compatible, no Docker Desktop needed)"
+    when_to_use: "Running Docker containers locally"
+    usage: "colima start  |  colima stop  |  colima status"
+    docs: "https://github.com/abiosoft/colima"

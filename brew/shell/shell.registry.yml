@@ -1,0 +1,46 @@
+# Shell stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/shell/shell.Brewfile
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Shell Tools"
+  install_check: true
+  validation: brewfile
+  source: brew/shell/shell.Brewfile
+
+tools:
+  - name: starship
+    description: "Fast, cross-shell prompt — shows git status, language versions, and context at a glance"
+    when_to_use: "Always active in shell; configured via ~/.config/starship.toml (symlinked from workbench)"
+    usage: "Initialized automatically via zsh config"
+    docs: "https://starship.rs"
+
+  - name: fzf
+    description: "Fuzzy finder — interactive search for files, history, and command output"
+    when_to_use: "Interactively filtering lists; integrates with shell history (ctrl-r), git, vim, and other tools"
+    usage: "fzf  |  git branch | fzf  |  history | fzf"
+    docs: "https://github.com/junegunn/fzf"
+
+  - name: zoxide
+    description: "Smarter cd — learns frequently-visited directories and jumps to them by partial name"
+    when_to_use: "Navigating to frequently-used directories faster than cd"
+    usage: "z workbench  |  z src"
+    docs: "https://github.com/ajeetdsouza/zoxide"
+
+  - name: zsh-autosuggestions
+    description: "Fish-style autosuggestions for zsh — suggests commands from history as you type"
+    when_to_use: "Always active in shell; accept suggestions with → or End key"
+    usage: "Loaded automatically via zsh config"
+    docs: "https://github.com/zsh-users/zsh-autosuggestions"
+
+  - name: zsh-completions
+    description: "Additional completion definitions for zsh — extends tab-completion for many tools"
+    when_to_use: "Always active in shell; enhances tab-completion for tools not covered by default zsh"
+    usage: "Loaded automatically via zsh config"
+    docs: "https://github.com/zsh-users/zsh-completions"
+
+  - name: zsh-syntax-highlighting
+    description: "Fish-style syntax highlighting for zsh — highlights valid commands green, errors red"
+    when_to_use: "Always active in shell; visual feedback before executing commands"
+    usage: "Loaded automatically via zsh config"
+    docs: "https://github.com/zsh-users/zsh-syntax-highlighting"

@@ -258,9 +258,9 @@ tasks:
         brew bundle --file="$BREWFILE"
         echo "✓ Core packages installed"
         echo ""
-        echo "→ Work-specific Brewfiles available in brew/work/:"
-        for f in "{{.TASKFILE_DIR}}"/brew/work/*.Brewfile; do
-          echo "   brew bundle --file=${f#{{.TASKFILE_DIR}}/}"
+        echo "→ Optional Brewfiles available:"
+        for f in "{{.TASKFILE_DIR}}"/brew/{lang,infra,tools}/*.Brewfile; do
+          [[ -f "$f" ]] && echo "   brew bundle --file=${f#{{.TASKFILE_DIR}}/}"
         done
 
   brew:dump:

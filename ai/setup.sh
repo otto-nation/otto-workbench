@@ -39,18 +39,21 @@ prompt_secret() {
 
 SELECTED_TOOLS=()
 
-tool_selected() {
-  local t
-  for t in "${SELECTED_TOOLS[@]}"; do [[ "$t" == "$1" ]] && return 0; done
-  return 1
-}
-
-select_tools() {
-  local tools=()
+# _ai_discover_tools ARRAY_VAR — populates ARRAY_VAR with the names of all
+# AI tools that have a steps.sh in a subdirectory of this script's directory.
+_ai_discover_tools() {
+  local -n _tools_ref="$1"
   local dir
   for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}steps.sh" ]] && tools+=("$(basename "$dir")")
+    [[ -f "${dir}steps.sh" ]] && _tools_ref+=("$(basename "$dir")")
   done
+}
+
+# select_tools — discovers available AI tools, prompts the user to select which
+# to configure, and populates SELECTED_TOOLS.
+select_tools() {
+  local tools=()
+  _ai_discover_tools tools
 
   if [[ ${#tools[@]} -eq 0 ]]; then
     err "No AI tools found in $SCRIPT_DIR"
@@ -61,6 +64,7 @@ select_tools() {
   echo
   info "Which AI tools do you want to set up?"
   local i=1
+  local tool
   for tool in "${tools[@]}"; do
     echo -e "  ${CYAN}[$i]${NC} $tool"
     i=$(( i + 1 ))
@@ -76,8 +80,7 @@ select_tools() {
     SELECTED_TOOLS+=("${tools[$((num - 1))]}")
   done
 
-  local tools_display=""
-  local t
+  local tools_display="" t
   for t in "${SELECTED_TOOLS[@]}"; do tools_display+="${BOLD}${t}${NC}  "; done
   info "Setting up:  ${tools_display}"
 }

@@ -234,6 +234,7 @@ _readme_ai_installs() {
 
 # _brew_pkgs_from FILE — comma-separated short package names from a Brewfile
 _brew_pkgs_from() {
+  [[ -f "$1" ]] || return 0
   grep -E '^(brew|cask) ' "$1" \
     | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' \
     | paste -sd ',' - | sed 's/,/, /g'

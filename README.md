@@ -95,7 +95,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 - `brew/lang/` — go · java · node
 - `brew/security/` — gnupg, pinentry-mac, gpg-suite
 - `brew/shell/` — fzf, starship, font-fira-code-nerd-font, zoxide, zsh-autosuggestions, zsh-completions, zsh-syntax-highlighting
-- `brew/tools/` — jira-cli
+- `brew/tools/` — jira-cli, mas
 <!-- BREW-STACKS-END -->
 
 ```bash

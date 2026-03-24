@@ -1,12 +1,12 @@
-# Jira stack registry — AI context for Claude/Kiro.
-# Install: brew bundle --file=brew/tools/jira.Brewfile
+# Tools stack registry — AI context for Claude/Kiro.
+# Install: brew bundle --file=brew/tools/tools.Brewfile
 # Regenerate: bin/generate-tool-context
 
 meta:
-  section: "Jira Tools"
+  section: "Dev Tools"
   install_check: true
   validation: brewfile
-  source: brew/tools/jira.Brewfile
+  source: brew/tools/tools.Brewfile
 
 tools:
   - name: jira
@@ -15,3 +15,9 @@ tools:
     when_to_use: "Viewing, moving, or commenting on Jira tickets; checking ticket status; assigning issues"
     usage: "jira issue view PROJ-123 --plain  |  jira issue list -P PROJ --plain  |  jira issue move PROJ-123 \"In Progress\""
     docs: "https://github.com/ankitpokhrel/jira-cli"
+
+  - name: mas
+    description: "Mac App Store CLI — search, install, and update App Store apps from the terminal"
+    when_to_use: "Installing or updating App Store apps; scripting machine setup with App Store installs"
+    usage: "mas search <app>  |  mas install <id>  |  mas upgrade"
+    docs: "https://github.com/mas-cli/mas"

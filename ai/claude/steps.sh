@@ -219,8 +219,20 @@ step_generate_tools() {
   bash "$generator"
 }
 
+# step_install_claude — installs claude-code via brew if not already in PATH.
+step_install_claude() {
+  if command -v claude >/dev/null 2>&1; then
+    success "claude already installed"
+    return
+  fi
+  require_command brew "Homebrew not found — install claude-code manually: https://www.anthropic.com/claude-code" || return
+  info "Installing claude-code..."
+  brew install --cask claude-code
+  success "claude-code installed"
+}
+
 register_claude_steps() {
-  require_command claude "Claude Code (claude) not found in PATH — skipping Claude setup steps" || return
+  register_step "Install claude-code"     step_install_claude
   register_step "Tool context"            step_generate_tools
   register_step "Claude Code settings"    step_claude_settings
   register_step "Claude Code guidelines"  step_claude_guidelines

@@ -52,9 +52,22 @@ step_kiro_rules() {
   symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$KIRO_STEERING_DIR" "$RULES_GLOB"
 }
 
+# step_install_kiro — installs kiro-cli via brew if not already in PATH.
+step_install_kiro() {
+  if command -v kiro >/dev/null 2>&1; then
+    success "kiro already installed"
+    return
+  fi
+  require_command brew "Homebrew not found — install kiro-cli manually: https://kiro.dev/docs/cli/" || return
+  info "Installing kiro-cli..."
+  brew install --cask kiro-cli
+  success "kiro-cli installed"
+}
+
 register_kiro_steps() {
-  register_step "Kiro agent configs" step_kiro_agents
-  register_step "Kiro rules"         step_kiro_rules
+  register_step "Install kiro-cli"    step_install_kiro
+  register_step "Kiro agent configs"  step_kiro_agents
+  register_step "Kiro rules"          step_kiro_rules
 }
 
 # sync_kiro — runs all Kiro sync steps non-interactively.

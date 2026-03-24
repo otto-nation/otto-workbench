@@ -14,6 +14,7 @@
 #     - No orphan: directory has setup.conf but is not registered
 #
 #   Cross-tier:
+#     - No duplicate sync_<name>() definitions across all steps.sh files
 #     - Every optional component's steps.sh (if present) defines sync_<name>()
 #
 # Exit code: 0 if all checks pass, 1 if any fail.
@@ -29,6 +30,26 @@ CHECKS=0
 
 _pass() { CHECKS=$(( CHECKS + 1 )); echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+# ─── Cross-tier: no duplicate sync_<name>() definitions across steps.sh files ─
+
+echo; info "Cross-tier — no duplicate sync_<name>() definitions"
+
+_sync_fns_all=""
+for _sf in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/*/*/steps.sh; do
+  [[ -f "$_sf" ]] || continue
+  _sync_fns_all+=$(grep -oE "^sync_[a-z_]+[[:space:]]*\(\)" "$_sf" | sed 's/[[:space:]]*()//')$'\n'
+done
+_sync_dupes=$(printf '%s' "$_sync_fns_all" | sort | uniq -d)
+if [[ -n "$_sync_dupes" ]]; then
+  while IFS= read -r _fn; do
+    [[ -z "$_fn" ]] && continue
+    _fail "duplicate ${_fn}() defined in multiple steps.sh files"
+  done <<< "$_sync_dupes"
+else
+  _pass "no duplicate sync_<name>() definitions"
+fi
+unset _sync_fns_all _sync_dupes _sf _fn
 
 # ─── Tier 1: steps.sh files define sync_<name>() ─────────────────────────────
 

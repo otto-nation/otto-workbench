@@ -25,6 +25,8 @@ _mcp_update() {
   info "Updating $name (command changed)"
   local tmp
   tmp=$(mktemp)
+  # shellcheck disable=SC2064  # $tmp must expand now to capture this invocation's value
+  trap "rm -f '$tmp'" RETURN
   jq --arg n "$name" 'del(.mcpServers[$n])' "$CLAUDE_CONFIG_FILE" > "$tmp" \
     && mv "$tmp" "$CLAUDE_CONFIG_FILE"
 }
@@ -221,14 +223,7 @@ step_generate_tools() {
 
 # step_install_claude — installs claude-code via brew if not already in PATH.
 step_install_claude() {
-  if command -v claude >/dev/null 2>&1; then
-    success "claude already installed"
-    return
-  fi
-  require_command brew "Homebrew not found — install claude-code manually: https://www.anthropic.com/claude-code" || return
-  info "Installing claude-code..."
-  brew install --cask claude-code
-  success "claude-code installed"
+  _ai_install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
 }
 
 register_claude_steps() {

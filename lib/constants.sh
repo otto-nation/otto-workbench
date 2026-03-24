@@ -12,7 +12,19 @@
 # Auto-derived from this file's location (lib/constants.sh → workbench root).
 # Respects DOTFILES_DIR (set by install.sh) and WORKBENCH_DIR if already set.
 if [[ -z "${WORKBENCH_DIR:-}" ]]; then
-  WORKBENCH_DIR="${DOTFILES_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}"
+  # Resolve symlinks so WORKBENCH_DIR is correct even if lib/constants.sh is symlinked.
+  _constants_src="${BASH_SOURCE[0]}"
+  while [[ -L "$_constants_src" ]]; do
+    _constants_link="$(readlink "$_constants_src")"
+    if [[ "$_constants_link" == /* ]]; then
+      _constants_src="$_constants_link"
+    else
+      _constants_src="$(cd "$(dirname "$_constants_src")" && pwd)/$_constants_link"
+    fi
+  done
+  unset _constants_link
+  WORKBENCH_DIR="${DOTFILES_DIR:-"$(cd "$(dirname "$_constants_src")/.." && pwd)"}"
+  unset _constants_src
 fi
 
 # ─── Shell dotfiles ───────────────────────────────────────────────────────────

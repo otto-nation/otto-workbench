@@ -64,14 +64,6 @@ update_path_in_shell_rc() {
 
 # ─── Component system ─────────────────────────────────────────────────────────
 
-# conf_get FILE KEY — reads a key = value line from FILE.
-# Returns the trimmed value or empty string if the key is not found.
-conf_get() {
-  local file=$1 key=$2
-  grep -m1 "^${key}[[:space:]]*=" "$file" 2>/dev/null \
-    | sed "s/^${key}[[:space:]]*=[[:space:]]*//"
-}
-
 # platform_supported PLATFORMS — returns 0 if the current OS matches PLATFORMS.
 # PLATFORMS is a space-separated list of: macos, linux. Empty or "all" means always supported.
 platform_supported() {
@@ -183,6 +175,9 @@ select_components() {
 # run_components — executes setup.sh for each selected component.
 # If setup.conf defines a `check` command, runs it first; skips the component if it exits 0.
 # DOTFILES_DIR is exported so check commands can reference it.
+#
+# Error recovery strategy: component setup failures warn and continue (non-fatal).
+# Framework contract violations (missing functions, bad registry) hard-fail before setup runs.
 run_components() {
   [[ ${#SELECTED_COMPONENTS[@]} -eq 0 ]] && return
 
@@ -193,6 +188,8 @@ run_components() {
     check_cmd=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" check)
     echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}${label:-$component}${NC}"
 
+    # check_cmd is read from setup.conf files that are version-controlled in this repo —
+    # treat as trusted input. Do not pass user-supplied strings here.
     # shellcheck disable=SC2086
     if [[ -n "$check_cmd" ]] && bash -c "$check_cmd" > /dev/null 2>&1; then
       success "already configured"

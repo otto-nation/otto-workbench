@@ -66,8 +66,8 @@ else
     if [[ ! -f "$conf" ]]; then
       _fail "$component: missing setup.conf"
     else
-      label=$(grep -m1 '^label[[:space:]]*=' "$conf" | sed 's/^label[[:space:]]*=[[:space:]]*//')
-      desc=$(grep -m1 '^description[[:space:]]*=' "$conf" | sed 's/^description[[:space:]]*=[[:space:]]*//')
+      label=$(conf_get "$conf" label)
+      desc=$(conf_get "$conf" description)
       if [[ -n "$label" ]]; then _pass "$component/setup.conf: label present"
       else                       _fail "$component/setup.conf: missing label"; fi
       if [[ -n "$desc" ]];  then _pass "$component/setup.conf: description present"

@@ -27,6 +27,22 @@ unset _dir
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+# _ai_install_cask CMD CASK LABEL MANUAL_URL
+# Installs a tool via Homebrew cask if CMD is not already in PATH.
+# Falls back to a manual install message if brew is unavailable.
+# Called from each tool's step_install_<tool>() at interactive setup time.
+_ai_install_cask() {
+  local cmd="$1" cask="$2" label="$3" manual_url="$4"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    success "$cmd already installed"
+    return
+  fi
+  require_command brew "Homebrew not found — install $label manually: $manual_url" || return
+  info "Installing $label..."
+  brew install --cask "$cask"
+  success "$label installed"
+}
+
 # prompt_secret LABEL VAR — hidden read into a named variable.
 prompt_secret() {
   local label=$1 var=$2 value
@@ -94,7 +110,11 @@ STEPS=()
 
 select_tools
 
+# Framework contract: missing register_<tool>_steps is a hard error — the tool's
+# steps.sh is broken and cannot run. Individual step failures are soft (warn + continue).
 for _tool in "${SELECTED_TOOLS[@]}"; do
+  declare -f "register_${_tool}_steps" > /dev/null \
+    || { err "register_${_tool}_steps is not defined — check ${_tool}/steps.sh"; exit 1; }
   "register_${_tool}_steps"
 done
 

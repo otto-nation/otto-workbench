@@ -197,17 +197,15 @@ run_components() {
     if [[ -n "$check_cmd" ]] && bash -c "$check_cmd" > /dev/null 2>&1; then
       success "already configured"
     else
-      bash "$WORKBENCH_DIR/$component/setup.sh"
+      bash "$WORKBENCH_DIR/$component/setup.sh" || warn "$label setup encountered errors — see above"
     fi
 
     index=$(( index + 1 ))
   done
 }
 
-# print_install_summary — prints a structured summary after all components run.
-# Sources each selected component's summary.sh (if present) and calls its
-# print_<component>_summary() function, following the same discovery pattern
-# used by ai/setup.sh for per-tool summaries.
+# print_install_summary — prints the final "All done" screen.
+# Per-component summaries are printed inline by each component's setup.sh.
 print_install_summary() {
   local shell_name readme
   shell_name=$(basename "$SHELL")
@@ -218,30 +216,20 @@ print_install_summary() {
   echo
 
   echo -e "  ${CYAN}Installed${NC}"
-  echo -e "  ${DIM}  • bin scripts      → $LOCAL_BIN_DIR/${NC}"
-  echo -e "  ${DIM}  • zsh snippets     → $ZSH_CONFIG_DIR/{framework,tools,aliases,prompt}/${NC}"
-  echo -e "  ${DIM}  • gitconfig        → $GITCONFIG_FILE (includes git/.gitconfig + ~/.gitconfig.local)${NC}"
-  echo -e "  ${DIM}  • global Taskfile  → $TASK_CONFIG_DIR/${NC}"
-  local component
+  echo -e "  ${DIM}  • bin scripts   → $LOCAL_BIN_DIR/${NC}"
+  echo -e "  ${DIM}  • zsh snippets  → $ZSH_CONFIG_DIR/{framework,tools,aliases,prompt}/${NC}"
+  echo -e "  ${DIM}  • gitconfig     → $GITCONFIG_FILE${NC}"
+  echo -e "  ${DIM}  • global tasks  → $TASK_CONFIG_DIR/${NC}"
+  local component label
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    local label
     label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
     echo -e "  ${DIM}  • ${label:-$component}${NC}"
   done
 
   echo
   echo -e "  ${CYAN}Next steps${NC}"
-  echo -e "  ${DIM}  1. Reload your shell:${NC}  ${BOLD}exec $shell_name${NC}"
-
-  for component in "${SELECTED_COMPONENTS[@]}"; do
-    local summary_file="$WORKBENCH_DIR/$component/summary.sh"
-    # shellcheck source=/dev/null
-    [[ -f "$summary_file" ]] && . "$summary_file"
-    declare -f "print_${component}_summary" > /dev/null && "print_${component}_summary"
-  done
-
-  echo
-  echo -e "  ${DIM}Day-to-day reference:  $readme${NC}"
+  echo -e "  ${DIM}  1. Reload your shell:  exec $shell_name${NC}"
+  echo -e "  ${DIM}  2. Reference:          $readme${NC}"
   echo
 }
 

@@ -39,13 +39,12 @@ prompt_secret() {
 
 SELECTED_TOOLS=()
 
-# _ai_discover_tools ARRAY_VAR — populates ARRAY_VAR with the names of all
-# AI tools that have a steps.sh in a subdirectory of this script's directory.
+# _ai_discover_tools — prints the name of each AI tool subdirectory that
+# contains a steps.sh, one per line. Caller reads into an array.
 _ai_discover_tools() {
-  local -n _tools_ref="$1"
   local dir
   for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}steps.sh" ]] && _tools_ref+=("$(basename "$dir")")
+    [[ -f "${dir}steps.sh" ]] && basename "$dir"
   done
 }
 
@@ -53,7 +52,7 @@ _ai_discover_tools() {
 # to configure, and populates SELECTED_TOOLS.
 select_tools() {
   local tools=()
-  _ai_discover_tools tools
+  while IFS= read -r tool; do tools+=("$tool"); done < <(_ai_discover_tools)
 
   if [[ ${#tools[@]} -eq 0 ]]; then
     err "No AI tools found in $SCRIPT_DIR"

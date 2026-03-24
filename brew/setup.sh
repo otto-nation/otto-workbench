@@ -8,10 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../lib/ui.sh"
 
 require_command brew "Homebrew not found — skipping package install" || exit 0
+require_command jq  "jq not found — required for brew install status" || exit 1
 
-# Cache installed formulae and casks once for fast per-package lookups
-_INSTALLED_FORMULAE=$(brew list --formula 2>/dev/null)
-_INSTALLED_CASKS=$(brew list --cask 2>/dev/null)
+# Build installed package sets once from brew's own metadata.
+# Using brew info JSON (formula name / cask token) rather than keg names means
+# aliases like delta→git-delta resolve correctly without per-package subprocesses.
+_BREW_INFO=$(brew info --installed --json=v2 2>/dev/null)
+_INSTALLED_FORMULAE=$(printf '%s' "$_BREW_INFO" | jq -r '.formulae[] | (.name, .aliases[])' 2>/dev/null)
+_INSTALLED_CASKS=$(printf '%s' "$_BREW_INFO" | jq -r '.casks[].token' 2>/dev/null)
+unset _BREW_INFO
 
 # _brew_pkg_url TYPE NAME
 # Generates a Homebrew URL. Tap packages link to the tap on GitHub.
@@ -26,14 +31,20 @@ _brew_pkg_url() {
   fi
 }
 
-# _brew_is_installed TYPE SHORT_NAME
+# _brew_is_installed TYPE FULL_NAME — checks the cached brew info sets.
 _brew_is_installed() {
-  local type="$1" name="$2"
+  local type="$1" short_name="${2##*/}"
   if [[ "$type" == "cask" ]]; then
-    echo "$_INSTALLED_CASKS" | grep -qx "$name"
+    echo "$_INSTALLED_CASKS"    | grep -qx "$short_name"
   else
-    echo "$_INSTALLED_FORMULAE" | grep -qx "$name"
+    echo "$_INSTALLED_FORMULAE" | grep -qx "$short_name"
   fi
+}
+
+# _brew_all_installed FILE — returns 0 if every dependency in FILE is satisfied.
+# Delegates to brew bundle check so brew's own resolver handles aliases and taps.
+_brew_all_installed() {
+  brew bundle check --file="$1" --no-upgrade &>/dev/null
 }
 
 # _brew_show_packages FILE [--numbered]
@@ -50,7 +61,7 @@ _brew_show_packages() {
     local prefix="" url
     url=$(_brew_pkg_url "$type" "$full_name")
     [[ "$numbered" == true ]] && prefix="$(printf '[%d] ' "$index")"
-    if _brew_is_installed "$type" "$short_name"; then
+    if _brew_is_installed "$type" "$full_name"; then
       echo -e "  ${DIM}✓ ${prefix}$(printf '%-28s' "$short_name") $url${NC}"
     else
       echo -e "  ${GREEN}+${NC} ${prefix}$(printf '%-28s' "$short_name") ${DIM}$url${NC}"
@@ -67,12 +78,7 @@ _brew_install_file() {
   info "$label:"
   _brew_show_packages "$file"
   echo
-  local all_installed=true
-  while IFS= read -r line; do
-    [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
-    _brew_is_installed "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]##*/}" || { all_installed=false; break; }
-  done < "$file"
-  if [[ "$all_installed" == true ]]; then
+  if _brew_all_installed "$file"; then
     echo -e "  ${DIM}All packages already installed — skipping${NC}"
     return
   fi
@@ -124,7 +130,7 @@ _brew_select_packages() {
   for num in $sel; do
     local idx=$(( num - 1 ))
     local type="${pkg_types[$idx]}" full="${pkg_full[$idx]}" short="${pkg_short[$idx]}"
-    if _brew_is_installed "$type" "$short"; then
+    if _brew_is_installed "$type" "$full"; then
       echo -e "  ${DIM}✓ $short already installed${NC}"
     elif [[ "$type" == "cask" ]]; then
       brew install --cask "$full" && success "Installed $short"
@@ -177,42 +183,6 @@ _brew_select_category() {
   done
 }
 
-# _brew_resolve_category_input RAW_INPUT DIRS_ARRAY LABELS_ARRAY
-# Resolves user input (numbers, names, or "all") against the parallel
-# DIRS_ARRAY / LABELS_ARRAY and calls _brew_select_category for each match.
-# Populates the caller's _SELECTED_FILES and _SELECTED_LABELS arrays.
-_brew_resolve_category_input() {
-  local raw_input="$1"
-  local -n _dirs_ref="$2"
-  local -n _labels_ref="$3"
-
-  # Expand "all" to every category index
-  if [[ "$raw_input" == "all" ]]; then
-    raw_input=""
-    local i
-    for i in "${!_dirs_ref[@]}"; do raw_input+="$((i+1)) "; done
-  fi
-
-  # Resolve each token: number → index; name → matching label
-  local token
-  for token in $raw_input; do
-    if [[ "$token" =~ ^[0-9]+$ ]]; then
-      local idx=$(( token - 1 ))
-      if [[ "$idx" -ge 0 && "$idx" -lt "${#_dirs_ref[@]}" ]]; then
-        _brew_select_category "${_dirs_ref[$idx]}" "${_labels_ref[$idx]}"
-      fi
-    else
-      local i
-      for i in "${!_labels_ref[@]}"; do
-        if [[ "${_labels_ref[$i]}" == "$token" ]]; then
-          _brew_select_category "${_dirs_ref[$i]}" "${_labels_ref[$i]}"
-          break
-        fi
-      done
-    fi
-  done
-}
-
 # _brew_select_optional BREW_DIR
 # Discovers category subdirs under BREW_DIR, presents them grouped.
 # User can select entire categories or drill into individual stacks.
@@ -233,24 +203,32 @@ _brew_select_optional() {
 
   echo
   info "Optional stacks — select categories to install:"
+  local i
   for i in "${!category_labels[@]}"; do
-    local stacks
-    stacks=$(for f in "${category_dirs[$i]}"*.Brewfile; do
-      [[ -f "$f" ]] && basename "$f" .Brewfile
-    done | paste -sd ',' - | sed 's/,/, /g')
-    printf "  [%d] %-12s ${DIM}%s${NC}\n" "$((i+1))" "${category_labels[$i]}" "$stacks"
+    local brewfiles=("${category_dirs[$i]}"*.Brewfile)
+    local description
+    if [[ ${#brewfiles[@]} -eq 1 ]] && [[ -f "${brewfiles[0]}" ]]; then
+      # Single stack — show package names so the user knows what they're getting
+      description=$(_brew_pkgs "${brewfiles[0]}")
+    else
+      # Multiple stacks — show stack names; packages are shown when drilling in
+      description=$(for f in "${category_dirs[$i]}"*.Brewfile; do
+        [[ -f "$f" ]] && basename "$f" .Brewfile
+      done | paste -sd ',' - | sed 's/,/, /g')
+    fi
+    printf "  [%d] %-12s ${DIM}%s${NC}\n" "$((i+1))" "${category_labels[$i]}" "$description"
   done
   echo
-  echo -e "  ${DIM}Enter numbers (e.g. 1 3), category names (e.g. lang infra), or 'all'${NC}"
-  echo
 
-  local raw_input
-  printf "  Selection [all]: "
-  read -r raw_input
-  raw_input="${raw_input:-all}"
+  local _sel
+  select_menu _sel "${#category_dirs[@]}" --default all
+  [[ -z "$_sel" ]] && return
 
   local _SELECTED_FILES=() _SELECTED_LABELS=()
-  _brew_resolve_category_input "$raw_input" category_dirs category_labels
+  local num
+  for num in $_sel; do
+    _brew_select_category "${category_dirs[$((num - 1))]}" "${category_labels[$((num - 1))]}"
+  done
 
   for i in "${!_SELECTED_FILES[@]}"; do
     _brew_select_packages "${_SELECTED_FILES[$i]}" "${_SELECTED_LABELS[$i]}"

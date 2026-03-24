@@ -91,7 +91,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 <!-- BREW-STACKS-START -->
 - `brew/Brewfile` — core: bash, jq, tree, yq, pipx, uv, bats-core, delta, gh, go-task, otto-stack, shellcheck, gitleaks, git-credential-manager
 - `brew/apps/` — 1password-cli, bruno, hiddenbar, maccy, rectangle, sublime-text
-- `brew/infra/` — aws · containers · kubernetes · terraform
+- `brew/infra/` — aws · kubernetes · terraform
 - `brew/lang/` — go · java · node
 - `brew/security/` — gnupg, pinentry-mac, gpg-suite
 - `brew/shell/` — fzf, starship, font-fira-code-nerd-font, zoxide, zsh-autosuggestions, zsh-completions, zsh-syntax-highlighting

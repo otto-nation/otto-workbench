@@ -275,7 +275,13 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
       prompt_overwrite "$target" || { skip "$label"; return; }
     fi
 
-    ln -sfh "$source" "$target"
+    # -sfh (BSD/macOS) and -sfn (GNU/Linux) both prevent following an existing symlink
+    # at the destination — without this, ln -sf on a dir symlink nests inside it.
+    if ln --version &>/dev/null 2>&1; then
+      ln -sfn "$source" "$target"   # GNU ln
+    else
+      ln -sfh "$source" "$target"   # BSD ln (macOS)
+    fi
     echo -e "  ${GREEN}✓${NC} $label"
   }
 

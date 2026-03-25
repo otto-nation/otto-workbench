@@ -22,7 +22,7 @@ print_ai_summary() {
   echo -e "  ${CYAN}AI Tasks${NC}"
 
   # Show the active AI_COMMAND if configured, otherwise prompt the user to set one.
-  # "Active" means an uncommented AI_COMMAND= line — matches load_ai_command() in lib/ai-commit.sh.
+  # "Active" means an uncommented AI_COMMAND= line — matches load_ai_command() in lib/ai/core.sh.
   local _active_cmd
   _active_cmd=$(grep -m1 '^AI_COMMAND=' "$TASK_CONFIG_DIR/taskfile.env" 2>/dev/null | sed 's/^AI_COMMAND=//')
 

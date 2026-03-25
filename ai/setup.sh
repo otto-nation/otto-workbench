@@ -133,7 +133,7 @@ unset _tool
 # an active AI_COMMAND. Skips all prompts if a command is already configured.
 #
 # "Active" means an uncommented AI_COMMAND= line — same definition used by
-# load_ai_command() in lib/ai-commit.sh at runtime.
+# load_ai_command() in lib/ai/core.sh at runtime.
 configure_ai_command() {
   command -v task >/dev/null 2>&1 || return
 

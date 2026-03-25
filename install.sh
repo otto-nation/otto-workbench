@@ -81,11 +81,10 @@ COMPONENT_LABELS=()
 COMPONENT_DESCS=()
 COMPONENT_PLATFORMS=()
 
-# validate_components REGISTRY — cross-checks the registry against the filesystem.
-# Exits with a hard error if:
-#   - a registered component directory does not exist
-#   - a registered component is missing setup.conf
-#   - a directory has setup.conf but is not registered (orphan)
+# validate_components REGISTRY — lightweight fast-fail guard before any side effects run.
+# Checks only that registered components exist on disk and that no setup.conf is orphaned.
+# This is intentionally a subset of bin/validate-components, which runs the full contract
+# check (sync functions, dep ordering, registry schema) in CI and pre-push.
 validate_components() {
   local registry=$1 errors=0 component dir conf
 

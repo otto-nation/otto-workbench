@@ -179,6 +179,11 @@ _compact_diff() {
   local omitted_names=()
   local size idx fname
 
+  # Use temp files instead of process substitution — sh (used by task) disables < <(...).
+  local _sort_tmp _idx_tmp
+  _sort_tmp=$(mktemp)
+  _idx_tmp=$(mktemp)
+  printf '%s' "$size_index_pairs" | sort -n > "$_sort_tmp"
   while IFS=' ' read -r size idx; do
     [[ -z "$size" ]] && continue
     if (( size <= budget )); then
@@ -188,14 +193,17 @@ _compact_diff() {
       fname=$(printf '%s' "${chunks[$idx]}" | head -1 | grep -oE ' b/.+$' | sed 's/^ b\///')
       omitted_names+=("${fname:-<file>}")
     fi
-  done < <(printf '%s' "$size_index_pairs" | sort -n)
+  done < "$_sort_tmp"
+  rm -f "$_sort_tmp"
 
   # Reconstruct in original diff order
   local result=""
+  printf '%s\n' "${included_indices[@]}" | sort -n > "$_idx_tmp"
   while IFS= read -r idx; do
     [[ -z "$idx" ]] && continue
     result+="${chunks[$idx]}"
-  done < <(printf '%s\n' "${included_indices[@]}" | sort -n)
+  done < "$_idx_tmp"
+  rm -f "$_idx_tmp"
 
   if [[ ${#omitted_names[@]} -gt 0 ]]; then
     local omitted_list
@@ -543,8 +551,10 @@ $PR_DESCRIPTION_MARKER <filled template>"
   PR_TITLE=$(echo "$AI_RESPONSE" | grep "^$PR_TITLE_MARKER" | sed "s/^$PR_TITLE_MARKER //" | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')
   PR_DESCRIPTION=$(echo "$AI_RESPONSE" | sed -n "/^$PR_DESCRIPTION_MARKER/,$ p" | sed '1d' | sed 's/^```markdown$//' | sed 's/^```$//')
 
-  [ -z "$PR_TITLE" ] && PR_TITLE="feat: improve codebase"
-  [ -z "$PR_DESCRIPTION" ] && PR_DESCRIPTION="## Summary"$'\n\n'"Branch: $branch"$'\n'"Commits: $commit_count"
+  PR_TITLE="${PR_TITLE:-feat: improve codebase}"
+  if [ -z "$PR_DESCRIPTION" ]; then
+    PR_DESCRIPTION=$(printf '## Summary\n\nBranch: %s\nCommits: %s' "$branch" "$commit_count")
+  fi
 }
 
 # _pr_append_issue_link ISSUE HAS_TEMPLATE

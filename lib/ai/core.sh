@@ -5,6 +5,7 @@
 # State set by functions: AI_COMMAND, AI_RESPONSE
 
 # ─── Configuration ────────────────────────────────────────────────────────────
+# shellcheck disable=SC2034  # All config variables are used by sourcing scripts (commit.sh, pr.sh, review.sh)
 # Maximum length of the commit header (type + optional scope + colon + space + subject).
 # Enforced in both the AI prompt and the fallback validator.
 COMMIT_HEADER_MAX_LEN=72
@@ -84,6 +85,7 @@ run_ai() {
   # the captured response. load_ai_command already validated the binary exists.
   # Strip complete ANSI sequences (ESC + '[' + params + letter) before removing bare control chars.
   # Anchoring to \033 prevents the pattern from eating markdown checkboxes like [x] or [ ].
+  # shellcheck disable=SC2034  # AI_RESPONSE is read by callers after run_ai returns
   AI_RESPONSE=$(echo "$prompt" | $AI_COMMAND 2>/dev/null | \
     sed 's/\033\[[0-9;]*[a-zA-Z]//g' | \
     tr -d '\033\007\015' | \

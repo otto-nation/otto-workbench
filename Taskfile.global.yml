@@ -43,6 +43,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
         load_ai_command || exit 1
 
@@ -82,6 +83,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
         load_ai_command || exit 1
 
@@ -176,6 +178,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
 
@@ -196,6 +199,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
         push_branch "$BRANCH" || exit 1
@@ -224,6 +228,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
 
@@ -253,6 +258,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
         load_ai_command || exit 1
 
@@ -288,6 +294,7 @@ tasks:
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
         load_ai_command || exit 1
 

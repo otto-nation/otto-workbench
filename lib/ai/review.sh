@@ -47,23 +47,7 @@ $compact_staged
 $compact_unstaged"
   fi
 
-  local ai_prompt="Review the following code changes and provide actionable feedback.
-
-Focus on:
-- Bugs, logic errors, and edge cases
-- Security vulnerabilities
-- Performance concerns
-- Code quality and maintainability
-- Missing error handling
-- Improvements worth making
-
-Be concise and direct. Group feedback by section when relevant. Skip sections with no issues.
-
-$context
-
-Provide a brief summary first, then specific findings."
-
-  run_ai "$ai_prompt"
+  run_ai "$(prompt_diff_review "$context")"
 }
 
 # generate_pr_review PR_NUMBER PR_TITLE PR_BODY PR_DIFF
@@ -76,28 +60,5 @@ generate_pr_review() {
   local compact_diff
   compact_diff=$(_compact_diff "$pr_diff")
 
-  local ai_prompt="Review this pull request and provide actionable feedback.
-
-PR #$pr_number: $pr_title
-
-Description:
-$pr_body
-
-Focus on:
-- Bugs, logic errors, and edge cases
-- Security vulnerabilities
-- Performance concerns
-- Code quality and maintainability
-- Missing error handling
-- Whether the changes match the PR description
-- Missing tests
-
-Be concise and direct. Group findings by file or category. Skip areas with no issues.
-
-Diff:
-$compact_diff
-
-Provide a brief overall summary first, then specific findings."
-
-  run_ai "$ai_prompt"
+  run_ai "$(prompt_pr_review "$pr_number" "$pr_title" "$pr_body" "$compact_diff")"
 }

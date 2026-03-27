@@ -159,17 +159,7 @@ _pr_generate_single_commit() {
 
   if [[ "$PR_HAS_TEMPLATE" = "true" ]]; then
     echo "→ Single commit — using commit message as title, AI filling template"
-    local ai_prompt="Fill out this PR template based on the commit below. Return only the filled template body — no title, no markers, no extra commentary.
-
-Template:
-$PR_TEMPLATE
-
-Commit subject: $commit_subject
-Commit body: ${commit_body:-<none>}
-
-Changed files:
-$changed_files"
-    run_ai "$ai_prompt"
+    run_ai "$(prompt_pr_single_commit "$commit_subject" "$commit_body" "$changed_files")"
     PR_DESCRIPTION="${AI_RESPONSE:-$PR_TEMPLATE}"
   elif [[ -n "$commit_body" ]]; then
     echo "→ Single commit — skipping AI, using commit message directly"
@@ -195,25 +185,7 @@ $(echo "$changed_files" | sed 's/^/- /')
 _pr_generate_multi_commit() {
   local branch="$1" issue="$2" commits="$3" commit_count="$4" changed_files="$5"
 
-  local ai_prompt="Generate a professional PR title and fill out this template based on the changes:
-
-Template:
-$PR_TEMPLATE
-
-Branch: $branch
-Issue: ${issue:-None}
-Commits: $commit_count
-
-Recent commits:
-$commits
-
-Changed files:
-$changed_files
-
-Return: $PR_TITLE_MARKER <title>
-$PR_DESCRIPTION_MARKER <filled template>"
-
-  run_ai "$ai_prompt"
+  run_ai "$(prompt_pr_multi_commit "$branch" "$issue" "$commits" "$commit_count" "$changed_files")"
 
   # shellcheck disable=SC2016  # backticks in single-quoted sed pattern are literal, not shell expansions
   PR_TITLE=$(echo "$AI_RESPONSE" | grep "^$PR_TITLE_MARKER" | sed "s/^$PR_TITLE_MARKER //" | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')

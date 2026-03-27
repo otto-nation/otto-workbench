@@ -36,11 +36,13 @@ find_commitlint_config() {
 # Sets COMMIT_RULES. Uses COMMIT_TYPES for the allowed-types list.
 build_commit_rules() {
   if [ -n "$COMMITLINT_CONFIG" ]; then
+    # shellcheck disable=SC2034  # COMMIT_RULES is read by prompt_commit in prompts.sh
     COMMIT_RULES="Follow the rules in this commitlint configuration: $(cat "$COMMITLINT_CONFIG")"
   else
     # Build a comma-separated display string from the space-separated COMMIT_TYPES constant
     local types_display
     types_display=$(echo "$COMMIT_TYPES" | tr ' ' ',')
+    # shellcheck disable=SC2034  # COMMIT_RULES is read by prompt_commit in prompts.sh
     COMMIT_RULES="Follow these conventional commit rules:
 - Use conventional commit format: type(scope): description
 - Types: $types_display
@@ -64,28 +66,7 @@ _build_commit_prompt() {
     diff_content=$(_compact_diff "$diff_content")
   fi
 
-  local ai_prompt="${retry_preamble}Generate a conventional commit message based on the changes.
-
-CRITICAL REQUIREMENTS:
-- Header MUST be ≤${COMMIT_HEADER_MAX_LEN} characters total
-- Header = type + optional \"\(scope\)\" + \": \" + subject
-- Subject budget = ${COMMIT_HEADER_MAX_LEN} minus your prefix length
-  Example: \"feat\(auth\): \" is 12 chars -> subject must be <=60 chars
-  Example: \"fix: \" is 5 chars -> subject must be <=67 chars
-  Example: \"refactor\(payments\): \" is 20 chars -> subject must be <=52 chars
-- Before writing, count your prefix length, subtract from ${COMMIT_HEADER_MAX_LEN}, then write a subject within that budget
-- Each body line MUST be ≤${COMMIT_BODY_MAX_LEN} characters (wrap long lines)
-- Subject must be concise — focus on WHAT changed, not HOW
-- If multiple changes, use semicolon in subject or list in body
-
-$COMMIT_RULES
-
-${files_section}Diff:
-$diff_content
-
-Return only the raw commit message text. No markdown, no code blocks, no backticks, no explanation."
-
-  run_ai "$ai_prompt"
+  run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble")"
   AI_MSG="$AI_RESPONSE"
 }
 
@@ -119,11 +100,8 @@ generate_commit_msg() {
     subject_budget=$(( COMMIT_HEADER_MAX_LEN - ${#prefix} ))
 
     echo "→ Header too long ($header_len chars), retrying with exact budget..."
-    local retry_preamble="PREVIOUS ATTEMPT FAILED: '${header}' is ${header_len} characters — $(( header_len - COMMIT_HEADER_MAX_LEN )) over the limit.
-
-You used the prefix '${prefix}' (${#prefix} chars). That leaves EXACTLY ${subject_budget} characters for the subject. Write a subject of ${subject_budget} characters or fewer. Count every character. Use the same prefix unless it genuinely does not fit.
-
-"
+    local retry_preamble
+    retry_preamble=$(prompt_commit_retry "$header" "$header_len" "$(( header_len - COMMIT_HEADER_MAX_LEN ))" "$prefix" "$subject_budget")
     _build_commit_prompt "$diff_content" "$files_section" "$retry_preamble"
 
     header=$(echo "$AI_MSG" | head -1)

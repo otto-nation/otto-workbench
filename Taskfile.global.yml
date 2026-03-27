@@ -42,7 +42,9 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
         load_ai_command || exit 1
 
         STAGED_FILES=$(git diff --cached --name-only)
@@ -68,6 +70,7 @@ tasks:
         echo ""
 
         validate_commit_msg "$AI_MSG" || exit 1
+        [[ -n "$AI_MSG" ]] || { echo "✗ Empty commit message — aborting"; exit 1; }
 
         echo "→ Committing..."
         git commit -m "$AI_MSG"
@@ -79,7 +82,9 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
         load_ai_command || exit 1
 
         # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
@@ -101,11 +106,8 @@ tasks:
           STASHED=true
         fi
 
-        TMPFILE=$(mktemp)
-        EDITOR_SCRIPT=$(mktemp)
-        SEQ_EDITOR=$(mktemp)
-
-        # Always pop stash and remove temp files on exit, even if something fails
+        # Register cleanup before mktemp so partial failures still clean up
+        TMPFILE="" EDITOR_SCRIPT="" SEQ_EDITOR=""
         cleanup() {
           rm -f "$TMPFILE" "$EDITOR_SCRIPT" "$SEQ_EDITOR" 2>/dev/null || true
           if [ "$STASHED" = true ]; then
@@ -114,6 +116,10 @@ tasks:
           fi
         }
         trap cleanup EXIT
+
+        TMPFILE=$(mktemp)
+        EDITOR_SCRIPT=$(mktemp)
+        SEQ_EDITOR=$(mktemp)
 
         echo "→ Analyzing commit with AI..."
         FULL_DIFF=$(git show "$TARGET_SHA" --no-color)
@@ -171,7 +177,9 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
 
         echo "→ Analyzing changes: $BRANCH"
@@ -190,7 +198,9 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
         push_branch "$BRANCH" || exit 1
 
@@ -217,7 +227,9 @@ tasks:
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
-        . "{{.TASKFILE_DIR}}/lib/ai-commit.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
 
         echo "→ Checking for existing PR..."
@@ -238,6 +250,81 @@ tasks:
 
         echo "✓ PR description updated"
         echo "→ View: $(gh pr view --json url -q .url)"
+
+  review:
+    desc: "AI review of staged, unstaged, and committed branch changes"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
+        load_ai_command || exit 1
+
+        STAGED=$(git diff --cached --no-color)
+        UNSTAGED=$(git diff --no-color)
+
+        BRANCH=$(git branch --show-current)
+        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+
+        COMMITS=""
+        COMMITTED_DIFF=""
+        if [ "$BRANCH" != "$DEFAULT_BRANCH" ]; then
+          COMMITS=$(git log --oneline "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null || true)
+          COMMITTED_DIFF=$(git diff --no-color "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null || true)
+        fi
+
+        if [ -z "$STAGED" ] && [ -z "$UNSTAGED" ] && [ -z "$COMMITTED_DIFF" ]; then
+          echo "✗ Nothing to review — no staged, unstaged, or committed changes found"
+          exit 0
+        fi
+
+        echo "→ Reviewing changes with AI..."
+        echo ""
+        generate_diff_review "$STAGED" "$UNSTAGED" "$COMMITS" "$COMMITTED_DIFF" "$BRANCH" "$DEFAULT_BRANCH"
+        echo ""
+        echo "$AI_RESPONSE"
+
+  pr:review:
+    desc: "AI review of the current PR"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
+        . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
+        load_ai_command || exit 1
+
+        if ! gh auth status &>/dev/null; then
+          echo "✗ GitHub CLI is not authenticated — run: gh auth login"
+          exit 1
+        fi
+
+        PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
+        if [ -z "$PR_NUMBER" ]; then
+          echo "✗ No PR found for current branch"
+          echo "→ Use 'task pr:create' to create a new PR"
+          exit 1
+        fi
+
+        echo "→ Fetching PR #$PR_NUMBER..."
+        PR_TITLE=$(gh pr view "$PR_NUMBER" --json title -q .title)
+        PR_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body)
+        PR_DIFF=$(gh pr diff "$PR_NUMBER" --no-color 2>/dev/null)
+
+        if [ -z "$PR_DIFF" ]; then
+          echo "✗ No diff found for PR #$PR_NUMBER"
+          exit 1
+        fi
+
+        echo "→ Reviewing PR with AI..."
+        echo ""
+        generate_pr_review "$PR_NUMBER" "$PR_TITLE" "$PR_BODY" "$PR_DIFF"
+        echo ""
+        echo "$AI_RESPONSE"
 
   # ============================================================================
   # HOMEBREW
@@ -304,9 +391,11 @@ tasks:
         echo "   ai:setup          Setup AI configuration (first-time setup)"
         echo "   commit            AI-generated commit messages"
         echo "   commit:reword     AI reword of a commit (default: HEAD; or: task commit:reword -- SHA)"
+        echo "   review            AI review of staged, unstaged, and committed changes"
         echo "   pr:content        Preview AI-generated PR title and description"
         echo "   pr:create         AI-generated PR (auto-pushes if needed)"
         echo "   pr:update         Update existing PR description"
+        echo "   pr:review         AI review of the current PR"
         echo "   Pass -- --no-issue to any pr:* task to skip issue prompts"
         echo ""
         echo "Homebrew:"

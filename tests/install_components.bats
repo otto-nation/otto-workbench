@@ -61,12 +61,14 @@ setup() {
 # ─── Reverse check (filesystem → registered) ──────────────────────────────────
 
 @test "no orphaned directories (setup.conf without entry in install.components)" {
+  local orphans=()
   for conf in "$REPO_ROOT"/*/setup.conf; do
     [[ -f "$conf" ]] || continue
     local dir
     dir=$(basename "$(dirname "$conf")")
-    grep -qx "$dir" "$REGISTRY"
+    grep -qx "$dir" "$REGISTRY" || orphans+=("$dir")
   done
+  [[ ${#orphans[@]} -eq 0 ]] || { echo "Orphaned dirs not in install.components: ${orphans[*]}"; false; }
 }
 
 # ─── conf_get parsing ─────────────────────────────────────────────────────────

@@ -51,8 +51,8 @@ tools:
     usage: "cleanup-testcontainers"
 
   - name: generate-git-rules
-    description: "Regenerates git.generated.md from lib/ai-commit.sh constants"
-    when_to_use: "After changing commit types, header length, or PR conventions in lib/ai-commit.sh"
+    description: "Regenerates git.generated.md from lib/ai/core.sh constants"
+    when_to_use: "After changing commit types, header length, or PR conventions in lib/ai/core.sh"
     usage: "bin/generate-git-rules"
 
   - name: validate-registries

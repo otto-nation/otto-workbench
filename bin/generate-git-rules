@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Generate ai/guidelines/rules/git.generated.md from constants in lib/ai-commit.sh.
+# Generate ai/guidelines/rules/git.generated.md from constants in lib/ai/core.sh.
 #
-# Reads:     lib/ai-commit.sh   (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
+# Reads:     lib/ai/core.sh     (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
 # Writes:    ai/guidelines/rules/git.generated.md
 #
 # Run automatically via pre-push hook and workbench sync.
-# Never edit git.generated.md directly — edit lib/ai-commit.sh or this script instead.
+# Never edit git.generated.md directly — edit lib/ai/core.sh or this script instead.
 #
 # Environment overrides (used in tests):
-#   AI_COMMIT_SH        path to ai-commit.sh    (default: lib/ai-commit.sh)
+#   AI_CORE_SH          path to core.sh          (default: lib/ai/core.sh)
 #   GIT_RULES_OUTPUT    output file path         (default: ai/guidelines/rules/git.generated.md)
 
 set -euo pipefail
@@ -19,12 +19,12 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 
-AI_COMMIT_SH="${AI_COMMIT_SH:-"$REPO_ROOT/lib/ai-commit.sh"}"
+AI_CORE_SH="${AI_CORE_SH:-"$REPO_ROOT/lib/ai/core.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 
 # Extract constants directly from the source file
 _extract_const() {
-  grep -E "^${1}=" "$AI_COMMIT_SH" | head -1 | cut -d'=' -f2- | tr -d '"'
+  grep -E "^${1}=" "$AI_CORE_SH" | head -1 | cut -d'=' -f2- | tr -d '"'
 }
 
 COMMIT_TYPES=$(_extract_const "COMMIT_TYPES")
@@ -32,7 +32,7 @@ COMMIT_HEADER_MAX_LEN=$(_extract_const "COMMIT_HEADER_MAX_LEN")
 COMMIT_BODY_MAX_LEN=$(_extract_const "COMMIT_BODY_MAX_LEN")
 
 if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" ]]; then
-  err "Could not extract constants from $AI_COMMIT_SH"
+  err "Could not extract constants from $AI_CORE_SH"
   exit 1
 fi
 
@@ -53,7 +53,7 @@ _budget_line() {
   printf '%s\n' \
     "# Git — Commits & Pull Requests" \
     "<!-- AUTO-GENERATED — do not edit directly -->" \
-    "<!-- Source: lib/ai-commit.sh -->" \
+    "<!-- Source: lib/ai/core.sh -->" \
     "<!-- Regenerate: bin/generate-git-rules -->" \
     "" \
     "## Conventional Commits" \

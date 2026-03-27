@@ -13,16 +13,22 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/constants.sh"
 fi
 
+# Color semantics: RED=error  YELLOW=warn  GREEN=success  BLUE=info/arrow
+#                  CYAN=section label  DIM=metadata/detail  BOLD=emphasis
+# Respect NO_COLOR (https://no-color.org) and non-terminal stdout.
 # shellcheck disable=SC2034  # All color/style variables are used by sourcing scripts
-BOLD='\033[1m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-# shellcheck disable=SC2034
-CYAN='\033[0;36m'
-DIM='\033[2m'
-NC='\033[0m'
+if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
+  BOLD='' GREEN='' BLUE='' YELLOW='' RED='' CYAN='' DIM='' NC=''
+else
+  BOLD='\033[1m'
+  GREEN='\033[0;32m'
+  BLUE='\033[0;34m'
+  YELLOW='\033[1;33m'
+  RED='\033[0;31m'
+  CYAN='\033[0;36m'
+  DIM='\033[2m'
+  NC='\033[0m'
+fi
 
 info()    { echo -e "${BLUE}→${NC} $*"; }
 success() { echo -e "${GREEN}✓${NC} $*"; }
@@ -218,6 +224,14 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     printf -v "$_result_var" '%s' "${_selected% }"
   }
 
+  # conf_get FILE KEY — reads a key = value line from a KEY = VALUE config file.
+  # Returns the trimmed value, or empty string if the key is not found.
+  conf_get() {
+    local file=$1 key=$2
+    grep -m1 "^${key}[[:space:]]*=" "$file" 2>/dev/null \
+      | sed "s/^${key}[[:space:]]*=[[:space:]]*//"
+  }
+
   # require_command NAME [MESSAGE] — returns 1 with a warning if NAME is not in PATH.
   # Caller decides whether to exit or return: require_command foo "msg" || exit 0
   require_command() {
@@ -261,7 +275,13 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
       prompt_overwrite "$target" || { skip "$label"; return; }
     fi
 
-    ln -sfh "$source" "$target"
+    # -sfh (BSD/macOS) and -sfn (GNU/Linux) both prevent following an existing symlink
+    # at the destination — without this, ln -sf on a dir symlink nests inside it.
+    if ln --version &>/dev/null 2>&1; then
+      ln -sfn "$source" "$target"   # GNU ln
+    else
+      ln -sfh "$source" "$target"   # BSD ln (macOS)
+    fi
     echo -e "  ${GREEN}✓${NC} $label"
   }
 

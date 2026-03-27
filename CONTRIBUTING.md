@@ -63,6 +63,11 @@ The workbench uses a two-tier component model. Use this decision rule when addin
 > **Should it appear in the install menu as an opt-in?** → Tier 2 (Optional)
 > **Does it have idempotent operations worth re-applying on sync?** → also add `steps.sh`
 
+**How discovery works:**
+- `install.sh` and `otto-workbench sync` auto-discover core components by globbing `*/steps.sh` and skipping any that have a sibling `setup.conf` (those are optional).
+- Adding a new core component requires **no edits to `install.sh`** — just create the directory with `steps.sh` defining `sync_<name>()`.
+- Adding a new optional component requires creating `setup.conf` + `setup.sh` and adding the name to `install.components`.
+
 Run `bin/validate-components` to check contracts for all existing components.
 
 ---
@@ -180,6 +185,32 @@ generate-tool-context
 
 The pre-push hook enforces that `tools.generated.md` is always up to date.
 
+## Environment Variables
+
+| Variable | Where set | Effect |
+|----------|-----------|--------|
+| `SYMLINK_MODE=no-prompt` | `bin/otto-workbench sync` | Skips the interactive overwrite prompt in `install_symlink` — real files at the target path are warned about and skipped instead of prompting |
+| `NO_COLOR` | shell environment | Disables all ANSI color output from `lib/ui.sh` helpers (follows [no-color.org](https://no-color.org)) |
+| `WORKBENCH_DIR` | auto-derived or caller | Override the repo root; set by `install.sh` and auto-derived from `lib/constants.sh` otherwise |
+
+## sync_<name>() Contract
+
+Every `steps.sh` that defines `sync_<name>()` **must** follow these rules:
+
+1. **Idempotent** — running twice must produce the same state as running once.
+2. **Non-interactive** — must not prompt for user input. Use `install_symlink` (respects `SYMLINK_MODE`), not `prompt_overwrite` directly.
+3. **Self-contained** — relies only on constants from `lib/constants.sh` and helpers from `lib/ui.sh`; does not depend on being called from a specific working directory.
+4. **Standalone bootstrap** — if the steps.sh can be run directly (`bash component/steps.sh`), include the standard bootstrap guard at the top.
+
+## Error Recovery Strategy
+
+| Scenario | Behaviour |
+|----------|-----------|
+| Component `setup.sh` fails during `run_components` | Warn and continue — other components still run |
+| Framework contract violation (missing `register_<tool>_steps`, bad registry) | Hard-fail immediately — setup cannot proceed safely |
+| Individual `install_symlink` on a real file (non-interactive mode) | Warn and skip — real files are never silently overwritten by sync |
+| Missing optional dependency (brew, jq, etc.) | Warn via `require_command` and return — caller decides whether to exit |
+
 ## Code Conventions
 
 - Quote all variables: `"$VAR"` not `$VAR`.
@@ -187,3 +218,4 @@ The pre-push hook enforces that `tools.generated.md` is always up to date.
 - Use `set -e` or explicit error checks in scripts.
 - No magic values — use named variables or constants from `lib/constants.sh`.
 - Guard clauses and early returns over nested `if` blocks.
+- Colors: `RED`=error `YELLOW`=warn `GREEN`=success `BLUE`=info `CYAN`=section label `DIM`=metadata.

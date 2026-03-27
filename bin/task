@@ -18,7 +18,8 @@ GLOBAL_TASKFILE="$TASK_CONFIG_DIR/Taskfile.yml"
 # Find the real task binary by temporarily removing $LOCAL_BIN_DIR from PATH — without this,
 # `which task` would find this wrapper script and exec would recurse infinitely.
 # || true prevents set -e from aborting; an empty TASK_BIN is handled explicitly below.
-TASK_BIN=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$LOCAL_BIN_DIR$" | tr '\n' ':') which task 2>/dev/null || true)
+# grep -Fxv: fixed-string exact-line match — avoids regex interpretation of '.' in $LOCAL_BIN_DIR
+TASK_BIN=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -Fxv "$LOCAL_BIN_DIR" | tr '\n' ':') which task 2>/dev/null || true)
 
 if [ -z "$TASK_BIN" ]; then
   err "task binary not found in PATH"
@@ -43,7 +44,7 @@ if [ "$USE_GLOBAL" = true ]; then
     exit 1
   fi
   exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "${FILTERED_ARGS[@]}"
-elif [ -f "Taskfile.yml" ] || [ -f "Taskfile.yaml" ]; then
+elif [ -f "Taskfile.yml" ] || [ -f "Taskfile.yaml" ] || [ -f "taskfile.yml" ] || [ -f "taskfile.yaml" ]; then
   exec "$TASK_BIN" "$@"
 else
   err "No local Taskfile found in current directory"

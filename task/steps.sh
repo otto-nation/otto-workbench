@@ -18,6 +18,10 @@ fi
 step_task_install() {
   command -v task >/dev/null 2>&1 && return
   warn "Task (task runner) is not installed"
+  if [[ ! -t 0 ]]; then
+    warn "Non-interactive shell — skipping task install. Run install.sh manually to install task."
+    return
+  fi
   printf "  Install it? [Y/n] "
   read -n 1 -r REPLY
   echo
@@ -32,7 +36,7 @@ step_task_install() {
       return 1
     fi
     info "Installing task via apt..."
-    sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+    sudo sh -c "$(curl --location --max-time 30 --retry 2 https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
   else
     err "Unable to auto-install. See: https://taskfile.dev/installation/"
   fi

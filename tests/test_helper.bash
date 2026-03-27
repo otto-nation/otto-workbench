@@ -2,12 +2,14 @@
 # Shared setup helpers for workbench bats tests.
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-LIB="$REPO_ROOT/lib/ai-commit.sh"
 
-# source_lib — loads lib/ai-commit.sh into the current test context.
+# source_lib — loads all lib/ai/*.sh files into the current test context.
 source_lib() {
-  # shellcheck disable=SC1090
-  source "$LIB"
+  local f
+  for f in "$REPO_ROOT/lib/ai/"*.sh; do
+    # shellcheck disable=SC1090
+    source "$f"
+  done
 }
 
 # make_ai_config DIR COMMAND — writes a taskfile.env with AI_COMMAND=COMMAND.

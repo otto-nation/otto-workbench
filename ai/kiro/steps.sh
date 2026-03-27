@@ -54,14 +54,7 @@ step_kiro_rules() {
 
 # step_install_kiro — installs kiro-cli via brew if not already in PATH.
 step_install_kiro() {
-  if command -v kiro >/dev/null 2>&1; then
-    success "kiro already installed"
-    return
-  fi
-  require_command brew "Homebrew not found — install kiro-cli manually: https://kiro.dev/docs/cli/" || return
-  info "Installing kiro-cli..."
-  brew install --cask kiro-cli
-  success "kiro-cli installed"
+  _ai_install_cask "kiro" "kiro-cli" "kiro-cli" "https://kiro.dev/docs/cli/"
 }
 
 register_kiro_steps() {

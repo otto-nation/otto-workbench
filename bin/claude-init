@@ -19,7 +19,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
-WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+# WORKBENCH_DIR is exported by lib/constants.sh (sourced via lib/ui.sh above)
 TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 PROJECT_NAME="$(basename "$(pwd)")"
 

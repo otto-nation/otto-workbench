@@ -14,6 +14,10 @@ require_command jq  "jq not found — required for brew install status" || exit 
 # Using brew info JSON (formula name / cask token) rather than keg names means
 # aliases like delta→git-delta resolve correctly without per-package subprocesses.
 _BREW_INFO=$(brew info --installed --json=v2 2>/dev/null)
+if ! printf '%s' "$_BREW_INFO" | jq empty 2>/dev/null; then
+  err "brew info returned invalid JSON — install status will not be shown correctly"
+  _BREW_INFO='{}'
+fi
 _INSTALLED_FORMULAE=$(printf '%s' "$_BREW_INFO" | jq -r '.formulae[] | (.name, .aliases[])' 2>/dev/null)
 _INSTALLED_CASKS=$(printf '%s' "$_BREW_INFO" | jq -r '.casks[].token' 2>/dev/null)
 unset _BREW_INFO

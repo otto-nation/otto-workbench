@@ -1,6 +1,6 @@
 # Git — Commits & Pull Requests
 <!-- AUTO-GENERATED — do not edit directly -->
-<!-- Source: lib/ai-commit.sh -->
+<!-- Source: lib/ai/core.sh -->
 <!-- Regenerate: bin/generate-git-rules -->
 
 ## Conventional Commits

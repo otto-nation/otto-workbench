@@ -16,7 +16,9 @@
 # Environment Setup
 # ============================================================================
 
-export DOCKER_HOST="unix://${HOME}/.colima/${COLIMA_PROFILE}/docker.sock"
+# Point DOCKER_HOST at the canonical socket symlink maintained by docker/steps.sh (colima or orbstack),
+# rather than a profile-specific path — avoids stale host when COLIMA_PROFILE differs from active profile.
+export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 export TESTCONTAINERS_HOST_OVERRIDE=localhost
 

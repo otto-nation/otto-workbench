@@ -12,9 +12,13 @@ print_docker_summary() {
   if [[ -z "$runtime" ]]; then
     local socket_target
     socket_target=$(readlink "$DOCKER_RUN_DIR/docker.sock" 2>/dev/null || true)
+    # Resolve relative symlink targets to absolute paths before path-prefix matching
+    if [[ -n "$socket_target" && "$socket_target" != /* ]]; then
+      socket_target="$(cd "$(dirname "$DOCKER_RUN_DIR/docker.sock")" && pwd)/$socket_target"
+    fi
     if [[ "$socket_target" == "$COLIMA_DIR"* ]]; then
       runtime="colima"
-    elif [[ -n "$socket_target" ]]; then
+    elif [[ "$socket_target" == *"orbstack"* ]]; then
       runtime="orbstack"
     fi
   fi

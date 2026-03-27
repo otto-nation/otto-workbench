@@ -20,12 +20,12 @@
 	discard = checkout --
 	fetch-all = fetch --all
 	graph-log = log --graph --decorate --pretty=oneline --abbrev-commit
-	fixup = "!func() { git commit --fixup=$1 && git stash && git rebase -i --autosquash $1^1; }; func"
+	fixup = "!func() { git commit --fixup=$1 && git stash && (git rebase -i --autosquash $1^1 || git stash pop); }; func"
 	wip = !git add . && git commit -m 'wip'
 	nah = !git reset --hard && git clean -df
-	rebase-off-main = !git fetch --all && git stash && git checkout main && git pull && git checkout - && git rebase main
-	deploy-branch = !git checkout main && git pull && git checkout -b "$(id -un)/deploy" && git rebase main && git commit --allow-empty --no-verify -m 'chore: deploy' && git push --no-verify
-	deploy-commit = !git commit -m 'chore: deploy' --allow-empty --no-verify && git push --no-verify
+	rebase-off-main = "!func() { git fetch --all; DIRTY=false; git diff --quiet && git diff --cached --quiet || DIRTY=true; $DIRTY && git stash; git checkout main && git pull && git checkout -; git rebase main; $DIRTY && git stash pop; }; func"
+	deploy-branch = !git checkout main && git pull && git checkout -b "$(id -un)/deploy" && git rebase main && git commit --allow-empty -m 'chore: deploy' && git push
+	deploy-commit = !git commit -m 'chore: deploy' --allow-empty && git push
 
 [color]
 	ui = true

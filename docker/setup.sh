@@ -59,6 +59,8 @@ if [[ -z "$DOCKER_RUNTIME" ]]; then
 fi
 
 info "Runtime: $DOCKER_RUNTIME"
+[[ -f "$SCRIPT_DIR/$DOCKER_RUNTIME/setup.sh" ]] \
+  || { err "Runtime setup not found: $SCRIPT_DIR/$DOCKER_RUNTIME/setup.sh"; exit 1; }
 # Source the runtime-specific setup so it shares helpers defined above
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/$DOCKER_RUNTIME/setup.sh"

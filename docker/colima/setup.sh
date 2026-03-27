@@ -15,4 +15,8 @@ fi
 COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 
 mkdir -p "$DOCKER_RUN_DIR"
+# The socket won't exist until colima is started; the symlink will dangle until then — expected.
+if [[ ! -S "$COLIMA_DIR/$COLIMA_PROFILE/docker.sock" ]]; then
+  warn "Colima socket not found — run 'colima start' after setup to create it"
+fi
 install_symlink "$COLIMA_DIR/$COLIMA_PROFILE/docker.sock" "$DOCKER_RUN_DIR/docker.sock"

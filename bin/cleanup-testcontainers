@@ -53,12 +53,11 @@ NETWORKS=$(docker network ls --filter "label=org.testcontainers=true" -q)
 VOLUMES=$(docker volume ls --filter "label=org.testcontainers=true" -q)
 IMAGES=$(docker images --filter "label=org.testcontainers=true" -q)
 
-# Count items
-# grep -c exits 1 when there are no matches, which would abort under set -e; || echo 0 handles the empty case
-CONTAINER_COUNT=$(echo "$CONTAINERS" | grep -c . || echo 0)
-NETWORK_COUNT=$(echo "$NETWORKS" | grep -c . || echo 0)
-VOLUME_COUNT=$(echo "$VOLUMES" | grep -c . || echo 0)
-IMAGE_COUNT=$(echo "$IMAGES" | grep -c . || echo 0)
+# Count items — guard against empty variables: echo "" produces a blank line that grep -c . counts as 1
+[[ -n "$CONTAINERS" ]] && CONTAINER_COUNT=$(echo "$CONTAINERS" | grep -c .) || CONTAINER_COUNT=0
+[[ -n "$NETWORKS" ]]   && NETWORK_COUNT=$(echo "$NETWORKS"   | grep -c .) || NETWORK_COUNT=0
+[[ -n "$VOLUMES" ]]    && VOLUME_COUNT=$(echo "$VOLUMES"    | grep -c .) || VOLUME_COUNT=0
+[[ -n "$IMAGES" ]]     && IMAGE_COUNT=$(echo "$IMAGES"     | grep -c .) || IMAGE_COUNT=0
 
 echo "Found:"
 echo "  • $CONTAINER_COUNT containers"

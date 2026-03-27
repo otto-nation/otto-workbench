@@ -23,6 +23,12 @@
 #   2. Add a _wb_load call below at the correct position
 #   3. Re-run install.sh — it will copy this updated loader and create the directory
 #
+#   Layer order is intentionally explicit here (not auto-discovered) because load
+#   order is semantically significant: framework must initialise PATH before tools
+#   can add version-manager shims, and aliases must resolve before prompt can
+#   reference them. Auto-discovery by filename or mtime would silently break this
+#   contract whenever a new layer is added.
+#
 # DISABLING A SNIPPET:
 #   Remove its symlink from ~/.config/zsh/config.d/<layer>/
 #   The workbench will recreate it on the next install.sh run unless you

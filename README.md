@@ -51,7 +51,7 @@ Re-run a single component independently:
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
-| `generate-git-rules` | Regenerates git.generated.md from lib/ai-commit.sh constants |
+| `generate-git-rules` | Regenerates git.generated.md from lib/ai/core.sh constants |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 <!-- SCRIPTS-TABLE-END -->
@@ -59,6 +59,16 @@ Re-run a single component independently:
 ### ZSH Configuration
 
 `zsh/.zshrc` is copied to `~/.zshrc` on first install. It sets up oh-my-zsh, lazy-loading for pyenv/nvm/SDKMAN, arch-aware Homebrew prefix, and modular config loading from `~/.config/zsh/config.d/`.
+
+oh-my-zsh and SDKMAN are loaded lazily and skipped gracefully if absent — install them separately if you want them:
+
+```bash
+# oh-my-zsh
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+
+# SDKMAN (Java version manager)
+curl -s "https://get.sdkman.io" | bash
+```
 
 `zsh/starship.toml` is symlinked to `~/.config/starship.toml`.
 
@@ -77,7 +87,7 @@ Useful aliases and settings in `git/.gitconfig`. `core.fsmonitor` and `core.untr
 
 Each tooling directory owns a `registry.yml` describing the tools it provides — name, description, when to use, usage, and docs URL. These are combined into `ai/guidelines/rules/tools.generated.md` and auto-loaded into every Claude and Kiro session.
 
-`ai/guidelines/rules/git.generated.md` is generated from the commit/PR constants in `lib/ai-commit.sh` — commit types, header length limit, PR template, and branch naming conventions. Never edit generated files directly.
+`ai/guidelines/rules/git.generated.md` is generated from the commit/PR constants in `lib/ai/core.sh` — commit types, header length limit, PR template, and branch naming conventions. Never edit generated files directly.
 
 Update the registry after adding or removing a tool, then regenerate:
 
@@ -119,6 +129,8 @@ task --global commit:reword        # Reword a commit message with AI (default: H
 task --global pr:content           # Preview AI-generated PR title and description (pass -- --no-issue to skip issue prompts)
 task --global pr:create            # Create AI-powered pull request with smart title and description (pass -- --no-issue to skip issue prompts)
 task --global pr:update            # Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)
+task --global review               # AI review of staged, unstaged, and committed branch changes
+task --global pr:review            # AI review of the current PR
 ```
 <!-- TASKS-BLOCK-END -->
 
@@ -164,20 +176,11 @@ Override per-project with `.taskfile/taskfile.env` in a project root.
 
 ## Requirements
 
-- macOS, ZSH
-- [Task](https://taskfile.dev) — auto-installed by `install.sh`
-- [gh](https://cli.github.com) — for `pr:create` and `pr:update`
-- Docker, AWS CLI — optional, for container and AWS utilities
+- macOS or Linux
+- bash (to run `install.sh`)
+- git (to clone the repo)
 
-**Manual installs** (run once on a new machine):
-
-```bash
-# oh-my-zsh
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-
-# SDKMAN (Java version manager)
-curl -s "https://get.sdkman.io" | bash
-```
+Everything else — Task, gh, Docker, and language tooling — is either auto-installed by `install.sh` or available through the optional component menu.
 
 ## Contributing
 

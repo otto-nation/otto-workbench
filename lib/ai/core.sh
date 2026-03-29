@@ -73,6 +73,52 @@ load_ai_command() {
     printf "✗ AI command not found: %s\n" "$ai_bin"
     return 1
   fi
+
+  # Optionally export ANTHROPIC_API_KEY for automation billing isolation.
+  # When set in taskfile.env it overrides the interactive session key for this task run only.
+  if grep -q "^ANTHROPIC_API_KEY=" "$env_file" 2>/dev/null; then
+    # shellcheck disable=SC2034  # ANTHROPIC_API_KEY is read by the AI CLI subprocess
+    ANTHROPIC_API_KEY=$(grep "^ANTHROPIC_API_KEY=" "$env_file" | head -1 | cut -d'=' -f2-)
+    export ANTHROPIC_API_KEY
+  fi
+}
+
+# load_gh_token
+# Reads GH_TOKEN from the taskfile.env config file and exports it.
+# Falls back to an existing GH_TOKEN in the environment (e.g. set via .env.local or shell).
+# Hard-fails if no token is available from either source — automation must not silently
+# fall back to the user's full interactive gh session.
+# Returns 1 on failure.
+load_gh_token() {
+  local local_env="$AI_LOCAL_ENV_PATH"
+  local global_env="$HOME/$AI_GLOBAL_ENV_SUBPATH"
+  local env_file
+
+  if [ -f "$local_env" ]; then
+    env_file="$local_env"
+  elif [ -f "$global_env" ]; then
+    env_file="$global_env"
+  fi
+
+  if [ -n "${env_file:-}" ] && grep -q "^GH_TOKEN=" "$env_file"; then
+    GH_TOKEN=$(grep "^GH_TOKEN=" "$env_file" | head -1 | cut -d'=' -f2-)
+    export GH_TOKEN
+    return 0
+  fi
+
+  # Accept a token already present in the environment (e.g. exported from a CI system
+  # or set manually) — as long as it was explicitly set, segmentation is maintained.
+  if [ -n "${GH_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  local cfg_path="${env_file:-$HOME/$AI_GLOBAL_ENV_SUBPATH}"
+  printf "✗ GH_TOKEN not configured for AI automation.\n"
+  printf "  Set it in %s\n" "$cfg_path"
+  printf "  Create a fine-grained PAT: https://github.com/settings/tokens/new\n"
+  printf "  Required: Contents (read/write), Pull requests (read/write) — scoped to specific repos\n"
+  printf "  Run: task --global ai:setup\n"
+  return 1
 }
 
 # run_ai PROMPT

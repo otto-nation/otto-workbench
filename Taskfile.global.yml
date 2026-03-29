@@ -24,16 +24,39 @@ tasks:
         if [ ! -f "$ENV_FILE" ]; then
           {
             printf '# Taskfile AI Configuration\n'
-            printf '# Uncomment and configure one of the examples below or add your own\n'
+            printf '# See ai/guidelines/rules/security.md for the two-file secret model.\n'
             printf '\n'
+            printf '# ── AI command ───────────────────────────────────────────────────────────────\n'
+            printf '# Uncomment one of the examples below or add your own\n'
             printf '# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config\n'
             printf '# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd\n'
             printf '# AI_COMMAND=copilot --agent ci-cd -p\n'
+            printf '\n'
+            printf '# ── GitHub token (required for: task pr:*) ───────────────────────────────────\n'
+            printf '# Create a fine-grained PAT at https://github.com/settings/tokens/new\n'
+            printf '# Permissions: Contents (read/write), Pull requests (read/write)\n'
+            printf '# Scope to specific repos only — never "All repositories"\n'
+            printf '# GH_TOKEN=github_pat_\n'
+            printf '\n'
+            printf '# ── Anthropic API key (optional — isolates automation billing) ────────────────\n'
+            printf '# When set, overrides ANTHROPIC_API_KEY from your shell for task runs only\n'
+            printf '# ANTHROPIC_API_KEY=sk-ant-api03-\n'
           } > "$ENV_FILE"
           printf "  ✓ Created %s\n" "$ENV_FILE"
-          echo "→ Edit to configure your AI command"
+          echo "→ Edit to configure your AI command and GitHub token"
         else
           printf "→ %s already exists\n" "$ENV_FILE"
+          if ! grep -q "GH_TOKEN" "$ENV_FILE"; then
+            {
+              printf '\n'
+              printf '# ── GitHub token (required for: task pr:*) ───────────────────────────────────\n'
+              printf '# Create a fine-grained PAT at https://github.com/settings/tokens/new\n'
+              printf '# Permissions: Contents (read/write), Pull requests (read/write)\n'
+              printf '# Scope to specific repos only — never "All repositories"\n'
+              printf '# GH_TOKEN=github_pat_\n'
+            } >> "$ENV_FILE"
+            printf "  ✓ Added GH_TOKEN section to %s\n" "$ENV_FILE"
+          fi
         fi
 
   commit:
@@ -297,6 +320,7 @@ tasks:
         . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/review.sh"
         load_ai_command || exit 1
+        load_gh_token || exit 1
 
         if ! gh auth status &>/dev/null; then
           echo "✗ GitHub CLI is not authenticated — run: gh auth login"

@@ -20,6 +20,14 @@ make_ai_config() {
   echo "AI_COMMAND=$command" > "$dir/.config/task/taskfile.env"
 }
 
+# make_gh_token_config DIR TOKEN — writes a taskfile.env with GH_TOKEN=TOKEN.
+make_gh_token_config() {
+  local dir="$1"
+  local token="$2"
+  mkdir -p "$dir/.config/task"
+  echo "GH_TOKEN=$token" > "$dir/.config/task/taskfile.env"
+}
+
 # make_fake_binary DIR NAME — creates an executable stub in DIR/NAME.
 make_fake_binary() {
   local dir="$1"

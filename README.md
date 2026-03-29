@@ -20,7 +20,7 @@ The installer symlinks scripts, zsh configs, git config, and the global Taskfile
 3. **Docker** (if installed): start your runtime — `colima start` or launch OrbStack
 4. **AI tools** (if installed): edit `~/.config/task/taskfile.env` to set your `AI_COMMAND`
 
-Secrets and machine-specific env vars go in `~/.env.local` — sourced automatically, never committed.
+Secrets and machine-specific env vars go in `~/.env.local` — sourced first by the shell loader, never committed. See `zsh/.env.local.template`.
 
 ## Keeping in Sync
 
@@ -72,12 +72,21 @@ curl -s "https://get.sdkman.io" | bash
 
 `zsh/starship.toml` is symlinked to `~/.config/starship.toml`.
 
-**Secrets and machine-specific config** go in `~/.env.local` — sourced automatically, never committed:
+**Secrets and machine-specific config** go in `~/.env.local` — sourced first by the shell loader, never committed. Bootstrap from the workbench template on a new machine:
 
+```bash
+cp zsh/.env.local.template ~/.env.local
+# then edit ~/.env.local to fill in your values
+```
+
+Examples:
 ```bash
 export JIRA_API_TOKEN=your-token
 export CONTEXT7_API_KEY=ctx7sk-your-key
+export COLIMA_CPU=6
 ```
+
+> **Note:** AI automation tokens (`GH_TOKEN`, `ANTHROPIC_API_KEY`) belong in `~/.config/task/taskfile.env`, not here — they must stay isolated from your interactive shell. Run `task --global ai:setup` to configure them.
 
 ### Git Configuration
 

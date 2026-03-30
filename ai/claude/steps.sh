@@ -152,21 +152,21 @@ step_claude_mcps() {
   done
 }
 
-# step_claude_guidelines — symlinks CLAUDE.md into ~/.claude/.
+# step_claude_guidelines — copies CLAUDE.md into ~/.claude/.
 step_claude_guidelines() {
   [[ -f "$CLAUDE_GUIDELINES_SRC" ]] || { err "Missing $CLAUDE_GUIDELINES_SRC"; return 1; }
   mkdir -p "$CLAUDE_DIR"
-  install_symlink "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
+  install_file "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
 }
 
-# step_claude_rules — symlinks workbench rules into ~/.claude/rules/ and
+# step_claude_rules — copies workbench rules into ~/.claude/rules/ and
 # generates workbench.md with current repo paths baked in.
 step_claude_rules() {
   [[ -d "$GUIDELINES_RULES_SRC_DIR" ]] || { warn "No rules found in $GUIDELINES_RULES_SRC_DIR — skipping"; return; }
 
   mkdir -p "$CLAUDE_RULES_DIR"
   info "Installing rules to $CLAUDE_RULES_DIR/"
-  symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$CLAUDE_RULES_DIR" "$RULES_GLOB" --strip-ext
+  copy_dir "$GUIDELINES_RULES_SRC_DIR" "$CLAUDE_RULES_DIR" "$RULES_GLOB" --strip-ext --prune
 
   echo
   info "Generating workbench.md"
@@ -202,12 +202,12 @@ step_claude_skills() {
   symlink_dir "$CLAUDE_SKILLS_SRC_DIR" "$CLAUDE_SKILLS_DIR" "*/"
 }
 
-# step_claude_agents — symlinks each agent markdown file into ~/.claude/agents/.
+# step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
 step_claude_agents() {
   [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_AGENTS_DIR"
   info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/"
-  symlink_dir "$CLAUDE_AGENTS_SRC_DIR" "$CLAUDE_AGENTS_DIR" "*.md" --strip-ext
+  copy_dir "$CLAUDE_AGENTS_SRC_DIR" "$CLAUDE_AGENTS_DIR" "*.md" --strip-ext --prune
 }
 
 # step_generate_tools — regenerates the AI tool context markdown from registries.

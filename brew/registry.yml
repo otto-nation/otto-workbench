@@ -9,6 +9,12 @@ meta:
   source: brew/Brewfile
 
 tools:
+  - name: docker
+    description: "Docker CLI — build, run, and manage containers against any backend runtime"
+    when_to_use: "Running container commands; works with Colima, OrbStack, or any Docker-compatible runtime"
+    usage: "docker run  |  docker build  |  docker compose up  |  docker ps"
+    docs: "https://docs.docker.com/engine/reference/commandline/cli/"
+
   - name: jq
     description: "JSON processor for querying, filtering, and transforming JSON data"
     when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"

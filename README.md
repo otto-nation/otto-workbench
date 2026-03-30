@@ -108,7 +108,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 ### Homebrew Packages
 
 <!-- BREW-STACKS-START -->
-- `brew/Brewfile` — core: bash, jq, tree, yq, pipx, uv, mise, bats-core, delta, gh, go-task, otto-stack, shellcheck, gitleaks, git-credential-manager
+- `brew/Brewfile` — core: bash, jq, tree, yq, pipx, uv, docker, mise, bats-core, delta, gh, go-task, otto-stack, shellcheck, gitleaks, git-credential-manager
 - `brew/apps/` — 1password-cli, bruno, hiddenbar, maccy, rectangle, sublime-text
 - `brew/infra/` — aws · kubernetes · terraform
 - `brew/lang/` — go · java

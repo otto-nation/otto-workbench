@@ -42,10 +42,18 @@ STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
 TASK_CONFIG_DIR="$HOME/.config/task"
 TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 
+# ─── Workbench runtime state ──────────────────────────────────────────────────
+# Written by setup scripts; read by zsh snippets and sync steps.
+# Never committed — machine-specific, lives in ~/.config/workbench/.
+WORKBENCH_STATE_DIR="$HOME/.config/workbench"
+
 # ─── Docker / Colima ──────────────────────────────────────────────────────────
 DOCKER_RUN_DIR="$HOME/.docker/run"
 COLIMA_DIR="$HOME/.colima"
 TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
+# Symlink written by docker/setup.sh pointing to docker/<runtime>/aliases.zsh.
+# Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.
+DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"

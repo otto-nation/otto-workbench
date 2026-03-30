@@ -15,12 +15,6 @@ tools:
     usage: "gradle build  |  gradle test  |  gradle dependencies"
     docs: "https://docs.gradle.org/"
 
-  - name: jenv
-    description: "Java version manager — switch between multiple JDK versions per project"
-    when_to_use: "Switching Java versions globally or per-directory; managing multiple JDKs"
-    usage: "jenv versions  |  jenv local 17  |  jenv global 21"
-    docs: "https://www.jenv.be/"
-
   - name: mvn
     brew_name: maven
     description: "Apache Maven — build and dependency management for Java projects"

@@ -16,7 +16,7 @@
 #   2. Add a _wb_load <layer> call to zsh/config.d/loader.zsh at the right position
 #   step_zsh picks up the new directory automatically — no changes needed here.
 #
-# Re-running is safe — symlinks are updated silently; loader.zsh only copied on change.
+# Re-running is safe — files are updated only when content changes; loader.zsh only copied on change.
 
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -30,7 +30,8 @@ fi
 
 # step_zsh — auto-discovers all layer directories in ZSH_CONFIG_SRC_DIR and
 # deploys their .zsh snippets to matching directories under ZSH_CONFIG_DIR.
-# Safe to re-run: symlinks are updated silently; stale symlinks are pruned.
+# Copies real files (not symlinks) so snippets work from sandboxed apps (e.g. Ghostty/TCC).
+# Safe to re-run: files are updated only when content changes; stale files are pruned.
 # Adding a new config.d layer requires no changes here — just create the directory.
 step_zsh() {
   local layer name
@@ -39,7 +40,7 @@ step_zsh() {
     [[ -d "$layer" ]] || continue
     name=$(basename "$layer")
     mkdir -p "$ZSH_CONFIG_DIR/$name"
-    symlink_dir "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB" --prune
+    copy_dir "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB" --prune
   done
 
   # Migration: prune stale aliases-*.zsh symlinks left at the config.d root
@@ -156,7 +157,7 @@ sync_zsh() {
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
   step_zsh_loader
-  install_symlink "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE"
+  install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"
 
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc

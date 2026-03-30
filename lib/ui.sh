@@ -285,6 +285,63 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     echo -e "  ${GREEN}✓${NC} $label"
   }
 
+  # install_file SOURCE TARGET [LABEL]
+  # Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET.
+  # Idempotent — no-op if file is already up to date.
+  install_file() {
+    local source=$1 target=$2
+    shift 2
+    local label="${1:-$(basename "$source")}"
+
+    if [[ -L "$target" ]]; then
+      rm "$target"
+    fi
+
+    if [[ -f "$target" ]] && diff -q "$source" "$target" &>/dev/null; then
+      echo -e "  ${DIM}✓ $label${NC}"
+      return
+    fi
+
+    cp "$source" "$target"
+    echo -e "  ${GREEN}✓${NC} $label"
+  }
+
+  # copy_dir SRC DST [GLOB] [--strip-ext] [--prune]
+  # Copies all files matching GLOB in SRC into DST, preserving filenames.
+  # GLOB defaults to '*'. --strip-ext removes the file extension from the display label.
+  # --prune removes stale files (or symlinks) in DST whose source counterpart is gone.
+  copy_dir() {
+    local src="${1%/}" dst="$2"
+    shift 2
+    local glob="*" strip_ext=false prune=false
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --strip-ext) strip_ext=true; shift ;;
+        --prune)     prune=true;     shift ;;
+        *)           glob="$1";      shift ;;
+      esac
+    done
+
+    if [[ "$prune" == true ]]; then
+      local item
+      for item in "$dst"/$glob; do
+        [[ -e "$item" || -L "$item" ]] || continue
+        [[ ! -e "$src/$(basename "$item")" ]] || continue
+        rm "$item"
+        echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"
+      done
+    fi
+
+    local item label
+    for item in "$src"/$glob; do
+      [[ -f "$item" ]] || continue
+      label=$(basename "$item")
+      [[ "$strip_ext" == true ]] && label="${label%.*}"
+      install_file "$item" "$dst/$(basename "$item")" "$label"
+    done
+  }
+
   # apply_config_patch FILE OLD NEW
   # Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched
   # or if FILE does not exist. Assumes OLD and NEW do not contain the | character.

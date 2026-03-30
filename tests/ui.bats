@@ -189,3 +189,77 @@ _select() {
 
   [ -L "$TMPDIR/dst/external.zsh" ]
 }
+
+# ── install_file ──────────────────────────────────────────────────────────────
+
+@test "install_file: copies source to target" {
+  echo "content" > "$TMPDIR/src"
+  install_file "$TMPDIR/src" "$TMPDIR/dst"
+  [ -f "$TMPDIR/dst" ]
+  [ "$(cat "$TMPDIR/dst")" = "content" ]
+}
+
+@test "install_file: is idempotent — no-op when content is identical" {
+  echo "content" > "$TMPDIR/src"
+  install_file "$TMPDIR/src" "$TMPDIR/dst"
+  local mtime1
+  mtime1=$(stat -f "%m" "$TMPDIR/dst" 2>/dev/null || stat -c "%Y" "$TMPDIR/dst")
+  sleep 1
+  install_file "$TMPDIR/src" "$TMPDIR/dst"
+  local mtime2
+  mtime2=$(stat -f "%m" "$TMPDIR/dst" 2>/dev/null || stat -c "%Y" "$TMPDIR/dst")
+  [ "$mtime1" = "$mtime2" ]
+}
+
+@test "install_file: updates target when content differs" {
+  echo "old" > "$TMPDIR/src"
+  install_file "$TMPDIR/src" "$TMPDIR/dst"
+  echo "new" > "$TMPDIR/src"
+  install_file "$TMPDIR/src" "$TMPDIR/dst"
+  [ "$(cat "$TMPDIR/dst")" = "new" ]
+}
+
+@test "install_file: replaces a stale symlink at target" {
+  echo "src" > "$TMPDIR/src"
+  echo "other" > "$TMPDIR/other"
+  ln -s "$TMPDIR/other" "$TMPDIR/dst"
+  install_file "$TMPDIR/src" "$TMPDIR/dst"
+  [ ! -L "$TMPDIR/dst" ]
+  [ "$(cat "$TMPDIR/dst")" = "src" ]
+}
+
+# ── copy_dir ──────────────────────────────────────────────────────────────────
+
+@test "copy_dir: copies matching files into dst" {
+  mkdir -p "$TMPDIR/src" "$TMPDIR/dst"
+  echo "a" > "$TMPDIR/src/a.zsh"
+  echo "b" > "$TMPDIR/src/b.zsh"
+  copy_dir "$TMPDIR/src" "$TMPDIR/dst" "*.zsh"
+  [ -f "$TMPDIR/dst/a.zsh" ]
+  [ -f "$TMPDIR/dst/b.zsh" ]
+}
+
+@test "copy_dir: does not create symlinks — copies real files" {
+  mkdir -p "$TMPDIR/src" "$TMPDIR/dst"
+  echo "a" > "$TMPDIR/src/a.zsh"
+  copy_dir "$TMPDIR/src" "$TMPDIR/dst" "*.zsh"
+  [ ! -L "$TMPDIR/dst/a.zsh" ]
+}
+
+@test "copy_dir: --prune removes stale files in dst" {
+  mkdir -p "$TMPDIR/src" "$TMPDIR/dst"
+  echo "a" > "$TMPDIR/src/keep.zsh"
+  echo "b" > "$TMPDIR/src/remove.zsh"
+  copy_dir "$TMPDIR/src" "$TMPDIR/dst" "*.zsh"
+  rm "$TMPDIR/src/remove.zsh"
+  copy_dir "$TMPDIR/src" "$TMPDIR/dst" "*.zsh" --prune
+  [ -f "$TMPDIR/dst/keep.zsh" ]
+  [ ! -e "$TMPDIR/dst/remove.zsh" ]
+}
+
+@test "copy_dir: handles src with trailing slash" {
+  mkdir -p "$TMPDIR/src/" "$TMPDIR/dst"
+  echo "a" > "$TMPDIR/src/a.zsh"
+  copy_dir "$TMPDIR/src/" "$TMPDIR/dst" "*.zsh"
+  [ -f "$TMPDIR/dst/a.zsh" ]
+}

@@ -36,7 +36,7 @@ step_ghostty_config() {
   success "Created $GHOSTTY_CONFIG_FILE from template"
 }
 
-# sync_ghostty — re-applies Ghostty config if Ghostty is installed.
+# sync_ghostty — re-applies Ghostty config and runs migrations if Ghostty is installed.
 # Called by sync_terminals() in terminals/steps.sh.
 sync_ghostty() {
   if ! command -v ghostty >/dev/null 2>&1 && [[ ! -d "$GHOSTTY_CONFIG_DIR" ]]; then
@@ -45,6 +45,8 @@ sync_ghostty() {
   fi
   echo; info "Ghostty config ($GHOSTTY_CONFIG_FILE)"
   step_ghostty_config
+  echo; info "Ghostty migrations"
+  run_migrations "$GHOSTTY_SRC_DIR"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

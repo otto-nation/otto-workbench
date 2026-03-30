@@ -18,6 +18,20 @@ fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
+# _docker_detect_runtime — detects the active runtime from the docker.sock symlink target.
+# Prints "colima", "orbstack", or "" (unknown/unset).
+_docker_detect_runtime() {
+  local socket_target
+  socket_target=$(readlink "$DOCKER_RUN_DIR/docker.sock" 2>/dev/null || true)
+  if [[ "$socket_target" == "$COLIMA_DIR"* ]]; then
+    echo "colima"
+  elif [[ "$socket_target" == *"orbstack"* ]]; then
+    echo "orbstack"
+  else
+    echo ""
+  fi
+}
+
 # step_docker_socket — re-applies the docker socket symlink for the detected runtime.
 # Detects the active runtime by reading the target of the existing docker.sock symlink.
 # Colima: re-symlinks $COLIMA_DIR/<profile>/docker.sock → $DOCKER_RUN_DIR/docker.sock.
@@ -39,6 +53,21 @@ step_docker_socket() {
   fi
 }
 
+# step_docker_runtime_aliases — restores the runtime marker symlink from socket detection.
+# Ensures the zsh runtime-specific aliases file stays in sync with the active runtime.
+# No-op if the runtime cannot be detected (e.g. docker was never configured).
+step_docker_runtime_aliases() {
+  local runtime
+  runtime=$(_docker_detect_runtime)
+  [[ -z "$runtime" ]] && return
+
+  local aliases_src="$DOCKER_SRC_DIR/$runtime/aliases.zsh"
+  [[ -f "$aliases_src" ]] || return
+
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  install_symlink "$aliases_src" "$DOCKER_RUNTIME_ALIASES"
+}
+
 # step_docker_testcontainers — symlinks testcontainers.properties so Gradle tests
 # work in non-interactive shells where docker aliases are not loaded.
 step_docker_testcontainers() {
@@ -46,13 +75,16 @@ step_docker_testcontainers() {
   install_symlink "$TESTCONTAINERS_SRC" "$TESTCONTAINERS_FILE"
 }
 
-# sync_docker — re-applies socket and testcontainers config non-interactively.
+# sync_docker — re-applies socket, runtime aliases, and testcontainers config non-interactively.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_docker() {
   [[ "$OSTYPE" == "darwin"* ]] || return
 
   echo; info "docker socket → $DOCKER_RUN_DIR/"
   step_docker_socket
+
+  echo; info "runtime aliases → $DOCKER_RUNTIME_ALIASES"
+  step_docker_runtime_aliases
 
   echo; info "testcontainers → $TESTCONTAINERS_FILE"
   step_docker_testcontainers

@@ -128,6 +128,17 @@ _zshrc_check_duplicates() {
   fi
 }
 
+# _env_local_bootstrap — creates ~/.env.local from the workbench template when
+# absent on a new machine. Never modifies an existing file.
+_env_local_bootstrap() {
+  if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
+    cp "$ENV_LOCAL_TEMPLATE" "$ENV_LOCAL_FILE"
+    warn "Created $ENV_LOCAL_FILE from template — review and fill in your values"
+  else
+    success ".env.local already exists"
+  fi
+}
+
 # step_zshrc — ensures ~/.zshrc is connected to the workbench loader and warns
 # about any tool inits that would now be loaded twice.
 step_zshrc() {
@@ -149,6 +160,9 @@ sync_zsh() {
 
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc
+
+  echo; info "Machine secrets template ($ENV_LOCAL_FILE)"
+  _env_local_bootstrap
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

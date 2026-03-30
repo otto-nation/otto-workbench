@@ -49,6 +49,10 @@ _wb_load() {
   done
 }
 
+# Machine-specific secrets and env vars — sourced first so every layer can read them.
+# See zsh/.env.local.template for what belongs here vs ~/.config/task/taskfile.env.
+[[ -f "$HOME/.env.local" ]] && source "$HOME/.env.local"
+
 _wb_load framework
 _wb_load tools
 _wb_load aliases

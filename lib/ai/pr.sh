@@ -58,6 +58,7 @@ push_branch() {
 # Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure.
 load_pr_context() {
   load_ai_command || return 1
+  load_gh_token || return 1
 
   if ! gh auth status &>/dev/null; then
     echo "✗ GitHub CLI is not authenticated — run: gh auth login"

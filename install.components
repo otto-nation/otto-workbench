@@ -3,5 +3,5 @@
 # Add a new component by creating the directory with those two files, then adding it here.
 brew
 docker
-iterm
+terminals
 ai

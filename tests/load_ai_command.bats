@@ -74,3 +74,32 @@ teardown() {
   PATH="$TMPDIR/bin:$PATH" load_ai_command
   [ "$AI_COMMAND" = "local-ai" ]
 }
+
+# ── ANTHROPIC_API_KEY export ──────────────────────────────────────────────────
+
+@test "exports ANTHROPIC_API_KEY when set in env file" {
+  make_fake_binary "$TMPDIR/bin" "fake-ai"
+  mkdir -p "$TMPDIR/.config/task"
+  printf 'AI_COMMAND=fake-ai\nANTHROPIC_API_KEY=sk-ant-test-key\n' \
+    > "$TMPDIR/.config/task/taskfile.env"
+  unset ANTHROPIC_API_KEY
+  PATH="$TMPDIR/bin:$PATH" load_ai_command
+  [ "$ANTHROPIC_API_KEY" = "sk-ant-test-key" ]
+}
+
+@test "does not fail when ANTHROPIC_API_KEY is absent from env file" {
+  make_fake_binary "$TMPDIR/bin" "fake-ai"
+  make_ai_config "$TMPDIR" "fake-ai"
+  PATH="$TMPDIR/bin:$PATH" run load_ai_command
+  [ "$status" -eq 0 ]
+}
+
+@test "ANTHROPIC_API_KEY in env file overrides existing environment value" {
+  make_fake_binary "$TMPDIR/bin" "fake-ai"
+  mkdir -p "$TMPDIR/.config/task"
+  printf 'AI_COMMAND=fake-ai\nANTHROPIC_API_KEY=sk-ant-from-file\n' \
+    > "$TMPDIR/.config/task/taskfile.env"
+  export ANTHROPIC_API_KEY="sk-ant-from-env"
+  PATH="$TMPDIR/bin:$PATH" load_ai_command
+  [ "$ANTHROPIC_API_KEY" = "sk-ant-from-file" ]
+}

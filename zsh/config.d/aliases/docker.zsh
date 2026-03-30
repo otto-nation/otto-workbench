@@ -1,52 +1,39 @@
-# Docker & Container Configuration
+# Docker shell configuration — shared across all runtimes.
+#
+# Sets DOCKER_HOST to the canonical socket symlink managed by docker/steps.sh,
+# so all docker tooling works regardless of which runtime is active.
+#
+# Runtime-specific config (Colima lazy-start, OrbStack no-op, etc.) is loaded
+# from ~/.config/workbench/docker-aliases.zsh — a symlink written by
+# docker/setup.sh pointing to docker/<runtime>/aliases.zsh in the workbench.
+# No-op if that symlink does not exist (fresh machine before docker/setup.sh runs).
+#
+# To switch runtimes: re-run docker/setup.sh or 'otto-workbench sync'.
 
 # ============================================================================
-# Colima Configuration
-# Override any of these in ~/.env.local before this file is sourced.
+# Environment
 # ============================================================================
 
-: "${COLIMA_PROFILE:=default}"
-: "${COLIMA_ARCH:=x86_64}"
-: "${COLIMA_VM_TYPE:=vz}"
-: "${COLIMA_ROSETTA:=true}"
-: "${COLIMA_CPU:=2}"
-: "${COLIMA_MEMORY:=4}"
-
-# ============================================================================
-# Environment Setup
-# ============================================================================
-
-# Point DOCKER_HOST at the canonical socket symlink maintained by docker/steps.sh (colima or orbstack),
-# rather than a profile-specific path — avoids stale host when COLIMA_PROFILE differs from active profile.
+# Point DOCKER_HOST at the canonical socket symlink maintained by docker/steps.sh.
+# Works for both Colima and OrbStack — the symlink target differs per runtime.
 export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 export TESTCONTAINERS_HOST_OVERRIDE=localhost
 
 # ============================================================================
-# Colima Management
+# Runtime-specific config (lazy-start, vars, etc.)
 # ============================================================================
 
-# Lazy colima start - only check when docker command is used
-docker() {
-  if ! command docker info >/dev/null 2>&1; then
-    echo "Starting Colima..."
-    local -a colima_args=(--arch "$COLIMA_ARCH" --vm-type="$COLIMA_VM_TYPE" --cpu "$COLIMA_CPU" --memory "$COLIMA_MEMORY")
-    [[ "$COLIMA_ROSETTA" == "true" ]] && colima_args+=(--vz-rosetta)
-    colima start "${colima_args[@]}"
-    docker context use colima
-  fi
-  command docker "$@"
-}
+[[ -f "$HOME/.config/workbench/docker-aliases.zsh" ]] \
+  && source "$HOME/.config/workbench/docker-aliases.zsh"
 
 # ============================================================================
-# Docker Shortcuts
+# Docker shortcuts
 # ============================================================================
 
-# Core commands
 alias d='docker'
 alias dc='docker compose'
 
-# Container management
 alias d-ps='docker ps'
 alias d-psa='docker ps -a'
 alias d-images='docker images'

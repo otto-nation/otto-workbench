@@ -46,7 +46,7 @@ cmd_sync() {
   echo
 
   # Auto-discovers sync_<component>() from */steps.sh and ai/*/steps.sh.
-  # Glob order is alphabetical: bin → docker → git → iterm → task → zsh →
+  # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
   #                              ai/claude → ai/kiro → …
   # Adding any component with a sync_<name>() function includes it automatically.
   for _f in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/ai/*/steps.sh; do

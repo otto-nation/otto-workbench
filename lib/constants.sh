@@ -69,9 +69,14 @@ TASKFILE_SRC="$WORKBENCH_DIR/Taskfile.global.yml"
 DOCKER_SRC_DIR="$WORKBENCH_DIR/docker"
 TESTCONTAINERS_SRC="$WORKBENCH_DIR/docker/testcontainers.properties"
 
-# ─── Workbench source — iterm ─────────────────────────────────────────────────
-ITERM_SRC_DIR="$WORKBENCH_DIR/iterm"
-ITERM_THEMES_SRC_DIR="$WORKBENCH_DIR/iterm/themes"
+# ─── Workbench source — terminals ────────────────────────────────────────────
+TERMINALS_SRC_DIR="$WORKBENCH_DIR/terminals"
+ITERM_SRC_DIR="$WORKBENCH_DIR/terminals/iterm"
+ITERM_THEMES_SRC_DIR="$WORKBENCH_DIR/terminals/iterm/themes"
+GHOSTTY_SRC_DIR="$WORKBENCH_DIR/terminals/ghostty"
+GHOSTTY_CONFIG_TEMPLATE="$WORKBENCH_DIR/terminals/ghostty/config.template"
+GHOSTTY_CONFIG_DIR="$HOME/.config/ghostty"
+GHOSTTY_CONFIG_FILE="$HOME/.config/ghostty/config"
 
 # ─── Workbench source — git ───────────────────────────────────────────────────
 GIT_SRC_DIR="$WORKBENCH_DIR/git"

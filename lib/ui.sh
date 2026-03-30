@@ -285,6 +285,27 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     echo -e "  ${GREEN}✓${NC} $label"
   }
 
+  # apply_config_patch FILE OLD NEW
+  # Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched
+  # or if FILE does not exist. Assumes OLD and NEW do not contain the | character.
+  # Called by component migrations.sh files via run_migrations.
+  apply_config_patch() {
+    local file="$1" old="$2" new="$3"
+    [[ -f "$file" ]] || return 0
+    grep -qF "$old" "$file" || return 0
+    sed -i '' "s|$old|$new|g" "$file"
+    success "Patched $(basename "$file"): '$old' → '$new'"
+  }
+
+  # run_migrations DIR
+  # Sources DIR/migrations.sh if it exists. No-op otherwise.
+  # Called by sync_<component> functions to apply idempotent config patches.
+  run_migrations() {
+    local file="$1/migrations.sh"
+    # shellcheck source=/dev/null
+    [[ -f "$file" ]] && . "$file"
+  }
+
   # symlink_dir SRC DST [GLOB] [--strip-ext] [--prune]
   # Symlinks all items matching GLOB in SRC into DST, preserving filenames.
   # GLOB defaults to '*'. --strip-ext removes the file extension from the display label.

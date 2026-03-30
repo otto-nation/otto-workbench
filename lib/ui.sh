@@ -312,7 +312,7 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   # --prune removes stale symlinks in DST that point into SRC but whose source is gone.
   # Inherits SYMLINK_MODE from the environment (pass-through to install_symlink).
   symlink_dir() {
-    local src=$1 dst=$2
+    local src="${1%/}" dst="$2"  # strip trailing slash so item paths never contain //
     shift 2
     local glob="*" strip_ext=false prune=false
 

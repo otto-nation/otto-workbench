@@ -73,7 +73,7 @@ _mcp_install_from_manifest() {
   _mcp_install "$name" "${cmd_args[@]}"
 
   note=$(jq -r '.note // empty' "$file")
-  [[ -n "$note" ]] && echo -e "  ${DIM}$note${NC}"
+  if [[ -n "$note" ]]; then echo -e "  ${DIM}$note${NC}"; fi
 }
 
 # _install_workbench_rule — writes the workbench.md rule file with current paths baked in.

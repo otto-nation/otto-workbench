@@ -17,7 +17,7 @@ _config_flag=""
 [[ -f "$_repo_root/.gitleaks.toml" ]] && _config_flag="--config $_repo_root/.gitleaks.toml"
 
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-gitleaks protect --staged $_config_flag 2>&1 \
+gitleaks protect --staged --verbose --no-color --no-banner $_config_flag \
   || { echo "✗ gitleaks found potential secrets — review the output above before committing"; exit 1; }
 
 # Delegate to the repo-local hook if present (bypassed when core.hooksPath is set globally).

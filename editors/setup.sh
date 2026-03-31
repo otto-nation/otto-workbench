@@ -61,10 +61,11 @@ if [[ ${#SELECTED_EDITORS[@]} -eq 0 ]]; then
   exit 0
 fi
 
+_EDITORS_DIR="$SCRIPT_DIR"
 for _editor in "${SELECTED_EDITORS[@]}"; do
   echo
   # shellcheck source=/dev/null
-  . "$SCRIPT_DIR/$_editor/setup.sh"
+  . "$_EDITORS_DIR/$_editor/setup.sh"
 done
 unset _editor
 

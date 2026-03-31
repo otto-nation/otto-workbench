@@ -10,7 +10,6 @@
   },
   "agent": {
     "default_profile": "ask",
-    "always_allow_tool_actions": true,
     "default_model": {
       "provider": "copilot_chat",
       "model": "claude-sonnet-4"
@@ -21,7 +20,7 @@
     "enabled": true
   },
   "terminal": {
-    "font_family": "MesloLGL Nerd Font",
+    "font_family": "FiraCode Nerd Font Mono",
     "font_features": null,
     "font_size": null
   }

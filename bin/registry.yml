@@ -64,3 +64,8 @@ tools:
     description: "Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency"
     when_to_use: "After adding or modifying any component (steps.sh, setup.conf, install.components)"
     usage: "bin/validate-components"
+
+  - name: ghostty-terminfo-push
+    description: "Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH"
+    when_to_use: "When connecting to a new remote server and seeing 'Error opening terminal: xterm-ghostty'"
+    usage: "ghostty-terminfo-push <host>"

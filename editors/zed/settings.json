@@ -1,0 +1,28 @@
+{
+  "_workbench": ["confirm_quit", "base_keymap", "theme", "agent", "inlay_hints", "terminal"],
+
+  "confirm_quit": true,
+  "base_keymap": "JetBrains",
+  "theme": {
+    "mode": "system",
+    "light": "Gruvbox Light Hard",
+    "dark": "Gruvbox Dark Hard"
+  },
+  "agent": {
+    "default_profile": "ask",
+    "always_allow_tool_actions": true,
+    "default_model": {
+      "provider": "copilot_chat",
+      "model": "claude-sonnet-4"
+    },
+    "model_parameters": []
+  },
+  "inlay_hints": {
+    "enabled": true
+  },
+  "terminal": {
+    "font_family": "MesloLGL Nerd Font",
+    "font_features": null,
+    "font_size": null
+  }
+}

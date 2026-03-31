@@ -54,6 +54,7 @@ Re-run a single component independently:
 | `generate-git-rules` | Regenerates git.generated.md from lib/ai/core.sh constants |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
+| `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
 <!-- SCRIPTS-TABLE-END -->
 
 ### ZSH Configuration
@@ -109,7 +110,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 
 <!-- BREW-STACKS-START -->
 - `brew/Brewfile` — core: bash, jq, tree, yq, pipx, uv, docker, mise, bats-core, delta, gh, go-task, otto-stack, shellcheck, gitleaks, git-credential-manager
-- `brew/apps/` — 1password-cli, bruno, hiddenbar, maccy, rectangle, sublime-text
+- `brew/apps/` — 1password, 1password-cli, bruno, ghostty, gitkraken, hiddenbar, maccy, readdle-spark, rectangle, spotify, sublime-text, zed
 - `brew/infra/` — aws · kubernetes · terraform
 - `brew/lang/` — go · java
 - `brew/security/` — gnupg, pinentry-mac, gpg-suite

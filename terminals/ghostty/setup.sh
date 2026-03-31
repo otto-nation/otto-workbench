@@ -15,6 +15,9 @@ step_ghostty_install
 echo
 info "Config ($GHOSTTY_CONFIG_FILE):"
 step_ghostty_config
+echo
+info "Theme:"
+step_ghostty_theme
 
 echo
 # shellcheck source=terminals/ghostty/summary.sh

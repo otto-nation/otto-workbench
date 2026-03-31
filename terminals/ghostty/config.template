@@ -6,7 +6,7 @@
 # To preview a theme: ghostty +list-themes | grep -i gruvbox
 
 # ─── Theme ────────────────────────────────────────────────────────────────────
-theme = Gruvbox Dark
+theme = light:Gruvbox Light,dark:Gruvbox Dark
 
 # ─── Font ─────────────────────────────────────────────────────────────────────
 font-family = FiraCode Nerd Font Mono

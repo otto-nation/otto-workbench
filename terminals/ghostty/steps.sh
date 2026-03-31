@@ -36,6 +36,22 @@ step_ghostty_config() {
   success "Created $GHOSTTY_CONFIG_FILE from template"
 }
 
+# step_ghostty_theme — sets theme to light/dark auto-switching in the live config.
+# Ghostty resolves the correct variant at runtime based on system appearance.
+# Idempotent: replaces any existing theme line; inserts one if absent.
+step_ghostty_theme() {
+  [[ -f "$GHOSTTY_CONFIG_FILE" ]] || { warn "Config not found — skipping theme update"; return; }
+
+  local theme="light:Gruvbox Light,dark:Gruvbox Dark"
+
+  if grep -q '^theme = ' "$GHOSTTY_CONFIG_FILE"; then
+    sed -i '' "s|^theme = .*|theme = $theme|" "$GHOSTTY_CONFIG_FILE"
+  else
+    printf '\n# ─── Theme ───────────────────────────────────────────────────────────────────\ntheme = %s\n' "$theme" >> "$GHOSTTY_CONFIG_FILE"
+  fi
+  success "theme = $theme"
+}
+
 # sync_ghostty — re-applies Ghostty config and runs migrations if Ghostty is installed.
 # Called by sync_terminals() in terminals/steps.sh.
 sync_ghostty() {
@@ -45,6 +61,8 @@ sync_ghostty() {
   fi
   echo; info "Ghostty config ($GHOSTTY_CONFIG_FILE)"
   step_ghostty_config
+  echo; info "Ghostty theme"
+  step_ghostty_theme
   echo; info "Ghostty migrations"
   run_migrations "$GHOSTTY_SRC_DIR"
 }

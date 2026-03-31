@@ -1,0 +1,55 @@
+#!/bin/bash
+# Install Ghostty's xterm-ghostty terminfo on a remote host.
+#
+# Fixes "Error opening terminal: xterm-ghostty" on remote servers and in sudo
+# sessions. Installs to both ~/.terminfo (user) and /etc/terminfo (system).
+# Run once per server; safe to re-run.
+#
+# Usage: ghostty-terminfo-push <host>
+#
+# Notes:
+#   - System install requires passwordless sudo on the remote host.
+#     If it fails, a manual fallback command is printed.
+#   - "older tic versions may treat the description field as an alias" is a
+#     harmless warning from older ncurses — the terminfo is still installed.
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+HOST="${1:-}"
+if [[ -z "$HOST" ]]; then
+  err "Usage: ghostty-terminfo-push <host>"
+  exit 1
+fi
+
+if ! infocmp xterm-ghostty &>/dev/null; then
+  err "xterm-ghostty terminfo not found — is Ghostty installed?"
+  exit 1
+fi
+
+# Capture once — avoid two separate infocmp invocations
+TERMINFO="$(infocmp -x xterm-ghostty)"
+
+info "Pushing xterm-ghostty terminfo to $HOST"
+echo
+
+# ── User install (~/.terminfo) ────────────────────────────────────────────────
+# Required for regular SSH sessions.
+info "User install (~/.terminfo)"
+printf '%s\n' "$TERMINFO" | ssh "$HOST" 'mkdir -p ~/.terminfo && tic -x -'
+success "Installed to ~/.terminfo"
+
+echo
+
+# ── System install (/etc/terminfo) ───────────────────────────────────────────
+# Required for sudo sessions (e.g. sudo nano, sudo vim).
+# Uses ssh -t to allocate a TTY so sudo can prompt for a password if needed.
+# Reads terminfo from ~/.terminfo on the remote (installed in the step above).
+info "System install (/etc/terminfo, may prompt for sudo password)"
+if ssh -t "$HOST" \
+  'infocmp -x xterm-ghostty | sudo tee /tmp/.ghostty-terminfo >/dev/null \
+   && sudo tic -x /tmp/.ghostty-terminfo; rc=$?; sudo rm -f /tmp/.ghostty-terminfo; exit $rc'; then
+  success "Installed system-wide"
+else
+  warn "System install failed"
+fi

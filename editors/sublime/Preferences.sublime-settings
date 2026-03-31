@@ -1,0 +1,8 @@
+{
+  "_workbench": ["translate_tabs_to_spaces", "ensure_newline_at_eof_on_save", "trim_trailing_white_space_on_save", "word_wrap"],
+
+  "translate_tabs_to_spaces": true,
+  "ensure_newline_at_eof_on_save": true,
+  "trim_trailing_white_space_on_save": true,
+  "word_wrap": false
+}

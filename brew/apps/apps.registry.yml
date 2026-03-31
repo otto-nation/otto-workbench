@@ -15,8 +15,44 @@ tools:
     usage: "op read 'op://vault/item/field'  |  op run -- <cmd>"
     docs: "https://developer.1password.com/docs/cli/"
 
+  - name: 1password
+    description: "1Password — password manager and secure vault for credentials, keys, and secrets"
+    when_to_use: "Managing passwords, passkeys, SSH keys, and secure notes"
+    usage: "Launched from Applications or Spotlight"
+    docs: "https://1password.com/"
+
   - name: bruno
     description: "Open-source API client — test and document REST, GraphQL, and gRPC APIs"
     when_to_use: "Testing API endpoints; managing API collections in version control"
     usage: "Launched from Applications or Spotlight"
     docs: "https://www.usebruno.com/"
+
+  - name: ghostty
+    description: "Ghostty — fast, native terminal emulator with GPU rendering"
+    when_to_use: "Primary terminal; supports xterm-ghostty terminfo for rich terminal features"
+    usage: "Launched from Applications or Spotlight"
+    docs: "https://ghostty.org/"
+
+  - name: gitkraken
+    description: "GitKraken — visual Git client for branch management, history, and merge conflict resolution"
+    when_to_use: "Visualizing git history and branches; resolving merge conflicts interactively"
+    usage: "Launched from Applications or Spotlight"
+    docs: "https://www.gitkraken.com/"
+
+  - name: readdle-spark
+    description: "Spark — email client by Readdle with smart inbox, snooze, and team collaboration"
+    when_to_use: "Managing email with smart filtering, scheduling, and quick replies"
+    usage: "Launched from Applications or Spotlight"
+    docs: "https://sparkmailapp.com/"
+
+  - name: spotify
+    description: "Spotify — music and podcast streaming client"
+    when_to_use: "Listening to music or podcasts during development"
+    usage: "Launched from Applications or Spotlight"
+    docs: "https://www.spotify.com/"
+
+  - name: zed
+    description: "Zed — high-performance, multiplayer code editor built in Rust"
+    when_to_use: "Fast code editing; real-time collaboration; AI-assisted coding"
+    usage: "Launched from Applications or Spotlight  |  zed <file>"
+    docs: "https://zed.dev/"

@@ -86,7 +86,9 @@ _brew_install_file() {
     echo -e "  ${DIM}All packages already installed — skipping${NC}"
     return
   fi
-  confirm "  Install $label?" && brew bundle --file="$file" && success "$label installed"
+  if confirm "  Install $label?"; then
+    brew bundle --file="$file" && success "$label installed"
+  fi
 }
 
 # _brew_pkgs FILE — prints comma-separated short package names from a Brewfile
@@ -280,7 +282,7 @@ _brew_migrate_version_managers() {
     fi
   fi
 
-  [[ "$found" -eq 1 ]] && echo -e "  ${DIM}Re-add runtimes with: mise use node@lts  |  mise use java@21${NC}"
+  if [[ "$found" -eq 1 ]]; then echo -e "  ${DIM}Re-add runtimes with: mise use node@lts  |  mise use java@21${NC}"; fi
 }
 
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"

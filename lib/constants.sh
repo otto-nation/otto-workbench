@@ -118,6 +118,18 @@ CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 KIRO_SRC_DIR="$WORKBENCH_DIR/ai/kiro"
 KIRO_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/kiro/agents"
 
+# ─── Workbench source — editors ───────────────────────────────────────────────
+ZED_SETTINGS_SRC="$WORKBENCH_DIR/editors/zed/settings.json"
+ZED_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/editors/zed/sync-settings.jq"
+SUBLIME_SETTINGS_SRC="$WORKBENCH_DIR/editors/sublime/Preferences.sublime-settings"
+SUBLIME_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/editors/sublime/sync-settings.jq"
+
+# ─── Editors — runtime paths ──────────────────────────────────────────────────
+ZED_CONFIG_DIR="$HOME/.config/zed"
+ZED_SETTINGS_FILE="$HOME/.config/zed/settings.json"
+SUBLIME_PREFS_DIR="$HOME/Library/Application Support/Sublime Text/Packages/User"
+SUBLIME_SETTINGS_FILE="$HOME/Library/Application Support/Sublime Text/Packages/User/Preferences.sublime-settings"
+
 # ─── Generated rule files ─────────────────────────────────────────────────────
 TOOLS_GENERATED_RELPATH="ai/guidelines/rules/tools.generated.md"
 GIT_GENERATED_RELPATH="ai/guidelines/rules/git.generated.md"

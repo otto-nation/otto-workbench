@@ -112,7 +112,6 @@ curl -s "https://get.sdkman.io" | bash
 Examples:
 ```bash
 export JIRA_API_TOKEN=your-token
-export CONTEXT7_API_KEY=ctx7sk-your-key
 export COLIMA_CPU=6
 ```
 
@@ -192,14 +191,11 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 - Skills: go
 - Agents: ci-cd
-- MCPs: Context7, Sequential Thinking, Serena
 
 **Kiro:**
 - `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)
 - Agents: ci-cd, default
 <!-- AI-INSTALLS-END -->
-
-**Context7** reads `CONTEXT7_API_KEY` from the environment at runtime — add it to `~/.env.local`.
 
 ### AI command configuration
 
@@ -207,7 +203,7 @@ After setup, configure which AI tool the global Taskfile uses:
 
 ```bash
 # ~/.config/task/taskfile.env
-AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config
+AI_COMMAND=claude -p --agent ci-cd
 AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
 ```
 

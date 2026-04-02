@@ -70,24 +70,36 @@ _join() {
   printf '%s' "$result"
 }
 
-# _splice_readme README MARKER
+# _splice_readme README MARKER [--shell]
 # Reads new section content from stdin and replaces the region between
 # <!-- MARKER-START --> and <!-- MARKER-END --> in README. No-ops if absent.
+# With --shell, uses shell-comment markers: # --- MARKER-START ---
 _splice_readme() {
-  local readme="$1" marker="$2"
+  local readme="$1" marker="$2" fmt="html"
+  shift 2
+  [[ "${1:-}" == "--shell" ]] && fmt="shell"
   if [[ ! -f "$readme" ]]; then cat > /dev/null; return 0; fi
+  local start_marker end_marker
+  if [[ "$fmt" == "shell" ]]; then
+    start_marker="# --- ${marker}-START ---"
+    end_marker="# --- ${marker}-END ---"
+  else
+    start_marker="<!-- ${marker}-START -->"
+    end_marker="<!-- ${marker}-END -->"
+  fi
   local tmp_content tmp_out
   tmp_content=$(mktemp)
   tmp_out=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp_content' '$tmp_out'" RETURN
   cat > "$tmp_content"
   awk -v tf="$tmp_content" \
-      -v s="<!-- ${marker}-START -->" \
-      -v e="<!-- ${marker}-END -->" '
+      -v s="$start_marker" \
+      -v e="$end_marker" '
     $0 == s { print; while ((getline line < tf) > 0) print line; skip=1; next }
     $0 == e { skip=0 }
     !skip   { print }
   ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
-  rm -f "$tmp_content"
 }
 
 # _iter_tools FILE CALLBACK [FILTER]
@@ -243,7 +255,7 @@ _generate_env_section() {
 }
 
 if [[ -f "$ENV_LOCAL_TEMPLATE_PATH" ]]; then
-  _generate_env_section | _splice_readme "$ENV_LOCAL_TEMPLATE_PATH" "ENV"
+  _generate_env_section | _splice_readme "$ENV_LOCAL_TEMPLATE_PATH" "ENV" --shell
   success "Updated .env.local.template env section"
 fi
 

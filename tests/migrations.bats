@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for the migration framework (lib/migrations.sh) and validator (bin/validate-migrations).
+bats_require_minimum_version 1.5.0
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
@@ -184,7 +185,7 @@ EOF
   [[ "$output" == *"Pruned stale migration state"* ]]
 
   # Stale entry should be gone, valid one should remain
-  ! grep -qxF "old/20240101-removed.sh" "$FAKE_STATE/migrations.applied"
+  run ! grep -qxF "old/20240101-removed.sh" "$FAKE_STATE/migrations.applied"
   grep -qxF "mycomp/20250101-test.sh" "$FAKE_STATE/migrations.applied"
 }
 

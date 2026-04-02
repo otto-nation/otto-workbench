@@ -291,6 +291,20 @@ step_global_hooks() {
   success "global core.hooksPath → $GIT_HOOKS_DIR"
 }
 
+# step_local_hooks — installs repo-local hooks into .git/hooks/ for the workbench repo.
+# When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
+# The global pre-push-global hook delegates back to .git/hooks/pre-push if present,
+# so this step is required for repo-local validators to run on push.
+step_local_hooks() {
+  local dot_git="$WORKBENCH_DIR/.git"
+  # In a worktree, .git is a file (not a directory) — skip in that case
+  [[ -d "$dot_git" ]] || return 0
+  mkdir -p "$dot_git/hooks"
+
+  echo; info "local git hooks → .git/hooks/"
+  install_symlink "$GIT_HOOKS_SRC_DIR/pre-push" "$dot_git/hooks/pre-push"
+}
+
 # install_git — interactive setup path for gitconfig.
 # Called by install.sh (prefers install_<name> over sync_<name> for core components).
 # Prompts for identity and offers overwrite/backup for existing configs.
@@ -307,6 +321,7 @@ install_git() {
 
   echo; info "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
+  step_local_hooks
 }
 
 # sync_git — runs all git sync steps non-interactively.
@@ -317,6 +332,7 @@ sync_git() {
 
   echo; info "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
+  step_local_hooks
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

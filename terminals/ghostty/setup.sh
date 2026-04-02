@@ -18,6 +18,9 @@ step_ghostty_config
 echo
 info "Theme:"
 step_ghostty_theme
+echo
+info "Migrations:"
+run_migrations "$GHOSTTY_SRC_DIR"
 
 echo
 # shellcheck source=terminals/ghostty/summary.sh

@@ -5,13 +5,15 @@
 #        (also sourced by install.sh and bin/otto-workbench for step functions)
 #
 # What it does:
-#   1. Sets up ~/.gitconfig to include the workbench shared config
-#   2. Bootstraps ~/.gitconfig.local from template if absent (identity, GPG, credentials)
-#   3. Installs a global pre-commit hook for gitleaks — protects every repo on this machine
+#   1. Bootstraps ~/.gitconfig from template on a new machine (identity, GPG, credentials)
+#   2. Ensures ~/.gitconfig includes the shared workbench config (git/gitconfig.shared)
+#   3. Installs global git hooks for gitleaks — protects every repo on this machine
 #
-# ~/.gitconfig is a real file (not a symlink) so `git config --global` never touches the
-# tracked repo file. Machine-specific values live only in ~/.gitconfig.local.
+# Architecture (2-layer):
+#   ~/.gitconfig         → your machine: identity, GPG, overrides (+ includes shared config)
+#   git/gitconfig.shared → shared aliases, colors, and behavior (version-controlled)
 #
+# git config --global writes directly to ~/.gitconfig — this is expected and fine.
 # Re-running is safe — all steps are idempotent.
 
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
@@ -24,29 +26,14 @@ fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
-# _gitconfig_write — creates a fresh ~/.gitconfig with both include stanzas.
-# Only called when the file does not yet exist.
-_gitconfig_write() {
-  cat > "$GITCONFIG_FILE" <<EOF
-# ~/.gitconfig — global git config for this machine.
-#
-# This file is NOT tracked by any repo and intentionally contains no settings directly.
-#
-# Architecture:
-#   git/.gitconfig     → shared aliases, colors, and behavior (version-controlled in workbench)
-#   ~/.gitconfig.local → machine-specific identity, GPG, and credentials (never committed)
-#
-# To change shared settings: edit git/.gitconfig in the workbench repo and commit.
-# To change machine-specific settings: edit ~/.gitconfig.local.
-# If you move the workbench repo, re-run install.sh to update the path below.
-
-[include]
-	path = $GIT_SHARED_CONFIG
-
-[include]
-	path = $GITCONFIG_LOCAL_FILE
-EOF
-  success "Created $GITCONFIG_FILE"
+# _gitconfig_bootstrap — copies the template into ~/.gitconfig when the file
+# does not yet exist (new machine). The template includes placeholder values
+# for identity and GPG that the user fills in.
+_gitconfig_bootstrap() {
+  if [[ ! -f "$GITCONFIG_FILE" ]]; then
+    cp "$GIT_CONFIG_TEMPLATE" "$GITCONFIG_FILE"
+    warn "Created $GITCONFIG_FILE from template — edit it to set your identity and GPG key"
+  fi
 }
 
 # _gitconfig_ensure_include PATH — appends an [include] stanza for PATH if not
@@ -59,30 +46,12 @@ _gitconfig_ensure_include() {
   fi
 }
 
-# _gitconfig_bootstrap_local — copies the local config template into place when
-# ~/.gitconfig.local does not yet exist. Warns the user to fill in their identity.
-_gitconfig_bootstrap_local() {
-  if [[ ! -f "$GITCONFIG_LOCAL_FILE" ]]; then
-    cp "$GIT_LOCAL_CONFIG_TEMPLATE" "$GITCONFIG_LOCAL_FILE"
-    warn "Created $GITCONFIG_LOCAL_FILE from template — edit it to set your identity and credential helpers"
-  else
-    success ".gitconfig.local already exists"
-  fi
-}
-
-# step_gitconfig — sets up ~/.gitconfig with [include] lines for the shared
-# workbench config and ~/.gitconfig.local. Bootstraps the local file from
-# template on a new machine.
+# step_gitconfig — ensures ~/.gitconfig exists and includes the shared
+# workbench config. Bootstraps from template on a new machine.
 step_gitconfig() {
-  if [[ ! -f "$GITCONFIG_FILE" ]]; then
-    _gitconfig_write
-  else
-    _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
-    _gitconfig_ensure_include "$GITCONFIG_LOCAL_FILE"
-    success "gitconfig includes up to date"
-  fi
-
-  _gitconfig_bootstrap_local
+  _gitconfig_bootstrap
+  _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
+  success "gitconfig includes up to date"
 }
 
 # step_global_hooks — symlinks the workbench pre-commit hook into $GIT_HOOKS_DIR

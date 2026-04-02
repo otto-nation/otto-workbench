@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-commit hook: scans staged changes for secrets before they enter history.
-# Installed via: task dev:setup  (sets core.hooksPath to git/hooks/)
+# Installed globally by git/steps.sh → ~/.git-hooks/pre-commit
 #
 # For global protection (all repos), the workbench install configures
 # a global hooks dir at ~/.git-hooks/ — see git/steps.sh.

@@ -11,7 +11,8 @@
 #       none          — schema-only, no cross-check
 #
 # Registry discovery:
-#   Top-level:    <repo>/*/registry.yml
+#   Top-level:       <repo>/*/registry.yml
+#   Nested:          <repo>/*/*/registry.yml  (e.g. ai/claude/registry.yml)
 #   Optional stacks: <repo>/brew/{lang,infra,tools}/*.registry.yml
 #
 # Usage: bin/validate-registries
@@ -24,8 +25,11 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
+# shellcheck source=../lib/registries.sh
+. "$REPO_ROOT/lib/registries.sh"
 
 ERRORS=0
+declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
 
 # _fail MSG — records an error and prints it; does not exit immediately so all
 # errors in a registry are reported before aborting.
@@ -122,6 +126,86 @@ _validate_against_zsh() {
   done
 }
 
+# _validate_env_fields FILE
+# Validates the optional top-level env[] array: var is present, valid format, no dupes.
+_validate_env_fields() {
+  local file="$1"
+  local has_env
+  has_env=$(yq '. | has("env")' "$file")
+  [[ "$has_env" == "true" ]] || return 0
+
+  local count i=0
+  count=$(yq '.env | length' "$file")
+  local -a seen_vars=()
+  while [[ "$i" -lt "$count" ]]; do
+    local var
+    var=$(yq ".env[$i].var // \"\"" "$file")
+    if [[ -z "$var" || "$var" == "null" ]]; then
+      _fail "$(basename "$file") env[$i]: missing required field: var"
+      i=$(( i + 1 ))
+      continue
+    fi
+    if [[ ! "$var" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+      _fail "$(basename "$file") env '$var': invalid var name (must match ^[A-Z][A-Z0-9_]*$)"
+    fi
+    local v
+    for v in "${seen_vars[@]}"; do
+      if [[ "$v" == "$var" ]]; then
+        _fail "$(basename "$file"): duplicate env var: $var"
+        break
+      fi
+    done
+    seen_vars+=("$var")
+    # Track for cross-registry duplicate check (use relative path for readability)
+    ALL_ENV_VARS+=("$var:${file#"$REPO_ROOT/"}")
+    i=$(( i + 1 ))
+  done
+}
+
+# _validate_install_check_command FILE
+# When install_check: true and install_check_command is set, validates it is non-empty.
+# When tools is empty and install_check: true, requires install_check_command.
+_validate_install_check_command() {
+  local file="$1"
+  local install_check install_check_command tools_count
+  install_check=$(yq '.meta.install_check // false' "$file")
+  [[ "$install_check" == "true" ]] || return 0
+
+  install_check_command=$(yq '.meta.install_check_command // ""' "$file")
+  tools_count=$(yq '.tools | length' "$file")
+
+  if [[ "$tools_count" -eq 0 ]] && [[ -z "$install_check_command" || "$install_check_command" == "null" ]]; then
+    _fail "$(basename "$file"): install_check: true with empty tools[] requires install_check_command"
+  fi
+}
+
+# _validate_auth_fields FILE
+# If auth block is present, env_var must be non-empty. Warns if setup_url is missing.
+_validate_auth_fields() {
+  local file="$1"
+  local count i=0
+  count=$(yq '.tools | length' "$file")
+  while [[ "$i" -lt "$count" ]]; do
+    local has_auth
+    has_auth=$(yq ".tools[$i] | has(\"auth\")" "$file")
+    if [[ "$has_auth" == "true" ]]; then
+      local name env_var setup_url
+      name=$(yq ".tools[$i].name" "$file")
+      env_var=$(yq ".tools[$i].auth.env_var // \"\"" "$file")
+      setup_url=$(yq ".tools[$i].auth.setup_url // \"\"" "$file")
+      if [[ -z "$env_var" || "$env_var" == "null" ]]; then
+        _fail "$(basename "$file") entry '$name': auth block missing required field: env_var"
+      else
+        ALL_ENV_VARS+=("$env_var:${file#"$REPO_ROOT/"}")
+      fi
+      if [[ -z "$setup_url" || "$setup_url" == "null" ]]; then
+        warn "$(basename "$file") entry '$name': auth block missing setup_url"
+      fi
+    fi
+    i=$(( i + 1 ))
+  done
+}
+
 # _validate_registry FILE
 # Dispatches cross-validation based on meta.validation and meta.source in FILE.
 _validate_registry() {
@@ -154,14 +238,9 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 1
 fi
 
-# Collect all registries: top-level (one per domain dir) + optional stacks
+# Collect all registries: top-level + nested (e.g. ai/claude/) + optional brew stacks
 declare -a all_registries=()
-for f in "$REPO_ROOT"/*/registry.yml; do
-  [[ -f "$f" ]] && all_registries+=("$f")
-done
-while IFS= read -r -d '' f; do
-  all_registries+=("$f")
-done < <(find "$REPO_ROOT/brew" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
+collect_registries all_registries "$REPO_ROOT"
 
 if [[ "${#all_registries[@]}" -eq 0 ]]; then
   warn "No registry files found — skipping"
@@ -174,8 +253,28 @@ for registry in "${all_registries[@]}"; do
   echo
   info "Schema: ${registry#"$REPO_ROOT/"}"
   _validate_schema "$registry"
+  _validate_env_fields "$registry"
+  _validate_auth_fields "$registry"
+  _validate_install_check_command "$registry"
   _validate_registry "$registry"
 done
+
+# Cross-registry duplicate check: no env var name should appear in multiple registries.
+_check_cross_registry_dupes() {
+  local -A var_sources=()
+  local entry var source
+  for entry in "${ALL_ENV_VARS[@]}"; do
+    var="${entry%%:*}"
+    source="${entry#*:}"
+    if [[ -n "${var_sources[$var]:-}" && "${var_sources[$var]}" != "$source" ]]; then
+      _fail "env var '$var' defined in multiple registries: ${var_sources[$var]} and $source"
+    fi
+    var_sources[$var]="$source"
+  done
+}
+if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then
+  _check_cross_registry_dupes
+fi
 
 echo
 if [[ "$ERRORS" -gt 0 ]]; then

@@ -30,11 +30,43 @@ After pulling updates or when config drifts:
 otto-workbench sync
 ```
 
-Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Safe to run at any time.
+Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Prints a summary of all managed and editable files when complete. Safe to run at any time.
 
 Re-run a single component independently:
 - Optional components (interactive): `bash <component>/setup.sh` — e.g. `bash ai/setup.sh`
 - Core components (idempotent): `bash <component>/steps.sh` — e.g. `bash git/steps.sh`
+
+## File Layout
+
+Both `install.sh` and `otto-workbench sync` print a summary of everything below.
+
+### Managed files (updated by `otto-workbench sync`)
+
+These are owned by the workbench and updated every time you sync. Do not edit directly.
+
+| Target | Source | Method |
+|--------|--------|--------|
+| `~/.local/bin/*` | `bin/` | symlinked |
+| `~/.config/zsh/config.d/*/` | `zsh/config.d/*/` | copied |
+| `~/.config/zsh/config.d/loader.zsh` | `zsh/config.d/loader.zsh` | copied |
+| `~/.config/starship.toml` | `zsh/starship.toml` | copied |
+| `~/.gitconfig` | includes `git/gitconfig.shared` | include stanza |
+| `~/.git-hooks/*` | `git/hooks/` | symlinked |
+| `~/.config/task/{Taskfile.yml,lib/}` | `Taskfile.global.yml`, `lib/` | symlinked |
+| `~/.claude/*` | `ai/claude/` | mixed (merge/copy/symlink) |
+| `~/.kiro/*` | `ai/kiro/`, `ai/guidelines/` | mixed |
+
+### Editable configs (yours — never overwritten)
+
+These are created once (from templates or by first-time setup) and never modified by sync.
+
+| File | Purpose | Bootstrap |
+|------|---------|-----------|
+| `~/.gitconfig` | Git identity, GPG, credentials | `git/gitconfig.template` |
+| `~/.env.local` | Shell secrets, API keys, env overrides | `zsh/.env.local.template` |
+| `~/.config/task/taskfile.env` | AI automation tokens (`GH_TOKEN`, `AI_COMMAND`) | `task --global ai:setup` |
+| `~/.zshrc` | Shell rc file | `zsh/.zshrc` |
+| `~/.config/ghostty/config` | Terminal config | `terminals/ghostty/config.template` |
 
 ## What's Included
 
@@ -73,12 +105,7 @@ curl -s "https://get.sdkman.io" | bash
 
 `zsh/starship.toml` is symlinked to `~/.config/starship.toml`.
 
-**Secrets and machine-specific config** go in `~/.env.local` — sourced first by the shell loader, never committed. Bootstrap from the workbench template on a new machine:
-
-```bash
-cp zsh/.env.local.template ~/.env.local
-# then edit ~/.env.local to fill in your values
-```
+**Secrets and machine-specific config** go in `~/.env.local` — sourced first by the shell loader, never committed. Created automatically on first install; the auto-generated ENV section is updated on every sync.
 
 Examples:
 ```bash
@@ -91,7 +118,7 @@ export COLIMA_CPU=6
 
 ### Git Configuration
 
-Useful aliases and settings in `git/.gitconfig`. `core.fsmonitor` and `core.untrackedCache` are enabled globally for fast `git status`.
+Two-layer architecture: `~/.gitconfig` is your machine-specific file (identity, GPG, credentials) and includes `git/gitconfig.shared` for shared aliases, colors, and behavior. `git config --global` writes to `~/.gitconfig` as expected — no drift. `core.fsmonitor` and `core.untrackedCache` are enabled globally for fast `git status`.
 
 ### Tool Registry
 
@@ -115,7 +142,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 - `brew/lang/` — go · java
 - `brew/security/` — gnupg, pinentry-mac, gpg-suite
 - `brew/shell/` — fzf, starship, font-fira-code-nerd-font, zoxide, zsh-autosuggestions, zsh-completions, zsh-syntax-highlighting
-- `brew/tools/` — jira-cli, mas
+- `brew/tools/` — jira-cli, linear, mas
 <!-- BREW-STACKS-END -->
 
 ```bash

@@ -43,12 +43,16 @@ setup() {
   grep -q 'taskfile.env' "$REPO_ROOT/zsh/.env.local.template"
 }
 
-@test ".env.local template includes Colima override examples" {
-  grep -q 'COLIMA_' "$REPO_ROOT/zsh/.env.local.template"
+@test ".env.local template has ENV auto-generation markers" {
+  grep -q '<!-- ENV-START -->' "$REPO_ROOT/zsh/.env.local.template"
+  grep -q '<!-- ENV-END -->' "$REPO_ROOT/zsh/.env.local.template"
 }
 
-@test ".env.local template includes CONTEXT7_API_KEY example" {
-  grep -q 'CONTEXT7_API_KEY' "$REPO_ROOT/zsh/.env.local.template"
+@test ".env.local template env section is populated after generation" {
+  # The generated section should contain at least one export line
+  local content
+  content=$(sed -n '/<!-- ENV-START -->/,/<!-- ENV-END -->/p' "$REPO_ROOT/zsh/.env.local.template")
+  echo "$content" | grep -q 'export'
 }
 
 # ── bootstrap step ────────────────────────────────────────────────────────────
@@ -83,5 +87,94 @@ setup() {
     >/dev/null 2>&1
 
   grep -q 'MY_CUSTOM_VAR=keep_me' "$FAKE_HOME/.env.local"
+  rm -rf "$TMPDIR"
+}
+
+@test "_env_local_bootstrap adds new vars into existing file with empty markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  # Create an existing .env.local with empty ENV markers and user content
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# my header
+<!-- ENV-START -->
+<!-- ENV-END -->
+export MY_CUSTOM_VAR=keep_me
+EOF
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    >/dev/null 2>&1
+
+  # User content preserved
+  grep -q 'MY_CUSTOM_VAR=keep_me' "$FAKE_HOME/.env.local"
+  # ENV section populated from template
+  grep -q 'export' "$FAKE_HOME/.env.local"
+  # Header preserved
+  grep -q '# my header' "$FAKE_HOME/.env.local"
+  rm -rf "$TMPDIR"
+}
+
+@test "_env_local_bootstrap preserves user-filled values" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  # Create a .env.local where the user has uncommented and filled in a value
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+<!-- ENV-START -->
+# user set this
+export CONTEXT7_API_KEY=ctx7sk-my-real-key
+<!-- ENV-END -->
+EOF
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    >/dev/null 2>&1
+
+  # User's filled-in value is preserved — not overwritten by template default
+  grep -q 'CONTEXT7_API_KEY=ctx7sk-my-real-key' "$FAKE_HOME/.env.local"
+  # Template default does NOT appear
+  run grep 'CONTEXT7_API_KEY=ctx7sk-$' "$FAKE_HOME/.env.local"
+  [ "$status" -ne 0 ]
+  rm -rf "$TMPDIR"
+}
+
+@test "_env_local_bootstrap does not duplicate existing commented vars" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  # Create a .env.local that already has the template defaults (commented)
+  cp "$REPO_ROOT/zsh/.env.local.template" "$FAKE_HOME/.env.local"
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    >/dev/null 2>&1
+
+  # No vars should be duplicated — count occurrences of CONTEXT7_API_KEY
+  local count
+  count=$(grep -c 'CONTEXT7_API_KEY' "$FAKE_HOME/.env.local")
+  [ "$count" -eq 1 ]
+  rm -rf "$TMPDIR"
+}
+
+@test "_env_local_bootstrap preserves content without ENV markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  echo "export LEGACY_VAR=unchanged" > "$FAKE_HOME/.env.local"
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    >/dev/null 2>&1
+
+  grep -q 'LEGACY_VAR=unchanged' "$FAKE_HOME/.env.local"
   rm -rf "$TMPDIR"
 }

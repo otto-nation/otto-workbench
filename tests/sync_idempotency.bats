@@ -106,7 +106,7 @@ _symlinks() {
   sync_git >/dev/null 2>&1
   sync_git >/dev/null 2>&1
 
-  grep -qF "path = $REPO_ROOT/git/.gitconfig" "$FAKE_HOME/.gitconfig"
+  grep -qF "path = $REPO_ROOT/git/gitconfig.shared" "$FAKE_HOME/.gitconfig"
 }
 
 # ─── sync_zsh ─────────────────────────────────────────────────────────────────

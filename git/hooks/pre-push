@@ -1,6 +1,6 @@
 #!/bin/bash
-# Pre-push hook: runs shellcheck and bats tests before any push.
-# Installed via: task dev:setup  (sets core.hooksPath to git/hooks/)
+# Pre-push hook: repo-local hook for otto-workbench.
+# Runs validation, linting, and tests before push.
 
 set -euo pipefail
 

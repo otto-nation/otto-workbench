@@ -231,33 +231,26 @@ run_components() {
   done
 }
 
-# print_install_summary — prints the final "All done" screen.
-# Per-component summaries are printed inline by each component's setup.sh.
+# print_install_summary — prints the final "All done" screen with a
+# consolidated file listing, editable configs, and per-component summaries.
 print_install_summary() {
-  local shell_name readme
-  shell_name=$(basename "$SHELL")
-  readme="$WORKBENCH_DIR/README.md"
+  . "$WORKBENCH_DIR/lib/summary.sh"
 
   echo
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
-  echo
+  print_workbench_summary
 
-  echo -e "  ${CYAN}Installed${NC}"
-  echo -e "  ${DIM}  • bin scripts   → $LOCAL_BIN_DIR/${NC}"
-  echo -e "  ${DIM}  • zsh snippets  → $ZSH_CONFIG_DIR/{framework,tools,aliases,prompt}/${NC}"
-  echo -e "  ${DIM}  • gitconfig     → $GITCONFIG_FILE${NC}"
-  echo -e "  ${DIM}  • global tasks  → $TASK_CONFIG_DIR/${NC}"
-  local component label
+  # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
+  local component summary_file fn
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
-    echo -e "  ${DIM}  • ${label:-$component}${NC}"
+    summary_file="$WORKBENCH_DIR/$component/summary.sh"
+    if [[ -f "$summary_file" ]]; then
+      # shellcheck source=/dev/null
+      . "$summary_file"
+      fn="print_$(basename "$component")_summary"
+      declare -f "$fn" > /dev/null 2>&1 && "$fn"
+    fi
   done
-
-  echo
-  echo -e "  ${CYAN}Next steps${NC}"
-  echo -e "  ${DIM}  1. Reload your shell:  exec $shell_name${NC}"
-  echo -e "  ${DIM}  2. Reference:          $readme${NC}"
-  echo
 }
 
 # ─── Core installation ────────────────────────────────────────────────────────

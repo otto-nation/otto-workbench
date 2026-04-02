@@ -61,6 +61,9 @@ register_kiro_steps() {
 # sync_kiro — runs all Kiro sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 sync_kiro() {
+  # Only sync if Kiro was previously set up (steering dir exists).
+  # First-time install is handled by ai/setup.sh when the user selects Kiro.
+  [[ -d "$KIRO_STEERING_DIR" ]] || return 0
   echo; info "Kiro agents + rules"
   step_kiro_agents
   step_kiro_rules

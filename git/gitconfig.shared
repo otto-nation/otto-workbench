@@ -47,6 +47,9 @@
 [pull]
 	rebase = true
 
+[gpg]
+	format = openpgp
+
 [commit]
 	gpgSign = true
 
@@ -60,4 +63,3 @@
 	fsmonitor = true
 	untrackedCache = true
 	pager = delta
-

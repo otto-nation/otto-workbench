@@ -7,9 +7,10 @@ setup() {
 
   # Point all generator inputs/outputs at temp paths so tests never touch
   # real workbench files (registry data, tools.generated.md, README.md).
-  export BREW_REGISTRY="$TMPDIR/brew.yml"
-  export BIN_REGISTRY="$TMPDIR/bin.yml"
-  export ZSH_REGISTRY="$TMPDIR/zsh.yml"
+  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh"
+  export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
+  export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
+  export ZSH_REGISTRY="$TMPDIR/zsh/registry.yml"
   export BREW_STACKS_DIR="$TMPDIR"
   export WORK_DIR="$TMPDIR/work"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"

@@ -262,14 +262,18 @@ echo
 step_task_install
 echo
 
-# Auto-call sync_<name>() for every core component (steps.sh present, setup.conf absent).
+# Auto-setup core components (steps.sh present, setup.conf absent).
+# Prefers install_<name>() (interactive) over sync_<name>() (non-interactive).
 # Optional components (have setup.conf) are handled via the component menu below.
-# This mirrors otto-workbench sync — new core components are picked up automatically.
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$_f" ]] || continue
   _c=$(basename "$(dirname "$_f")")
   [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
-  declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
+  if declare -f "install_${_c}" > /dev/null; then
+    "install_${_c}"
+  elif declare -f "sync_${_c}" > /dev/null; then
+    "sync_${_c}"
+  fi
 done
 unset _f _c
 

@@ -24,6 +24,90 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   unset _D
 fi
 
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+# _git_detect_brew_prefix — returns the Homebrew prefix for the current architecture.
+_git_detect_brew_prefix() {
+  if command -v brew &>/dev/null; then
+    brew --prefix
+  elif [[ -d /opt/homebrew ]]; then
+    echo "/opt/homebrew"
+  else
+    echo "/usr/local"
+  fi
+}
+
+# _git_detect_gpg_program — returns the path to gpg if installed.
+_git_detect_gpg_program() {
+  local prefix
+  prefix="$(_git_detect_brew_prefix)"
+  local gpg_path="$prefix/bin/gpg"
+  if [[ -x "$gpg_path" ]]; then
+    echo "$gpg_path"
+  elif command -v gpg &>/dev/null; then
+    command -v gpg
+  fi
+}
+
+# _git_detect_credential_helper — returns the GCM path if installed.
+_git_detect_credential_helper() {
+  local prefix
+  prefix="$(_git_detect_brew_prefix)"
+  local gcm_path="$prefix/share/gcm-core/git-credential-manager"
+  if [[ -x "$gcm_path" ]]; then
+    echo "$gcm_path"
+  fi
+}
+
+# _gitconfig_interactive_bootstrap — prompts for identity and creates ~/.gitconfig.
+# If the file exists, offers overwrite/backup/skip via prompt_overwrite.
+# On skip, returns 1 so the caller can fall through to include/hooks only.
+_gitconfig_interactive_bootstrap() {
+  if [[ -f "$GITCONFIG_FILE" ]]; then
+    prompt_overwrite "$GITCONFIG_FILE" || return 1
+  fi
+
+  cp "$GIT_CONFIG_TEMPLATE" "$GITCONFIG_FILE"
+
+  echo
+  info "Configure your git identity:"
+  local user_name user_email signing_key
+  read -rp "  Name: " user_name
+  read -rp "  Email: " user_email
+
+  echo
+  info "GPG signing key (optional — press Enter to skip):"
+  echo -e "  ${DIM}Run: gpg --list-secret-keys --keyid-format LONG${NC}"
+  read -rp "  Signing key fingerprint: " signing_key
+
+  # Auto-detect machine-specific paths
+  local gpg_program credential_helper
+  gpg_program="$(_git_detect_gpg_program)"
+  credential_helper="$(_git_detect_credential_helper)"
+
+  # Substitute placeholders in the copied template
+  if [[ -n "$user_name" ]]; then
+    sed -i '' "s|name = Your Name|name = $user_name|" "$GITCONFIG_FILE"
+  fi
+  if [[ -n "$user_email" ]]; then
+    sed -i '' "s|email = you@example.com|email = $user_email|" "$GITCONFIG_FILE"
+  fi
+  if [[ -n "$signing_key" ]]; then
+    sed -i '' "s|signingKey = YOUR_SIGNING_KEY|signingKey = $signing_key|" "$GITCONFIG_FILE"
+  fi
+  if [[ -n "$gpg_program" ]]; then
+    sed -i '' "s|program = /opt/homebrew/bin/gpg|program = $gpg_program|" "$GITCONFIG_FILE"
+  fi
+  if [[ -n "$credential_helper" ]]; then
+    sed -i '' "s|helper = /opt/homebrew/share/gcm-core/git-credential-manager|helper = $credential_helper|" "$GITCONFIG_FILE"
+  fi
+
+  success "Created $GITCONFIG_FILE"
+  if [[ -z "$signing_key" ]]; then
+    warn "No signing key set — edit $GITCONFIG_FILE later to add one"
+  fi
+}
+
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
 # _gitconfig_bootstrap — copies the template into ~/.gitconfig when the file
@@ -64,6 +148,24 @@ step_global_hooks() {
   success "global core.hooksPath → $GIT_HOOKS_DIR"
 }
 
+# install_git — interactive setup path for gitconfig.
+# Called by install.sh (prefers install_<name> over sync_<name> for core components).
+# Prompts for identity and offers overwrite/backup for existing configs.
+install_git() {
+  echo; info "git config → $GITCONFIG_FILE"
+  if _gitconfig_interactive_bootstrap; then
+    _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
+    success "gitconfig includes up to date"
+  else
+    # User skipped overwrite — still ensure the include is present.
+    _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
+    skip "gitconfig identity (kept existing)"
+  fi
+
+  echo; info "global git hooks → $GIT_HOOKS_DIR"
+  step_global_hooks
+}
+
 # sync_git — runs all git sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_git() {
@@ -79,11 +181,7 @@ sync_git() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   echo -e "${BOLD}${BLUE}Git setup${NC}\n"
 
-  echo; info "git config → $GITCONFIG_FILE"
-  step_gitconfig
-
-  echo; info "global git hooks → $GIT_HOOKS_DIR"
-  step_global_hooks
+  install_git
 
   echo
   success "Git setup complete!"

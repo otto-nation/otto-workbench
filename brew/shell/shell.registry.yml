@@ -27,11 +27,11 @@ tools:
     usage: "z workbench  |  z src"
     docs: "https://github.com/ajeetdsouza/zoxide"
 
-  - name: zsh-autosuggestions
-    description: "Fish-style autosuggestions for zsh — suggests commands from history as you type"
-    when_to_use: "Always active in shell; accept suggestions with → or End key"
+  - name: zsh-history-substring-search
+    description: "History search filtered by what you've typed — press up/down to cycle through matches"
+    when_to_use: "Always active in shell; type partial command then up/down arrow to find matching history"
     usage: "Loaded automatically via zsh config"
-    docs: "https://github.com/zsh-users/zsh-autosuggestions"
+    docs: "https://github.com/zsh-users/zsh-history-substring-search"
 
   - name: zsh-completions
     description: "Additional completion definitions for zsh — extends tab-completion for many tools"

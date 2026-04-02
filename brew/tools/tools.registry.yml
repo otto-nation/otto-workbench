@@ -15,6 +15,20 @@ tools:
     when_to_use: "Viewing, moving, or commenting on Jira tickets; checking ticket status; assigning issues"
     usage: "jira issue view PROJ-123 --plain  |  jira issue list -P PROJ --plain  |  jira issue move PROJ-123 \"In Progress\""
     docs: "https://github.com/ankitpokhrel/jira-cli"
+    auth:
+      env_var: JIRA_API_TOKEN
+      setup_url: "https://id.atlassian.net/manage-profile/security/api-tokens"
+
+  - name: linear
+    brew_name: "schpet/tap/linear"
+    description: "Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal"
+    when_to_use: "Listing, creating, or starting Linear issues; git-aware issue tracking"
+    usage: "linear issue list  |  linear issue start <ID>  |  linear issue create  |  linear auth login"
+    docs: "https://github.com/schpet/linear-cli"
+    auth:
+      env_var: LINEAR_API_KEY
+      prefix: "lin_api_"
+      setup_url: "https://linear.app/settings/api"
 
   - name: mas
     description: "Mac App Store CLI — search, install, and update App Store apps from the terminal"

@@ -30,6 +30,10 @@ else
   NC='\033[0m'
 fi
 
+# sed_i EXPRESSION FILE — portable in-place sed (macOS and Linux).
+# shellcheck disable=SC2145  # ${@: -1} extracts the last argument (the file), not a join
+sed_i() { sed -i.bak "$@" && rm -f "${@: -1}.bak"; }
+
 info()    { echo -e "${BLUE}→${NC} $*"; }
 success() { echo -e "${GREEN}✓${NC} $*"; }
 warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
@@ -184,44 +188,54 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
       require) _default_hint=""                              ;;
     esac
 
-    local _raw
-    read -rp "  ${_number_hint}${_default_hint}: " _raw
-    echo
+    local _raw _selected _invalid _num _all _i
+    while true; do
+      read -rp "  ${_number_hint}${_default_hint}: " _raw
+      echo
 
-    if [[ -z "$_raw" ]]; then
-      case "$_default" in
-        all)
-          local _all="" _i
-          for (( _i=1; _i<=_count; _i++ )); do _all+="$_i "; done
-          printf -v "$_result_var" '%s' "${_all% }"
-          return 0 ;;
-        skip)
-          printf -v "$_result_var" '%s' ""
-          skip
-          return 0 ;;
-        require)
-          printf -v "$_result_var" '%s' ""
-          return 1 ;;
-      esac
-    fi
-
-    if [[ "$_raw" == "0" ]]; then
-      printf -v "$_result_var" '%s' ""
-      skip
-      return 0
-    fi
-
-    local _selected="" _num
-    for _num in $_raw; do
-      if [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )); then
-        _selected+="$_num "
-        [[ "$_single" == true ]] && break
-      else
-        warn "Unknown option: $_num — ignored"
+      # Treat whitespace-only input the same as empty.
+      if [[ -z "${_raw// /}" ]]; then
+        case "$_default" in
+          all)
+            _all=""
+            for (( _i=1; _i<=_count; _i++ )); do _all+="$_i "; done
+            printf -v "$_result_var" '%s' "${_all% }"
+            return 0 ;;
+          skip)
+            printf -v "$_result_var" '%s' ""
+            skip
+            return 0 ;;
+          require)
+            printf -v "$_result_var" '%s' ""
+            return 1 ;;
+        esac
       fi
-    done
 
-    printf -v "$_result_var" '%s' "${_selected% }"
+      if [[ "$_raw" == "0" ]]; then
+        printf -v "$_result_var" '%s' ""
+        skip
+        return 0
+      fi
+
+      _selected="" _invalid=false
+      for _num in $_raw; do
+        if [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )); then
+          _selected+="$_num "
+          [[ "$_single" == true ]] && break
+        else
+          warn "Unknown option: $_num"
+          _invalid=true
+        fi
+      done
+
+      if [[ "$_invalid" == true ]]; then
+        warn "Please enter valid numbers between 1 and $_count (or 0 to skip)"
+        continue
+      fi
+
+      printf -v "$_result_var" '%s' "${_selected% }"
+      return 0
+    done
   }
 
   # conf_get FILE KEY — reads a key = value line from a KEY = VALUE config file.
@@ -350,13 +364,14 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     local file="$1" old="$2" new="$3"
     [[ -f "$file" ]] || return 0
     grep -qF "$old" "$file" || return 0
-    sed -i '' "s|$old|$new|g" "$file"
+    sed_i "s|$old|$new|g" "$file"
     success "Patched $(basename "$file"): '$old' → '$new'"
   }
 
   # run_migrations DIR
-  # Sources DIR/migrations.sh if it exists. No-op otherwise.
-  # Called by sync_<component> functions to apply idempotent config patches.
+  # DEPRECATED: Use run_component_migrations from lib/migrations.sh instead.
+  # This function sources a single migrations.sh file with no state tracking.
+  # Kept for backward compatibility until all callers are migrated.
   run_migrations() {
     local file="$1/migrations.sh"
     # shellcheck source=/dev/null

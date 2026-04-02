@@ -130,14 +130,97 @@ _zshrc_check_duplicates() {
 }
 
 # _env_local_bootstrap — creates ~/.env.local from the workbench template when
-# absent on a new machine. Never modifies an existing file.
+# absent, or appends NEW env vars from the template into an existing file.
+# Existing user values (commented or uncommented) are never overwritten.
+# Only vars present in the template but missing from the user's ENV section are added.
 _env_local_bootstrap() {
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
     cp "$ENV_LOCAL_TEMPLATE" "$ENV_LOCAL_FILE"
     warn "Created $ENV_LOCAL_FILE from template — review and fill in your values"
-  else
-    success ".env.local already exists"
+    return
   fi
+
+  if ! grep -q '# --- ENV-START ---' "$ENV_LOCAL_FILE" 2>/dev/null; then
+    success ".env.local already exists (no ENV markers — add them to enable auto-updates)"
+    return
+  fi
+
+  # Collect var names already in the user's ENV section (both commented and uncommented)
+  local user_vars
+  user_vars=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$ENV_LOCAL_FILE" \
+    | grep -oE 'export [A-Z_][A-Z_0-9]*=' | sed 's/export //;s/=//' | sort -u)
+
+  # Walk the template and collect entries for vars not yet in the user's file.
+  # New entries are appended before # --- ENV-END --- so user values are never touched.
+  local tmp_new
+  tmp_new=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp_new'" RETURN
+  local in_section=false current_header="" header_emitted=false pending=""
+
+  while IFS= read -r line; do
+    if [[ "$line" == *'# --- ENV-START ---'* ]]; then in_section=true; continue; fi
+    if [[ "$line" == *'# --- ENV-END ---'* ]]; then break; fi
+    [[ "$in_section" == false ]] && continue
+
+    # Section header (e.g. "# ── Docker / Colima ───")
+    if [[ "$line" == '# ── '* ]]; then
+      current_header="$line"
+      header_emitted=false
+      pending=""
+      continue
+    fi
+
+    # Blank line — buffered; only emitted if the next export is for a new var
+    if [[ -z "${line// /}" ]]; then
+      [[ -n "$pending" ]] && pending+=$'\n'
+      continue
+    fi
+
+    # Export line (commented or not) — check if var is new
+    if [[ "$line" == *'export '* ]]; then
+      local var_name
+      var_name="${line#*export }"  # strip everything before "export "
+      var_name="${var_name%%=*}"   # strip from "=" onward
+      if [[ -n "$var_name" ]] && ! echo "$user_vars" | grep -qx "$var_name"; then
+        # New var — emit section header (once), pending comments, then this line
+        if [[ "$header_emitted" == false && -n "$current_header" ]]; then
+          echo "" >> "$tmp_new"
+          echo "$current_header" >> "$tmp_new"
+          header_emitted=true
+        fi
+        if [[ -n "$pending" ]]; then
+          echo "" >> "$tmp_new"
+          printf '%s\n' "$pending" >> "$tmp_new"
+        fi
+        echo "$line" >> "$tmp_new"
+      fi
+      pending=""
+      continue
+    fi
+
+    # Comment line — accumulate as pending (emitted only if next export is new)
+    if [[ -z "$pending" ]]; then
+      pending="$line"
+    else
+      pending+=$'\n'"$line"
+    fi
+  done < "$ENV_LOCAL_TEMPLATE"
+
+  if [[ ! -s "$tmp_new" ]]; then
+    success ".env.local env section up to date"
+    return
+  fi
+
+  # Insert new entries before # --- ENV-END --- in the user's file
+  local tmp_out
+  tmp_out=$(mktemp)
+  awk -v tf="$tmp_new" '
+    /# --- ENV-END ---/ { while ((getline line < tf) > 0) print line }
+    { print }
+  ' "$ENV_LOCAL_FILE" > "$tmp_out" && mv "$tmp_out" "$ENV_LOCAL_FILE"
+
+  success ".env.local: added new env entries"
 }
 
 # step_zshrc — ensures ~/.zshrc is connected to the workbench loader and warns
@@ -162,7 +245,12 @@ sync_zsh() {
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc
 
-  echo; info "Machine secrets template ($ENV_LOCAL_FILE)"
+  echo; info "Environment variables ($ENV_LOCAL_FILE)"
+  # Regenerate the template so it reflects currently installed tools,
+  # then splice the ENV section into ~/.env.local.
+  if command -v yq >/dev/null 2>&1; then
+    bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
+  fi
   _env_local_bootstrap
 }
 

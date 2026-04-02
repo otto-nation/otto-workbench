@@ -1,0 +1,30 @@
+# Docker component registry — env var overrides for Colima runtime.
+# Only rendered when colima is installed (install_check_command: colima).
+
+meta:
+  section: "Docker / Colima"
+  install_check: true
+  install_check_command: colima
+  validation: none
+
+env:
+  - var: COLIMA_PROFILE
+    comment: "VM profile name"
+    default: "default"
+  - var: COLIMA_ARCH
+    comment: "CPU architecture (x86_64 | aarch64)"
+    default: "x86_64"
+  - var: COLIMA_VM_TYPE
+    comment: "Virtualization type (vz | qemu)"
+    default: "vz"
+  - var: COLIMA_ROSETTA
+    comment: "Enable Rosetta for x86_64 emulation"
+    default: "true"
+  - var: COLIMA_CPU
+    comment: "Number of CPUs"
+    default: "4"
+  - var: COLIMA_MEMORY
+    comment: "Memory in GB"
+    default: "8"
+
+tools: []

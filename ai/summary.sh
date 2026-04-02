@@ -6,17 +6,8 @@
 # print_ai_summary — delegates to per-tool summary functions defined in steps.sh files,
 # then prints the remaining configuration step for AI task automation.
 print_ai_summary() {
-  # shellcheck source=/dev/null
-  [[ -f "$CLAUDE_SRC_DIR/steps.sh" ]] && . "$CLAUDE_SRC_DIR/steps.sh"
-  # shellcheck source=/dev/null
-  [[ -f "$KIRO_SRC_DIR/steps.sh" ]] && . "$KIRO_SRC_DIR/steps.sh"
-
-  if declare -f print_claude_summary > /dev/null 2>&1; then
-    print_claude_summary
-  fi
-  if declare -f print_kiro_summary > /dev/null 2>&1; then
-    print_kiro_summary
-  fi
+  # Per-tool summaries (Claude, Kiro) are printed by ai/setup.sh immediately
+  # after setup — this function only prints the shared AI Tasks section.
 
   echo
   echo -e "  ${CYAN}AI Tasks${NC}"

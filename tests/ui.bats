@@ -50,9 +50,19 @@ _select() {
   [ "$result" = "1 3" ]
 }
 
-@test "select_menu: out-of-range indices are ignored" {
-  result=$(_select "1 9" 3 --default skip)
-  [ "$result" = "1" ]
+@test "select_menu: out-of-range index re-prompts then accepts valid input" {
+  result=$(_select $'1 9\n2' 3 --default skip)
+  [ "$result" = "2" ]
+}
+
+@test "select_menu: non-numeric input re-prompts then accepts valid input" {
+  result=$(_select $'abc\n1 3' 3 --default skip)
+  [ "$result" = "1 3" ]
+}
+
+@test "select_menu: re-prompt accepts 0 to skip" {
+  result=$(_select $'xyz\n0' 3 --default skip)
+  [ -z "$result" ]
 }
 
 @test "select_menu: --single stops after first valid entry" {

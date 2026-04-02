@@ -246,9 +246,6 @@ sync_claude() {
   echo; info "Claude settings"
   step_claude_settings
 
-  echo; info "Tool context"
-  step_generate_tools
-
   echo; info "Claude guidelines + rules"
   step_claude_guidelines
   step_claude_rules

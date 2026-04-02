@@ -1,0 +1,15 @@
+# Claude AI registry — env vars for MCP server credentials.
+# Always rendered (install_check: false) since Claude is always configured.
+
+meta:
+  section: "AI / MCP Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: CONTEXT7_API_KEY
+    comment: "Context7 MCP server — up-to-date library docs for Claude Code"
+    prefix: "ctx7sk-"
+    setup_url: "https://context7.com"
+
+tools: []

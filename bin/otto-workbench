@@ -4,16 +4,22 @@
 # Usage: otto-workbench <command>
 #
 # Commands:
-#   sync   Re-apply all workbench configuration to ~/
+#   sync        Re-apply all workbench configuration to ~/
+#   changelog   Show recent changes from conventional commits
 #
-# What sync does:
+# What sync does (pure config reconciliation):
 #   - Re-symlinks bin/, zsh/, git/.gitconfig, Taskfile, lib/
 #   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
+#   - Syncs Kiro agent configs and rules
+#   - Merges Zed/Sublime editor settings
+#   - Reconciles Ghostty theme key
 #
-# What sync does NOT do (one-time setup operations):
-#   - Install Homebrew packages
+# What sync does NOT do (one-time setup via install.sh):
+#   - Install Homebrew packages or casks
 #   - Configure Docker runtime
-#   - Install iTerm themes
+#   - Import iTerm themes
+#   - Create Ghostty config from template
+#   - Regenerate tool context (now runs during sync via sync_zsh)
 #
 # To run first-time setup or those components: bash <workbench>/install.sh
 
@@ -22,6 +28,8 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/migrations.sh"
 
 WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
 
@@ -45,6 +53,12 @@ cmd_sync() {
   title "Workbench sync"
   echo
 
+  # Run pending migrations before syncing components.
+  # Migrations clean up state (stale symlinks, old config) that sync functions depend on.
+  info "Migrations"
+  run_all_migrations
+  echo
+
   # Auto-discovers sync_<component>() from */steps.sh and ai/*/steps.sh.
   # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
   #                              ai/claude → ai/kiro → …
@@ -56,20 +70,30 @@ cmd_sync() {
   done
   unset _f _c
 
+  # shellcheck source=/dev/null
+  . "$(dirname "$_SELF")/../lib/summary.sh"
+
   echo
   success "Workbench synced!"
-  echo -e "  ${DIM}Reload your shell: exec $(basename "$SHELL")${NC}"
+  print_workbench_summary
+}
+
+cmd_changelog() {
+  shift  # remove "changelog" from args
+  bash "$WORKBENCH_DIR/bin/generate-changelog" "$@"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
-  sync) cmd_sync ;;
+  sync)      cmd_sync ;;
+  changelog) cmd_changelog "$@" ;;
   *)
     echo "Usage: otto-workbench <command>"
     echo
     echo "Commands:"
-    echo "  sync   Re-apply all workbench configuration to ~/"
+    echo "  sync        Re-apply all workbench configuration to ~/"
+    echo "  changelog   Show recent changes from conventional commits"
     exit 1
     ;;
 esac

@@ -6,6 +6,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../../lib/ui.sh"
+. "$SCRIPT_DIR/../../lib/migrations.sh"
 # shellcheck source=terminals/ghostty/steps.sh
 . "$SCRIPT_DIR/steps.sh"
 
@@ -18,6 +19,9 @@ step_ghostty_config
 echo
 info "Theme:"
 step_ghostty_theme
+echo
+info "Migrations:"
+run_component_migrations "$GHOSTTY_SRC_DIR"
 
 echo
 # shellcheck source=terminals/ghostty/summary.sh

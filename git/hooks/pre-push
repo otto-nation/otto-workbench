@@ -1,6 +1,6 @@
 #!/bin/bash
-# Pre-push hook: runs shellcheck and bats tests before any push.
-# Installed via: task dev:setup  (sets core.hooksPath to git/hooks/)
+# Pre-push hook: repo-local hook for otto-workbench.
+# Runs validation, linting, and tests before push.
 
 set -euo pipefail
 
@@ -35,6 +35,9 @@ bash "$REPO_ROOT/bin/validate-registries"
 
 echo "→ Validating component framework..."
 bash "$REPO_ROOT/bin/validate-components"
+
+echo "→ Validating migrations..."
+bash "$REPO_ROOT/bin/validate-migrations"
 
 echo "→ Regenerating tool context..."
 bash "$REPO_ROOT/bin/generate-tool-context"

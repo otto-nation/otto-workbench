@@ -39,12 +39,15 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
+# shellcheck source=../lib/registries.sh
+. "$REPO_ROOT/lib/registries.sh"
 
 BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
 BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
+ENV_LOCAL_TEMPLATE_PATH="${ENV_LOCAL_TEMPLATE_PATH:-"$REPO_ROOT/zsh/.env.local.template"}"
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
 TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
 AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
@@ -67,28 +70,37 @@ _join() {
   printf '%s' "$result"
 }
 
-# _splice_readme README MARKER
+# _splice_readme README MARKER [--shell]
 # Reads new section content from stdin and replaces the region between
 # <!-- MARKER-START --> and <!-- MARKER-END --> in README. No-ops if absent.
+# With --shell, uses shell-comment markers: # --- MARKER-START ---
 _splice_readme() {
-  local readme="$1" marker="$2"
+  local readme="$1" marker="$2" fmt="html"
+  shift 2
+  [[ "${1:-}" == "--shell" ]] && fmt="shell"
   if [[ ! -f "$readme" ]]; then cat > /dev/null; return 0; fi
+  local start_marker end_marker
+  if [[ "$fmt" == "shell" ]]; then
+    start_marker="# --- ${marker}-START ---"
+    end_marker="# --- ${marker}-END ---"
+  else
+    start_marker="<!-- ${marker}-START -->"
+    end_marker="<!-- ${marker}-END -->"
+  fi
   local tmp_content tmp_out
   tmp_content=$(mktemp)
   tmp_out=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp_content' '$tmp_out'" RETURN
   cat > "$tmp_content"
   awk -v tf="$tmp_content" \
-      -v s="<!-- ${marker}-START -->" \
-      -v e="<!-- ${marker}-END -->" '
+      -v s="$start_marker" \
+      -v e="$end_marker" '
     $0 == s { print; while ((getline line < tf) > 0) print line; skip=1; next }
     $0 == e { skip=0 }
     !skip   { print }
   ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
-  rm -f "$tmp_content"
 }
-
-# _is_installed NAME — returns 0 if NAME is found in PATH
-_is_installed() { command -v "$1" >/dev/null 2>&1; }
 
 # _iter_tools FILE CALLBACK [FILTER]
 # Calls CALLBACK name description when_to_use usage docs for each tool in FILE.
@@ -136,7 +148,7 @@ _render_registry() {
   local section install_check filter=""
   section=$(yq '.meta.section // "Tools"' "$file")
   install_check=$(yq '.meta.install_check // false' "$file")
-  [[ "$install_check" == "true" ]] && filter="_is_installed"
+  [[ "$install_check" == "true" ]] && filter="is_installed"
 
   # Accumulate tool entries first; skip the section header if nothing renders
   local content
@@ -160,6 +172,92 @@ _render_registry() {
   _render_registry "$ZSH_REGISTRY"
 } > "$OUTPUT"
 success "Generated $(basename "$OUTPUT")"
+
+# ── .env.local.template env section ───────────────────────────────────────────
+
+# _env_entry_plain — callback for iter_registry_env; emits plain-text env template lines.
+_env_entry_plain() {
+  local var="$1" comment="$2" default_val="$3" setup_url="$4" prefix="$5"
+
+  if [[ -n "$comment" && "$comment" != "null" ]]; then
+    local comment_line="# $comment"
+    if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+      comment_line+=" — $setup_url"
+    fi
+    printf '%s\n' "$comment_line"
+  fi
+
+  local export_line="# export ${var}="
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    export_line+="${prefix}"
+  elif [[ -n "$default_val" && "$default_val" != "null" ]]; then
+    export_line+="${default_val}"
+  fi
+  printf '%s\n\n' "$export_line"
+}
+
+# _auth_entry_plain — callback for iter_registry_auth; emits plain-text auth template lines.
+_auth_entry_plain() {
+  local name="$1" env_var="$2" setup_url="$3" prefix="$4"
+
+  local comment="# ${name}"
+  if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+    comment+=" — create key at ${setup_url}"
+  fi
+
+  local export_line="# export ${env_var}="
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    export_line+="${prefix}"
+  fi
+
+  printf '%s\n%s\n\n' "$comment" "$export_line"
+}
+
+# _render_registry_env FILE — renders env + auth entries for a single registry.
+# Outputs a section header and entries, or nothing if no entries pass filters.
+_render_registry_env() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+
+  registry_passes_install_check "$file" || return 0
+
+  local entries=""
+  local env_entries auth_entries
+  env_entries=$(iter_registry_env "$file" _env_entry_plain)
+  auth_entries=$(iter_registry_auth "$file" _auth_entry_plain)
+  [[ -n "$env_entries" ]] && entries+="$env_entries"$'\n'
+  [[ -n "$auth_entries" ]] && entries+="$auth_entries"$'\n'
+  [[ -n "$entries" ]] || return 0
+
+  local section
+  section=$(yq '.meta.section // "Tools"' "$file")
+  printf '# ── %s %s\n\n' "$section" "$(printf '─%.0s' $(seq 1 $(( 72 - ${#section} ))))"
+  printf '%s' "$entries"
+}
+
+_generate_env_section() {
+  local output=""
+
+  local -a unique_registries=()
+  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+
+  local section_output first=true
+  for registry in "${unique_registries[@]}"; do
+    section_output=$(_render_registry_env "$registry")
+    if [[ -n "$section_output" ]]; then
+      $first || output+=$'\n'
+      first=false
+      output+="$section_output"$'\n'
+    fi
+  done
+
+  if [[ -n "$output" ]]; then printf '%s' "$output"; fi
+}
+
+if [[ -f "$ENV_LOCAL_TEMPLATE_PATH" ]]; then
+  _generate_env_section | _splice_readme "$ENV_LOCAL_TEMPLATE_PATH" "ENV" --shell
+  success "Updated .env.local.template env section"
+fi
 
 # ── README sections ───────────────────────────────────────────────────────────
 

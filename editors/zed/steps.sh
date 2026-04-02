@@ -10,13 +10,41 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   unset _D
 fi
 
+# _zed_strip_jsonc — converts JSONC to valid JSON via stdin → stdout.
+# Handles: // line comments, /* */ block comments, trailing commas.
+# Uses python3 (available on all macOS) to correctly track string boundaries
+# so URLs and other // inside strings are never stripped.
+_zed_strip_jsonc() {
+  python3 - <<'PYEOF'
+import sys, re
+def strip_jsonc(src):
+    out, i, n = [], 0, len(src)
+    while i < n:
+        if src[i] == '"':
+            out.append(src[i]); i += 1
+            while i < n:
+                if src[i] == '\\': out.append(src[i:i+2]); i += 2
+                elif src[i] == '"': out.append(src[i]); i += 1; break
+                else: out.append(src[i]); i += 1
+        elif src[i:i+2] == '//':
+            while i < n and src[i] != '\n': i += 1
+        elif src[i:i+2] == '/*':
+            i += 2
+            while i < n - 1 and src[i:i+2] != '*/': i += 1
+            i += 2
+        else:
+            out.append(src[i]); i += 1
+    return re.sub(r',(\s*[}\]])', r'\1', ''.join(out))
+sys.stdout.write(strip_jsonc(sys.stdin.read()))
+PYEOF
+}
+
 # step_zed_settings — merges workbench-managed keys into ~/.config/zed/settings.json.
 # Preserves any keys not listed in the template's _workbench manifest.
-# Strips JSONC line comments before parsing — Zed's default file uses // comments.
 step_zed_settings() {
   local existing="{}" content
   if [[ -f "$ZED_SETTINGS_FILE" ]]; then
-    content=$(grep -v '^\s*//' "$ZED_SETTINGS_FILE")
+    content=$(_zed_strip_jsonc < "$ZED_SETTINGS_FILE")
     [[ -n "$content" ]] && existing="$content"
   fi
 

@@ -31,6 +31,7 @@ else
 fi
 
 # sed_i EXPRESSION FILE — portable in-place sed (macOS and Linux).
+# shellcheck disable=SC2145  # ${@: -1} extracts the last argument (the file), not a join
 sed_i() { sed -i.bak "$@" && rm -f "${@: -1}.bak"; }
 
 info()    { echo -e "${BLUE}→${NC} $*"; }

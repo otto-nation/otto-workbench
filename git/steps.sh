@@ -113,10 +113,10 @@ _gitconfig_apply_template() {
   credential_helper="$(_git_detect_credential_helper)"
 
   if [[ -n "$gpg_program" ]]; then
-    sed -i '' "s|program = /opt/homebrew/bin/gpg|program = $gpg_program|" "$GITCONFIG_FILE"
+    sed_i "s|program = /opt/homebrew/bin/gpg|program = $gpg_program|" "$GITCONFIG_FILE"
   fi
   if [[ -n "$credential_helper" ]]; then
-    sed -i '' "s|helper = /opt/homebrew/share/gcm-core/git-credential-manager|helper = $credential_helper|" "$GITCONFIG_FILE"
+    sed_i "s|helper = /opt/homebrew/share/gcm-core/git-credential-manager|helper = $credential_helper|" "$GITCONFIG_FILE"
   fi
 }
 
@@ -125,13 +125,13 @@ _gitconfig_apply_template() {
 _gitconfig_set_default_identity() {
   local name="$1" email="$2" key="${3:-}"
   if [[ -n "$name" ]]; then
-    sed -i '' "s|name = Your Name|name = $name|" "$GITCONFIG_FILE"
+    sed_i "s|name = Your Name|name = $name|" "$GITCONFIG_FILE"
   fi
   if [[ -n "$email" ]]; then
-    sed -i '' "s|email = you@example.com|email = $email|" "$GITCONFIG_FILE"
+    sed_i "s|email = you@example.com|email = $email|" "$GITCONFIG_FILE"
   fi
   if [[ -n "$key" ]]; then
-    sed -i '' "s|signingKey = YOUR_SIGNING_KEY|signingKey = $key|" "$GITCONFIG_FILE"
+    sed_i "s|signingKey = YOUR_SIGNING_KEY|signingKey = $key|" "$GITCONFIG_FILE"
   fi
 }
 

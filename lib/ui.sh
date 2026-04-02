@@ -30,6 +30,9 @@ else
   NC='\033[0m'
 fi
 
+# sed_i EXPRESSION FILE — portable in-place sed (macOS and Linux).
+sed_i() { sed -i.bak "$@" && rm -f "${@: -1}.bak"; }
+
 info()    { echo -e "${BLUE}→${NC} $*"; }
 success() { echo -e "${GREEN}✓${NC} $*"; }
 warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
@@ -360,7 +363,7 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     local file="$1" old="$2" new="$3"
     [[ -f "$file" ]] || return 0
     grep -qF "$old" "$file" || return 0
-    sed -i '' "s|$old|$new|g" "$file"
+    sed_i "s|$old|$new|g" "$file"
     success "Patched $(basename "$file"): '$old' → '$new'"
   }
 

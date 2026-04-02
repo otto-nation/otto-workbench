@@ -23,7 +23,7 @@ err()     { echo "✗ $*" >&2; }
 apply_config_patch() { :; }
 STUB
   # Inject the actual WORKBENCH_DIR into the stub
-  sed -i '' "s|WORKBENCH_DIR=\"\${WORKBENCH_DIR}\"|WORKBENCH_DIR=\"$FAKE_ROOT\"|" "$FAKE_ROOT/lib/ui.sh"
+  sed -i.bak "s|WORKBENCH_DIR=\"\${WORKBENCH_DIR}\"|WORKBENCH_DIR=\"$FAKE_ROOT\"|" "$FAKE_ROOT/lib/ui.sh" && rm -f "$FAKE_ROOT/lib/ui.sh.bak"
 
   cat > "$FAKE_ROOT/lib/constants.sh" <<CONST
 #!/bin/bash

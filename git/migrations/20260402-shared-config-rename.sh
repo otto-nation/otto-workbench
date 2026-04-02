@@ -6,6 +6,6 @@ migration_20260402_shared_config_rename() {
   [[ -f "$GITCONFIG_FILE" ]] || return 0
   grep -qF "git/.gitconfig" "$GITCONFIG_FILE" || return 0
 
-  sed -i '' 's|git/\.gitconfig|git/gitconfig.shared|' "$GITCONFIG_FILE"
+  sed_i 's|git/\.gitconfig|git/gitconfig.shared|' "$GITCONFIG_FILE"
   success "Updated include path: git/.gitconfig → git/gitconfig.shared"
 }

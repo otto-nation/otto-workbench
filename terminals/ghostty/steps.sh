@@ -45,7 +45,7 @@ step_ghostty_theme() {
   local theme="light:Gruvbox Light,dark:Gruvbox Dark"
 
   if grep -q '^theme = ' "$GHOSTTY_CONFIG_FILE"; then
-    sed -i '' "s|^theme = .*|theme = $theme|" "$GHOSTTY_CONFIG_FILE"
+    sed_i "s|^theme = .*|theme = $theme|" "$GHOSTTY_CONFIG_FILE"
   else
     printf '\n# ─── Theme ───────────────────────────────────────────────────────────────────\ntheme = %s\n' "$theme" >> "$GHOSTTY_CONFIG_FILE"
   fi

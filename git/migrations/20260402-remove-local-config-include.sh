@@ -13,10 +13,10 @@ migration_20260402_remove_local_config_include() {
   if grep -qF ".gitconfig.local" "$GITCONFIG_FILE"; then
     # Remove the path line and any preceding [include] that belongs to it.
     # Pattern: blank line + [include] + tab-path = ...gitconfig.local
-    sed -i '' '/\.gitconfig\.local/d' "$GITCONFIG_FILE"
+    sed_i '/\.gitconfig\.local/d' "$GITCONFIG_FILE"
     # Clean up orphaned [include] blocks left with no path= line after them.
     # An [include] followed by a blank line or another section header is orphaned.
-    sed -i '' -E '/^\[include\]$/{N;/^\[include\]\n([[:space:]]*$|\[)/s/^\[include\]\n//;}' "$GITCONFIG_FILE"
+    sed_i -E '/^\[include\]$/{N;/^\[include\]\n([[:space:]]*$|\[)/s/^\[include\]\n//;}' "$GITCONFIG_FILE"
 
     success "Removed stale include for .gitconfig.local"
   fi

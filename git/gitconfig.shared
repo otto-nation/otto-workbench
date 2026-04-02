@@ -1,15 +1,11 @@
 # Shared git configuration — machine-agnostic settings only.
 #
 # Architecture:
-#   ~/.gitconfig          → minimal file: includes THIS file + ~/.gitconfig.local
-#   git/.gitconfig        → this file: shared aliases, colors, and behavior (version-controlled)
-#   ~/.gitconfig.local    → machine-specific identity, GPG, and credentials (never committed)
+#   ~/.gitconfig           → your machine: identity, GPG, overrides (+ includes this file)
+#   git/gitconfig.shared   → this file: shared aliases, colors, and behavior (version-controlled)
 #
 # To update shared settings: edit this file and commit.
-# To update machine-specific settings: edit ~/.gitconfig.local.
-# Run install.sh if ~/.gitconfig ever needs to be recreated.
-#
-# DO NOT add [include] stanzas here — those belong only in ~/.gitconfig.
+# To update machine-specific settings: edit ~/.gitconfig directly or use git config --global.
 
 [alias]
 	hard-delete = branch -D
@@ -51,6 +47,9 @@
 [pull]
 	rebase = true
 
+[gpg]
+	format = openpgp
+
 [commit]
 	gpgSign = true
 
@@ -64,4 +63,3 @@
 	fsmonitor = true
 	untrackedCache = true
 	pager = delta
-

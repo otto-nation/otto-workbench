@@ -288,3 +288,7 @@ _brew_migrate_version_managers() {
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
 _brew_select_optional "$SCRIPT_DIR"
 _brew_migrate_version_managers
+
+# shellcheck source=brew/summary.sh
+. "$SCRIPT_DIR/summary.sh"
+print_brew_summary

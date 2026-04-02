@@ -45,7 +45,7 @@ step_ghostty_theme() {
   local theme="light:Gruvbox Light,dark:Gruvbox Dark"
 
   if grep -q '^theme = ' "$GHOSTTY_CONFIG_FILE"; then
-    sed -i '' "s|^theme = .*|theme = $theme|" "$GHOSTTY_CONFIG_FILE"
+    sed_i "s|^theme = .*|theme = $theme|" "$GHOSTTY_CONFIG_FILE"
   else
     printf '\n# ─── Theme ───────────────────────────────────────────────────────────────────\ntheme = %s\n' "$theme" >> "$GHOSTTY_CONFIG_FILE"
   fi
@@ -59,12 +59,10 @@ sync_ghostty() {
     echo -e "  ${DIM}⊘ ghostty not installed — skipping${NC}"
     return
   fi
-  echo; info "Ghostty config ($GHOSTTY_CONFIG_FILE)"
-  step_ghostty_config
+  # Config creation and migrations are one-time setup steps handled by ghostty/setup.sh.
+  # Sync only reconciles the workbench-managed theme key.
   echo; info "Ghostty theme"
   step_ghostty_theme
-  echo; info "Ghostty migrations"
-  run_migrations "$GHOSTTY_SRC_DIR"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

@@ -1,6 +1,14 @@
-# Machine-specific git configuration — NOT committed to the workbench.
-# Copy to ~/.gitconfig.local and fill in your values.
-# This file is included automatically by ~/.gitconfig.
+# ~/.gitconfig — machine-specific git configuration.
+#
+# This file is YOUR machine's gitconfig. It is not tracked by any repo.
+# Shared workbench settings are included automatically via the [include] below.
+#
+# Architecture:
+#   ~/.gitconfig           → this file: identity, GPG, credentials, overrides
+#   git/gitconfig.shared   → shared aliases, colors, and behavior (version-controlled)
+#
+# To update shared settings: edit git/gitconfig.shared in the workbench repo and commit.
+# To update machine-specific settings: edit this file or use git config --global.
 #
 # ─── GPG KEY SETUP (first time on a new machine) ─────────────────────────────
 #
@@ -35,6 +43,22 @@
 # 6. Fill in signingKey below with YOUR_FINGERPRINT, then test:
 #      echo "test" | gpg --clearsign
 #
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shared workbench settings — aliases, colors, delta, etc.
+# [include]
+#	path = WORKBENCH_DIR/git/gitconfig.shared
+
+# ─── MULTI-IDENTITY (optional) ──────────────────────────────────────────────
+#
+# Override identity per directory using includeIf. Example:
+#
+# [includeIf "gitdir:~/git/work/"]
+#	path = ~/.config/git/identities/work.gitconfig
+#
+# Identity files are written automatically by the installer when you choose
+# multiple identities. To add one manually, create a file with a [user] section
+# in ~/.config/git/identities/ and add an includeIf stanza here.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [user]

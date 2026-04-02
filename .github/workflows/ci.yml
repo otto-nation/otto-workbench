@@ -38,6 +38,9 @@ jobs:
       - name: Validate component framework
         run: bash bin/validate-components
 
+      - name: Validate migrations
+        run: bash bin/validate-migrations
+
       - name: Verify tools.generated.md is up to date
         run: |
           bash bin/generate-tool-context

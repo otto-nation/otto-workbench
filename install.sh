@@ -25,6 +25,7 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
+. "$DOTFILES_DIR/lib/migrations.sh"
 # Export WORKBENCH_DIR so it is available in setup.conf check commands (bash -c context).
 export WORKBENCH_DIR
 
@@ -231,33 +232,26 @@ run_components() {
   done
 }
 
-# print_install_summary — prints the final "All done" screen.
-# Per-component summaries are printed inline by each component's setup.sh.
+# print_install_summary — prints the final "All done" screen with a
+# consolidated file listing, editable configs, and per-component summaries.
 print_install_summary() {
-  local shell_name readme
-  shell_name=$(basename "$SHELL")
-  readme="$WORKBENCH_DIR/README.md"
+  . "$WORKBENCH_DIR/lib/summary.sh"
 
   echo
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
-  echo
+  print_workbench_summary
 
-  echo -e "  ${CYAN}Installed${NC}"
-  echo -e "  ${DIM}  • bin scripts   → $LOCAL_BIN_DIR/${NC}"
-  echo -e "  ${DIM}  • zsh snippets  → $ZSH_CONFIG_DIR/{framework,tools,aliases,prompt}/${NC}"
-  echo -e "  ${DIM}  • gitconfig     → $GITCONFIG_FILE${NC}"
-  echo -e "  ${DIM}  • global tasks  → $TASK_CONFIG_DIR/${NC}"
-  local component label
+  # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
+  local component summary_file fn
   for component in "${SELECTED_COMPONENTS[@]}"; do
-    label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
-    echo -e "  ${DIM}  • ${label:-$component}${NC}"
+    summary_file="$WORKBENCH_DIR/$component/summary.sh"
+    if [[ -f "$summary_file" ]]; then
+      # shellcheck source=/dev/null
+      . "$summary_file"
+      fn="print_$(basename "$component")_summary"
+      declare -f "$fn" > /dev/null 2>&1 && "$fn"
+    fi
   done
-
-  echo
-  echo -e "  ${CYAN}Next steps${NC}"
-  echo -e "  ${DIM}  1. Reload your shell:  exec $shell_name${NC}"
-  echo -e "  ${DIM}  2. Reference:          $readme${NC}"
-  echo
 }
 
 # ─── Core installation ────────────────────────────────────────────────────────
@@ -269,18 +263,27 @@ echo
 step_task_install
 echo
 
-# Auto-call sync_<name>() for every core component (steps.sh present, setup.conf absent).
+# Auto-setup core components (steps.sh present, setup.conf absent).
+# Prefers install_<name>() (interactive) over sync_<name>() (non-interactive).
 # Optional components (have setup.conf) are handled via the component menu below.
-# This mirrors otto-workbench sync — new core components are picked up automatically.
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$_f" ]] || continue
   _c=$(basename "$(dirname "$_f")")
   [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
-  declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
+  if declare -f "install_${_c}" > /dev/null; then
+    "install_${_c}"
+  elif declare -f "sync_${_c}" > /dev/null; then
+    "sync_${_c}"
+  fi
 done
 unset _f _c
 
 update_path_in_shell_rc
+
+# Run pending migrations after core sync, before optional components.
+echo
+info "Migrations"
+run_all_migrations
 
 echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 

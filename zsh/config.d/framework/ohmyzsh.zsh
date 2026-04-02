@@ -28,4 +28,11 @@ plugins=(
   macos   # macOS-specific aliases (e.g. `ofd` to open Finder here)
 )
 
+# Add Homebrew completions to fpath before oh-my-zsh calls compinit.
+# brew shellenv (tools/homebrew.zsh) sets PATH but not fpath; this must happen
+# here so completions for brew-installed tools are available at compinit time.
+if [[ -d /opt/homebrew/share/zsh/site-functions ]]; then
+  fpath=(/opt/homebrew/share/zsh/site-functions $fpath)
+fi
+
 source "$ZSH/oh-my-zsh.sh"

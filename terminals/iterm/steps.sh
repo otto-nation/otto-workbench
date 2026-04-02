@@ -57,15 +57,11 @@ step_iterm_themes() {
   done
 }
 
-# sync_iterm — re-imports all color themes non-interactively.
-# Called automatically by otto-workbench sync via the sync_<component> convention.
+# sync_iterm — no-op during sync.
+# Theme import is a one-time setup step handled by iterm/setup.sh.
+# Nothing to reconcile during sync — iTerm themes live in its own plist.
 sync_iterm() {
-  if [[ "$OSTYPE" != "darwin"* ]]; then
-    echo -e "  ${DIM}⊘ iterm sync is macOS-only${NC}"
-    return
-  fi
-  echo; info "iTerm2 color themes → Color Presets"
-  step_iterm_themes
+  :
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

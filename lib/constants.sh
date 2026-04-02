@@ -32,7 +32,6 @@ ZSHRC_FILE="$HOME/.zshrc"
 BASHRC_FILE="$HOME/.bashrc"
 ENV_LOCAL_FILE="$HOME/.env.local"
 GITCONFIG_FILE="$HOME/.gitconfig"
-GITCONFIG_LOCAL_FILE="$HOME/.gitconfig.local"
 GIT_HOOKS_DIR="$HOME/.git-hooks"
 
 # ─── XDG-style config and local dirs ─────────────────────────────────────────
@@ -54,6 +53,7 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 # Symlink written by docker/setup.sh pointing to docker/<runtime>/aliases.zsh.
 # Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
+MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
@@ -88,9 +88,10 @@ GHOSTTY_CONFIG_FILE="$HOME/.config/ghostty/config"
 
 # ─── Workbench source — git ───────────────────────────────────────────────────
 GIT_SRC_DIR="$WORKBENCH_DIR/git"
-GIT_SHARED_CONFIG="$WORKBENCH_DIR/git/.gitconfig"
-GIT_LOCAL_CONFIG_TEMPLATE="$WORKBENCH_DIR/git/.gitconfig.local.template"
+GIT_SHARED_CONFIG="$WORKBENCH_DIR/git/gitconfig.shared"
+GIT_CONFIG_TEMPLATE="$WORKBENCH_DIR/git/gitconfig.template"
 GIT_HOOKS_SRC_DIR="$WORKBENCH_DIR/git/hooks"
+GIT_IDENTITY_DIR="$HOME/.config/git/identities"
 
 # ─── Workbench source — zsh ───────────────────────────────────────────────────
 ZSH_SRC_DIR="$WORKBENCH_DIR/zsh"

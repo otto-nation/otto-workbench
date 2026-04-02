@@ -9,6 +9,7 @@ setup() {
   mkdir -p "$TMPDIR/bin" "$TMPDIR/brew/work" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
   cp "$REPO_ROOT/lib/ui.sh" "$TMPDIR/lib/ui.sh"
   cp "$REPO_ROOT/lib/constants.sh" "$TMPDIR/lib/constants.sh"
+  cp "$REPO_ROOT/lib/registries.sh" "$TMPDIR/lib/registries.sh"
 
   # Stub bin scripts referenced in tests
   touch "$TMPDIR/bin/mytool" && chmod +x "$TMPDIR/bin/mytool"
@@ -306,6 +307,147 @@ tools:
     when_to_use: "Managing clusters"
 EOF
   printf 'brew "kubernetes-cli"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+# ── Env field validation ─────────────────────────────────────────────────────
+
+@test "passes with valid env entries" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: MY_CONFIG_VAR
+    comment: "A config var"
+    default: "default"
+
+tools: []
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when env entry is missing var" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+env:
+  - comment: "No var field"
+
+tools: []
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: var"* ]]
+}
+
+@test "fails when env var name is invalid" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: lower_case_bad
+
+tools: []
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid var name"* ]]
+}
+
+@test "fails on duplicate env var within same registry" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: MY_VAR
+  - var: MY_VAR
+
+tools: []
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"duplicate env var: MY_VAR"* ]]
+}
+
+@test "fails on duplicate env var across registries" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: SHARED_VAR
+
+tools: []
+EOF
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Bin Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: SHARED_VAR
+
+tools: []
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"defined in multiple registries"* ]]
+}
+
+@test "fails when install_check true with empty tools and no install_check_command" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: true
+  validation: none
+
+env:
+  - var: MY_VAR
+
+tools: []
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires install_check_command"* ]]
+}
+
+@test "passes when install_check true with empty tools and install_check_command set" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: true
+  install_check_command: sh
+  validation: none
+
+env:
+  - var: MY_VAR
+
+tools: []
+EOF
 
   run bash "$VALIDATOR"
   [ "$status" -eq 0 ]

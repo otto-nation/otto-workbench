@@ -7,15 +7,18 @@ setup() {
 
   # Point all generator inputs/outputs at temp paths so tests never touch
   # real workbench files (registry data, tools.generated.md, README.md).
-  export BREW_REGISTRY="$TMPDIR/brew.yml"
-  export BIN_REGISTRY="$TMPDIR/bin.yml"
-  export ZSH_REGISTRY="$TMPDIR/zsh.yml"
+  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh"
+  export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
+  export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
+  export ZSH_REGISTRY="$TMPDIR/zsh/registry.yml"
   export BREW_STACKS_DIR="$TMPDIR"
   export WORK_DIR="$TMPDIR/work"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
   export README_PATH="$TMPDIR/README.md"
   export TASKFILE_PATH="$TMPDIR/Taskfile.yml"
   export AI_DIR="$TMPDIR/ai"
+  export REGISTRY_SCAN_DIR="$TMPDIR"
+  export ENV_LOCAL_TEMPLATE_PATH="$TMPDIR/env.local.template.nonexistent"
 
   mkdir -p "$WORK_DIR"
   GENERATOR="$REPO_ROOT/bin/generate-tool-context"
@@ -24,7 +27,7 @@ setup() {
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
-  unset BREW_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT
+  unset BREW_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title
@@ -240,4 +243,223 @@ EOF
   bash "$GENERATOR"
   grep -q "### tool-a" "$TOOL_CONTEXT_OUTPUT"
   grep -q "### tool-b" "$TOOL_CONTEXT_OUTPUT"
+}
+
+# ── Env section generation ───────────────────────────────────────────────────
+
+# _write_env_template — creates a minimal .env.local.template with ENV markers
+_write_env_template() {
+  export ENV_LOCAL_TEMPLATE_PATH="$TMPDIR/env.local.template"
+  cat > "$ENV_LOCAL_TEMPLATE_PATH" << 'EOF'
+# header
+# --- ENV-START ---
+# --- ENV-END ---
+# footer
+EOF
+}
+
+# _write_auth_registry FILE — writes a registry with an auth block
+_write_auth_registry() {
+  local file="$1"
+  cat > "$file" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    description: "A test tool"
+    when_to_use: "When testing"
+    auth:
+      env_var: MY_API_KEY
+      setup_url: "https://example.com/api-keys"
+EOF
+}
+
+# _write_env_registry FILE — writes a registry with a top-level env block
+_write_env_registry() {
+  local file="$1"
+  cat > "$file" << 'EOF'
+meta:
+  section: "Config"
+  install_check: false
+  validation: none
+
+env:
+  - var: MY_CONFIG_VAR
+    comment: "A config variable"
+    default: "mydefault"
+
+tools: []
+EOF
+}
+
+@test "generates auth entry in env template" {
+  _write_auth_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  grep -q "MY_API_KEY" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+@test "auth entry includes setup_url as comment" {
+  _write_auth_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  grep -q "https://example.com/api-keys" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+@test "auth entry renders prefix when present" {
+  _write_env_template
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    description: "A test tool"
+    when_to_use: "When testing"
+    auth:
+      env_var: MY_API_KEY
+      prefix: "mk_"
+      setup_url: "https://example.com"
+EOF
+
+  bash "$GENERATOR"
+  grep -q "MY_API_KEY=mk_" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+@test "no env section when tools have no auth or env block" {
+  _write_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  run grep "export" "$ENV_LOCAL_TEMPLATE_PATH"
+  [ "$status" -ne 0 ]
+}
+
+@test "env preserves surrounding content in template" {
+  _write_auth_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  grep -q "# header" "$ENV_LOCAL_TEMPLATE_PATH"
+  grep -q "# footer" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+# ── Top-level env entries ────────────────────────────────────────────────────
+
+@test "env entry renders var with default value" {
+  _write_env_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  grep -q "MY_CONFIG_VAR=mydefault" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+@test "env entry renders comment above export" {
+  _write_env_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  grep -q "# A config variable" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+@test "env entry renders setup_url in comment" {
+  _write_env_template
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: MY_KEY
+    comment: "API key"
+    setup_url: "https://example.com/keys"
+
+tools: []
+EOF
+
+  bash "$GENERATOR"
+  grep -q "https://example.com/keys" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+@test "env entry renders prefix over default" {
+  _write_env_template
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+env:
+  - var: MY_TOKEN
+    prefix: "tok_"
+    default: "should-not-appear"
+
+tools: []
+EOF
+
+  bash "$GENERATOR"
+  grep -q "MY_TOKEN=tok_" "$ENV_LOCAL_TEMPLATE_PATH"
+  run grep "should-not-appear" "$ENV_LOCAL_TEMPLATE_PATH"
+  [ "$status" -ne 0 ]
+}
+
+@test "env section renders section header" {
+  _write_env_registry "$BREW_REGISTRY"
+  _write_env_template
+
+  bash "$GENERATOR"
+  grep -q "Config" "$ENV_LOCAL_TEMPLATE_PATH"
+}
+
+# ── Install-check filtering for env/auth ─────────────────────────────────────
+
+@test "env section skipped when install_check_command not found" {
+  _write_env_template
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Filtered"
+  install_check: true
+  install_check_command: definitely-not-a-real-tool-xyzzy
+  validation: none
+
+env:
+  - var: SHOULD_NOT_APPEAR
+    default: "hidden"
+
+tools: []
+EOF
+
+  bash "$GENERATOR"
+  run grep "SHOULD_NOT_APPEAR" "$ENV_LOCAL_TEMPLATE_PATH"
+  [ "$status" -ne 0 ]
+}
+
+@test "auth entry skipped when tool not installed and install_check is true" {
+  _write_env_template
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: true
+  validation: none
+
+tools:
+  - name: definitely-not-a-real-tool-xyzzy
+    description: "Missing tool"
+    when_to_use: "Never"
+    auth:
+      env_var: SHOULD_NOT_APPEAR
+      setup_url: "https://example.com"
+EOF
+
+  bash "$GENERATOR"
+  run grep "SHOULD_NOT_APPEAR" "$ENV_LOCAL_TEMPLATE_PATH"
+  [ "$status" -ne 0 ]
 }

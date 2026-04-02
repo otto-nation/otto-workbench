@@ -4,27 +4,22 @@
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-# _install_file TARGET CONTENT LABEL
-# Writes CONTENT to TARGET, prompting before overwriting an existing file.
-_install_file() {
-  local target=$1 content=$2 label=$3
-  if [[ -f "$target" ]]; then
-    prompt_overwrite "$target" || { skip; return; }
-  fi
-  printf '%s\n' "$content" > "$target"
-  success "Wrote $label"
-}
-
 # _install_kiro_agent TARGET SOURCE UVX_PATH LABEL
 # Processes SOURCE via jq (substituting the uvx path) then writes to TARGET.
+# Uses install_file from lib/ui.sh (diff-aware, no prompts) via a temp file.
 # context7 reads CONTEXT7_API_KEY from the environment at runtime — no key needed at install time.
 _install_kiro_agent() {
   local target=$1 source=$2 uvx_path=$3 label=$4
-  local content
-  content=$(jq --arg uvx "$uvx_path" \
-    '.mcpServers.serena.command = $uvx' "$source") \
+  local tmp
+  tmp=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp'" RETURN
+
+  jq --arg uvx "$uvx_path" \
+    '.mcpServers.serena.command = $uvx' "$source" > "$tmp" \
     || { err "Missing: $source"; return 1; }
-  _install_file "$target" "$content" "$label"
+
+  install_file "$tmp" "$target" "$label"
 }
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
@@ -66,6 +61,9 @@ register_kiro_steps() {
 # sync_kiro — runs all Kiro sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 sync_kiro() {
+  # Only sync if Kiro was previously set up (steering dir exists).
+  # First-time install is handled by ai/setup.sh when the user selects Kiro.
+  [[ -d "$KIRO_STEERING_DIR" ]] || return 0
   echo; info "Kiro agents + rules"
   step_kiro_agents
   step_kiro_rules

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-commit hook: scans staged changes for secrets before they enter history.
-# Installed via: task dev:setup  (sets core.hooksPath to git/hooks/)
+# Installed globally by git/steps.sh → ~/.git-hooks/pre-commit
 #
 # For global protection (all repos), the workbench install configures
 # a global hooks dir at ~/.git-hooks/ — see git/steps.sh.
@@ -17,7 +17,7 @@ _config_flag=""
 [[ -f "$_repo_root/.gitleaks.toml" ]] && _config_flag="--config $_repo_root/.gitleaks.toml"
 
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-gitleaks protect --staged $_config_flag 2>&1 \
+gitleaks protect --staged --verbose --no-color --no-banner $_config_flag \
   || { echo "✗ gitleaks found potential secrets — review the output above before committing"; exit 1; }
 
 # Delegate to the repo-local hook if present (bypassed when core.hooksPath is set globally).

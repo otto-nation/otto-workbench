@@ -7,10 +7,5 @@
 
 ## Rules
 Coding guidelines load automatically from `~/.claude/rules/` based on file type.
-- Add personal or machine-specific rules as `~/.claude/rules/<topic>.local.md`
-- Add personal project rules as `.claude/rules/<topic>.local.md` (gitignored)
-- Run `claude-rules add <domain> "rule"` to append a rule without opening files
-
-## Workbench
-Your developer environment is managed by the workbench repo.
-See `~/.claude/rules/workbench.md` for location, ownership, and maintenance instructions.
+- Run `claude-rules add <domain> "rule"` to append a machine-specific rule
+- Run `claude-rules project add "rule"` to append a rule to the current repo's CLAUDE.md

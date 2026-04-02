@@ -5,8 +5,16 @@
 meta:
   section: "AWS Tools"
   install_check: true
+  install_check_command: aws
   validation: brewfile
   source: brew/infra/aws.Brewfile
+
+env:
+  - var: AWS_PROFILE
+    comment: "Default AWS CLI profile"
+  - var: AWS_DEFAULT_REGION
+    comment: "Default AWS region"
+    default: "us-east-1"
 
 tools:
   - name: aws

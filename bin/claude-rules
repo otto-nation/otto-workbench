@@ -9,6 +9,8 @@
 #   list                  List all local rule files with line counts
 #   status                Show local rules not tracked in workbench
 #   open [domain]         Open a local rule file in $EDITOR
+#   project add "rule"    Append a rule to the current repo's CLAUDE.md
+#   project show          Display the current repo's CLAUDE.md
 #
 # Local rule files (*.local.md) are never touched by workbench setup or sync.
 # They complement workbench-managed symlinks for machine-specific additions.
@@ -276,14 +278,83 @@ cmd_open() {
   ${EDITOR:-nano} "$file"
 }
 
+# ─── Project commands ────────────────────────────────────────────────────────
+
+# _find_repo_root — walk up from cwd to find a git repo root with CLAUDE.md
+_find_repo_root() {
+  local dir="$PWD"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -d "$dir/.git" ]]; then
+      echo "$dir"
+      return
+    fi
+    dir="$(dirname "$dir")"
+  done
+  err "Not inside a git repository"
+  exit 1
+}
+
+cmd_project() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    add)
+      local rule="${1:-}"
+      if [[ -z "$rule" ]]; then
+        err "Usage: claude-rules project add \"rule text\""
+        exit 1
+      fi
+
+      local root
+      root="$(_find_repo_root)"
+      local claude_md="$root/CLAUDE.md"
+
+      if [[ ! -f "$claude_md" ]]; then
+        err "No CLAUDE.md found at $root"
+        echo "  Create one first, then use this command to append rules." >&2
+        exit 1
+      fi
+
+      # Append under ## Conventions if it exists, otherwise append at end
+      if grep -q '^## Conventions' "$claude_md"; then
+        printf -- '- %s\n' "$rule" >> "$claude_md"
+      else
+        printf '\n## Conventions\n\n- %s\n' "$rule" >> "$claude_md"
+      fi
+      success "Added to $claude_md"
+      ;;
+
+    show)
+      local root
+      root="$(_find_repo_root)"
+      local claude_md="$root/CLAUDE.md"
+
+      if [[ ! -f "$claude_md" ]]; then
+        echo -e "  ${DIM}No CLAUDE.md at $root${NC}"
+        return
+      fi
+      cat "$claude_md"
+      ;;
+
+    *)
+      err "Usage: claude-rules project <add|show>"
+      echo "  add \"rule\"   Append a convention to CLAUDE.md" >&2
+      echo "  show         Display CLAUDE.md" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
-  sync)   cmd_sync ;;
-  add)    shift; cmd_add "$@" ;;
-  list)   cmd_list ;;
-  status) cmd_status ;;
-  open)   shift; cmd_open "$@" ;;
+  sync)    cmd_sync ;;
+  add)     shift; cmd_add "$@" ;;
+  list)    cmd_list ;;
+  status)  cmd_status ;;
+  open)    shift; cmd_open "$@" ;;
+  project) shift; cmd_project "$@" ;;
   *)
     echo "Usage: claude-rules <command>"
     echo
@@ -293,6 +364,8 @@ case "${1:-}" in
     echo "  list                   List all local rule files with line counts"
     echo "  status                 Show local rules not tracked in workbench"
     echo "  open [domain]          Open a local rule file in \$EDITOR"
+    echo "  project add \"rule\"   Append a convention to the current repo's CLAUDE.md"
+    echo "  project show           Display the current repo's CLAUDE.md"
     echo
     echo "Domains: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql"
     exit 1

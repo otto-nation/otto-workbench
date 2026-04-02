@@ -90,6 +90,7 @@ GIT_SRC_DIR="$WORKBENCH_DIR/git"
 GIT_SHARED_CONFIG="$WORKBENCH_DIR/git/gitconfig.shared"
 GIT_CONFIG_TEMPLATE="$WORKBENCH_DIR/git/gitconfig.template"
 GIT_HOOKS_SRC_DIR="$WORKBENCH_DIR/git/hooks"
+GIT_IDENTITY_DIR="$HOME/.config/git/identities"
 
 # ─── Workbench source — zsh ───────────────────────────────────────────────────
 ZSH_SRC_DIR="$WORKBENCH_DIR/zsh"

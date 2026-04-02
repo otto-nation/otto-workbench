@@ -138,3 +138,99 @@ EOF
   run grep "task dev:setup" "$GIT_HOOKS_SRC_DIR/pre-push"
   [ "$status" -ne 0 ]
 }
+
+# ── Multi-identity helpers ──────────────────────────────────────────────────
+
+@test "write_identity_config creates identity file with user section" {
+  GIT_IDENTITY_DIR="$TMPDIR/identities"
+
+  local result
+  result="$(_git_write_identity_config "work" "Work User" "work@company.com" "ABCD1234")"
+
+  [ -f "$result" ]
+  grep -q 'name = Work User' "$result"
+  grep -q 'email = work@company.com' "$result"
+  grep -q 'signingKey = ABCD1234' "$result"
+}
+
+@test "write_identity_config omits signingKey when empty" {
+  GIT_IDENTITY_DIR="$TMPDIR/identities"
+
+  local result
+  result="$(_git_write_identity_config "personal" "Personal User" "me@home.com")"
+
+  [ -f "$result" ]
+  grep -q 'name = Personal User' "$result"
+  grep -q 'email = me@home.com' "$result"
+  run grep 'signingKey' "$result"
+  [ "$status" -ne 0 ]
+}
+
+@test "write_identity_config creates identity directory" {
+  GIT_IDENTITY_DIR="$TMPDIR/new-dir/identities"
+
+  _git_write_identity_config "test" "Test" "test@test.com" > /dev/null
+
+  [ -d "$GIT_IDENTITY_DIR" ]
+}
+
+@test "ensure_includeif adds stanza for directory" {
+  local fake_gitconfig="$TMPDIR/.gitconfig"
+  echo "[user]" > "$fake_gitconfig"
+  GITCONFIG_FILE="$fake_gitconfig"
+
+  _gitconfig_ensure_includeif "$HOME/git/work" "/path/to/work.gitconfig"
+
+  grep -q 'includeIf "gitdir:'"$HOME"'/git/work/"' "$fake_gitconfig"
+  grep -q 'path = /path/to/work.gitconfig' "$fake_gitconfig"
+}
+
+@test "ensure_includeif is idempotent" {
+  local fake_gitconfig="$TMPDIR/.gitconfig"
+  echo "[user]" > "$fake_gitconfig"
+  GITCONFIG_FILE="$fake_gitconfig"
+
+  _gitconfig_ensure_includeif "$HOME/git/work/" "/path/to/work.gitconfig"
+  _gitconfig_ensure_includeif "$HOME/git/work/" "/path/to/work.gitconfig"
+
+  local count
+  count=$(grep -c 'includeIf' "$fake_gitconfig")
+  [ "$count" -eq 1 ]
+}
+
+@test "ensure_includeif normalizes trailing slash" {
+  local fake_gitconfig="$TMPDIR/.gitconfig"
+  echo "[user]" > "$fake_gitconfig"
+  GITCONFIG_FILE="$fake_gitconfig"
+
+  # Pass without trailing slash
+  _gitconfig_ensure_includeif "$HOME/git/work" "/path/to/work.gitconfig"
+
+  # Should have trailing slash in the gitdir pattern
+  grep -q 'gitdir:'"$HOME"'/git/work/' "$fake_gitconfig"
+}
+
+@test "apply_template creates gitconfig with template content" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+
+  _gitconfig_apply_template
+
+  [ -f "$GITCONFIG_FILE" ]
+  grep -q '\[user\]' "$GITCONFIG_FILE"
+}
+
+@test "set_default_identity substitutes placeholders" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  cp "$GIT_CONFIG_TEMPLATE" "$GITCONFIG_FILE"
+
+  _gitconfig_set_default_identity "Test User" "test@example.com" "KEY123"
+
+  grep -q 'name = Test User' "$GITCONFIG_FILE"
+  grep -q 'email = test@example.com' "$GITCONFIG_FILE"
+  grep -q 'signingKey = KEY123' "$GITCONFIG_FILE"
+}
+
+@test "template documents multi-identity pattern" {
+  grep -q 'includeIf' "$GIT_CONFIG_TEMPLATE"
+  grep -q 'identities' "$GIT_CONFIG_TEMPLATE"
+}

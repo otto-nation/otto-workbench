@@ -49,6 +49,18 @@
 # [include]
 #	path = WORKBENCH_DIR/git/gitconfig.shared
 
+# ─── MULTI-IDENTITY (optional) ──────────────────────────────────────────────
+#
+# Override identity per directory using includeIf. Example:
+#
+# [includeIf "gitdir:~/git/work/"]
+#	path = ~/.config/git/identities/work.gitconfig
+#
+# Identity files are written automatically by the installer when you choose
+# multiple identities. To add one manually, create a file with a [user] section
+# in ~/.config/git/identities/ and add an includeIf stanza here.
+# ─────────────────────────────────────────────────────────────────────────────
+
 [user]
 	name = Your Name
 	email = you@example.com

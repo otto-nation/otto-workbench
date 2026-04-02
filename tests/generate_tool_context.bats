@@ -252,8 +252,8 @@ _write_env_template() {
   export ENV_LOCAL_TEMPLATE_PATH="$TMPDIR/env.local.template"
   cat > "$ENV_LOCAL_TEMPLATE_PATH" << 'EOF'
 # header
-<!-- ENV-START -->
-<!-- ENV-END -->
+# --- ENV-START ---
+# --- ENV-END ---
 # footer
 EOF
 }

@@ -25,6 +25,7 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
+. "$DOTFILES_DIR/lib/migrations.sh"
 # Export WORKBENCH_DIR so it is available in setup.conf check commands (bash -c context).
 export WORKBENCH_DIR
 
@@ -278,6 +279,11 @@ done
 unset _f _c
 
 update_path_in_shell_rc
+
+# Run pending migrations after core sync, before optional components.
+echo
+info "Migrations"
+run_all_migrations
 
 echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 

@@ -355,8 +355,9 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   }
 
   # run_migrations DIR
-  # Sources DIR/migrations.sh if it exists. No-op otherwise.
-  # Called by sync_<component> functions to apply idempotent config patches.
+  # DEPRECATED: Use run_component_migrations from lib/migrations.sh instead.
+  # This function sources a single migrations.sh file with no state tracking.
+  # Kept for backward compatibility until all callers are migrated.
   run_migrations() {
     local file="$1/migrations.sh"
     # shellcheck source=/dev/null

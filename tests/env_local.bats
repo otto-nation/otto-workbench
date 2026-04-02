@@ -44,14 +44,14 @@ setup() {
 }
 
 @test ".env.local template has ENV auto-generation markers" {
-  grep -q '<!-- ENV-START -->' "$REPO_ROOT/zsh/.env.local.template"
-  grep -q '<!-- ENV-END -->' "$REPO_ROOT/zsh/.env.local.template"
+  grep -q '# --- ENV-START ---' "$REPO_ROOT/zsh/.env.local.template"
+  grep -q '# --- ENV-END ---' "$REPO_ROOT/zsh/.env.local.template"
 }
 
 @test ".env.local template env section is populated after generation" {
   # The generated section should contain at least one export line
   local content
-  content=$(sed -n '/<!-- ENV-START -->/,/<!-- ENV-END -->/p' "$REPO_ROOT/zsh/.env.local.template")
+  content=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$REPO_ROOT/zsh/.env.local.template")
   echo "$content" | grep -q 'export'
 }
 
@@ -99,8 +99,8 @@ setup() {
   # Create an existing .env.local with empty ENV markers and user content
   cat > "$FAKE_HOME/.env.local" <<'EOF'
 # my header
-<!-- ENV-START -->
-<!-- ENV-END -->
+# --- ENV-START ---
+# --- ENV-END ---
 export MY_CUSTOM_VAR=keep_me
 EOF
 
@@ -125,10 +125,10 @@ EOF
 
   # Create a .env.local where the user has uncommented and filled in a value
   cat > "$FAKE_HOME/.env.local" <<'EOF'
-<!-- ENV-START -->
+# --- ENV-START ---
 # user set this
 export CONTEXT7_API_KEY=ctx7sk-my-real-key
-<!-- ENV-END -->
+# --- ENV-END ---
 EOF
 
   HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \

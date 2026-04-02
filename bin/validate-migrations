@@ -1,0 +1,95 @@
+#!/bin/bash
+# Validate migration file conventions across all workbench components.
+#
+# Usage: bin/validate-migrations
+#
+# Checks:
+#   - Filenames match YYYYMMDD-slug.sh (slug: lowercase alphanumeric + dashes)
+#   - Each file has a #!/bin/bash shebang
+#   - Each file defines a function matching migration_YYYYMMDD_slug (derived from filename)
+#   - No duplicate filenames across components
+#
+# Exit code: 0 if all checks pass (or no migrations found), 1 if any fail.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+ERRORS=0
+CHECKS=0
+FOUND=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+# Collect all migration files
+ALL_BASENAMES=()
+
+for migrations_dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrations; do
+  [[ -d "$migrations_dir" ]] || continue
+
+  for migration in "$migrations_dir"/*.sh; do
+    [[ -f "$migration" ]] || continue
+    FOUND=$(( FOUND + 1 ))
+
+    basename_m="$(basename "$migration")"
+    component_rel="$(dirname "$migrations_dir")"
+    component_rel="${component_rel#"$WORKBENCH_DIR/"}"
+    display="$component_rel/$basename_m"
+
+    ALL_BASENAMES+=("$basename_m")
+
+    # Filename format: YYYYMMDD-slug.sh
+    if [[ "$basename_m" =~ ^[0-9]{8}-[a-z0-9-]+\.sh$ ]]; then
+      _pass "$display: filename format valid"
+    else
+      _fail "$display: filename must match YYYYMMDD-slug.sh (lowercase alphanumeric + dashes)"
+    fi
+
+    # Shebang check
+    first_line="$(head -1 "$migration")"
+    if [[ "$first_line" == "#!/bin/bash" ]]; then
+      _pass "$display: shebang present"
+    else
+      _fail "$display: missing #!/bin/bash shebang"
+    fi
+
+    # Function name: migration_YYYYMMDD_slug (dashes to underscores, .sh stripped)
+    expected_fn="migration_${basename_m%.sh}"
+    expected_fn="${expected_fn//-/_}"
+    if grep -qE "^${expected_fn}[[:space:]]*\(\)" "$migration"; then
+      _pass "$display: defines ${expected_fn}()"
+    else
+      _fail "$display: expected function ${expected_fn}() not found"
+    fi
+  done
+done
+
+# Duplicate filename check across components
+if (( FOUND > 0 )); then
+  echo; info "Cross-component — no duplicate migration filenames"
+  dupes="$(printf '%s\n' "${ALL_BASENAMES[@]}" | sort | uniq -d)"
+  if [[ -n "$dupes" ]]; then
+    while IFS= read -r dup; do
+      [[ -z "$dup" ]] && continue
+      _fail "duplicate migration filename: $dup"
+    done <<< "$dupes"
+  else
+    _pass "no duplicate migration filenames"
+  fi
+fi
+
+# Summary
+echo
+if (( FOUND == 0 )); then
+  echo -e "  ${DIM}no migration files found${NC}"
+  exit 0
+elif (( ERRORS == 0 )); then
+  success "$CHECKS checks passed ($FOUND migrations)"
+  exit 0
+else
+  err "$ERRORS of $CHECKS checks failed"
+  exit 1
+fi

@@ -53,6 +53,7 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 # Symlink written by docker/setup.sh pointing to docker/<runtime>/aliases.zsh.
 # Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
+MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"

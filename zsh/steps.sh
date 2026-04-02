@@ -140,18 +140,18 @@ _env_local_bootstrap() {
     return
   fi
 
-  if ! grep -q '<!-- ENV-START -->' "$ENV_LOCAL_FILE" 2>/dev/null; then
+  if ! grep -q '# --- ENV-START ---' "$ENV_LOCAL_FILE" 2>/dev/null; then
     success ".env.local already exists (no ENV markers — add them to enable auto-updates)"
     return
   fi
 
   # Collect var names already in the user's ENV section (both commented and uncommented)
   local user_vars
-  user_vars=$(sed -n '/<!-- ENV-START -->/,/<!-- ENV-END -->/p' "$ENV_LOCAL_FILE" \
+  user_vars=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$ENV_LOCAL_FILE" \
     | grep -oE 'export [A-Z_][A-Z_0-9]*=' | sed 's/export //;s/=//' | sort -u)
 
   # Walk the template and collect entries for vars not yet in the user's file.
-  # New entries are appended before <!-- ENV-END --> so user values are never touched.
+  # New entries are appended before # --- ENV-END --- so user values are never touched.
   local tmp_new
   tmp_new=$(mktemp)
   # shellcheck disable=SC2064
@@ -159,8 +159,8 @@ _env_local_bootstrap() {
   local in_section=false current_header="" header_emitted=false pending=""
 
   while IFS= read -r line; do
-    if [[ "$line" == *'<!-- ENV-START -->'* ]]; then in_section=true; continue; fi
-    if [[ "$line" == *'<!-- ENV-END -->'* ]]; then break; fi
+    if [[ "$line" == *'# --- ENV-START ---'* ]]; then in_section=true; continue; fi
+    if [[ "$line" == *'# --- ENV-END ---'* ]]; then break; fi
     [[ "$in_section" == false ]] && continue
 
     # Section header (e.g. "# ── Docker / Colima ───")
@@ -212,11 +212,11 @@ _env_local_bootstrap() {
     return
   fi
 
-  # Insert new entries before <!-- ENV-END --> in the user's file
+  # Insert new entries before # --- ENV-END --- in the user's file
   local tmp_out
   tmp_out=$(mktemp)
   awk -v tf="$tmp_new" '
-    /<!-- ENV-END -->/ { while ((getline line < tf) > 0) print line }
+    /# --- ENV-END ---/ { while ((getline line < tf) > 0) print line }
     { print }
   ' "$ENV_LOCAL_FILE" > "$tmp_out" && mv "$tmp_out" "$ENV_LOCAL_FILE"
 

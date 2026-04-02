@@ -30,7 +30,7 @@ After pulling updates or when config drifts:
 otto-workbench sync
 ```
 
-Re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Prints a summary of all managed and editable files when complete. Safe to run at any time.
+Runs pending migrations, re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Prints a summary of all managed and editable files when complete. Safe to run at any time.
 
 Re-run a single component independently:
 - Optional components (interactive): `bash <component>/setup.sh` — e.g. `bash ai/setup.sh`
@@ -86,6 +86,8 @@ These are created once (from templates or by first-time setup) and never modifie
 | `generate-git-rules` | Regenerates git.generated.md from lib/ai/core.sh constants |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
+| `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
+| `generate-changelog` | Generates a changelog from conventional commits grouped by type |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
 <!-- SCRIPTS-TABLE-END -->
 

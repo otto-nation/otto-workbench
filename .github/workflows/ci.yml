@@ -14,7 +14,7 @@ jobs:
       - name: Run ShellCheck
         # Auto-discover scripts by shebang so new files are checked automatically
         run: |
-          grep -rlE '^#!.*/(ba)?sh' . \
+          grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' . \
             | grep -v '^\./\.git/' \
             | sort \
             | xargs shellcheck --severity=warning

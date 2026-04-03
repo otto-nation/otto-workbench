@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Print the failing command on unexpected exits so errors are never silent.
+trap 'echo "✗ pre-push hook failed (exit $?) at line $LINENO" >&2' ERR
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 # shellcheck source=../../lib/ui.sh

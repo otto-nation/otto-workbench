@@ -424,23 +424,37 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     [[ -f "$file" ]] && . "$file"
   }
 
-  # symlink_dir SRC DST [GLOB] [--strip-ext] [--prune]
+  # symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]
   # Symlinks all items matching GLOB in SRC into DST, preserving filenames.
   # GLOB defaults to '*'. --strip-ext removes the file extension from the display label.
   # --prune removes stale symlinks in DST that point into SRC but whose source is gone.
+  # --replace-copies removes regular files in DST that have a source counterpart,
+  #   allowing install_symlink to replace them. Used when migrating from copy_dir.
   # Inherits SYMLINK_MODE from the environment (pass-through to install_symlink).
   symlink_dir() {
     local src="${1%/}" dst="$2"  # strip trailing slash so item paths never contain //
     shift 2
-    local glob="*" strip_ext=false prune=false
+    local glob="*" strip_ext=false prune=false replace_copies=false
 
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --strip-ext) strip_ext=true; shift ;;
-        --prune)     prune=true;     shift ;;
-        *)           glob="$1";      shift ;;
+        --strip-ext)       strip_ext=true;      shift ;;
+        --prune)           prune=true;           shift ;;
+        --replace-copies)  replace_copies=true;  shift ;;
+        *)                 glob="$1";            shift ;;
       esac
     done
+
+    # Replace regular files with source counterparts so install_symlink can create symlinks.
+    # install_symlink skips (no-prompt) or prompts (interactive) when a real file exists.
+    if [[ "$replace_copies" == true ]]; then
+      local item
+      for item in "$dst"/$glob; do
+        [[ -f "$item" && ! -L "$item" ]] || continue
+        [[ -e "$src/$(basename "$item")" ]] || continue
+        rm "$item"
+      done
+    fi
 
     if [[ "$prune" == true ]]; then
       local item target
@@ -462,5 +476,20 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
       [[ "$strip_ext" == true ]] && label="${label%.*}"
       install_symlink "$item" "$dst/$(basename "$item")" "$label"
     done
+  }
+
+  # install_cask CMD CASK LABEL MANUAL_URL
+  # Installs a tool via Homebrew cask if CMD is not already in PATH.
+  # Falls back to a manual install message if brew is unavailable.
+  install_cask() {
+    local cmd="$1" cask="$2" label="$3" manual_url="$4"
+    if command -v "$cmd" >/dev/null 2>&1; then
+      success "$cmd already installed"
+      return
+    fi
+    require_command brew "Homebrew not found — install $label manually: $manual_url" || return
+    info "Installing $label..."
+    brew install --cask "$cask"
+    success "$label installed"
   }
 fi

@@ -168,7 +168,7 @@ step_generate_tools() {
 
 # step_install_claude — installs claude-code via brew if not already in PATH.
 step_install_claude() {
-  _ai_install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
+  install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
 }
 
 register_claude_steps() {

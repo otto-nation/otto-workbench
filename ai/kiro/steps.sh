@@ -42,14 +42,14 @@ step_kiro_agents() {
 }
 
 step_kiro_rules() {
-  info "Installing rules to $KIRO_STEERING_DIR/"
   mkdir -p "$KIRO_STEERING_DIR"
-  copy_dir "$GUIDELINES_RULES_SRC_DIR" "$KIRO_STEERING_DIR" "$RULES_GLOB" --prune
+  info "Syncing rules → $KIRO_STEERING_DIR/"
+  symlink_dir "$GUIDELINES_RULES_SRC_DIR" "$KIRO_STEERING_DIR" "$RULES_GLOB" --replace-copies --prune
 }
 
 # step_install_kiro — installs kiro-cli via brew if not already in PATH.
 step_install_kiro() {
-  _ai_install_cask "kiro" "kiro-cli" "kiro-cli" "https://kiro.dev/docs/cli/"
+  install_cask "kiro" "kiro-cli" "kiro-cli" "https://kiro.dev/docs/cli/"
 }
 
 register_kiro_steps() {

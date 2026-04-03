@@ -121,16 +121,8 @@ cmd_sync() {
 
   mkdir -p "$RULES_DIR"
 
-  # Transition: replace stale copies with symlinks (idempotent)
-  local item
-  for item in "$RULES_DIR"/$RULES_GLOB; do
-    [[ -f "$item" && ! -L "$item" ]] || continue
-    [[ -e "$rules_src/$(basename "$item")" ]] || continue
-    rm "$item"
-  done
-
   info "Syncing workbench rules → $RULES_DIR"
-  symlink_dir "$rules_src" "$RULES_DIR" "$RULES_GLOB" --strip-ext --prune
+  symlink_dir "$rules_src" "$RULES_DIR" "$RULES_GLOB" --strip-ext --replace-copies --prune
 
   echo
   info "Generating workbench.md"

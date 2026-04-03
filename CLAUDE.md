@@ -58,5 +58,6 @@ Cross-validation modes: `brewfile` (tools must exist in Brewfile), `bindir` (mus
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
 - All scripts use `#!/usr/bin/env bash` (not `#!/bin/bash`) to pick up Homebrew's modern bash on macOS. Bash 4.3+ is required.
 - All scripts source `lib/ui.sh` via `_SELF` readlink pattern for portability.
-- Scripts use `set -e`; all sync functions are idempotent and safe to re-run.
-- Migrations are idempotent, state-tracked in `~/.config/workbench/migrations.applied`, and auto-pruned when removed.
+- Scripts use `set -e`.
+- **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
+- Migrations are state-tracked in `~/.config/workbench/migrations.applied` and auto-pruned when removed.

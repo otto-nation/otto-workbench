@@ -12,6 +12,17 @@ if ! command -v orb >/dev/null 2>&1; then
   success "orbstack installed"
 fi
 
+# Start OrbStack if not running — idempotent, launches instantly.
+if ! docker info &>/dev/null; then
+  info "Starting OrbStack..."
+  orb start
+  if docker info &>/dev/null; then
+    success "OrbStack started"
+  else
+    warn "OrbStack failed to start — try 'orb start' manually"
+  fi
+fi
+
 # Remove stale Colima socket symlink — OrbStack doesn't need it and a dangling
 # symlink breaks DOCKER_HOST for all tooling.
 if [[ -L "$DOCKER_RUN_DIR/docker.sock" ]]; then

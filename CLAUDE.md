@@ -60,4 +60,5 @@ Cross-validation modes: `brewfile` (tools must exist in Brewfile), `bindir` (mus
 - All scripts source `lib/ui.sh` via `_SELF` readlink pattern for portability.
 - Scripts use `set -e`.
 - **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
+- **Return values via `local -n` (nameref), never `printf -v`** — `printf -v "$var"` silently writes to a same-named `local` in the current scope instead of the caller's variable. Use `local -n __out=$1` and assign `__out="value"`. The `__` prefix convention prevents collisions with caller variables.
 - Migrations are state-tracked in `~/.config/workbench/migrations.applied` and auto-pruned when removed.

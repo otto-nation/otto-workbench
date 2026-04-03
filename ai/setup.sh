@@ -45,10 +45,12 @@ _ai_install_cask() {
 
 # prompt_secret LABEL VAR — hidden read into a named variable.
 prompt_secret() {
-  local label=$1 var=$2 value
+  local label=$1
+  local -n __out=$2
+  local value
   read -rsp "${label}: " value
   echo
-  printf -v "$var" '%s' "$value"
+  __out="$value"
 }
 
 # ─── Tool selection ───────────────────────────────────────────────────────────

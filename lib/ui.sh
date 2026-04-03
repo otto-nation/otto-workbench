@@ -65,13 +65,14 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   # confirm_step RESULT_VAR MSG — [Y/n/a]; writes "yes", "no", or "all" to RESULT_VAR.
   # "a" means accept this step and all remaining steps without prompting.
   confirm_step() {
-    local _result_var=$1 _msg=$2
+    local -n __out=$1
+    local _msg=$2
     read -r -n 1 -p "$_msg [Y/n/a] " REPLY
     echo
     case "$REPLY" in
-      [Nn]) printf -v "$_result_var" '%s' "no"  ;;
-      [Aa]) printf -v "$_result_var" '%s' "all" ;;
-      *)    printf -v "$_result_var" '%s' "yes" ;;
+      [Nn]) __out="no"  ;;
+      [Aa]) __out="all" ;;
+      *)    __out="yes" ;;
     esac
   }
 
@@ -163,7 +164,8 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   #
   # Result: space-separated 1-based indices written to RESULT_VAR, or "" for skip.
   select_menu() {
-    local _result_var=$1 _count=$2
+    local -n __out=$1
+    local _count=$2
     shift 2
     local _default="skip" _single=false
 
@@ -199,20 +201,20 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
           all)
             _all=""
             for (( _i=1; _i<=_count; _i++ )); do _all+="$_i "; done
-            printf -v "$_result_var" '%s' "${_all% }"
+            __out="${_all% }"
             return 0 ;;
           skip)
-            printf -v "$_result_var" '%s' ""
+            __out=""
             skip
             return 0 ;;
           require)
-            printf -v "$_result_var" '%s' ""
+            __out=""
             return 1 ;;
         esac
       fi
 
       if [[ "$_raw" == "0" ]]; then
-        printf -v "$_result_var" '%s' ""
+        __out=""
         skip
         return 0
       fi
@@ -233,7 +235,7 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
         continue
       fi
 
-      printf -v "$_result_var" '%s' "${_selected% }"
+      __out="${_selected% }"
       return 0
     done
   }
@@ -245,7 +247,8 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   # RESULT_VAR. Any extra arguments are forwarded to select_menu (e.g. --default
   # all, --single). Returns 1 if no subdirectories are found.
   select_subdirs() {
-    local _result_var=$1 _parent_dir=$2 _prompt=$3
+    local -n __out=$1
+    local _parent_dir=$2 _prompt=$3
     shift 3
 
     local _items=() _dir
@@ -266,19 +269,19 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     done
     echo
 
-    local _sel
-    select_menu _sel "${#_items[@]}" "$@"
+    local _sm_result
+    select_menu _sm_result "${#_items[@]}" "$@"
 
-    if [[ -z "$_sel" ]]; then
-      printf -v "$_result_var" '%s' ""
+    if [[ -z "$_sm_result" ]]; then
+      __out=""
       return 0
     fi
 
     local _selected="" _num
-    for _num in $_sel; do
+    for _num in $_sm_result; do
       _selected+="${_items[$(( _num - 1 ))]} "
     done
-    printf -v "$_result_var" '%s' "${_selected% }"
+    __out="${_selected% }"
   }
 
   # conf_get FILE KEY — reads a key = value line from a KEY = VALUE config file.

@@ -174,8 +174,13 @@ _validate_install_check_command() {
   install_check_command=$(yq '.meta.install_check_command // ""' "$file")
   tools_count=$(yq '.tools | length' "$file")
 
-  if [[ "$tools_count" -eq 0 ]] && [[ -z "$install_check_command" || "$install_check_command" == "null" ]]; then
-    _fail "$(basename "$file"): install_check: true with empty tools[] requires install_check_command"
+  local install_check_symlink
+  install_check_symlink=$(yq '.meta.install_check_symlink // ""' "$file")
+
+  if [[ "$tools_count" -eq 0 ]] \
+     && [[ -z "$install_check_command" || "$install_check_command" == "null" ]] \
+     && [[ -z "$install_check_symlink" || "$install_check_symlink" == "null" ]]; then
+    _fail "$(basename "$file"): install_check: true with empty tools[] requires install_check_command or install_check_symlink"
   fi
 }
 

@@ -6,6 +6,76 @@
 #
 # All path variables come from lib/constants.sh (sourced via lib/ui.sh).
 
+# ── Environment setup from registries ──────────────────────────────────────────
+
+# shellcheck source=registries.sh
+. "$WORKBENCH_DIR/lib/registries.sh"
+
+# _env_setup_entry — callback for iter_registry_env; prints ANSI-colored env var.
+# Uses dynamic scoping: reads/writes `_env_found` from the calling function.
+_env_setup_entry() {
+  local var="$1" _comment="$2" default_val="$3" setup_url="$4" prefix="$5"
+
+  if [[ "$_env_found" == false ]]; then
+    echo
+    echo -e "  ${CYAN}Environment setup${NC}"
+    echo -e "  ${DIM}  Add these to $ENV_LOCAL_FILE:${NC}"
+    _env_found=true
+  fi
+
+  local val=""
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    val="$prefix"
+  elif [[ -n "$default_val" && "$default_val" != "null" ]]; then
+    val="$default_val"
+  fi
+  echo -e "  ${DIM}  export ${var}=${val}${NC}"
+  if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+    echo -e "  ${DIM}    → $setup_url${NC}"
+  fi
+}
+
+# _env_setup_auth_entry — callback for iter_registry_auth; prints ANSI-colored auth var.
+# Uses dynamic scoping: reads/writes `_env_found` from the calling function.
+_env_setup_auth_entry() {
+  local _name="$1" env_var="$2" setup_url="$3" prefix="$4"
+
+  if [[ "$_env_found" == false ]]; then
+    echo
+    echo -e "  ${CYAN}Environment setup${NC}"
+    echo -e "  ${DIM}  Add these to $ENV_LOCAL_FILE:${NC}"
+    _env_found=true
+  fi
+
+  local val=""
+  [[ -n "$prefix" && "$prefix" != "null" ]] && val="$prefix"
+  echo -e "  ${DIM}  export ${env_var}=${val}${NC}"
+  if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+    echo -e "  ${DIM}    → $setup_url${NC}"
+  fi
+}
+
+# _print_env_setup — prints env setup instructions from all registries.
+# Scans all registries and shows env vars the user may need to configure.
+# Respects install_check: skips registries/tools not installed or not active.
+_print_env_setup() {
+  # yq is required for registry iteration; skip silently if not available
+  command -v yq >/dev/null 2>&1 || return 0
+
+  local _env_found=false
+  local -a registries=()
+  collect_registries registries "$WORKBENCH_DIR"
+
+  local reg
+  for reg in "${registries[@]}"; do
+    registry_passes_install_check "$reg" || continue
+    iter_registry_env "$reg" _env_setup_entry
+    iter_registry_auth "$reg" _env_setup_auth_entry
+  done
+}
+
+# ── Main summary ──────────────────────────────────────────────────────────────
+
 # print_workbench_summary — prints the consolidated summary of what the
 # workbench manages and what the user can edit.
 print_workbench_summary() {
@@ -104,6 +174,9 @@ print_workbench_summary() {
   if [[ -f "$GHOSTTY_CONFIG_FILE" ]]; then
     echo -e "  ${DIM}  terminal          ${GHOSTTY_CONFIG_FILE/#"$HOME"/$home_short}${NC}"
   fi
+
+  # ── Environment setup (from registries) ──────────────────────────────
+  _print_env_setup
 
   # ── Quick reference ──────────────────────────────────────────────────
   echo

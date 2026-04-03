@@ -8,8 +8,8 @@
 : "${COLIMA_ARCH:=x86_64}"
 : "${COLIMA_VM_TYPE:=vz}"
 : "${COLIMA_ROSETTA:=true}"
-: "${COLIMA_CPU:=2}"
-: "${COLIMA_MEMORY:=4}"
+: "${COLIMA_CPU:=4}"
+: "${COLIMA_MEMORY:=8}"
 
 # Lazy colima start — only spins up Colima when a docker command is first used.
 # Overrides the bare 'docker' command; all other docker aliases call this wrapper.

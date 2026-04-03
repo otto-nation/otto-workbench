@@ -18,6 +18,9 @@ if [[ -z "${WORKBENCH_DIR:-}" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
+# shellcheck source=components.sh
+. "$WORKBENCH_DIR/lib/components.sh"
+
 # run_component_migrations DIR
 # Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs
 # each function, and records success. Failed migrations are not recorded and retry
@@ -80,10 +83,10 @@ _prune_stale_migration_state() {
   [[ -f "$state_file" ]] || return 0
 
   # Collect all discovered migration state keys
-  local -a discovered_keys=()
+  local -a discovered_keys=() _migration_dirs=()
+  discover_migration_dirs _migration_dirs
   local dir migration basename_m component_rel
-  for dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrations; do
-    [[ -d "$dir" ]] || continue
+  for dir in "${_migration_dirs[@]}"; do
     component_rel="$(dirname "$dir")"
     component_rel="${component_rel#"$WORKBENCH_DIR/"}"
     for migration in "$dir"/*.sh; do
@@ -124,14 +127,16 @@ run_all_migrations() {
   # Prune stale state entries before running (handles removed/renamed migrations)
   _prune_stale_migration_state
 
-  local found=false dir
-  for dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrations; do
-    [[ -d "$dir" ]] || continue
-    found=true
+  local -a _migration_dirs=()
+  discover_migration_dirs _migration_dirs
+
+  if [[ ${#_migration_dirs[@]} -eq 0 ]]; then
+    echo -e "  ${DIM}no migrations found${NC}"
+    return
+  fi
+
+  local dir
+  for dir in "${_migration_dirs[@]}"; do
     run_component_migrations "$(dirname "$dir")"
   done
-
-  if [[ "$found" == false ]]; then
-    echo -e "  ${DIM}no migrations found${NC}"
-  fi
 }

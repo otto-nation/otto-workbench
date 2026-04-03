@@ -16,6 +16,8 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/components.sh"
 
 ERRORS=0
 CHECKS=0
@@ -27,9 +29,10 @@ _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 # Collect all migration files
 ALL_BASENAMES=()
 
-for migrations_dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrations; do
-  [[ -d "$migrations_dir" ]] || continue
+_migration_dirs=()
+discover_migration_dirs _migration_dirs
 
+for migrations_dir in "${_migration_dirs[@]}"; do
   for migration in "$migrations_dir"/*.sh; do
     [[ -f "$migration" ]] || continue
     FOUND=$(( FOUND + 1 ))

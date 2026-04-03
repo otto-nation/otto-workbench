@@ -71,7 +71,24 @@ select_runtime() {
 
 echo -e "${BOLD}${BLUE}Docker setup${NC}\n"
 
-select_runtime
+# Detect existing runtime from the persisted aliases symlink
+_existing=""
+if [[ -L "$DOCKER_RUNTIME_ALIASES" ]]; then
+  _target=$(readlink "$DOCKER_RUNTIME_ALIASES" 2>/dev/null || true)
+  _existing="${_target##*/docker/}"       # strip prefix → orbstack/aliases.zsh
+  _existing="${_existing%%/aliases.zsh}"  # strip suffix → orbstack
+fi
+
+if [[ -n "$_existing" && -d "$SCRIPT_DIR/$_existing" ]]; then
+  info "Current docker runtime: $_existing"
+  if confirm_n "Change runtime?"; then
+    select_runtime
+  else
+    DOCKER_RUNTIME="$_existing"
+  fi
+else
+  select_runtime
+fi
 
 if [[ -z "$DOCKER_RUNTIME" ]]; then
   skip "Docker runtime setup"
@@ -79,7 +96,11 @@ if [[ -z "$DOCKER_RUNTIME" ]]; then
 fi
 
 info "Runtime: $DOCKER_RUNTIME"
-_docker_check_conflicts "$DOCKER_RUNTIME"
+
+# Only warn about conflicts when switching runtimes or on first-time setup
+if [[ "$_existing" != "$DOCKER_RUNTIME" ]]; then
+  _docker_check_conflicts "$DOCKER_RUNTIME"
+fi
 
 [[ -f "$SCRIPT_DIR/$DOCKER_RUNTIME/setup.sh" ]] \
   || { err "Runtime setup not found: $SCRIPT_DIR/$DOCKER_RUNTIME/setup.sh"; exit 1; }

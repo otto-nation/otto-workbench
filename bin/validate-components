@@ -26,6 +26,8 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/components.sh"
 
 ERRORS=0
 CHECKS=0
@@ -37,9 +39,11 @@ _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
 echo; info "Cross-tier — no duplicate sync_<name>() definitions"
 
+_step_files=()
+discover_step_files _step_files
+
 _sync_fns_all=""
-for _sf in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/*/*/steps.sh; do
-  [[ -f "$_sf" ]] || continue
+for _sf in "${_step_files[@]}"; do
   _sync_fns_all+=$(grep -oE "^sync_[a-z_]+[[:space:]]*\(\)" "$_sf" | sed 's/[[:space:]]*()//')$'\n'
 done
 _sync_dupes=$(printf '%s' "$_sync_fns_all" | sort | uniq -d)

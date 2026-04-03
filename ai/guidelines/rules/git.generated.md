@@ -1,6 +1,6 @@
 # Git — Commits & Pull Requests
 <!-- AUTO-GENERATED — do not edit directly -->
-<!-- Source: lib/ai/core.sh -->
+<!-- Source: lib/conventions.sh -->
 <!-- Regenerate: bin/generate-git-rules -->
 
 ## Conventional Commits
@@ -89,6 +89,6 @@ Use this structure when no project-level PR template exists:
 
 ## Branch Naming
 
-- Format: `type/ISSUE-description-in-kebab-case`
-- Examples: `feat/AUTH-42-oauth-login`, `fix/PROJ-7-cache-race`
-- Use the same type vocabulary as conventional commits
+- Format: `username/<ISSUE or type if no ISSUE>/description_in_snake_case`
+- Examples: `carlos/PROJ-42/oauth_login`, `sofia/PROJ-7/fix_cache_race`, javier/feat/add_metrics
+- Use the git user name (first name, lowercase) as the username prefix

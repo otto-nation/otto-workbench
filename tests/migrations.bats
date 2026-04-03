@@ -32,7 +32,8 @@ WORKBENCH_STATE_DIR="$FAKE_STATE"
 MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
 CONST
 
-  # Source the real migrations library with our fake paths
+  # Source the real component discovery and migrations libraries with our fake paths
+  cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
   cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
 }
 
@@ -60,6 +61,37 @@ run_migrations_in_fake() {
     . "$FAKE_ROOT/lib/migrations.sh"
     run_all_migrations
   )
+}
+
+# ─── Component discovery under set -e ────────────────────────────────────────
+
+@test "discover_migration_dirs returns 0 under set -e with no migrations" {
+  # Regression: glob non-match caused [[ -d ... ]] to return 1, killing set -e scripts
+  run bash -c "
+    set -e
+    . '$FAKE_ROOT/lib/ui.sh'
+    . '$FAKE_ROOT/lib/constants.sh'
+    . '$FAKE_ROOT/lib/components.sh'
+    dirs=()
+    discover_migration_dirs dirs
+    echo \"count=\${#dirs[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"count=0"* ]]
+}
+
+@test "discover_step_files returns 0 under set -e with no steps" {
+  run bash -c "
+    set -e
+    . '$FAKE_ROOT/lib/ui.sh'
+    . '$FAKE_ROOT/lib/constants.sh'
+    . '$FAKE_ROOT/lib/components.sh'
+    files=()
+    discover_step_files files
+    echo \"count=\${#files[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"count=0"* ]]
 }
 
 # ─── Smoke test: validator passes against the real repo ──────────────────────

@@ -6,24 +6,25 @@
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 # shellcheck disable=SC2034  # All config variables are used by sourcing scripts (commit.sh, pr.sh, review.sh)
-# Maximum length of the commit header (type + optional scope + colon + space + subject).
-# Enforced in both the AI prompt and the fallback validator.
-COMMIT_HEADER_MAX_LEN=72
 
-# Maximum length of each line in the commit body.
-# Referenced in the AI prompt only — not machine-validated locally.
-COMMIT_BODY_MAX_LEN=100
+# Git convention constants (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
+# are defined in lib/conventions.sh — sourced here so AI automation inherits them.
+# When sourced from bash (bin scripts), BASH_SOURCE resolves the path.
+# When sourced from sh (Taskfile tasks), TASKFILE_DIR is set by go-task.
+if [ -n "${BASH_SOURCE:-}" ]; then
+  _ai_core_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  _ai_core_dir="${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai"
+fi
+# shellcheck source=../conventions.sh
+. "$_ai_core_dir/../conventions.sh"
+unset _ai_core_dir
 
 # Maximum characters of diff content sent to the AI.
 # Large diffs cause the AI CLI to reject the prompt entirely.
 # When exceeded, complete per-file diffs are included greedily (smallest first);
 # omitted files are listed by name so the AI still knows the full scope of changes.
 DIFF_MAX_CHARS=8000
-
-# Space-separated list of allowed commit types.
-# Used to build the AI prompt rules and the fallback format validator.
-# To add a type, append it here — no other changes needed.
-COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
 
 # When true, skips both issue-related prompts in generate_pr_content.
 # Set by parse_pr_flags; pass --no-issue after -- in task invocations.

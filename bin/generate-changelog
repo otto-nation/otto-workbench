@@ -7,15 +7,15 @@
 # Output: grouped markdown to stdout
 #
 # Groups commits by conventional commit type using the authoritative COMMIT_TYPES
-# list from lib/ai/core.sh. Non-conforming commits appear under "Other".
+# list from lib/conventions.sh. Non-conforming commits appear under "Other".
 
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
-# shellcheck source=../lib/ai/core.sh
-. "$WORKBENCH_DIR/lib/ai/core.sh"
+# shellcheck source=../lib/conventions.sh
+. "$WORKBENCH_DIR/lib/conventions.sh"
 
 # ─── Args ─────────────────────────────────────────────────────────────────────
 

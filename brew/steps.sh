@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Homebrew preflight — ensures brew is installed before components that need it.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 

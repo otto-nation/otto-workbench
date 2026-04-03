@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Migration framework — discovers and runs per-component migrations with state tracking.
 #
 # Migration files live in <component>/migrations/YYYYMMDD-slug.sh and define a single

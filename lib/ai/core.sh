@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Shared configuration and helpers for AI-powered git automation.
 # Sourced by lib/ai/commit.sh, lib/ai/pr.sh, and lib/ai/review.sh via Taskfile tasks.
 #

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Install Ghostty's xterm-ghostty terminfo on a remote host.
 #
 # Fixes "Error opening terminal: xterm-ghostty" on remote servers and in sudo

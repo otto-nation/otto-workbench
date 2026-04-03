@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Post-install summary for the docker component.
 # Sourced by install.sh after all components run — defines print_docker_summary().
 # No top-level execution; safe to source without side effects.

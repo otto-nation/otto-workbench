@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # AI tools setup wizard.
 #
 # Usage: bash ai/setup.sh

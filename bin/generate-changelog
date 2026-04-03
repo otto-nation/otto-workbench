@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Generate a changelog from conventional commits on the current branch.
 #
 # Usage: bin/generate-changelog [--since DATE] [--until DATE]

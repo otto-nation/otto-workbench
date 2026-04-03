@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Commit message generation and validation helpers.
 # Requires lib/ai/core.sh to be sourced first.
 #

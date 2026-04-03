@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Task runner setup — manages go-task installation and global Taskfile symlinks.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 

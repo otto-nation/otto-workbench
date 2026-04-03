@@ -56,6 +56,7 @@ Cross-validation modes: `brewfile` (tools must exist in Brewfile), `bindir` (mus
 - Adding a migration = create `<component>/migrations/YYYYMMDD-slug.sh` with a `migration_YYYYMMDD_slug()` function. No registry edits needed.
 - Generated files (`tools.generated.md`, `git.generated.md`) are never edited directly — edit the source and regenerate.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
+- All scripts use `#!/usr/bin/env bash` (not `#!/bin/bash`) to pick up Homebrew's modern bash on macOS. Bash 4.3+ is required.
 - All scripts source `lib/ui.sh` via `_SELF` readlink pattern for portability.
 - Scripts use `set -e`; all sync functions are idempotent and safe to re-run.
 - Migrations are idempotent, state-tracked in `~/.config/workbench/migrations.applied`, and auto-pruned when removed.

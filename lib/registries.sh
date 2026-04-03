@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Shared registry discovery, install-check, and env/auth iteration.
 #
 # Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries

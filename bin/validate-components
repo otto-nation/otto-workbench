@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Validate the component framework contracts for all workbench components.
 #
 # Usage: bin/validate-components

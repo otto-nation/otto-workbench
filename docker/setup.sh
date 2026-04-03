@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Docker runtime setup.
 #
 # Usage: bash docker/setup.sh

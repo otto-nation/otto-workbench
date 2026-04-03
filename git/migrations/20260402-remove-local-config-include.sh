@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Migration: remove stale [include] for ~/.gitconfig.local.
 # The old architecture stored identity in ~/.gitconfig.local and included it from
 # ~/.gitconfig. The new architecture puts identity directly in ~/.gitconfig.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Post-install summary for the ghostty sub-component.
 # Sourced by ghostty/setup.sh — defines print_ghostty_summary().
 # No top-level execution; safe to source without side effects.

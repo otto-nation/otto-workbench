@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Post-install summary for the brew component.
 # Sourced by install.sh after all components run — defines print_brew_summary().
 # No top-level execution; safe to source without side effects.

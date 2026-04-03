@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Shared path and filename constants — sourced automatically via lib/ui.sh.
 #
 # HOME-relative paths work on any machine without any caller setup.

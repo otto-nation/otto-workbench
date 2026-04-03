@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Claude Code setup steps — sourced by ai/setup.sh and bin/otto-workbench.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 

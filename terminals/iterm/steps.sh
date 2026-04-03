@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # iTerm2 sync steps — re-imports color themes non-interactively.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 #

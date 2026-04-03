@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Terminal emulator setup.
 #
 # Usage: bash terminals/setup.sh

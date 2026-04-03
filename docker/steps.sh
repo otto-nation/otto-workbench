@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Docker sync steps — re-applies socket setup and testcontainers config non-interactively.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 #

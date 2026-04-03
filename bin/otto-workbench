@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Manage your workbench developer environment.
 #
 # Usage: otto-workbench <command>
@@ -24,6 +24,12 @@
 # To run first-time setup or those components: bash <workbench>/install.sh
 
 set -e
+
+# Require modern bash (4.3+ for namerefs used in lib/registries.sh).
+if [[ "${BASH_VERSINFO[0]}" -lt 4 || ( "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -lt 3 ) ]]; then
+  echo "✗ bash 4.3+ required (found ${BASH_VERSION}). Install: brew install bash" >&2
+  exit 1
+fi
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null

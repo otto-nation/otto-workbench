@@ -1,11 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Validate migration file conventions across all workbench components.
 #
 # Usage: bin/validate-migrations
 #
 # Checks:
 #   - Filenames match YYYYMMDD-slug.sh (slug: lowercase alphanumeric + dashes)
-#   - Each file has a #!/bin/bash shebang
+#   - Each file has a #!/usr/bin/env bash shebang
 #   - Each file defines a function matching migration_YYYYMMDD_slug (derived from filename)
 #   - No duplicate filenames across components
 #
@@ -50,10 +50,10 @@ for migrations_dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrati
 
     # Shebang check
     first_line="$(head -1 "$migration")"
-    if [[ "$first_line" == "#!/bin/bash" ]]; then
+    if [[ "$first_line" == "#!/usr/bin/env bash" ]]; then
       _pass "$display: shebang present"
     else
-      _fail "$display: missing #!/bin/bash shebang"
+      _fail "$display: missing #!/usr/bin/env bash shebang"
     fi
 
     # Function name: migration_YYYYMMDD_slug (dashes to underscores, .sh stripped)

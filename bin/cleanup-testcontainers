@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Clean up orphaned Testcontainers resources
 
 set -e

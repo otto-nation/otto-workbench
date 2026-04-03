@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Post-run summary for install.sh and otto-workbench sync.
 #
 # Prints a consolidated view of managed files, editable configs, and quick

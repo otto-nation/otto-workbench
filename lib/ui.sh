@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Shared UI helpers and path constants — sourced by all workbench scripts
 #
 # Sourcing patterns:

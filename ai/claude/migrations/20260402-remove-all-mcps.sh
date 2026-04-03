@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Migration: remove all MCP server registrations from ~/.claude.json.
 # Serena, Context7, and Sequential Thinking were removed from the workbench.
 # step_claude_mcps() only adds — it never prunes removed manifests.

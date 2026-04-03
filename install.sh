@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Bootstrap script for workbench dotfiles.
 #
 # Usage: bash install.sh [--all]
@@ -263,6 +263,16 @@ print_install_summary() {
 echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}"
 echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
 echo
+
+# ─── Preflight ────────────────────────────────────────────────────────────────
+# Verify modern bash (4.3+ for namerefs, associative arrays, etc.).
+# macOS ships bash 3.2 at /bin/bash — Homebrew's bash is required.
+if [[ "${BASH_VERSINFO[0]}" -lt 4 || ( "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -lt 3 ) ]]; then
+  err "bash 4.3+ is required (found ${BASH_VERSION})"
+  err "Install modern bash: brew install bash"
+  err "Then re-run: bash install.sh"
+  exit 1
+fi
 
 step_task_install
 step_brew_install

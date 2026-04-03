@@ -13,7 +13,7 @@ setup() {
   mkdir -p "$FAKE_ROOT/lib" "$FAKE_STATE"
 
   cat > "$FAKE_ROOT/lib/ui.sh" <<'STUB'
-#!/bin/bash
+#!/usr/bin/env bash
 WORKBENCH_DIR="${WORKBENCH_DIR}"
 BOLD='' GREEN='' BLUE='' YELLOW='' RED='' CYAN='' DIM='' NC=''
 info()    { echo "→ $*"; }
@@ -26,7 +26,7 @@ STUB
   sed -i.bak "s|WORKBENCH_DIR=\"\${WORKBENCH_DIR}\"|WORKBENCH_DIR=\"$FAKE_ROOT\"|" "$FAKE_ROOT/lib/ui.sh" && rm -f "$FAKE_ROOT/lib/ui.sh.bak"
 
   cat > "$FAKE_ROOT/lib/constants.sh" <<CONST
-#!/bin/bash
+#!/usr/bin/env bash
 WORKBENCH_DIR="$FAKE_ROOT"
 WORKBENCH_STATE_DIR="$FAKE_STATE"
 MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
@@ -45,7 +45,7 @@ create_migration() {
   local component="$1" filename="$2" fn_name="$3"
   mkdir -p "$FAKE_ROOT/$component/migrations"
   cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 ${fn_name}() {
   :
 }
@@ -74,7 +74,7 @@ run_migrations_in_fake() {
 @test "validator rejects bad filename format" {
   mkdir -p "$FAKE_ROOT/mycomp/migrations"
   cat > "$FAKE_ROOT/mycomp/migrations/bad-name.sh" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 migration_bad_name() { :; }
 EOF
 
@@ -95,7 +95,7 @@ EOF
 @test "validator rejects missing function" {
   mkdir -p "$FAKE_ROOT/mycomp/migrations"
   cat > "$FAKE_ROOT/mycomp/migrations/20250101-test.sh" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 wrong_function_name() { :; }
 EOF
 
@@ -115,7 +115,7 @@ EOF
 
   run env WORKBENCH_DIR="$FAKE_ROOT" bash "$VALIDATOR"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"missing #!/bin/bash shebang"* ]]
+  [[ "$output" == *"missing #!/usr/bin/env bash shebang"* ]]
 }
 
 # ─── Migration execution: runs and records ───────────────────────────────────
@@ -153,13 +153,13 @@ EOF
 
   local log_file="$TMPDIR/order.log"
   cat > "$FAKE_ROOT/mycomp/migrations/20250101-first.sh" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 migration_20250101_first() {
   echo "first" >> "$log_file"
 }
 EOF
   cat > "$FAKE_ROOT/mycomp/migrations/20250201-second.sh" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 migration_20250201_second() {
   echo "second" >> "$log_file"
 }

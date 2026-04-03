@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Editor setup.
 #
 # Usage: bash editors/setup.sh

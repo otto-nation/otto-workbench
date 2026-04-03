@@ -35,17 +35,24 @@ _docker_detect_runtime() {
 # step_docker_socket — re-applies the docker socket symlink for the detected runtime.
 # Detects the active runtime by reading the target of the existing docker.sock symlink.
 # Colima: re-symlinks $COLIMA_DIR/<profile>/docker.sock → $DOCKER_RUN_DIR/docker.sock.
-# Other runtimes (OrbStack, etc.) manage their own socket — nothing to re-apply.
+# OrbStack: removes stale Colima symlinks — OrbStack manages its own socket.
 # No-op with an info message if no runtime is detected.
 step_docker_socket() {
   local socket_target
   socket_target=$(readlink "$DOCKER_RUN_DIR/docker.sock" 2>/dev/null || true)
 
   if [[ "$socket_target" == "$COLIMA_DIR"* ]]; then
-    local profile
-    profile=$(basename "$(dirname "$socket_target")")
-    mkdir -p "$DOCKER_RUN_DIR"
-    install_symlink "$COLIMA_DIR/$profile/docker.sock" "$DOCKER_RUN_DIR/docker.sock"
+    # Check if OrbStack is actually the intended runtime (stale Colima symlink)
+    if [[ -f "$DOCKER_RUNTIME_ALIASES" ]] \
+       && [[ "$(readlink "$DOCKER_RUNTIME_ALIASES" 2>/dev/null)" == *"orbstack"* ]]; then
+      rm -f "$DOCKER_RUN_DIR/docker.sock"
+      echo -e "  ${DIM}✓ removed stale Colima socket (OrbStack is active runtime)${NC}"
+    else
+      local profile
+      profile=$(basename "$(dirname "$socket_target")")
+      mkdir -p "$DOCKER_RUN_DIR"
+      install_symlink "$COLIMA_DIR/$profile/docker.sock" "$DOCKER_RUN_DIR/docker.sock"
+    fi
   elif [[ -n "$socket_target" ]]; then
     echo -e "  ${DIM}✓ socket managed externally ($(basename "$(dirname "$socket_target")")${NC})"
   else

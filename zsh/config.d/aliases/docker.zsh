@@ -15,8 +15,11 @@
 # ============================================================================
 
 # Point DOCKER_HOST at the canonical socket symlink maintained by docker/steps.sh.
-# Works for both Colima and OrbStack — the symlink target differs per runtime.
-export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
+# If the symlink doesn't exist (OrbStack manages its own socket), leave DOCKER_HOST
+# unset so Docker falls back to the default socket path.
+if [[ -e "${HOME}/.docker/run/docker.sock" ]]; then
+  export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
+fi
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 export TESTCONTAINERS_HOST_OVERRIDE=localhost
 

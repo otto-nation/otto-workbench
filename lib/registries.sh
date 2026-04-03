@@ -22,7 +22,7 @@ is_installed() { command -v "$1" >/dev/null 2>&1; }
 
 # collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with deduplicated registry paths.
-# SCAN_DIR: root directory to glob for */registry.yml and /*/*/registry.yml
+# SCAN_DIR: root directory to glob for */registry.yml, /*/*/registry.yml, and *.env.yml
 # BREW_DIR: directory to search for *.registry.yml stacks (defaults to SCAN_DIR/brew)
 collect_registries() {
   local -n _out_arr=$1
@@ -36,6 +36,11 @@ collect_registries() {
   for f in "$scan_dir"/*/registry.yml "$scan_dir"/*/*/registry.yml; do
     [[ -f "$f" ]] && raw+=("$f")
   done
+
+  # Consumer-owned env files (colocated with the code that reads the vars)
+  while IFS= read -r -d '' f; do
+    raw+=("$f")
+  done < <(find "$scan_dir" -name '*.env.yml' -not -path '*/.git/*' -print0 | sort -z)
 
   # Brew stack registries
   if [[ -d "$brew_dir" ]]; then

@@ -32,7 +32,7 @@ Three layers during `install.sh`:
 
 ### Registries
 
-Each tool domain has a `registry.yml` describing its tools for AI context generation.
+Each tool domain has a `registry.yml` describing its tools for AI context generation. Consumer-owned `*.env.yml` files declare env vars and auth, colocated with the code that reads them.
 
 Required fields: `meta.section`, `meta.validation`, `meta.source`; per-tool: `name`, `description`, `when_to_use`.
 
@@ -51,9 +51,9 @@ Cross-validation modes: `brewfile` (tools must exist in Brewfile), `bindir` (mus
 
 ## Conventions
 
-- **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.config/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test.
+- **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.config/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test. Registry `*.registry.yml` files own tool documentation (`tools[]`). Registry `*.env.yml` files own env var declarations (`env[]`, `auth`), colocated with the consumer code that reads them. Env vars set programmatically at runtime (e.g. DOCKER_HOST) are NOT declared in registries.
 - Dynamic discovery over hardcoded config — glob patterns, not individual entries. Test: "does adding a new item require editing this file?" If yes, use a convention-based alternative.
-- Adding a brew tool = add to Brewfile + registry.yml. No other config edits needed.
+- Adding a brew tool = add to Brewfile + registry.yml. No other config edits needed. Env vars go in a `.env.yml` next to the consumer, not in the brew registry.
 - Adding a migration = create `<component>/migrations/YYYYMMDD-slug.sh` with a `migration_YYYYMMDD_slug()` function. No registry edits needed.
 - Generated files (`tools.generated.md`, `git.generated.md`) are never edited directly — edit the source and regenerate.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.

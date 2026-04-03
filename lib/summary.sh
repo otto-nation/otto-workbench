@@ -11,17 +11,20 @@
 # shellcheck source=registries.sh
 . "$WORKBENCH_DIR/lib/registries.sh"
 
-# _env_setup_entry — callback for iter_registry_env; prints ANSI-colored env var.
+# _env_ensure_header — prints the "Environment setup" header on first call.
 # Uses dynamic scoping: reads/writes `_env_found` from the calling function.
-_env_setup_entry() {
-  local var="$1" _comment="$2" default_val="$3" setup_url="$4" prefix="$5"
+_env_ensure_header() {
+  [[ "$_env_found" == true ]] && return
+  echo
+  echo -e "  ${CYAN}Environment setup${NC}"
+  echo -e "  ${DIM}  Add these to $ENV_LOCAL_FILE:${NC}"
+  _env_found=true
+}
 
-  if [[ "$_env_found" == false ]]; then
-    echo
-    echo -e "  ${CYAN}Environment setup${NC}"
-    echo -e "  ${DIM}  Add these to $ENV_LOCAL_FILE:${NC}"
-    _env_found=true
-  fi
+# _env_print_var VAR PREFIX DEFAULT SETUP_URL — prints a single env var line.
+_env_print_var() {
+  local var="$1" prefix="$2" default_val="$3" setup_url="$4"
+  _env_ensure_header
 
   local val=""
   if [[ -n "$prefix" && "$prefix" != "null" ]]; then
@@ -35,24 +38,16 @@ _env_setup_entry() {
   fi
 }
 
-# _env_setup_auth_entry — callback for iter_registry_auth; prints ANSI-colored auth var.
-# Uses dynamic scoping: reads/writes `_env_found` from the calling function.
+# _env_setup_entry — callback for iter_registry_env.
+_env_setup_entry() {
+  local var="$1" _comment="$2" default_val="$3" setup_url="$4" prefix="$5"
+  _env_print_var "$var" "$prefix" "$default_val" "$setup_url"
+}
+
+# _env_setup_auth_entry — callback for iter_registry_auth.
 _env_setup_auth_entry() {
   local _name="$1" env_var="$2" setup_url="$3" prefix="$4"
-
-  if [[ "$_env_found" == false ]]; then
-    echo
-    echo -e "  ${CYAN}Environment setup${NC}"
-    echo -e "  ${DIM}  Add these to $ENV_LOCAL_FILE:${NC}"
-    _env_found=true
-  fi
-
-  local val=""
-  [[ -n "$prefix" && "$prefix" != "null" ]] && val="$prefix"
-  echo -e "  ${DIM}  export ${env_var}=${val}${NC}"
-  if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
-    echo -e "  ${DIM}    → $setup_url${NC}"
-  fi
+  _env_print_var "$env_var" "$prefix" "" "$setup_url"
 }
 
 # _print_env_setup — prints env setup instructions from all registries.
@@ -191,27 +186,25 @@ print_workbench_summary() {
 # from */summary.sh files. If COMPONENT args are given, only those are checked;
 # otherwise all components with summary.sh are discovered via glob.
 run_component_summaries() {
-  local components=("$@")
-  local summary_file fn
+  local -a files=()
 
-  if [[ ${#components[@]} -eq 0 ]]; then
+  if [[ $# -eq 0 ]]; then
     # Auto-discover all components with summary.sh (skip lib/ — it's not a component)
-    for summary_file in "$WORKBENCH_DIR"/*/summary.sh; do
-      [[ -f "$summary_file" ]] || continue
-      [[ "$(dirname "$summary_file")" == "$WORKBENCH_DIR/lib" ]] && continue
-      # shellcheck source=/dev/null
-      . "$summary_file"
-      fn="print_$(basename "$(dirname "$summary_file")")_summary"
-      declare -f "$fn" > /dev/null 2>&1 && "$fn" || true
+    for _f in "$WORKBENCH_DIR"/*/summary.sh; do
+      [[ -f "$_f" && "$(dirname "$_f")" != "$WORKBENCH_DIR/lib" ]] && files+=("$_f")
     done
   else
-    for component in "${components[@]}"; do
-      summary_file="$WORKBENCH_DIR/$component/summary.sh"
-      [[ -f "$summary_file" ]] || continue
-      # shellcheck source=/dev/null
-      . "$summary_file"
-      fn="print_$(basename "$component")_summary"
-      declare -f "$fn" > /dev/null 2>&1 && "$fn" || true
+    for _c in "$@"; do
+      files+=("$WORKBENCH_DIR/$_c/summary.sh")
     done
   fi
+
+  local summary_file fn
+  for summary_file in "${files[@]}"; do
+    [[ -f "$summary_file" ]] || continue
+    # shellcheck source=/dev/null
+    . "$summary_file"
+    fn="print_$(basename "$(dirname "$summary_file")")_summary"
+    declare -f "$fn" > /dev/null 2>&1 && "$fn" || true
+  done
 }

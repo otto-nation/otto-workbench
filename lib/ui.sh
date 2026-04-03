@@ -238,6 +238,49 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
     done
   }
 
+  # select_subdirs RESULT_VAR PARENT_DIR PROMPT [SELECT_MENU_OPTS...]
+  #
+  # Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a
+  # numbered menu with PROMPT, and writes space-separated selected names to
+  # RESULT_VAR. Any extra arguments are forwarded to select_menu (e.g. --default
+  # all, --single). Returns 1 if no subdirectories are found.
+  select_subdirs() {
+    local _result_var=$1 _parent_dir=$2 _prompt=$3
+    shift 3
+
+    local _items=() _dir
+    for _dir in "$_parent_dir"/*/; do
+      [[ -f "${_dir}setup.sh" ]] && _items+=("$(basename "$_dir")")
+    done
+
+    if [[ ${#_items[@]} -eq 0 ]]; then
+      err "No setups found in $_parent_dir"
+      return 1
+    fi
+
+    info "$_prompt"
+    local _i=1 _item
+    for _item in "${_items[@]}"; do
+      echo "  [$_i] $_item"
+      _i=$(( _i + 1 ))
+    done
+    echo
+
+    local _sel
+    select_menu _sel "${#_items[@]}" "$@"
+
+    if [[ -z "$_sel" ]]; then
+      printf -v "$_result_var" '%s' ""
+      return 0
+    fi
+
+    local _selected="" _num
+    for _num in $_sel; do
+      _selected+="${_items[$(( _num - 1 ))]} "
+    done
+    printf -v "$_result_var" '%s' "${_selected% }"
+  }
+
   # conf_get FILE KEY — reads a key = value line from a KEY = VALUE config file.
   # Returns the trimmed value, or empty string if the key is not found.
   conf_get() {

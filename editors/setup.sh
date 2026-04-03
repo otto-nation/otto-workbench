@@ -21,34 +21,13 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
 fi
 
 select_editors() {
-  local editors=() dir
-
-  for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}setup.sh" ]] && editors+=("$(basename "$dir")")
-  done
-
-  if [[ ${#editors[@]} -eq 0 ]]; then
-    err "No editor setups found in $SCRIPT_DIR"
-    exit 1
-  fi
-
-  info "Which editor(s) would you like to configure?"
-  local i=1 editor
-  for editor in "${editors[@]}"; do
-    echo "  [$i] $editor"
-    i=$(( i + 1 ))
-  done
-  echo
-
   local _sel
-  select_menu _sel "${#editors[@]}" --default all
-  [[ -z "$_sel" ]] && { SELECTED_EDITORS=(); return; }
+  select_subdirs _sel "$SCRIPT_DIR" "Which editor(s) would you like to configure?" --default all \
+    || exit 1
 
   SELECTED_EDITORS=()
-  local num
-  for num in $_sel; do
-    SELECTED_EDITORS+=("${editors[$(( num - 1 ))]}")
-  done
+  # shellcheck disable=SC2086  # word-splitting intentional — _sel is space-separated names
+  for _e in $_sel; do SELECTED_EDITORS+=("$_e"); done
 }
 
 echo -e "${BOLD}${BLUE}Editor setup${NC}\n"

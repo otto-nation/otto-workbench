@@ -245,17 +245,8 @@ print_install_summary() {
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
   print_workbench_summary
 
-  # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
-  local component summary_file fn
-  for component in "${SELECTED_COMPONENTS[@]}"; do
-    summary_file="$WORKBENCH_DIR/$component/summary.sh"
-    if [[ -f "$summary_file" ]]; then
-      # shellcheck source=/dev/null
-      . "$summary_file"
-      fn="print_$(basename "$component")_summary"
-      declare -f "$fn" > /dev/null 2>&1 && "$fn"
-    fi
-  done
+  # Run per-component summaries for selected components (brew, docker, ai, etc.)
+  run_component_summaries "${SELECTED_COMPONENTS[@]}"
 }
 
 # ─── Core installation ────────────────────────────────────────────────────────
@@ -280,17 +271,18 @@ echo
 
 # Core components (steps.sh present, setup.conf absent, not preflight).
 # Preflight components (task, brew) already ran above and are excluded.
-PREFLIGHT_COMPONENTS="task brew"
+PREFLIGHT_COMPONENTS=(task brew)
 _core_dirs=()
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$_f" ]] || continue
   _c=$(basename "$(dirname "$_f")")
   [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
-  # shellcheck disable=SC2076  # literal match intended
-  [[ " $PREFLIGHT_COMPONENTS " =~ " $_c " ]] && continue
+  _is_preflight=false
+  for _pf in "${PREFLIGHT_COMPONENTS[@]}"; do [[ "$_pf" == "$_c" ]] && { _is_preflight=true; break; }; done
+  [[ "$_is_preflight" == true ]] && continue
   _core_dirs+=("$_c")
 done
-unset _f _c
+unset _f _c _is_preflight _pf
 
 if [[ ${#_core_dirs[@]} -gt 0 ]]; then
   _core_selected=()

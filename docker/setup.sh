@@ -61,32 +61,10 @@ _docker_check_conflicts() {
 # ─── Runtime selection ────────────────────────────────────────────────────────
 
 select_runtime() {
-  local runtimes=()
-  local dir
-
-  # Discover runtimes dynamically — any subdirectory containing setup.sh qualifies
-  for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}setup.sh" ]] && runtimes+=("$(basename "$dir")")
-  done
-
-  if [[ ${#runtimes[@]} -eq 0 ]]; then
-    err "No runtimes found in $SCRIPT_DIR"
-    exit 1
-  fi
-
-  info "Which docker runtime are you using?"
-  local i=1
-  for runtime in "${runtimes[@]}"; do
-    echo "  [$i] $runtime"
-    i=$(( i + 1 ))
-  done
-  echo
-
   local _sel
-  select_menu _sel "${#runtimes[@]}" --default skip --single
-  [[ -z "$_sel" ]] && { DOCKER_RUNTIME=""; return; }
-
-  DOCKER_RUNTIME="${runtimes[$((_sel - 1))]}"
+  select_subdirs _sel "$SCRIPT_DIR" "Which docker runtime are you using?" --default skip --single \
+    || exit 1
+  DOCKER_RUNTIME="$_sel"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

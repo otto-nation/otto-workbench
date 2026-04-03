@@ -88,19 +88,14 @@ print_workbench_summary() {
 
   # AI tokens — check AI_COMMAND and GH_TOKEN in taskfile.env
   local _ai_status="${YELLOW}not configured${NC} ${DIM}— run: task --global ai:setup${NC}"
+  local _gh_status="${YELLOW}not set${NC}"
   if [[ -f "$TASKFILE_ENV" ]]; then
     local _ai_cmd
     _ai_cmd=$(grep -m1 '^AI_COMMAND=' "$TASKFILE_ENV" 2>/dev/null | sed 's/^AI_COMMAND=//')
-    if [[ -n "$_ai_cmd" ]]; then
-      _ai_status="${DIM}${_ai_cmd}${NC}"
-    fi
+    [[ -n "$_ai_cmd" ]] && _ai_status="${DIM}${_ai_cmd}${NC}"
+    grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null && _gh_status="${DIM}configured${NC}"
   fi
   echo -e "  ${DIM}  AI command        ${TASKFILE_ENV/#"$HOME"/$home_short}  ${NC}${_ai_status}"
-
-  local _gh_status="${YELLOW}not set${NC}"
-  if [[ -f "$TASKFILE_ENV" ]] && grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null; then
-    _gh_status="${DIM}configured${NC}"
-  fi
   echo -e "  ${DIM}  GH_TOKEN          ${TASKFILE_ENV/#"$HOME"/$home_short}  ${NC}${_gh_status}"
 
   echo -e "  ${DIM}  shell rc          ${ZSHRC_FILE/#"$HOME"/$home_short}${NC}"
@@ -117,4 +112,33 @@ print_workbench_summary() {
   echo -e "  ${DIM}  Add a rule        claude-rules add <domain> \"rule\"${NC}"
   echo -e "  ${DIM}  Reload shell      exec $(basename "${SHELL:-zsh}")${NC}"
   echo
+}
+
+# run_component_summaries [COMPONENT...] — auto-discovers and calls print_<name>_summary()
+# from */summary.sh files. If COMPONENT args are given, only those are checked;
+# otherwise all components with summary.sh are discovered via glob.
+run_component_summaries() {
+  local components=("$@")
+  local summary_file fn
+
+  if [[ ${#components[@]} -eq 0 ]]; then
+    # Auto-discover all components with summary.sh (skip lib/ — it's not a component)
+    for summary_file in "$WORKBENCH_DIR"/*/summary.sh; do
+      [[ -f "$summary_file" ]] || continue
+      [[ "$(dirname "$summary_file")" == "$WORKBENCH_DIR/lib" ]] && continue
+      # shellcheck source=/dev/null
+      . "$summary_file"
+      fn="print_$(basename "$(dirname "$summary_file")")_summary"
+      declare -f "$fn" > /dev/null 2>&1 && "$fn" || true
+    done
+  else
+    for component in "${components[@]}"; do
+      summary_file="$WORKBENCH_DIR/$component/summary.sh"
+      [[ -f "$summary_file" ]] || continue
+      # shellcheck source=/dev/null
+      . "$summary_file"
+      fn="print_$(basename "$component")_summary"
+      declare -f "$fn" > /dev/null 2>&1 && "$fn" || true
+    done
+  fi
 }

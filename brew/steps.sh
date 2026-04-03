@@ -29,10 +29,7 @@ step_brew_install() {
   fi
 
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    printf "  Install Homebrew? [Y/n] "
-    read -n 1 -r REPLY
-    echo
-    [[ "$REPLY" =~ ^[Nn]$ ]] && return
+    confirm "  Install Homebrew?" || return
 
     info "Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"

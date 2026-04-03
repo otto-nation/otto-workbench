@@ -22,10 +22,7 @@ step_task_install() {
     warn "Non-interactive shell — skipping task install. Run install.sh manually to install task."
     return
   fi
-  printf "  Install it? [Y/n] "
-  read -n 1 -r REPLY
-  echo
-  [[ "$REPLY" =~ ^[Nn]$ ]] && return
+  confirm "  Install task?" || return
 
   if [[ "$OSTYPE" == "darwin"* ]]; then
     info "Installing task via Homebrew..."

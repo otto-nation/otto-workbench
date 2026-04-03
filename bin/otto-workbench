@@ -84,15 +84,7 @@ cmd_sync() {
   print_workbench_summary
 
   # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
-  local _sf _fn
-  for _sf in "$WORKBENCH_DIR"/*/summary.sh; do
-    [[ -f "$_sf" ]] || continue
-    # shellcheck source=/dev/null
-    . "$_sf"
-    _fn="print_$(basename "$(dirname "$_sf")")_summary"
-    declare -f "$_fn" > /dev/null 2>&1 && "$_fn"
-  done
-  unset _sf _fn
+  run_component_summaries
 }
 
 cmd_changelog() {

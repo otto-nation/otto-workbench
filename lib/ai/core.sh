@@ -46,22 +46,27 @@ PR_TITLE_MARKER="TITLE:"
 PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
 
+# _resolve_env_file — finds the active env file (local override or global).
+# Prints the path to stdout. Returns 1 if neither exists.
+_resolve_env_file() {
+  if [ -f "$AI_LOCAL_ENV_PATH" ]; then
+    echo "$AI_LOCAL_ENV_PATH"
+  elif [ -f "$TASKFILE_ENV" ]; then
+    echo "$TASKFILE_ENV"
+  else
+    return 1
+  fi
+}
+
 # load_ai_command
 # Finds the AI config and validates the binary exists.
 # Sets AI_COMMAND. Returns 1 on failure.
 load_ai_command() {
-  local local_env="$AI_LOCAL_ENV_PATH"
-  local global_env="$TASKFILE_ENV"
   local env_file
-
-  if [ -f "$local_env" ]; then
-    env_file="$local_env"
-  elif [ -f "$global_env" ]; then
-    env_file="$global_env"
-  else
+  env_file=$(_resolve_env_file) || {
     echo "✗ AI not configured. Run: task --global ai:setup"
     return 1
-  fi
+  }
 
   if ! grep -q "^AI_COMMAND=" "$env_file"; then
     printf "✗ AI_COMMAND not set in %s\n" "$env_file"
@@ -93,15 +98,8 @@ load_ai_command() {
 # fall back to the user's full interactive gh session.
 # Returns 1 on failure.
 load_gh_token() {
-  local local_env="$AI_LOCAL_ENV_PATH"
-  local global_env="$TASKFILE_ENV"
   local env_file
-
-  if [ -f "$local_env" ]; then
-    env_file="$local_env"
-  elif [ -f "$global_env" ]; then
-    env_file="$global_env"
-  fi
+  env_file=$(_resolve_env_file) || true
 
   if [ -n "${env_file:-}" ] && grep -q "^GH_TOKEN=" "$env_file"; then
     GH_TOKEN=$(grep "^GH_TOKEN=" "$env_file" | head -1 | cut -d'=' -f2-)

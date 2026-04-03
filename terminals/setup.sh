@@ -23,35 +23,13 @@ fi
 # ─── Terminal selection ───────────────────────────────────────────────────────
 
 select_terminals() {
-  local terminals=() dir
-
-  # Discover terminals dynamically — any subdirectory containing setup.sh qualifies
-  for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}setup.sh" ]] && terminals+=("$(basename "$dir")")
-  done
-
-  if [[ ${#terminals[@]} -eq 0 ]]; then
-    err "No terminal setups found in $SCRIPT_DIR"
-    exit 1
-  fi
-
-  info "Which terminal(s) would you like to configure?"
-  local i=1
-  for terminal in "${terminals[@]}"; do
-    echo "  [$i] $terminal"
-    i=$(( i + 1 ))
-  done
-  echo
-
   local _sel
-  select_menu _sel "${#terminals[@]}" --default all
-  [[ -z "$_sel" ]] && { SELECTED_TERMINALS=(); return; }
+  select_subdirs _sel "$SCRIPT_DIR" "Which terminal(s) would you like to configure?" --default all \
+    || exit 1
 
   SELECTED_TERMINALS=()
-  local num
-  for num in $_sel; do
-    SELECTED_TERMINALS+=("${terminals[$(( num - 1 ))]}")
-  done
+  # shellcheck disable=SC2086  # word-splitting intentional — _sel is space-separated names
+  for _t in $_sel; do SELECTED_TERMINALS+=("$_t"); done
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

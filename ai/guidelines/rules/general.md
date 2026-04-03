@@ -70,7 +70,7 @@
 
 ## Git
 
-- Never force push without explicit confirmation
+- Never use `--force` or `--force-with-lease` on git push. Always try a regular push first. If it fails because the branch diverged, tell the user and let them decide how to proceed
 - Never commit unless explicitly asked
 
 ## Incremental Changes

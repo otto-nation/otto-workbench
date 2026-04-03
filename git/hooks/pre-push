@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pre-push hook: repo-local hook for otto-workbench.
 # Runs validation, linting, and tests before push.
 
@@ -31,16 +31,16 @@ if ! command -v yq >/dev/null 2>&1; then
 fi
 
 echo "→ Validating registries..."
-bash "$REPO_ROOT/bin/validate-registries"
+"$REPO_ROOT/bin/validate-registries"
 
 echo "→ Validating component framework..."
-bash "$REPO_ROOT/bin/validate-components"
+"$REPO_ROOT/bin/validate-components"
 
 echo "→ Validating migrations..."
-bash "$REPO_ROOT/bin/validate-migrations"
+"$REPO_ROOT/bin/validate-migrations"
 
 echo "→ Regenerating tool context..."
-bash "$REPO_ROOT/bin/generate-tool-context"
+"$REPO_ROOT/bin/generate-tool-context"
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then
   echo "✗ tools.generated.md was updated — commit it before pushing:"
   echo "  git add $TOOLS_GENERATED_RELPATH"
@@ -50,7 +50,7 @@ fi
 echo "✓ Tool context up to date"
 
 echo "→ Regenerating git rules..."
-bash "$REPO_ROOT/bin/generate-git-rules"
+"$REPO_ROOT/bin/generate-git-rules"
 if ! git -C "$REPO_ROOT" diff --quiet "$GIT_GENERATED_RELPATH"; then
   echo "✗ git.generated.md was updated — commit it before pushing:"
   echo "  git add $GIT_GENERATED_RELPATH"

@@ -44,7 +44,7 @@ select_terminals() {
   echo
 
   local _sel
-  select_menu _sel "${#terminals[@]}" --default skip
+  select_menu _sel "${#terminals[@]}" --default all
   [[ -z "$_sel" ]] && { SELECTED_TERMINALS=(); return; }
 
   SELECTED_TERMINALS=()

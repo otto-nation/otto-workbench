@@ -41,7 +41,7 @@ select_editors() {
   echo
 
   local _sel
-  select_menu _sel "${#editors[@]}" --default skip
+  select_menu _sel "${#editors[@]}" --default all
   [[ -z "$_sel" ]] && { SELECTED_EDITORS=(); return; }
 
   SELECTED_EDITORS=()

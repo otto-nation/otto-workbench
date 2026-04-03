@@ -23,9 +23,12 @@ otto-workbench changelog       # show recent changes from conventional commits
 
 ### Components
 
-Two tiers:
-- **Tier 1 (core):** `<name>/steps.sh` with `sync_<name>()` — always installed (bin, git, task, zsh)
-- **Tier 2 (optional):** `<name>/setup.conf` + `setup.sh`, listed in `install.components` — user-selectable (brew, docker, terminals, editors, ai)
+Three layers during `install.sh`:
+- **Preflight (mandatory):** `task` and `brew` — ensures tooling is present before anything else runs
+- **Core (selectable, Enter = all):** `<name>/steps.sh` with `sync_<name>()`, no `setup.conf` — currently bin, git, zsh
+- **Optional (selectable, Enter = all):** `<name>/setup.conf` + `setup.sh`, listed in `install.components` — brew packages, docker, terminals, editors, ai
+
+`otto-workbench sync` always syncs all components (no selection). Sub-menus (terminals, editors, AI tools) also default to Enter = all.
 
 ### Registries
 

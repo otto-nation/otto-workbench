@@ -32,10 +32,13 @@ SKIP_ISSUE=false
 # Git remote name used for push/fetch/range operations.
 GIT_REMOTE="origin"
 
-# Paths searched for the AI command configuration, local taking priority over global.
-# AI_GLOBAL_ENV_SUBPATH is relative to $HOME and expanded at call time, not source time.
+# Global env file path — single source of truth is lib/constants.sh (TASKFILE_ENV).
+# When sourced via Taskfile tasks (sh, not bash), lib/constants.sh is not available,
+# so we fall back to the same value defined there.
+: "${TASKFILE_ENV:="$HOME/.config/task/taskfile.env"}"
+
+# Local per-project override takes priority over the global TASKFILE_ENV.
 AI_LOCAL_ENV_PATH=".taskfile/taskfile.env"
-AI_GLOBAL_ENV_SUBPATH=".config/task/taskfile.env"
 
 # Markers the AI must use when returning PR content.
 # Must stay in sync with the prompt in generate_pr_content.
@@ -48,7 +51,7 @@ PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # Sets AI_COMMAND. Returns 1 on failure.
 load_ai_command() {
   local local_env="$AI_LOCAL_ENV_PATH"
-  local global_env="$HOME/$AI_GLOBAL_ENV_SUBPATH"
+  local global_env="$TASKFILE_ENV"
   local env_file
 
   if [ -f "$local_env" ]; then
@@ -91,7 +94,7 @@ load_ai_command() {
 # Returns 1 on failure.
 load_gh_token() {
   local local_env="$AI_LOCAL_ENV_PATH"
-  local global_env="$HOME/$AI_GLOBAL_ENV_SUBPATH"
+  local global_env="$TASKFILE_ENV"
   local env_file
 
   if [ -f "$local_env" ]; then
@@ -112,7 +115,7 @@ load_gh_token() {
     return 0
   fi
 
-  local cfg_path="${env_file:-$HOME/$AI_GLOBAL_ENV_SUBPATH}"
+  local cfg_path="${env_file:-$TASKFILE_ENV}"
   printf "✗ GH_TOKEN not configured for AI automation.\n"
   printf "  Set it in %s\n" "$cfg_path"
   printf "  Create a fine-grained PAT: https://github.com/settings/tokens/new\n"

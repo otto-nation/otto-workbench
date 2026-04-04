@@ -79,6 +79,71 @@ setup() {
   [[ "$output" == "ok" ]]
 }
 
+# ─── Bash version guard ────────────────────────────────────────────────────
+
+@test "output.sh rejects bash older than 4.3" {
+  # BASH_VERSINFO is readonly — can't override. Test with /bin/bash (macOS 3.2) if available.
+  [[ -x /bin/bash ]] || skip "/bin/bash not available"
+  local old_version
+  old_version=$(/bin/bash --version | head -1)
+  [[ "$old_version" == *"version 3."* || "$old_version" == *"version 4.0"* || "$old_version" == *"version 4.1"* || "$old_version" == *"version 4.2"* ]] \
+    || skip "/bin/bash is already 4.3+ ($old_version)"
+
+  run /bin/bash -c ". '$REPO_ROOT/lib/output.sh' 2>&1"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Bash 4.3+ required"* ]]
+}
+
+@test "output.sh version guard contains helpful message" {
+  # Verify the guard text is present in the source (even if we can't trigger it)
+  grep -q "Bash 4.3+ required" "$REPO_ROOT/lib/output.sh"
+  grep -q "brew install bash" "$REPO_ROOT/lib/output.sh"
+}
+
+@test "output.sh accepts current bash" {
+  run bash -c ". '$REPO_ROOT/lib/output.sh' && echo ok"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "ok" ]]
+}
+
+# ─── Nameref regression — local -n must work in all lib modules ────────────
+
+@test "collect_registries uses namerefs without error" {
+  run bash -c "
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/registries.sh'
+    arr=()
+    collect_registries arr '$REPO_ROOT'
+    echo \"count=\${#arr[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"count="* ]]
+}
+
+@test "discover_step_files uses namerefs without error" {
+  run bash -c "
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/components.sh'
+    files=()
+    discover_step_files files
+    echo \"count=\${#files[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"count="* ]]
+}
+
+@test "discover_migration_dirs uses namerefs without error" {
+  run bash -c "
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/components.sh'
+    dirs=()
+    discover_migration_dirs dirs
+    echo \"count=\${#dirs[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"count="* ]]
+}
+
 # ─── Zsh compatibility ─────────────────────────────────────────────────────
 
 @test "output.sh works when sourced from zsh" {

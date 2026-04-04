@@ -8,6 +8,16 @@
 [[ -n "${_LIB_OUTPUT_SH:-}" ]] && return
 _LIB_OUTPUT_SH=1
 
+# Bash 4.3+ required for namerefs (local -n) used throughout workbench libs.
+# macOS ships bash 3.2 at /bin/bash — if env bash resolves there, fail early.
+# Guard is bash-only so zsh sourcing (e.g. bin/aliases) is unaffected.
+if [[ -n "${BASH_VERSINFO[0]:-}" ]]; then
+  if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+    echo "ERROR: Bash 4.3+ required (found ${BASH_VERSION}). Install: brew install bash" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+fi
+
 # Color semantics: RED=error  YELLOW=warn  GREEN=success  BLUE=info/arrow
 #                  CYAN=section label  DIM=metadata/detail  BOLD=emphasis
 # Respect NO_COLOR (https://no-color.org) and non-terminal stdout.

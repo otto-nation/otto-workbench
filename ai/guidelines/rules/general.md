@@ -67,6 +67,8 @@
 - When a foundational method's contract changes, audit every test that asserts
   the old behavior and update it before declaring the work done
 - Avoid mocking when possible
+- Every bug fix and behavioral change must include a new or updated test that
+  would have caught the issue. No fix is complete without a regression test
 
 ## Git
 

@@ -75,6 +75,39 @@ _select() {
   [ "$result" = "1 1" ]
 }
 
+# ── select_subdirs ────────────────────────────────────────────────────────────
+
+# _select_subdirs INPUT PARENT_DIR [OPTIONS...] — runs select_subdirs in a subshell, prints result.
+_select_subdirs() {
+  local input="$1" parent_dir="$2"
+  shift 2
+  local args="$*"
+  bash -c "
+    export NO_COLOR=1
+    source '$REPO_ROOT/lib/ui.sh'
+    select_subdirs _sel '$parent_dir' 'Pick one' $args 2>/dev/null
+    echo \"\$_sel\"
+  " <<< "$input" 2>/dev/null | tail -n1
+}
+
+@test "select_subdirs: maps index to directory name" {
+  mkdir -p "$TMPDIR/parent/alpha" "$TMPDIR/parent/beta"
+  echo "#!/bin/bash" > "$TMPDIR/parent/alpha/setup.sh"
+  echo "#!/bin/bash" > "$TMPDIR/parent/beta/setup.sh"
+  result=$(_select_subdirs "1" "$TMPDIR/parent" --single)
+  [ "$result" = "alpha" ]
+}
+
+@test "select_subdirs: caller variable _sel receives result (nameref regression)" {
+  mkdir -p "$TMPDIR/parent/alpha" "$TMPDIR/parent/beta"
+  echo "#!/bin/bash" > "$TMPDIR/parent/alpha/setup.sh"
+  echo "#!/bin/bash" > "$TMPDIR/parent/beta/setup.sh"
+  # This test uses _sel as the result variable — the exact pattern that was
+  # broken when select_subdirs used printf -v with its own local _sel.
+  result=$(_select_subdirs "2" "$TMPDIR/parent" --single)
+  [ "$result" = "beta" ]
+}
+
 # ── confirm ───────────────────────────────────────────────────────────────────
 
 @test "confirm: y returns success" {

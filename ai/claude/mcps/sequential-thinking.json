@@ -1,6 +1,0 @@
-{
-  "name": "Sequential Thinking",
-  "label": "MCP: Sequential Thinking",
-  "url": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
-  "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"]
-}

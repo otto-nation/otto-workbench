@@ -139,6 +139,23 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "all git hooks use portable shebang" {
+  local bad=()
+  for hook in "$GIT_HOOKS_SRC_DIR"/*; do
+    [ -f "$hook" ] || continue
+    local first_line
+    first_line="$(head -1 "$hook")"
+    # Only check files that have a bash shebang at all
+    if [[ "$first_line" == *"bash"* ]] && [[ "$first_line" != "#!/usr/bin/env bash" ]]; then
+      bad+=("$(basename "$hook")")
+    fi
+  done
+  if [ "${#bad[@]}" -gt 0 ]; then
+    echo "hooks with wrong shebang (expected #!/usr/bin/env bash): ${bad[*]}"
+    return 1
+  fi
+}
+
 # ── Multi-identity helpers ──────────────────────────────────────────────────
 
 @test "write_identity_config creates identity file with user section" {

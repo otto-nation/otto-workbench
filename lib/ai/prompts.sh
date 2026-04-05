@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # AI prompt templates for git automation.
 # Requires lib/ai/core.sh to be sourced first (for COMMIT_* and PR_* constants).
 #

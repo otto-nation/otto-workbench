@@ -1,6 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Commit message generation and validation helpers.
 # Requires lib/ai/core.sh to be sourced first.
+# shellcheck source=compact_diff.sh
+if [ -n "${BASH_SOURCE:-}" ]; then
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compact_diff.sh"
+else
+  . "${TASKFILE_DIR:?commit.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai/compact_diff.sh"
+fi
 #
 # Typical call sequence:
 #   find_commitlint_config   → sets COMMITLINT_CONFIG

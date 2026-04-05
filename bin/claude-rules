@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Manage local Claude Code rule additions.
 #
 # Usage: claude-rules <command> [args]
@@ -26,129 +26,56 @@ RULES_DIR="$CLAUDE_RULES_DIR"
 
 # ─── Frontmatter ──────────────────────────────────────────────────────────────
 
-# _write_frontmatter FILE DOMAIN — creates FILE with the correct YAML path-scope
-# frontmatter for the given domain. No-op if FILE already exists.
+# _normalize_domain DOMAIN — echoes the canonical domain name for aliases.
+_normalize_domain() {
+  case "$1" in
+    ts|js)    echo "typescript" ;;
+    py)       echo "python" ;;
+    sh|shell) echo "bash" ;;
+    yml)      echo "yaml" ;;
+    *)        echo "$1" ;;
+  esac
+}
+
+# _write_frontmatter FILE DOMAIN — creates FILE with YAML path-scope frontmatter
+# extracted from the workbench source rule. No-op if FILE already exists.
 _write_frontmatter() {
-  local file="$1" domain="$2"
+  local file="$1" domain
+  domain=$(_normalize_domain "$2")
   [[ -f "$file" ]] && return
 
-  case "$domain" in
-    kotlin)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.kt"
-  - "**/*.kts"
----
+  local source="$GUIDELINES_RULES_SRC_DIR/${domain}.md"
+  if [[ ! -f "$source" ]]; then
+    touch "$file"
+    return
+  fi
 
-EOF
-      ;;
-    java)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.java"
----
+  # Extract YAML frontmatter (between first two --- lines)
+  local in_fm=false fm=""
+  while IFS= read -r line; do
+    if [[ "$line" == "---" ]]; then
+      if [[ "$in_fm" == false ]]; then
+        in_fm=true; fm="---"$'\n'; continue
+      else
+        fm+="---"$'\n'; break
+      fi
+    fi
+    [[ "$in_fm" == true ]] && fm+="$line"$'\n'
+  done < "$source"
 
-EOF
-      ;;
-    go)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.go"
----
-
-EOF
-      ;;
-    typescript|ts|js)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.ts"
-  - "**/*.tsx"
-  - "**/*.js"
-  - "**/*.jsx"
----
-
-EOF
-      ;;
-    python|py)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.py"
----
-
-EOF
-      ;;
-    bash|sh|shell)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.sh"
----
-
-EOF
-      ;;
-    docker)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/Dockerfile"
-  - "**/Dockerfile.*"
-  - "**/compose.yml"
-  - "**/docker-compose.yml"
----
-
-EOF
-      ;;
-    yaml|yml)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.yml"
-  - "**/*.yaml"
----
-
-EOF
-      ;;
-    sql)
-      cat > "$file" <<'EOF'
----
-paths:
-  - "**/*.sql"
----
-
-EOF
-      ;;
-    general|*)
-      touch "$file"
-      ;;
-  esac
+  if [[ -n "$fm" ]]; then
+    printf '%s\n' "$fm" > "$file"
+  else
+    touch "$file"
+  fi
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
-cmd_sync() {
-  local rules_src="$GUIDELINES_RULES_SRC_DIR"
-  [[ -d "$rules_src" ]] || { err "Rules not found at $rules_src"; exit 1; }
-
-  mkdir -p "$RULES_DIR"
-
-  info "Syncing workbench rules → $RULES_DIR"
-  local file name
-  for file in "$rules_src"/*.md; do
-    [[ -e "$file" ]] || continue
-    name=$(basename "$file")
-    install_symlink "$file" "$RULES_DIR/$name"
-    success "${name%.md}"
-  done
-
-  # Regenerate workbench.md with current path (in case repo moved)
-  echo
-  info "Regenerating workbench.md"
+# _install_workbench_rule — writes the workbench.md rule file with current paths baked in.
+_install_workbench_rule() {
   local target="$RULES_DIR/workbench.md"
+
   cat > "$target" <<EOF
 # Workbench
 
@@ -162,29 +89,46 @@ When modifying Claude config (MCPs, agents, skills, settings), bin scripts, zsh 
 git config, or developer tooling — make the change in the workbench repo and re-run
 the relevant setup script. Do not edit \`~/\` directly.
 
-Re-run AI setup:   bash $WORKBENCH_DIR/ai/setup.sh
+Re-run AI setup:   bash $AI_SRC_DIR/setup.sh
 Add a local rule:  claude-rules add <domain> "rule text"
 Edit local rules:  claude-rules open [domain]
 Review untracked:  claude-rules status
 EOF
   success "workbench.md"
+}
 
-  # Warn about any untracked local additions
-  local found=false
+# _check_local_rules — warns about any *.local.md files not tracked in the workbench.
+_check_local_rules() {
+  local found=false file lines
   for file in "$RULES_DIR"/*.local.md; do
     [[ -e "$file" ]] || continue
+    lines=$(wc -l < "$file" | tr -d ' ')
     if [[ "$found" == false ]]; then
       echo
       warn "Local rule additions not tracked in workbench:"
     fi
-    local lines
-    lines=$(wc -l < "$file" | tr -d ' ')
     echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}"
     found=true
   done
   if [[ "$found" == true ]]; then
-    echo -e "  ${DIM}  Run 'claude-rules status' to review${NC}"
+    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}"
   fi
+}
+
+cmd_sync() {
+  local rules_src="$GUIDELINES_RULES_SRC_DIR"
+  [[ -d "$rules_src" ]] || { err "Rules not found at $rules_src"; exit 1; }
+
+  mkdir -p "$RULES_DIR"
+
+  info "Syncing workbench rules → $RULES_DIR"
+  symlink_dir "$rules_src" "$RULES_DIR" "$RULES_GLOB" --strip-ext --replace-copies --prune
+
+  echo
+  info "Generating workbench.md"
+  _install_workbench_rule
+
+  _check_local_rules
 }
 
 cmd_add() {

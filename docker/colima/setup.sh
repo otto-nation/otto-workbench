@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Colima runtime setup — sourced by docker/setup.sh, do not run directly.
 #
 # Restores the docker socket chain broken when Docker Desktop is replaced by Colima.

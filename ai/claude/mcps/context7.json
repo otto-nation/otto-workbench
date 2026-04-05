@@ -1,7 +1,0 @@
-{
-  "name": "Context7",
-  "label": "MCP: Context7",
-  "url": "https://github.com/upstash/context7",
-  "command": ["npx", "-y", "@upstash/context7-mcp"],
-  "note": "Set CONTEXT7_API_KEY in ~/.env.local to enable"
-}

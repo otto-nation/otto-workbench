@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Install Ghostty's xterm-ghostty terminfo on a remote host.
 #
 # Fixes "Error opening terminal: xterm-ghostty" on remote servers and in sudo
@@ -12,6 +12,8 @@
 #     If it fails, a manual fallback command is printed.
 #   - "older tic versions may treat the description field as an alias" is a
 #     harmless warning from older ncurses — the terminfo is still installed.
+
+set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"

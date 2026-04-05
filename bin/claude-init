@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Scaffold a project-level .claude/ directory with CLAUDE.md and rules/.
 #
 # Usage: claude-init [--force]

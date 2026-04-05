@@ -4,7 +4,8 @@
 meta:
   section: "Docker / Colima"
   install_check: true
-  install_check_command: colima
+  install_check_symlink: "~/.config/workbench/docker-aliases.zsh"
+  install_check_symlink_contains: "colima"
   validation: none
 
 env:

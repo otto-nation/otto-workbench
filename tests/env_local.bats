@@ -127,7 +127,7 @@ EOF
   cat > "$FAKE_HOME/.env.local" <<'EOF'
 # --- ENV-START ---
 # user set this
-export CONTEXT7_API_KEY=ctx7sk-my-real-key
+export LINEAR_API_KEY=lin_api_my-real-key
 # --- ENV-END ---
 EOF
 
@@ -136,9 +136,9 @@ EOF
     >/dev/null 2>&1
 
   # User's filled-in value is preserved — not overwritten by template default
-  grep -q 'CONTEXT7_API_KEY=ctx7sk-my-real-key' "$FAKE_HOME/.env.local"
+  grep -q 'LINEAR_API_KEY=lin_api_my-real-key' "$FAKE_HOME/.env.local"
   # Template default does NOT appear
-  run grep 'CONTEXT7_API_KEY=ctx7sk-$' "$FAKE_HOME/.env.local"
+  run grep 'LINEAR_API_KEY=lin_api_$' "$FAKE_HOME/.env.local"
   [ "$status" -ne 0 ]
   rm -rf "$TMPDIR"
 }
@@ -156,9 +156,9 @@ EOF
     bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
     >/dev/null 2>&1
 
-  # No vars should be duplicated — count occurrences of CONTEXT7_API_KEY
+  # No vars should be duplicated — count occurrences of LINEAR_API_KEY
   local count
-  count=$(grep -c 'CONTEXT7_API_KEY' "$FAKE_HOME/.env.local")
+  count=$(grep -c 'LINEAR_API_KEY' "$FAKE_HOME/.env.local")
   [ "$count" -eq 1 ]
   rm -rf "$TMPDIR"
 }

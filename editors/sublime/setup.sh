@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Sublime Text setup — sourced by editors/setup.sh, do not run directly.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Ghostty setup — sourced by terminals/setup.sh, do not run directly.
 #
 # Installs the Ghostty cask if absent, then bootstraps ~/.config/ghostty/config

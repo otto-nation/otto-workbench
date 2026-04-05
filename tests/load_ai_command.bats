@@ -7,6 +7,8 @@ setup() {
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
+  # Re-derive TASKFILE_ENV for the test HOME (constants.sh resolves at source time)
+  TASKFILE_ENV="$HOME/.config/task/taskfile.env"
   # Start from a clean directory with no local .taskfile/
   cd "$TMPDIR"
 }

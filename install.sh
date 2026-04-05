@@ -1,16 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Bootstrap script for workbench dotfiles.
 #
 # Usage: bash install.sh [--all]
 #
-# What it does (core — always runs):
-#   1. Installs the `task` runner if not present  [preflight — explicit]
-#   2. Auto-discovers and calls sync_<name>() for every core component
-#      (core = has steps.sh but no setup.conf; currently: bin, git, task, zsh)
-#      Adding a new core component requires only creating steps.sh — no edits here.
-#   3. Adds ~/.local/bin to PATH in your shell rc file if needed
+# What it does:
+#   Preflight (always runs):
+#     1. Installs `task` runner if not present
+#     2. Installs Homebrew if not present
 #
-# Then presents a menu of optional components (brew, docker, iterm, ai).
+#   Core components (selectable, Enter = all):
+#     Auto-discovers sync_<name>() for every core component
+#     (core = has steps.sh but no setup.conf; currently: bin, git, zsh)
+#     Adding a new core component requires only creating steps.sh — no edits here.
+#     Adds ~/.local/bin to PATH in your shell rc file if needed
+#
+# Then presents a menu of optional components (brew, docker, terminals, editors, ai).
 # Each component is defined by a setup.sh + setup.conf in its directory.
 # Components are run in the order listed in install.components.
 # Components that declare `depends` in setup.conf have those deps auto-included.
@@ -241,17 +245,8 @@ print_install_summary() {
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
   print_workbench_summary
 
-  # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
-  local component summary_file fn
-  for component in "${SELECTED_COMPONENTS[@]}"; do
-    summary_file="$WORKBENCH_DIR/$component/summary.sh"
-    if [[ -f "$summary_file" ]]; then
-      # shellcheck source=/dev/null
-      . "$summary_file"
-      fn="print_$(basename "$component")_summary"
-      declare -f "$fn" > /dev/null 2>&1 && "$fn"
-    fi
-  done
+  # Run per-component summaries for selected components (brew, docker, ai, etc.)
+  run_component_summaries "${SELECTED_COMPONENTS[@]}"
 }
 
 # ─── Core installation ────────────────────────────────────────────────────────
@@ -260,23 +255,69 @@ echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}"
 echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
 echo
 
+# ─── Preflight ────────────────────────────────────────────────────────────────
+# Verify modern bash (4.3+ for namerefs, associative arrays, etc.).
+# macOS ships bash 3.2 at /bin/bash — Homebrew's bash is required.
+if [[ "${BASH_VERSINFO[0]}" -lt 4 || ( "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -lt 3 ) ]]; then
+  err "bash 4.3+ is required (found ${BASH_VERSION})"
+  err "Install modern bash: brew install bash"
+  err "Then re-run: bash install.sh"
+  exit 1
+fi
+
 step_task_install
+step_brew_install
 echo
 
-# Auto-setup core components (steps.sh present, setup.conf absent).
-# Prefers install_<name>() (interactive) over sync_<name>() (non-interactive).
-# Optional components (have setup.conf) are handled via the component menu below.
+# Core components (steps.sh present, setup.conf absent, not preflight).
+# Preflight components (task, brew) already ran above and are excluded.
+PREFLIGHT_COMPONENTS=(task brew)
+_core_dirs=()
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$_f" ]] || continue
   _c=$(basename "$(dirname "$_f")")
   [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
-  if declare -f "install_${_c}" > /dev/null; then
-    "install_${_c}"
-  elif declare -f "sync_${_c}" > /dev/null; then
-    "sync_${_c}"
-  fi
+  _is_preflight=false
+  for _pf in "${PREFLIGHT_COMPONENTS[@]}"; do [[ "$_pf" == "$_c" ]] && { _is_preflight=true; break; }; done
+  [[ "$_is_preflight" == true ]] && continue
+  _core_dirs+=("$_c")
 done
-unset _f _c
+unset _f _c _is_preflight _pf
+
+if [[ ${#_core_dirs[@]} -gt 0 ]]; then
+  _core_selected=()
+  if [[ "$INSTALL_ALL" == "true" ]]; then
+    _core_selected=("${_core_dirs[@]}")
+  else
+    info "Core components:"
+    for _i in "${!_core_dirs[@]}"; do
+      printf "  [%d] %s\n" "$(( _i + 1 ))" "${_core_dirs[$_i]}"
+    done
+    echo
+
+    _core_sel=""
+    select_menu _core_sel "${#_core_dirs[@]}" --default all
+
+    if [[ -n "$_core_sel" ]]; then
+      for _num in $_core_sel; do
+        _core_selected+=("${_core_dirs[$(( _num - 1 ))]}")
+      done
+    fi
+    unset _num
+  fi
+
+  # Run selected core components.
+  # Prefers install_<name>() (interactive) over sync_<name>() (non-interactive).
+  for _c in "${_core_selected[@]}"; do
+    if declare -f "install_${_c}" > /dev/null; then
+      "install_${_c}"
+    elif declare -f "sync_${_c}" > /dev/null; then
+      "sync_${_c}"
+    fi
+  done
+  unset _c
+fi
+unset _core_dirs _core_selected
 
 update_path_in_shell_rc
 

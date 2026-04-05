@@ -4,10 +4,7 @@
   },
   "permissions": {
     "allow": [
-      "mcp__serena__*",
-      "mcp__sequential-thinking__*",
-      "mcp__context7__*",
-      "mcp__datadog__*",
+
       "Bash(git:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",

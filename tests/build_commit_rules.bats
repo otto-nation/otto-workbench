@@ -13,6 +13,24 @@ teardown() {
   rm -rf "$TMPDIR"
 }
 
+# ── Conventions sourcing (lib/conventions.sh via lib/ai/core.sh) ──────────────
+
+@test "conventions.sh is sourced by core.sh and defines COMMIT_TYPES" {
+  [[ -n "$COMMIT_TYPES" ]]
+}
+
+@test "conventions.sh is sourced by core.sh and defines COMMIT_HEADER_MAX_LEN" {
+  [[ -n "$COMMIT_HEADER_MAX_LEN" ]]
+  [[ "$COMMIT_HEADER_MAX_LEN" -gt 0 ]]
+}
+
+@test "core.sh can be sourced with TASKFILE_DIR (Taskfile context)" {
+  # Simulates how go-task sources core.sh: TASKFILE_DIR is set, sh -c is used
+  run sh -c "TASKFILE_DIR='$REPO_ROOT' . '$REPO_ROOT/lib/ai/core.sh' && echo \"\$COMMIT_TYPES\""
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"feat"* ]]
+}
+
 # ── Fallback rules (no commitlint config) ─────────────────────────────────────
 
 @test "uses fallback rules when COMMITLINT_CONFIG is empty" {

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Terminals sync steps — re-applies config for each installed terminal.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 

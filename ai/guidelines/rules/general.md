@@ -26,11 +26,7 @@
 
 ## Code Quality
 
-- Prioritize clean, reusable, generic, extensible, and maintainable production-ready code
-- Design for multiple use cases, not just the immediate issue
-- Never make special-case or hardcoded changes for a single scenario
-- Never suggest changes with empty functions
-- Follow DRY (Don't Repeat Yourself) and KISS (Keep It Simple, Stupid) principles
+- Prefer solutions that work for the general case, not just the immediate scenario — check if the pattern exists elsewhere before writing a narrow fix
 - Use guard clauses and early returns to reduce nesting
 - Always check existing tooling before adding anything new
 
@@ -47,7 +43,7 @@
 - Always sort imports
 
 ### Constants & Magic Values
-- Never use magic values — always give them context
+- Never use magic values (String literals, integers, etc.) — always give them context
 - Prioritize constants, enums, or variables with descriptive names
 - Durations should always be named constants (e.g. `AWAIT_AT_MOST = Duration.ofSeconds(30)`)
 - Check if constants already exist before creating new ones

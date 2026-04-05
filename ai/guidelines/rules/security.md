@@ -24,5 +24,6 @@ The workbench uses two separate files for machine-specific secrets — use the r
 ### `~/.config/task/taskfile.env` — AI automation credentials
 - Read by `load_ai_command()` and `load_gh_token()` in `lib/ai/core.sh`
 - `GH_TOKEN`: **required** for `task pr:*` — must be a fine-grained PAT scoped to specific repos with Contents (read/write) and Pull requests (read/write) only. Never use your full interactive gh session token for automation.
+- `GH_TOKEN__<ORG>`: optional per-org overrides — `load_gh_token()` detects the current repo's GitHub org from `origin` and looks for `GH_TOKEN__<NORMALIZED_ORG>` first (e.g. `GH_TOKEN__OTTO_NATION` for repos under `otto-nation`). Org names are uppercased with hyphens replaced by underscores. Each PAT should be scoped to that org's repos only. Falls back to `GH_TOKEN` when no org-specific token matches.
 - `ANTHROPIC_API_KEY`: optional — set to a separate key to isolate automation API usage from interactive Claude billing
 - Run `task --global ai:setup` to scaffold this file with instructions

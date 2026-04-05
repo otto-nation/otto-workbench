@@ -92,31 +92,92 @@ load_ai_command() {
   fi
 }
 
+# _detect_gh_org — extracts the GitHub org/owner from the current repo's origin remote.
+# Handles SSH (git@github.com:org/repo.git) and HTTPS (https://github.com/org/repo.git).
+# Prints the org name to stdout. Returns empty (not failure) if detection is not possible.
+_detect_gh_org() {
+  local url
+  url=$(git remote get-url origin 2>/dev/null) || return 0
+  local org=""
+  case "$url" in
+    git@github.com:*)
+      # git@github.com:org/repo.git → strip prefix and /repo.git suffix
+      org="${url#git@github.com:}"
+      org="${org%%/*}"
+      ;;
+    https://github.com/*)
+      # https://github.com/org/repo.git → strip prefix and /repo.git suffix
+      org="${url#https://github.com/}"
+      org="${org%%/*}"
+      ;;
+  esac
+  printf '%s' "$org"
+}
+
+# _normalize_org_to_env ORG — converts a GitHub org name to an env var suffix.
+# Uppercases the name and replaces hyphens with underscores.
+# Example: otto-nation → OTTO_NATION
+_normalize_org_to_env() {
+  local org="$1"
+  printf '%s' "$org" | tr '[:lower:]-' '[:upper:]_'
+}
+
 # load_gh_token
-# Reads GH_TOKEN from the taskfile.env config file and exports it.
-# Falls back to an existing GH_TOKEN in the environment (e.g. set via .env.local or shell).
-# Hard-fails if no token is available from either source — automation must not silently
-# fall back to the user's full interactive gh session.
+# Resolves GH_TOKEN with per-org routing support.
+# Resolution order (first match wins):
+#   1. GH_TOKEN in local .taskfile/taskfile.env (project-level pin)
+#   2. GH_TOKEN__<ORG> in global taskfile.env (org-specific)
+#   3. GH_TOKEN in global taskfile.env (default)
+#   4. GH_TOKEN already in the environment (e.g. CI, .env.local)
+#   5. Fail with actionable error
 # Returns 1 on failure.
 load_gh_token() {
   local env_file
   env_file=$(_resolve_env_file) || true
 
+  # Tier 1: local override (GH_TOKEN in .taskfile/taskfile.env)
+  if [ -f "$AI_LOCAL_ENV_PATH" ] && grep -q "^GH_TOKEN=" "$AI_LOCAL_ENV_PATH"; then
+    GH_TOKEN=$(grep "^GH_TOKEN=" "$AI_LOCAL_ENV_PATH" | head -1 | cut -d'=' -f2-)
+    export GH_TOKEN
+    return 0
+  fi
+
+  # Detect current org for org-specific token lookup
+  local org org_suffix org_token_var
+  org=$(_detect_gh_org)
+  if [ -n "$org" ]; then
+    org_suffix=$(_normalize_org_to_env "$org")
+    org_token_var="GH_TOKEN__${org_suffix}"
+
+    # Tier 2: org-specific token in global env file
+    if [ -n "${env_file:-}" ] && grep -q "^${org_token_var}=" "$env_file"; then
+      GH_TOKEN=$(grep "^${org_token_var}=" "$env_file" | head -1 | cut -d'=' -f2-)
+      export GH_TOKEN
+      return 0
+    fi
+  fi
+
+  # Tier 3: default GH_TOKEN in env file
   if [ -n "${env_file:-}" ] && grep -q "^GH_TOKEN=" "$env_file"; then
     GH_TOKEN=$(grep "^GH_TOKEN=" "$env_file" | head -1 | cut -d'=' -f2-)
     export GH_TOKEN
     return 0
   fi
 
-  # Accept a token already present in the environment (e.g. exported from a CI system
+  # Tier 4: accept a token already present in the environment (e.g. CI system
   # or set manually) — as long as it was explicitly set, segmentation is maintained.
   if [ -n "${GH_TOKEN:-}" ]; then
     return 0
   fi
 
+  # Tier 5: fail with actionable error
   local cfg_path="${env_file:-$TASKFILE_ENV}"
   printf "✗ GH_TOKEN not configured for AI automation.\n"
-  printf "  Set it in %s\n" "$cfg_path"
+  if [ -n "${org:-}" ]; then
+    printf "  Set %s (for %s) or GH_TOKEN (default) in %s\n" "$org_token_var" "$org" "$cfg_path"
+  else
+    printf "  Set GH_TOKEN in %s\n" "$cfg_path"
+  fi
   printf "  Create a fine-grained PAT: https://github.com/settings/tokens/new\n"
   printf "  Required: Contents (read/write), Pull requests (read/write) — scoped to specific repos\n"
   printf "  Run: task --global ai:setup\n"

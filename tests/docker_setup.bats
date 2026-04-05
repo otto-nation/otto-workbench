@@ -74,20 +74,17 @@ teardown() {
 # ─── Conflict detection ─────────────────────────────────────────────────────
 
 @test "conflict check warns when switching to orbstack with colima in PATH" {
-  # Source the real docker/setup.sh to get _docker_check_conflicts
-  SCRIPT_DIR="$FAKE_DOCKER"
-  # shellcheck source=/dev/null
-  . "$REPO_ROOT/docker/setup.sh" 2>/dev/null <<< "0" || true
-
   # Create a fake colima binary
   local fake_bin="$TMPDIR/bin"
   make_fake_binary "$fake_bin" "colima"
-  PATH="$fake_bin:$PATH"
 
+  # Extract the function definition from docker/setup.sh and run it in a clean bash
+  # subshell — sourcing the whole file would execute its main section (exit 0).
   run bash -c "
     . '$REPO_ROOT/lib/ui.sh'
     export NO_COLOR=1
-    $(declare -f _docker_check_conflicts 2>/dev/null || cat "$REPO_ROOT/docker/setup.sh" | sed -n '/_docker_check_conflicts/,/^}/p')
+    PATH='$fake_bin:\$PATH'
+    $(sed -n '/^_docker_check_conflicts/,/^}/p' "$REPO_ROOT/docker/setup.sh")
     _docker_check_conflicts orbstack
   "
   [[ "$output" == *"Colima is installed"* ]]

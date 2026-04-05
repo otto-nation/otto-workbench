@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Migration: correct Ghostty theme name to match built-in name (space-separated).
 # Idempotent — no-op if the old value is not present.
 

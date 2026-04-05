@@ -1,11 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Validate migration file conventions across all workbench components.
 #
 # Usage: bin/validate-migrations
 #
 # Checks:
 #   - Filenames match YYYYMMDD-slug.sh (slug: lowercase alphanumeric + dashes)
-#   - Each file has a #!/bin/bash shebang
+#   - Each file has a #!/usr/bin/env bash shebang
 #   - Each file defines a function matching migration_YYYYMMDD_slug (derived from filename)
 #   - No duplicate filenames across components
 #
@@ -16,6 +16,8 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/components.sh"
 
 ERRORS=0
 CHECKS=0
@@ -27,9 +29,10 @@ _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 # Collect all migration files
 ALL_BASENAMES=()
 
-for migrations_dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrations; do
-  [[ -d "$migrations_dir" ]] || continue
+_migration_dirs=()
+discover_migration_dirs _migration_dirs
 
+for migrations_dir in "${_migration_dirs[@]}"; do
   for migration in "$migrations_dir"/*.sh; do
     [[ -f "$migration" ]] || continue
     FOUND=$(( FOUND + 1 ))
@@ -50,10 +53,10 @@ for migrations_dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrati
 
     # Shebang check
     first_line="$(head -1 "$migration")"
-    if [[ "$first_line" == "#!/bin/bash" ]]; then
+    if [[ "$first_line" == "#!/usr/bin/env bash" ]]; then
       _pass "$display: shebang present"
     else
-      _fail "$display: missing #!/bin/bash shebang"
+      _fail "$display: missing #!/usr/bin/env bash shebang"
     fi
 
     # Function name: migration_YYYYMMDD_slug (dashes to underscores, .sh stripped)

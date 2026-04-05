@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Shared registry discovery, install-check, and env/auth iteration.
 #
 # Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries
@@ -22,7 +22,7 @@ is_installed() { command -v "$1" >/dev/null 2>&1; }
 
 # collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with deduplicated registry paths.
-# SCAN_DIR: root directory to glob for */registry.yml and /*/*/registry.yml
+# SCAN_DIR: root directory to glob for */registry.yml, /*/*/registry.yml, and *.env.yml
 # BREW_DIR: directory to search for *.registry.yml stacks (defaults to SCAN_DIR/brew)
 collect_registries() {
   local -n _out_arr=$1
@@ -36,6 +36,11 @@ collect_registries() {
   for f in "$scan_dir"/*/registry.yml "$scan_dir"/*/*/registry.yml; do
     [[ -f "$f" ]] && raw+=("$f")
   done
+
+  # Consumer-owned env files (colocated with the code that reads the vars)
+  while IFS= read -r -d '' f; do
+    raw+=("$f")
+  done < <(find "$scan_dir" -name '*.env.yml' -not -path '*/.git/*' -print0 | sort -z)
 
   # Brew stack registries
   if [[ -d "$brew_dir" ]]; then
@@ -63,6 +68,20 @@ registry_passes_install_check() {
   install_check=$(yq '.meta.install_check // false' "$file")
   [[ "$install_check" == "true" ]] || return 0
 
+  # Symlink-based check: pass if a symlink's target contains the expected string.
+  # Used by registries whose relevance depends on a runtime choice (e.g. Docker runtime).
+  local check_symlink check_contains
+  check_symlink=$(yq '.meta.install_check_symlink // ""' "$file")
+  check_contains=$(yq '.meta.install_check_symlink_contains // ""' "$file")
+  if [[ -n "$check_symlink" && "$check_symlink" != "null" ]]; then
+    # Expand ~ to $HOME
+    check_symlink="${check_symlink/#\~/$HOME}"
+    local symlink_target
+    symlink_target=$(readlink "$check_symlink" 2>/dev/null || true)
+    [[ "$symlink_target" == *"$check_contains"* ]] && return 0 || return 1
+  fi
+
+  # Command-based check: pass if a specific command is in PATH.
   local check_cmd
   check_cmd=$(yq '.meta.install_check_command // ""' "$file")
   if [[ -n "$check_cmd" && "$check_cmd" != "null" ]]; then

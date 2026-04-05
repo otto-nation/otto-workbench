@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Manage your workbench developer environment.
 #
 # Usage: otto-workbench <command>
@@ -25,6 +25,12 @@
 
 set -e
 
+# Require modern bash (4.3+ for namerefs used in lib/registries.sh).
+if [[ "${BASH_VERSINFO[0]}" -lt 4 || ( "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -lt 3 ) ]]; then
+  echo "✗ bash 4.3+ required (found ${BASH_VERSION}). Install: brew install bash" >&2
+  exit 1
+fi
+
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
@@ -38,14 +44,16 @@ WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
 # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
 SYMLINK_MODE=no-prompt
 
-# Auto-discover and source all steps.sh files — top-level dirs first, then ai/ subdirs.
+# Auto-discover and source all steps.sh files.
 # Each steps.sh self-derives its own paths; no external variables need to be injected.
 # Adding a new component with a steps.sh automatically makes its functions available here.
-for _f in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/ai/*/steps.sh; do
+_step_files=()
+discover_step_files _step_files
+for _f in "${_step_files[@]}"; do
   # shellcheck source=/dev/null
-  [[ -f "$_f" ]] && . "$_f"
+  . "$_f"
 done
-unset _f
+unset _f _step_files
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
@@ -59,16 +67,17 @@ cmd_sync() {
   run_all_migrations
   echo
 
-  # Auto-discovers sync_<component>() from */steps.sh and ai/*/steps.sh.
+  # Auto-discovers sync_<component>() from all steps.sh files.
   # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
   #                              ai/claude → ai/kiro → …
   # Adding any component with a sync_<name>() function includes it automatically.
-  for _f in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/ai/*/steps.sh; do
-    [[ -f "$_f" ]] || continue
+  local -a _step_files=()
+  discover_step_files _step_files
+  local _f _c
+  for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
     declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
   done
-  unset _f _c
 
   # shellcheck source=/dev/null
   . "$(dirname "$_SELF")/../lib/summary.sh"
@@ -76,6 +85,9 @@ cmd_sync() {
   echo
   success "Workbench synced!"
   print_workbench_summary
+
+  # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
+  run_component_summaries
 }
 
 cmd_changelog() {

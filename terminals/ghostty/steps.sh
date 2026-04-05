@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Ghostty sync steps — installs Ghostty and bootstraps config.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 

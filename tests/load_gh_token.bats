@@ -7,6 +7,8 @@ setup() {
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
+  # Re-derive TASKFILE_ENV for the test HOME (constants.sh resolves at source time)
+  TASKFILE_ENV="$HOME/.config/task/taskfile.env"
   # Ensure GH_TOKEN is not inherited from the test runner environment
   unset GH_TOKEN
   cd "$TMPDIR"
@@ -106,4 +108,109 @@ teardown() {
   cd "$TMPDIR/project"
   load_gh_token
   [ "$GH_TOKEN" = "github_pat_local" ]
+}
+
+# ── Org detection ────────────────────────────────────────────────────────────
+
+@test "_detect_gh_org extracts org from SSH remote" {
+  make_git_repo_with_org "$TMPDIR/repo" "otto-nation" "workbench"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$status" -eq 0 ]
+  [ "$output" = "otto-nation" ]
+}
+
+@test "_detect_gh_org extracts org from HTTPS remote" {
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  git -C "$TMPDIR/repo" remote add origin "https://github.com/my-corp/my-repo.git"
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$status" -eq 0 ]
+  [ "$output" = "my-corp" ]
+}
+
+@test "_detect_gh_org returns empty when no git repo" {
+  mkdir -p "$TMPDIR/not-a-repo"
+  cd "$TMPDIR/not-a-repo"
+  run _detect_gh_org
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+@test "_detect_gh_org returns empty when no origin remote" {
+  mkdir -p "$TMPDIR/repo"
+  git -C "$TMPDIR/repo" init --quiet
+  cd "$TMPDIR/repo"
+  run _detect_gh_org
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+# ── Org normalization ────────────────────────────────────────────────────────
+
+@test "_normalize_org_to_env uppercases and replaces hyphens" {
+  run _normalize_org_to_env "otto-nation"
+  [ "$output" = "OTTO_NATION" ]
+}
+
+@test "_normalize_org_to_env handles already-uppercase org" {
+  run _normalize_org_to_env "ACME"
+  [ "$output" = "ACME" ]
+}
+
+# ── Org-specific token resolution ────────────────────────────────────────────
+
+@test "uses org-specific GH_TOKEN__<ORG> from env file" {
+  make_git_repo_with_org "$TMPDIR/repo" "otto-nation" "workbench"
+  cd "$TMPDIR/repo"
+  mkdir -p "$TMPDIR/.config/task"
+  printf 'GH_TOKEN=github_pat_default\nGH_TOKEN__OTTO_NATION=github_pat_org\n' > "$TMPDIR/.config/task/taskfile.env"
+  load_gh_token
+  [ "$GH_TOKEN" = "github_pat_org" ]
+}
+
+@test "falls back to default GH_TOKEN when no org-specific token" {
+  make_git_repo_with_org "$TMPDIR/repo" "unknown-org" "some-repo"
+  cd "$TMPDIR/repo"
+  make_gh_token_config "$TMPDIR" "github_pat_default"
+  load_gh_token
+  [ "$GH_TOKEN" = "github_pat_default" ]
+}
+
+@test "org-specific token takes precedence over default GH_TOKEN" {
+  make_git_repo_with_org "$TMPDIR/repo" "my-corp" "app"
+  cd "$TMPDIR/repo"
+  mkdir -p "$TMPDIR/.config/task"
+  printf 'GH_TOKEN=github_pat_default\nGH_TOKEN__MY_CORP=github_pat_corp\n' > "$TMPDIR/.config/task/taskfile.env"
+  load_gh_token
+  [ "$GH_TOKEN" = "github_pat_corp" ]
+}
+
+@test "local .taskfile/taskfile.env GH_TOKEN wins over org-specific global" {
+  make_git_repo_with_org "$TMPDIR/repo" "otto-nation" "workbench"
+  cd "$TMPDIR/repo"
+  mkdir -p "$TMPDIR/.config/task"
+  printf 'GH_TOKEN__OTTO_NATION=github_pat_org\n' > "$TMPDIR/.config/task/taskfile.env"
+  mkdir -p "$TMPDIR/repo/.taskfile"
+  echo "GH_TOKEN=github_pat_local" > "$TMPDIR/repo/.taskfile/taskfile.env"
+  load_gh_token
+  [ "$GH_TOKEN" = "github_pat_local" ]
+}
+
+@test "works when not in a git repo — falls back to default GH_TOKEN" {
+  mkdir -p "$TMPDIR/not-a-repo"
+  cd "$TMPDIR/not-a-repo"
+  make_gh_token_config "$TMPDIR" "github_pat_default"
+  load_gh_token
+  [ "$GH_TOKEN" = "github_pat_default" ]
+}
+
+@test "failure message includes org-specific variable name" {
+  make_git_repo_with_org "$TMPDIR/repo" "otto-nation" "workbench"
+  cd "$TMPDIR/repo"
+  run load_gh_token
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"GH_TOKEN__OTTO_NATION"* ]]
+  [[ "$output" == *"otto-nation"* ]]
 }

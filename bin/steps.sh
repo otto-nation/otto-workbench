@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Bin scripts setup — symlinks workbench scripts to ~/.local/bin/.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 

@@ -8,6 +8,10 @@ setup() {
   # Mirror minimum required repo structure in TMPDIR
   mkdir -p "$TMPDIR/bin" "$TMPDIR/brew/work" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
   cp "$REPO_ROOT/lib/ui.sh" "$TMPDIR/lib/ui.sh"
+  cp "$REPO_ROOT/lib/output.sh" "$TMPDIR/lib/output.sh"
+  cp "$REPO_ROOT/lib/prompts.sh" "$TMPDIR/lib/prompts.sh"
+  cp "$REPO_ROOT/lib/files.sh" "$TMPDIR/lib/files.sh"
+  cp "$REPO_ROOT/lib/setup.sh" "$TMPDIR/lib/setup.sh"
   cp "$REPO_ROOT/lib/constants.sh" "$TMPDIR/lib/constants.sh"
   cp "$REPO_ROOT/lib/registries.sh" "$TMPDIR/lib/registries.sh"
 

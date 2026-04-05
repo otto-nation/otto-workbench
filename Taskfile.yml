@@ -33,7 +33,7 @@ tasks:
     silent: true
     cmds:
       - |
-        grep -rlE '^#!.*/(ba)?sh' . \
+        grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' . \
           | grep -v '^\./\.git/' \
           | sort \
           | xargs shellcheck --severity=warning

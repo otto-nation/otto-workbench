@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Claude Code setup steps — sourced by ai/setup.sh and bin/otto-workbench.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 
@@ -76,50 +76,6 @@ _mcp_install_from_manifest() {
   if [[ -n "$note" ]]; then echo -e "  ${DIM}$note${NC}"; fi
 }
 
-# _install_workbench_rule — writes the workbench.md rule file with current paths baked in.
-_install_workbench_rule() {
-  local target="$CLAUDE_RULES_DIR/workbench.md"
-
-  mkdir -p "$CLAUDE_RULES_DIR"
-  cat > "$target" <<EOF
-# Workbench
-
-Your developer environment is managed at: $WORKBENCH_DIR
-
-What it owns: Claude config (\`ai/claude/\`), coding rules (\`ai/guidelines/rules/\`),
-bin scripts (\`bin/\`), zsh config (\`zsh/\`), git config (\`git/\`),
-Docker setup (\`docker/\`), Brew packages (\`brew/\`).
-
-When modifying Claude config (MCPs, agents, skills, settings), bin scripts, zsh config,
-git config, or developer tooling — make the change in the workbench repo and re-run
-the relevant setup script. Do not edit \`~/\` directly.
-
-Re-run AI setup:   bash $AI_SRC_DIR/setup.sh
-Add a local rule:  claude-rules add <domain> "rule text"
-Edit local rules:  claude-rules open [domain]
-Review untracked:  claude-rules status
-EOF
-  success "workbench.md"
-}
-
-# _check_local_rules DIR — warns about any *.local.md files found in DIR that
-# are not tracked in the workbench. Called at the end of step_claude_rules.
-_check_local_rules() {
-  local rules_dst="$1" found=false file lines
-  for file in "$rules_dst"/*.local.md; do
-    [[ -e "$file" ]] || continue
-    lines=$(wc -l < "$file" | tr -d ' ')
-    if [[ "$found" == false ]]; then
-      echo
-      warn "Local rule additions not tracked in workbench:"
-    fi
-    echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}"
-    found=true
-  done
-  if [[ "$found" == true ]]; then
-    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}"
-  fi
-}
 
 # _print_item_list LABEL DIR GLOB — prints a cyan section header followed by a
 # bulleted list of matching items. Prints "(none)" if no items are found.
@@ -159,20 +115,9 @@ step_claude_guidelines() {
   install_file "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
 }
 
-# step_claude_rules — copies workbench rules into ~/.claude/rules/ and
-# generates workbench.md with current repo paths baked in.
+# step_claude_rules — delegates to claude-rules sync which owns all rules logic.
 step_claude_rules() {
-  [[ -d "$GUIDELINES_RULES_SRC_DIR" ]] || { warn "No rules found in $GUIDELINES_RULES_SRC_DIR — skipping"; return; }
-
-  mkdir -p "$CLAUDE_RULES_DIR"
-  info "Installing rules to $CLAUDE_RULES_DIR/"
-  copy_dir "$GUIDELINES_RULES_SRC_DIR" "$CLAUDE_RULES_DIR" "$RULES_GLOB" --strip-ext --prune
-
-  echo
-  info "Generating workbench.md"
-  _install_workbench_rule
-
-  _check_local_rules "$CLAUDE_RULES_DIR"
+  claude-rules sync
 }
 
 # step_claude_settings — merges workbench settings.json template into the live
@@ -223,7 +168,7 @@ step_generate_tools() {
 
 # step_install_claude — installs claude-code via brew if not already in PATH.
 step_install_claude() {
-  _ai_install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
+  install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
 }
 
 register_claude_steps() {

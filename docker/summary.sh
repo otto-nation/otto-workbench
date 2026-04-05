@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Post-install summary for the docker component.
 # Sourced by install.sh after all components run — defines print_docker_summary().
 # No top-level execution; safe to source without side effects.
@@ -8,19 +8,11 @@
 print_docker_summary() {
   local runtime="${1:-}"
 
-  # Detect from socket symlink when not passed directly (e.g. called from install.sh summary)
+  # Detect from socket symlink when not passed directly (e.g. called from install.sh summary).
+  # _docker_detect_runtime is defined in docker/steps.sh, which is sourced before summary files
+  # in both install.sh and otto-workbench sync flows.
   if [[ -z "$runtime" ]]; then
-    local socket_target
-    socket_target=$(readlink "$DOCKER_RUN_DIR/docker.sock" 2>/dev/null || true)
-    # Resolve relative symlink targets to absolute paths before path-prefix matching
-    if [[ -n "$socket_target" && "$socket_target" != /* ]]; then
-      socket_target="$(cd "$(dirname "$DOCKER_RUN_DIR/docker.sock")" && pwd)/$socket_target"
-    fi
-    if [[ "$socket_target" == "$COLIMA_DIR"* ]]; then
-      runtime="colima"
-    elif [[ "$socket_target" == *"orbstack"* ]]; then
-      runtime="orbstack"
-    fi
+    runtime=$(_docker_detect_runtime)
   fi
 
   echo

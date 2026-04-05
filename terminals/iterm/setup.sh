@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # iTerm2 setup — imports Gruvbox color schemes and prints font configuration instructions.
 #
 # Color schemes are imported by passing the .itermcolors files to `open`, which registers

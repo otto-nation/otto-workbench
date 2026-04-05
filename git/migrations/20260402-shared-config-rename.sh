@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Migration: update include path after git/.gitconfig → git/gitconfig.shared rename.
 # Replaces the stale include path in ~/.gitconfig. Idempotent — no-op if already correct.
 

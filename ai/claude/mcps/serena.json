@@ -1,6 +1,0 @@
-{
-  "name": "Serena",
-  "label": "MCP: Serena",
-  "url": "https://github.com/oraios/serena",
-  "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--context", "ide-assistant"]
-}

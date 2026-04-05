@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ZSH configuration setup.
 #
 # Usage: bash zsh/steps.sh

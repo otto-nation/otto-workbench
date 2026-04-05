@@ -28,6 +28,16 @@ make_gh_token_config() {
   echo "GH_TOKEN=$token" > "$dir/.config/task/taskfile.env"
 }
 
+# make_git_repo_with_org DIR ORG REPO — creates a git repo with origin pointing to github.com:ORG/REPO.
+make_git_repo_with_org() {
+  local dir="$1"
+  local org="$2"
+  local repo="$3"
+  mkdir -p "$dir"
+  git -C "$dir" init --quiet
+  git -C "$dir" remote add origin "git@github.com:${org}/${repo}.git"
+}
+
 # make_fake_binary DIR NAME — creates an executable stub in DIR/NAME.
 make_fake_binary() {
   local dir="$1"

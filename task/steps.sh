@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Task runner setup — manages go-task installation and global Taskfile symlinks.
 # All paths come from lib/constants.sh (loaded via lib/ui.sh before this file is sourced).
 
@@ -22,10 +22,7 @@ step_task_install() {
     warn "Non-interactive shell — skipping task install. Run install.sh manually to install task."
     return
   fi
-  printf "  Install it? [Y/n] "
-  read -n 1 -r REPLY
-  echo
-  [[ "$REPLY" =~ ^[Nn]$ ]] && return
+  confirm "  Install task?" || return
 
   if [[ "$OSTYPE" == "darwin"* ]]; then
     info "Installing task via Homebrew..."

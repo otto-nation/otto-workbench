@@ -9,7 +9,7 @@
 #   result       = template entries + user_entries
 #   _workbench   = updated to current template
 #
-# Hooks (keyed by event name, arrays of {type, command} objects):
+# Hooks (keyed by event name, arrays of {matcher, hooks: [{type, command}]} objects):
 #   Managed hooks are tracked by command string in $e._workbench.hooks.
 #   User-added hooks are preserved; managed hooks are replaced with the template.
 #
@@ -24,16 +24,21 @@
 ($t.permissions.deny  // []) as $new_deny  |
 
 # ── Hooks ────────────────────────────────────────────────────────────────────
+# Hooks use matcher+hooks structure: [{matcher: "", hooks: [{type, command}]}]
 # Build a merged hooks object: for each event in the template, remove previously
 # managed hooks from existing, then prepend the new template hooks.
+# Backward compat: extract commands from both old flat ({type,command}) and new
+# nested ({matcher, hooks:[{type,command}]}) formats.
 (($t.hooks // {}) | keys) as $hook_events |
 (reduce $hook_events[] as $ev (
   ($e.hooks // {});
-  ($e._workbench.hooks[$ev] // [] | [.[].command]) as $prev_cmds |
-  [(.[$ev] // [])[] | select(.command as $c | $prev_cmds | index($c) == null)] as $user_hooks |
+  ($e._workbench.hooks[$ev] // [] | [.[] | (.hooks[]?.command // .command) // empty]) as $prev_cmds |
+  [(.[$ev] // [])[] | select(
+    [(.hooks[]?.command // .command) // empty] | all(. as $c | $prev_cmds | index($c) == null)
+  )] as $user_hooks |
   .[$ev] = ($t.hooks[$ev] + $user_hooks)
 )) as $merged_hooks |
-# _workbench tracking: store template hook commands per event
+# _workbench tracking: store template hook entries per event
 (reduce $hook_events[] as $ev (
   ($e._workbench.hooks // {});
   .[$ev] = $t.hooks[$ev]

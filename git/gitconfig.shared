@@ -22,6 +22,7 @@
 	rebase-off-main = "!func() { git fetch --all; DIRTY=false; git diff --quiet && git diff --cached --quiet || DIRTY=true; $DIRTY && git stash; git checkout main && git pull && git checkout -; git rebase main; $DIRTY && git stash pop; }; func"
 	deploy-branch = !git checkout main && git pull && git checkout -b "$(id -un)/deploy" && git rebase main && git commit --allow-empty -m 'chore: deploy' && git push
 	deploy-commit = !git commit -m 'chore: deploy' --allow-empty && git push
+	strip-coauthor = "!f() { if [ -z \"$1\" ]; then echo \"Usage: git strip-coauthor <pattern>\"; echo \"Example: git strip-coauthor Claude\"; exit 1; fi; BRANCH=$(git rev-parse --abbrev-ref HEAD); if [ \"$BRANCH\" = main ] || [ \"$BRANCH\" = master ]; then printf \"You are on %s. Rewrite commits anyway? [y/N] \" \"$BRANCH\"; read -r ANS; case \"$ANS\" in [yY]*) ;; *) echo \"Aborted.\"; exit 1;; esac; fi; BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD origin/master); COUNT=$(git rev-list --count \"$BASE\"..HEAD); if [ \"$COUNT\" = 0 ]; then echo \"No commits to rewrite (up to date with origin).\"; exit 0; fi; echo \"Rewriting $COUNT commit(s)...\"; FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --msg-filter \"sed /^Co-Authored-By:.*$1/Id\" \"$BASE\"..HEAD; }; f"
 
 [color]
 	ui = true

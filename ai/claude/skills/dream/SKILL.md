@@ -7,7 +7,7 @@ description: "Memory consolidation for Claude Code. Scans session transcripts fo
 
 Consolidates scattered auto-memory notes into a clean, organized knowledge base by scanning recent session transcripts for corrections, decisions, preferences, and patterns.
 
-Run this skill manually with `/dream` or automate via a Stop hook (see below).
+Run manually with `/dream`. Auto-triggers every 24 hours via the Stop hook managed by `otto-workbench sync`.
 
 ---
 
@@ -17,28 +17,6 @@ Dream runs 4 sequential phases. Execute them in order. Do not skip phases.
 
 ```
 ORIENT --> GATHER SIGNAL --> CONSOLIDATE --> PRUNE & INDEX
-```
-
-### Auto-trigger flow (optional)
-
-Add a Stop hook to `~/.claude/settings.json` to auto-trigger every 24 hours:
-
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "type": "command",
-      "command": "bash $HOME/.claude/skills/dream/should-dream.sh && touch $HOME/.claude/.dream-pending || true"
-    }]
-  }
-}
-```
-
-Then add to `~/.claude/CLAUDE.md`:
-
-```markdown
-## Auto Dream
-If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagent in the background, then delete the flag: `rm ~/.claude/.dream-pending`.
 ```
 
 ---

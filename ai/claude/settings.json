@@ -2,6 +2,14 @@
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true
   },
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bash $HOME/.claude/skills/dream/should-dream.sh && touch $HOME/.claude/.dream-pending || true"
+      }
+    ]
+  },
   "permissions": {
     "allow": [
 

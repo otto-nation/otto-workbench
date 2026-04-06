@@ -44,6 +44,10 @@ the relevant setup script. Do not edit `~/` directly.
 
 Never mention Claude Code, AI assistance, or co-authorship in commit messages, PR descriptions, or any git artifacts.
 
+## Auto Dream
+
+If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagent in the background, then delete the flag: `rm ~/.claude/.dream-pending`. This is the memory consolidation system — it triggers automatically every 24 hours via a Stop hook.
+
 ## Output
 
 - Do not summarize changes at the end of a response — the diff speaks for itself

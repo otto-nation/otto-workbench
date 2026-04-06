@@ -130,6 +130,10 @@ _budget_line() {
     "- Add \`Closes #<number>\` at the top of the description only for numeric GitHub issues" \
     "- Omit issue linking for Jira-style keys (\`PROJ-123\`) — they do not auto-close on GitHub merge" \
     "" \
+    "### Assignee" \
+    "" \
+    "- Always assign PRs to the person opening them (\`--assignee @me\`)" \
+    "" \
     "### Footer" \
     "" \
     "- Never append an AI-generated footer (e.g. 'Generated with Claude Code') — use only the PR template content" \

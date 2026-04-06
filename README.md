@@ -189,8 +189,8 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 - `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
-- Skills: go
-- Agents: ci-cd
+- Skills: dream, go
+- Agents: changelog, ci-cd, explain, incident, migrate
 
 **Kiro:**
 - `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)

@@ -2,6 +2,19 @@
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true
   },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/skills/dream/should-dream.sh && touch $HOME/.claude/.dream-pending || true"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
 
@@ -44,6 +57,10 @@
       "Bash(gh gist:*)",
       "Bash(gh label:*)",
       "Bash(gh milestone:*)",
+      "Bash(go:*)",
+      "Bash(golangci-lint:*)",
+      "Bash(shellcheck:*)",
+      "Bash(tree:*)",
       "Bash(gradle:*)",
       "Bash(./gradlew:*)",
       "Bash(brew:*)",

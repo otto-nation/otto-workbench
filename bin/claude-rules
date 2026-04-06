@@ -135,7 +135,8 @@ cmd_add() {
   local domain="${1:-}" rule="${2:-}"
   if [[ -z "$domain" || -z "$rule" ]]; then
     err "Usage: claude-rules add <domain> \"rule text\""
-    echo "Domains: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql" >&2
+    echo "Any domain name is accepted (e.g. general, go, linear, workflow)." >&2
+    echo "Common: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql" >&2
     exit 1
   fi
 
@@ -311,7 +312,7 @@ case "${1:-}" in
     echo "  project add \"rule\"   Append a convention to the current repo's CLAUDE.md"
     echo "  project show           Display the current repo's CLAUDE.md"
     echo
-    echo "Domains: general, kotlin, java, go, typescript, python, bash, docker, yaml, sql"
+    echo "Any domain name is accepted (e.g. general, go, linear, workflow)"
     exit 1
     ;;
 esac

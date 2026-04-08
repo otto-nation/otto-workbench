@@ -191,7 +191,7 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 - Skills: dream
-- Agents: changelog, ci-cd, debugger, explain, incident, migrate
+- Agents: changelog, ci-cd, debugger, explain, incident, migrate, reviewer
 
 **Kiro:**
 - `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)

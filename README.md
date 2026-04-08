@@ -190,7 +190,7 @@ Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, t
 - `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
-- Skills: dream, go
+- Skills: dream
 - Agents: changelog, ci-cd, explain, incident, migrate
 
 **Kiro:**

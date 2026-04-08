@@ -62,7 +62,8 @@ fix: resolve race condition in cache eviction; update TTL default
 
 ### Description template
 
-Use this structure when no project-level PR template exists:
+- Always use the repo's PR template (`.github/PULL_REQUEST_TEMPLATE.md`) when one exists
+- Fall back to this structure only when no project-level PR template exists:
 
 ```markdown
 ## Summary
@@ -93,6 +94,7 @@ Use this structure when no project-level PR template exists:
 
 ## Branch Naming
 
+- Always branch from `origin/main`, never local `main` — local main may be stale
 - Format: `username/<ISSUE or type if no ISSUE>/description_in_snake_case`
 - Examples: `carlos/PROJ-42/oauth_login`, `sofia/PROJ-7/fix_cache_race`, javier/feat/add_metrics
 - Use the git user name (first name, lowercase) as the username prefix

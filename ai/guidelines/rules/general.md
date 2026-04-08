@@ -5,7 +5,6 @@
 - Give alternatives when applicable with pros and cons for each option
 - Present the recommended option first with reasoning
 - Always ask which option to proceed with before making changes
-- Provide brief summaries of changes made
 - For large features, break into smaller incremental changes
 - Always ask for confirmation before architectural decisions or significant changes
 - Never say "You're absolutely right"
@@ -29,6 +28,7 @@
 - Prefer solutions that work for the general case, not just the immediate scenario — check if the pattern exists elsewhere before writing a narrow fix
 - Use guard clauses and early returns to reduce nesting
 - Always check existing tooling before adding anything new
+- Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere. Changes that create a second source of truth introduce drift and must be reworked
 
 ## Unknowns & Assumptions
 
@@ -65,11 +65,6 @@
 - Avoid mocking when possible
 - Every bug fix and behavioral change must include a new or updated test that
   would have caught the issue. No fix is complete without a regression test
-
-## Git
-
-- Never use `--force` or `--force-with-lease` on git push. Always try a regular push first. If it fails because the branch diverged, tell the user and let them decide how to proceed
-- Never commit unless explicitly asked
 
 ## Incremental Changes
 

@@ -48,6 +48,17 @@ Never mention Claude Code, AI assistance, or co-authorship in commit messages, P
 
 If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagent in the background, then delete the flag: `rm ~/.claude/.dream-pending`. This is the memory consolidation system — it triggers automatically every 24 hours via a Stop hook.
 
+## Agent Protocols
+
+When a situation matches an agent's domain, read the agent file and follow its
+protocol before taking action. Agent files live at `~/.claude/agents/`.
+
+| Situation | Agent file | Constraint |
+|-----------|-----------|------------|
+| Investigating a bug, test failure, or unexpected behavior | `debugger.md` | Diagnose before fixing |
+| Production incident or outage triage | `incident.md` | Read-only investigation |
+| Dependency upgrade or framework migration | `migrate.md` | Plan before changing |
+
 ## Output
 
 - Do not summarize changes at the end of a response — the diff speaks for itself

@@ -88,6 +88,7 @@ These are created once (from templates or by first-time setup) and never modifie
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |
+| `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
 <!-- SCRIPTS-TABLE-END -->
 

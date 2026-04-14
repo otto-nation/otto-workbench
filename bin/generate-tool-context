@@ -43,6 +43,7 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 . "$REPO_ROOT/lib/registries.sh"
 
 BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
+MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
 BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
@@ -172,9 +173,10 @@ _render_registry() {
   printf -- '---\n\n'
   printf '# Environment Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Sources: brew/registry.yml  brew/{lang,infra,tools}/*.registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
+  printf '<!-- Sources: brew/registry.yml  mise/registry.yml  brew/{lang,infra,tools}/*.registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
   printf '<!-- Regenerate: bin/generate-tool-context -->\n'
   _render_registry "$BREW_REGISTRY"
+  _render_registry "$MISE_REGISTRY"
   while IFS= read -r -d '' registry; do
     _render_registry "$registry"
   done < <(find "$BREW_STACKS_DIR" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)

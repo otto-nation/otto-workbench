@@ -118,7 +118,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 ```
 
-**Existing core components:** `bin`, `git`, `task`, `zsh`
+<!-- CORE-COMPONENTS-START -->
+**Existing core components:** `bin`, `git`, `mise`, `task`, `zsh`
+<!-- CORE-COMPONENTS-END -->
 
 ---
 
@@ -159,7 +161,9 @@ mytool/
   summary.sh    ← print_mytool_summary() for post-install output
 ```
 
-**Existing optional components:** `brew` (no sync), `docker` (has sync), `iterm` (has sync), `ai` (has sync via sub-components)
+<!-- OPTIONAL-COMPONENTS-START -->
+**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (no sync)
+<!-- OPTIONAL-COMPONENTS-END -->
 
 ---
 

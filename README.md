@@ -11,14 +11,16 @@ cd ~/otto-workbench
 exec zsh
 ```
 
-The installer symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu (Homebrew, Docker, iTerm2, AI tools).
+The installer symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu (<!-- COMPONENT-MENU-START -->Homebrew packages, Docker, Terminals, Editors, AI tools<!-- COMPONENT-MENU-END -->).
 
 ## After Install
 
+<!-- AFTER-INSTALL-START -->
 1. **Reload your shell**: `exec zsh`
-2. **iTerm2** (if installed): Settings → Profiles → Text → Font → `FiraCodeNFM-Reg`
-3. **Docker** (if installed): start your runtime — `colima start` or launch OrbStack
+2. **Docker** (if installed): start your runtime — `colima start` or launch OrbStack
+3. **Ghostty** (if installed): Settings → Font → `FiraCodeNFM-Reg`
 4. **AI tools** (if installed): edit `~/.config/task/taskfile.env` to set your `AI_COMMAND`
+<!-- AFTER-INSTALL-END -->
 
 Secrets and machine-specific env vars go in `~/.env.local` — sourced first by the shell loader, never committed. See `zsh/.env.local.template`.
 
@@ -135,28 +137,108 @@ generate-tool-context   # regenerates tools.generated.md
 generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 ```
 
-### Homebrew Packages
+### Tools
 
-<!-- BREW-STACKS-START -->
-- `brew/Brewfile` — core: bash, jq, tree, yq, pipx, uv, docker, bats-core, delta, gh, go-task, otto-stack, shellcheck, gitleaks, git-credential-manager
-- `brew/apps/` — 1password, 1password-cli, bruno, ghostty, gitkraken, hiddenbar, maccy, readdle-spark, rectangle, spotify, sublime-text, zed
-- `brew/infra/` — aws · kubernetes · terraform
-- `brew/lang/` — go · java
-- `brew/security/` — gnupg, pinentry-mac, gpg-suite
-- `brew/shell/` — fzf, starship, font-fira-code-nerd-font, zoxide, zsh-history-substring-search, zsh-completions, zsh-syntax-highlighting
-- `brew/tools/` — jira-cli, linear, mas
-<!-- BREW-STACKS-END -->
+<!-- TOOLS-TABLE-START -->
 
-```bash
-brew bundle --file=brew/Brewfile
-brew bundle --file=brew/infra/aws.Brewfile  # add optional stacks as needed
-```
+**Brew Tools**
 
-Keep the core Brewfile current after installing or removing packages:
+| Tool | Description |
+|------|-------------|
+| [docker](https://docs.docker.com/engine/reference/commandline/cli/) | Docker CLI — build, run, and manage containers against any backend runtime |
+| [jq](https://jqlang.github.io/jq/manual/) | JSON processor for querying, filtering, and transforming JSON data |
+| [yq](https://mikefarah.gitbook.io/yq/) | YAML/JSON/TOML processor — like jq but for YAML |
+| [gh](https://cli.github.com/manual/) | GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal |
+| [go-task](https://taskfile.dev) | Task runner with YAML-defined tasks (used via the 'task' wrapper script) |
+| [shellcheck](https://www.shellcheck.net/) | Static analysis tool for shell scripts — catches bugs and style issues |
+| [bats-core](https://bats-core.readthedocs.io/) | Bash Automated Testing System — unit testing framework for shell scripts |
+| [tree](https://oldmanprogrammer.net/source.php?dir=projects/tree) | Recursive directory listing tool — visualizes folder structure as a tree |
+| [delta](https://dandavison.github.io/delta/) | Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers |
+| [pipx](https://pipx.pypa.io/) | Install and run Python CLI tools in isolated environments |
+| [uv](https://docs.astral.sh/uv/) | Fast Python package and project manager (Rust-based pip/venv replacement) |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanner — detects committed credentials, tokens, and keys |
 
-```bash
-task --global brew:dump
-```
+**Version Management**
+
+| Tool | Description |
+|------|-------------|
+| [mise](https://mise.jdx.dev) | Polyglot dev tool version manager — replaces nvm, jenv, pyenv, asdf with one tool |
+
+**Mac Apps**
+
+| Tool | Description |
+|------|-------------|
+| [1password-cli](https://developer.1password.com/docs/cli/) | 1Password CLI (op) — access secrets, SSH keys, and vaults from the terminal |
+| [1password](https://1password.com/) | 1Password — password manager and secure vault for credentials, keys, and secrets |
+| [bruno](https://www.usebruno.com/) | Open-source API client — test and document REST, GraphQL, and gRPC APIs |
+| [ghostty](https://ghostty.org/) | Ghostty — fast, native terminal emulator with GPU rendering |
+| [gitkraken](https://www.gitkraken.com/) | GitKraken — visual Git client for branch management, history, and merge conflict resolution |
+| [readdle-spark](https://sparkmailapp.com/) | Spark — email client by Readdle with smart inbox, snooze, and team collaboration |
+| [spotify](https://www.spotify.com/) | Spotify — music and podcast streaming client |
+| [zed](https://zed.dev/) | Zed — high-performance, multiplayer code editor built in Rust |
+
+**AWS Tools**
+
+| Tool | Description |
+|------|-------------|
+| [aws](https://docs.aws.amazon.com/cli/) | AWS CLI — manage AWS resources, services, and credentials from the terminal |
+| [aws-sso-util](https://github.com/benkehoe/aws-sso-util) | Utilities for AWS SSO — simplifies login and credential management for SSO-based AWS accounts |
+
+**Kubernetes Tools**
+
+| Tool | Description |
+|------|-------------|
+| [k9s](https://k9scli.io/) | Terminal UI for Kubernetes — real-time cluster monitoring and management |
+| [kubectx](https://github.com/ahmetb/kubectx) | Fast Kubernetes context and namespace switcher |
+| [kubectl](https://kubernetes.io/docs/reference/kubectl/) | Kubernetes CLI — manage clusters, deployments, pods, and services |
+
+**Terraform Tools**
+
+| Tool | Description |
+|------|-------------|
+| [tfenv](https://github.com/tfutils/tfenv) | Terraform version manager — install and switch between Terraform versions |
+| [terraform-docs](https://terraform-docs.io/) | Generate documentation from Terraform module inputs and outputs |
+
+**Go Tools**
+
+| Tool | Description |
+|------|-------------|
+| [go](https://go.dev/doc/) | Go programming language toolchain — compiler, formatter, and standard tooling |
+| [golangci-lint](https://golangci-lint.run/) | Fast Go linter runner — aggregates and runs many linters in one pass |
+| [goreleaser](https://goreleaser.com/) | Go release automation — builds cross-platform binaries and publishes GitHub releases |
+
+**Java Tools**
+
+| Tool | Description |
+|------|-------------|
+| [gradle](https://docs.gradle.org/) | Gradle build tool — build, test, and publish JVM projects |
+| [mvn](https://maven.apache.org/guides/) | Apache Maven — build and dependency management for Java projects |
+
+**Signing Tools**
+
+| Tool | Description |
+|------|-------------|
+| [gnupg](https://gnupg.org/documentation/) | GNU Privacy Guard — GPG encryption and signing |
+
+**Shell Tools**
+
+| Tool | Description |
+|------|-------------|
+| [starship](https://starship.rs) | Fast, cross-shell prompt — shows git status, language versions, and context at a glance |
+| [fzf](https://github.com/junegunn/fzf) | Fuzzy finder — interactive search for files, history, and command output |
+| [zoxide](https://github.com/ajeetdsouza/zoxide) | Smarter cd — learns frequently-visited directories and jumps to them by partial name |
+| [zsh-history-substring-search](https://github.com/zsh-users/zsh-history-substring-search) | History search filtered by what you've typed — press up/down to cycle through matches |
+| [zsh-completions](https://github.com/zsh-users/zsh-completions) | Additional completion definitions for zsh — extends tab-completion for many tools |
+| [zsh-syntax-highlighting](https://github.com/zsh-users/zsh-syntax-highlighting) | Fish-style syntax highlighting for zsh — highlights valid commands green, errors red |
+
+**Dev Tools**
+
+| Tool | Description |
+|------|-------------|
+| [jira](https://github.com/ankitpokhrel/jira-cli) | Jira CLI (ankitpokhrel/jira-cli) — manage Jira tickets from the terminal |
+| [linear](https://github.com/schpet/linear-cli) | Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal |
+| [mas](https://github.com/mas-cli/mas) | Mac App Store CLI — search, install, and update App Store apps from the terminal |
+<!-- TOOLS-TABLE-END -->
 
 ### Global Taskfile — AI Git Automation
 

@@ -52,6 +52,8 @@ ENV_LOCAL_TEMPLATE_PATH="${ENV_LOCAL_TEMPLATE_PATH:-"$REPO_ROOT/zsh/.env.local.t
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
 TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
 AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
+COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
+CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
 
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
@@ -101,6 +103,35 @@ _splice_readme() {
     $0 == e { skip=0 }
     !skip   { print }
   ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
+}
+
+# _splice_inline FILE MARKER
+# Replaces inline content between <!-- MARKER-START -->...<!-- MARKER-END --> on
+# the same line. Reads replacement text from stdin (must be a single line).
+_splice_inline() {
+  local file="$1" marker="$2"
+  if [[ ! -f "$file" ]]; then cat > /dev/null; return 0; fi
+  local start_marker="<!-- ${marker}-START -->"
+  local end_marker="<!-- ${marker}-END -->"
+  local replacement
+  replacement=$(cat)
+  local tmp_out
+  tmp_out=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp_out'" RETURN
+  awk -v s="$start_marker" -v e="$end_marker" -v r="$replacement" '
+    {
+      idx_s = index($0, s)
+      if (idx_s > 0) {
+        idx_e = index($0, e)
+        if (idx_e > 0) {
+          printf "%s%s%s%s%s\n", substr($0, 1, idx_s - 1 + length(s)), r, e, substr($0, idx_e + length(e)), ""
+          next
+        }
+      }
+      print
+    }
+  ' "$file" > "$tmp_out" && mv "$tmp_out" "$file"
 }
 
 # _iter_tools FILE CALLBACK [FILTER]
@@ -342,48 +373,123 @@ _readme_ai_installs() {
   [[ ${#kiro_agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join ', ' "${kiro_agents[@]}")"
 }
 
-# _brew_pkgs_from FILE — comma-separated short package names from a Brewfile
-_brew_pkgs_from() {
-  [[ -f "$1" ]] || return 0
-  grep -E '^(brew|cask) ' "$1" \
-    | grep -oE '"[^"]+"' | tr -d '"' | awk -F'/' '{print $NF}' \
-    | paste -sd ',' - | sed 's/,/, /g'
+# _tool_readme_table_row NAME DESCRIPTION WHEN_TO_USE USAGE DOCS
+# Renders a single row for the README tools table. Name links to docs if available.
+_tool_readme_table_row() {
+  local name="$1" description="$2" docs="$5"
+  local display_name
+  if [[ -n "$docs" && "$docs" != "null" ]]; then
+    display_name="[${name}](${docs})"
+  else
+    display_name="$name"
+  fi
+  printf '| %s | %s |\n' "$display_name" "$description"
 }
 
-_readme_brew_stacks() {
-  local brew_dir="$BREW_STACKS_DIR"
+# _render_readme_registry FILE — renders a single registry as a tools table section.
+# Skips the section if no tools are present. Does NOT filter by install_check
+# because the README is reference documentation, not runtime context.
+_render_readme_registry() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  local count
+  count=$(yq '.tools | length' "$file")
+  [[ "$count" -gt 0 ]] || return 0
 
-  # Core Brewfile
-  local core_pkgs
-  core_pkgs=$(_brew_pkgs_from "$brew_dir/Brewfile")
-  printf -- '- `brew/Brewfile` — core: %s\n' "$core_pkgs"
+  local section
+  section=$(yq '.meta.section // "Tools"' "$file")
 
-  # Optional stacks grouped by category dir
-  for cat_dir in "$brew_dir"/*/; do
-    [[ -d "$cat_dir" ]] || continue
-    local cat_name
-    cat_name="$(basename "$cat_dir")"
-    local stack_files=()
-    for f in "$cat_dir"*.Brewfile; do
-      [[ -f "$f" ]] && stack_files+=("$f")
-    done
-    [[ ${#stack_files[@]} -eq 0 ]] && continue
+  local content
+  content=$(_iter_tools "$file" _tool_readme_table_row)
+  [[ -n "$content" ]] || return 0
 
-    if [[ ${#stack_files[@]} -eq 1 ]]; then
-      # Single stack — show packages inline
-      local pkgs
-      pkgs=$(_brew_pkgs_from "${stack_files[0]}")
-      printf -- '- `brew/%s/` — %s\n' "$cat_name" "$pkgs"
-    else
-      # Multiple stacks — list stack names only
-      local names=()
-      for f in "${stack_files[@]}"; do names+=("$(basename "$f" .Brewfile)"); done
-      printf -- '- `brew/%s/` — %s\n' "$cat_name" "$(_join ' · ' "${names[@]}")"
-    fi
+  printf '\n**%s**\n\n' "$section"
+  printf '| Tool | Description |\n'
+  printf '|------|-------------|\n'
+  printf '%s\n' "$content"
+}
+
+_readme_tools_table() {
+  # Same registry order as tools.generated.md, but skip bin and zsh (they have their own sections)
+  _render_readme_registry "$BREW_REGISTRY"
+  _render_readme_registry "$MISE_REGISTRY"
+  while IFS= read -r -d '' registry; do
+    _render_readme_registry "$registry"
+  done < <(find "$BREW_STACKS_DIR" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
+}
+
+# _readme_component_menu — comma-separated list of optional component labels from install.components.
+_readme_component_menu() {
+  [[ -f "$COMPONENTS_FILE" ]] || return 0
+  local labels=() component conf label
+  while IFS= read -r component; do
+    [[ -z "$component" || "$component" =~ ^# ]] && continue
+    conf="$REPO_ROOT/$component/setup.conf"
+    [[ -f "$conf" ]] || continue
+    label=$(conf_get "$conf" label)
+    [[ -n "$label" ]] && labels+=("$label")
+  done < "$COMPONENTS_FILE"
+  _join ', ' "${labels[@]}"
+}
+
+# _readme_after_install — numbered post-install steps from setup.conf post_install fields.
+_readme_after_install() {
+  [[ -f "$COMPONENTS_FILE" ]] || return 0
+  local step_num=1
+  printf '%d. **Reload your shell**: `exec zsh`\n' "$step_num"
+  step_num=$(( step_num + 1 ))
+
+  local component conf note
+  while IFS= read -r component; do
+    [[ -z "$component" || "$component" =~ ^# ]] && continue
+    conf="$REPO_ROOT/$component/setup.conf"
+    [[ -f "$conf" ]] || continue
+    note=$(conf_get "$conf" post_install) || true
+    [[ -n "$note" ]] || continue
+    printf '%d. %s\n' "$step_num" "$note"
+    step_num=$(( step_num + 1 ))
+  done < "$COMPONENTS_FILE"
+}
+
+# _readme_core_components — discovers core components (steps.sh without setup.conf).
+_readme_core_components() {
+  local names=()
+  for steps in "$REPO_ROOT"/*/steps.sh; do
+    [[ -f "$steps" ]] || continue
+    local dir
+    dir=$(dirname "$steps")
+    # Core = has steps.sh but no setup.conf (not an optional component)
+    [[ -f "$dir/setup.conf" ]] && continue
+    names+=("\`$(basename "$dir")\`")
   done
+  printf '**Existing core components:** %s\n' "$(_join ', ' "${names[@]}")"
 }
 
-if [[ -f "$BIN_REGISTRY" ]];  then _readme_scripts    | _splice_readme "$README_PATH" "SCRIPTS-TABLE"; success "Updated README scripts table"; fi
-if [[ -f "$TASKFILE_PATH" ]]; then _readme_tasks       | _splice_readme "$README_PATH" "TASKS-BLOCK";   success "Updated README tasks block";   fi
-if [[ -d "$AI_DIR" ]];        then _readme_ai_installs | _splice_readme "$README_PATH" "AI-INSTALLS";   success "Updated README AI installs";   fi
-if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_brew_stacks | _splice_readme "$README_PATH" "BREW-STACKS"; success "Updated README brew stacks";   fi
+# _readme_optional_components — lists optional components from install.components with sync info.
+_readme_optional_components() {
+  [[ -f "$COMPONENTS_FILE" ]] || return 0
+  local entries=() component label sync_note
+  while IFS= read -r component; do
+    [[ -z "$component" || "$component" =~ ^# ]] && continue
+    local conf="$REPO_ROOT/$component/setup.conf"
+    [[ -f "$conf" ]] || continue
+    label=$(conf_get "$conf" label)
+    [[ -n "$label" ]] || label="$component"
+    if [[ -f "$REPO_ROOT/$component/steps.sh" ]]; then
+      sync_note="has sync"
+    else
+      sync_note="no sync"
+    fi
+    entries+=("\`$component\` ($sync_note)")
+  done < "$COMPONENTS_FILE"
+  printf '**Existing optional components:** %s\n' "$(_join ', ' "${entries[@]}")"
+}
+
+if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$README_PATH" "SCRIPTS-TABLE";    success "Updated README scripts table";    fi
+if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$README_PATH" "TASKS-BLOCK";      success "Updated README tasks block";      fi
+if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$README_PATH" "AI-INSTALLS";      success "Updated README AI installs";      fi
+if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$README_PATH" "TOOLS-TABLE";      success "Updated README tools table";      fi
+if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   success "Updated README component menu";   fi
+if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    success "Updated README after-install";    fi
+                                     _readme_core_components     | _splice_readme "$CONTRIBUTING_PATH" "CORE-COMPONENTS";     success "Updated CONTRIBUTING core components"
+                                     _readme_optional_components | _splice_readme "$CONTRIBUTING_PATH" "OPTIONAL-COMPONENTS"; success "Updated CONTRIBUTING optional components"

@@ -11,7 +11,6 @@
 - Header (type + scope + subject) must be ≤ 72 characters total
 - No period at the end of the subject
 - Use a semicolon (`;`) to separate multiple changes in the header
-- Separate header and body with a blank line
 - Each body line must be ≤ 100 characters — wrap long lines
 - Use bullet points for multiple changes in the body
 - Subject should be concise and focus on *what* changed, not *how*

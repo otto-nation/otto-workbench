@@ -160,6 +160,16 @@ _render_registry() {
 }
 
 {
+  printf -- '---\n'
+  printf 'paths:\n'
+  printf '  - "**/Brewfile"\n'
+  printf '  - "**/Brewfile.*"\n'
+  printf '  - "**/registry.yml"\n'
+  printf '  - "**/*.registry.yml"\n'
+  printf '  - "**/bin/*"\n'
+  printf '  - "**/Taskfile*.yml"\n'
+  printf '  - "**/zsh/**"\n'
+  printf -- '---\n\n'
   printf '# Environment Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
   printf '<!-- Sources: brew/registry.yml  brew/{lang,infra,tools}/*.registry.yml  bin/registry.yml  zsh/registry.yml -->\n'

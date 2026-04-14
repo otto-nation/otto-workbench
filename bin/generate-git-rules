@@ -64,8 +64,7 @@ _budget_line() {
   printf '%s\n' "- Header (type + scope + subject) must be ≤ ${COMMIT_HEADER_MAX_LEN} characters total"
   printf '%s\n' \
     "- No period at the end of the subject" \
-    "- Use a semicolon (\`;\`) to separate multiple changes in the header" \
-    "- Separate header and body with a blank line"
+    "- Use a semicolon (\`;\`) to separate multiple changes in the header"
   printf '%s\n' "- Each body line must be ≤ ${COMMIT_BODY_MAX_LEN} characters — wrap long lines"
   printf '%s\n' \
     "- Use bullet points for multiple changes in the body" \

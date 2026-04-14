@@ -30,16 +30,6 @@ Only add a rule when Claude gets something wrong without it. For each existing r
 - Keep each file under 200 lines — long files cause rules to be ignored
 - Use path-scoped frontmatter so rules only load when relevant files are touched
 
-### Workbench
-
-Your developer environment is the repo containing this file (resolve via
-`readlink ~/.claude/CLAUDE.md`). It owns Claude config (`ai/claude/`),
-coding rules (`ai/guidelines/rules/`), bin scripts (`bin/`), zsh config (`zsh/`),
-git config (`git/`), Docker setup (`docker/`), and Brew packages (`brew/`).
-
-When modifying any of these — make the change in the workbench repo and re-run
-the relevant setup script. Do not edit `~/` directly.
-
 ## Git Commit & PR Rules
 
 Never mention Claude Code, AI assistance, or co-authorship in commit messages, PR descriptions, or any git artifacts.

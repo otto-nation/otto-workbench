@@ -267,11 +267,12 @@ fi
 
 step_task_install
 step_brew_install
+step_mise_install
 echo
 
 # Core components (steps.sh present, setup.conf absent, not preflight).
-# Preflight components (task, brew) already ran above and are excluded.
-PREFLIGHT_COMPONENTS=(task brew)
+# Preflight components (task, brew, mise) already ran above and are excluded.
+PREFLIGHT_COMPONENTS=(task brew mise)
 _core_dirs=()
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$_f" ]] || continue

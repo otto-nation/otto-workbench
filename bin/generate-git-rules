@@ -64,8 +64,7 @@ _budget_line() {
   printf '%s\n' "- Header (type + scope + subject) must be ≤ ${COMMIT_HEADER_MAX_LEN} characters total"
   printf '%s\n' \
     "- No period at the end of the subject" \
-    "- Use a semicolon (\`;\`) to separate multiple changes in the header" \
-    "- Separate header and body with a blank line"
+    "- Use a semicolon (\`;\`) to separate multiple changes in the header"
   printf '%s\n' "- Each body line must be ≤ ${COMMIT_BODY_MAX_LEN} characters — wrap long lines"
   printf '%s\n' \
     "- Use bullet points for multiple changes in the body" \
@@ -109,7 +108,8 @@ _budget_line() {
     "" \
     "### Description template" \
     "" \
-    "Use this structure when no project-level PR template exists:" \
+    "- Always use the repo's PR template (\`.github/PULL_REQUEST_TEMPLATE.md\`) when one exists" \
+    "- Fall back to this structure only when no project-level PR template exists:" \
     "" \
     '```markdown' \
     "## Summary" \
@@ -140,6 +140,7 @@ _budget_line() {
     "" \
     "## Branch Naming" \
     "" \
+    "- Always branch from \`origin/main\`, never local \`main\` — local main may be stale" \
     "- Format: \`username/<ISSUE or type if no ISSUE>/description_in_snake_case\`" \
     "- Examples: \`carlos/PROJ-42/oauth_login\`, \`sofia/PROJ-7/fix_cache_race\`, javier/feat/add_metrics" \
     "- Use the git user name (first name, lowercase) as the username prefix"

@@ -7,8 +7,9 @@ setup() {
 
   # Point all generator inputs/outputs at temp paths so tests never touch
   # real workbench files (registry data, tools.generated.md, README.md).
-  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh"
+  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"
   export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
+  export MISE_REGISTRY="$TMPDIR/mise/registry.yml"
   export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
   export ZSH_REGISTRY="$TMPDIR/zsh/registry.yml"
   export BREW_STACKS_DIR="$TMPDIR"
@@ -27,7 +28,7 @@ setup() {
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
-  unset BREW_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR
+  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title

@@ -1,0 +1,15 @@
+# Mise registry — AI context for Claude/Kiro.
+# Regenerate: bin/generate-tool-context
+
+meta:
+  section: "Version Management"
+  install_check: false
+  validation: none
+  source: mise
+
+tools:
+  - name: mise
+    description: "Polyglot dev tool version manager — replaces nvm, jenv, pyenv, asdf with one tool"
+    when_to_use: "Installing/switching language runtime versions (Node, Python, Java, Go, etc.) per project"
+    usage: "mise use node@20  |  mise install  |  mise ls  |  mise activate zsh"
+    docs: "https://mise.jdx.dev"

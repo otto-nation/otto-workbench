@@ -53,7 +53,7 @@ $compact_staged
 $compact_unstaged"
   fi
 
-  run_ai "$(prompt_diff_review "$context")"
+  run_ai "$(prompt_diff_review "$context")" "reviewer"
 }
 
 # generate_pr_review PR_NUMBER PR_TITLE PR_BODY PR_DIFF
@@ -66,5 +66,5 @@ generate_pr_review() {
   local compact_diff
   compact_diff=$(_compact_diff "$pr_diff")
 
-  run_ai "$(prompt_pr_review "$pr_number" "$pr_title" "$pr_body" "$compact_diff")"
+  run_ai "$(prompt_pr_review "$pr_number" "$pr_title" "$pr_body" "$compact_diff")" "reviewer"
 }

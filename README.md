@@ -18,8 +18,7 @@ The installer symlinks scripts, zsh configs, git config, and the global Taskfile
 <!-- AFTER-INSTALL-START -->
 1. **Reload your shell**: `exec zsh`
 2. **Docker** (if installed): start your runtime — `colima start` or launch OrbStack
-3. **Ghostty** (if installed): Settings → Font → `FiraCodeNFM-Reg`
-4. **AI tools** (if installed): edit `~/.config/task/taskfile.env` to set your `AI_COMMAND`
+3. **AI tools** (if installed): run `task --global ai:setup` to configure your `AI_COMMAND` and tokens
 <!-- AFTER-INSTALL-END -->
 
 Secrets and machine-specific env vars go in `~/.env.local` — sourced first by the shell loader, never committed. See `zsh/.env.local.template`.

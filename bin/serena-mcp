@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Scaffold Serena MCP into a project's .mcp.json.
+#
+# Usage: serena-mcp <command>
+#
+# Commands:
+#   init      Add Serena to .mcp.json in the current directory (creates if missing)
+#   status    Show whether Serena is configured in the current project
+#
+# Serena is a heavyweight MCP server that starts LSP servers for code intelligence.
+# This script keeps it project-scoped so it only runs where explicitly enabled.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+MCP_FILE=".mcp.json"
+MCP_NAME="serena"
+GITIGNORE_FILE=".gitignore"
+SERENA_IGNORES=(".serena/")
+
+# The canonical Serena MCP server entry — single source of truth.
+SERENA_ENTRY='{
+  "command": "uvx",
+  "args": ["-p", "3.13", "--from", "git+https://github.com/oraios/serena", "serena", "init"]
+}'
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+# _ensure_gitignore — appends Serena entries to .gitignore if missing.
+_ensure_gitignore() {
+  local pattern added=false
+  for pattern in "${SERENA_IGNORES[@]}"; do
+    if [[ -f "$GITIGNORE_FILE" ]] && grep -qxF "$pattern" "$GITIGNORE_FILE"; then
+      continue
+    fi
+    echo "$pattern" >> "$GITIGNORE_FILE"
+    added=true
+  done
+
+  if [[ "$added" == true ]]; then
+    success "Added Serena entries to $GITIGNORE_FILE"
+  fi
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_init() {
+  local existing="{}"
+  if [[ -f "$MCP_FILE" ]]; then
+    existing=$(cat "$MCP_FILE")
+    if echo "$existing" | jq -e ".mcpServers.${MCP_NAME}" > /dev/null 2>&1; then
+      success "Serena already configured in $MCP_FILE"
+      return
+    fi
+    info "Adding Serena to existing $MCP_FILE"
+  else
+    info "Creating $MCP_FILE with Serena"
+  fi
+
+  local result
+  result=$(echo "$existing" | jq --argjson entry "$SERENA_ENTRY" \
+    '.mcpServers //= {} | .mcpServers.serena = $entry')
+
+  printf '%s\n' "$result" > "$MCP_FILE"
+  success "Serena configured in $MCP_FILE"
+
+  _ensure_gitignore
+}
+
+cmd_status() {
+  if [[ ! -f "$MCP_FILE" ]]; then
+    info "No $MCP_FILE found in current directory"
+    return
+  fi
+
+  if jq -e ".mcpServers.${MCP_NAME}" "$MCP_FILE" > /dev/null 2>&1; then
+    success "Serena is configured in $MCP_FILE"
+  else
+    info "Serena is not configured in $MCP_FILE"
+  fi
+}
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+usage() {
+  sed -n '2,/^$/s/^# \?//p' "${BASH_SOURCE[0]}"
+}
+
+main() {
+  local command="${1:-}"
+
+  case "$command" in
+    init)   cmd_init ;;
+    status) cmd_status ;;
+    -h|--help|"")
+      usage
+      ;;
+    *)
+      err "Unknown command: $command"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

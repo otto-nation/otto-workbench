@@ -184,18 +184,30 @@ load_gh_token() {
   return 1
 }
 
-# run_ai PROMPT
+# run_ai PROMPT [AGENT_OVERRIDE]
 # Requires AI_COMMAND.
+# When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND
+# so different tasks can route to the appropriate agent.
 # Sets AI_RESPONSE.
 run_ai() {
   local prompt="$1"
-  # shellcheck disable=SC2086  # $AI_COMMAND holds "binary [flags]"; word-splitting is intentional
+  local agent_override="${2:-}"
+
+  local cmd="$AI_COMMAND"
+  if [[ -n "$agent_override" ]]; then
+    # Replace the agent name after --agent with the override value.
+    # Uses sed because bash parameter expansion cannot match [^ ]* (non-space glob).
+    # shellcheck disable=SC2001
+    cmd=$(echo "$cmd" | sed "s/--agent [^ ]*/--agent $agent_override/")
+  fi
+
+  # shellcheck disable=SC2086  # $cmd holds "binary [flags]"; word-splitting is intentional
   # Redirect stderr to /dev/null — MCP server errors and CLI noise must not pollute
   # the captured response. load_ai_command already validated the binary exists.
   # Strip complete ANSI sequences (ESC + '[' + params + letter) before removing bare control chars.
   # Anchoring to \033 prevents the pattern from eating markdown checkboxes like [x] or [ ].
   # shellcheck disable=SC2034  # AI_RESPONSE is read by callers after run_ai returns
-  AI_RESPONSE=$(echo "$prompt" | $AI_COMMAND 2>/dev/null | \
+  AI_RESPONSE=$(echo "$prompt" | $cmd 2>/dev/null | \
     sed 's/\033\[[0-9;]*[a-zA-Z]//g' | \
     tr -d '\033\007\015' | \
     sed 's/^[> ]*//g' | \

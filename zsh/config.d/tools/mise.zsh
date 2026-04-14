@@ -6,7 +6,7 @@
 # mise replaces nvm, jenv, pyenv, and asdf. If you still have those tools installed
 # and active, disable their snippets to avoid PATH conflicts.
 #
-# Install:         brew install mise
+# Install:         curl -fsSL https://mise.run | sh
 # Docs:            https://mise.jdx.dev
 # duplicate-check: mise activate
 

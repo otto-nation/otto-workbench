@@ -11,7 +11,6 @@
 - Header (type + scope + subject) must be ≤ 72 characters total
 - No period at the end of the subject
 - Use a semicolon (`;`) to separate multiple changes in the header
-- Separate header and body with a blank line
 - Each body line must be ≤ 100 characters — wrap long lines
 - Use bullet points for multiple changes in the body
 - Subject should be concise and focus on *what* changed, not *how*
@@ -62,7 +61,8 @@ fix: resolve race condition in cache eviction; update TTL default
 
 ### Description template
 
-Use this structure when no project-level PR template exists:
+- Always use the repo's PR template (`.github/PULL_REQUEST_TEMPLATE.md`) when one exists
+- Fall back to this structure only when no project-level PR template exists:
 
 ```markdown
 ## Summary
@@ -93,6 +93,7 @@ Use this structure when no project-level PR template exists:
 
 ## Branch Naming
 
+- Always branch from `origin/main`, never local `main` — local main may be stale
 - Format: `username/<ISSUE or type if no ISSUE>/description_in_snake_case`
 - Examples: `carlos/PROJ-42/oauth_login`, `sofia/PROJ-7/fix_cache_race`, javier/feat/add_metrics
 - Use the git user name (first name, lowercase) as the username prefix

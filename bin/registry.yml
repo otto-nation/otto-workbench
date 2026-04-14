@@ -75,6 +75,11 @@ tools:
     when_to_use: "Reviewing recent changes; understanding what landed since a given date"
     usage: "bin/generate-changelog  |  bin/generate-changelog --since '7 days ago'"
 
+  - name: serena-mcp
+    description: "Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence"
+    when_to_use: "Enabling Serena LSP-based code intelligence in a specific project"
+    usage: "serena-mcp init  |  serena-mcp status"
+
   - name: ghostty-terminfo-push
     description: "Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH"
     when_to_use: "When connecting to a new remote server and seeing 'Error opening terminal: xterm-ghostty'"

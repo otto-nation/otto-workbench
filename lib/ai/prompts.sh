@@ -116,54 +116,31 @@ EOF
 # prompt_diff_review CONTEXT
 # CONTEXT is a pre-built string of labelled diff sections (committed, staged, unstaged).
 # Built by generate_diff_review before calling this function.
+# Review instructions come from the reviewer agent — this prompt provides data only.
 prompt_diff_review() {
   local context="$1"
 
   cat <<EOF
-Review the following code changes and provide actionable feedback.
-
-Focus on:
-- Bugs, logic errors, and edge cases
-- Security vulnerabilities
-- Performance concerns
-- Code quality and maintainability
-- Missing error handling
-- Improvements worth making
-
-Be concise and direct. Group feedback by section when relevant. Skip sections with no issues.
+Review the following code changes.
 
 ${context}
-
-Provide a brief summary first, then specific findings.
 EOF
 }
 
 # prompt_pr_review PR_NUMBER PR_TITLE PR_BODY COMPACT_DIFF
+# Review instructions come from the reviewer agent — this prompt provides data only.
 prompt_pr_review() {
   local pr_number="$1" pr_title="$2" pr_body="$3" compact_diff="$4"
 
   cat <<EOF
-Review this pull request and provide actionable feedback.
+Review this pull request.
 
 PR #${pr_number}: ${pr_title}
 
 Description:
 ${pr_body}
 
-Focus on:
-- Bugs, logic errors, and edge cases
-- Security vulnerabilities
-- Performance concerns
-- Code quality and maintainability
-- Missing error handling
-- Whether the changes match the PR description
-- Missing tests
-
-Be concise and direct. Group findings by file or category. Skip areas with no issues.
-
 Diff:
 ${compact_diff}
-
-Provide a brief overall summary first, then specific findings.
 EOF
 }

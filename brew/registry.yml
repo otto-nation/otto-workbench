@@ -33,12 +33,6 @@ tools:
     usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"
     docs: "https://cli.github.com/manual/"
 
-  - name: mise
-    description: "Polyglot dev tool version manager — replaces nvm, jenv, pyenv, asdf with one tool"
-    when_to_use: "Installing/switching language runtime versions (Node, Python, Java, Go, etc.) per project"
-    usage: "mise use node@20  |  mise install  |  mise ls  |  mise activate zsh"
-    docs: "https://mise.jdx.dev"
-
   - name: go-task
     description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
     when_to_use: "Running defined dev workflows: commits, PRs, brew management"

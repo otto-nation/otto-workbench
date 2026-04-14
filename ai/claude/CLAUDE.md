@@ -30,16 +30,6 @@ Only add a rule when Claude gets something wrong without it. For each existing r
 - Keep each file under 200 lines — long files cause rules to be ignored
 - Use path-scoped frontmatter so rules only load when relevant files are touched
 
-### Workbench
-
-Your developer environment is the repo containing this file (resolve via
-`readlink ~/.claude/CLAUDE.md`). It owns Claude config (`ai/claude/`),
-coding rules (`ai/guidelines/rules/`), bin scripts (`bin/`), zsh config (`zsh/`),
-git config (`git/`), Docker setup (`docker/`), and Brew packages (`brew/`).
-
-When modifying any of these — make the change in the workbench repo and re-run
-the relevant setup script. Do not edit `~/` directly.
-
 ## Git Commit & PR Rules
 
 Never mention Claude Code, AI assistance, or co-authorship in commit messages, PR descriptions, or any git artifacts.
@@ -47,6 +37,18 @@ Never mention Claude Code, AI assistance, or co-authorship in commit messages, P
 ## Auto Dream
 
 If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagent in the background, then delete the flag: `rm ~/.claude/.dream-pending`. This is the memory consolidation system — it triggers automatically every 24 hours via a Stop hook.
+
+## Agent Protocols
+
+When a situation matches an agent's domain, read the agent file and follow its
+protocol before taking action. Agent files live at `~/.claude/agents/`.
+
+| Situation | Agent file | Constraint |
+|-----------|-----------|------------|
+| Investigating a bug, test failure, or unexpected behavior | `debugger.md` | Diagnose before fixing |
+| Production incident or outage triage | `incident.md` | Read-only investigation |
+| Dependency upgrade or framework migration | `migrate.md` | Plan before changing |
+| Code review (PR or diff) | `reviewer.md` | Review before approving |
 
 ## Output
 

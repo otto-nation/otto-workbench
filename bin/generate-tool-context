@@ -304,6 +304,7 @@ fi
 
 # ── README sections ───────────────────────────────────────────────────────────
 
+# shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
 _tool_readme_row() { printf '| `%s` | %s |\n' "$1" "$2"; }
 
 _readme_scripts() {
@@ -340,8 +341,11 @@ _readme_ai_installs() {
   local kiro_agents_src="$AI_DIR/kiro/agents"
 
   printf '**Claude Code:**\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   printf -- '- `%s/settings.json` — permissions and deny rules (merged, not overwritten)\n' "$claude_home"
+  # shellcheck disable=SC2016
   printf -- '- `%s/CLAUDE.md` — coding guidelines\n' "$claude_home"
+  # shellcheck disable=SC2016
   printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
 
   local skills=()
@@ -364,6 +368,7 @@ _readme_ai_installs() {
 
   printf '\n'
   printf '**Kiro:**\n'
+  # shellcheck disable=SC2016
   printf -- '- `%s/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)\n' "$kiro_steering"
 
   local kiro_agents=()
@@ -436,6 +441,7 @@ _readme_component_menu() {
 _readme_after_install() {
   [[ -f "$COMPONENTS_FILE" ]] || return 0
   local step_num=1
+  # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   printf '%d. **Reload your shell**: `exec zsh`\n' "$step_num"
   step_num=$(( step_num + 1 ))
 

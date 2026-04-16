@@ -81,5 +81,36 @@ if ! command -v bats >/dev/null 2>&1; then
 fi
 
 info "Running tests..."
-bats "$REPO_ROOT/tests/" --recursive --timing
-success "Tests passed"
+_bats_start=$SECONDS
+_bats_output=$(bats "$REPO_ROOT/tests/" --recursive --timing 2>&1) || {
+  # Show full output on failure — failures and context are visible
+  echo "$_bats_output"
+  err "Tests failed"
+  exit 1
+}
+_bats_elapsed=$(( SECONDS - _bats_start ))
+
+# Extract test count from TAP plan line (1..N)
+_test_count=$(echo "$_bats_output" | grep -oE '^1\.\.[0-9]+' | head -1)
+_test_count="${_test_count#1..}"
+success "Tests passed (${_test_count:-?} tests, ${_bats_elapsed}s)"
+
+# Warn about slow tests (>2s) — surfaces performance regressions
+_slow_threshold_ms=2000
+_slow_tests=$(echo "$_bats_output" \
+  | grep -E '^ok .+ in [0-9]+ms$' \
+  | while IFS= read -r line; do
+      _ms="${line##* in }"
+      _ms="${_ms%ms}"
+      if [[ "$_ms" -gt "$_slow_threshold_ms" ]]; then
+        # Strip "ok N " prefix (N can be multi-digit) and " in Nms" suffix
+        _name="${line% in *}"
+        _name="${_name#ok }"
+        _name="${_name#* }"
+        printf '  %s (%ss)\n' "$_name" "$(( _ms / 1000 ))"
+      fi
+    done)
+if [[ -n "$_slow_tests" ]]; then
+  warn "Slow tests (>${_slow_threshold_ms}ms):"
+  echo "$_slow_tests"
+fi

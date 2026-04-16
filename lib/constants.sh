@@ -79,8 +79,6 @@ TESTCONTAINERS_SRC="$WORKBENCH_DIR/docker/testcontainers.properties"
 
 # ─── Workbench source — terminals ────────────────────────────────────────────
 TERMINALS_SRC_DIR="$WORKBENCH_DIR/terminals"
-ITERM_SRC_DIR="$WORKBENCH_DIR/terminals/iterm"
-ITERM_THEMES_SRC_DIR="$WORKBENCH_DIR/terminals/iterm/themes"
 GHOSTTY_SRC_DIR="$WORKBENCH_DIR/terminals/ghostty"
 GHOSTTY_CONFIG_TEMPLATE="$WORKBENCH_DIR/terminals/ghostty/config.template"
 GHOSTTY_CONFIG_DIR="$HOME/.config/ghostty"

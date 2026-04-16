@@ -12,9 +12,7 @@ fi
 
 _TERMINALS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source sub-component steps so sync_iterm and sync_ghostty are available.
-# shellcheck source=terminals/iterm/steps.sh
-. "$_TERMINALS_DIR/iterm/steps.sh"
+# Source sub-component steps so sync_ghostty is available.
 # shellcheck source=terminals/ghostty/steps.sh
 . "$_TERMINALS_DIR/ghostty/steps.sh"
 
@@ -25,7 +23,6 @@ sync_terminals() {
     echo -e "  ${DIM}⊘ terminal sync is macOS-only${NC}"
     return
   fi
-  sync_iterm
   sync_ghostty
 }
 

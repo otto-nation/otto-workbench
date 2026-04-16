@@ -15,71 +15,71 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # ── Secret scan ───────────────────────────────────────────────────────────────
 
 if ! command -v gitleaks >/dev/null 2>&1; then
-  echo "✗ gitleaks not found — run: brew install gitleaks"
+  err "gitleaks not found — run: brew install gitleaks"
   exit 1
 fi
 
-echo "→ Scanning for secrets..."
+info "Scanning for secrets..."
 _config_flag=""
 [[ -f "$REPO_ROOT/.gitleaks.toml" ]] && _config_flag="--config $REPO_ROOT/.gitleaks.toml"
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
 gitleaks protect --staged $_config_flag 2>&1 \
-  || { echo "✗ gitleaks found potential secrets — commit blocked"; exit 1; }
-echo "✓ No secrets detected"
+  || { err "gitleaks found potential secrets — commit blocked"; exit 1; }
+success "No secrets detected"
 
 # ── Tool context ──────────────────────────────────────────────────────────────
 if ! command -v yq >/dev/null 2>&1; then
-  echo "✗ yq not found — run: brew install yq"
+  err "yq not found — run: brew install yq"
   exit 1
 fi
 
-echo "→ Validating registries..."
-"$REPO_ROOT/bin/validate-registries"
+info "Validating registries..."
+"$REPO_ROOT/bin/validate-registries" --quiet
 
-echo "→ Validating component framework..."
-"$REPO_ROOT/bin/validate-components"
+info "Validating component framework..."
+"$REPO_ROOT/bin/validate-components" --quiet
 
-echo "→ Validating migrations..."
-"$REPO_ROOT/bin/validate-migrations"
+info "Validating migrations..."
+"$REPO_ROOT/bin/validate-migrations" --quiet
 
-echo "→ Regenerating tool context..."
-"$REPO_ROOT/bin/generate-tool-context"
+info "Regenerating tool context..."
+"$REPO_ROOT/bin/generate-tool-context" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then
-  echo "✗ tools.generated.md was updated — commit it before pushing:"
+  err "tools.generated.md was updated — commit it before pushing:"
   echo "  git add $TOOLS_GENERATED_RELPATH"
   echo "  git commit -m \"chore: regenerate tool context\""
   exit 1
 fi
-echo "✓ Tool context up to date"
+success "Tool context up to date"
 
-echo "→ Regenerating git rules..."
-"$REPO_ROOT/bin/generate-git-rules"
+info "Regenerating git rules..."
+"$REPO_ROOT/bin/generate-git-rules" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$GIT_GENERATED_RELPATH"; then
-  echo "✗ git.generated.md was updated — commit it before pushing:"
+  err "git.generated.md was updated — commit it before pushing:"
   echo "  git add $GIT_GENERATED_RELPATH"
   echo "  git commit -m \"chore: regenerate git rules\""
   exit 1
 fi
-echo "✓ Git rules up to date"
+success "Git rules up to date"
 
 # ── ShellCheck ────────────────────────────────────────────────────────────────
 if ! command -v shellcheck >/dev/null 2>&1; then
-  echo "✗ shellcheck not found — run: brew install shellcheck"
+  err "shellcheck not found — run: brew install shellcheck"
   exit 1
 fi
 
-echo "→ Running ShellCheck..."
+info "Running ShellCheck..."
 grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' "$REPO_ROOT" --exclude-dir='.git' \
   | sort \
   | xargs shellcheck --severity=warning
-echo "✓ ShellCheck passed"
+success "ShellCheck passed"
 
 # ── Bats tests ────────────────────────────────────────────────────────────────
 if ! command -v bats >/dev/null 2>&1; then
-  echo "✗ bats not found — run: brew install bats-core"
+  err "bats not found — run: brew install bats-core"
   exit 1
 fi
 
-echo "→ Running tests..."
+info "Running tests..."
 bats "$REPO_ROOT/tests/" --recursive --timing
-echo "✓ Tests passed"
+success "Tests passed"

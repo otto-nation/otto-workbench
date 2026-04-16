@@ -28,7 +28,11 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 # shellcheck source=../lib/registries.sh
 . "$REPO_ROOT/lib/registries.sh"
 
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
 ERRORS=0
+REGISTRIES_CHECKED=0
 declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
 
 # _fail MSG — records an error and prints it; does not exit immediately so all
@@ -252,11 +256,14 @@ if [[ "${#all_registries[@]}" -eq 0 ]]; then
   exit 0
 fi
 
-echo "→ Validating registries..."
+$QUIET || echo "→ Validating registries..."
 
 for registry in "${all_registries[@]}"; do
-  echo
-  info "Schema: ${registry#"$REPO_ROOT/"}"
+  REGISTRIES_CHECKED=$(( REGISTRIES_CHECKED + 1 ))
+  if ! $QUIET; then
+    echo
+    info "Schema: ${registry#"$REPO_ROOT/"}"
+  fi
   _validate_schema "$registry"
   _validate_env_fields "$registry"
   _validate_auth_fields "$registry"
@@ -287,4 +294,4 @@ if [[ "$ERRORS" -gt 0 ]]; then
   exit 1
 fi
 
-success "All registries valid"
+success "All registries valid ($REGISTRIES_CHECKED files)"

@@ -55,6 +55,9 @@ AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
 COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
 CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
 
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
   exit 1
@@ -214,7 +217,7 @@ _render_registry() {
   _render_registry "$BIN_REGISTRY"
   _render_registry "$ZSH_REGISTRY"
 } > "$OUTPUT"
-success "Generated $(basename "$OUTPUT")"
+$QUIET || success "Generated $(basename "$OUTPUT")"
 
 # ── .env.local.template env section ───────────────────────────────────────────
 
@@ -299,7 +302,7 @@ _generate_env_section() {
 
 if [[ -f "$ENV_LOCAL_TEMPLATE_PATH" ]]; then
   _generate_env_section | _splice_readme "$ENV_LOCAL_TEMPLATE_PATH" "ENV" --shell
-  success "Updated .env.local.template env section"
+  $QUIET || success "Updated .env.local.template env section"
 fi
 
 # ── README sections ───────────────────────────────────────────────────────────
@@ -491,11 +494,13 @@ _readme_optional_components() {
   printf '**Existing optional components:** %s\n' "$(_join ', ' "${entries[@]}")"
 }
 
-if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$README_PATH" "SCRIPTS-TABLE";    success "Updated README scripts table";    fi
-if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$README_PATH" "TASKS-BLOCK";      success "Updated README tasks block";      fi
-if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$README_PATH" "AI-INSTALLS";      success "Updated README AI installs";      fi
-if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$README_PATH" "TOOLS-TABLE";      success "Updated README tools table";      fi
-if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   success "Updated README component menu";   fi
-if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    success "Updated README after-install";    fi
-                                     _readme_core_components     | _splice_readme "$CONTRIBUTING_PATH" "CORE-COMPONENTS";     success "Updated CONTRIBUTING core components"
-                                     _readme_optional_components | _splice_readme "$CONTRIBUTING_PATH" "OPTIONAL-COMPONENTS"; success "Updated CONTRIBUTING optional components"
+_gen_success() { $QUIET || success "$*"; }
+
+if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$README_PATH" "SCRIPTS-TABLE";    _gen_success "Updated README scripts table";    fi
+if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$README_PATH" "TASKS-BLOCK";      _gen_success "Updated README tasks block";      fi
+if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$README_PATH" "AI-INSTALLS";      _gen_success "Updated README AI installs";      fi
+if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$README_PATH" "TOOLS-TABLE";      _gen_success "Updated README tools table";      fi
+if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   _gen_success "Updated README component menu";   fi
+if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    _gen_success "Updated README after-install";    fi
+                                     _readme_core_components     | _splice_readme "$CONTRIBUTING_PATH" "CORE-COMPONENTS";     _gen_success "Updated CONTRIBUTING core components"
+                                     _readme_optional_components | _splice_readme "$CONTRIBUTING_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated CONTRIBUTING optional components"

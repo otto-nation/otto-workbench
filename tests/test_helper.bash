@@ -57,7 +57,7 @@ make_git_remote() {
   # Isolate from user's global gitconfig (e.g. empty gpg.format causes failures).
   export GIT_CONFIG_GLOBAL=/dev/null
 
-  git init --bare "$remote_dir" --quiet
+  git init --bare "$remote_dir" --quiet --initial-branch=main
   git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null
   cd "$local_dir" || return 1
 

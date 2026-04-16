@@ -360,6 +360,76 @@ tasks:
         echo "$AI_RESPONSE"
 
   # ============================================================================
+  # GIT WORKTREES
+  # ============================================================================
+
+  wt:create:
+    desc: "Create a git worktree with auto-named branch (usage: task wt:create -- <name> [base-branch])"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/worktree.sh"
+        set -- {{.CLI_ARGS}}
+        name="${1:-}"
+        base="${2:-origin/main}"
+        if [ -z "$name" ]; then
+          err "Usage: task wt:create -- <name> [base-branch]"
+          exit 1
+        fi
+        wt_create "$name" "$base"
+
+  wt:list:
+    desc: "List all worktrees in the current repo"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/worktree.sh"
+        wt_list
+
+  wt:status:
+    desc: "Show status of current or named worktree (usage: task wt:status [-- name])"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/worktree.sh"
+        set -- {{.CLI_ARGS}}
+        wt_status "${1:-}"
+
+  wt:open:
+    desc: "Print path to a worktree for cd (usage: cd $(task wt:open -- <name>))"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/worktree.sh"
+        set -- {{.CLI_ARGS}}
+        name="${1:-}"
+        if [ -z "$name" ]; then
+          err "Usage: task wt:open -- <name>" >&2
+          exit 1
+        fi
+        wt_path "$name"
+
+  wt:remove:
+    desc: "Remove a worktree and optionally delete its branch (usage: task wt:remove -- <name> [--force])"
+    silent: true
+    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    cmds:
+      - |
+        . "{{.TASKFILE_DIR}}/lib/worktree.sh"
+        set -- {{.CLI_ARGS}}
+        name="${1:-}"
+        force_flag="${2:-}"
+        if [ -z "$name" ]; then
+          err "Usage: task wt:remove -- <name> [--force]"
+          exit 1
+        fi
+        wt_remove "$name" "$force_flag"
+
+  # ============================================================================
   # HOMEBREW
   # ============================================================================
   brew:install:
@@ -430,6 +500,13 @@ tasks:
         echo "   pr:update         Update existing PR description"
         echo "   pr:review         AI review of the current PR"
         echo "   Pass -- --no-issue to any pr:* task to skip issue prompts"
+        echo ""
+        echo "Git Worktrees:"
+        echo "   wt:create        Create a worktree with auto-named branch"
+        echo "   wt:list          List all worktrees in the current repo"
+        echo "   wt:status        Show status of current or named worktree"
+        echo "   wt:open          Print path to a worktree (use: cd \$(task wt:open -- name))"
+        echo "   wt:remove        Remove a worktree and optionally its branch"
         echo ""
         echo "Homebrew:"
         echo "   brew:install      Install core packages from brew/Brewfile"

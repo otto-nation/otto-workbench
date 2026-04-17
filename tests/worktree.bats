@@ -1,15 +1,26 @@
 #!/usr/bin/env bats
 
+setup_file() {
+  load 'test_helper'
+  # Create the bare remote once — tests clone from it in setup().
+  SHARED_REMOTE="$BATS_FILE_TMPDIR/remote"
+  local tmp_local="$BATS_FILE_TMPDIR/seed"
+  make_git_remote "$SHARED_REMOTE" "$tmp_local" "feature/test"
+  # Push feature branch so clones can check it out
+  git push --quiet origin "feature/test"
+  cd /
+  rm -rf "$tmp_local"
+  export SHARED_REMOTE
+}
+
 setup() {
   load 'test_helper'
 
   TMPDIR="$(mktemp -d)"
-  REMOTE_DIR="$TMPDIR/remote"
   LOCAL_DIR="$TMPDIR/local"
   FAKE_HOME="$TMPDIR/fakehome"
 
-  make_git_remote "$REMOTE_DIR" "$LOCAL_DIR" "feature/test"
-  # make_git_remote cds into LOCAL_DIR and sets GIT_CONFIG_GLOBAL=/dev/null
+  clone_from_shared_remote "$SHARED_REMOTE" "$LOCAL_DIR" "feature/test"
 
   # Resolve symlinks so comparisons work on macOS (/tmp -> /private/tmp)
   LOCAL_DIR="$(cd "$LOCAL_DIR" && pwd -P)"

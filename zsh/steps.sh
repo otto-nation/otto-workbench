@@ -248,7 +248,7 @@ sync_zsh() {
   echo; info "Environment variables ($ENV_LOCAL_FILE)"
   # Regenerate the template so it reflects currently installed tools,
   # then splice the ENV section into ~/.env.local.
-  if command -v yq >/dev/null 2>&1; then
+  if [[ "${WORKBENCH_SKIP_GENERATE:-}" != "1" ]] && command -v yq >/dev/null 2>&1; then
     bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
   fi
   _env_local_bootstrap

@@ -151,6 +151,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 | [go-task](https://taskfile.dev) | Task runner with YAML-defined tasks (used via the 'task' wrapper script) |
 | [shellcheck](https://www.shellcheck.net/) | Static analysis tool for shell scripts — catches bugs and style issues |
 | [bats-core](https://bats-core.readthedocs.io/) | Bash Automated Testing System — unit testing framework for shell scripts |
+| [parallel](https://www.gnu.org/software/parallel/) | GNU parallel — run shell commands in parallel across multiple cores |
 | [tree](https://oldmanprogrammer.net/source.php?dir=projects/tree) | Recursive directory listing tool — visualizes folder structure as a tree |
 | [delta](https://dandavison.github.io/delta/) | Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers |
 | [pipx](https://pipx.pypa.io/) | Install and run Python CLI tools in isolated environments |

@@ -51,6 +51,12 @@ tools:
     usage: "bats tests/  |  bats tests/foo.bats"
     docs: "https://bats-core.readthedocs.io/"
 
+  - name: parallel
+    description: "GNU parallel — run shell commands in parallel across multiple cores"
+    brew_name: "parallel"
+    when_to_use: "Required by bats --jobs for parallel test execution in pre-push hook"
+    docs: "https://www.gnu.org/software/parallel/"
+
   - name: tree
     description: "Recursive directory listing tool — visualizes folder structure as a tree"
     when_to_use: "Quickly inspecting directory structure; understanding project layout at a glance"

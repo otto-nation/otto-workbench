@@ -82,7 +82,9 @@ fi
 
 info "Running tests..."
 _bats_start=$SECONDS
-_bats_output=$(bats "$REPO_ROOT/tests/" --recursive --timing 2>&1) || {
+_bats_jobs_flag=()
+command -v parallel >/dev/null 2>&1 && _bats_jobs_flag=(--jobs 8 --no-parallelize-within-files)
+_bats_output=$(bats "$REPO_ROOT/tests/" --recursive --timing "${_bats_jobs_flag[@]}" 2>&1) || {
   # Show full output on failure — failures and context are visible
   echo "$_bats_output"
   err "Tests failed"

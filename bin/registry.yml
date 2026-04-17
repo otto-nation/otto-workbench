@@ -28,7 +28,7 @@ tools:
   - name: otto-workbench
     description: "Re-applies all workbench configuration to ~/ (symlinks, settings, rules)"
     when_to_use: "After pulling workbench updates or when config gets out of sync"
-    usage: "otto-workbench sync"
+    usage: "otto-workbench sync  |  otto-workbench claude [--force]  |  otto-workbench changelog"
 
   - name: generate-tool-context
     description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"

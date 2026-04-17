@@ -203,6 +203,194 @@ sync_claude() {
   step_claude_agents
 }
 
+# ─── Project scaffolding ─────────────────────────────────────────────────────
+# These functions scaffold a per-project .claude/ directory. Called by
+# `otto-workbench claude` when run from a project root.
+
+# _detect_project_stacks — populates DETECTED_STACKS array with detected languages.
+_detect_project_stacks() {
+  DETECTED_STACKS=()
+
+  if [[ -f "build.gradle.kts" ]]; then
+    DETECTED_STACKS+=("kotlin")
+  elif [[ -f "build.gradle" ]] && grep -q "kotlin" "build.gradle" 2>/dev/null; then
+    DETECTED_STACKS+=("kotlin")
+  elif [[ -f "build.gradle" || -f "pom.xml" ]]; then
+    DETECTED_STACKS+=("java")
+  fi
+
+  [[ -f "go.mod" ]] && DETECTED_STACKS+=("go")
+
+  if [[ -f "package.json" ]]; then
+    if [[ -f "tsconfig.json" ]] || grep -q '"typescript"' "package.json" 2>/dev/null; then
+      DETECTED_STACKS+=("typescript")
+    else
+      DETECTED_STACKS+=("node")
+    fi
+  fi
+
+  if [[ -f "requirements.txt" || -f "pyproject.toml" || -f "setup.py" ]]; then
+    DETECTED_STACKS+=("python")
+  fi
+
+  [[ -f "Cargo.toml" ]] && DETECTED_STACKS+=("rust")
+  return 0
+}
+
+# _detect_build_commands — sets BUILD_CMD, TEST_CMD, RUN_CMD based on primary stack.
+_detect_build_commands() {
+  BUILD_CMD="" TEST_CMD="" RUN_CMD=""
+  local primary="${DETECTED_STACKS[0]:-}"
+  case "$primary" in
+    kotlin|java)
+      if [[ -f "gradlew" ]]; then
+        BUILD_CMD="./gradlew build"; TEST_CMD="./gradlew test"
+      elif [[ -f "pom.xml" ]]; then
+        BUILD_CMD="mvn package"; TEST_CMD="mvn test"
+      fi ;;
+    go)
+      BUILD_CMD="go build ./..."; TEST_CMD="go test ./..."; RUN_CMD="go run ." ;;
+    typescript|node)
+      local pm="npm"
+      [[ -f "bun.lockb" || -f "bun.lock" ]] && pm="bun"
+      [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
+      [[ -f "yarn.lock" ]] && pm="yarn"
+      BUILD_CMD="${pm} run build"; TEST_CMD="${pm} run test"; RUN_CMD="${pm} run dev" ;;
+    python)
+      TEST_CMD="pytest"; RUN_CMD="python -m <module>" ;;
+    rust)
+      BUILD_CMD="cargo build"; TEST_CMD="cargo test"; RUN_CMD="cargo run" ;;
+  esac
+}
+
+# _build_stack_label — sets STACK_LABEL from DETECTED_STACKS.
+_build_stack_label() {
+  if [[ ${#DETECTED_STACKS[@]} -eq 0 ]]; then
+    STACK_LABEL="(not detected)"; return
+  fi
+  local labels=() s
+  for s in "${DETECTED_STACKS[@]}"; do
+    case "$s" in
+      kotlin) labels+=("Kotlin") ;; java) labels+=("Java") ;;
+      go) labels+=("Go") ;; typescript) labels+=("TypeScript") ;;
+      node) labels+=("Node.js") ;; python) labels+=("Python") ;;
+      rust) labels+=("Rust") ;; *) labels+=("$s") ;;
+    esac
+  done
+  local IFS=", "; STACK_LABEL="${labels[*]}"
+}
+
+# _scaffold_file SOURCE TARGET LABEL — copies source to target, skips if exists.
+_scaffold_file() {
+  local source="$1" target="$2" label="$3" force="${4:-false}"
+  if [[ -f "$target" ]] && [[ "$force" == false ]]; then
+    skip "$label (exists)"; return
+  fi
+  cp "$source" "$target"
+  success "$label"
+}
+
+# _generate_claude_md TARGET — writes a lean project CLAUDE.md.
+_generate_claude_md() {
+  local target="$1" force="${2:-false}" project_name
+  project_name="$(basename "$(pwd)")"
+  if [[ -f "$target" ]] && [[ "$force" == false ]]; then
+    skip "CLAUDE.md (exists)"; return
+  fi
+
+  local workflow=""
+  [[ -n "$BUILD_CMD" ]] && workflow+="- Build: \`${BUILD_CMD}\`"$'\n'
+  [[ -n "$TEST_CMD"  ]] && workflow+="- Test:  \`${TEST_CMD}\`"$'\n'
+  [[ -n "$RUN_CMD"   ]] && workflow+="- Run:   \`${RUN_CMD}\`"$'\n'
+  workflow="${workflow%$'\n'}"
+
+  cat > "$target" <<EOF
+# ${project_name}
+
+<!-- TODO: Describe this project in 1-2 sentences -->
+
+## Stack
+${STACK_LABEL}
+
+## Dev workflow
+${workflow:-<!-- TODO: Add build/test/run commands -->}
+
+## Key paths
+<!-- TODO: Add paths Claude should know
+     Examples:
+       - Source:     src/main/kotlin/
+       - Tests:      src/test/kotlin/
+       - Config:     src/main/resources/
+       - Generated:  build/generated/ (do not edit)
+-->
+
+## Notes
+<!-- TODO: Add anything Claude should know before starting:
+       - External dependencies (databases, services) required to run
+       - Architectural constraints or patterns enforced in this repo
+       - Anything that has burned you before
+-->
+
+## Rules
+Project conventions load from \`.claude/rules/\` automatically.
+Add personal rules as \`.claude/rules/<topic>.local.md\` (gitignored).
+EOF
+  success "CLAUDE.md"
+}
+
+# _scaffold_gitignore — creates .claude/rules/.gitignore and .claude/.gitignore.
+_scaffold_gitignore() {
+  local rules_gi=".claude/rules/.gitignore"
+  if [[ ! -f "$rules_gi" ]]; then
+    printf '*.local.md\n' > "$rules_gi"
+  fi
+
+  local claude_gi=".claude/.gitignore"
+  if [[ ! -f "$claude_gi" ]]; then
+    printf 'anatomy.md\n' > "$claude_gi"
+  elif ! grep -qF 'anatomy.md' "$claude_gi" 2>/dev/null; then
+    printf 'anatomy.md\n' >> "$claude_gi"
+  fi
+}
+
+# scaffold_project_claude [--force] — scaffolds .claude/ in the current directory.
+# Called by `otto-workbench claude` for project-level setup.
+scaffold_project_claude() {
+  local force=false
+  [[ "${1:-}" == "--force" ]] && force=true
+
+  _detect_project_stacks
+  _detect_build_commands
+  _build_stack_label
+
+  if [[ ${#DETECTED_STACKS[@]} -gt 0 ]]; then
+    info "Stack: ${STACK_LABEL}"
+  else
+    warn "No stack detected — generating base scaffold"
+  fi
+  echo
+
+  mkdir -p .claude/rules
+
+  info "Scaffolding .claude/"
+  _generate_claude_md ".claude/CLAUDE.md" "$force"
+
+  echo
+  info "Scaffolding .claude/rules/"
+  _scaffold_file "$CLAUDE_TEMPLATES_DIR/rules/conventions.md" ".claude/rules/conventions.md" "conventions.md" "$force"
+  _scaffold_file "$CLAUDE_TEMPLATES_DIR/rules/testing.md"     ".claude/rules/testing.md"     "testing.md"     "$force"
+
+  local s
+  for s in "${DETECTED_STACKS[@]}"; do
+    local tmpl="$CLAUDE_TEMPLATES_DIR/rules/${s}.md"
+    [[ -f "$tmpl" ]] && _scaffold_file "$tmpl" ".claude/rules/${s}.md" "${s}.md" "$force"
+  done
+
+  _scaffold_gitignore
+}
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+
 print_claude_summary() {
   echo
   info "Claude Code"

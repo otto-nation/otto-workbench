@@ -1,0 +1,14 @@
+# Docker script registry — installed when the Docker component is set up.
+# Regenerate: ai/bin/generate-tool-context
+
+meta:
+  section: "Docker Scripts"
+  install_check: false
+  validation: bindir
+  source: docker/bin
+
+tools:
+  - name: cleanup-testcontainers
+    description: "Stops and removes stale Testcontainers Docker resources left by test runs"
+    when_to_use: "After test runs that left orphaned containers; when freeing Docker resources"
+    usage: "cleanup-testcontainers"

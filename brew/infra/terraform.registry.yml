@@ -1,6 +1,6 @@
-# Terraform stack registry — AI context for Claude/Kiro.
+# Terraform stack registry.
 # Install: brew bundle --file=brew/infra/terraform.Brewfile
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Terraform Tools"

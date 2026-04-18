@@ -57,7 +57,7 @@ make_git_remote() {
   # Isolate from user's global gitconfig (e.g. empty gpg.format causes failures).
   export GIT_CONFIG_GLOBAL=/dev/null
 
-  git init --bare "$remote_dir" --quiet
+  git init --bare "$remote_dir" --quiet --initial-branch=main
   git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null
   cd "$local_dir" || return 1
 
@@ -73,4 +73,21 @@ make_git_remote() {
   echo "feature" > feature.txt
   git add .
   git commit -m "feat: add feature" --quiet
+}
+
+# clone_from_shared_remote REMOTE_DIR LOCAL_DIR [BRANCH] — fast local clone from
+# a bare remote created by make_git_remote in setup_file. Use this in per-test
+# setup() to avoid repeating the expensive init/commit/push cycle.
+clone_from_shared_remote() {
+  local remote_dir="$1"
+  local local_dir="$2"
+  local branch="${3:-feature/test}"
+
+  export GIT_CONFIG_GLOBAL=/dev/null
+  cd / || return 1
+  git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null
+  cd "$local_dir" || return 1
+  git config user.email "test@example.com"
+  git config user.name "Test"
+  git checkout "$branch" --quiet 2>/dev/null
 }

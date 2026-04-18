@@ -1,0 +1,19 @@
+# Git script registry.
+# Regenerate: ai/bin/generate-tool-context
+
+meta:
+  section: "Git Scripts"
+  install_check: false
+  validation: bindir
+  source: git/bin
+
+tools:
+  - name: generate-changelog
+    description: "Generates a changelog from conventional commits grouped by type"
+    when_to_use: "Reviewing recent changes; understanding what landed since a given date"
+    usage: "generate-changelog  |  generate-changelog --since '7 days ago'"
+
+  - name: generate-git-rules
+    description: "Regenerates git.generated.md from lib/conventions.sh constants"
+    when_to_use: "After changing commit types, header length, or PR conventions in lib/conventions.sh"
+    usage: "git/bin/generate-git-rules"

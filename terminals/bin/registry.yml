@@ -1,0 +1,14 @@
+# Terminal script registry — installed when the Terminals component is set up.
+# Regenerate: ai/bin/generate-tool-context
+
+meta:
+  section: "Terminal Scripts"
+  install_check: false
+  validation: bindir
+  source: terminals/bin
+
+tools:
+  - name: ghostty-terminfo-push
+    description: "Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH"
+    when_to_use: "When connecting to a new remote server and seeing 'Error opening terminal: xterm-ghostty'"
+    usage: "ghostty-terminfo-push <host>"

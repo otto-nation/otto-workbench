@@ -1,0 +1,24 @@
+# AI script registry — installed when the AI component is set up.
+# Regenerate: ai/bin/generate-tool-context
+
+meta:
+  section: "AI Scripts"
+  install_check: false
+  validation: bindir
+  source: ai/bin
+
+tools:
+  - name: claude-rules
+    description: "Manages local Claude Code rule additions not tracked in the workbench"
+    when_to_use: "Adding machine-specific or project-specific Claude instructions"
+    usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
+
+  - name: generate-tool-context
+    description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
+    when_to_use: "After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync"
+    usage: "ai/bin/generate-tool-context"
+
+  - name: serena-mcp
+    description: "Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence"
+    when_to_use: "Enabling Serena LSP-based code intelligence in a specific project"
+    usage: "serena-mcp init  |  serena-mcp status"

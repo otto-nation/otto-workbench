@@ -245,9 +245,10 @@ _select_subdirs() {
 @test "install_file: is idempotent — no-op when content is identical" {
   echo "content" > "$TMPDIR/src"
   install_file "$TMPDIR/src" "$TMPDIR/dst"
+  # Backdate dst so a re-copy would visibly change the mtime (no sleep needed)
+  touch -t 200001010000 "$TMPDIR/dst"
   local mtime1
   mtime1=$(stat -f "%m" "$TMPDIR/dst" 2>/dev/null || stat -c "%Y" "$TMPDIR/dst")
-  sleep 1
   install_file "$TMPDIR/src" "$TMPDIR/dst"
   local mtime2
   mtime2=$(stat -f "%m" "$TMPDIR/dst" 2>/dev/null || stat -c "%Y" "$TMPDIR/dst")

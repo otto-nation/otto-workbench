@@ -1,11 +1,8 @@
 # AI Coding Assistant Guidelines - Language-Specific
 
-Language-specific coding standards for AI coding assistants (Kiro CLI, Cursor, GitHub Copilot, Claude, ChatGPT, etc.).
+Language-specific coding standards for AI coding assistants (Cursor, GitHub Copilot, Claude, ChatGPT, etc.).
 
 ## Installation
-
-### Kiro CLI
-Save to `~/.kiro/steering/language-specific.md`
 
 ### Cursor
 Add to `.cursorrules` or workspace settings

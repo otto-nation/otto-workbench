@@ -64,10 +64,6 @@ CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 
-# ─── Kiro ─────────────────────────────────────────────────────────────────────
-KIRO_AGENTS_DIR="$HOME/.kiro/agents"
-KIRO_STEERING_DIR="$HOME/.kiro/steering"
-
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
@@ -79,8 +75,6 @@ TESTCONTAINERS_SRC="$WORKBENCH_DIR/docker/testcontainers.properties"
 
 # ─── Workbench source — terminals ────────────────────────────────────────────
 TERMINALS_SRC_DIR="$WORKBENCH_DIR/terminals"
-ITERM_SRC_DIR="$WORKBENCH_DIR/terminals/iterm"
-ITERM_THEMES_SRC_DIR="$WORKBENCH_DIR/terminals/iterm/themes"
 GHOSTTY_SRC_DIR="$WORKBENCH_DIR/terminals/ghostty"
 GHOSTTY_CONFIG_TEMPLATE="$WORKBENCH_DIR/terminals/ghostty/config.template"
 GHOSTTY_CONFIG_DIR="$HOME/.config/ghostty"
@@ -115,9 +109,7 @@ CLAUDE_SETTINGS_SRC="$WORKBENCH_DIR/ai/claude/settings.json"
 CLAUDE_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/ai/claude/sync-settings.jq"
 CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
-
-KIRO_SRC_DIR="$WORKBENCH_DIR/ai/kiro"
-KIRO_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/kiro/agents"
+CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 
 # ─── Workbench source — editors ───────────────────────────────────────────────
 ZED_SETTINGS_SRC="$WORKBENCH_DIR/editors/zed/settings.json"

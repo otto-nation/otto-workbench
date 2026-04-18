@@ -10,7 +10,7 @@ _LIB_OUTPUT_SH=1
 
 # Bash 4.3+ required for namerefs (local -n) used throughout workbench libs.
 # macOS ships bash 3.2 at /bin/bash — if env bash resolves there, fail early.
-# Guard is bash-only so zsh sourcing (e.g. bin/aliases) is unaffected.
+# Guard is bash-only so zsh sourcing (e.g. zsh/bin/aliases) is unaffected.
 if [[ -n "${BASH_VERSINFO[0]:-}" ]]; then
   if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
     echo "ERROR: Bash 4.3+ required (found ${BASH_VERSION}). Install: brew install bash" >&2
@@ -41,8 +41,14 @@ sed_i() { sed -i.bak "$@" && rm -f "${@: -1}.bak"; }
 
 info()    { echo -e "${BLUE}→${NC} $*"; }
 success() { echo -e "${GREEN}✓${NC} $*"; }
-warn()    { echo -e "${YELLOW}⚠${NC}  $*"; }
-err()     { echo -e "${RED}✗${NC} $*" >&2; }
+warn() {
+  echo -e "${YELLOW}⚠${NC}  $*"
+  [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG" || true
+}
+err() {
+  echo -e "${RED}✗${NC} $*" >&2
+  [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "ERR:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG" || true
+}
 title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 
 # skip [label] — print a skip line with optional label

@@ -11,6 +11,7 @@ You are strictly read-only — you MUST NOT modify any files, apply changes, or 
 ## Planning Protocol
 
 ### 1. Scope Assessment
+- Read the repo's CLAUDE.md for project-specific build commands, generated file mappings, and constraints
 - Read dependency files (`go.mod`, `build.gradle`, `package.json`, `Dockerfile`, `requirements.txt`, `Brewfile`, etc.)
 - Identify current versions and target versions
 - Check for known breaking changes between current and target versions

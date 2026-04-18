@@ -4,13 +4,21 @@
 # Usage: otto-workbench <command>
 #
 # Commands:
-#   sync        Re-apply all workbench configuration to ~/
-#   changelog   Show recent changes from conventional commits
+#   sync              Re-apply all workbench configuration to ~/
+#   claude [--force]  Sync Claude config + scaffold project .claude/ (see below)
+#   changelog         Show recent changes from conventional commits
+#
+# What claude does:
+#   Syncs machine-level Claude config (settings, rules, skills, agents, MCPs),
+#   then scaffolds a .claude/ directory in the current git repo (if one doesn't
+#   exist) with stack-detected rules and a project anatomy file.
+#   Anatomy is a file index (.claude/anatomy.md) with per-file descriptions and
+#   token estimates — helps Claude decide what to read before exploring.
+#   Use --force to re-scaffold an existing .claude/ directory.
 #
 # What sync does (pure config reconciliation):
-#   - Re-symlinks bin/, zsh/, git/.gitconfig, Taskfile, lib/
+#   - Re-symlinks scripts, zsh/, git/.gitconfig, Taskfile, lib/
 #   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
-#   - Syncs Kiro agent configs and rules
 #   - Merges Zed/Sublime editor settings
 #   - Reconciles Ghostty theme key
 #
@@ -58,6 +66,11 @@ unset _f _step_files
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_sync() {
+  # Collect warnings/errors for final summary replay.
+  WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
+  export WORKBENCH_INSTALL_LOG
+  trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
+
   title "Workbench sync"
   echo
 
@@ -69,15 +82,17 @@ cmd_sync() {
 
   # Auto-discovers sync_<component>() from all steps.sh files.
   # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
-  #                              ai/claude → ai/kiro → …
+  #                              ai/claude → editors/… → …
   # Adding any component with a sync_<name>() function includes it automatically.
   local -a _step_files=()
   discover_step_files _step_files
   local _f _c
   for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
+    export WORKBENCH_CURRENT_COMPONENT="$_c"
     declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
   done
+  unset WORKBENCH_CURRENT_COMPONENT
 
   # shellcheck source=/dev/null
   . "$(dirname "$_SELF")/../lib/summary.sh"
@@ -88,24 +103,72 @@ cmd_sync() {
 
   # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
   run_component_summaries
+
+  print_warnings_summary
+}
+
+cmd_claude() {
+  local force_flag=""
+  [[ "${2:-}" == "--force" ]] && force_flag="--force"
+
+  title "Claude setup"
+  echo
+
+  # 1. Sync machine-level Claude config (settings, rules, skills, agents, MCPs)
+  sync_claude
+
+  # 2. Scaffold project .claude/ if not already done (or if --force)
+  local project_root
+  project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
+
+  if [[ -n "$project_root" ]]; then
+    cd "$project_root"
+    echo
+    if [[ -d ".claude" ]] && [[ -z "$force_flag" ]]; then
+      info "Project .claude/ exists — skipping scaffold (use --force to re-scaffold)"
+    else
+      info "Scaffolding project"
+      scaffold_project_claude $force_flag
+    fi
+
+    # 3. Generate project anatomy
+    local anatomy_gen="$CLAUDE_SKILLS_DIR/anatomy/generate-anatomy.sh"
+    if [[ -f "$anatomy_gen" ]]; then
+      echo
+      info "Generating project anatomy"
+      if bash "$anatomy_gen"; then
+        success "anatomy.md"
+      else
+        skip "anatomy.md (generator failed)"
+      fi
+    fi
+  else
+    echo
+    warn "Not in a git repo — skipping project scaffold and anatomy"
+  fi
+
+  echo
+  success "Claude setup complete!"
 }
 
 cmd_changelog() {
   shift  # remove "changelog" from args
-  bash "$WORKBENCH_DIR/bin/generate-changelog" "$@"
+  bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 case "${1:-}" in
   sync)      cmd_sync ;;
+  claude)    cmd_claude "$@" ;;
   changelog) cmd_changelog "$@" ;;
   *)
     echo "Usage: otto-workbench <command>"
     echo
     echo "Commands:"
-    echo "  sync        Re-apply all workbench configuration to ~/"
-    echo "  changelog   Show recent changes from conventional commits"
+    echo "  sync              Re-apply all workbench configuration to ~/"
+    echo "  claude [--force]  Sync Claude config + scaffold .claude/ in current repo"
+    echo "  changelog         Show recent changes from conventional commits"
     exit 1
     ;;
 esac

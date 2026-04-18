@@ -1,11 +1,8 @@
 # AI Coding Assistant Guidelines - General
 
-Universal coding standards and best practices for AI coding assistants (Kiro CLI, Cursor, GitHub Copilot, Claude, ChatGPT, etc.).
+Universal coding standards and best practices for AI coding assistants (Cursor, GitHub Copilot, Claude, ChatGPT, etc.).
 
 ## Installation
-
-### Kiro CLI
-Save to `~/.kiro/steering/general.md`
 
 ### Cursor
 Add to `.cursorrules` or workspace settings

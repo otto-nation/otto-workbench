@@ -61,6 +61,7 @@
 	autoSetupRemote = true
 
 [core]
+	excludesFile = ~/.config/git/ignore
 	fsmonitor = true
 	untrackedCache = true
 	pager = delta

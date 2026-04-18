@@ -22,13 +22,13 @@ setup() {
   export ENV_LOCAL_TEMPLATE_PATH="$TMPDIR/env.local.template.nonexistent"
 
   mkdir -p "$WORK_DIR"
-  GENERATOR="$REPO_ROOT/bin/generate-tool-context"
+  GENERATOR="$REPO_ROOT/ai/bin/generate-tool-context"
 }
 
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR
+  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR AI_DIR README_PATH TASKFILE_PATH
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title

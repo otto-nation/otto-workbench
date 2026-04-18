@@ -14,10 +14,13 @@
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
+
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
 
 CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
@@ -54,7 +57,7 @@ _budget_line() {
     "# Git — Commits & Pull Requests" \
     "<!-- AUTO-GENERATED — do not edit directly -->" \
     "<!-- Source: lib/conventions.sh -->" \
-    "<!-- Regenerate: bin/generate-git-rules -->" \
+    "<!-- Regenerate: git/bin/generate-git-rules -->" \
     "" \
     "## Conventional Commits" \
     "" \
@@ -146,4 +149,4 @@ _budget_line() {
     "- Use the git user name (first name, lowercase) as the username prefix"
 } > "$OUTPUT"
 
-success "Generated $(basename "$OUTPUT")"
+$QUIET || success "Generated $(basename "$OUTPUT")"

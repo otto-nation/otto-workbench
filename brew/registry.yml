@@ -1,6 +1,6 @@
-# Brew tool registry — AI context for Claude/Kiro.
+# Brew tool registry.
 # Add an entry here whenever you add a formula or cask to the Brewfile.
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Brew Tools"
@@ -50,6 +50,12 @@ tools:
     when_to_use: "Writing or running tests for bash scripts in this repo"
     usage: "bats tests/  |  bats tests/foo.bats"
     docs: "https://bats-core.readthedocs.io/"
+
+  - name: parallel
+    description: "GNU parallel — run shell commands in parallel across multiple cores"
+    brew_name: "parallel"
+    when_to_use: "Required by bats --jobs for parallel test execution in pre-push hook"
+    docs: "https://www.gnu.org/software/parallel/"
 
   - name: tree
     description: "Recursive directory listing tool — visualizes folder structure as a tree"

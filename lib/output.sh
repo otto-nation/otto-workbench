@@ -43,11 +43,11 @@ info()    { echo -e "${BLUE}→${NC} $*"; }
 success() { echo -e "${GREEN}✓${NC} $*"; }
 warn() {
   echo -e "${YELLOW}⚠${NC}  $*"
-  [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG"
+  [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG" || true
 }
 err() {
   echo -e "${RED}✗${NC} $*" >&2
-  [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "ERR:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG"
+  [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "ERR:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG" || true
 }
 title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 

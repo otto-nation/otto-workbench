@@ -14,7 +14,7 @@
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
@@ -57,7 +57,7 @@ _budget_line() {
     "# Git — Commits & Pull Requests" \
     "<!-- AUTO-GENERATED — do not edit directly -->" \
     "<!-- Source: lib/conventions.sh -->" \
-    "<!-- Regenerate: bin/generate-git-rules -->" \
+    "<!-- Regenerate: git/bin/generate-git-rules -->" \
     "" \
     "## Conventional Commits" \
     "" \

@@ -1,6 +1,5 @@
-# Bin script registry.
-# Add an entry here whenever you add a script to bin/.
-# Regenerate: bin/generate-tool-context
+# Bin script registry — framework-level scripts that are always installed.
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Workbench Scripts"
@@ -14,16 +13,6 @@ tools:
     when_to_use: "Running any dev workflow — commits, PRs, brew management"
     usage: "task commit  |  task pr:create  |  task --global <cmd>"
     docs: "https://taskfile.dev"
-
-  - name: aliases
-    description: "Lists all custom shell aliases and functions with optional keyword filtering"
-    when_to_use: "Discovering available aliases; answering 'what shortcut exists for X?'"
-    usage: "aliases  |  aliases docker  |  aliases git"
-
-  - name: claude-rules
-    description: "Manages local Claude Code rule additions not tracked in the workbench"
-    when_to_use: "Adding machine-specific or project-specific Claude instructions"
-    usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
   - name: otto-workbench
     description: "Manage your workbench developer environment"
@@ -45,11 +34,6 @@ tools:
         scope: "Git history"
         when: "Reviewing recent changes from conventional commits"
 
-  - name: generate-tool-context
-    description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
-    when_to_use: "After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync"
-    usage: "bin/generate-tool-context"
-
   - name: mem-analyze
     description: "macOS memory analysis report — pressure, swap usage, top processes, per-user totals"
     when_to_use: "Diagnosing memory issues, high swap, or identifying memory-hungry processes"
@@ -59,16 +43,6 @@ tools:
     description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"
     when_to_use: "Fetching credentials or config values stored in Secrets Manager"
     usage: "get-secret"
-
-  - name: cleanup-testcontainers
-    description: "Stops and removes stale Testcontainers Docker resources left by test runs"
-    when_to_use: "After test runs that left orphaned containers; when freeing Docker resources"
-    usage: "cleanup-testcontainers"
-
-  - name: generate-git-rules
-    description: "Regenerates git.generated.md from lib/ai/core.sh constants"
-    when_to_use: "After changing commit types, header length, or PR conventions in lib/ai/core.sh"
-    usage: "bin/generate-git-rules"
 
   - name: validate-registries
     description: "Validates all tool registry YAML files for schema correctness and cross-file consistency"
@@ -84,18 +58,3 @@ tools:
     description: "Validates migration file naming, function naming, and shebang conventions"
     when_to_use: "After adding or editing any migration file; runs automatically on pre-push"
     usage: "bin/validate-migrations"
-
-  - name: generate-changelog
-    description: "Generates a changelog from conventional commits grouped by type"
-    when_to_use: "Reviewing recent changes; understanding what landed since a given date"
-    usage: "bin/generate-changelog  |  bin/generate-changelog --since '7 days ago'"
-
-  - name: serena-mcp
-    description: "Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence"
-    when_to_use: "Enabling Serena LSP-based code intelligence in a specific project"
-    usage: "serena-mcp init  |  serena-mcp status"
-
-  - name: ghostty-terminfo-push
-    description: "Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH"
-    when_to_use: "When connecting to a new remote server and seeing 'Error opening terminal: xterm-ghostty'"
-    usage: "ghostty-terminfo-push <host>"

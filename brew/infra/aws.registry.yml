@@ -1,6 +1,6 @@
 # AWS stack registry.
 # Install: brew bundle --file=brew/infra/aws.Brewfile
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "AWS Tools"

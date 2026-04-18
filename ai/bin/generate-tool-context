@@ -9,11 +9,9 @@
 # Never edit generated content directly — edit the source files instead.
 #
 # Registry discovery:
-#   Top-level:  brew/registry.yml  bin/registry.yml  zsh/registry.yml
-#   Optional stacks: brew/lang/*.registry.yml  brew/infra/*.registry.yml  brew/tools/*.registry.yml
-#                    (rendered only for installed tools — install_check: true)
-#   Adding a new stack: create brew/<category>/<name>.registry.yml with a meta block.
-#   Adding a new top-level registry: add one _render_registry call in the output block.
+#   Uses collect_registries() to auto-discover all */registry.yml and /*/*/registry.yml
+#   files, plus brew stacks (brew/*/*.registry.yml) and consumer env files (*.env.yml).
+#   Adding a new registry requires only creating the file — no edits here.
 #
 # Each registry file must contain a `meta` block:
 #   meta:
@@ -23,10 +21,8 @@
 #     source:        brew/Brewfile     # relative path used by validate-registries
 #
 # Environment overrides (for tests):
-#   BREW_REGISTRY        brew/registry.yml
-#   BIN_REGISTRY         bin/registry.yml
-#   ZSH_REGISTRY         zsh/registry.yml
-#   BREW_STACKS_DIR      brew/ directory (scanned recursively for *.registry.yml)
+#   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
+#   BREW_STACKS_DIR      brew/ directory (scanned for *.registry.yml stacks)
 #   TOOL_CONTEXT_OUTPUT  tools.generated.md path
 #   README_PATH          README.md path
 #   TASKFILE_PATH        Taskfile.global.yml path
@@ -35,18 +31,17 @@
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 # shellcheck source=../lib/registries.sh
 . "$REPO_ROOT/lib/registries.sh"
 
+BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
 BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
-ZSH_REGISTRY="${ZSH_REGISTRY:-"$REPO_ROOT/zsh/registry.yml"}"
-BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
 ENV_LOCAL_TEMPLATE_PATH="${ENV_LOCAL_TEMPLATE_PATH:-"$REPO_ROOT/zsh/.env.local.template"}"
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
@@ -194,6 +189,9 @@ _render_registry() {
   printf '%s\n' "$content"
 }
 
+_tool_registries=()
+collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+
 {
   printf -- '---\n'
   printf 'paths:\n'
@@ -207,15 +205,10 @@ _render_registry() {
   printf -- '---\n\n'
   printf '# Environment Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Sources: brew/registry.yml  mise/registry.yml  brew/{lang,infra,tools}/*.registry.yml  bin/registry.yml  zsh/registry.yml -->\n'
-  printf '<!-- Regenerate: bin/generate-tool-context -->\n'
-  _render_registry "$BREW_REGISTRY"
-  _render_registry "$MISE_REGISTRY"
-  while IFS= read -r -d '' registry; do
-    _render_registry "$registry"
-  done < <(find "$BREW_STACKS_DIR" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
-  _render_registry "$BIN_REGISTRY"
-  _render_registry "$ZSH_REGISTRY"
+  printf '<!-- Regenerate: ai/bin/generate-tool-context -->\n'
+  for _reg in "${_tool_registries[@]}"; do
+    _render_registry "$_reg"
+  done
 } > "$OUTPUT"
 $QUIET || success "Generated $(basename "$OUTPUT")"
 
@@ -313,7 +306,15 @@ _tool_readme_row() { printf '| `%s` | %s |\n' "$1" "$2"; }
 _readme_scripts() {
   printf '| Script | Description |\n'
   printf '|--------|-------------|\n'
-  _iter_tools "$BIN_REGISTRY" _tool_readme_row
+  local -a _script_registries=()
+  collect_registries _script_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+  for _reg in "${_script_registries[@]}"; do
+    local _val
+    _val=$(yq '.meta.validation // ""' "$_reg")
+    if [[ "$_val" == "bindir" ]]; then
+      _iter_tools "$_reg" _tool_readme_row
+    fi
+  done
 }
 
 _readme_tasks() {

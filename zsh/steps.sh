@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# description: Deploy zsh config layers, loader, and plugins
 # ZSH configuration setup.
 #
 # Usage: bash zsh/steps.sh
@@ -249,9 +250,12 @@ sync_zsh() {
   # Regenerate the template so it reflects currently installed tools,
   # then splice the ENV section into ~/.env.local.
   if [[ "${WORKBENCH_SKIP_GENERATE:-}" != "1" ]] && command -v yq >/dev/null 2>&1; then
-    bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
+    bash "$WORKBENCH_DIR/ai/bin/generate-tool-context" >/dev/null 2>&1
   fi
   _env_local_bootstrap
+
+  echo; info "zsh scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$ZSH_SRC_DIR"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

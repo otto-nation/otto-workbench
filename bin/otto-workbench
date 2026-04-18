@@ -9,7 +9,7 @@
 #   changelog         Show recent changes from conventional commits
 #
 # What sync does (pure config reconciliation):
-#   - Re-symlinks bin/, zsh/, git/.gitconfig, Taskfile, lib/
+#   - Re-symlinks scripts, zsh/, git/.gitconfig, Taskfile, lib/
 #   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
 #   - Merges Zed/Sublime editor settings
 #   - Reconciles Ghostty theme key
@@ -136,7 +136,7 @@ cmd_claude() {
 
 cmd_changelog() {
   shift  # remove "changelog" from args
-  bash "$WORKBENCH_DIR/bin/generate-changelog" "$@"
+  bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

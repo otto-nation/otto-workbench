@@ -1,6 +1,6 @@
 # Signing stack registry.
 # Install: brew bundle --file=brew/security/signing.Brewfile
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Signing Tools"

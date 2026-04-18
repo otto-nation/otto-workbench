@@ -274,6 +274,7 @@ echo
 # Preflight components (task, brew, mise) already ran above and are excluded.
 PREFLIGHT_COMPONENTS=(task brew mise)
 _core_dirs=()
+_core_descs=()
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$_f" ]] || continue
   _c=$(basename "$(dirname "$_f")")
@@ -282,8 +283,17 @@ for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   for _pf in "${PREFLIGHT_COMPONENTS[@]}"; do [[ "$_pf" == "$_c" ]] && { _is_preflight=true; break; }; done
   [[ "$_is_preflight" == true ]] && continue
   _core_dirs+=("$_c")
+  # Parse '# description: ...' from the first 5 lines of steps.sh
+  _desc=""
+  while IFS= read -r _line; do
+    if [[ "$_line" =~ ^#[[:space:]]*description:[[:space:]]*(.*) ]]; then
+      _desc="${BASH_REMATCH[1]}"
+      break
+    fi
+  done < <(head -n 5 "$_f")
+  _core_descs+=("$_desc")
 done
-unset _f _c _is_preflight _pf
+unset _f _c _is_preflight _pf _desc _line
 
 if [[ ${#_core_dirs[@]} -gt 0 ]]; then
   _core_selected=()
@@ -292,7 +302,7 @@ if [[ ${#_core_dirs[@]} -gt 0 ]]; then
   else
     info "Core components:"
     for _i in "${!_core_dirs[@]}"; do
-      printf "  [%d] %s\n" "$(( _i + 1 ))" "${_core_dirs[$_i]}"
+      printf "  [%d] %-22s ${DIM}%s${NC}\n" "$(( _i + 1 ))" "${_core_dirs[$_i]}" "${_core_descs[$_i]}"
     done
     echo
 
@@ -318,7 +328,7 @@ if [[ ${#_core_dirs[@]} -gt 0 ]]; then
   done
   unset _c
 fi
-unset _core_dirs _core_selected
+unset _core_dirs _core_descs _core_selected
 
 update_path_in_shell_rc
 

@@ -162,7 +162,7 @@ mytool/
 ```
 
 <!-- OPTIONAL-COMPONENTS-START -->
-**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (no sync)
+**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync)
 <!-- OPTIONAL-COMPONENTS-END -->
 
 ---

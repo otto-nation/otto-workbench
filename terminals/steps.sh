@@ -24,6 +24,9 @@ sync_terminals() {
     return
   fi
   sync_ghostty
+
+  echo; info "terminal scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$TERMINALS_SRC_DIR"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

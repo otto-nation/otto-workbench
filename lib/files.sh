@@ -170,6 +170,17 @@ symlink_dir() {
   done
 }
 
+# sync_component_bin COMPONENT_DIR — symlinks extensionless scripts from
+# COMPONENT_DIR/bin/ into LOCAL_BIN_DIR. No-op if bin/ subdirectory is absent.
+sync_component_bin() {
+  local component_bin="$1/bin"
+  [[ -d "$component_bin" ]] || return 0
+  mkdir -p "$LOCAL_BIN_DIR"
+  shopt -s extglob
+  symlink_dir "$component_bin" "$LOCAL_BIN_DIR" "!(*.*)" --prune
+  shopt -u extglob
+}
+
 # apply_config_patch FILE OLD NEW
 # Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched
 # or if FILE does not exist. Assumes OLD and NEW do not contain the | character.

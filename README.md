@@ -73,20 +73,20 @@ These are created once (from templates or by first-time setup) and never modifie
 | Script | Description |
 |--------|-------------|
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
-| `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
-| `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
 | `otto-workbench` | Manage your workbench developer environment |
-| `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
-| `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
-| `generate-git-rules` | Regenerates git.generated.md from lib/ai/core.sh constants |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
-| `generate-changelog` | Generates a changelog from conventional commits grouped by type |
+| `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
+| `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
+| `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
+| `generate-changelog` | Generates a changelog from conventional commits grouped by type |
+| `generate-git-rules` | Regenerates git.generated.md from lib/conventions.sh constants |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
+| `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
 <!-- SCRIPTS-TABLE-END -->
 
 ### ZSH Configuration
@@ -171,6 +171,7 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 | [gitkraken](https://www.gitkraken.com/) | GitKraken — visual Git client for branch management, history, and merge conflict resolution |
 | [readdle-spark](https://sparkmailapp.com/) | Spark — email client by Readdle with smart inbox, snooze, and team collaboration |
 | [spotify](https://www.spotify.com/) | Spotify — music and podcast streaming client |
+| [tailscale](https://tailscale.com/kb/) | Tailscale — zero-config mesh VPN built on WireGuard for secure private networking |
 | [zed](https://zed.dev/) | Zed — high-performance, multiplayer code editor built in Rust |
 
 **AWS Tools**

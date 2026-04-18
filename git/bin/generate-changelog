@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generate a changelog from conventional commits on the current branch.
 #
-# Usage: bin/generate-changelog [--since DATE] [--until DATE]
+# Usage: generate-changelog [--since DATE] [--until DATE]
 #
 # Defaults: --since "30 days ago", --until HEAD
 # Output: grouped markdown to stdout
@@ -13,7 +13,7 @@ set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$(dirname "$_SELF")/../../lib/ui.sh"
 # shellcheck source=../lib/conventions.sh
 . "$WORKBENCH_DIR/lib/conventions.sh"
 

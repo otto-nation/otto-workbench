@@ -157,7 +157,7 @@ step_claude_agents() {
 
 # step_generate_tools — regenerates the AI tool context markdown from registries.
 step_generate_tools() {
-  local generator="$BIN_SRC_DIR/generate-tool-context"
+  local generator="$AI_SRC_DIR/bin/generate-tool-context"
   if [[ ! -x "$generator" ]]; then
     warn "generate-tool-context not found — skipping tool context generation"
     return

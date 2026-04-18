@@ -1,6 +1,6 @@
 # Brew tool registry.
 # Add an entry here whenever you add a formula or cask to the Brewfile.
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Brew Tools"

@@ -1,6 +1,6 @@
 # Zsh alias registry.
 # Add an entry here whenever you add a new alias group to zsh/config.d/.
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Shell Aliases"

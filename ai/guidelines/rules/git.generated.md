@@ -1,7 +1,7 @@
 # Git — Commits & Pull Requests
 <!-- AUTO-GENERATED — do not edit directly -->
 <!-- Source: lib/conventions.sh -->
-<!-- Regenerate: bin/generate-git-rules -->
+<!-- Regenerate: git/bin/generate-git-rules -->
 
 ## Conventional Commits
 

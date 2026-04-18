@@ -6,7 +6,7 @@
 # to get the actual file in the workbench repo.
 _CMD="${$(whence -p "${0:t}" 2>/dev/null):-$0}"
 _SELF="$(readlink "$_CMD" 2>/dev/null || echo "$_CMD")"
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$(dirname "$_SELF")/../../lib/ui.sh"
 
 # ZSH_CONFIG_DIR comes from lib/constants.sh (bash-only); fall back to known path when running under zsh
 ALIASES_DIR="${ZSH_CONFIG_DIR:-$HOME/.config/zsh/config.d}"

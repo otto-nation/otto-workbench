@@ -1,6 +1,6 @@
 # Tools stack registry.
 # Install: brew bundle --file=brew/tools/tools.Brewfile
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Dev Tools"

@@ -12,80 +12,131 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 
-# ── Secret scan ───────────────────────────────────────────────────────────────
+# ── Output helpers ───────────────────────────────────────────────────────────
+
+# _step LABEL — prints "→ LABEL..." without a newline. Follow with _pass or _fail.
+_step() { printf "${BLUE}→${NC} %s... " "$*"; }
+
+# _pass [DETAIL] — completes the current step line with ✓ and optional detail.
+_pass() {
+  if [[ -n "${1:-}" ]]; then
+    printf "${GREEN}✓${NC} ${DIM}(%s)${NC}\n" "$*"
+  else
+    printf "${GREEN}✓${NC}\n"
+  fi
+}
+
+# _fail MSG — completes the current step line with ✗, prints captured output, and exits.
+_fail() {
+  printf "${RED}✗${NC}\n" >&2
+  echo "$1" >&2
+  exit 1
+}
+
+# _run_step LABEL COMMAND [ARGS...] — runs a command silently; prints compact pass/fail.
+# On success, extracts a parenthesized detail from stdout (e.g. "(16 files)") for display.
+_run_step() {
+  local label="$1"; shift
+  _step "$label"
+  local output
+  if output=$("$@" 2>&1); then
+    # Extract detail from success output for compact display.
+    # Matches "(N files)" or "N checks passed" patterns.
+    local detail=""
+    local _paren_re='\(([^)]+)\)'
+    local _checks_re='([0-9]+ checks)'
+    if [[ "$output" =~ $_paren_re ]]; then
+      detail="${BASH_REMATCH[1]}"
+    elif [[ "$output" =~ $_checks_re ]]; then
+      detail="${BASH_REMATCH[1]}"
+    fi
+    _pass "$detail"
+  else
+    _fail "$output"
+  fi
+}
+
+# ── Secret scan ──────────────────────────────────────────────────────────────
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   err "gitleaks not found — run: brew install gitleaks"
   exit 1
 fi
 
-info "Scanning for secrets..."
+_step "Scanning for secrets"
 _config_flag=""
 [[ -f "$REPO_ROOT/.gitleaks.toml" ]] && _config_flag="--config $REPO_ROOT/.gitleaks.toml"
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-gitleaks protect --staged $_config_flag 2>&1 \
-  || { err "gitleaks found potential secrets — commit blocked"; exit 1; }
-success "No secrets detected"
+if _gitleaks_output=$(gitleaks protect --staged $_config_flag 2>&1); then
+  _pass
+else
+  _fail "$_gitleaks_output"
+fi
 
-# ── Tool context ──────────────────────────────────────────────────────────────
+# ── Validation ───────────────────────────────────────────────────────────────
+
 if ! command -v yq >/dev/null 2>&1; then
   err "yq not found — run: brew install yq"
   exit 1
 fi
 
-info "Validating registries..."
-"$REPO_ROOT/bin/validate-registries" --quiet
+_run_step "Validating registries"   "$REPO_ROOT/bin/validate-registries" --quiet
+_run_step "Validating components"   "$REPO_ROOT/bin/validate-components" --quiet
+_run_step "Validating migrations"   "$REPO_ROOT/bin/validate-migrations" --quiet
 
-info "Validating component framework..."
-"$REPO_ROOT/bin/validate-components" --quiet
+# ── Generation ───────────────────────────────────────────────────────────────
 
-info "Validating migrations..."
-"$REPO_ROOT/bin/validate-migrations" --quiet
-
-info "Regenerating tool context..."
+_step "Regenerating tool context"
 "$REPO_ROOT/bin/generate-tool-context" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then
+  printf "${RED}✗${NC}\n" >&2
   err "tools.generated.md was updated — commit it before pushing:"
   echo "  git add $TOOLS_GENERATED_RELPATH"
   echo "  git commit -m \"chore: regenerate tool context\""
   exit 1
 fi
-success "Tool context up to date"
+_pass
 
-info "Regenerating git rules..."
+_step "Regenerating git rules"
 "$REPO_ROOT/bin/generate-git-rules" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$GIT_GENERATED_RELPATH"; then
+  printf "${RED}✗${NC}\n" >&2
   err "git.generated.md was updated — commit it before pushing:"
   echo "  git add $GIT_GENERATED_RELPATH"
   echo "  git commit -m \"chore: regenerate git rules\""
   exit 1
 fi
-success "Git rules up to date"
+_pass
 
-# ── ShellCheck ────────────────────────────────────────────────────────────────
+# ── ShellCheck ───────────────────────────────────────────────────────────────
+
 if ! command -v shellcheck >/dev/null 2>&1; then
   err "shellcheck not found — run: brew install shellcheck"
   exit 1
 fi
 
-info "Running ShellCheck..."
-grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' "$REPO_ROOT" --exclude-dir='.git' \
+_step "Running ShellCheck"
+if _sc_output=$(grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' "$REPO_ROOT" --exclude-dir='.git' \
   | sort \
-  | xargs shellcheck --severity=warning
-success "ShellCheck passed"
+  | xargs shellcheck --severity=warning 2>&1); then
+  _pass
+else
+  _fail "$_sc_output"
+fi
 
-# ── Bats tests ────────────────────────────────────────────────────────────────
+# ── Bats tests ───────────────────────────────────────────────────────────────
+
 if ! command -v bats >/dev/null 2>&1; then
   err "bats not found — run: brew install bats-core"
   exit 1
 fi
 
-info "Running tests..."
+_step "Running tests"
 _bats_start=$SECONDS
 _bats_jobs_flag=()
 command -v parallel >/dev/null 2>&1 && _bats_jobs_flag=(--jobs 8 --no-parallelize-within-files)
 _bats_output=$(bats "$REPO_ROOT/tests/" --recursive --timing "${_bats_jobs_flag[@]}" 2>&1) || {
-  # Show full output on failure — failures and context are visible
+  printf "${RED}✗${NC}\n" >&2
   echo "$_bats_output"
   err "Tests failed"
   exit 1
@@ -95,7 +146,7 @@ _bats_elapsed=$(( SECONDS - _bats_start ))
 # Extract test count from TAP plan line (1..N)
 _test_count=$(echo "$_bats_output" | grep -oE '^1\.\.[0-9]+' | head -1)
 _test_count="${_test_count#1..}"
-success "Tests passed (${_test_count:-?} tests, ${_bats_elapsed}s)"
+_pass "${_test_count:-?} tests, ${_bats_elapsed}s"
 
 # Warn about slow tests (>2s) — surfaces performance regressions
 _slow_threshold_ms=2000

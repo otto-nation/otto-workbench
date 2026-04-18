@@ -32,6 +32,7 @@ brew "docker"
 # ---------------------------------------------------------------------------
 brew "bats-core"
 brew "delta"
+brew "parallel"
 brew "gh"
 brew "go-task/tap/go-task"
 brew "otto-nation/tap/otto-stack"

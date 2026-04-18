@@ -1,6 +1,6 @@
-# Apps stack registry — AI context for Claude/Kiro.
+# Apps stack registry.
 # Install: brew bundle --file=brew/apps/apps.Brewfile
-# Regenerate: bin/generate-tool-context
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Mac Apps"
@@ -50,6 +50,12 @@ tools:
     when_to_use: "Listening to music or podcasts during development"
     usage: "Launched from Applications or Spotlight"
     docs: "https://www.spotify.com/"
+
+  - name: tailscale
+    description: "Tailscale — zero-config mesh VPN built on WireGuard for secure private networking"
+    when_to_use: "Connecting to private networks, accessing remote machines, sharing services between devices"
+    usage: "Launched from menu bar  |  tailscale status  |  tailscale up"
+    docs: "https://tailscale.com/kb/"
 
   - name: zed
     description: "Zed — high-performance, multiplayer code editor built in Rust"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# description: Configure gitconfig, shared settings, and global hooks
 # Git configuration setup.
 #
 # Usage: bash git/steps.sh
@@ -322,6 +323,9 @@ install_git() {
   echo; info "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
   step_local_hooks
+
+  echo; info "git scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$GIT_SRC_DIR"
 }
 
 # sync_git — runs all git sync steps non-interactively.
@@ -333,6 +337,9 @@ sync_git() {
   echo; info "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
   step_local_hooks
+
+  echo; info "git scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$GIT_SRC_DIR"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

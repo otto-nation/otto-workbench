@@ -95,6 +95,9 @@ sync_docker() {
 
   echo; info "testcontainers → $TESTCONTAINERS_FILE"
   step_docker_testcontainers
+
+  echo; info "docker scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$DOCKER_SRC_DIR"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

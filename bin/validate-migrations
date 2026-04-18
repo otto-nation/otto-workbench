@@ -19,11 +19,14 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/components.sh"
 
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
 ERRORS=0
 CHECKS=0
 FOUND=0
 
-_pass() { CHECKS=$(( CHECKS + 1 )); echo -e "  ${GREEN}✓${NC} $*"; }
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
 # Collect all migration files
@@ -72,7 +75,7 @@ done
 
 # Duplicate filename check across components
 if (( FOUND > 0 )); then
-  echo; info "Cross-component — no duplicate migration filenames"
+  if ! $QUIET; then echo; info "Cross-component — no duplicate migration filenames"; fi
   dupes="$(printf '%s\n' "${ALL_BASENAMES[@]}" | sort | uniq -d)"
   if [[ -n "$dupes" ]]; then
     while IFS= read -r dup; do

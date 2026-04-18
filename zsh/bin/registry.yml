@@ -1,0 +1,14 @@
+# ZSH script registry.
+# Regenerate: ai/bin/generate-tool-context
+
+meta:
+  section: "ZSH Scripts"
+  install_check: false
+  validation: bindir
+  source: zsh/bin
+
+tools:
+  - name: aliases
+    description: "Lists all custom shell aliases and functions with optional keyword filtering"
+    when_to_use: "Discovering available aliases; answering 'what shortcut exists for X?'"
+    usage: "aliases  |  aliases docker  |  aliases git"

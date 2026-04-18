@@ -22,3 +22,15 @@ alias gd='git diff'
 git-clean-branches() {
   git branch --merged | grep -vE '^\*|main|master|development' | xargs -n 1 git branch -d
 }
+
+# Worktree navigation — cd into a named worktree
+wt() {
+  local path
+  path=$(task wt:open -- "$1" 2>/dev/null)
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    cd "$path" || return 1
+  else
+    echo "✗ Worktree not found: $1" >&2
+    return 1
+  fi
+}

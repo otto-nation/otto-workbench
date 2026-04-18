@@ -2,7 +2,7 @@
 # Git convention constants — single source of truth for commit and PR formatting.
 #
 # Sourced by lib/ai/core.sh (for AI automation tasks) and directly by scripts
-# that only need convention constants (bin/generate-changelog, bin/generate-git-rules).
+# that only need convention constants (git/bin/generate-changelog, git/bin/generate-git-rules).
 #
 # To add a commit type, append it to COMMIT_TYPES — no other changes needed.
 

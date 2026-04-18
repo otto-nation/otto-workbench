@@ -121,12 +121,6 @@ print_workbench_summary() {
     echo -e "  ${DIM}  Claude config     ${CLAUDE_DIR/#"$HOME"/$home_short}/{settings.json,CLAUDE.md,rules/,skills/,agents/}${NC}"
   fi
 
-  # Kiro — only if installed
-  if [[ -d "$KIRO_STEERING_DIR" ]]; then
-    local kiro_dir="${KIRO_STEERING_DIR%/steering}"
-    echo -e "  ${DIM}  Kiro config       ${kiro_dir/#"$HOME"/$home_short}/{agents/,steering/}${NC}"
-  fi
-
   # ── Editable configs ─────────────────────────────────────────────────
   echo
   echo -e "  ${CYAN}Editable configs${NC} ${DIM}(never overwritten by sync)${NC}"
@@ -180,6 +174,26 @@ print_workbench_summary() {
   echo -e "  ${DIM}  Add a rule        claude-rules add <domain> \"rule\"${NC}"
   echo -e "  ${DIM}  Reload shell      exec $(basename "${SHELL:-zsh}")${NC}"
   echo
+}
+
+# print_warnings_summary — replays collected warnings and errors from the install log.
+# No-op if WORKBENCH_INSTALL_LOG is unset or the file is empty/missing.
+print_warnings_summary() {
+  [[ -n "${WORKBENCH_INSTALL_LOG:-}" && -s "$WORKBENCH_INSTALL_LOG" ]] || return 0
+
+  echo
+  echo -e "  ${CYAN}Warnings & Errors${NC}"
+
+  local line level msg
+  while IFS= read -r line; do
+    level="${line%%:*}"
+    msg="${line#*:}"
+    case "$level" in
+      WARN) echo -e "    ${YELLOW}⚠${NC}  $msg" ;;
+      ERR)  echo -e "    ${RED}✗${NC} $msg" ;;
+      *)    echo -e "      $line" ;;
+    esac
+  done < "$WORKBENCH_INSTALL_LOG"
 }
 
 # run_component_summaries [COMPONENT...] — auto-discovers and calls print_<name>_summary()

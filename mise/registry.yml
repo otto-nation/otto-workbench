@@ -1,5 +1,5 @@
-# Mise registry — AI context for Claude/Kiro.
-# Regenerate: bin/generate-tool-context
+# Mise registry.
+# Regenerate: ai/bin/generate-tool-context
 
 meta:
   section: "Version Management"

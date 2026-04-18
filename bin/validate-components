@@ -29,15 +29,18 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/components.sh"
 
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
 ERRORS=0
 CHECKS=0
 
-_pass() { CHECKS=$(( CHECKS + 1 )); echo -e "  ${GREEN}✓${NC} $*"; }
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
 # ─── Cross-tier: no duplicate sync_<name>() definitions across steps.sh files ─
 
-echo; info "Cross-tier — no duplicate sync_<name>() definitions"
+if ! $QUIET; then echo; info "Cross-tier — no duplicate sync_<name>() definitions"; fi
 
 _step_files=()
 discover_step_files _step_files
@@ -59,7 +62,7 @@ unset _sync_fns_all _sync_dupes _sf _fn
 
 # ─── Tier 1: steps.sh files define sync_<name>() ─────────────────────────────
 
-echo; info "Tier 1 — Core components (steps.sh → sync_<name>)"
+if ! $QUIET; then echo; info "Tier 1 — Core components (steps.sh → sync_<name>)"; fi
 
 for steps_file in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$steps_file" ]] || continue
@@ -73,7 +76,7 @@ done
 
 # ─── Tier 2: install.components registry ─────────────────────────────────────
 
-echo; info "Tier 2 — Optional components (install.components registry)"
+if ! $QUIET; then echo; info "Tier 2 — Optional components (install.components registry)"; fi
 
 REGISTRY="$WORKBENCH_DIR/install.components"
 if [[ ! -f "$REGISTRY" ]]; then
@@ -120,7 +123,7 @@ else
   done < "$REGISTRY"
 
   # Reverse check: no orphaned setup.conf
-  echo; info "Reverse check — no orphaned setup.conf"
+  if ! $QUIET; then echo; info "Reverse check — no orphaned setup.conf"; fi
   for conf in "$WORKBENCH_DIR"/*/setup.conf; do
     [[ -f "$conf" ]] || continue
     dir=$(basename "$(dirname "$conf")")
@@ -138,7 +141,7 @@ fi
 #   2. The dep appears before the component in install.components
 
 if [[ -f "$REGISTRY" ]]; then
-  echo; info "Dependency ordering"
+  if ! $QUIET; then echo; info "Dependency ordering"; fi
 
   # Build ordered list from registry
   _reg_order=()

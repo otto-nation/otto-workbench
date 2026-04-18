@@ -14,7 +14,7 @@ set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$(dirname "$_SELF")/../../lib/ui.sh"
 
 MCP_FILE=".mcp.json"
 MCP_NAME="serena"

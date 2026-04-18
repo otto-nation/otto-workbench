@@ -43,21 +43,21 @@ jobs:
 
       - name: Verify tools.generated.md is up to date
         run: |
-          bash bin/generate-tool-context
+          bash ai/bin/generate-tool-context
           if ! git diff --exit-code ai/guidelines/rules/tools.generated.md; then
             echo ""
             echo "tools.generated.md is out of date."
-            echo "Run bin/generate-tool-context locally and commit the result."
+            echo "Run ai/bin/generate-tool-context locally and commit the result."
             exit 1
           fi
 
       - name: Verify git.generated.md is up to date
         run: |
-          bash bin/generate-git-rules
+          bash git/bin/generate-git-rules
           if ! git diff --exit-code ai/guidelines/rules/git.generated.md; then
             echo ""
             echo "git.generated.md is out of date."
-            echo "Run bin/generate-git-rules locally and commit the result."
+            echo "Run git/bin/generate-git-rules locally and commit the result."
             exit 1
           fi
 

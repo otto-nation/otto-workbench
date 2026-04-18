@@ -11,7 +11,6 @@
 # What sync does (pure config reconciliation):
 #   - Re-symlinks bin/, zsh/, git/.gitconfig, Taskfile, lib/
 #   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
-#   - Syncs Kiro agent configs and rules
 #   - Merges Zed/Sublime editor settings
 #   - Reconciles Ghostty theme key
 #
@@ -70,7 +69,7 @@ cmd_sync() {
 
   # Auto-discovers sync_<component>() from all steps.sh files.
   # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
-  #                              ai/claude → ai/kiro → …
+  #                              ai/claude → editors/… → …
   # Adding any component with a sync_<name>() function includes it automatically.
   local -a _step_files=()
   discover_step_files _step_files

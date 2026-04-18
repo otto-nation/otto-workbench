@@ -1,4 +1,4 @@
-# Bin script registry — AI context for Claude/Kiro.
+# Bin script registry.
 # Add an entry here whenever you add a script to bin/.
 # Regenerate: bin/generate-tool-context
 
@@ -26,9 +26,24 @@ tools:
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
   - name: otto-workbench
-    description: "Re-applies all workbench configuration to ~/ (symlinks, settings, rules)"
+    description: "Manage your workbench developer environment"
     when_to_use: "After pulling workbench updates or when config gets out of sync"
     usage: "otto-workbench sync  |  otto-workbench claude [--force]  |  otto-workbench changelog"
+    commands:
+      - name: sync
+        scope: "All components"
+        when: "After pulling workbench updates or when config drifts"
+        detail: "Re-applies all workbench config — runs pending migrations, re-symlinks scripts and configs, regenerates tool context, and syncs AI settings. Safe to re-run at any time."
+      - name: claude
+        scope: "Claude only"
+        when: "Setting up Claude in a new project repo"
+        detail: "Syncs machine-level Claude config, then scaffolds a `.claude/` directory in the current git repo (if one doesn't exist) with stack-detected rules and a project anatomy file."
+      - name: "claude --force"
+        scope: "Claude only"
+        when: "Re-scaffolding an existing project's `.claude/`"
+      - name: changelog
+        scope: "Git history"
+        when: "Reviewing recent changes from conventional commits"
 
   - name: generate-tool-context
     description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"

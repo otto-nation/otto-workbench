@@ -1,4 +1,4 @@
-# Kubernetes stack registry — AI context for Claude/Kiro.
+# Kubernetes stack registry.
 # Install: brew bundle --file=brew/infra/kubernetes.Brewfile
 # Regenerate: bin/generate-tool-context
 

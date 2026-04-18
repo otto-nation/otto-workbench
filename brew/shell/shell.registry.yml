@@ -1,4 +1,4 @@
-# Shell stack registry — AI context for Claude/Kiro.
+# Shell stack registry.
 # Install: brew bundle --file=brew/shell/shell.Brewfile
 # Regenerate: bin/generate-tool-context
 

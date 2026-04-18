@@ -32,7 +32,6 @@ tasks:
             printf '# ── AI command ───────────────────────────────────────────────────────────────\n'
             printf '# Uncomment one of the examples below or add your own\n'
             printf '# AI_COMMAND=claude -p --agent ci-cd --strict-mcp-config\n'
-            printf '# AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd\n'
             printf '# AI_COMMAND=copilot --agent ci-cd -p\n'
             printf '\n'
             printf '# ── GitHub token (required for: task pr:*) ───────────────────────────────────\n'

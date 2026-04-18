@@ -1,4 +1,4 @@
-# Zsh alias registry — AI context for Claude/Kiro.
+# Zsh alias registry.
 # Add an entry here whenever you add a new alias group to zsh/config.d/.
 # Regenerate: bin/generate-tool-context
 

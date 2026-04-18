@@ -1,4 +1,4 @@
-# Brew tool registry — AI context for Claude/Kiro.
+# Brew tool registry.
 # Add an entry here whenever you add a formula or cask to the Brewfile.
 # Regenerate: bin/generate-tool-context
 

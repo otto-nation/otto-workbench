@@ -121,12 +121,6 @@ print_workbench_summary() {
     echo -e "  ${DIM}  Claude config     ${CLAUDE_DIR/#"$HOME"/$home_short}/{settings.json,CLAUDE.md,rules/,skills/,agents/}${NC}"
   fi
 
-  # Kiro — only if installed
-  if [[ -d "$KIRO_STEERING_DIR" ]]; then
-    local kiro_dir="${KIRO_STEERING_DIR%/steering}"
-    echo -e "  ${DIM}  Kiro config       ${kiro_dir/#"$HOME"/$home_short}/{agents/,steering/}${NC}"
-  fi
-
   # ── Editable configs ─────────────────────────────────────────────────
   echo
   echo -e "  ${CYAN}Editable configs${NC} ${DIM}(never overwritten by sync)${NC}"

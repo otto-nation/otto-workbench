@@ -331,17 +331,24 @@ _readme_tasks() {
   printf '```\n'
 }
 
+# _extract_frontmatter_field FILE FIELD — reads a YAML frontmatter field from a markdown file.
+_extract_frontmatter_field() {
+  local file="$1" field="$2"
+  sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null \
+    | grep "^${field}:" \
+    | sed "s/^${field}:[[:space:]]*//" \
+    | sed 's/^"\(.*\)"$/\1/' \
+    | head -1
+}
+
 _readme_ai_installs() {
   # Derive display paths from constants, replacing $HOME prefix with ~
   local claude_home="~${CLAUDE_DIR#"$HOME"}"
   local claude_rules="~${CLAUDE_RULES_DIR#"$HOME"}"
-  local kiro_steering="~${KIRO_STEERING_DIR#"$HOME"}"
-
   # Source dirs within the repo
   local claude_skills_src="$AI_DIR/claude/skills"
   local claude_agents_src="$AI_DIR/claude/agents"
   local claude_mcps_src="$AI_DIR/claude/mcps"
-  local kiro_agents_src="$AI_DIR/kiro/agents"
 
   printf '**Claude Code:**\n'
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
@@ -351,34 +358,49 @@ _readme_ai_installs() {
   # shellcheck disable=SC2016
   printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
 
-  local skills=()
+  # Skills table with descriptions from SKILL.md frontmatter
+  local has_skills=false
   for d in "$claude_skills_src"/*/; do
-    [[ -d "$d" ]] && skills+=("$(basename "$d")")
+    [[ -d "$d" ]] || continue
+    if [[ "$has_skills" == false ]]; then
+      printf '\n**Skills:**\n\n'
+      printf '| Skill | Description |\n'
+      printf '|-------|-------------|\n'
+      has_skills=true
+    fi
+    local skill_name skill_desc
+    skill_name="$(basename "$d")"
+    skill_desc="$(_extract_frontmatter_field "$d/SKILL.md" "description")"
+    [[ -z "$skill_desc" ]] && skill_desc="—"
+    printf '| %s | %s |\n' "$skill_name" "$skill_desc"
   done
-  [[ ${#skills[@]} -gt 0 ]] && printf -- '- Skills: %s\n' "$(_join ', ' "${skills[@]}")"
 
-  local agents=()
+  # Agents table with descriptions from agent .md frontmatter
+  local has_agents=false
   for f in "$claude_agents_src"/*.md; do
-    [[ -f "$f" ]] && agents+=("$(basename "${f%.md}")")
+    [[ -f "$f" ]] || continue
+    if [[ "$has_agents" == false ]]; then
+      printf '\n**Agents:**\n\n'
+      printf '| Agent | Description |\n'
+      printf '|-------|-------------|\n'
+      has_agents=true
+    fi
+    local agent_name agent_desc
+    agent_name="$(basename "${f%.md}")"
+    agent_desc="$(_extract_frontmatter_field "$f" "description")"
+    [[ -z "$agent_desc" ]] && agent_desc="—"
+    printf '| %s | %s |\n' "$agent_name" "$agent_desc"
   done
-  [[ ${#agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join ', ' "${agents[@]}")"
 
+  # MCPs
   local mcps=()
   for f in "$claude_mcps_src"/*.json; do
     [[ -f "$f" ]] && mcps+=("$(jq -r '.name // ""' "$f")")
   done
-  [[ ${#mcps[@]} -gt 0 ]] && printf -- '- MCPs: %s\n' "$(_join ', ' "${mcps[@]}")"
+  if [[ ${#mcps[@]} -gt 0 ]]; then
+    printf '\n**MCP Servers:** %s\n' "$(_join ', ' "${mcps[@]}")"
+  fi
 
-  printf '\n'
-  printf '**Kiro:**\n'
-  # shellcheck disable=SC2016
-  printf -- '- `%s/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)\n' "$kiro_steering"
-
-  local kiro_agents=()
-  for f in "$kiro_agents_src"/*.json; do
-    [[ -f "$f" ]] && kiro_agents+=("$(basename "${f%.json}")")
-  done
-  [[ ${#kiro_agents[@]} -gt 0 ]] && printf -- '- Agents: %s\n' "$(_join ', ' "${kiro_agents[@]}")"
 }
 
 # _tool_readme_table_row NAME DESCRIPTION WHEN_TO_USE USAGE DOCS
@@ -494,8 +516,37 @@ _readme_optional_components() {
   printf '**Existing optional components:** %s\n' "$(_join ', ' "${entries[@]}")"
 }
 
+# _readme_workbench_commands — renders otto-workbench subcommands table + detail paragraphs
+# from the `commands` array on the otto-workbench entry in bin/registry.yml.
+_readme_workbench_commands() {
+  [[ -f "$BIN_REGISTRY" ]] || return 0
+  local count
+  count=$(yq '.tools[] | select(.name == "otto-workbench") | .commands | length' "$BIN_REGISTRY" 2>/dev/null)
+  [[ "$count" -gt 0 ]] || return 0
+
+  # Command table with optional detail column
+  printf '| Command | Scope | Description |\n'
+  printf '|---------|-------|-------------|\n'
+  local i
+  for (( i=0; i<count; i++ )); do
+    local cmd scope when detail desc
+    cmd=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].name" "$BIN_REGISTRY")
+    scope=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].scope" "$BIN_REGISTRY")
+    when=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].when" "$BIN_REGISTRY")
+    detail=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].detail // \"\"" "$BIN_REGISTRY")
+    if [[ -n "$detail" && "$detail" != "null" ]]; then
+      desc="$detail"
+    else
+      desc="$when"
+    fi
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '| `otto-workbench %s` | %s | %s |\n' "$cmd" "$scope" "$desc"
+  done
+}
+
 _gen_success() { $QUIET || success "$*"; }
 
+if [[ -f "$BIN_REGISTRY" ]];    then _readme_workbench_commands | _splice_readme "$README_PATH" "WORKBENCH-COMMANDS"; _gen_success "Updated README workbench commands"; fi
 if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$README_PATH" "SCRIPTS-TABLE";    _gen_success "Updated README scripts table";    fi
 if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$README_PATH" "TASKS-BLOCK";      _gen_success "Updated README tasks block";      fi
 if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$README_PATH" "AI-INSTALLS";      _gen_success "Updated README AI installs";      fi

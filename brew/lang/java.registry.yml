@@ -1,4 +1,4 @@
-# Java stack registry — AI context for Claude/Kiro.
+# Java stack registry.
 # Install: brew bundle --file=brew/lang/java.Brewfile
 # Regenerate: bin/generate-tool-context
 

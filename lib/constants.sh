@@ -64,10 +64,6 @@ CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 
-# ─── Kiro ─────────────────────────────────────────────────────────────────────
-KIRO_AGENTS_DIR="$HOME/.kiro/agents"
-KIRO_STEERING_DIR="$HOME/.kiro/steering"
-
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
@@ -114,9 +110,6 @@ CLAUDE_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/ai/claude/sync-settings.jq"
 CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
-
-KIRO_SRC_DIR="$WORKBENCH_DIR/ai/kiro"
-KIRO_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/kiro/agents"
 
 # ─── Workbench source — editors ───────────────────────────────────────────────
 ZED_SETTINGS_SRC="$WORKBENCH_DIR/editors/zed/settings.json"

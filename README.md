@@ -25,17 +25,14 @@ Secrets and machine-specific env vars go in `~/.env.local` — sourced first by 
 
 ## Keeping in Sync
 
-After pulling updates or when config drifts:
-
-```bash
-otto-workbench sync
-```
-
-Runs pending migrations, re-applies all symlinks, regenerates tool context, and syncs Claude settings and rules. Prints a summary of all managed and editable files when complete. Safe to run at any time.
-
-Re-run a single component independently:
-- Optional components (interactive): `bash <component>/setup.sh` — e.g. `bash ai/setup.sh`
-- Core components (idempotent): `bash <component>/steps.sh` — e.g. `bash git/steps.sh`
+<!-- WORKBENCH-COMMANDS-START -->
+| Command | Scope | Description |
+|---------|-------|-------------|
+| `otto-workbench sync` | All components | Re-applies all workbench config — runs pending migrations, re-symlinks scripts and configs, regenerates tool context, and syncs AI settings. Safe to re-run at any time. |
+| `otto-workbench claude` | Claude only | Syncs machine-level Claude config, then scaffolds a `.claude/` directory in the current git repo (if one doesn't exist) with stack-detected rules and a project anatomy file. |
+| `otto-workbench claude --force` | Claude only | Re-scaffolding an existing project's `.claude/` |
+| `otto-workbench changelog` | Git history | Reviewing recent changes from conventional commits |
+<!-- WORKBENCH-COMMANDS-END -->
 
 ## File Layout
 
@@ -55,7 +52,6 @@ These are owned by the workbench and updated every time you sync. Do not edit di
 | `~/.git-hooks/*` | `git/hooks/` | symlinked |
 | `~/.config/task/{Taskfile.yml,lib/}` | `Taskfile.global.yml`, `lib/` | symlinked |
 | `~/.claude/*` | `ai/claude/` | mixed (merge/copy/symlink) |
-| `~/.kiro/*` | `ai/kiro/`, `ai/guidelines/` | mixed |
 
 ### Editable configs (yours — never overwritten)
 
@@ -79,7 +75,7 @@ These are created once (from templates or by first-time setup) and never modifie
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
 | `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
-| `otto-workbench` | Re-applies all workbench configuration to ~/ (symlinks, settings, rules) |
+| `otto-workbench` | Manage your workbench developer environment |
 | `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
@@ -125,7 +121,7 @@ Two-layer architecture: `~/.gitconfig` is your machine-specific file (identity, 
 
 ### Tool Registry
 
-Each tooling directory owns a `registry.yml` describing the tools it provides — name, description, when to use, usage, and docs URL. These are combined into `ai/guidelines/rules/tools.generated.md` and auto-loaded into every Claude and Kiro session.
+Each tooling directory owns a `registry.yml` describing the tools it provides — name, description, when to use, usage, and docs URL. These are combined into `ai/guidelines/rules/tools.generated.md` and auto-loaded into every Claude session.
 
 `ai/guidelines/rules/git.generated.md` is generated from the commit/PR constants in `lib/ai/core.sh` — commit types, header length limit, PR template, and branch naming conventions. Never edit generated files directly.
 
@@ -240,7 +236,45 @@ generate-git-rules      # regenerates git.generated.md (or: otto-workbench sync)
 | [mas](https://github.com/mas-cli/mas) | Mac App Store CLI — search, install, and update App Store apps from the terminal |
 <!-- TOOLS-TABLE-END -->
 
-### Global Taskfile — AI Git Automation
+## AI
+
+First-time setup:
+
+```bash
+bash ai/setup.sh
+```
+
+Prompts for confirmation at each step. Safe to re-run.
+
+### What gets installed
+
+<!-- AI-INSTALLS-START -->
+**Claude Code:**
+- `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
+- `~/.claude/CLAUDE.md` — coding guidelines
+- `~/.claude/rules/` — language and tool-specific rules (symlinked)
+
+**Skills:**
+
+| Skill | Description |
+|-------|-------------|
+| anatomy | Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring. |
+| dream | Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory. |
+
+**Agents:**
+
+| Agent | Description |
+|-------|-------------|
+| changelog | Generate categorized release notes and changelogs from git history. Used by task automation. |
+| ci-cd | Generate commit messages and pull request descriptions from git context. Used by task automation. |
+| debugger | Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything. |
+| explain | Fast text-in/text-out explainer. Answers questions from provided input without exploring files or suggesting edits. |
+| incident | Structured production incident investigation. Read-only triage — gathers symptoms, checks recent changes, forms ranked hypotheses. Never modifies anything. |
+| migrate | Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them. |
+| reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
+<!-- AI-INSTALLS-END -->
+
+### Task automation
 
 <!-- TASKS-BLOCK-START -->
 ```bash
@@ -262,37 +296,13 @@ task --global wt:remove            # Remove a worktree and optionally delete its
 
 Use `--global` to run tasks from `~/.config/task/` rather than a local project Taskfile.
 
-## AI Tools Setup
-
-```bash
-bash ai/setup.sh
-```
-
-Prompts which tools to configure (Claude Code, Kiro), lists all steps upfront, then runs each with individual confirmation. Safe to re-run.
-
-### What gets installed
-
-<!-- AI-INSTALLS-START -->
-**Claude Code:**
-- `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
-- `~/.claude/CLAUDE.md` — coding guidelines
-- `~/.claude/rules/` — language and tool-specific rules (symlinked)
-- Skills: anatomy, dream
-- Agents: changelog, ci-cd, debugger, explain, incident, migrate, reviewer
-
-**Kiro:**
-- `~/.kiro/steering/` — language, tool, and git rules (symlinked from `ai/guidelines/rules/`)
-- Agents: ci-cd, default
-<!-- AI-INSTALLS-END -->
-
-### AI command configuration
+### Configuration
 
 After setup, configure which AI tool the global Taskfile uses:
 
 ```bash
 # ~/.config/task/taskfile.env
 AI_COMMAND=claude -p --agent ci-cd
-AI_COMMAND=kiro-cli chat --no-interactive --agent ci-cd
 ```
 
 Override per-project with `.taskfile/taskfile.env` in a project root.

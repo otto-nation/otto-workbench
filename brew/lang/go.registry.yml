@@ -1,4 +1,4 @@
-# Go stack registry — AI context for Claude/Kiro.
+# Go stack registry.
 # Install: brew bundle --file=brew/lang/go.Brewfile
 # Regenerate: bin/generate-tool-context
 

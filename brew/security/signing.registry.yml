@@ -1,4 +1,4 @@
-# Signing stack registry — AI context for Claude/Kiro.
+# Signing stack registry.
 # Install: brew bundle --file=brew/security/signing.Brewfile
 # Regenerate: bin/generate-tool-context
 

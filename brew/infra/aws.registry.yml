@@ -1,4 +1,4 @@
-# AWS stack registry — AI context for Claude/Kiro.
+# AWS stack registry.
 # Install: brew bundle --file=brew/infra/aws.Brewfile
 # Regenerate: bin/generate-tool-context
 

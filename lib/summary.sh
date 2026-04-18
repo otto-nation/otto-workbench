@@ -176,6 +176,26 @@ print_workbench_summary() {
   echo
 }
 
+# print_warnings_summary — replays collected warnings and errors from the install log.
+# No-op if WORKBENCH_INSTALL_LOG is unset or the file is empty/missing.
+print_warnings_summary() {
+  [[ -n "${WORKBENCH_INSTALL_LOG:-}" && -s "$WORKBENCH_INSTALL_LOG" ]] || return 0
+
+  echo
+  echo -e "  ${CYAN}Warnings & Errors${NC}"
+
+  local line level msg
+  while IFS= read -r line; do
+    level="${line%%:*}"
+    msg="${line#*:}"
+    case "$level" in
+      WARN) echo -e "    ${YELLOW}⚠${NC}  $msg" ;;
+      ERR)  echo -e "    ${RED}✗${NC} $msg" ;;
+      *)    echo -e "      $line" ;;
+    esac
+  done < "$WORKBENCH_INSTALL_LOG"
+}
+
 # run_component_summaries [COMPONENT...] — auto-discovers and calls print_<name>_summary()
 # from */summary.sh files. If COMPONENT args are given, only those are checked;
 # otherwise all components with summary.sh are discovered via glob.

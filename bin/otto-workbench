@@ -58,6 +58,11 @@ unset _f _step_files
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_sync() {
+  # Collect warnings/errors for final summary replay.
+  WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
+  export WORKBENCH_INSTALL_LOG
+  trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
+
   title "Workbench sync"
   echo
 
@@ -76,8 +81,10 @@ cmd_sync() {
   local _f _c
   for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
+    export WORKBENCH_CURRENT_COMPONENT="$_c"
     declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
   done
+  unset WORKBENCH_CURRENT_COMPONENT
 
   # shellcheck source=/dev/null
   . "$(dirname "$_SELF")/../lib/summary.sh"
@@ -88,6 +95,8 @@ cmd_sync() {
 
   # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
   run_component_summaries
+
+  print_warnings_summary
 }
 
 cmd_claude() {

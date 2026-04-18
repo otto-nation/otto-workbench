@@ -30,6 +30,11 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_DIR
 . "$DOTFILES_DIR/lib/ui.sh"
 . "$DOTFILES_DIR/lib/migrations.sh"
+
+# Collect warnings/errors for final summary replay.
+WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-install.XXXXXX")"
+export WORKBENCH_INSTALL_LOG
+trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
 # Export WORKBENCH_DIR so it is available in setup.conf check commands (bash -c context).
 export WORKBENCH_DIR
 
@@ -219,6 +224,7 @@ run_components() {
   local total=${#SELECTED_COMPONENTS[@]} index=1 component label check_cmd
 
   for component in "${SELECTED_COMPONENTS[@]}"; do
+    export WORKBENCH_CURRENT_COMPONENT="$component"
     label=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" label)
     check_cmd=$(conf_get "$WORKBENCH_DIR/$component/setup.conf" check)
     echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}${label:-$component}${NC}"
@@ -234,6 +240,7 @@ run_components() {
 
     index=$(( index + 1 ))
   done
+  unset WORKBENCH_CURRENT_COMPONENT
 }
 
 # print_install_summary — prints the final "All done" screen with a
@@ -247,6 +254,8 @@ print_install_summary() {
 
   # Run per-component summaries for selected components (brew, docker, ai, etc.)
   run_component_summaries "${SELECTED_COMPONENTS[@]}"
+
+  print_warnings_summary
 }
 
 # ─── Core installation ────────────────────────────────────────────────────────
@@ -320,13 +329,14 @@ if [[ ${#_core_dirs[@]} -gt 0 ]]; then
   # Run selected core components.
   # Prefers install_<name>() (interactive) over sync_<name>() (non-interactive).
   for _c in "${_core_selected[@]}"; do
+    export WORKBENCH_CURRENT_COMPONENT="$_c"
     if declare -f "install_${_c}" > /dev/null; then
       "install_${_c}"
     elif declare -f "sync_${_c}" > /dev/null; then
       "sync_${_c}"
     fi
   done
-  unset _c
+  unset _c WORKBENCH_CURRENT_COMPONENT
 fi
 unset _core_dirs _core_descs _core_selected
 

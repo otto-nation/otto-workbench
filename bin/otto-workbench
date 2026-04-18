@@ -5,8 +5,16 @@
 #
 # Commands:
 #   sync              Re-apply all workbench configuration to ~/
-#   claude [--force]  Sync Claude config + scaffold project .claude/
+#   claude [--force]  Sync Claude config + scaffold project .claude/ (see below)
 #   changelog         Show recent changes from conventional commits
+#
+# What claude does:
+#   Syncs machine-level Claude config (settings, rules, skills, agents, MCPs),
+#   then scaffolds a .claude/ directory in the current git repo (if one doesn't
+#   exist) with stack-detected rules and a project anatomy file.
+#   Anatomy is a file index (.claude/anatomy.md) with per-file descriptions and
+#   token estimates — helps Claude decide what to read before exploring.
+#   Use --force to re-scaffold an existing .claude/ directory.
 #
 # What sync does (pure config reconciliation):
 #   - Re-symlinks scripts, zsh/, git/.gitconfig, Taskfile, lib/
@@ -159,7 +167,7 @@ case "${1:-}" in
     echo
     echo "Commands:"
     echo "  sync              Re-apply all workbench configuration to ~/"
-    echo "  claude [--force]  Sync Claude config + scaffold project .claude/"
+    echo "  claude [--force]  Sync Claude config + scaffold .claude/ in current repo"
     echo "  changelog         Show recent changes from conventional commits"
     exit 1
     ;;

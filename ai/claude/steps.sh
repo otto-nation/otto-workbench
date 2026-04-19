@@ -99,7 +99,7 @@ _print_item_list() {
 
 # step_claude_mcps — installs all MCP servers discovered from ai/claude/mcps/*.json.
 step_claude_mcps() {
-  [[ -d "$CLAUDE_MCPS_SRC_DIR" ]] || { warn "No MCP configs found in $CLAUDE_MCPS_SRC_DIR — skipping"; return; }
+  [[ -d "$CLAUDE_MCPS_SRC_DIR" ]] || { skip "No MCP configs in $CLAUDE_MCPS_SRC_DIR"; return; }
 
   local file
   for file in "$CLAUDE_MCPS_SRC_DIR"/*.json; do

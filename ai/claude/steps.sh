@@ -234,6 +234,7 @@ _detect_project_stacks() {
   fi
 
   [[ -f "Cargo.toml" ]] && DETECTED_STACKS+=("rust")
+  [[ -d "ansible" ]] && DETECTED_STACKS+=("ansible")
   return 0
 }
 
@@ -274,7 +275,7 @@ _build_stack_label() {
       kotlin) labels+=("Kotlin") ;; java) labels+=("Java") ;;
       go) labels+=("Go") ;; typescript) labels+=("TypeScript") ;;
       node) labels+=("Node.js") ;; python) labels+=("Python") ;;
-      rust) labels+=("Rust") ;; *) labels+=("$s") ;;
+      rust) labels+=("Rust") ;; ansible) labels+=("Ansible") ;; *) labels+=("$s") ;;
     esac
   done
   local IFS=", "; STACK_LABEL="${labels[*]}"
@@ -384,6 +385,17 @@ scaffold_project_claude() {
   for s in "${DETECTED_STACKS[@]}"; do
     local tmpl="$CLAUDE_TEMPLATES_DIR/rules/${s}.md"
     [[ -f "$tmpl" ]] && _scaffold_file "$tmpl" ".claude/rules/${s}.md" "${s}.md" "$force"
+  done
+
+  # Scaffold context.md for stacks that benefit from architecture narrative
+  for s in "${DETECTED_STACKS[@]}"; do
+    local ctx_tmpl="$CLAUDE_TEMPLATES_DIR/context/${s}.md"
+    if [[ -f "$ctx_tmpl" ]]; then
+      echo
+      info "Scaffolding .claude/context.md"
+      _scaffold_file "$ctx_tmpl" ".claude/context.md" "context.md" "$force"
+      break
+    fi
   done
 
   _scaffold_gitignore

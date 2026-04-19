@@ -42,6 +42,8 @@ If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagen
 
 If `.claude/anatomy.md` exists in the project, read it before exploring unfamiliar parts of the codebase. It contains a file index with descriptions and token estimates — use it to decide which files to open instead of browsing blindly. Regenerated automatically via Stop hook; run `/anatomy` to force a refresh.
 
+If `.claude/context.md` exists in the project, read it alongside anatomy.md — it contains architecture narrative, service identity, and known constraints that anatomy.md does not capture.
+
 ## Agent Protocols
 
 When a situation matches an agent's domain, read the agent file and follow its

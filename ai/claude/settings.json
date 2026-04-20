@@ -24,6 +24,10 @@
           },
           {
             "type": "command",
+            "command": "bash $HOME/.claude/skills/promote/should-promote.sh && touch $HOME/.claude/.promote-pending || true"
+          },
+          {
+            "type": "command",
             "command": "bash $HOME/.claude/skills/anatomy/generate-anatomy.sh || true"
           },
           {

@@ -38,6 +38,10 @@ Never mention Claude Code, AI assistance, or co-authorship in commit messages, P
 
 If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagent in the background, then delete the flag: `rm ~/.claude/.dream-pending`. This is the memory consolidation system — it triggers automatically every 24 hours via a Stop hook.
 
+## Auto Promote
+
+If `~/.claude/.promote-pending` exists at session start, run `/promote` as a subagent in the background, then delete the flag: `rm ~/.claude/.promote-pending`. This reviews accumulated memories for promotion into workbench artifacts (lint rules, scripts, coding rules, hooks). Triggers automatically every 7 days via a Stop hook.
+
 ## Machine Profile
 
 If `~/.claude/machine/machine.md` exists, read it at session start — it contains

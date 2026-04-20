@@ -51,12 +51,18 @@ _git_detect_gpg_program() {
 }
 
 # _git_detect_credential_helper — returns the GCM path if installed.
+# Checks the Homebrew prefix first, then /usr/local (pkg installer location),
+# then falls back to PATH — the pkg installs to /usr/local regardless of arch.
 _git_detect_credential_helper() {
   local prefix
   prefix="$(_git_detect_brew_prefix)"
   local gcm_path="$prefix/share/gcm-core/git-credential-manager"
   if [[ -x "$gcm_path" ]]; then
     echo "$gcm_path"
+  elif [[ -x "/usr/local/share/gcm-core/git-credential-manager" ]]; then
+    echo "/usr/local/share/gcm-core/git-credential-manager"
+  elif command -v git-credential-manager &>/dev/null; then
+    command -v git-credential-manager
   fi
 }
 

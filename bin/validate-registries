@@ -28,6 +28,19 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 # shellcheck source=../lib/registries.sh
 . "$REPO_ROOT/lib/registries.sh"
 
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate tool registries against schema and cross-check with their source files.
+
+Options:
+  --quiet     Suppress per-registry output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 QUIET=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true
 

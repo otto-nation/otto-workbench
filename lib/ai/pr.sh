@@ -52,6 +52,28 @@ push_branch() {
   fi
 }
 
+# _ensure_gh_repo_access
+# Verifies the current gh auth can access the repo. If the automation token
+# (GH_TOKEN) lacks access, unsets it to fall back to interactive gh auth.
+# Must be called after load_gh_token. Returns 1 when neither auth method works.
+_ensure_gh_repo_access() {
+  # If no automation token is set, nothing to fall back from
+  [ -n "${GH_TOKEN:-}" ] || return 0
+
+  # Quick check: can the token see this repo?
+  if gh repo view --json name -q .name &>/dev/null; then
+    return 0
+  fi
+
+  echo "⚠  Automation token cannot access this repo — falling back to interactive gh auth"
+  unset GH_TOKEN
+
+  if ! gh auth status &>/dev/null; then
+    echo "✗ Interactive gh auth also not available — run: gh auth login"
+    return 1
+  fi
+}
+
 # load_pr_context
 # Loads the AI command and resolves the current branch context.
 # Must be called before generate_pr_content or push_branch.
@@ -59,6 +81,7 @@ push_branch() {
 load_pr_context() {
   load_ai_command || return 1
   load_gh_token || return 1
+  _ensure_gh_repo_access || return 1
 
   if ! gh auth status &>/dev/null; then
     echo "✗ GitHub CLI is not authenticated — run: gh auth login"

@@ -13,6 +13,24 @@ set -euo pipefail
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--global] [command] [args...]
+
+Task wrapper that adds --global support for running tasks from ~/.config/task/Taskfile.yml.
+
+Options:
+  --global    Use the global Taskfile (~/.config/task/Taskfile.yml) from any directory
+  -h, --help  Show this help
+
+Examples:
+  task commit              Run a task from ./Taskfile.yml in the current directory
+  task --global commit     Run a global task from ~/.config/task/Taskfile.yml
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
 GLOBAL_TASKFILE="$TASK_CONFIG_DIR/Taskfile.yml"
 
 # Find the real task binary by temporarily removing $LOCAL_BIN_DIR from PATH — without this,

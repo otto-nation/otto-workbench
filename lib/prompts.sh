@@ -50,7 +50,7 @@ confirm_step() {
 # Returns 1 if the user skips, 0 if they choose to overwrite (with or without backup).
 prompt_overwrite() {
   local file=$1
-  warn "$file already exists"
+  skip "$file already exists"
   local _choice
   read -rp "  [o]verwrite / [b]ackup and overwrite / [s]kip [s]: " _choice
   case "${_choice:-s}" in

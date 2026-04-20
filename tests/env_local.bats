@@ -147,18 +147,31 @@ EOF
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
+  FAKE_TEMPLATE="$TMPDIR/env.local.template"
   mkdir -p "$FAKE_HOME"
 
-  # Create a .env.local that already has the template defaults (commented)
-  cp "$REPO_ROOT/zsh/.env.local.template" "$FAKE_HOME/.env.local"
+  # Controlled fixture — independent of which tools are installed on the machine.
+  # Uses a synthetic var so the assertion is never broken by registry changes.
+  cat > "$FAKE_TEMPLATE" <<'EOF'
+# --- ENV-START ---
+# ── Test section ─────────────────────────────────────────────────────────────
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
+# test key
+# export TEST_DEDUP_VAR=
+
+# --- ENV-END ---
+EOF
+
+  # .env.local already contains the template defaults (simulates a file that was
+  # bootstrapped previously — re-running must not duplicate any var)
+  cp "$FAKE_TEMPLATE" "$FAKE_HOME/.env.local"
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" ENV_LOCAL_TEMPLATE="$FAKE_TEMPLATE" NO_COLOR=1 \
     bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
     >/dev/null 2>&1
 
-  # No vars should be duplicated — count occurrences of LINEAR_API_KEY
   local count
-  count=$(grep -c 'LINEAR_API_KEY' "$FAKE_HOME/.env.local")
+  count=$(grep -c 'TEST_DEDUP_VAR' "$FAKE_HOME/.env.local")
   [ "$count" -eq 1 ]
   rm -rf "$TMPDIR"
 }

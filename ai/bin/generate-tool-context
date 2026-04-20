@@ -50,6 +50,19 @@ AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
 COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
 CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
 
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Regenerate tools.generated.md and README sections from source registries.
+
+Options:
+  --quiet     Suppress per-file success messages
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 QUIET=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true
 

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# <name> — one-line description
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+<description>
+
+Options:
+  -h, --help      Show this help
+EOF
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      *) err "Unknown option: $1"; usage >&2; exit 1 ;;
+    esac
+    shift
+  done
+
+  # implementation here
+}
+
+main "$@"

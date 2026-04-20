@@ -293,26 +293,35 @@ cmd_project() {
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+usage() {
+  cat <<EOF
+Usage: claude-rules <command> [args]
+
+Manage local Claude Code rule additions.
+
+Commands:
+  sync                   Re-symlink workbench rules and regenerate workbench.md
+  add <domain> "rule"    Append a rule to ~/.claude/rules/<domain>.local.md
+  list                   List all local rule files with line counts
+  status                 Show local rules not tracked in workbench
+  open [domain]          Open a local rule file in \$EDITOR
+  project add "rule"     Append a convention to the current repo's CLAUDE.md
+  project show           Display the current repo's CLAUDE.md
+
+Any domain name is accepted (e.g. general, go, linear, workflow)
+EOF
+}
+
 case "${1:-}" in
-  sync)    cmd_sync ;;
-  add)     shift; cmd_add "$@" ;;
-  list)    cmd_list ;;
-  status)  cmd_status ;;
-  open)    shift; cmd_open "$@" ;;
-  project) shift; cmd_project "$@" ;;
+  sync)      cmd_sync ;;
+  add)       shift; cmd_add "$@" ;;
+  list)      cmd_list ;;
+  status)    cmd_status ;;
+  open)      shift; cmd_open "$@" ;;
+  project)   shift; cmd_project "$@" ;;
+  -h|--help) usage; exit 0 ;;
   *)
-    echo "Usage: claude-rules <command>"
-    echo
-    echo "Commands:"
-    echo "  sync                   Re-symlink workbench rules and regenerate workbench.md"
-    echo "  add <domain> \"rule\"   Append a rule to ~/.claude/rules/<domain>.local.md"
-    echo "  list                   List all local rule files with line counts"
-    echo "  status                 Show local rules not tracked in workbench"
-    echo "  open [domain]          Open a local rule file in \$EDITOR"
-    echo "  project add \"rule\"   Append a convention to the current repo's CLAUDE.md"
-    echo "  project show           Display the current repo's CLAUDE.md"
-    echo
-    echo "Any domain name is accepted (e.g. general, go, linear, workflow)"
+    usage >&2
     exit 1
     ;;
 esac

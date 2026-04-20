@@ -18,6 +18,23 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+Print a macOS memory analysis report: pressure, page stats, swap, top processes.
+
+Options:
+  -h, --help  Show this help
+
+Environment overrides:
+  SWAP_WARN_THRESHOLD_MB      Swap warning threshold in MB (default: 10240)
+  PROCESS_WARN_THRESHOLD_KB   Process memory warning threshold in KB (default: 500000)
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
 # Thresholds — override via environment variable if needed
 SWAP_WARN_THRESHOLD_MB="${SWAP_WARN_THRESHOLD_MB:-10240}"      # 10 GB
 PROCESS_WARN_THRESHOLD_KB="${PROCESS_WARN_THRESHOLD_KB:-500000}"  # ~488 MB

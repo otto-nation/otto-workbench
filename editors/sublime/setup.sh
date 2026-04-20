@@ -9,8 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo; info "Sublime Text"
 
 if [[ ! -d "$SUBLIME_PREFS_DIR" ]]; then
-  warn "Sublime Text not installed — Packages/User dir not found"
-  info "Open Sublime Text once to initialize it, then re-run: bash editors/setup.sh"
+  skip "Sublime Text not installed — open it once to initialize, then re-run: bash editors/setup.sh"
   return
 fi
 

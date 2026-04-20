@@ -124,6 +124,54 @@ else
   _fail "$_sc_output"
 fi
 
+# ── YAML lint ────────────────────────────────────────────────────────────────
+
+if command -v yamllint >/dev/null 2>&1; then
+  _step "Linting YAML"
+  if _yl_output=$(yamllint "$REPO_ROOT" 2>&1); then
+    _yl_count=$(find "$REPO_ROOT" \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' | wc -l | tr -d ' ')
+    _pass "${_yl_count} files"
+  else
+    _fail "$_yl_output"
+  fi
+fi
+
+# ── ZSH syntax ───────────────────────────────────────────────────────────────
+
+if command -v zsh >/dev/null 2>&1; then
+  _step "Checking ZSH syntax"
+  _zsh_files=()
+  while IFS= read -r -d '' f; do
+    _zsh_files+=("$f")
+  done < <(find "$REPO_ROOT" -name '*.zsh' -not -path '*/.git/*' -print0)
+  if [[ ${#_zsh_files[@]} -gt 0 ]]; then
+    if _zsh_output=$(zsh -n "${_zsh_files[@]}" 2>&1); then
+      _pass "${#_zsh_files[@]} files"
+    else
+      _fail "$_zsh_output"
+    fi
+  else
+    _pass "0 files"
+  fi
+fi
+
+# ── JSON validation ──────────────────────────────────────────────────────────
+
+_step "Validating JSON"
+_json_errors=""
+_json_count=0
+while IFS= read -r -d '' f; do
+  _json_count=$((_json_count + 1))
+  if ! jq -e '.' "$f" > /dev/null 2>&1; then
+    _json_errors+="  Invalid JSON: $f"$'\n'
+  fi
+done < <(find "$REPO_ROOT" -name '*.json' -not -path '*/.git/*' -not -path '*/.claude/*' -print0)
+if [[ -n "$_json_errors" ]]; then
+  _fail "$_json_errors"
+else
+  _pass "${_json_count} files"
+fi
+
 # ── Bats tests ───────────────────────────────────────────────────────────────
 
 if ! command -v bats >/dev/null 2>&1; then

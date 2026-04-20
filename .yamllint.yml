@@ -1,0 +1,9 @@
+extends: relaxed
+
+rules:
+  line-length: disable
+  truthy: disable
+
+ignore:
+  - .git/
+  - .serena/

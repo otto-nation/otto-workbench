@@ -158,17 +158,24 @@ cmd_changelog() {
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+usage() {
+  cat <<EOF
+Usage: otto-workbench <command>
+
+Commands:
+  sync              Re-apply all workbench configuration to ~/
+  claude [--force]  Sync Claude config + scaffold .claude/ in current repo
+  changelog         Show recent changes from conventional commits
+EOF
+}
+
 case "${1:-}" in
   sync)      cmd_sync ;;
   claude)    cmd_claude "$@" ;;
   changelog) cmd_changelog "$@" ;;
+  -h|--help) usage; exit 0 ;;
   *)
-    echo "Usage: otto-workbench <command>"
-    echo
-    echo "Commands:"
-    echo "  sync              Re-apply all workbench configuration to ~/"
-    echo "  claude [--force]  Sync Claude config + scaffold .claude/ in current repo"
-    echo "  changelog         Show recent changes from conventional commits"
+    usage >&2
     exit 1
     ;;
 esac

@@ -140,6 +140,84 @@ label_from_filename() {
   printf '%s' "${base^}"
 }
 
+# ── Ansible section ──────────────────────────────────────────────────────────
+
+# generate_ansible_section OUTPUT_FILE — appends a "Service Stack" section to the
+# output file if an Ansible inventory with versions.yml is found. Pure bash; no yq/jq.
+generate_ansible_section() {
+  local out="$1"
+
+  # Find versions.yml — walk group_vars subdirs
+  local versions_file="" services_file=""
+  local gvars_dir
+  for gvars_dir in ansible/inventory/group_vars/*/; do
+    [[ -f "${gvars_dir}versions.yml" ]] || continue
+    versions_file="${gvars_dir}versions.yml"
+    [[ -f "${gvars_dir}services.yml" ]] && services_file="${gvars_dir}services.yml"
+    break
+  done
+
+  [[ -z "$versions_file" ]] && return 0
+
+  # Parse versions: key pattern is <service>_version: "value"
+  declare -A svc_versions=()
+  local line key val
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^([a-z0-9_]+)_version:[[:space:]]+\"?([^\"[:space:]#]+) ]]; then
+      key="${BASH_REMATCH[1]}"
+      val="${BASH_REMATCH[2]}"
+      val="${val//\"/}"
+      svc_versions["$key"]="$val"
+    fi
+  done < "$versions_file"
+
+  [[ ${#svc_versions[@]} -eq 0 ]] && return 0
+
+  # Parse ports and container names from services.yml
+  declare -A svc_ports=()
+  declare -A svc_containers=()
+  if [[ -n "$services_file" ]]; then
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^([a-z0-9_]+)_port:[[:space:]]+([0-9]+) ]]; then
+        svc_ports["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+      elif [[ "$line" =~ ^([a-z0-9_]+)_container:[[:space:]]+([a-z0-9_-]+) ]]; then
+        svc_containers["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+      fi
+    done < "$services_file"
+  fi
+
+  # Emit section
+  {
+    printf '## Service Stack\n\n'
+    printf '<!-- Auto-generated from %s -->\n\n' "$versions_file"
+    printf '| Service | Container | Version | Port |\n'
+    printf '|---------|-----------|---------|------|\n'
+
+    local svc
+    while IFS= read -r svc; do
+      # Skip sub-service version keys (immich_postgres, immich_ml, etc.)
+      case "$svc" in *_postgres|*_ml|*_redis) continue ;; esac
+
+      local version="${svc_versions[$svc]}"
+      local container="${svc_containers[$svc]:-—}"
+      # Fallback: try <svc>_server container (e.g., immich_server_container)
+      [[ "$container" == "—" && -n "${svc_containers[${svc}_server]:-}" ]] && \
+        container="${svc_containers[${svc}_server]}"
+      # Port: try <svc>_port, then <svc>_admin_port (e.g., adguard_admin_port)
+      local port="${svc_ports[$svc]:-${svc_ports[${svc}_admin]:-—}}"
+      # Special case: caddy has separate http/https ports
+      if [[ "$svc" == "caddy" ]]; then
+        local http="${svc_ports[caddy_http]:-}" https="${svc_ports[caddy_https]:-}"
+        [[ -n "$http" && -n "$https" ]] && port="${http}/${https}"
+      fi
+
+      printf '| %s | %s | %s | %s |\n' "$svc" "$container" "$version" "$port"
+    done < <(printf '%s\n' "${!svc_versions[@]}" | sort)
+
+    printf '\n'
+  } >> "$out"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -228,6 +306,9 @@ main() {
       "$current_hash" "$file_count"
     printf '<!-- Read this file to understand the project layout before exploring. -->\n\n'
   } > "$tmp_file"
+
+  # Write Ansible service stack section (no-op if not an Ansible repo)
+  generate_ansible_section "$tmp_file"
 
   # Write directory sections
   for dir in "${sorted_dirs[@]}"; do

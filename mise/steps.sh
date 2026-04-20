@@ -17,7 +17,7 @@ fi
 # No-op if mise is already installed. This is an install-time step — not called by sync_mise.
 step_mise_install() {
   command -v mise >/dev/null 2>&1 && return
-  warn "mise (version manager) is not installed"
+  skip "mise (version manager) is not installed"
   if [[ ! -t 0 ]]; then
     warn "Non-interactive shell — skipping mise install. Run install.sh manually to install mise."
     return

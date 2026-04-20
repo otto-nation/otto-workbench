@@ -166,6 +166,73 @@ step_generate_tools() {
   bash "$generator"
 }
 
+# step_claude_machine_profile — generates ~/.claude/machine/machine.md unconditionally.
+# The generator has its own 24h staleness check; --force bypasses it for sync runs.
+step_claude_machine_profile() {
+  local generator="$CLAUDE_SKILLS_DIR/machine/generate-machine-profile.sh"
+  if [[ ! -f "$generator" ]]; then
+    warn "generate-machine-profile.sh not found — skipping"
+    return
+  fi
+  info "Generating machine profile"
+  bash "$generator" --force
+}
+
+# step_claude_backup_memory — copies ~/.claude/projects/*/memory/*.md into ai/memory/.
+# Preserves the slug directory structure so step_claude_restore_memory can reverse it.
+step_claude_backup_memory() {
+  local projects_dir="$HOME/.claude/projects"
+  local backup_dir="$WORKBENCH_DIR/ai/memory"
+  [[ -d "$projects_dir" ]] || { skip "No ~/.claude/projects/ — skipping memory backup"; return; }
+  mkdir -p "$backup_dir"
+
+  local slug mem_dir dest count=0
+  for mem_dir in "$projects_dir"/*/memory/; do
+    [[ -d "$mem_dir" ]] || continue
+    slug=$(basename "$(dirname "$mem_dir")")
+    dest="$backup_dir/$slug"
+    mkdir -p "$dest"
+    local f
+    for f in "$mem_dir"*.md; do
+      [[ -f "$f" ]] || continue
+      cp "$f" "$dest/"
+      (( count++ )) || true
+    done
+  done
+  success "Memory backed up ($count files → ai/memory/)"
+}
+
+# step_claude_restore_memory — copies ai/memory/ back to ~/.claude/projects/*/memory/.
+# Only runs when a project memory directory is absent (new-machine setup guard).
+step_claude_restore_memory() {
+  local backup_dir="$WORKBENCH_DIR/ai/memory"
+  [[ -d "$backup_dir" ]] || { skip "No ai/memory/ backup — skipping restore"; return; }
+
+  local slug dest_base count=0
+  for slug_dir in "$backup_dir"/*/; do
+    [[ -d "$slug_dir" ]] || continue
+    slug=$(basename "$slug_dir")
+    dest_base="$HOME/.claude/projects/$slug/memory"
+    # Only restore if memory dir is absent or empty — never overwrite existing session learning
+    if [[ -d "$dest_base" ]] && [[ -n "$(ls -A "$dest_base" 2>/dev/null)" ]]; then
+      skip "Memory for $slug already exists — skipping restore"
+      continue
+    fi
+    mkdir -p "$dest_base"
+    local f
+    for f in "$slug_dir"*.md; do
+      [[ -f "$f" ]] || continue
+      cp "$f" "$dest_base/"
+      (( count++ )) || true
+    done
+  done
+  if [[ $count -gt 0 ]]; then
+    success "Memory restored ($count files ← ai/memory/)"
+  else
+    skip "Nothing to restore"
+  fi
+}
+
 # step_install_claude — installs claude-code via brew if not already in PATH.
 step_install_claude() {
   install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
@@ -201,6 +268,12 @@ sync_claude() {
   echo; info "Claude skills + agents"
   step_claude_skills
   step_claude_agents
+
+  echo; info "Machine profile"
+  step_claude_machine_profile
+
+  echo; info "Memory backup"
+  step_claude_backup_memory
 }
 
 # ─── Project scaffolding ─────────────────────────────────────────────────────

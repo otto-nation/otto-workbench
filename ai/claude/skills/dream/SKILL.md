@@ -109,13 +109,20 @@ For each finding, note:
    - `patterns.md` — Recurring workflows, common tasks
    - Create new topic files only when existing ones don't fit
 
-6. **Route architectural facts to context.md, not memory.** If a finding describes
-   software identity (what software actually runs), container constraints (which tools
-   are absent), or stable architectural conventions — flag it for Phase 5 (Context Update)
-   rather than writing it to a memory topic file. Memory is for session-derived behavior;
-   context.md is for stable architectural truth.
-   - Signs it belongs in context.md: "X is not Y", "doesn't have curl", "use conduit.toml not homeserver.yaml"
-   - Signs it belongs in memory: "user prefers", "we decided", "stop doing", "next time"
+6. **Route facts to the right destination — memory, context.md, or machine.md.**
+
+   **machine.md** (`~/.claude/machine/machine.md`) — facts about the machine itself:
+   - OS behavior, runtime versions, tool paths, Docker state changes
+   - Signs it belongs here: "Colima stopped", "upgraded to Node 22", "brew installed X", "not running"
+   - Flag for Phase 5 (Machine Update) rather than writing to memory or context.md
+
+   **context.md** (`.claude/context.md` in the project) — stable project architectural truth:
+   - Software identity (what software actually runs), container tool constraints, conventions
+   - Signs it belongs here: "X is not Y", "doesn't have curl", "use conduit.toml not homeserver.yaml"
+   - Flag for Phase 5 (Context Update)
+
+   **memory/** — session-derived behavior and preferences:
+   - Signs it belongs here: "user prefers", "we decided", "stop doing", "next time"
 
 6. **Entry format.** Each memory entry should be concise:
 ```markdown
@@ -224,3 +231,42 @@ Format for new bullets:
 1. Update the `<!-- last-reviewed: YYYY-MM-DD -->` header at the top of context.md to today's date
 2. Do NOT remove existing content — only append
 3. If context.md was updated, note it in the Phase 5 summary line
+
+---
+
+## Phase 5b: MACHINE UPDATE
+
+**Goal:** Push machine-level facts discovered in sessions into `~/.claude/machine/machine.md`.
+
+### When to run
+
+Only if `~/.claude/machine/machine.md` exists. Skip silently otherwise.
+
+### What to scan for
+
+Re-use the session files already scanned in Phase 2. Look for machine-level signals:
+
+**Runtime/tool changes:**
+```bash
+grep -il "upgraded\|installed\|updated\|removed\|uninstalled\|now running\|switched to\|brew install" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+```
+
+**Docker/runtime state changes:**
+```bash
+grep -il "colima\|docker.*not\|docker.*stopped\|socket.*not found\|docker desktop" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+```
+
+### What to write
+
+machine.md is auto-generated — do NOT directly edit its sections.
+Instead, append a `<!-- session-note: -->` comment at the bottom of the relevant section:
+
+```markdown
+<!-- session-note: <fact> (seen: YYYY-MM-DD) — run /machine to regenerate -->
+```
+
+This flags the section for refresh on the next `/machine` run, without corrupting the generated content.
+
+### After writing
+
+If machine.md was updated, note it in the Phase 5 summary line. Suggest running `/machine` to regenerate from current system state.

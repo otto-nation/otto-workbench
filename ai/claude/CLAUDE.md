@@ -38,6 +38,15 @@ Never mention Claude Code, AI assistance, or co-authorship in commit messages, P
 
 If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagent in the background, then delete the flag: `rm ~/.claude/.dream-pending`. This is the memory consolidation system — it triggers automatically every 24 hours via a Stop hook.
 
+## Machine Profile
+
+If `~/.claude/machine/machine.md` exists, read it at session start — it contains
+hardware, OS, runtime versions, Docker setup, Git identity, and the project registry.
+Use it to answer environment questions without re-discovering system state. Check
+`<!-- last-updated -->`: if more than 7 days ago, mention it may be stale and suggest
+running `/machine` to refresh. Auto-regenerates every 24h via Stop hook; run `/machine`
+to force a refresh.
+
 ## Project Anatomy
 
 If `.claude/anatomy.md` exists in the project, read it before exploring unfamiliar parts of the codebase. It contains a file index with descriptions and token estimates — use it to decide which files to open instead of browsing blindly. Regenerated automatically via Stop hook; run `/anatomy` to force a refresh.

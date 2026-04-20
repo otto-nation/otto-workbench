@@ -14,6 +14,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.claude/skills/anatomy/generate-anatomy.sh || true"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/skills/machine/generate-machine-profile.sh || true"
           }
         ]
       }

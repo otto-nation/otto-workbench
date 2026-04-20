@@ -13,10 +13,10 @@ Run manually with `/dream`. Auto-triggers every 24 hours via the Stop hook manag
 
 ## How It Works
 
-Dream runs 4 sequential phases. Execute them in order. Do not skip phases.
+Dream runs 5 sequential phases. Execute them in order. Do not skip phases.
 
 ```
-ORIENT --> GATHER SIGNAL --> CONSOLIDATE --> PRUNE & INDEX
+ORIENT --> GATHER SIGNAL --> CONSOLIDATE --> PRUNE & INDEX --> CONTEXT UPDATE
 ```
 
 ---
@@ -107,8 +107,15 @@ For each finding, note:
    - `decisions.md` — Choices and their rationale
    - `corrections.md` — Things the user corrected
    - `patterns.md` — Recurring workflows, common tasks
-   - `facts.md` — Project-specific knowledge, architecture notes
    - Create new topic files only when existing ones don't fit
+
+6. **Route architectural facts to context.md, not memory.** If a finding describes
+   software identity (what software actually runs), container constraints (which tools
+   are absent), or stable architectural conventions — flag it for Phase 5 (Context Update)
+   rather than writing it to a memory topic file. Memory is for session-derived behavior;
+   context.md is for stable architectural truth.
+   - Signs it belongs in context.md: "X is not Y", "doesn't have curl", "use conduit.toml not homeserver.yaml"
+   - Signs it belongs in memory: "user prefers", "we decided", "stop doing", "next time"
 
 6. **Entry format.** Each memory entry should be concise:
 ```markdown
@@ -161,4 +168,59 @@ After running, verify:
 2. No topic file has duplicate entries
 3. No relative dates remain ("yesterday", "last week", etc.)
 4. All topic files referenced in MEMORY.md actually exist
-5. Print a summary: entries added, updated, archived, contradictions resolved
+5. Print a summary: entries added, updated, archived, contradictions resolved, context.md updates made
+
+---
+
+## Phase 5: CONTEXT UPDATE
+
+**Goal:** Push architectural facts discovered in sessions into `.claude/context.md`.
+Memory captures behavior; context.md captures stable truth about the project.
+
+### When to run
+
+Only if `.claude/context.md` exists in the project directory. Skip silently otherwise.
+
+### What to scan for
+
+Re-use the session files already scanned in Phase 2. Look specifically for architectural signals:
+
+**Software/API identity discoveries:**
+```bash
+grep -il "not synapse\|not synapse\|actually uses\|it's actually\|turned out\|the real\|wrong api\|wrong image\|wrong software" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+```
+
+**Container constraint discoveries:**
+```bash
+grep -il "not installed\|not available\|doesn't have\|missing tool\|no curl\|no wget\|no bash\|no shell\|minimal image\|distroless" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+```
+
+**Architectural convention confirmations:**
+```bash
+grep -il "the convention is\|the pattern is\|always goes in\|never edit directly\|single source\|canonical location" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+```
+
+### Confidence threshold
+
+- **Two or more sessions** mention the same fact → add it directly to context.md
+- **One session only** → add as an HTML comment `<!-- candidate: <fact> (seen: YYYY-MM-DD) -->` at the bottom of the relevant section for human review
+- **Already in context.md** → skip (never duplicate)
+
+### What to write
+
+For each qualifying fact, determine the right section in context.md:
+- Software/API identity → add to **Known Constraints** under "Software identity"
+- Container tool absence → add to **Known Constraints** under "Container tool availability"
+- Convention confirmed or corrected → add to **Conventions** section
+- New service discovered → add a row to the **Service Stack** table (role, container, software, port, notes)
+
+Format for new bullets:
+```markdown
+- <Fact stated concisely.> <!-- added by dream YYYY-MM-DD -->
+```
+
+### After writing
+
+1. Update the `<!-- last-reviewed: YYYY-MM-DD -->` header at the top of context.md to today's date
+2. Do NOT remove existing content — only append
+3. If context.md was updated, note it in the Phase 5 summary line

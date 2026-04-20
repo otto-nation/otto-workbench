@@ -1,3 +1,4 @@
+<!-- last-reviewed: YYYY-MM-DD -->
 # Architecture Context
 
 <!-- This file is committed and manually maintained. Fill it in with facts that

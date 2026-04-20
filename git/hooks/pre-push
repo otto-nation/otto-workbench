@@ -138,19 +138,21 @@ fi
 
 # ── ZSH syntax ───────────────────────────────────────────────────────────────
 
-_step "Checking ZSH syntax"
-_zsh_files=()
-while IFS= read -r -d '' f; do
-  _zsh_files+=("$f")
-done < <(find "$REPO_ROOT" -name '*.zsh' -not -path '*/.git/*' -print0)
-if [[ ${#_zsh_files[@]} -gt 0 ]]; then
-  if _zsh_output=$(zsh -n "${_zsh_files[@]}" 2>&1); then
-    _pass "${#_zsh_files[@]} files"
+if command -v zsh >/dev/null 2>&1; then
+  _step "Checking ZSH syntax"
+  _zsh_files=()
+  while IFS= read -r -d '' f; do
+    _zsh_files+=("$f")
+  done < <(find "$REPO_ROOT" -name '*.zsh' -not -path '*/.git/*' -print0)
+  if [[ ${#_zsh_files[@]} -gt 0 ]]; then
+    if _zsh_output=$(zsh -n "${_zsh_files[@]}" 2>&1); then
+      _pass "${#_zsh_files[@]} files"
+    else
+      _fail "$_zsh_output"
+    fi
   else
-    _fail "$_zsh_output"
+    _pass "0 files"
   fi
-else
-  _pass "0 files"
 fi
 
 # ── JSON validation ──────────────────────────────────────────────────────────

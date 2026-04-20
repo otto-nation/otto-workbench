@@ -64,12 +64,18 @@ jobs:
       - name: Validate migrations
         run: bash bin/validate-migrations
 
-      - name: Verify tools.generated.md is up to date
+      - name: Verify generated files are up to date
         run: |
           bash ai/bin/generate-tool-context
-          if ! git diff --exit-code ai/guidelines/rules/tools.generated.md; then
-            echo ""
-            echo "tools.generated.md is out of date."
+          failed=false
+          for f in ai/guidelines/rules/tools.generated.md docs/tools.md docs/ai-automation.md docs/components.md README.md; do
+            if ! git diff --exit-code "$f"; then
+              echo ""
+              echo "$f is out of date."
+              failed=true
+            fi
+          done
+          if $failed; then
             echo "Run ai/bin/generate-tool-context locally and commit the result."
             exit 1
           fi

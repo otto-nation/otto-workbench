@@ -381,29 +381,15 @@ _generate_claude_md() {
   cat > "$target" <<EOF
 # ${project_name}
 
-<!-- TODO: Describe this project in 1-2 sentences -->
-
 ## Stack
 ${STACK_LABEL}
 
 ## Dev workflow
-${workflow:-<!-- TODO: Add build/test/run commands -->}
+${workflow}
 
 ## Key paths
-<!-- TODO: Add paths Claude should know
-     Examples:
-       - Source:     src/main/kotlin/
-       - Tests:      src/test/kotlin/
-       - Config:     src/main/resources/
-       - Generated:  build/generated/ (do not edit)
--->
 
 ## Notes
-<!-- TODO: Add anything Claude should know before starting:
-       - External dependencies (databases, services) required to run
-       - Architectural constraints or patterns enforced in this repo
-       - Anything that has burned you before
--->
 
 ## Rules
 Project conventions load from \`.claude/rules/\` automatically.
@@ -472,6 +458,9 @@ scaffold_project_claude() {
   done
 
   _scaffold_gitignore
+
+  echo
+  info "Next: start a Claude session and run /analyze-project to populate scaffolded files"
 }
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

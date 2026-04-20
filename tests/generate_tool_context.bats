@@ -7,7 +7,7 @@ setup() {
 
   # Point all generator inputs/outputs at temp paths so tests never touch
   # real workbench files (registry data, tools.generated.md, README.md).
-  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"
+  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise" "$TMPDIR/docs"
   export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
   export MISE_REGISTRY="$TMPDIR/mise/registry.yml"
   export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
@@ -20,6 +20,10 @@ setup() {
   export AI_DIR="$TMPDIR/ai"
   export REGISTRY_SCAN_DIR="$TMPDIR"
   export ENV_LOCAL_TEMPLATE_PATH="$TMPDIR/env.local.template.nonexistent"
+  export DOCS_DIR="$TMPDIR/docs"
+  export TOOLS_DOC_PATH="$TMPDIR/docs/tools.md"
+  export AI_DOC_PATH="$TMPDIR/docs/ai-automation.md"
+  export COMPONENTS_DOC_PATH="$TMPDIR/docs/components.md"
 
   mkdir -p "$WORK_DIR"
   GENERATOR="$REPO_ROOT/ai/bin/generate-tool-context"
@@ -28,7 +32,7 @@ setup() {
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR AI_DIR README_PATH TASKFILE_PATH
+  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR AI_DIR README_PATH TASKFILE_PATH DOCS_DIR TOOLS_DOC_PATH AI_DOC_PATH COMPONENTS_DOC_PATH
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title

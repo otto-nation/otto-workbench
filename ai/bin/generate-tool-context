@@ -49,6 +49,10 @@ TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
 AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
 COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
 CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
+DOCS_DIR="${DOCS_DIR:-"$REPO_ROOT/docs"}"
+TOOLS_DOC_PATH="${TOOLS_DOC_PATH:-"$DOCS_DIR/tools.md"}"
+AI_DOC_PATH="${AI_DOC_PATH:-"$DOCS_DIR/ai-automation.md"}"
+COMPONENTS_DOC_PATH="${COMPONENTS_DOC_PATH:-"$DOCS_DIR/components.md"}"
 
 usage() {
   cat <<EOF
@@ -560,12 +564,15 @@ _readme_workbench_commands() {
 
 _gen_success() { $QUIET || success "$*"; }
 
+# README splices (landing page content stays in README)
 if [[ -f "$BIN_REGISTRY" ]];    then _readme_workbench_commands | _splice_readme "$README_PATH" "WORKBENCH-COMMANDS"; _gen_success "Updated README workbench commands"; fi
-if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$README_PATH" "SCRIPTS-TABLE";    _gen_success "Updated README scripts table";    fi
-if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$README_PATH" "TASKS-BLOCK";      _gen_success "Updated README tasks block";      fi
-if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$README_PATH" "AI-INSTALLS";      _gen_success "Updated README AI installs";      fi
-if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$README_PATH" "TOOLS-TABLE";      _gen_success "Updated README tools table";      fi
 if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   _gen_success "Updated README component menu";   fi
 if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    _gen_success "Updated README after-install";    fi
-                                     _readme_core_components     | _splice_readme "$CONTRIBUTING_PATH" "CORE-COMPONENTS";     _gen_success "Updated CONTRIBUTING core components"
-                                     _readme_optional_components | _splice_readme "$CONTRIBUTING_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated CONTRIBUTING optional components"
+
+# docs/ splices (reference content lives in docs/)
+if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$TOOLS_DOC_PATH" "SCRIPTS-TABLE";    _gen_success "Updated docs/tools.md scripts table";    fi
+if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$TOOLS_DOC_PATH" "TOOLS-TABLE";      _gen_success "Updated docs/tools.md tools table";      fi
+if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$AI_DOC_PATH" "AI-INSTALLS";         _gen_success "Updated docs/ai-automation.md installs"; fi
+if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
+                                     _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
+                                     _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"

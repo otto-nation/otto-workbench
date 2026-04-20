@@ -460,9 +460,7 @@ scaffold_project_claude() {
   _scaffold_gitignore
 
   echo
-  info "Next: populate scaffolded files with project analysis:"
-  echo -e "  ${DIM}claude -p \"Read the codebase and fill in .claude/CLAUDE.md and .claude/rules/ with project-specific conventions\" \\\\${NC}"
-  echo -e "  ${DIM}  --allowedTools Read,Glob,Grep,Edit,Write${NC}"
+  info "Next: start a Claude session and run /analyze-project to populate scaffolded files"
 }
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

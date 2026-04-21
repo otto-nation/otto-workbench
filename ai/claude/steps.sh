@@ -405,6 +405,11 @@ _scaffold_gitignore() {
     printf '*.local.md\n' > "$rules_gi"
   fi
 
+  local review_gi=".claude/review/.gitignore"
+  if [[ ! -f "$review_gi" ]]; then
+    printf '*.local.md\n' > "$review_gi"
+  fi
+
   local claude_gi=".claude/.gitignore"
   if [[ ! -f "$claude_gi" ]]; then
     printf 'anatomy.md\n' > "$claude_gi"
@@ -430,7 +435,7 @@ scaffold_project_claude() {
   fi
   echo
 
-  mkdir -p .claude/rules
+  mkdir -p .claude/rules .claude/review
 
   info "Scaffolding .claude/"
   _generate_claude_md ".claude/CLAUDE.md" "$force"

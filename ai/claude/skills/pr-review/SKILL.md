@@ -77,7 +77,9 @@ For each finding in the review file:
 
 1. **Verify the file exists in the diff.** If a file path from the review is not in the diff, skip it and warn the user.
 
-2. **Map line numbers to diff positions.** The GitHub API requires `line` (the line number in the file at the HEAD of the PR branch) not a raw diff hunk position. For each finding:
+2. **Parse finding IDs.** Each finding has an ID like `[M1]`, `[S1]`, `[N1]` (severity letter + sequence). Preserve these IDs and include them in the posted comment body so responses can correlate with specific findings.
+
+3. **Map line numbers to diff positions.** The GitHub API requires `line` (the line number in the file at the HEAD of the PR branch) not a raw diff hunk position. For each finding:
    - Parse the diff hunks for the target file
    - Confirm the referenced line number falls within a changed hunk (added or context line)
    - If the line is not in the diff, convert to a file-level comment (no `line` field) and note this in the output
@@ -101,7 +103,7 @@ For each finding that references source code (e.g., `see pkg/service/exampleclas
    ```
 
 4. Build each comment body as a thorough, self-contained explanation:
-   - Lead with the severity tag: `**[must-fix]**`, `**[should-fix]**`, or `**[nit]**`
+   - Lead with the finding ID and severity tag: `**[M1] [must-fix]**`, `**[S1] [should-fix]**`, or `**[N1] [nit]**`
    - Explain the problem completely — a reader should understand the issue from the comment alone without needing to cross-reference the review file
    - Embed permalink URLs inline to back up claims (e.g., "should be [`ExampleClass`](permalink)")
    - Suggestions must show the **complete corrected text** that should replace the problematic code — not just a fragment or variable assignment. The reader should be able to copy-paste the fix

@@ -11,4 +11,5 @@ print_brew_summary() {
   echo -e "  ${DIM}  After installing new packages, sync the Brewfile:${NC}"
   echo -e "  ${DIM}  \$ task --global brew:dump${NC}"
   echo -e "  ${DIM}  Optional stacks: brew bundle --file=brew/<category>/<stack>.Brewfile${NC}"
+  echo -e "  ${DIM}  Autoupdate status: brew autoupdate status${NC}"
 }

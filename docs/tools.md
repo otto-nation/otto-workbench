@@ -44,6 +44,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | [delta](https://dandavison.github.io/delta/) | Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers |
 | [pipx](https://pipx.pypa.io/) | Install and run Python CLI tools in isolated environments |
 | [uv](https://docs.astral.sh/uv/) | Fast Python package and project manager (Rust-based pip/venv replacement) |
+| [worktrunk](https://worktrunk.dev) | Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanner — detects committed credentials, tokens, and keys |
 
 **Version Management**

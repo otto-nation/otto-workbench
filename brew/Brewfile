@@ -35,6 +35,7 @@ brew "delta"
 brew "parallel"
 brew "gh"
 brew "go-task/tap/go-task"
+brew "worktrunk"
 brew "otto-nation/tap/otto-stack"
 brew "shellcheck"
 

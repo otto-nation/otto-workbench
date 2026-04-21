@@ -21,6 +21,8 @@
 #   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
 #   - Merges Zed/Sublime editor settings
 #   - Reconciles Ghostty theme key
+#   - Checks for install-needed changes (missing brew packages, unconfigured
+#     components) and prints actionable "install.sh <component>" commands
 #
 # What sync does NOT do (one-time setup via install.sh):
 #   - Install Homebrew packages or casks
@@ -29,7 +31,7 @@
 #   - Create Ghostty config from template
 #   - Regenerate tool context (now runs during sync via sync_zsh)
 #
-# To run first-time setup or those components: bash <workbench>/install.sh
+# To run first-time setup or those components: bash <workbench>/install.sh [COMPONENT ...]
 
 set -e
 
@@ -62,6 +64,64 @@ for _f in "${_step_files[@]}"; do
   . "$_f"
 done
 unset _f _step_files
+
+# ─── Install-needed detection ─────────────────────────────────────────────────
+
+# _check_install_needed — detects components that need a full install.sh run.
+# Checks: core Brewfile missing packages, optional component check commands.
+# Prints actionable output with the exact install.sh command to run.
+_check_install_needed() {
+  local -a needs_install=()
+  local -a install_reasons=()
+
+  # 1. Check core Brewfile for missing packages
+  local brewfile="$WORKBENCH_DIR/brew/Brewfile"
+  if [[ -f "$brewfile" ]] && command -v brew >/dev/null 2>&1; then
+    local missing_output
+    if ! missing_output=$(brew bundle check --file="$brewfile" --no-upgrade 2>&1); then
+      local missing_count
+      missing_count=$(echo "$missing_output" | grep -c 'needs to be installed') || missing_count=0
+      if (( missing_count > 0 )); then
+        needs_install+=("brew")
+        install_reasons+=("$missing_count missing package(s)")
+      else
+        needs_install+=("brew")
+        install_reasons+=("missing packages")
+      fi
+    fi
+  fi
+
+  # 2. Check optional components with check commands in setup.conf
+  local registry="$WORKBENCH_DIR/install.components"
+  if [[ -f "$registry" ]]; then
+    local component check_cmd
+    while IFS= read -r component; do
+      [[ -z "$component" || "$component" =~ ^# ]] && continue
+      local conf="$WORKBENCH_DIR/$component/setup.conf"
+      [[ -f "$conf" ]] || continue
+      check_cmd=$(grep -m1 '^check[[:space:]]*=' "$conf" 2>/dev/null \
+        | sed 's/^check[[:space:]]*=[[:space:]]*//')
+      [[ -z "$check_cmd" ]] && continue
+      # shellcheck disable=SC2086
+      if ! bash -c "$check_cmd" >/dev/null 2>&1; then
+        needs_install+=("$component")
+        install_reasons+=("not configured")
+      fi
+    done < "$registry"
+  fi
+
+  # Print results
+  if [[ ${#needs_install[@]} -gt 0 ]]; then
+    echo
+    echo -e "  ${CYAN}Install needed${NC}"
+    local i
+    for i in "${!needs_install[@]}"; do
+      printf "    ${YELLOW}%-18s${NC} %s\n" "${needs_install[$i]}" "${install_reasons[$i]}"
+    done
+    echo
+    echo -e "  Run: ${BOLD}install.sh ${needs_install[*]}${NC}"
+  fi
+}
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
@@ -103,6 +163,9 @@ cmd_sync() {
 
   # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
   run_component_summaries
+
+  # Check if any components need a full install run.
+  _check_install_needed
 
   print_warnings_summary
 }

@@ -72,9 +72,18 @@ cmd_review() {
   local review_file
   _review_file review_file "$pr_number"
 
+  local issue_link
+  read -rp "Issue link (optional, Enter to skip): " issue_link
+
+  local prompt="$pr_input"
+  if [[ -n "$issue_link" ]]; then
+    prompt="Review PR ${pr_input}
+Related issue: ${issue_link}"
+  fi
+
   info "Running review agent on PR #${pr_number}..."
   echo
-  claude -p --add-dir "$REVIEWS_DIR" --agent reviewer "$pr_input"
+  claude -p --add-dir "$REVIEWS_DIR" --agent reviewer "$prompt"
 
   if [[ ! -f "$review_file" ]]; then
     err "Review file not found: $review_file"

@@ -41,6 +41,14 @@ Follow these phases in order:
 - Read the repo's CLAUDE.md (and any sub-CLAUDE.md files it references). Use project-specific rules as review criteria throughout
 - Read the PR description and commit messages — what is the intent?
 - Read the full files being changed, not just the diff lines. Understand how existing code in those files handles similar operations
+- **If a related issue link was provided** in the input, fetch and read the issue to understand the original requirements:
+  - GitHub issues (`#123` or URL): `gh issue view <number> --json title,body,comments`
+  - Linear issues (URL or ID like `PROJ-123`): fetch via `linear issue view <ID>` or WebFetch the URL
+  - Other URLs: fetch via WebFetch
+  - Use the issue's requirements as baseline criteria throughout Phases 2–6:
+    - **Completeness** — does the PR fully address what the issue describes? Flag requirements mentioned in the issue but missing from the implementation
+    - **Scope creep** — does the PR introduce changes not motivated by the issue? Note them (they may be intentional, but should be called out)
+    - **Acceptance criteria** — if the issue lists specific criteria or test cases, verify each is addressed
 
 ### 2. Scope
 - Which files are touched and what areas of the codebase are affected?

@@ -3,6 +3,7 @@
 
 meta:
   section: "AI Scripts"
+  loading: always
   install_check: false
   validation: bindir
   source: ai/bin

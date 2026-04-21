@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run Claude's reviewer agent on a PR with write access to ~/.claude/reviews/.
+#
+# Usage: claude-review <pr_url_or_number>
+#
+# Wraps `claude -p --agent reviewer` with --add-dir so the agent can write
+# review files to ~/.claude/reviews/ without disabling the sandbox entirely.
+
+set -e
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: claude-review <pr_url_or_number>" >&2
+  exit 1
+fi
+
+exec claude -p --add-dir ~/.claude/reviews --agent reviewer "$1"

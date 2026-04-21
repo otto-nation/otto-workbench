@@ -49,7 +49,18 @@ Follow these phases in order:
 - Maintainability — are there implicit assumptions, hidden dependencies, or fragile ordering that would break under reasonable future changes?
 - Test coverage — are new behaviors tested? Are edge cases covered?
 
-### 7. Verdict
+### 7. Back up claims with source references
+
+Every finding that asserts something about the codebase (wrong API name, missing field, incorrect behavior, existing utility not used) must include a source reference proving the claim. Do not just say "X is wrong" — show where the correct version lives.
+
+For each such finding:
+1. Search the codebase for the actual function, struct, constant, or pattern
+2. Include the file path and line number in the finding (e.g., `see pkg/filename.go:13-22`)
+3. If a working example of the correct pattern exists elsewhere, reference it (e.g., `see example/service/examplefile.go:16-44 for a working helper`)
+
+This allows `/pr-review` to convert references into GitHub permalink URLs when posting.
+
+### 8. Verdict
 
 Write the review to `/tmp/reviews/<repo>-<pr_number>.md`. Create `/tmp/reviews/` if it doesn't exist.
 
@@ -77,7 +88,7 @@ Omit severity sections with no findings. Skip files with no issues.
 
 After writing, print the file path so the user can review and edit before drafting.
 
-### 8. Next steps
+### 9. Next steps
 
 After writing the review file, print:
 

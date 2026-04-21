@@ -99,18 +99,24 @@ EOF
 
 # _check_local_rules — warns about any *.local.md files not tracked in the workbench.
 _check_local_rules() {
-  local found=false file lines
+  local found=false file lines details=""
   for file in "$RULES_DIR"/*.local.md; do
     [[ -e "$file" ]] || continue
     lines=$(wc -l < "$file" | tr -d ' ')
+    details+="$(basename "$file") ($lines lines), "
     if [[ "$found" == false ]]; then
       echo
-      warn "Local rule additions not tracked in workbench:"
+      echo -e "${YELLOW}⚠${NC}  Local rule additions not tracked in workbench:"
     fi
     echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}"
     found=true
   done
   if [[ "$found" == true ]]; then
+    details="${details%, }"
+    # Log the full message for summary replay (warn would double-print to stdout)
+    if [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]]; then
+      echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }Local rule additions not tracked in workbench: $details" >> "$WORKBENCH_INSTALL_LOG"
+    fi
     echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}"
   fi
 }

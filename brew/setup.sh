@@ -289,6 +289,20 @@ _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
 _brew_select_optional "$SCRIPT_DIR"
 _brew_migrate_version_managers
 
+# --- Autoupdate ---------------------------------------------------------------
+# brew autoupdate (DomT4/autoupdate tap) schedules brew update/upgrade via launchd.
+if command -v brew &>/dev/null && brew autoupdate status 2>/dev/null | grep -q "not running"; then
+  echo
+  info "Homebrew autoupdate is not running."
+  echo -e "  ${DIM}Upgrades all formulae and casks every 12 hours and on every system boot.${NC}"
+  echo -e "  ${DIM}Casks with built-in auto-updates are skipped. Prompts for sudo when needed.${NC}"
+  echo -e "  ${DIM}Old versions and left-over files are cleaned up automatically.${NC}"
+  if confirm "  Enable brew autoupdate?"; then
+    brew autoupdate start 43200 --upgrade --cleanup --immediate --sudo
+    success "Homebrew autoupdate enabled"
+  fi
+fi
+
 # shellcheck source=brew/summary.sh
 . "$SCRIPT_DIR/summary.sh"
 print_brew_summary

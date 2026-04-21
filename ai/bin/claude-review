@@ -1,16 +1,141 @@
 #!/usr/bin/env bash
-# Run Claude's reviewer agent on a PR with write access to ~/.claude/reviews/.
+# Run Claude's reviewer agent on a PR and optionally post findings to GitHub.
 #
 # Usage: claude-review <pr_url_or_number>
+#        claude-review post <pr_number>
 #
-# Wraps `claude -p --agent reviewer` with --add-dir so the agent can write
-# review files to ~/.claude/reviews/ without disabling the sandbox entirely.
+# Commands:
+#   <pr_url_or_number>   Run headless review, display results, prompt to post
+#   post <pr_number>     Post an existing review file via /pr-review skill
+#
+# Side effects:
+#   - Writes review to ~/.claude/reviews/<repo>-<pr_number>.md
+#   - When posting: launches interactive Claude session with /pr-review skill
 
 set -e
 
-if [[ $# -eq 0 ]]; then
-  echo "Usage: claude-review <pr_url_or_number>" >&2
-  exit 1
-fi
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../../lib/ui.sh"
 
-exec claude -p --add-dir ~/.claude/reviews --agent reviewer "$1"
+REVIEWS_DIR="$HOME/.claude/reviews"
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+# _extract_pr_number RESULT_VAR INPUT — extracts PR number from URL or bare number.
+_extract_pr_number() {
+  local -n __out=$1
+  local input="$2"
+
+  if [[ "$input" =~ /pull/([0-9]+) ]]; then
+    __out="${BASH_REMATCH[1]}"
+  elif [[ "$input" =~ ^[0-9]+$ ]]; then
+    __out="$input"
+  else
+    err "Cannot extract PR number from: $input"
+    exit 1
+  fi
+}
+
+# _review_file RESULT_VAR PR_NUMBER — computes the review file path.
+_review_file() {
+  local -n __out=$1
+  local pr_number="$2"
+  local repo
+  repo=$(basename "$(git rev-parse --show-toplevel)")
+  __out="${REVIEWS_DIR}/${repo}-${pr_number}.md"
+}
+
+# _display_review FILE — prints the review file with a header.
+_display_review() {
+  local file="$1"
+  echo
+  title "Review"
+  echo
+  cat "$file"
+  echo
+}
+
+usage() {
+  echo "Usage: claude-review <pr_url_or_number>"
+  echo "       claude-review post <pr_number>"
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_review() {
+  local pr_input="$1"
+
+  local pr_number
+  _extract_pr_number pr_number "$pr_input"
+
+  local review_file
+  _review_file review_file "$pr_number"
+
+  info "Running review agent on PR #${pr_number}..."
+  echo
+  claude -p --add-dir "$REVIEWS_DIR" --agent reviewer "$pr_input"
+
+  if [[ ! -f "$review_file" ]]; then
+    err "Review file not found: $review_file"
+    exit 1
+  fi
+
+  _display_review "$review_file"
+
+  if ! confirm "Satisfied with the review?"; then
+    info "Review saved to ${review_file}"
+    echo -e "  ${DIM}Edit the file, then run: claude-review post ${pr_number}${NC}"
+    exit 0
+  fi
+
+  if confirm_n "Post review to GitHub?"; then
+    cmd_post "$pr_number"
+  else
+    info "Review saved to ${review_file}"
+    echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
+  fi
+}
+
+cmd_post() {
+  local pr_number="$1"
+
+  local review_file
+  _review_file review_file "$pr_number"
+
+  if [[ ! -f "$review_file" ]]; then
+    err "No review file found: $review_file"
+    echo -e "  ${DIM}Run: claude-review ${pr_number}${NC}"
+    exit 1
+  fi
+
+  info "Launching Claude to post review..."
+  exec claude "/pr-review ${pr_number}"
+}
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+main() {
+  local command="${1:-}"
+
+  case "$command" in
+    post)
+      shift
+      local pr_number="${1:-}"
+      [[ -n "$pr_number" ]] || { err "Usage: claude-review post <pr_number>"; exit 1; }
+      cmd_post "$pr_number"
+      ;;
+    -h|--help)
+      usage
+      ;;
+    "")
+      usage
+      exit 1
+      ;;
+    *)
+      cmd_review "$command"
+      ;;
+  esac
+}
+
+main "$@"

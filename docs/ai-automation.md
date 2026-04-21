@@ -71,11 +71,6 @@ task --global pr:create            # Create AI-powered pull request with smart t
 task --global pr:update            # Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)
 task --global review               # AI review of staged, unstaged, and committed branch changes
 task --global pr:review            # AI review of the current PR
-task --global wt:create            # Create a git worktree with auto-named branch (usage: task wt:create -- <name> [base-branch])
-task --global wt:list              # List all worktrees in the current repo
-task --global wt:status            # Show status of current or named worktree (usage: task wt:status [-- name])
-task --global wt:open              # Print path to a worktree for cd (usage: cd $(task wt:open -- <name>))
-task --global wt:remove            # Remove a worktree and optionally delete its branch (usage: task wt:remove -- <name> [--force])
 ```
 <!-- TASKS-BLOCK-END -->
 

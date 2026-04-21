@@ -238,6 +238,22 @@ step_install_claude() {
   install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
 }
 
+# step_claude_worktrunk_plugin — installs Worktrunk's Claude Code plugin for
+# worktree-isolated agent sessions. One-time interactive setup; skips if wt is
+# not installed or the plugin is already present.
+step_claude_worktrunk_plugin() {
+  command -v wt >/dev/null 2>&1 || { skip "worktrunk not installed — skipping plugin"; return; }
+
+  if wt config plugins list 2>/dev/null | grep -q "claude"; then
+    success "Worktrunk Claude plugin already installed"
+    return
+  fi
+
+  info "Installing Worktrunk Claude Code plugin"
+  wt config plugins claude install
+  success "Worktrunk Claude plugin installed"
+}
+
 register_claude_steps() {
   register_step "Install claude-code"     step_install_claude
   register_step "Tool context"            step_generate_tools
@@ -247,6 +263,7 @@ register_claude_steps() {
   register_step "MCP servers"             step_claude_mcps
   register_step "Claude Code skills"      step_claude_skills
   register_step "Claude Code agents"      step_claude_agents
+  register_step "Worktrunk Claude plugin" step_claude_worktrunk_plugin
 }
 
 # sync_claude — runs all Claude sync steps non-interactively.

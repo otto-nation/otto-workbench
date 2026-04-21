@@ -84,7 +84,36 @@ For each finding in the review file:
 
 3. **Report skipped findings.** Print any findings that couldn't be mapped so the user can address them manually.
 
-### 5. Post or update the review
+### 5. Resolve source references to GitHub permalinks
+
+For each finding that references source code (e.g., `see pkg/service/exampleclass.go:13-22`):
+
+1. Get the SHA of `origin/main` for permalink stability:
+   ```bash
+   git rev-parse origin/main
+   ```
+
+2. Verify the referenced file and line still exist on main (the source may have changed since the review was written)
+
+3. Convert each reference to a GitHub permalink:
+   ```
+   https://github.com/{owner}/{repo}/blob/<main_sha>/<file_path>#L<start>-L<end>
+   ```
+
+4. Build each comment body as a thorough, self-contained explanation:
+   - Lead with the severity tag: `**[must-fix]**`, `**[should-fix]**`, or `**[nit]**`
+   - Explain the problem completely — a reader should understand the issue from the comment alone without needing to cross-reference the review file
+   - Embed permalink URLs inline to back up claims (e.g., "should be [`ExampleClass`](permalink)")
+   - Suggestions must show the **complete corrected text** that should replace the problematic code — not just a fragment or variable assignment. The reader should be able to copy-paste the fix
+   - If a working example exists elsewhere in the codebase, link to it
+
+### 6. Post or update the review
+
+**Review body:** Keep it short — just a brief note pointing at the inline comments. Example:
+
+> Have some comments marked as nit, must-fix, or should-fix.
+
+Do not repeat the summary, verdict, or out-of-scope findings in the body. All substance belongs in the inline comments.
 
 **If no existing PENDING review:**
 
@@ -92,13 +121,16 @@ For each finding in the review file:
 gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews \
   --method POST \
   -f commit_id="<head_sha>" \
-  -f event="PENDING" \
-  -f body="<summary + verdict>" \
+  -f body="<brief note>" \
   -f 'comments[][path]=<file>' \
   -f 'comments[][line]=<line_in_file>' \
   -f 'comments[][side]=RIGHT' \
   -f 'comments[][body]=<severity_tag + finding>'
 ```
+
+Do NOT pass an `event` field — omitting it creates the review as PENDING. Passing `event="PENDING"` causes a 422 error.
+
+**JSON payload escaping:** Always use a **quoted heredoc** (`<< 'EOF'`) or write the JSON to a temp file via the Write tool. An unquoted heredoc causes bash to expand `$(...)`, backticks, and `$VAR` inside comment bodies — turning code suggestions like `$(gh api user --jq '.login')` into their evaluated output.
 
 **If updating an existing PENDING review:** add new comments to the existing review and skip findings already posted.
 
@@ -110,12 +142,7 @@ gh api repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies \
   -f body="<response>"
 ```
 
-Format each comment body as:
-```
-**[must-fix]** <finding description>
-```
-
-### 6. Report
+### 7. Report
 
 Print:
 - Number of inline comments posted (new + replies)

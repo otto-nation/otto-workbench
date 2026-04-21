@@ -40,6 +40,7 @@ This creates `~/.config/task/taskfile.env` with:
 | context | On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. |
 | dream | Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory. |
 | machine | Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh. |
+| pr-comments | Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers. |
 | pr-review | Post or update a GitHub PR review from /tmp/reviews/. Creates PENDING reviews with inline comments, and can analyze and respond to existing review threads. |
 | promote | Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. |
 
@@ -70,11 +71,6 @@ task --global pr:create            # Create AI-powered pull request with smart t
 task --global pr:update            # Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)
 task --global review               # AI review of staged, unstaged, and committed branch changes
 task --global pr:review            # AI review of the current PR
-task --global wt:create            # Create a git worktree with auto-named branch (usage: task wt:create -- <name> [base-branch])
-task --global wt:list              # List all worktrees in the current repo
-task --global wt:status            # Show status of current or named worktree (usage: task wt:status [-- name])
-task --global wt:open              # Print path to a worktree for cd (usage: cd $(task wt:open -- <name>))
-task --global wt:remove            # Remove a worktree and optionally delete its branch (usage: task wt:remove -- <name> [--force])
 ```
 <!-- TASKS-BLOCK-END -->
 

@@ -81,6 +81,12 @@ tools:
     usage: "uv pip install <pkg>  |  uvx <tool>"
     docs: "https://docs.astral.sh/uv/"
 
+  - name: worktrunk
+    description: "Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration"
+    when_to_use: "Managing parallel git worktrees for concurrent feature development or isolating Claude Code agents in separate worktrees"
+    usage: "wt switch -c feat/auth  |  wt list  |  wt merge  |  wt remove feat/auth"
+    docs: "https://worktrunk.dev"
+
   - name: gitleaks
     description: "Secret scanner — detects committed credentials, tokens, and keys"
     when_to_use: "Automatically on every commit and push via git hooks; run manually to audit history"

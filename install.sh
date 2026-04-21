@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap script for workbench dotfiles.
 #
-# Usage: bash install.sh [--all]
+# Usage: bash install.sh [--all] [COMPONENT ...]
 #
 # What it does:
 #   Preflight (always runs):
@@ -20,7 +20,9 @@
 # Components that declare `depends` in setup.conf have those deps auto-included.
 #
 # Flags:
-#   --all   Skip the component selection menu and run all eligible components.
+#   --all              Skip the component selection menu and run all eligible components.
+#   COMPONENT ...      Run only the named components (core or optional), skipping menus.
+#                      Examples: install.sh brew docker   |   install.sh bin git
 #
 # Re-running is safe — existing symlinks are updated silently; real files prompt before overwrite.
 
@@ -48,8 +50,72 @@ unset _f
 # ─── Flags ────────────────────────────────────────────────────────────────────
 
 INSTALL_ALL=false
-for _arg in "$@"; do [[ "$_arg" == "--all" ]] && INSTALL_ALL=true; done
+INSTALL_TARGETS=()
+for _arg in "$@"; do
+  case "$_arg" in
+    --all) INSTALL_ALL=true ;;
+    -*)    err "Unknown flag: $_arg"; exit 1 ;;
+    *)     INSTALL_TARGETS+=("$_arg") ;;
+  esac
+done
 unset _arg
+INSTALL_TARGETED=false
+[[ ${#INSTALL_TARGETS[@]} -gt 0 ]] && INSTALL_TARGETED=true
+
+# ─── Targeted install helpers ─────────────────────────────────────────────────
+
+# _resolve_known_components — builds lookup sets of all known core and optional
+# component names. Populates KNOWN_CORE_COMPONENTS and KNOWN_OPTIONAL_COMPONENTS.
+KNOWN_CORE_COMPONENTS=()
+KNOWN_OPTIONAL_COMPONENTS=()
+PREFLIGHT_COMPONENTS=(task brew mise)
+
+_resolve_known_components() {
+  # Core: has steps.sh, no setup.conf, not preflight
+  for _f in "$WORKBENCH_DIR"/*/steps.sh; do
+    [[ -f "$_f" ]] || continue
+    local _c _is_pf=false
+    _c=$(basename "$(dirname "$_f")")
+    [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
+    for _pf in "${PREFLIGHT_COMPONENTS[@]}"; do [[ "$_pf" == "$_c" ]] && { _is_pf=true; break; }; done
+    [[ "$_is_pf" == true ]] && continue
+    KNOWN_CORE_COMPONENTS+=("$_c")
+  done
+
+  # Optional: listed in install.components
+  while IFS= read -r _c; do
+    [[ -z "$_c" || "$_c" =~ ^# ]] && continue
+    KNOWN_OPTIONAL_COMPONENTS+=("$_c")
+  done < "$WORKBENCH_DIR/install.components"
+}
+
+# _validate_targets — checks that every INSTALL_TARGETS entry is a known component.
+_validate_targets() {
+  local errors=0 target found
+  for target in "${INSTALL_TARGETS[@]}"; do
+    found=false
+    for _c in "${KNOWN_CORE_COMPONENTS[@]}" "${KNOWN_OPTIONAL_COMPONENTS[@]}"; do
+      [[ "$_c" == "$target" ]] && { found=true; break; }
+    done
+    if [[ "$found" == false ]]; then
+      err "Unknown component: '$target'"
+      errors=$(( errors + 1 ))
+    fi
+  done
+  if (( errors > 0 )); then
+    echo
+    echo "Known core components:     ${KNOWN_CORE_COMPONENTS[*]}"
+    echo "Known optional components: ${KNOWN_OPTIONAL_COMPONENTS[*]}"
+    exit 1
+  fi
+}
+
+# _is_targeted TARGET — returns 0 if TARGET is in INSTALL_TARGETS.
+_is_targeted() {
+  local target=$1 t
+  for t in "${INSTALL_TARGETS[@]}"; do [[ "$t" == "$target" ]] && return 0; done
+  return 1
+}
 
 # ─── Core helpers ─────────────────────────────────────────────────────────────
 
@@ -162,7 +228,13 @@ select_components() {
   fi
 
   local desired=()
-  if [[ "$INSTALL_ALL" == "true" ]]; then
+  if [[ "$INSTALL_TARGETED" == true ]]; then
+    # Targeted mode: select only named optional components
+    for _d in "${eligible_dirs[@]}"; do
+      _is_targeted "$_d" && desired+=("$_d")
+    done
+    [[ ${#desired[@]} -eq 0 ]] && return
+  elif [[ "$INSTALL_ALL" == "true" ]]; then
     desired=("${eligible_dirs[@]}")
   else
     echo
@@ -279,9 +351,15 @@ step_brew_install
 step_mise_install
 echo
 
+# Resolve known components and validate targets (if any).
+_resolve_known_components
+
+if [[ "$INSTALL_TARGETED" == true ]]; then
+  _validate_targets
+fi
+
 # Core components (steps.sh present, setup.conf absent, not preflight).
 # Preflight components (task, brew, mise) already ran above and are excluded.
-PREFLIGHT_COMPONENTS=(task brew mise)
 _core_dirs=()
 _core_descs=()
 for _f in "$WORKBENCH_DIR"/*/steps.sh; do
@@ -306,7 +384,12 @@ unset _f _c _is_preflight _pf _desc _line
 
 if [[ ${#_core_dirs[@]} -gt 0 ]]; then
   _core_selected=()
-  if [[ "$INSTALL_ALL" == "true" ]]; then
+  if [[ "$INSTALL_TARGETED" == true ]]; then
+    # Targeted mode: run only named core components
+    for _c in "${_core_dirs[@]}"; do
+      _is_targeted "$_c" && _core_selected+=("$_c")
+    done
+  elif [[ "$INSTALL_ALL" == "true" ]]; then
     _core_selected=("${_core_dirs[@]}")
   else
     info "Core components:"

@@ -81,6 +81,7 @@
       "Bash(gh label:*)",
       "Bash(gh milestone:*)",
       "Bash(go:*)",
+      "Bash(wt:*)",
       "Bash(golangci-lint:*)",
       "Bash(shellcheck:*)",
       "Bash(tree:*)",

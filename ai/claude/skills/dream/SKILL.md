@@ -74,6 +74,11 @@ grep -il "let's go with\|I decided\|we're using\|the plan is\|switch to\|move to
 grep -il "again\|every time\|keep forgetting\|as usual\|same as before\|like last time\|we always\|the usual" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
 ```
 
+**Review feedback signals:**
+```bash
+grep -il "accepted\|rejected\|won't-fix\|false positive\|not applying\|review feedback summary" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+```
+
 ### How to read matches
 
 For each file that matches, read ONLY the surrounding context of the match. JSONL files have one JSON object per line. Focus on lines where `type` is `"human"` (user messages) and the immediately following `"assistant"` response.
@@ -107,6 +112,7 @@ For each finding, note:
    - `decisions.md` — Choices and their rationale
    - `corrections.md` — Things the user corrected
    - `patterns.md` — Recurring workflows, common tasks
+   - `review-feedback.md` — Accepted/rejected review findings and false positive patterns
    - Create new topic files only when existing ones don't fit
 
 6. **Route facts to the right destination — memory, context.md, or machine.md.**

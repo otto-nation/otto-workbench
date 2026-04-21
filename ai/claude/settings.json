@@ -88,8 +88,16 @@
       "Bash(gradle:*)",
       "Bash(./gradlew:*)",
       "Bash(brew:*)",
+      "Bash(gh api:*)",
+      "Bash(ln:*)",
+      "Bash(env)",
+      "Bash(xargs:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
       "WebFetch(domain:docs.anthropic.com)",
-      "WebFetch(domain:gist.github.com)"
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:github.com)",
+      "WebSearch"
     ],
     "deny": [
       "Bash(git reset:*)",

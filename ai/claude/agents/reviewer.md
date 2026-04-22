@@ -15,11 +15,40 @@ Follow these phases in order:
 - Read `.claude/context.md` Known Constraints section if it exists — use it to avoid findings that contradict known project constraints
 - If dependency files are modified (go.mod, package.json, Gemfile, requirements.txt, etc.), flag for breaking-change analysis in Phase 3
 - If no `.claude/review/` directory exists or no checklists match, proceed normally — Discovery is optional
+- **When reviewing a PR** (not a local diff), fetch existing reviews and comments to avoid duplicating what's already been discussed:
+  1. Fetch submitted reviews and their verdicts:
+     ```bash
+     gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews \
+       --jq '.[] | {user: .user.login, state, body}'
+     ```
+  2. Fetch inline review comments with reply threads:
+     ```bash
+     gh api repos/{owner}/{repo}/pulls/<pr_number>/comments \
+       --jq '.[] | {id, path, line, body, user: .user.login, in_reply_to_id}'
+     ```
+  3. Fetch general PR comments (non-inline discussion):
+     ```bash
+     gh api repos/{owner}/{repo}/issues/<pr_number>/comments \
+       --jq '.[] | {user: .user.login, body}'
+     ```
+  4. Use this context throughout Phases 3–6:
+     - Do not re-raise findings already covered by another reviewer — reference them instead if relevant
+     - Note resolved threads (author acknowledged and fixed) — skip these entirely
+     - Focus on gaps: issues no one has raised, or threads where the resolution looks incomplete
+     - If you disagree with an existing reviewer's assessment, say so explicitly with your reasoning
 
 ### 1. Context
 - Read the repo's CLAUDE.md (and any sub-CLAUDE.md files it references). Use project-specific rules as review criteria throughout
 - Read the PR description and commit messages — what is the intent?
 - Read the full files being changed, not just the diff lines. Understand how existing code in those files handles similar operations
+- **If a related issue link was provided** in the input, fetch and read the issue to understand the original requirements:
+  - GitHub issues (`#123` or URL): `gh issue view <number> --json title,body,comments`
+  - Linear issues (URL or ID like `PROJ-123`): fetch via `linear issue view <ID>` or WebFetch the URL
+  - Other URLs: fetch via WebFetch
+  - Use the issue's requirements as baseline criteria throughout Phases 2–6:
+    - **Completeness** — does the PR fully address what the issue describes? Flag requirements mentioned in the issue but missing from the implementation
+    - **Scope creep** — does the PR introduce changes not motivated by the issue? Note them (they may be intentional, but should be called out)
+    - **Acceptance criteria** — if the issue lists specific criteria or test cases, verify each is addressed
 
 ### 2. Scope
 - Which files are touched and what areas of the codebase are affected?

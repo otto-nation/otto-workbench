@@ -125,6 +125,8 @@ SUBLIME_SETTINGS_FILE="$HOME/Library/Application Support/Sublime Text/Packages/U
 
 # ─── Generated rule files ─────────────────────────────────────────────────────
 TOOLS_GENERATED_RELPATH="ai/guidelines/rules/tools.generated.md"
+TOOLS_WORKFLOW_GENERATED_RELPATH="ai/guidelines/rules/tools-workflow.generated.md"
 GIT_GENERATED_RELPATH="ai/guidelines/rules/git.generated.md"
 TOOLS_GENERATED_FILE="$WORKBENCH_DIR/$TOOLS_GENERATED_RELPATH"
+TOOLS_WORKFLOW_GENERATED_FILE="$WORKBENCH_DIR/$TOOLS_WORKFLOW_GENERATED_RELPATH"
 GIT_GENERATED_FILE="$WORKBENCH_DIR/$GIT_GENERATED_RELPATH"

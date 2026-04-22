@@ -43,6 +43,7 @@ BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
+WORKFLOW_OUTPUT="${TOOL_WORKFLOW_OUTPUT:-"$REPO_ROOT/$TOOLS_WORKFLOW_GENERATED_RELPATH"}"
 ENV_LOCAL_TEMPLATE_PATH="${ENV_LOCAL_TEMPLATE_PATH:-"$REPO_ROOT/zsh/.env.local.template"}"
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
 TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
@@ -209,6 +210,32 @@ _render_registry() {
 _tool_registries=()
 collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
 
+# _is_always_loaded FILE — returns 0 if registry meta.loading is "always".
+_is_always_loaded() { [[ "$(yq '.meta.loading // "scoped"' "$1")" == "always" ]]; }
+
+# Split registries into always-loaded (workflow) and path-scoped sets.
+_workflow_registries=()
+_scoped_registries=()
+for _reg in "${_tool_registries[@]}"; do
+  if _is_always_loaded "$_reg"; then
+    _workflow_registries+=("$_reg")
+  else
+    _scoped_registries+=("$_reg")
+  fi
+done
+
+# Always-loaded file — no frontmatter, available in every Claude session.
+{
+  printf '# Workflow Tools\n'
+  printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
+  printf '<!-- Regenerate: ai/bin/generate-tool-context -->\n'
+  for _reg in "${_workflow_registries[@]}"; do
+    _render_registry "$_reg"
+  done
+} > "$WORKFLOW_OUTPUT"
+$QUIET || success "Generated $(basename "$WORKFLOW_OUTPUT")"
+
+# Path-scoped file — loads only when editing Brewfile, registry, bin, Taskfile, or zsh files.
 {
   printf -- '---\n'
   printf 'paths:\n'
@@ -223,7 +250,7 @@ collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_ST
   printf '# Environment Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
   printf '<!-- Regenerate: ai/bin/generate-tool-context -->\n'
-  for _reg in "${_tool_registries[@]}"; do
+  for _reg in "${_scoped_registries[@]}"; do
     _render_registry "$_reg"
   done
 } > "$OUTPUT"

@@ -116,6 +116,12 @@ done
 
 run_steps
 
+# Record installed component and sub-tools in state
+state_record "ai"
+for _tool in "${SELECTED_TOOLS[@]}"; do
+  state_record "ai/$_tool"
+done
+
 echo
 success "AI tools setup complete!"
 for _tool in "${SELECTED_TOOLS[@]}"; do

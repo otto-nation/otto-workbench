@@ -54,6 +54,7 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 # Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
 MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
+INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # description: Symlink AI scripts to ~/.local/bin
-# AI bin scripts setup — symlinks ai/bin/ scripts to ~/.local/bin/.
+# AI component sync — sub-tools handle their own script installation.
 
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -10,11 +10,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   unset _D
 fi
 
-# sync_ai — symlinks ai/bin/ scripts to ~/.local/bin/.
+# sync_ai — no-op; sub-tools (claude, serena) handle their own script installation.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {
-  echo; info "ai scripts → $LOCAL_BIN_DIR/"
-  sync_component_bin "$AI_SRC_DIR"
+  # No component-level scripts — sub-tools (claude, serena) handle their own.
+  :
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

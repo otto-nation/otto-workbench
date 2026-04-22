@@ -1,5 +1,5 @@
 # Git script registry.
-# Regenerate: ai/bin/generate-tool-context
+# Regenerate: generate-tool-context
 
 meta:
   section: "Git Scripts"

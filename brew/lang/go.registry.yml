@@ -1,6 +1,6 @@
 # Go stack registry.
 # Install: brew bundle --file=brew/lang/go.Brewfile
-# Regenerate: ai/bin/generate-tool-context
+# Regenerate: generate-tool-context
 
 meta:
   section: "Go Tools"

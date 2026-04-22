@@ -15,7 +15,7 @@ shellcheck <file>.sh           # lint a script
 bin/validate-registries        # check registry YAML schema + cross-validation
 bin/validate-components        # check component tier contracts
 bin/validate-migrations        # check migration file conventions
-ai/bin/generate-tool-context   # regenerate tools.generated.md from registries
+bin/generate-tool-context      # regenerate tools.generated.md from registries
 otto-workbench changelog       # show recent changes from conventional commits
 ```
 

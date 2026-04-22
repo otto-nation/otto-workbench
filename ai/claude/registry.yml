@@ -1,0 +1,20 @@
+# Claude script registry — installed when the Claude sub-tool is set up.
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Claude Scripts"
+  loading: always
+  install_check: false
+  validation: bindir
+  source: ai/claude/bin
+
+tools:
+  - name: claude-review
+    description: "Run Claude's reviewer agent on a PR and optionally post findings to GitHub"
+    when_to_use: "Running a structured code review on a PR with optional GitHub posting"
+    usage: "claude-review <pr_url_or_number>  |  claude-review post <pr_number>"
+
+  - name: claude-rules
+    description: "Manages local Claude Code rule additions not tracked in the workbench"
+    when_to_use: "Adding machine-specific or project-specific Claude instructions"
+    usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"

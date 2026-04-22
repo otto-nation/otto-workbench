@@ -1,5 +1,5 @@
 # Docker script registry — installed when the Docker component is set up.
-# Regenerate: ai/bin/generate-tool-context
+# Regenerate: generate-tool-context
 
 meta:
   section: "Docker Scripts"

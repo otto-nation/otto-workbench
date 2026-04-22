@@ -15,6 +15,7 @@ setup() {
   export BREW_STACKS_DIR="$TMPDIR"
   export WORK_DIR="$TMPDIR/work"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
+  export TOOL_WORKFLOW_OUTPUT="$TMPDIR/tools-workflow.generated.md"
   export README_PATH="$TMPDIR/README.md"
   export TASKFILE_PATH="$TMPDIR/Taskfile.yml"
   export AI_DIR="$TMPDIR/ai"
@@ -32,7 +33,7 @@ setup() {
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR AI_DIR README_PATH TASKFILE_PATH DOCS_DIR TOOLS_DOC_PATH AI_DOC_PATH COMPONENTS_DOC_PATH
+  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT TOOL_WORKFLOW_OUTPUT ENV_LOCAL_TEMPLATE_PATH REGISTRY_SCAN_DIR AI_DIR README_PATH TASKFILE_PATH DOCS_DIR TOOLS_DOC_PATH AI_DOC_PATH COMPONENTS_DOC_PATH
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title
@@ -82,6 +83,24 @@ tools:
   - name: $tool_name
     description: "An install-checked tool"
     when_to_use: "When installed"
+EOF
+}
+
+# _write_workflow_registry FILE SECTION — writes a registry with loading: always
+_write_workflow_registry() {
+  local file="$1" section="${2:-Workflow}"
+  cat > "$file" << EOF
+meta:
+  section: "$section"
+  loading: always
+  install_check: false
+  validation: none
+
+tools:
+  - name: workflow-tool
+    description: "A workflow tool"
+    when_to_use: "Always available"
+    usage: "workflow-tool --run"
 EOF
 }
 
@@ -467,4 +486,41 @@ EOF
   bash "$GENERATOR"
   run grep "SHOULD_NOT_APPEAR" "$ENV_LOCAL_TEMPLATE_PATH"
   [ "$status" -ne 0 ]
+}
+
+# ── Loading split ────────────────────────────────────────────────────────────
+
+@test "always-loaded registry goes to workflow file, not scoped file" {
+  _write_workflow_registry "$BIN_REGISTRY" "Workflow Scripts"
+  _write_registry "$BREW_REGISTRY" "Brew Tools"
+
+  bash "$GENERATOR"
+  grep -q "### workflow-tool" "$TOOL_WORKFLOW_OUTPUT"
+  run grep "### workflow-tool" "$TOOL_CONTEXT_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+@test "scoped registry goes to scoped file, not workflow file" {
+  _write_workflow_registry "$BIN_REGISTRY" "Workflow Scripts"
+  _write_registry "$BREW_REGISTRY" "Brew Tools"
+
+  bash "$GENERATOR"
+  grep -q "### mytool" "$TOOL_CONTEXT_OUTPUT"
+  run grep "### mytool" "$TOOL_WORKFLOW_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+@test "workflow file has no frontmatter" {
+  _write_workflow_registry "$BIN_REGISTRY"
+
+  bash "$GENERATOR"
+  run grep "^---" "$TOOL_WORKFLOW_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+@test "scoped file retains frontmatter" {
+  _write_registry "$BREW_REGISTRY"
+
+  bash "$GENERATOR"
+  grep -q "^---" "$TOOL_CONTEXT_OUTPUT"
 }

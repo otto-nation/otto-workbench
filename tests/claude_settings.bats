@@ -33,10 +33,9 @@ setup() {
   [ "$count" -eq 0 ]
 }
 
-@test "allow list does not permit gh api (raw REST/GraphQL)" {
-  local count
-  count=$(jq '[.permissions.allow[] | select(test("Bash\\(gh api"))] | length' "$SETTINGS")
-  [ "$count" -eq 0 ]
+@test "allow list includes gh api for review comment workflows" {
+  run jq -e '[.permissions.allow[] | select(startswith("Bash(gh api:"))] | length > 0' "$SETTINGS"
+  [ "$status" -eq 0 ]
 }
 
 @test "allow list does not permit gh secret management" {

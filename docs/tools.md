@@ -14,6 +14,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
+| `claude-review` | Run Claude's reviewer agent on a PR and optionally post findings to GitHub |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
 | `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |

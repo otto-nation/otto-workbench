@@ -140,15 +140,26 @@ cmd_sync() {
   run_all_migrations
   echo
 
-  # Auto-discovers sync_<component>() from all steps.sh files.
-  # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
-  #                              ai/claude → editors/… → …
-  # Adding any component with a sync_<name>() function includes it automatically.
+  # Sync components — respects installation state when a state file exists.
+  # Without a state file (pre-existing installs), syncs everything (backward compat).
+  # Infrastructure components (bin, task, mise) always sync regardless of state.
   local -a _step_files=()
   discover_step_files _step_files
-  local _f _c
+  local _f _c _path
+  local _always_sync="bin task mise"
   for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
+    # Derive component path relative to WORKBENCH_DIR (e.g. ai/claude from ai/claude/steps.sh)
+    _path="${_f#"$WORKBENCH_DIR/"}"
+    _path="${_path%/steps.sh}"
+
+    # Gate on state: skip uninstalled components (unless no state file = backward compat)
+    if state_file_exists; then
+      if [[ " $_always_sync " != *" $_path "* ]] && ! state_is_installed "$_path"; then
+        continue
+      fi
+    fi
+
     export WORKBENCH_CURRENT_COMPONENT="$_c"
     declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
   done

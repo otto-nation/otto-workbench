@@ -41,7 +41,7 @@ This creates `~/.config/task/taskfile.env` with:
 | dream | Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory. |
 | machine | Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh. |
 | pr-comments | Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers. |
-| pr-review | Post or update a GitHub PR review from ~/.claude/reviews/. Creates PENDING reviews with inline comments, and can analyze and respond to existing review threads. |
+| pr-review | Post or update a GitHub PR review from ~/.config/workbench/reviews/. Creates PENDING reviews with inline comments, and can analyze and respond to existing review threads. |
 | promote | Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. |
 
 **Agents:**

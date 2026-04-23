@@ -1,6 +1,7 @@
 ---
 name: promote
 description: "Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose."
+source: otto-workbench/ai/claude/skills/promote/SKILL.md
 ---
 
 # Promote — Memory-to-Artifact Pipeline

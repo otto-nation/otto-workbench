@@ -1,6 +1,7 @@
 ---
 name: context
 description: "On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md."
+source: otto-workbench/ai/claude/skills/context/SKILL.md
 ---
 
 # Context — Project Context Refresh

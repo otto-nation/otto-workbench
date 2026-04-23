@@ -1,6 +1,7 @@
 ---
 name: dream
 description: "Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory."
+source: otto-workbench/ai/claude/skills/dream/SKILL.md
 ---
 
 # Dream - Memory Consolidation

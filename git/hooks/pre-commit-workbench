@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit hook for otto-workbench: regenerates generated files and auto-stages them.
+# Symlinked to .git/hooks/pre-commit by `task dev:setup`.
+# Called via delegation from the global pre-commit hook (~/.git-hooks/pre-commit).
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+_generated_files=(
+  "$TOOLS_GENERATED_RELPATH"
+  "$TOOLS_WORKFLOW_GENERATED_RELPATH"
+  "$GIT_GENERATED_RELPATH"
+)
+
+# Run generators quietly
+"$REPO_ROOT/bin/generate-tool-context" --quiet
+"$REPO_ROOT/git/bin/generate-git-rules" --quiet
+
+# Auto-stage any generated files that changed
+_staged=()
+for _gf in "${_generated_files[@]}"; do
+  if ! git -C "$REPO_ROOT" diff --quiet "$_gf" 2>/dev/null; then
+    git -C "$REPO_ROOT" add "$_gf"
+    _staged+=("$_gf")
+  fi
+done
+
+if [[ ${#_staged[@]} -gt 0 ]]; then
+  echo "Auto-staged updated generated files:"
+  for _gf in "${_staged[@]}"; do
+    echo "  $_gf"
+  done
+fi

@@ -1,6 +1,7 @@
 ---
 name: pr-comments
 description: "Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers."
+source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 ---
 
 # PR Comments

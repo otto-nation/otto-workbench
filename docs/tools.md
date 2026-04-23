@@ -15,7 +15,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
 | `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
-| `claude-review` | Run Claude's reviewer agent on a PR and optionally post findings to GitHub |
+| `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |

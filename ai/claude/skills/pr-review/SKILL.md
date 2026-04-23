@@ -1,6 +1,7 @@
 ---
 name: pr-review
-description: "Post or update a GitHub PR review from ~/.claude/reviews/. Creates PENDING reviews with inline comments, and can analyze and respond to existing review threads."
+description: "Post or update a GitHub PR review from ~/.config/workbench/reviews/. Creates PENDING reviews with inline comments, and can analyze and respond to existing review threads."
+source: otto-workbench/ai/claude/skills/pr-review/SKILL.md
 ---
 
 # PR Review
@@ -42,7 +43,7 @@ gh api repos/{owner}/{repo}/pulls/<pr_number>/comments \
 For each unanswered thread:
 1. Read the original comment and all replies
 2. Determine if the response resolves the finding, requests clarification, or disagrees
-3. Update the review file in `~/.claude/reviews/<repo>-<pr_number>.md`:
+3. Update the review file in `~/.config/workbench/reviews/<repo>-<pr_number>.md`:
    - Mark resolved findings with `~~strikethrough~~` and note the resolution
    - Add new findings surfaced by the discussion
    - Append an `## Open Threads` section with threads needing a response
@@ -50,7 +51,7 @@ For each unanswered thread:
 
 ### 2. Load the review file
 
-Read `~/.claude/reviews/<repo>-<pr_number>.md`. If the file doesn't exist, stop and tell the user to run the reviewer agent first.
+Read `~/.config/workbench/reviews/<repo>-<pr_number>.md`. If the file doesn't exist, stop and tell the user to run the reviewer agent first.
 
 Parse the file to extract:
 - Summary (from the `## Summary` section)

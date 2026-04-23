@@ -1,24 +1,59 @@
 #!/usr/bin/env bash
-# Run Claude's reviewer agent on a PR and optionally post findings to GitHub.
+# Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
 #
-# Usage: claude-review <pr_url_or_number>
-#        claude-review post <pr_number>
+# Usage: claude-review [options] <pr_url_or_number>
+#        claude-review post <pr_url_or_number>
 #
 # Commands:
 #   <pr_url_or_number>   Run headless review, display results, prompt to post
-#   post <pr_number>     Post an existing review file via /pr-review skill
+#   post <pr_url_or_number>  Post an existing review file via /pr-review skill
+#
+# Options:
+#   --no-post            Skip all interactive prompts; run review and exit
+#   --issue <link>       Attach an issue link for reviewer context
+#
+# Flow:
+#   1. Fetches PR metadata (title, branch, size, file list)
+#   2. Creates a git worktree via `wt switch pr:<N>` with latest changes
+#   3. If a prior review exists, archives it and feeds findings to the agent
+#   4. Runs the reviewer agent with local file access and streams progress
+#   5. Cleans up the worktree on exit
+#
+# Iterative reviews:
+#   Re-running on the same PR archives the previous review and passes it as
+#   context. The agent tracks which findings were resolved and carries forward
+#   open issues. Session logs are timestamped so review history is preserved.
 #
 # Side effects:
-#   - Writes review to ~/.claude/reviews/<repo>-<pr_number>.md
+#   - Writes review to ~/.config/workbench/reviews/<repo>-<pr_number>.md
+#   - Archives prior reviews as <repo>-<pr_number>.<timestamp>.md
+#   - Creates/removes a temporary git worktree for the PR branch
 #   - When posting: launches interactive Claude session with /pr-review skill
+#
+# Non-interactive mode (--no-post):
+#   Skips all prompts — no issue link prompt, no satisfaction confirm, no post
+#   confirm. Runs the review agent, writes the review file, and exits.
+#   Useful for automation and when Claude itself runs reviews as a subagent.
+#
+# When calling from Claude Code:
+#   Run each review in a foreground Bash call (not backgrounded with &).
+#   To review multiple PRs in parallel, use the Agent tool to dispatch
+#   separate subagents — each runs one `claude-review --no-post <N>` call.
 
-set -e
+set -eo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+. "$(dirname "$_SELF")/../../../lib/ui.sh"
 
-REVIEWS_DIR="$HOME/.claude/reviews"
+REVIEWS_DIR="$HOME/.config/workbench/reviews"
+mkdir -p "$REVIEWS_DIR"
+
+# Migrate reviews from legacy location
+if [[ -d "$HOME/.claude/reviews" ]]; then
+  mv "$HOME/.claude/reviews"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
+  mv "$HOME/.claude/reviews"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
+fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,35 +72,67 @@ _extract_pr_number() {
   fi
 }
 
-# _review_file RESULT_VAR PR_NUMBER — computes the review file path.
+# _extract_repo RESULT_VAR INPUT — extracts owner/repo from URL, falls back to gh context.
+_extract_repo() {
+  local -n __out=$1
+  local input="$2"
+
+  if [[ "$input" =~ github\.com/([^/]+/[^/]+) ]]; then
+    __out="${BASH_REMATCH[1]}"
+  else
+    __out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+      err "Cannot determine repository from: $input"
+      exit 1
+    }
+  fi
+}
+
+# _review_file RESULT_VAR REPO PR_NUMBER — computes the review file path.
 _review_file() {
   local -n __out=$1
-  local pr_number="$2"
-  local repo
-  repo=$(basename "$(git rev-parse --show-toplevel)")
-  __out="${REVIEWS_DIR}/${repo}-${pr_number}.md"
+  local repo_name="${2##*/}"
+  local pr_number="$3"
+  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}.md"
 }
 
 # _stream_progress SESSION_LOG — reads stream-json from stdin, shows progress, saves raw log.
 _stream_progress() {
   local session_log="$1"
   : > "$session_log"
+  local prev_label=""
   while IFS= read -r line; do
     echo "$line" >> "$session_log"
-    local event_type
-    event_type=$(echo "$line" | jq -r '.event.type // empty' 2>/dev/null) || continue
-    case "$event_type" in
-      content_block_start)
-        local tool_name
-        tool_name=$(echo "$line" | jq -r '.event.content_block.name // empty' 2>/dev/null)
-        [[ -n "$tool_name" ]] && echo -e "  ${DIM}▸ ${tool_name}${NC}"
-        ;;
-      content_block_delta)
-        local text
-        text=$(echo "$line" | jq -r 'select(.event.delta.type == "text_delta") | .event.delta.text // empty' 2>/dev/null)
-        [[ -n "$text" ]] && printf "%s" "$text"
-        ;;
-    esac
+    local msg_type
+    msg_type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null) || continue
+    [[ "$msg_type" == "assistant" ]] || continue
+
+    # Extract tool calls and build a human-readable label
+    local labels
+    labels=$(echo "$line" | jq -r '
+      .message.content[]? | select(.type == "tool_use") |
+      if .input.description then
+        .input.description
+      elif .name == "Read" then
+        "Read " + (.input.file_path | split("/") | last)
+      elif .name == "Grep" then
+        "Grep " + (.input.pattern // "")
+      elif .name == "Glob" then
+        "Glob " + (.input.pattern // "")
+      elif .name == "Write" then
+        "Write " + (.input.file_path | split("/") | last)
+      else
+        .name
+      end
+    ' 2>/dev/null)
+    [[ -z "$labels" ]] && continue
+
+    # Print each tool call, deduplicating consecutive identical labels
+    while IFS= read -r label; do
+      [[ -z "$label" ]] && continue
+      [[ "$label" == "$prev_label" ]] && continue
+      echo -e "  ${DIM}▸ ${label}${NC}"
+      prev_label="$label"
+    done <<< "$labels"
   done
 }
 
@@ -80,45 +147,172 @@ _display_review() {
 }
 
 usage() {
-  echo "Usage: claude-review <pr_url_or_number>"
+  echo "Usage: claude-review [options] <pr_url_or_number>"
   echo "       claude-review post <pr_number>"
+  echo
+  echo "Options:"
+  echo "  --no-post          Skip all interactive prompts; run review and exit"
+  echo "  --issue <link>     Attach an issue link for reviewer context"
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_review() {
   local pr_input="$1"
+  local no_post="${2:-false}"
+  local issue_link="${3:-}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
 
+  local repo
+  _extract_repo repo "$pr_input"
+
   local review_file
-  _review_file review_file "$pr_number"
+  _review_file review_file "$repo" "$pr_number"
 
-  local issue_link
-  read -rp "Issue link (optional, Enter to skip): " issue_link
+  if [[ "$no_post" != "true" && -z "$issue_link" ]]; then
+    read -rp "Issue link (optional, Enter to skip): " issue_link
+  fi
 
-  local prompt="$pr_input"
+  # Pre-fetch PR metadata so the agent doesn't waste turns on discovery
+  info "Fetching PR metadata..."
+  local pr_meta
+  pr_meta=$(gh pr view "$pr_number" --repo "$repo" \
+    --json title,body,headRefName,baseRefName,additions,deletions,changedFiles,files \
+    --jq '{
+      title, body, headRefName, baseRefName, additions, deletions, changedFiles,
+      files: [.files[] | {path, additions, deletions}]
+    }' 2>/dev/null) || {
+    err "Failed to fetch PR #${pr_number} from ${repo}"
+    exit 1
+  }
+
+  local pr_title pr_additions pr_deletions pr_changed_files pr_head pr_base
+  pr_title=$(echo "$pr_meta" | jq -r '.title')
+  pr_additions=$(echo "$pr_meta" | jq -r '.additions')
+  pr_deletions=$(echo "$pr_meta" | jq -r '.deletions')
+  pr_changed_files=$(echo "$pr_meta" | jq -r '.changedFiles')
+  pr_head=$(echo "$pr_meta" | jq -r '.headRefName')
+  pr_base=$(echo "$pr_meta" | jq -r '.baseRefName')
+
+  # Resolve the repo root — look for an existing clone or locate via gh
+  local repo_root=""
+  local git_toplevel
+  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
+  local repo_name="${repo##*/}"
+  if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
+    repo_root="$git_toplevel"
+  else
+    # Try to find the repo via gh
+    repo_root=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
+  fi
+
+  if [[ -z "$repo_root" ]]; then
+    err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
+    exit 1
+  fi
+
+  # Create a worktree for the PR branch so the agent can read files locally
+  info "Setting up worktree for PR #${pr_number}..."
+  local wt_json wt_path
+  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || {
+    err "Failed to create worktree for PR #${pr_number}"
+    exit 1
+  }
+  wt_path=$(echo "$wt_json" | jq -r '.path')
+
+  if [[ -z "$wt_path" || "$wt_path" == "null" ]]; then
+    err "Could not determine worktree path from wt output"
+    exit 1
+  fi
+
+  # Ensure the worktree has the latest changes from the PR branch
+  # Use fetch+reset to handle force-pushed branches (common during PR iteration)
+  git -C "$wt_path" fetch origin "$pr_head" 2>/dev/null || true
+  git -C "$wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
+
+  # Clean up worktree when done (review is read-only, so always safe to remove)
+  # shellcheck disable=SC2154
+  trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
+
+  # Preserve prior review for iterative context
+  local prior_review=""
+  if [[ -f "$review_file" ]]; then
+    prior_review=$(cat "$review_file")
+    # Archive with timestamp so history is preserved
+    local archive
+    archive="${review_file%.md}.$(date +%Y%m%d-%H%M%S).md"
+    mv "$review_file" "$archive"
+    info "Archived prior review to $(basename "$archive")"
+  fi
+
+  # Build the prompt
+  local prompt
+  prompt="Review PR #${pr_number} in ${repo}.
+
+## PR metadata
+- **Title:** ${pr_title}
+- **Branch:** ${pr_head} → ${pr_base}
+- **Size:** +${pr_additions} -${pr_deletions} across ${pr_changed_files} files
+
+## Environment
+The PR branch is checked out locally at: ${wt_path}
+Read source files directly from this path. Do NOT fetch files via the GitHub API.
+
+## Output
+You MUST use the Write tool to write the review to: ${review_file}
+Do NOT print the review to stdout — it must be saved as a file using the Write tool."
+
   if [[ -n "$issue_link" ]]; then
-    prompt="Review PR ${pr_input}
-Related issue: ${issue_link}"
+    prompt="${prompt}
+
+## Related issue
+${issue_link}"
+  fi
+
+  if [[ -n "$prior_review" ]]; then
+    prompt="${prompt}
+
+## Prior review
+This is a re-review. Below are the findings from the previous review. For each prior finding:
+- If the issue has been fixed, note it as resolved and omit from the new review
+- If the issue is still present, carry it forward
+- Add any new findings from changes since the last review
+
+<prior_review>
+${prior_review}
+</prior_review>"
   fi
 
   local session_log="${review_file%.md}.session.jsonl"
 
-  info "Running review agent on PR #${pr_number}..."
+  # Archive prior session log
+  if [[ -f "$session_log" ]]; then
+    mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
+  fi
+
+  info "Running review agent on PR #${pr_number} (${pr_title})..."
   echo
-  claude -p --output-format stream-json --add-dir "$REVIEWS_DIR" --agent reviewer "$prompt" \
+  claude -p --verbose --output-format stream-json \
+    --add-dir "$REVIEWS_DIR" --add-dir "$wt_path" --agent reviewer "$prompt" \
     | _stream_progress "$session_log"
   echo
 
   if [[ ! -f "$review_file" ]]; then
     err "Review file not found: $review_file"
+    err "The review agent did not produce output. Check the session log for details."
     [[ -f "$session_log" ]] && echo -e "  ${DIM}Session log: ${session_log}${NC}"
     exit 1
   fi
 
   _display_review "$review_file"
+
+  if [[ "$no_post" == "true" ]]; then
+    info "Review saved to ${review_file}"
+    echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
+    return
+  fi
 
   if ! confirm "Satisfied with the review?"; then
     info "Review saved to ${review_file}"
@@ -128,7 +322,7 @@ Related issue: ${issue_link}"
   fi
 
   if confirm_n "Post review to GitHub?"; then
-    cmd_post "$pr_number"
+    cmd_post "$repo" "$pr_number"
   else
     info "Review saved to ${review_file}"
     echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
@@ -137,10 +331,11 @@ Related issue: ${issue_link}"
 }
 
 cmd_post() {
-  local pr_number="$1"
+  local repo="$1"
+  local pr_number="$2"
 
   local review_file
-  _review_file review_file "$pr_number"
+  _review_file review_file "$repo" "$pr_number"
 
   if [[ ! -f "$review_file" ]]; then
     err "No review file found: $review_file"
@@ -155,24 +350,36 @@ cmd_post() {
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
-  local command="${1:-}"
+  local no_post="false"
+  local issue_link=""
+  local positional=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-post)   no_post="true"; shift ;;
+      --issue)     issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
+      -h|--help)   usage; exit 0 ;;
+      *)           positional+=("$1"); shift ;;
+    esac
+  done
+
+  local command="${positional[0]:-}"
 
   case "$command" in
     post)
-      shift
-      local pr_number="${1:-}"
-      [[ -n "$pr_number" ]] || { err "Usage: claude-review post <pr_number>"; exit 1; }
-      cmd_post "$pr_number"
-      ;;
-    -h|--help)
-      usage
+      local post_input="${positional[1]:-}"
+      [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
+      local post_pr_number post_repo
+      _extract_pr_number post_pr_number "$post_input"
+      _extract_repo post_repo "$post_input"
+      cmd_post "$post_repo" "$post_pr_number"
       ;;
     "")
       usage
       exit 1
       ;;
     *)
-      cmd_review "$command"
+      cmd_review "$command" "$no_post" "$issue_link"
       ;;
   esac
 }

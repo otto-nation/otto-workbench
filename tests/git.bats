@@ -124,8 +124,13 @@ EOF
   [ -f "$GIT_HOOKS_SRC_DIR/pre-commit" ]
 }
 
-@test "pre-push-global hook source exists" {
-  [ -f "$GIT_HOOKS_SRC_DIR/pre-push-global" ]
+@test "pre-push hook source exists" {
+  [ -f "$GIT_HOOKS_SRC_DIR/pre-push" ]
+}
+
+@test "workbench hooks exist" {
+  [ -f "$GIT_HOOKS_SRC_DIR/pre-commit-workbench" ]
+  [ -f "$GIT_HOOKS_SRC_DIR/pre-push-workbench" ]
 }
 
 @test "pre-commit hook has current header" {

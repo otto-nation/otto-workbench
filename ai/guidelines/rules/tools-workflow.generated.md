@@ -48,9 +48,9 @@ Generates ai/guidelines/rules/tools.generated.md from the domain registries
 ## Claude Scripts
 
 ### claude-review
-Run Claude's reviewer agent on a PR and optionally post findings to GitHub
-- **When to use**: Running a structured code review on a PR with optional GitHub posting
-- **Usage**: `claude-review <pr_url_or_number>  |  claude-review post <pr_number>`
+Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support
+- **When to use**: Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. For multiple PRs, dispatch separate Agent subagents — do not background with &
+- **Usage**: `claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review post <pr_url_or_number>`
 
 ### claude-rules
 Manages local Claude Code rule additions not tracked in the workbench

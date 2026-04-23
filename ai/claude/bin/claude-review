@@ -12,11 +12,11 @@
 #   - Writes review to ~/.claude/reviews/<repo>-<pr_number>.md
 #   - When posting: launches interactive Claude session with /pr-review skill
 
-set -e
+set -eo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+. "$(dirname "$_SELF")/../../../lib/ui.sh"
 
 REVIEWS_DIR="$HOME/.claude/reviews"
 
@@ -50,22 +50,40 @@ _review_file() {
 _stream_progress() {
   local session_log="$1"
   : > "$session_log"
+  local prev_label=""
   while IFS= read -r line; do
     echo "$line" >> "$session_log"
-    local event_type
-    event_type=$(echo "$line" | jq -r '.event.type // empty' 2>/dev/null) || continue
-    case "$event_type" in
-      content_block_start)
-        local tool_name
-        tool_name=$(echo "$line" | jq -r '.event.content_block.name // empty' 2>/dev/null)
-        [[ -n "$tool_name" ]] && echo -e "  ${DIM}▸ ${tool_name}${NC}"
-        ;;
-      content_block_delta)
-        local text
-        text=$(echo "$line" | jq -r 'select(.event.delta.type == "text_delta") | .event.delta.text // empty' 2>/dev/null)
-        [[ -n "$text" ]] && printf "%s" "$text"
-        ;;
-    esac
+    local msg_type
+    msg_type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null) || continue
+    [[ "$msg_type" == "assistant" ]] || continue
+
+    # Extract tool calls and build a human-readable label
+    local labels
+    labels=$(echo "$line" | jq -r '
+      .message.content[]? | select(.type == "tool_use") |
+      if .input.description then
+        .input.description
+      elif .name == "Read" then
+        "Read " + (.input.file_path | split("/") | last)
+      elif .name == "Grep" then
+        "Grep " + (.input.pattern // "")
+      elif .name == "Glob" then
+        "Glob " + (.input.pattern // "")
+      elif .name == "Write" then
+        "Write " + (.input.file_path | split("/") | last)
+      else
+        .name
+      end
+    ' 2>/dev/null)
+    [[ -z "$labels" ]] && continue
+
+    # Print each tool call, deduplicating consecutive identical labels
+    while IFS= read -r label; do
+      [[ -z "$label" ]] && continue
+      [[ "$label" == "$prev_label" ]] && continue
+      echo -e "  ${DIM}▸ ${label}${NC}"
+      prev_label="$label"
+    done <<< "$labels"
   done
 }
 
@@ -106,14 +124,18 @@ Related issue: ${issue_link}"
 
   local session_log="${review_file%.md}.session.jsonl"
 
+  # Remove stale review so we detect if claude fails to produce a new one
+  rm -f "$review_file"
+
   info "Running review agent on PR #${pr_number}..."
   echo
-  claude -p --output-format stream-json --add-dir "$REVIEWS_DIR" --agent reviewer "$prompt" \
+  claude -p --verbose --output-format stream-json --add-dir "$REVIEWS_DIR" --agent reviewer "$prompt" \
     | _stream_progress "$session_log"
   echo
 
   if [[ ! -f "$review_file" ]]; then
     err "Review file not found: $review_file"
+    err "The review agent did not produce output. Check the session log for details."
     [[ -f "$session_log" ]] && echo -e "  ${DIM}Session log: ${session_log}${NC}"
     exit 1
   fi

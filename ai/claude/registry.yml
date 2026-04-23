@@ -10,9 +10,9 @@ meta:
 
 tools:
   - name: claude-review
-    description: "Run Claude's reviewer agent on a PR and optionally post findings to GitHub"
-    when_to_use: "Running a structured code review on a PR with optional GitHub posting"
-    usage: "claude-review <pr_url_or_number>  |  claude-review post <pr_number>"
+    description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
+    when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings"
+    usage: "claude-review <pr_url_or_number>  |  claude-review post <pr_url_or_number>"
 
   - name: claude-rules
     description: "Manages local Claude Code rule additions not tracked in the workbench"

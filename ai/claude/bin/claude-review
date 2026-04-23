@@ -1,15 +1,29 @@
 #!/usr/bin/env bash
-# Run Claude's reviewer agent on a PR and optionally post findings to GitHub.
+# Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
 #
 # Usage: claude-review <pr_url_or_number>
-#        claude-review post <pr_number>
+#        claude-review post <pr_url_or_number>
 #
 # Commands:
 #   <pr_url_or_number>   Run headless review, display results, prompt to post
-#   post <pr_number>     Post an existing review file via /pr-review skill
+#   post <pr_url_or_number>  Post an existing review file via /pr-review skill
+#
+# Flow:
+#   1. Fetches PR metadata (title, branch, size, file list)
+#   2. Creates a git worktree via `wt switch pr:<N>` with latest changes
+#   3. If a prior review exists, archives it and feeds findings to the agent
+#   4. Runs the reviewer agent with local file access and streams progress
+#   5. Cleans up the worktree on exit
+#
+# Iterative reviews:
+#   Re-running on the same PR archives the previous review and passes it as
+#   context. The agent tracks which findings were resolved and carries forward
+#   open issues. Session logs are timestamped so review history is preserved.
 #
 # Side effects:
-#   - Writes review to ~/.claude/reviews/<repo>-<pr_number>.md
+#   - Writes review to ~/.config/workbench/reviews/<repo>-<pr_number>.md
+#   - Archives prior reviews as <repo>-<pr_number>.<timestamp>.md
+#   - Creates/removes a temporary git worktree for the PR branch
 #   - When posting: launches interactive Claude session with /pr-review skill
 
 set -eo pipefail
@@ -18,7 +32,14 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../../../lib/ui.sh"
 
-REVIEWS_DIR="$HOME/.claude/reviews"
+REVIEWS_DIR="$HOME/.config/workbench/reviews"
+mkdir -p "$REVIEWS_DIR"
+
+# Migrate reviews from legacy location
+if [[ -d "$HOME/.claude/reviews" ]]; then
+  mv "$HOME/.claude/reviews"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
+  mv "$HOME/.claude/reviews"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
+fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -251,7 +272,7 @@ ${prior_review}
 
   info "Running review agent on PR #${pr_number} (${pr_title})..."
   echo
-  claude -p --verbose --output-format stream-json --permission-mode acceptEdits \
+  claude -p --verbose --output-format stream-json \
     --add-dir "$REVIEWS_DIR" --add-dir "$wt_path" --agent reviewer "$prompt" \
     | _stream_progress "$session_log"
   echo

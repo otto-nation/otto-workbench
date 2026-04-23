@@ -1,6 +1,6 @@
 # Apps stack registry.
 # Install: brew bundle --file=brew/apps/apps.Brewfile
-# Regenerate: ai/bin/generate-tool-context
+# Regenerate: generate-tool-context
 
 meta:
   section: "Mac Apps"

@@ -157,7 +157,7 @@ step_claude_agents() {
 
 # step_generate_tools — regenerates the AI tool context markdown from registries.
 step_generate_tools() {
-  local generator="$AI_SRC_DIR/bin/generate-tool-context"
+  local generator="$BIN_SRC_DIR/generate-tool-context"
   if [[ ! -x "$generator" ]]; then
     warn "generate-tool-context not found — skipping tool context generation"
     return
@@ -271,6 +271,9 @@ register_claude_steps() {
 # Skips silently if claude is not installed on this machine.
 sync_claude() {
   command -v claude >/dev/null 2>&1 || { warn "claude not found in PATH — skipping"; return; }
+
+  echo; info "claude scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$CLAUDE_SRC_DIR"
 
   echo; info "Claude settings"
   step_claude_settings

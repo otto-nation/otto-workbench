@@ -59,6 +59,10 @@ sync_ghostty() {
     echo -e "  ${DIM}⊘ ghostty not installed — skipping${NC}"
     return
   fi
+
+  echo; info "ghostty scripts → $LOCAL_BIN_DIR/"
+  sync_component_bin "$GHOSTTY_SRC_DIR"
+
   # Config creation and migrations are one-time setup steps handled by ghostty/setup.sh.
   # Sync only reconciles the workbench-managed theme key.
   echo; info "Ghostty theme"

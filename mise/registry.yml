@@ -1,5 +1,5 @@
 # Mise registry.
-# Regenerate: ai/bin/generate-tool-context
+# Regenerate: generate-tool-context
 
 meta:
   section: "Version Management"

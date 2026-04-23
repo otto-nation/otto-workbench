@@ -14,6 +14,7 @@ setup() {
   cp "$REPO_ROOT/lib/setup.sh" "$TMPDIR/lib/setup.sh"
   cp "$REPO_ROOT/lib/constants.sh" "$TMPDIR/lib/constants.sh"
   cp "$REPO_ROOT/lib/registries.sh" "$TMPDIR/lib/registries.sh"
+  cp "$REPO_ROOT/lib/state.sh" "$TMPDIR/lib/state.sh"
 
   # Stub bin scripts referenced in tests
   touch "$TMPDIR/bin/mytool" && chmod +x "$TMPDIR/bin/mytool"

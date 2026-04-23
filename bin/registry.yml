@@ -1,5 +1,5 @@
 # Bin script registry — framework-level scripts that are always installed.
-# Regenerate: ai/bin/generate-tool-context
+# Regenerate: generate-tool-context
 
 meta:
   section: "Workbench Scripts"
@@ -59,3 +59,8 @@ tools:
     description: "Validates migration file naming, function naming, and shebang conventions"
     when_to_use: "After adding or editing any migration file; runs automatically on pre-push"
     usage: "bin/validate-migrations"
+
+  - name: generate-tool-context
+    description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
+    when_to_use: "After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync"
+    usage: "generate-tool-context"

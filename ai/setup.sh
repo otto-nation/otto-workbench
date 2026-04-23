@@ -96,11 +96,15 @@ STEPS=()
 
 select_tools
 
-# Symlink ai/bin/ scripts (claude-rules, generate-tool-context, etc.) to ~/.local/bin/
-# before running tool steps — tools like claude-rules must be in PATH.
-# shellcheck source=/dev/null
-. "$SCRIPT_DIR/steps.sh"
-sync_ai
+# Install scripts for each selected tool before running steps —
+# tools like claude-rules must be in PATH for their setup steps.
+for _tool in "${SELECTED_TOOLS[@]}"; do
+  _tool_dir="$SCRIPT_DIR/$_tool"
+  if [[ -d "$_tool_dir/bin" ]]; then
+    sync_component_bin "$_tool_dir"
+  fi
+done
+unset _tool_dir
 
 # Framework contract: missing register_<tool>_steps is a hard error — the tool's
 # steps.sh is broken and cannot run. Individual step failures are soft (warn + continue).
@@ -111,6 +115,12 @@ for _tool in "${SELECTED_TOOLS[@]}"; do
 done
 
 run_steps
+
+# Record installed component and sub-tools in state
+state_record "ai"
+for _tool in "${SELECTED_TOOLS[@]}"; do
+  state_record "ai/$_tool"
+done
 
 echo
 success "AI tools setup complete!"

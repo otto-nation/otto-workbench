@@ -1,0 +1,15 @@
+# Serena script registry — installed when the Serena sub-tool is set up.
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Serena Scripts"
+  loading: always
+  install_check: false
+  validation: bindir
+  source: ai/serena/bin
+
+tools:
+  - name: serena-mcp
+    description: "Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence"
+    when_to_use: "Enabling Serena LSP-based code intelligence in a specific project"
+    usage: "serena-mcp init  |  serena-mcp status"

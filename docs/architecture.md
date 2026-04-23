@@ -77,7 +77,7 @@ Registries are auto-discovered by [`lib/registries.sh`](../lib/registries.sh) vi
 - `**/*.registry.yml` — brew stack registries
 - `*.env.yml` — consumer-owned env/auth declarations
 
-The generator [`ai/bin/generate-tool-context`](../ai/bin/generate-tool-context) combines all registries into [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) for AI sessions, and splices tables into the docs.
+The generator [`bin/generate-tool-context`](../bin/generate-tool-context) combines all registries into [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) for AI sessions, and splices tables into the docs.
 
 **Registry vs env files**: `registry.yml` owns tool documentation (`tools[]`). `*.env.yml` owns env var and auth declarations (`env[]`, `auth`), colocated with the code that reads them. Env vars set programmatically at runtime (e.g., `DOCKER_HOST`) are not declared in registries.
 
@@ -115,12 +115,12 @@ These files are derived from source data and must never be edited directly. Edit
 
 | File | Generator | Source | CI Enforcement |
 |------|-----------|--------|----------------|
-| [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) | [`generate-tool-context`](../ai/bin/generate-tool-context) | `*/registry.yml` | Freshness diff |
+| [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) | [`generate-tool-context`](../bin/generate-tool-context) | `*/registry.yml` | Freshness diff |
 | [`git.generated.md`](../ai/guidelines/rules/git.generated.md) | [`generate-git-rules`](../git/bin/generate-git-rules) | [`lib/conventions.sh`](../lib/conventions.sh) | Freshness diff |
-| `docs/tools.md` (tables) | [`generate-tool-context`](../ai/bin/generate-tool-context) | Registries | Freshness diff |
-| `docs/ai-automation.md` (tables) | [`generate-tool-context`](../ai/bin/generate-tool-context) | Skills, agents, Taskfile | Freshness diff |
-| `docs/components.md` (lists) | [`generate-tool-context`](../ai/bin/generate-tool-context) | Component discovery | Freshness diff |
-| `.env.local.template` (ENV section) | [`generate-tool-context`](../ai/bin/generate-tool-context) | `*.env.yml` | — |
+| `docs/tools.md` (tables) | [`generate-tool-context`](../bin/generate-tool-context) | Registries | Freshness diff |
+| `docs/ai-automation.md` (tables) | [`generate-tool-context`](../bin/generate-tool-context) | Skills, agents, Taskfile | Freshness diff |
+| `docs/components.md` (lists) | [`generate-tool-context`](../bin/generate-tool-context) | Component discovery | Freshness diff |
+| `.env.local.template` (ENV section) | [`generate-tool-context`](../bin/generate-tool-context) | `*.env.yml` | — |
 | `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/claude/skills/anatomy/generate-anatomy.sh) | `git ls-files` | — |
 
 Freshness is enforced twice: the pre-push hook runs generators and blocks if output changed, and CI runs the same check on every PR.

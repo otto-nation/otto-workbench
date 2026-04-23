@@ -1,11 +1,11 @@
-# Terminal script registry — installed when the Terminals component is set up.
-# Regenerate: ai/bin/generate-tool-context
+# Ghostty script registry — installed when the Ghostty sub-tool is set up.
+# Regenerate: generate-tool-context
 
 meta:
-  section: "Terminal Scripts"
+  section: "Ghostty Scripts"
   install_check: false
   validation: bindir
-  source: terminals/bin
+  source: terminals/ghostty/bin
 
 tools:
   - name: ghostty-terminfo-push

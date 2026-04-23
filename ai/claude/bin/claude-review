@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
 #
-# Usage: claude-review <pr_url_or_number>
+# Usage: claude-review [options] <pr_url_or_number>
 #        claude-review post <pr_url_or_number>
 #
 # Commands:
 #   <pr_url_or_number>   Run headless review, display results, prompt to post
 #   post <pr_url_or_number>  Post an existing review file via /pr-review skill
+#
+# Options:
+#   --no-post            Skip all interactive prompts; run review and exit
+#   --issue <link>       Attach an issue link for reviewer context
 #
 # Flow:
 #   1. Fetches PR metadata (title, branch, size, file list)
@@ -25,6 +29,11 @@
 #   - Archives prior reviews as <repo>-<pr_number>.<timestamp>.md
 #   - Creates/removes a temporary git worktree for the PR branch
 #   - When posting: launches interactive Claude session with /pr-review skill
+#
+# Non-interactive mode (--no-post):
+#   Skips all prompts — no issue link prompt, no satisfaction confirm, no post
+#   confirm. Runs the review agent, writes the review file, and exits.
+#   Useful for automation and when Claude itself runs reviews as a subagent.
 
 set -eo pipefail
 
@@ -133,14 +142,20 @@ _display_review() {
 }
 
 usage() {
-  echo "Usage: claude-review <pr_url_or_number>"
+  echo "Usage: claude-review [options] <pr_url_or_number>"
   echo "       claude-review post <pr_number>"
+  echo
+  echo "Options:"
+  echo "  --no-post          Skip all interactive prompts; run review and exit"
+  echo "  --issue <link>     Attach an issue link for reviewer context"
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_review() {
   local pr_input="$1"
+  local no_post="${2:-false}"
+  local issue_link="${3:-}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -151,8 +166,9 @@ cmd_review() {
   local review_file
   _review_file review_file "$repo" "$pr_number"
 
-  local issue_link
-  read -rp "Issue link (optional, Enter to skip): " issue_link
+  if [[ "$no_post" != "true" && -z "$issue_link" ]]; then
+    read -rp "Issue link (optional, Enter to skip): " issue_link
+  fi
 
   # Pre-fetch PR metadata so the agent doesn't waste turns on discovery
   info "Fetching PR metadata..."
@@ -215,6 +231,17 @@ cmd_review() {
   # shellcheck disable=SC2154
   trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
 
+  # Preserve prior review for iterative context
+  local prior_review=""
+  if [[ -f "$review_file" ]]; then
+    prior_review=$(cat "$review_file")
+    # Archive with timestamp so history is preserved
+    local archive
+    archive="${review_file%.md}.$(date +%Y%m%d-%H%M%S).md"
+    mv "$review_file" "$archive"
+    info "Archived prior review to $(basename "$archive")"
+  fi
+
   # Build the prompt
   local prompt
   prompt="Review PR #${pr_number} in ${repo}.
@@ -254,17 +281,6 @@ ${prior_review}
 
   local session_log="${review_file%.md}.session.jsonl"
 
-  # Preserve prior review for iterative context
-  local prior_review=""
-  if [[ -f "$review_file" ]]; then
-    prior_review=$(cat "$review_file")
-    # Archive with timestamp so history is preserved
-    local archive
-    archive="${review_file%.md}.$(date +%Y%m%d-%H%M%S).md"
-    mv "$review_file" "$archive"
-    info "Archived prior review to $(basename "$archive")"
-  fi
-
   # Archive prior session log
   if [[ -f "$session_log" ]]; then
     mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
@@ -285,6 +301,12 @@ ${prior_review}
   fi
 
   _display_review "$review_file"
+
+  if [[ "$no_post" == "true" ]]; then
+    info "Review saved to ${review_file}"
+    echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
+    return
+  fi
 
   if ! confirm "Satisfied with the review?"; then
     info "Review saved to ${review_file}"
@@ -322,27 +344,36 @@ cmd_post() {
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
-  local command="${1:-}"
+  local no_post="false"
+  local issue_link=""
+  local positional=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-post)   no_post="true"; shift ;;
+      --issue)     issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
+      -h|--help)   usage; exit 0 ;;
+      *)           positional+=("$1"); shift ;;
+    esac
+  done
+
+  local command="${positional[0]:-}"
 
   case "$command" in
     post)
-      shift
-      local post_input="${1:-}"
+      local post_input="${positional[1]:-}"
       [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
       local post_pr_number post_repo
       _extract_pr_number post_pr_number "$post_input"
       _extract_repo post_repo "$post_input"
       cmd_post "$post_repo" "$post_pr_number"
       ;;
-    -h|--help)
-      usage
-      ;;
     "")
       usage
       exit 1
       ;;
     *)
-      cmd_review "$command"
+      cmd_review "$command" "$no_post" "$issue_link"
       ;;
   esac
 }

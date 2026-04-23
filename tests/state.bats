@@ -106,3 +106,125 @@ teardown() {
   run state_is_installed "ai/serena"
   [ "$status" -eq 1 ]
 }
+
+# ─── state_list ────────────────────────────────────────────────────────────
+
+@test "state_list prints all entries" {
+  state_record "bin"
+  state_record "ai"
+  state_record "ai/claude"
+
+  run state_list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bin"* ]]
+  [[ "$output" == *"ai"* ]]
+  [[ "$output" == *"ai/claude"* ]]
+}
+
+@test "state_list returns 0 when no state file" {
+  run state_list
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# ─── state_detect_installed ────────────────────────────────────────────────
+
+@test "state_detect_installed records core components" {
+  # Need constants for detection heuristics — source ui.sh with fake HOME
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+
+  state_detect_installed
+
+  run state_is_installed "bin"
+  [ "$status" -eq 0 ]
+  run state_is_installed "git"
+  [ "$status" -eq 0 ]
+  run state_is_installed "zsh"
+  [ "$status" -eq 0 ]
+}
+
+@test "state_detect_installed detects optional components by heuristic" {
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+
+  # Set up ghostty
+  mkdir -p "$GHOSTTY_CONFIG_DIR"
+
+  state_detect_installed
+
+  run state_is_installed "terminals"
+  [ "$status" -eq 0 ]
+  run state_is_installed "terminals/ghostty"
+  [ "$status" -eq 0 ]
+
+  # Docker not set up — should not be detected
+  run state_is_installed "docker"
+  [ "$status" -ne 0 ]
+}
+
+# ─── state_prune_orphans ──────────────────────────────────────────────────
+
+@test "state_prune_orphans removes entries with no step file" {
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+  . "$REPO_ROOT/lib/components.sh"
+
+  # Record a real component and a fake one
+  state_record "bin"
+  state_record "nonexistent/tool"
+
+  state_prune_orphans
+
+  run state_is_installed "bin"
+  [ "$status" -eq 0 ]
+  run state_is_installed "nonexistent/tool"
+  [ "$status" -ne 0 ]
+}
+
+@test "state_prune_orphans is safe with no state file" {
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+  . "$REPO_ROOT/lib/components.sh"
+
+  run state_prune_orphans
+  [ "$status" -eq 0 ]
+}
+
+@test "state_prune_orphans keeps all valid entries" {
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+  . "$REPO_ROOT/lib/components.sh"
+
+  state_record "bin"
+  state_record "git"
+  state_record "ai"
+  state_record "ai/claude"
+
+  state_prune_orphans
+
+  # All are valid components with step files
+  run state_is_installed "bin"
+  [ "$status" -eq 0 ]
+  run state_is_installed "git"
+  [ "$status" -eq 0 ]
+  run state_is_installed "ai"
+  [ "$status" -eq 0 ]
+  run state_is_installed "ai/claude"
+  [ "$status" -eq 0 ]
+}

@@ -60,16 +60,17 @@ _source_with_fake_home() {
 # ─── Infrastructure always-sync list ────────────────────────────────────────
 
 @test "infrastructure components match always-sync list" {
-  local _always_sync="bin task mise"
+  local _always_sync="bin task mise git zsh"
 
   # Infrastructure entries match
   [[ " $_always_sync " == *" bin "* ]]
   [[ " $_always_sync " == *" task "* ]]
   [[ " $_always_sync " == *" mise "* ]]
+  [[ " $_always_sync " == *" git "* ]]
+  [[ " $_always_sync " == *" zsh "* ]]
 
   # Non-infrastructure entries do not match
   [[ " $_always_sync " != *" docker "* ]]
-  [[ " $_always_sync " != *" git "* ]]
   [[ " $_always_sync " != *" ai "* ]]
   [[ " $_always_sync " != *" ai/claude "* ]]
 }

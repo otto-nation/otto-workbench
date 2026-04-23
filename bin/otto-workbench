@@ -4,9 +4,10 @@
 # Usage: otto-workbench <command>
 #
 # Commands:
-#   sync              Re-apply all workbench configuration to ~/
-#   claude [--force]  Sync Claude config + scaffold project .claude/ (see below)
-#   changelog         Show recent changes from conventional commits
+#   sync                  Re-apply all workbench configuration to ~/
+#   claude [--force]      Sync Claude config + scaffold project .claude/ (see below)
+#   state [regenerate]    Show or re-detect installed component state
+#   changelog             Show recent changes from conventional commits
 #
 # What claude does:
 #   Syncs machine-level Claude config (settings, rules, skills, agents, MCPs),
@@ -140,15 +141,31 @@ cmd_sync() {
   run_all_migrations
   echo
 
-  # Auto-discovers sync_<component>() from all steps.sh files.
-  # Glob order is alphabetical: bin → docker → git → task → terminals → zsh →
-  #                              ai/claude → editors/… → …
-  # Adding any component with a sync_<name>() function includes it automatically.
+  # Sync components — respects installation state when a state file exists.
+  # Without a state file (pre-existing installs), syncs everything (backward compat).
+  # Infrastructure components (bin, task, mise, git, zsh) always sync regardless of state.
+  #
+  # Before syncing, prune any orphaned state entries (renamed/removed components).
+  state_prune_orphans
+
   local -a _step_files=()
   discover_step_files _step_files
-  local _f _c
+  local _f _c _path
+  local _always_sync="bin task mise git zsh"
   for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
+    # Derive component path relative to WORKBENCH_DIR (e.g. ai/claude from ai/claude/steps.sh)
+    _path="${_f#"$WORKBENCH_DIR/"}"
+    _path="${_path%/steps.sh}"
+
+    # Gate on state: skip uninstalled components (unless no state file = backward compat)
+    if state_file_exists; then
+      if [[ " $_always_sync " != *" $_path "* ]] && ! state_is_installed "$_path"; then
+        skip "$_path (not installed)"
+        continue
+      fi
+    fi
+
     export WORKBENCH_CURRENT_COMPONENT="$_c"
     declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
   done
@@ -214,6 +231,39 @@ cmd_claude() {
   success "Claude setup complete!"
 }
 
+cmd_state() {
+  local subcmd="${2:-}"
+  case "$subcmd" in
+    regenerate)
+      info "Regenerating installation state"
+      rm -f "$INSTALLED_STATE_FILE"
+      state_detect_installed
+      echo
+      success "Installation state regenerated"
+      echo -e "\n  ${CYAN}Detected components${NC}"
+      local _entry
+      while IFS= read -r _entry; do
+        echo "    $_entry"
+      done < "$INSTALLED_STATE_FILE"
+      ;;
+    "")
+      if state_file_exists; then
+        info "Installed components:"
+        local _entry
+        while IFS= read -r _entry; do
+          echo "  $_entry"
+        done < "$INSTALLED_STATE_FILE"
+      else
+        info "No state file — all components will sync (backward compat)"
+      fi
+      ;;
+    *)
+      echo "Usage: otto-workbench state [regenerate]" >&2
+      exit 1
+      ;;
+  esac
+}
+
 cmd_changelog() {
   shift  # remove "changelog" from args
   bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
@@ -226,15 +276,17 @@ usage() {
 Usage: otto-workbench <command>
 
 Commands:
-  sync              Re-apply all workbench configuration to ~/
-  claude [--force]  Sync Claude config + scaffold .claude/ in current repo
-  changelog         Show recent changes from conventional commits
+  sync                  Re-apply all workbench configuration to ~/
+  claude [--force]      Sync Claude config + scaffold .claude/ in current repo
+  state [regenerate]    Show or regenerate installed component state
+  changelog             Show recent changes from conventional commits
 EOF
 }
 
 case "${1:-}" in
   sync)      cmd_sync ;;
   claude)    cmd_claude "$@" ;;
+  state)     cmd_state "$@" ;;
   changelog) cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;
   *)

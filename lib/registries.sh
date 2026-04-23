@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared registry discovery, install-check, and env/auth iteration.
 #
-# Used by: ai/bin/generate-tool-context, brew/summary.sh, bin/validate-registries
+# Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries
 #
 # Functions:
 #   is_installed NAME             — returns 0 if NAME is in PATH

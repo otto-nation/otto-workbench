@@ -87,7 +87,7 @@ _run_step "Validating migrations"   "$REPO_ROOT/bin/validate-migrations" --quiet
 # ── Generation ───────────────────────────────────────────────────────────────
 
 _step "Regenerating tool context"
-"$REPO_ROOT/ai/bin/generate-tool-context" --quiet
+"$REPO_ROOT/bin/generate-tool-context" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH" "$TOOLS_WORKFLOW_GENERATED_RELPATH"; then
   printf "${RED}✗${NC}\n" >&2
   err "Generated tool files were updated — commit them before pushing:"

@@ -54,6 +54,7 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 # Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
 MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
+INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
@@ -103,6 +104,7 @@ GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
 
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
+SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
 CLAUDE_SETTINGS_SRC="$WORKBENCH_DIR/ai/claude/settings.json"

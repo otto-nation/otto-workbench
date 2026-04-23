@@ -9,4 +9,4 @@
 
 [[ -x "$(command -v wt 2>/dev/null)" ]] || return 0
 
-eval "$(wt config shell show zsh)"
+eval "$(wt config shell init zsh)"

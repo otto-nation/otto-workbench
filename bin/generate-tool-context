@@ -31,7 +31,7 @@
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
 
 # shellcheck source=../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
@@ -228,7 +228,7 @@ done
 {
   printf '# Workflow Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Regenerate: ai/bin/generate-tool-context -->\n'
+  printf '<!-- Regenerate: generate-tool-context -->\n'
   for _reg in "${_workflow_registries[@]}"; do
     _render_registry "$_reg"
   done
@@ -249,7 +249,7 @@ $QUIET || success "Generated $(basename "$WORKFLOW_OUTPUT")"
   printf -- '---\n\n'
   printf '# Environment Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Regenerate: ai/bin/generate-tool-context -->\n'
+  printf '<!-- Regenerate: generate-tool-context -->\n'
   for _reg in "${_scoped_registries[@]}"; do
     _render_registry "$_reg"
   done

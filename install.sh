@@ -309,6 +309,7 @@ run_components() {
     else
       bash "$WORKBENCH_DIR/$component/setup.sh" || warn "$label setup encountered errors — see above"
     fi
+    state_record "$component"
 
     index=$(( index + 1 ))
   done
@@ -418,6 +419,7 @@ if [[ ${#_core_dirs[@]} -gt 0 ]]; then
     elif declare -f "sync_${_c}" > /dev/null; then
       "sync_${_c}"
     fi
+    state_record "$_c"
   done
   unset _c WORKBENCH_CURRENT_COMPONENT
 fi

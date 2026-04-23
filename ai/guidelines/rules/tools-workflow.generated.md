@@ -1,6 +1,6 @@
 # Workflow Tools
 <!-- AUTO-GENERATED — do not edit directly -->
-<!-- Regenerate: ai/bin/generate-tool-context -->
+<!-- Regenerate: generate-tool-context -->
 
 ## Workbench Scripts
 
@@ -40,7 +40,12 @@ Validates migration file naming, function naming, and shebang conventions
 - **When to use**: After adding or editing any migration file; runs automatically on pre-push
 - **Usage**: `bin/validate-migrations`
 
-## AI Scripts
+### generate-tool-context
+Generates ai/guidelines/rules/tools.generated.md from the domain registries
+- **When to use**: After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync
+- **Usage**: `generate-tool-context`
+
+## Claude Scripts
 
 ### claude-review
 Run Claude's reviewer agent on a PR and optionally post findings to GitHub
@@ -52,10 +57,7 @@ Manages local Claude Code rule additions not tracked in the workbench
 - **When to use**: Adding machine-specific or project-specific Claude instructions
 - **Usage**: `claude-rules add <domain> "rule"  |  claude-rules list  |  claude-rules status`
 
-### generate-tool-context
-Generates ai/guidelines/rules/tools.generated.md from the domain registries
-- **When to use**: After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync
-- **Usage**: `ai/bin/generate-tool-context`
+## Serena Scripts
 
 ### serena-mcp
 Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence

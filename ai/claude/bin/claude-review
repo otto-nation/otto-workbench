@@ -46,6 +46,29 @@ _review_file() {
   __out="${REVIEWS_DIR}/${repo}-${pr_number}.md"
 }
 
+# _stream_progress SESSION_LOG — reads stream-json from stdin, shows progress, saves raw log.
+_stream_progress() {
+  local session_log="$1"
+  : > "$session_log"
+  while IFS= read -r line; do
+    echo "$line" >> "$session_log"
+    local event_type
+    event_type=$(echo "$line" | jq -r '.event.type // empty' 2>/dev/null) || continue
+    case "$event_type" in
+      content_block_start)
+        local tool_name
+        tool_name=$(echo "$line" | jq -r '.event.content_block.name // empty' 2>/dev/null)
+        [[ -n "$tool_name" ]] && echo -e "  ${DIM}▸ ${tool_name}${NC}"
+        ;;
+      content_block_delta)
+        local text
+        text=$(echo "$line" | jq -r 'select(.event.delta.type == "text_delta") | .event.delta.text // empty' 2>/dev/null)
+        [[ -n "$text" ]] && printf "%s" "$text"
+        ;;
+    esac
+  done
+}
+
 # _display_review FILE — prints the review file with a header.
 _display_review() {
   local file="$1"
@@ -81,12 +104,17 @@ cmd_review() {
 Related issue: ${issue_link}"
   fi
 
+  local session_log="${review_file%.md}.session.jsonl"
+
   info "Running review agent on PR #${pr_number}..."
   echo
-  claude -p --add-dir "$REVIEWS_DIR" --agent reviewer "$prompt"
+  claude -p --output-format stream-json --add-dir "$REVIEWS_DIR" --agent reviewer "$prompt" \
+    | _stream_progress "$session_log"
+  echo
 
   if [[ ! -f "$review_file" ]]; then
     err "Review file not found: $review_file"
+    [[ -f "$session_log" ]] && echo -e "  ${DIM}Session log: ${session_log}${NC}"
     exit 1
   fi
 
@@ -95,6 +123,7 @@ Related issue: ${issue_link}"
   if ! confirm "Satisfied with the review?"; then
     info "Review saved to ${review_file}"
     echo -e "  ${DIM}Edit the file, then run: claude-review post ${pr_number}${NC}"
+    echo -e "  ${DIM}Session log: ${session_log}${NC}"
     exit 0
   fi
 
@@ -103,6 +132,7 @@ Related issue: ${issue_link}"
   else
     info "Review saved to ${review_file}"
     echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
+    echo -e "  ${DIM}Session log: ${session_log}${NC}"
   fi
 }
 

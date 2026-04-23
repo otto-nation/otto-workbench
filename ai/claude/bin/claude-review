@@ -34,6 +34,11 @@
 #   Skips all prompts — no issue link prompt, no satisfaction confirm, no post
 #   confirm. Runs the review agent, writes the review file, and exits.
 #   Useful for automation and when Claude itself runs reviews as a subagent.
+#
+# When calling from Claude Code:
+#   Run each review in a foreground Bash call (not backgrounded with &).
+#   To review multiple PRs in parallel, use the Agent tool to dispatch
+#   separate subagents — each runs one `claude-review --no-post <N>` call.
 
 set -eo pipefail
 
@@ -256,7 +261,8 @@ The PR branch is checked out locally at: ${wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API.
 
 ## Output
-Write the review to: ${review_file}"
+You MUST use the Write tool to write the review to: ${review_file}
+Do NOT print the review to stdout — it must be saved as a file using the Write tool."
 
   if [[ -n "$issue_link" ]]; then
     prompt="${prompt}

@@ -104,7 +104,7 @@ This allows `/pr-review` to convert references into GitHub permalink URLs when p
 
 ### 8. Verdict
 
-Write the review to the output path specified in the prompt.
+Use the Write tool to save the review to the output path specified in the prompt. Do NOT print the review to stdout — it must be written as a file.
 
 ```markdown
 # Review: <repo>#<pr_number> — <PR title>

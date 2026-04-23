@@ -11,7 +11,7 @@ meta:
 tools:
   - name: claude-review
     description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
-    when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings"
+    when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. For multiple PRs, dispatch separate Agent subagents — do not background with &"
     usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review post <pr_url_or_number>"
 
   - name: claude-rules

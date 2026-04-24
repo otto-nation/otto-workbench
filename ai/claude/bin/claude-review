@@ -402,7 +402,7 @@ ${prior_review}
     exit 0
   fi
 
-  if confirm_n "Post review to GitHub?"; then
+  if confirm "Post review to GitHub?"; then
     cmd_post "$repo" "$pr_number"
     local post_session_log="${review_file%.md}.post.jsonl"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
@@ -438,7 +438,16 @@ Review file: ${review_file}"
     --add-dir "$REVIEWS_DIR" --agent poster "$poster_prompt" \
     | _stream_progress "$session_log"
   echo
+  # Fetch the PENDING review ID for the submit command
+  local pending_review_id
+  pending_review_id=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
+    --jq '[.[] | select(.state == "PENDING")] | first | .id' 2>/dev/null) || true
+
   info "Done. Review is PENDING — verify and submit from the GitHub UI."
+  if [[ -n "$pending_review_id" && "$pending_review_id" != "null" ]]; then
+    echo
+    echo -e "  ${DIM}Submit: gh api repos/${repo}/pulls/${pr_number}/reviews/${pending_review_id}/events --method POST -f event=\"COMMENT\"${NC}"
+  fi
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

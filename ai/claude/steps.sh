@@ -109,10 +109,25 @@ step_claude_mcps() {
 }
 
 # step_claude_guidelines — copies CLAUDE.md into ~/.claude/.
+# Supports user overrides: user/ai/claude/CLAUDE.md replaces the default,
+# user/ai/claude/CLAUDE.local.md is appended after the default.
 step_claude_guidelines() {
   [[ -f "$CLAUDE_GUIDELINES_SRC" ]] || { err "Missing $CLAUDE_GUIDELINES_SRC"; return 1; }
   mkdir -p "$CLAUDE_DIR"
-  install_file "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
+
+  if [[ -f "$USER_GUIDELINES_SRC" ]]; then
+    # Full replacement from user override
+    install_file "$USER_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE" "CLAUDE.md (user override)"
+  elif [[ -f "$USER_GUIDELINES_LOCAL" ]]; then
+    # Append user additions to default
+    local tmp
+    tmp=$(mktemp)
+    cat "$CLAUDE_GUIDELINES_SRC" "$USER_GUIDELINES_LOCAL" > "$tmp"
+    install_file "$tmp" "$CLAUDE_GUIDELINES_FILE" "CLAUDE.md (+ user additions)"
+    rm -f "$tmp"
+  else
+    install_file "$CLAUDE_GUIDELINES_SRC" "$CLAUDE_GUIDELINES_FILE"
+  fi
 }
 
 # step_claude_rules — delegates to claude-rules sync which owns all rules logic.
@@ -122,6 +137,7 @@ step_claude_rules() {
 
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
+# Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
 step_claude_settings() {
   mkdir -p "$CLAUDE_DIR"
 
@@ -131,28 +147,87 @@ step_claude_settings() {
     [[ -n "$content" ]] && existing="$content"
   fi
 
+  local template
+  template=$(cat "$CLAUDE_SETTINGS_SRC")
+
+  # Merge user override settings into the template before applying
+  if [[ -f "$USER_SETTINGS_SRC" ]]; then
+    template=$(jq -n --argjson base "$template" --argjson user "$(cat "$USER_SETTINGS_SRC")" \
+      '$base * $user')
+  fi
+
   local result
-  result=$(jq -n --argjson t "$(cat "$CLAUDE_SETTINGS_SRC")" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
+  result=$(jq -n --argjson t "$template" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }
 
   printf '%s\n' "$result" > "$CLAUDE_SETTINGS_FILE"
-  if [[ "$existing" == "{}" ]]; then success "settings.json written"; else success "settings.json synced"; fi
+  local label="settings.json synced"
+  [[ "$existing" == "{}" ]] && label="settings.json written"
+  [[ -f "$USER_SETTINGS_SRC" ]] && label+=" (+ user overrides)"
+  success "$label"
 }
 
 # step_claude_skills — symlinks each skill directory into ~/.claude/skills/.
+# Supports user overrides: user/ai/claude/skills/<name>/ replaces the default,
+# user/ai/claude/skills/<name>.disabled suppresses it entirely.
 step_claude_skills() {
   [[ -d "$CLAUDE_SKILLS_SRC_DIR" ]] || { warn "No skills found in $CLAUDE_SKILLS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_SKILLS_DIR"
   info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/"
-  symlink_dir "$CLAUDE_SKILLS_SRC_DIR" "$CLAUDE_SKILLS_DIR" "*/"
+
+  local -A layers
+  resolve_layers "$CLAUDE_SKILLS_SRC_DIR" "$USER_SKILLS_DIR" "*/" layers
+
+  # Prune skills in target that are no longer in either layer
+  local item target
+  for item in "$CLAUDE_SKILLS_DIR"/*/; do
+    [[ -L "${item%/}" || -d "$item" ]] || continue
+    local name
+    name=$(basename "$item")
+    if [[ -z "${layers[$name]+set}" ]]; then
+      rm -f "${item%/}"  # remove symlink
+      echo -e "  ${DIM}⊘ pruned $name${NC}"
+    fi
+  done
+
+  # Install from merged layers
+  local name source
+  for name in "${!layers[@]}"; do
+    source="${layers[$name]}"
+    install_symlink "$source" "$CLAUDE_SKILLS_DIR/$name" "$name"
+  done
 }
 
 # step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
+# Supports user overrides: user/ai/claude/agents/<name>.md replaces the default,
+# user/ai/claude/agents/<name>.disabled suppresses it entirely.
 step_claude_agents() {
   [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_AGENTS_DIR"
   info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/"
-  copy_dir "$CLAUDE_AGENTS_SRC_DIR" "$CLAUDE_AGENTS_DIR" "*.md" --strip-ext --prune
+
+  local -A layers
+  resolve_layers "$CLAUDE_AGENTS_SRC_DIR" "$USER_AGENTS_DIR" "*.md" layers
+
+  # Prune agents in target that are no longer in either layer
+  local item
+  for item in "$CLAUDE_AGENTS_DIR"/*.md; do
+    [[ -e "$item" || -L "$item" ]] || continue
+    local name
+    name=$(basename "$item")
+    if [[ -z "${layers[$name]+set}" ]]; then
+      rm "$item"
+      echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}"
+    fi
+  done
+
+  # Install from merged layers
+  local name source label
+  for name in "${!layers[@]}"; do
+    source="${layers[$name]}"
+    label="${name%.md}"
+    install_file "$source" "$CLAUDE_AGENTS_DIR/$name" "$label"
+  done
 }
 
 # step_generate_tools — regenerates the AI tool context markdown from registries.
@@ -512,4 +587,42 @@ print_claude_summary() {
 
   echo -e "  ${DIM}  $CLAUDE_GUIDELINES_FILE   — persistent guidelines${NC}"
   echo -e "  ${DIM}  $CLAUDE_SETTINGS_FILE     — persistent permissions${NC}"
+
+  _print_override_summary
+}
+
+# _print_override_summary — lists active user overrides from user/ai/.
+_print_override_summary() {
+  [[ -d "$USER_AI_DIR" ]] || return 0
+
+  local found=false
+  local item
+
+  # Check override files
+  for item in "$USER_GUIDELINES_SRC" "$USER_GUIDELINES_LOCAL" "$USER_SETTINGS_SRC"; do
+    [[ -f "$item" ]] || continue
+    if [[ "$found" == false ]]; then
+      echo
+      echo -e "  ${CYAN}User overrides${NC} ${DIM}(user/ai/)${NC}"
+      found=true
+    fi
+    echo -e "  ${DIM}  • $(basename "$item")${NC}"
+  done
+
+  # Check override directories
+  local dir label
+  for dir in "$USER_AGENTS_DIR:agents" "$USER_SKILLS_DIR:skills" "$USER_RULES_DIR:rules"; do
+    label="${dir##*:}"
+    dir="${dir%%:*}"
+    [[ -d "$dir" ]] || continue
+    for item in "$dir"/*; do
+      [[ -e "$item" ]] || continue
+      if [[ "$found" == false ]]; then
+        echo
+        echo -e "  ${CYAN}User overrides${NC} ${DIM}(user/ai/)${NC}"
+        found=true
+      fi
+      echo -e "  ${DIM}  • $label/$(basename "$item")${NC}"
+    done
+  done
 }

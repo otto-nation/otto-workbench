@@ -113,6 +113,16 @@ CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 
+# ─── User overrides (gitignored, local customizations) ──────────────────────
+USER_AI_DIR="$WORKBENCH_DIR/user/ai"
+USER_CLAUDE_DIR="$USER_AI_DIR/claude"
+USER_AGENTS_DIR="$USER_CLAUDE_DIR/agents"
+USER_SKILLS_DIR="$USER_CLAUDE_DIR/skills"
+USER_RULES_DIR="$USER_AI_DIR/guidelines/rules"
+USER_GUIDELINES_SRC="$USER_CLAUDE_DIR/CLAUDE.md"
+USER_GUIDELINES_LOCAL="$USER_CLAUDE_DIR/CLAUDE.local.md"
+USER_SETTINGS_SRC="$USER_CLAUDE_DIR/settings.json"
+
 # ─── Workbench source — editors ───────────────────────────────────────────────
 ZED_SETTINGS_SRC="$WORKBENCH_DIR/editors/zed/settings.json"
 ZED_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/editors/zed/sync-settings.jq"

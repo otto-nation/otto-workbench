@@ -11,6 +11,7 @@ setup_file() {
   cd "$tmp_local" || return 1
   git config user.email "test@example.com"
   git config user.name "Test"
+  git config core.hooksPath /dev/null
   echo "init" > README.md
   git add .
   git commit -m "initial" --quiet
@@ -36,6 +37,7 @@ setup() {
   cd "$LOCAL_DIR" || return 1
   git config user.email "test@example.com"
   git config user.name "Test"
+  git config core.hooksPath /dev/null
 
   # Create local feature branch (unpushed) — matches original make_git_remote behavior
   git checkout -b "feature/test" --quiet

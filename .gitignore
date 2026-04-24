@@ -12,6 +12,9 @@ Thumbs.db
 # Claude Code local overrides
 .claude/
 
+# User overrides (local customizations, not tracked)
+user/
+
 # Machine-specific generated files
 ai/guidelines/rules/tools.generated.md
 ai/memory/

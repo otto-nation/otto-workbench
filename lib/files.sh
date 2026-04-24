@@ -181,6 +181,48 @@ sync_component_bin() {
   shopt -u extglob
 }
 
+# resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF
+# Merges two directory layers into an associative array: basename -> source_path.
+# User dir wins for same-named files. A .disabled sentinel in user dir suppresses both.
+# RESULT_NAMEREF must be a declared associative array in the caller.
+resolve_layers() {
+  local base_dir="${1%/}" user_dir="${2%/}" glob="$3"
+  local -n __result=$4
+
+  # Base layer — all matching items
+  local item name
+  for item in "$base_dir"/$glob; do
+    [[ -e "$item" ]] || continue
+    item="${item%/}"  # strip trailing slash from directory globs
+    name=$(basename "$item")
+    __result["$name"]="$item"
+  done
+
+  # User layer — overrides and additions
+  if [[ -d "$user_dir" ]]; then
+    for item in "$user_dir"/$glob; do
+      [[ -e "$item" ]] || continue
+      item="${item%/}"
+      name=$(basename "$item")
+      __result["$name"]="$item"
+    done
+
+    # Disable layer — .disabled sentinels suppress both layers
+    for item in "$user_dir"/*.disabled; do
+      [[ -e "$item" ]] || continue
+      name=$(basename "$item" .disabled)
+      unset "__result[$name]"
+      # Try common extensions
+      unset "__result[${name}.md]"
+    done
+  fi
+}
+
+# is_disabled USER_DIR NAME — returns 0 if a .disabled sentinel exists.
+is_disabled() {
+  [[ -f "${1%/}/${2}.disabled" ]]
+}
+
 # apply_config_patch FILE OLD NEW
 # Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched
 # or if FILE does not exist. Assumes OLD and NEW do not contain the | character.

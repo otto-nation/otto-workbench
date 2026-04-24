@@ -7,8 +7,9 @@
 
 set -euo pipefail
 
-_repo_root="$(git rev-parse --show-toplevel)"
-_local_hook="$_repo_root/.git/hooks/pre-push"
+# Use --git-common-dir so delegation works from worktrees (where .git is a file, not a dir)
+_git_common="$(git rev-parse --git-common-dir)"
+_local_hook="$_git_common/hooks/pre-push"
 
 if [[ -x "$_local_hook" ]]; then
   exec "$_local_hook" "$@"

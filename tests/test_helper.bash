@@ -34,7 +34,9 @@ make_git_repo_with_org() {
   local org="$2"
   local repo="$3"
   mkdir -p "$dir"
-  git -C "$dir" init --quiet
+  # Prevent git from discovering the parent workbench repo during parallel test runs
+  # (bats places TMPDIR under the repo tree, so git init would reuse the parent .git)
+  GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" init --quiet
   git -C "$dir" remote add origin "git@github.com:${org}/${repo}.git"
 }
 
@@ -54,7 +56,8 @@ make_git_remote() {
   local local_dir="$2"
   local branch="${3:-feature/test}"
 
-  # Isolate from user's global gitconfig (e.g. empty gpg.format causes failures).
+  # Isolate from user's global gitconfig (e.g. empty gpg.format causes failures)
+  # and disable hooks so the workbench pre-commit doesn't fire in temp repos.
   export GIT_CONFIG_GLOBAL=/dev/null
 
   git init --bare "$remote_dir" --quiet --initial-branch=main
@@ -63,6 +66,7 @@ make_git_remote() {
 
   git config user.email "test@example.com"
   git config user.name "Test"
+  git config core.hooksPath /dev/null
 
   echo "init" > README.md
   git add .
@@ -89,5 +93,6 @@ clone_from_shared_remote() {
   cd "$local_dir" || return 1
   git config user.email "test@example.com"
   git config user.name "Test"
+  git config core.hooksPath /dev/null
   git checkout "$branch" --quiet 2>/dev/null
 }

@@ -402,7 +402,7 @@ ${prior_review}
     exit 0
   fi
 
-  if confirm_n "Post review to GitHub?"; then
+  if confirm "Post review to GitHub?"; then
     cmd_post "$repo" "$pr_number"
     local post_session_log="${review_file%.md}.post.jsonl"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"

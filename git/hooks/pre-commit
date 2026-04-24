@@ -21,7 +21,8 @@ gitleaks protect --staged --verbose --no-color --no-banner $_config_flag \
   || { echo "✗ gitleaks found potential secrets — review the output above before committing"; exit 1; }
 
 # Delegate to the repo-local hook if present (bypassed when core.hooksPath is set globally).
-_local_hook="$_repo_root/.git/hooks/pre-commit"
+# Use --git-common-dir so delegation works from worktrees (where .git is a file, not a dir).
+_local_hook="$(git rev-parse --git-common-dir)/hooks/pre-commit"
 if [[ -x "$_local_hook" ]]; then
   exec "$_local_hook" "$@"
 fi

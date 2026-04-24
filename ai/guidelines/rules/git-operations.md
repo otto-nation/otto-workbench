@@ -5,7 +5,7 @@
 - Never edit or write files directly on `main`, `master`, or any shared/protected branch — always create a worktree first
 - For implementation work on any branch, prefer using a worktree to isolate changes from the working tree — this prevents accidental modifications to uncommitted work and keeps the primary checkout clean
 - Read-only operations (searching, reading files, exploring code) do not require a worktree
-- Use the `superpowers:using-git-worktrees` skill or the `EnterWorktree` tool to create worktrees
+- Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never use the built-in `EnterWorktree` tool or the `superpowers:using-git-worktrees` skill
 
 ## Cross-Worktree Safety
 

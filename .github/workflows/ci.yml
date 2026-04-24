@@ -117,3 +117,16 @@ jobs:
 
       - name: Run tests
         run: bats tests/ --recursive --timing
+
+      - name: Check tests did not pollute repo config
+        run: |
+          dirty=false
+          for key in user.name user.email; do
+            val=$(git config --local "$key" 2>/dev/null) || continue
+            echo "::error::Tests left $key=$val in repo .git/config"
+            dirty=true
+          done
+          if $dirty; then
+            echo "A test set git config without cd-ing to a temp directory first."
+            exit 1
+          fi

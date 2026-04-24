@@ -54,6 +54,7 @@ This creates `~/.config/task/taskfile.env` with:
 | explain | Fast text-in/text-out explainer. Answers questions from provided input without exploring files or suggesting edits. |
 | incident | Structured production incident investigation. Read-only triage — gathers symptoms, checks recent changes, forms ranked hypotheses. Never modifies anything. |
 | migrate | Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them. |
+| poster | Post a PR review to GitHub from a review file. Maps findings to diff positions, resolves source references to permalinks, and creates a PENDING review with inline comments. |
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 <!-- AI-INSTALLS-END -->
 

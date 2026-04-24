@@ -7,6 +7,8 @@ setup() {
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
   export HOME="$TMPDIR"
+  # Prevent git from discovering the parent workbench repo during parallel test runs
+  export GIT_CEILING_DIRECTORIES="$TMPDIR"
   # Re-derive TASKFILE_ENV for the test HOME (constants.sh resolves at source time)
   TASKFILE_ENV="$HOME/.config/task/taskfile.env"
   # Ensure GH_TOKEN is not inherited from the test runner environment

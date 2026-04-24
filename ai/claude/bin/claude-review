@@ -6,10 +6,11 @@
 #
 # Commands:
 #   <pr_url_or_number>   Run headless review, display results, prompt to post
-#   post <pr_url_or_number>  Post an existing review file via /pr-review skill
+#   post <pr_url_or_number>  Post an existing review file headlessly via poster agent
 #
 # Options:
 #   --no-post            Skip all interactive prompts; run review and exit
+#   --post               Run review then post automatically (fully headless)
 #   --issue <link>       Attach an issue link for reviewer context
 #
 # Flow:
@@ -17,7 +18,8 @@
 #   2. Creates a git worktree via `wt switch pr:<N>` with latest changes
 #   3. If a prior review exists, archives it and feeds findings to the agent
 #   4. Runs the reviewer agent with local file access and streams progress
-#   5. Cleans up the worktree on exit
+#   5. Optionally posts the review via the poster agent (--post or interactive)
+#   6. Cleans up the worktree on exit
 #
 # Iterative reviews:
 #   Re-running on the same PR archives the previous review and passes it as
@@ -28,12 +30,16 @@
 #   - Writes review to ~/.config/workbench/reviews/<repo>-<pr_number>.md
 #   - Archives prior reviews as <repo>-<pr_number>.<timestamp>.md
 #   - Creates/removes a temporary git worktree for the PR branch
-#   - When posting: launches interactive Claude session with /pr-review skill
+#   - When posting: creates a PENDING review on GitHub via poster agent
 #
 # Non-interactive mode (--no-post):
 #   Skips all prompts — no issue link prompt, no satisfaction confirm, no post
 #   confirm. Runs the review agent, writes the review file, and exits.
 #   Useful for automation and when Claude itself runs reviews as a subagent.
+#
+# Fully headless mode (--post):
+#   Runs the review agent, then immediately posts via the poster agent.
+#   No interactive prompts at any step. Useful for CI and full automation.
 #
 # When calling from Claude Code:
 #   Run each review in a foreground Bash call (not backgrounded with &).
@@ -146,12 +152,30 @@ _display_review() {
   echo
 }
 
+# _print_summary REVIEW_FILE SESSION_LOG PR_URL [POST_SESSION_LOG] — prints summary of artifacts.
+_print_summary() {
+  local review_file="$1"
+  local session_log="$2"
+  local pr_url="$3"
+  local post_session_log="${4:-}"
+
+  echo
+  title "Summary"
+  echo -e "  Review:          ${review_file}"
+  echo -e "  Session log:     ${session_log}"
+  [[ -n "$post_session_log" && -f "$post_session_log" ]] && \
+    echo -e "  Poster session:  ${post_session_log}"
+  echo -e "  PR:              ${pr_url}"
+  echo
+}
+
 usage() {
   echo "Usage: claude-review [options] <pr_url_or_number>"
   echo "       claude-review post <pr_number>"
   echo
   echo "Options:"
   echo "  --no-post          Skip all interactive prompts; run review and exit"
+  echo "  --post             Run review then post automatically (fully headless)"
   echo "  --issue <link>     Attach an issue link for reviewer context"
 }
 
@@ -161,6 +185,7 @@ cmd_review() {
   local pr_input="$1"
   local no_post="${2:-false}"
   local issue_link="${3:-}"
+  local auto_post="${4:-false}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -171,7 +196,7 @@ cmd_review() {
   local review_file
   _review_file review_file "$repo" "$pr_number"
 
-  if [[ "$no_post" != "true" && -z "$issue_link" ]]; then
+  if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" ]]; then
     read -rp "Issue link (optional, Enter to skip): " issue_link
   fi
 
@@ -188,13 +213,35 @@ cmd_review() {
     exit 1
   }
 
-  local pr_title pr_additions pr_deletions pr_changed_files pr_head pr_base
+  local pr_title pr_body pr_additions pr_deletions pr_changed_files pr_head pr_base
   pr_title=$(echo "$pr_meta" | jq -r '.title')
+  pr_body=$(echo "$pr_meta" | jq -r '.body // ""')
   pr_additions=$(echo "$pr_meta" | jq -r '.additions')
   pr_deletions=$(echo "$pr_meta" | jq -r '.deletions')
   pr_changed_files=$(echo "$pr_meta" | jq -r '.changedFiles')
   pr_head=$(echo "$pr_meta" | jq -r '.headRefName')
   pr_base=$(echo "$pr_meta" | jq -r '.baseRefName')
+
+  local pr_url="https://github.com/${repo}/pull/${pr_number}"
+
+  # Pre-fetch PR context so the agent doesn't waste tool calls on discovery
+  info "Fetching PR context..."
+  local pr_commits pr_reviews pr_review_comments pr_comments
+  pr_commits=$(gh pr view "$pr_number" --repo "$repo" \
+    --json commits --jq '[.commits[] | .messageHeadline] | join("\n")' 2>/dev/null) || true
+  pr_reviews=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
+    --jq '[.[] | {user: .user.login, state, body}]' 2>/dev/null) || true
+  pr_review_comments=$(gh api "repos/${repo}/pulls/${pr_number}/comments" \
+    --jq '[.[] | {id, path, line, body, user: .user.login, in_reply_to_id}]' 2>/dev/null) || true
+  pr_comments=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+    --jq '[.[] | {user: .user.login, body}]' 2>/dev/null) || true
+
+  # File-level diff stats for large PRs (>500 lines) — helps the agent prioritize
+  local pr_total_lines pr_file_stats=""
+  pr_total_lines=$(( pr_additions + pr_deletions ))
+  if (( pr_total_lines > 500 )); then
+    pr_file_stats=$(echo "$pr_meta" | jq -r '.files | sort_by(-.additions - .deletions) | .[] | "  - \(.path) (+\(.additions) -\(.deletions))"')
+  fi
 
   # Resolve the repo root — look for an existing clone or locate via gh
   local repo_root=""
@@ -256,6 +303,33 @@ cmd_review() {
 - **Branch:** ${pr_head} → ${pr_base}
 - **Size:** +${pr_additions} -${pr_deletions} across ${pr_changed_files} files
 
+### Description
+${pr_body:-_No description provided._}
+
+### Commits
+${pr_commits:-_No commits._}"
+
+  if [[ -n "$pr_file_stats" ]]; then
+    prompt="${prompt}
+
+### File breakdown (sorted by churn)
+${pr_file_stats}"
+  fi
+
+  prompt="${prompt}
+
+## Existing reviews and comments
+Skip these — do NOT re-fetch from the GitHub API. This data is current as of script invocation.
+
+### Submitted reviews
+${pr_reviews:-[]}
+
+### Inline review comments
+${pr_review_comments:-[]}
+
+### General PR comments
+${pr_comments:-[]}
+
 ## Environment
 The PR branch is checked out locally at: ${wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API.
@@ -295,6 +369,7 @@ ${prior_review}
   info "Running review agent on PR #${pr_number} (${pr_title})..."
   echo
   claude -p --verbose --output-format stream-json \
+    --permission-mode acceptEdits \
     --add-dir "$REVIEWS_DIR" --add-dir "$wt_path" --agent reviewer "$prompt" \
     | _stream_progress "$session_log"
   echo
@@ -309,24 +384,31 @@ ${prior_review}
   _display_review "$review_file"
 
   if [[ "$no_post" == "true" ]]; then
-    info "Review saved to ${review_file}"
+    _print_summary "$review_file" "$session_log" "$pr_url"
     echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
     return
   fi
 
+  if [[ "$auto_post" == "true" ]]; then
+    cmd_post "$repo" "$pr_number"
+    local post_session_log="${review_file%.md}.post.jsonl"
+    _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
+    return
+  fi
+
   if ! confirm "Satisfied with the review?"; then
-    info "Review saved to ${review_file}"
+    _print_summary "$review_file" "$session_log" "$pr_url"
     echo -e "  ${DIM}Edit the file, then run: claude-review post ${pr_number}${NC}"
-    echo -e "  ${DIM}Session log: ${session_log}${NC}"
     exit 0
   fi
 
   if confirm_n "Post review to GitHub?"; then
     cmd_post "$repo" "$pr_number"
+    local post_session_log="${review_file%.md}.post.jsonl"
+    _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
   else
-    info "Review saved to ${review_file}"
+    _print_summary "$review_file" "$session_log" "$pr_url"
     echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
-    echo -e "  ${DIM}Session log: ${session_log}${NC}"
   fi
 }
 
@@ -343,25 +425,44 @@ cmd_post() {
     exit 1
   fi
 
-  info "Launching Claude to post review..."
-  exec claude "/pr-review ${pr_number}"
+  local poster_prompt
+  poster_prompt="Post review for PR #${pr_number} in ${repo}.
+Review file: ${review_file}"
+
+  local session_log="${review_file%.md}.post.jsonl"
+
+  info "Posting review for PR #${pr_number}..."
+  echo
+  claude -p --verbose --output-format stream-json \
+    --permission-mode acceptEdits \
+    --add-dir "$REVIEWS_DIR" --agent poster "$poster_prompt" \
+    | _stream_progress "$session_log"
+  echo
+  info "Done. Review is PENDING — verify and submit from the GitHub UI."
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
   local no_post="false"
+  local auto_post="false"
   local issue_link=""
   local positional=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-post)   no_post="true"; shift ;;
+      --post)      auto_post="true"; shift ;;
       --issue)     issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       -h|--help)   usage; exit 0 ;;
       *)           positional+=("$1"); shift ;;
     esac
   done
+
+  if [[ "$no_post" == "true" && "$auto_post" == "true" ]]; then
+    err "--no-post and --post are mutually exclusive"
+    exit 1
+  fi
 
   local command="${positional[0]:-}"
 
@@ -379,7 +480,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post"
       ;;
   esac
 }

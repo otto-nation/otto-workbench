@@ -269,6 +269,167 @@ cmd_changelog() {
   bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
 }
 
+# ─── Override management ─────────────────────────────────────────────────────
+
+# _override_type_dir TYPE — echoes the default source dir and user dir for a type.
+_override_type_dirs() {
+  local -n __default=$2 __user=$3
+  case "$1" in
+    agent|agents)   __default="$CLAUDE_AGENTS_SRC_DIR"; __user="$USER_AGENTS_DIR" ;;
+    skill|skills)   __default="$CLAUDE_SKILLS_SRC_DIR"; __user="$USER_SKILLS_DIR" ;;
+    rule|rules)     __default="$GUIDELINES_RULES_SRC_DIR"; __user="$USER_RULES_DIR" ;;
+    *)              err "Unknown type: $1 (expected: agent, skill, rule)"; exit 1 ;;
+  esac
+}
+
+cmd_override() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    list)
+      info "Active user overrides"
+      local found=false item
+
+      # Check override files
+      for item in "$USER_GUIDELINES_SRC" "$USER_GUIDELINES_LOCAL" "$USER_SETTINGS_SRC"; do
+        [[ -f "$item" ]] || continue
+        found=true
+        echo -e "  ${CYAN}$(basename "$item")${NC}"
+      done
+
+      # Check override directories
+      local dir label
+      for dir in "$USER_AGENTS_DIR:agents" "$USER_SKILLS_DIR:skills" "$USER_RULES_DIR:rules"; do
+        label="${dir##*:}"
+        dir="${dir%%:*}"
+        [[ -d "$dir" ]] || continue
+        for item in "$dir"/*; do
+          [[ -e "$item" ]] || continue
+          found=true
+          local name
+          name=$(basename "$item")
+          local suffix=""
+          [[ "$name" == *.disabled ]] && suffix=" (disabled)"
+          echo -e "  ${CYAN}$label/${name}${NC}${DIM}${suffix}${NC}"
+        done
+      done
+
+      [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in user/ai/${NC}"
+      ;;
+
+    add)
+      local type="${1:-}" name="${2:-}"
+      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench override add <agent|skill|rule> <name>"; exit 1; }
+
+      local default_dir user_dir
+      _override_type_dirs "$type" default_dir user_dir
+
+      # Find the source file
+      local src=""
+      case "$type" in
+        agent|agents) src="$default_dir/${name}.md" ;;
+        rule|rules)   src="$default_dir/${name}.md" ;;
+        skill|skills) src="$default_dir/${name}" ;;
+      esac
+
+      if [[ ! -e "$src" ]]; then
+        err "No default $type named '$name' found at $src"
+        exit 1
+      fi
+
+      mkdir -p "$user_dir"
+      case "$type" in
+        skill|skills)
+          # Copy skill directory
+          cp -R "$src" "$user_dir/"
+          success "Copied $type '$name' to user/ai/ for editing"
+          echo -e "  ${DIM}$user_dir/$name/${NC}"
+          ;;
+        *)
+          # Copy single file
+          local dest="$user_dir/${name}.md"
+          cp "$src" "$dest"
+          success "Copied $type '$name' to user/ai/ for editing"
+          echo -e "  ${DIM}$dest${NC}"
+          ;;
+      esac
+      echo -e "  ${DIM}Run 'otto-workbench sync' after editing to apply${NC}"
+      ;;
+
+    disable)
+      local type="${1:-}" name="${2:-}"
+      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench override disable <agent|skill|rule> <name>"; exit 1; }
+
+      local default_dir user_dir
+      _override_type_dirs "$type" default_dir user_dir
+      mkdir -p "$user_dir"
+      touch "$user_dir/${name}.disabled"
+      success "Disabled $type '$name'"
+      echo -e "  ${DIM}Run 'otto-workbench sync' to apply${NC}"
+      ;;
+
+    enable)
+      local type="${1:-}" name="${2:-}"
+      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench override enable <agent|skill|rule> <name>"; exit 1; }
+
+      local default_dir user_dir
+      _override_type_dirs "$type" default_dir user_dir
+      local sentinel="$user_dir/${name}.disabled"
+      if [[ -f "$sentinel" ]]; then
+        rm "$sentinel"
+        success "Re-enabled $type '$name'"
+        echo -e "  ${DIM}Run 'otto-workbench sync' to apply${NC}"
+      else
+        warn "No disable sentinel found for $type '$name'"
+      fi
+      ;;
+
+    status)
+      info "Override status (user/ai/ vs defaults)"
+      echo
+
+      local type default_dir user_dir
+      for type in agents skills rules; do
+        _override_type_dirs "$type" default_dir user_dir
+        [[ -d "$user_dir" ]] || continue
+
+        local found=false item name
+        for item in "$user_dir"/*; do
+          [[ -e "$item" ]] || continue
+          name=$(basename "$item")
+          if [[ "$found" == false ]]; then
+            echo -e "  ${CYAN}$type${NC}"
+            found=true
+          fi
+          if [[ "$name" == *.disabled ]]; then
+            echo -e "    ${RED}✗${NC} ${name%.disabled} ${DIM}(disabled)${NC}"
+          else
+            echo -e "    ${GREEN}↻${NC} ${name%.md} ${DIM}(override)${NC}"
+          fi
+        done
+      done
+      ;;
+
+    *)
+      cat <<EOF
+Usage: otto-workbench override <command>
+
+Manage user overrides for AI config (agents, skills, rules).
+Override files live in user/ai/ (gitignored).
+
+Commands:
+  list                            List all active overrides
+  add <agent|skill|rule> <name>   Copy default to user/ai/ for editing
+  disable <agent|skill|rule> <name>  Suppress a default (creates .disabled sentinel)
+  enable <agent|skill|rule> <name>   Re-enable a disabled default
+  status                          Show overrides vs defaults
+EOF
+      [[ -z "$subcmd" ]] && exit 1 || exit 0
+      ;;
+  esac
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -278,14 +439,18 @@ Usage: otto-workbench <command>
 Commands:
   sync                  Re-apply all workbench configuration to ~/
   claude [--force]      Sync Claude config + scaffold .claude/ in current repo
+  override <subcmd>     Manage user overrides for AI config (agents, skills, rules)
   state [regenerate]    Show or regenerate installed component state
   changelog             Show recent changes from conventional commits
+
+Run 'otto-workbench override' for override subcommands.
 EOF
 }
 
 case "${1:-}" in
   sync)      cmd_sync ;;
   claude)    cmd_claude "$@" ;;
+  override)  shift; cmd_override "$@" ;;
   state)     cmd_state "$@" ;;
   changelog) cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;

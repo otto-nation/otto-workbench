@@ -128,7 +128,40 @@ cmd_sync() {
   mkdir -p "$RULES_DIR"
 
   info "Syncing workbench rules → $RULES_DIR"
-  symlink_dir "$rules_src" "$RULES_DIR" "$RULES_GLOB" --strip-ext --replace-copies --prune
+
+  # Build merged layer: default rules + user overrides/additions
+  local -A layers
+  resolve_layers "$rules_src" "$USER_RULES_DIR" "$RULES_GLOB" layers
+
+  # Prune stale symlinks pointing into the workbench or user source dirs
+  local item target
+  for item in "$RULES_DIR"/$RULES_GLOB; do
+    [[ -L "$item" ]] || continue
+    target=$(readlink "$item")
+    [[ "$target" == "$rules_src"/* || "$target" == "${USER_RULES_DIR:-__none__}"/* ]] || continue
+    local name
+    name=$(basename "$item")
+    if [[ -z "${layers[$name]+set}" ]]; then
+      rm "$item"
+      echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}"
+    fi
+  done
+
+  # Replace old copies with symlinks where source exists
+  for item in "$RULES_DIR"/$RULES_GLOB; do
+    [[ -f "$item" && ! -L "$item" ]] || continue
+    local name
+    name=$(basename "$item")
+    [[ -n "${layers[$name]+set}" ]] && rm "$item"
+  done
+
+  # Install from merged layers
+  local name source label
+  for name in "${!layers[@]}"; do
+    source="${layers[$name]}"
+    label="${name%.md}"
+    install_symlink "$source" "$RULES_DIR/$name" "$label"
+  done
 
   echo
   info "Generating workbench.md"

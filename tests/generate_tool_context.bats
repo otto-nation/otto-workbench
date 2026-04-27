@@ -27,7 +27,7 @@ setup() {
   export COMPONENTS_DOC_PATH="$TMPDIR/docs/components.md"
 
   mkdir -p "$WORK_DIR"
-  GENERATOR="$REPO_ROOT/bin/generate-tool-context"
+  GENERATOR="$REPO_ROOT/bin/local/generate-tool-context"
 }
 
 teardown() {

@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
-# Tests for bin/validate-components.
+# Tests for bin/local/validate-components.
 # Covers both the Tier 1 (steps.sh → sync_<name>) and Tier 2 (registry) contracts.
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-  SCRIPT="$REPO_ROOT/bin/validate-components"
+  SCRIPT="$REPO_ROOT/bin/local/validate-components"
   TMPDIR="$(mktemp -d)"
 }
 

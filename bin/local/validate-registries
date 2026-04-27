@@ -15,17 +15,17 @@
 #   Nested:          <repo>/*/*/registry.yml  (e.g. ai/claude/registry.yml)
 #   Optional stacks: <repo>/brew/{lang,infra,tools}/*.registry.yml
 #
-# Usage: bin/validate-registries
+# Usage: bin/local/validate-registries
 # Exit code: 0 if all checks pass, 1 if any fail.
 
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
-# shellcheck source=../lib/ui.sh
+# shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
-# shellcheck source=../lib/registries.sh
+# shellcheck source=../../lib/registries.sh
 . "$REPO_ROOT/lib/registries.sh"
 
 usage() {

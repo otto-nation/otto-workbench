@@ -81,14 +81,14 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 1
 fi
 
-_run_step "Validating registries"   "$REPO_ROOT/bin/validate-registries" --quiet
-_run_step "Validating components"   "$REPO_ROOT/bin/validate-components" --quiet
-_run_step "Validating migrations"   "$REPO_ROOT/bin/validate-migrations" --quiet
+_run_step "Validating registries"   "$REPO_ROOT/bin/local/validate-registries" --quiet
+_run_step "Validating components"   "$REPO_ROOT/bin/local/validate-components" --quiet
+_run_step "Validating migrations"   "$REPO_ROOT/bin/local/validate-migrations" --quiet
 
 # ── Generation ───────────────────────────────────────────────────────────────
 
 _step "Regenerating tool context"
-"$REPO_ROOT/bin/generate-tool-context" --quiet
+"$REPO_ROOT/bin/local/generate-tool-context" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH" "$TOOLS_WORKFLOW_GENERATED_RELPATH"; then
   printf "${RED}✗${NC}\n" >&2
   err "Generated tool files were updated — commit them before pushing:"
@@ -99,7 +99,7 @@ fi
 _pass
 
 _step "Regenerating git rules"
-"$REPO_ROOT/git/bin/generate-git-rules" --quiet
+"$REPO_ROOT/git/bin/local/generate-git-rules" --quiet
 if ! git -C "$REPO_ROOT" diff --quiet "$GIT_GENERATED_RELPATH"; then
   printf "${RED}✗${NC}\n" >&2
   err "git.generated.md was updated — commit it before pushing:"

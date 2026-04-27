@@ -17,8 +17,8 @@ _generated_files=(
 )
 
 # Run generators quietly
-"$REPO_ROOT/bin/generate-tool-context" --quiet
-"$REPO_ROOT/git/bin/generate-git-rules" --quiet
+"$REPO_ROOT/bin/local/generate-tool-context" --quiet
+"$REPO_ROOT/git/bin/local/generate-git-rules" --quiet
 
 # Auto-stage any generated files that changed
 _staged=()

@@ -29,9 +29,44 @@ fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
+# _deploy_zsh_layer SRC DST GLOB — copies .zsh snippets from SRC to DST.
+# Skips files with a "# requires-cmd: <cmd>" header when <cmd> is not in PATH.
+# Removes previously deployed files for unmet requirements (handles tool uninstall).
+# Prunes DST files that no longer exist in SRC.
+_deploy_zsh_layer() {
+  local src="$1" dst="$2" glob="$3"
+  local item name dst_file req_cmd
+
+  for item in "$src"/$glob; do
+    [[ -f "$item" ]] || continue
+    name=$(basename "$item")
+    dst_file="$dst/$name"
+
+    req_cmd=$(sed -n 's/^# requires-cmd:[[:space:]]*//p' "$item" 2>/dev/null | head -1)
+    if [[ -n "$req_cmd" ]] && ! command -v "$req_cmd" >/dev/null 2>&1; then
+      echo -e "  ${DIM}⊘ $name (requires $req_cmd — install it, then: otto-workbench sync zsh)${NC}"
+      # Remove previously deployed file so it doesn't activate a missing tool
+      [[ -f "$dst_file" ]] && rm "$dst_file"
+      continue
+    fi
+
+    install_file "$item" "$dst_file"
+  done
+
+  # Prune stale deployed files no longer present in source
+  local dst_item
+  for dst_item in "$dst"/$glob; do
+    [[ -f "$dst_item" ]] || continue
+    [[ -e "$src/$(basename "$dst_item")" ]] && continue
+    rm "$dst_item"
+    echo -e "  ${DIM}⊘ pruned $(basename "$dst_item")${NC}"
+  done
+}
+
 # step_zsh — auto-discovers all layer directories in ZSH_CONFIG_SRC_DIR and
 # deploys their .zsh snippets to matching directories under ZSH_CONFIG_DIR.
 # Copies real files (not symlinks) so snippets work from sandboxed apps (e.g. Ghostty/TCC).
+# Snippets with "# requires-cmd: <cmd>" are skipped when <cmd> is not installed.
 # Safe to re-run: files are updated only when content changes; stale files are pruned.
 # Adding a new config.d layer requires no changes here — just create the directory.
 step_zsh() {
@@ -41,7 +76,7 @@ step_zsh() {
     [[ -d "$layer" ]] || continue
     name=$(basename "$layer")
     mkdir -p "$ZSH_CONFIG_DIR/$name"
-    copy_dir "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB" --prune
+    _deploy_zsh_layer "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB"
   done
 
   # Migration: prune stale aliases-*.zsh symlinks left at the config.d root
@@ -241,7 +276,11 @@ sync_zsh() {
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
   step_zsh_loader
-  install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"
+  if command -v starship >/dev/null 2>&1; then
+    install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"
+  else
+    echo -e "  ${DIM}⊘ starship.toml (requires starship — install it, then: otto-workbench sync zsh)${NC}"
+  fi
 
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc
@@ -250,7 +289,7 @@ sync_zsh() {
   # Regenerate the template so it reflects currently installed tools,
   # then splice the ENV section into ~/.env.local.
   if [[ "${WORKBENCH_SKIP_GENERATE:-}" != "1" ]] && command -v yq >/dev/null 2>&1; then
-    bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
+    bash "$WORKBENCH_DIR/bin/local/generate-tool-context" >/dev/null 2>&1
   fi
   _env_local_bootstrap
 

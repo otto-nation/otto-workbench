@@ -31,11 +31,11 @@
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
-# shellcheck source=../lib/ui.sh
+# shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
-# shellcheck source=../lib/registries.sh
+# shellcheck source=../../lib/registries.sh
 . "$REPO_ROOT/lib/registries.sh"
 
 BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"

@@ -56,17 +56,17 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
 
       - name: Validate registries
-        run: bash bin/validate-registries
+        run: bash bin/local/validate-registries
 
       - name: Validate component framework
-        run: bash bin/validate-components
+        run: bash bin/local/validate-components
 
       - name: Validate migrations
-        run: bash bin/validate-migrations
+        run: bash bin/local/validate-migrations
 
       - name: Verify generated files are up to date
         run: |
-          bash bin/generate-tool-context
+          bash bin/local/generate-tool-context
           failed=false
           for f in ai/guidelines/rules/tools.generated.md ai/guidelines/rules/tools-workflow.generated.md docs/tools.md docs/ai-automation.md docs/components.md README.md; do
             if ! git diff --exit-code "$f"; then
@@ -82,7 +82,7 @@ jobs:
 
       - name: Verify git.generated.md is up to date
         run: |
-          bash git/bin/generate-git-rules
+          bash git/bin/local/generate-git-rules
           if ! git diff --exit-code ai/guidelines/rules/git.generated.md; then
             echo ""
             echo "git.generated.md is out of date."

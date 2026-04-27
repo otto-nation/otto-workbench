@@ -164,6 +164,7 @@ symlink_dir() {
   local item label
   for item in "$src"/$glob; do
     [[ -e "$item" ]] || continue
+    [[ -d "$item" ]] && continue  # never symlink subdirectories (e.g. bin/local/)
     label=$(basename "$item")
     [[ "$strip_ext" == true ]] && label="${label%.*}"
     install_symlink "$item" "$dst/$(basename "$item")" "$label"

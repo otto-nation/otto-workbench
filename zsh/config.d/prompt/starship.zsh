@@ -12,6 +12,7 @@
 # Install:         brew install starship
 # Docs:            https://starship.rs
 # duplicate-check: starship init
+# requires-cmd:    starship
 
 command -v starship &>/dev/null || return 0
 

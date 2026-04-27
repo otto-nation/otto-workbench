@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Validate the component framework contracts for all workbench components.
 #
-# Usage: bin/validate-components
+# Usage: bin/local/validate-components
 #
 # Checks:
 #   Tier 1 (Core — steps.sh only):
@@ -25,9 +25,9 @@ set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$(dirname "$_SELF")/../../lib/ui.sh"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/components.sh"
+. "$(dirname "$_SELF")/../../lib/components.sh"
 
 usage() {
   cat <<EOF

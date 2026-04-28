@@ -78,14 +78,19 @@ Follow these phases in order:
 ### 5. Consistency
 - Does the change follow existing patterns in the same file/package? If every other handler does X, a new handler should too — or justify the deviation
 - Are there existing constants, helpers, or utilities that should be used instead of inline reimplementations?
-- Does the change introduce magic values (string literals, numbers) that should be constants?
+- **Magic values in production code** — flag string literals, numeric literals, and addresses that should be named constants. Common cases:
+  - Service or component names passed to functions (e.g. interceptors, loggers, clients) — check if a constant already exists in config, envconfig, or a const block
+  - Addresses or URLs assembled from string literals instead of configuration
+  - Numeric thresholds or limits without context for what they represent
+  - Do NOT flag magic values in tests unless they are repeated — test-only literals (fixture UUIDs, sample names) are fine as inline values
+- **Repeated literals in tests** — when the same literal (UUID, date, amount) appears 2+ times across test functions, flag it for extraction to a package-level var or const. The issue is DRY, not magic values
 
 ### 6. Design
 - Naming clarity and consistency with the existing codebase
 - Single-responsibility — does any new function do more than one thing?
 - Coupling and cohesion — does the change increase unnecessary dependencies?
 - Single source of truth — does the change duplicate data, logic, or constants that already have a canonical owner? Flag any second source that could drift
-- Repeated code — are there patterns introduced more than twice that should be extracted into a shared helper or utility?
+- Repeated code — when the same multi-line block (3+ lines) appears in 2+ places within the PR, flag it. Before suggesting a new helper, search the shared library for an existing one that already does what the block does
 - Extensibility — will the next developer who adds a similar case need to modify multiple files or copy-paste a block? Prefer designs that extend by addition, not modification
 - Maintainability — are there implicit assumptions, hidden dependencies, or fragile ordering that would break under reasonable future changes?
 - Test coverage — are new behaviors tested? Are edge cases covered?

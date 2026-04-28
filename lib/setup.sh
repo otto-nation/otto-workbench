@@ -40,26 +40,17 @@ run_steps() {
     fn="${step##*|}"
     echo -e "\n${DIM}[$index/$total]${NC} ${BOLD}$name${NC}"
 
-    if [[ "$_accept_all" == true ]]; then
+    if [[ "$_accept_all" != true ]]; then
+      confirm_step _decision "  Run this step?"
+      [[ "$_decision" == "all" ]] && _accept_all=true
+    fi
+
+    if [[ "$_accept_all" == true || "$_decision" == "yes" || "$_decision" == "all" ]]; then
       $fn
       ran=$(( ran + 1 ))
     else
-      confirm_step _decision "  Run this step?"
-      case "$_decision" in
-        all)
-          _accept_all=true
-          $fn
-          ran=$(( ran + 1 ))
-          ;;
-        yes)
-          $fn
-          ran=$(( ran + 1 ))
-          ;;
-        no)
-          echo -e "  ${DIM}⊘ Skipped${NC}"
-          skipped=$(( skipped + 1 ))
-          ;;
-      esac
+      echo -e "  ${DIM}⊘ Skipped${NC}"
+      skipped=$(( skipped + 1 ))
     fi
 
     index=$(( index + 1 ))

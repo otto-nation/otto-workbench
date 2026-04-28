@@ -109,22 +109,16 @@ select_menu() {
     read -rp "  ${_number_hint}${_default_hint}: " _raw
     echo
 
-    # Treat whitespace-only input the same as empty.
-    if [[ -z "${_raw// /}" ]]; then
-      case "$_default" in
-        all)
-          _all=""
-          for (( _i=1; _i<=_count; _i++ )); do _all+="$_i "; done
-          __out="${_all% }"
-          return 0 ;;
-        skip)
-          __out=""
-          skip
-          return 0 ;;
-        require)
-          __out=""
-          return 1 ;;
-      esac
+    # Treat whitespace-only input the same as empty — dispatch by default mode.
+    if [[ -z "${_raw// /}" && "$_default" == "all" ]]; then
+      _all=""
+      for (( _i=1; _i<=_count; _i++ )); do _all+="$_i "; done
+      __out="${_all% }"
+      return 0
+    elif [[ -z "${_raw// /}" && "$_default" == "skip" ]]; then
+      __out=""; skip; return 0
+    elif [[ -z "${_raw// /}" && "$_default" == "require" ]]; then
+      __out=""; return 1
     fi
 
     if [[ "$_raw" == "0" ]]; then
@@ -135,13 +129,9 @@ select_menu() {
 
     _selected="" _invalid=false
     for _num in $_raw; do
-      if [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )); then
-        _selected+="$_num "
-        [[ "$_single" == true ]] && break
-      else
-        warn "Unknown option: $_num"
-        _invalid=true
-      fi
+      [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )) || { warn "Unknown option: $_num"; _invalid=true; continue; }
+      _selected+="$_num "
+      [[ "$_single" == true ]] && break
     done
 
     if [[ "$_invalid" == true ]]; then

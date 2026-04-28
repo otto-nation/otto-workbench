@@ -134,7 +134,8 @@ _splice_inline() {
   tmp_out=$(mktemp)
   # shellcheck disable=SC2064
   trap "rm -f '$tmp_out'" RETURN
-  awk -v s="$start_marker" -v e="$end_marker" -v r="$replacement" '
+  local _awk_prog
+  read -r -d '' _awk_prog <<'AWK' || true
     {
       idx_s = index($0, s)
       if (idx_s > 0) {
@@ -146,7 +147,8 @@ _splice_inline() {
       }
       print
     }
-  ' "$file" > "$tmp_out" && mv "$tmp_out" "$file"
+AWK
+  awk -v s="$start_marker" -v e="$end_marker" -v r="$replacement" "$_awk_prog" "$file" > "$tmp_out" && mv "$tmp_out" "$file"
 }
 
 # _iter_tools FILE CALLBACK [FILTER]

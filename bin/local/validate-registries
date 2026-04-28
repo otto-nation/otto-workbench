@@ -167,10 +167,9 @@ _validate_env_fields() {
     fi
     local v
     for v in "${seen_vars[@]}"; do
-      if [[ "$v" == "$var" ]]; then
-        _fail "$(basename "$file"): duplicate env var: $var"
-        break
-      fi
+      [[ "$v" != "$var" ]] && continue
+      _fail "$(basename "$file"): duplicate env var: $var"
+      break
     done
     seen_vars+=("$var")
     # Track for cross-registry duplicate check (use relative path for readability)
@@ -210,19 +209,21 @@ _validate_auth_fields() {
   while [[ "$i" -lt "$count" ]]; do
     local has_auth
     has_auth=$(yq ".tools[$i] | has(\"auth\")" "$file")
-    if [[ "$has_auth" == "true" ]]; then
-      local name env_var setup_url
-      name=$(yq ".tools[$i].name" "$file")
-      env_var=$(yq ".tools[$i].auth.env_var // \"\"" "$file")
-      setup_url=$(yq ".tools[$i].auth.setup_url // \"\"" "$file")
-      if [[ -z "$env_var" || "$env_var" == "null" ]]; then
-        _fail "$(basename "$file") entry '$name': auth block missing required field: env_var"
-      else
-        ALL_ENV_VARS+=("$env_var:${file#"$REPO_ROOT/"}")
-      fi
-      if [[ -z "$setup_url" || "$setup_url" == "null" ]]; then
-        warn "$(basename "$file") entry '$name': auth block missing setup_url"
-      fi
+    if [[ "$has_auth" != "true" ]]; then
+      i=$(( i + 1 ))
+      continue
+    fi
+    local name env_var setup_url
+    name=$(yq ".tools[$i].name" "$file")
+    env_var=$(yq ".tools[$i].auth.env_var // \"\"" "$file")
+    setup_url=$(yq ".tools[$i].auth.setup_url // \"\"" "$file")
+    if [[ -z "$env_var" || "$env_var" == "null" ]]; then
+      _fail "$(basename "$file") entry '$name': auth block missing required field: env_var"
+    else
+      ALL_ENV_VARS+=("$env_var:${file#"$REPO_ROOT/"}")
+    fi
+    if [[ -z "$setup_url" || "$setup_url" == "null" ]]; then
+      warn "$(basename "$file") entry '$name': auth block missing setup_url"
     fi
     i=$(( i + 1 ))
   done

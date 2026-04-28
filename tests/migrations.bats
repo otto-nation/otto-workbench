@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
-# Tests for the migration framework (lib/migrations.sh) and validator (bin/validate-migrations).
+# Tests for the migration framework (lib/migrations.sh) and validator (bin/local/validate-migrations).
 bats_require_minimum_version 1.5.0
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-  VALIDATOR="$REPO_ROOT/bin/validate-migrations"
+  VALIDATOR="$REPO_ROOT/bin/local/validate-migrations"
   TMPDIR="$(mktemp -d)"
 
   # Build a minimal fake workbench with ui.sh stubs and constants

@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Validate that shell scripts do not exceed a maximum nesting depth per function.
+
+Usage: bin/local/validate-nesting [--quiet] [--max-depth N] [file...]
+
+Tracks nesting depth from block-opening keywords (if, for, while, until, case)
+and their closers (fi, done, esac). Depth resets at each function boundary so
+nesting in one function does not affect another.
+
+Skips heredoc content and command substitution bodies to avoid false positives
+from embedded languages (python, jq, awk).
+
+When no files are given, discovers all bash scripts in the repo by shebang.
+
+Exit code: 0 if all files pass, 1 if any exceed max depth.
+"""
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+OPENERS = re.compile(r'\b(if|for|while|until|case)\b')
+CLOSERS = re.compile(r'\b(fi|done|esac)\b')
+FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
+FUNC_END = re.compile(r'^\}\s*$')
+HEREDOC_START = re.compile(r"<<-?\s*'?([A-Za-z_]\w*)'?")
+CMD_SUB_OPEN = re.compile(r'\$\(')
+
+# Colors (disabled when NO_COLOR is set or stdout is not a TTY)
+if os.environ.get('NO_COLOR') or not sys.stderr.isatty():
+    RED = GREEN = DIM = NC = ''
+else:
+    RED, GREEN, DIM, NC = '\033[0;31m', '\033[0;32m', '\033[2m', '\033[0m'
+
+
+def strip_strings_and_comments(line: str) -> str:
+    line = re.sub(r'#.*', '', line)
+    line = re.sub(r"'[^']*'", '', line)
+    line = re.sub(r'"[^"]*"', '', line)
+    return line
+
+
+def check_file(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
+    """Return list of (line_number, depth, function_name) violations."""
+    violations = []
+    depth = 0
+    sub_depth = 0
+    heredoc_end = None
+    in_function = False
+    func_name = '(top-level)'
+
+    with open(filepath) as f:
+        for lineno, raw_line in enumerate(f, 1):
+            line = raw_line.rstrip('\n')
+
+            # Skip heredoc content
+            if heredoc_end is not None:
+                if line.strip() == heredoc_end:
+                    heredoc_end = None
+                continue
+
+            m = HEREDOC_START.search(line)
+            if m:
+                heredoc_end = m.group(1)
+                # Don't skip this line — the bash part before << may have keywords
+                # But heredocs with embedded languages start on the NEXT line
+
+            stripped = strip_strings_and_comments(line)
+
+            # Track command substitution depth
+            opens = len(CMD_SUB_OPEN.findall(stripped))
+            sub_depth += opens
+
+            if sub_depth > 0:
+                inner_opens = stripped.count('(') - opens
+                inner_closes = stripped.count(')')
+                net = inner_closes - inner_opens
+                if net > 0:
+                    sub_depth = max(0, sub_depth - net)
+                continue
+
+            # Function definition — reset depth
+            fm = FUNC_DEF.match(stripped)
+            if fm:
+                depth = 0
+                in_function = True
+                func_name = fm.group(1)
+                continue
+
+            # Function end — lone } at column 0
+            if in_function and FUNC_END.match(stripped):
+                in_function = False
+                depth = 0
+                func_name = '(top-level)'
+                continue
+
+            opener_count = len(OPENERS.findall(stripped))
+            closer_count = len(CLOSERS.findall(stripped))
+
+            depth = max(0, depth - closer_count)
+            depth += opener_count
+
+            if depth > max_depth:
+                violations.append((lineno, depth, func_name))
+
+    return violations
+
+
+def discover_scripts(repo_root: str) -> list[str]:
+    """Find all bash scripts in the repo by shebang."""
+    shebang_re = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
+    scripts = set()
+
+    # .sh and .bash files
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d != '.git']
+        for fname in filenames:
+            if fname.endswith(('.sh', '.bash')):
+                path = os.path.join(dirpath, fname)
+                try:
+                    with open(path, 'rb') as f:
+                        first_line = f.readline()
+                    if shebang_re.search(first_line):
+                        scripts.add(path)
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+    # Extensionless scripts in known directories
+    for subdir in ('bin', 'ai/claude/bin', 'git/hooks', 'git/bin'):
+        search_dir = os.path.join(repo_root, subdir)
+        if not os.path.isdir(search_dir):
+            continue
+        for dirpath, _, filenames in os.walk(search_dir):
+            # Max depth 2
+            rel = os.path.relpath(dirpath, search_dir)
+            if rel != '.' and rel.count(os.sep) >= 2:
+                continue
+            for fname in filenames:
+                if '.' in fname:
+                    continue
+                path = os.path.join(dirpath, fname)
+                try:
+                    with open(path, 'rb') as f:
+                        first_line = f.readline()
+                    if shebang_re.search(first_line):
+                        scripts.add(path)
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+    return sorted(scripts)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Validate shell script nesting depth.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('--max-depth', type=int, default=2, help='Maximum nesting depth (default: 2)')
+    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    files = args.files if args.files else discover_scripts(repo_root)
+
+    errors = 0
+    files_checked = 0
+
+    for filepath in files:
+        files_checked += 1
+        violations = check_file(filepath, args.max_depth)
+        relpath = os.path.relpath(filepath, repo_root)
+
+        if violations:
+            errors += 1
+            print(f'{RED}✗{NC} {relpath}: nesting exceeds {args.max_depth} levels', file=sys.stderr)
+            prev_func = None
+            for lineno, depth, func in violations:
+                if func != prev_func:
+                    print(f'    {DIM}in {func}():{NC}', file=sys.stderr)
+                    prev_func = func
+                print(f'      line {lineno}: depth {depth}', file=sys.stderr)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, no excessive nesting')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files exceed max nesting depth of {args.max_depth}', file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

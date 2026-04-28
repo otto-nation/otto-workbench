@@ -12,19 +12,15 @@
 #
 # ─── GPG KEY SETUP (first time on a new machine) ─────────────────────────────
 #
-# 1. Install GPG:
-#      brew install gnupg pinentry-mac
+# GPG, pinentry-mac, and GPG_TTY are installed and configured automatically
+# by the workbench (brew/security/signing.Brewfile + zsh/config.d/tools/gpg.zsh).
 #
-# 2. Configure pinentry (so GPG can prompt for your passphrase in the terminal):
-#      echo "pinentry-program $(brew --prefix)/bin/pinentry-mac" >> ~/.gnupg/gpg-agent.conf
-#      gpgconf --kill gpg-agent
-#
-# 3a. Generate a NEW key (skip if importing an existing one):
+# 1a. Generate a NEW key (skip if importing an existing one):
 #      gpg --full-generate-key
 #      → Choose: ECC (sign and encrypt), Curve 25519, key does not expire
 #      → Enter your name and the email that matches your Git commits
 #
-# 3b. Import an EXISTING key from another machine:
+# 1b. Import an EXISTING key from another machine:
 #      # On old machine — export:
 #      gpg --export-secret-keys --armor YOUR_EMAIL > private-key.asc
 #      gpg --export --armor YOUR_EMAIL > public-key.asc
@@ -33,14 +29,14 @@
 #      gpg --import public-key.asc
 #      gpg --edit-key YOUR_EMAIL → type: trust → 5 (ultimate) → quit
 #
-# 4. Find your key fingerprint (the long hex string after "sec"):
+# 2. Find your key fingerprint (the long hex string after "sec"):
 #      gpg --list-secret-keys --keyid-format LONG
 #
-# 5. Export public key to GitHub/GitLab:
+# 3. Export public key to GitHub/GitLab:
 #      gpg --armor --export YOUR_FINGERPRINT | pbcopy
 #      → Paste at: https://github.com/settings/keys
 #
-# 6. Fill in signingKey below with YOUR_FINGERPRINT, then test:
+# 4. Fill in signingKey below with YOUR_FINGERPRINT, then test:
 #      echo "test" | gpg --clearsign
 #
 # ─────────────────────────────────────────────────────────────────────────────

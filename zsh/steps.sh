@@ -29,9 +29,44 @@ fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
+# _deploy_zsh_layer SRC DST GLOB — copies .zsh snippets from SRC to DST.
+# Skips files with a "# requires-cmd: <cmd>" header when <cmd> is not in PATH.
+# Removes previously deployed files for unmet requirements (handles tool uninstall).
+# Prunes DST files that no longer exist in SRC.
+_deploy_zsh_layer() {
+  local src="$1" dst="$2" glob="$3"
+  local item name dst_file req_cmd
+
+  for item in "$src"/$glob; do
+    [[ -f "$item" ]] || continue
+    name=$(basename "$item")
+    dst_file="$dst/$name"
+
+    req_cmd=$(sed -n 's/^# requires-cmd:[[:space:]]*//p' "$item" 2>/dev/null | head -1)
+    if [[ -n "$req_cmd" ]] && ! command -v "$req_cmd" >/dev/null 2>&1; then
+      echo -e "  ${DIM}⊘ $name (requires $req_cmd — install it, then: otto-workbench sync zsh)${NC}"
+      # Remove previously deployed file so it doesn't activate a missing tool
+      [[ -f "$dst_file" ]] && rm "$dst_file"
+      continue
+    fi
+
+    install_file "$item" "$dst_file"
+  done
+
+  # Prune stale deployed files no longer present in source
+  local dst_item
+  for dst_item in "$dst"/$glob; do
+    [[ -f "$dst_item" ]] || continue
+    [[ -e "$src/$(basename "$dst_item")" ]] && continue
+    rm "$dst_item"
+    echo -e "  ${DIM}⊘ pruned $(basename "$dst_item")${NC}"
+  done
+}
+
 # step_zsh — auto-discovers all layer directories in ZSH_CONFIG_SRC_DIR and
 # deploys their .zsh snippets to matching directories under ZSH_CONFIG_DIR.
 # Copies real files (not symlinks) so snippets work from sandboxed apps (e.g. Ghostty/TCC).
+# Snippets with "# requires-cmd: <cmd>" are skipped when <cmd> is not installed.
 # Safe to re-run: files are updated only when content changes; stale files are pruned.
 # Adding a new config.d layer requires no changes here — just create the directory.
 step_zsh() {
@@ -41,7 +76,7 @@ step_zsh() {
     [[ -d "$layer" ]] || continue
     name=$(basename "$layer")
     mkdir -p "$ZSH_CONFIG_DIR/$name"
-    copy_dir "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB" --prune
+    _deploy_zsh_layer "$layer" "$ZSH_CONFIG_DIR/$name" "$ZSH_SNIPPET_GLOB"
   done
 
   # Migration: prune stale aliases-*.zsh symlinks left at the config.d root
@@ -130,14 +165,99 @@ _zshrc_check_duplicates() {
   fi
 }
 
-# _env_local_bootstrap — creates ~/.env.local from the workbench template when
-# absent, or appends NEW env vars from the template into an existing file.
-# Existing user values (commented or uncommented) are never overwritten.
-# Only vars present in the template but missing from the user's ENV section are added.
-_env_local_bootstrap() {
+# ─── env.local helpers ────────────────────────────────────────────────────────
+
+# _env_entry_plain — callback for iter_registry_env; emits commented export lines.
+_env_entry_plain() {
+  local var="$1" comment="$2" default_val="$3" setup_url="$4" prefix="$5"
+
+  if [[ -n "$comment" && "$comment" != "null" ]]; then
+    local comment_line="# $comment"
+    if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+      comment_line+=" — $setup_url"
+    fi
+    printf '%s\n' "$comment_line"
+  fi
+
+  local export_line="# export ${var}="
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    export_line+="${prefix}"
+  elif [[ -n "$default_val" && "$default_val" != "null" ]]; then
+    export_line+="${default_val}"
+  fi
+  printf '%s\n\n' "$export_line"
+}
+
+# _auth_entry_plain — callback for iter_registry_auth; emits commented auth lines.
+_auth_entry_plain() {
+  local name="$1" env_var="$2" setup_url="$3" prefix="$4"
+
+  local comment="# ${name}"
+  if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+    comment+=" — create key at ${setup_url}"
+  fi
+
+  local export_line="# export ${env_var}="
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    export_line+="${prefix}"
+  fi
+
+  printf '%s\n%s\n\n' "$comment" "$export_line"
+}
+
+# _render_registry_env FILE — renders env + auth entries for a single registry.
+_render_registry_env() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  registry_passes_install_check "$file" || return 0
+
+  local entries="" env_entries auth_entries
+  env_entries=$(iter_registry_env "$file" _env_entry_plain)
+  auth_entries=$(iter_registry_auth "$file" _auth_entry_plain)
+  [[ -n "$env_entries" ]] && entries+="$env_entries"$'\n'
+  [[ -n "$auth_entries" ]] && entries+="$auth_entries"$'\n'
+  [[ -n "$entries" ]] || return 0
+
+  local section
+  section=$(yq '.meta.section // "Tools"' "$file")
+  printf '# ── %s %s\n\n' "$section" "$(printf '─%.0s' $(seq 1 $(( 72 - ${#section} ))))"
+  printf '%s' "$entries"
+}
+
+# _generate_env_section — generates env var reference from all registries.
+# Sources lib/registries.sh on first call (lazy load — not needed for other zsh steps).
+_generate_env_section() {
+  if ! declare -f collect_registries >/dev/null 2>&1; then
+    # shellcheck source=../lib/registries.sh
+    . "$WORKBENCH_DIR/lib/registries.sh"
+  fi
+  local output="" section_output first=true
+  local -a unique_registries=()
+  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$WORKBENCH_DIR/brew"
+
+  for registry in "${unique_registries[@]}"; do
+    section_output=$(_render_registry_env "$registry")
+    if [[ -n "$section_output" ]]; then
+      $first || output+=$'\n'
+      first=false
+      output+="$section_output"$'\n'
+    fi
+  done
+
+  if [[ -n "$output" ]]; then printf '%s' "$output"; fi
+}
+
+# step_env_local — ensures ~/.env.local exists and its ENV marker section
+# reflects the current registries. User values below ENV-END are never touched.
+# The marker section is read-only: fully regenerated from registries each sync.
+step_env_local() {
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
     cp "$ENV_LOCAL_TEMPLATE" "$ENV_LOCAL_FILE"
     warn "Created $ENV_LOCAL_FILE from template — review and fill in your values"
+  fi
+
+  if ! command -v yq >/dev/null 2>&1; then
+    success ".env.local exists (yq not found — skipping env var sync)"
     return
   fi
 
@@ -146,82 +266,20 @@ _env_local_bootstrap() {
     return
   fi
 
-  # Collect var names already in the user's ENV section (both commented and uncommented)
-  local user_vars
-  user_vars=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$ENV_LOCAL_FILE" \
-    | grep -oE 'export [A-Z_][A-Z_0-9]*=' | sed 's/export //;s/=//' | sort -u)
+  # Generate env content from registries and splice into ~/.env.local
+  local new_content_file tmp
+  new_content_file=$(mktemp)
+  tmp=$(mktemp)
+  _generate_env_section > "$new_content_file"
 
-  # Walk the template and collect entries for vars not yet in the user's file.
-  # New entries are appended before # --- ENV-END --- so user values are never touched.
-  local tmp_new
-  tmp_new=$(mktemp)
-  # shellcheck disable=SC2064
-  trap "rm -f '$tmp_new'" RETURN
-  local in_section=false current_header="" header_emitted=false pending=""
+  awk -v cf="$new_content_file" '
+    /# --- ENV-START ---/ { print; while ((getline line < cf) > 0) print line; skip=1; next }
+    /# --- ENV-END ---/   { skip=0 }
+    !skip                 { print }
+  ' "$ENV_LOCAL_FILE" > "$tmp" && mv "$tmp" "$ENV_LOCAL_FILE"
+  rm -f "$new_content_file"
 
-  while IFS= read -r line; do
-    if [[ "$line" == *'# --- ENV-START ---'* ]]; then in_section=true; continue; fi
-    if [[ "$line" == *'# --- ENV-END ---'* ]]; then break; fi
-    [[ "$in_section" == false ]] && continue
-
-    # Section header (e.g. "# ── Docker / Colima ───")
-    if [[ "$line" == '# ── '* ]]; then
-      current_header="$line"
-      header_emitted=false
-      pending=""
-      continue
-    fi
-
-    # Blank line — buffered; only emitted if the next export is for a new var
-    if [[ -z "${line// /}" ]]; then
-      [[ -n "$pending" ]] && pending+=$'\n'
-      continue
-    fi
-
-    # Export line (commented or not) — check if var is new
-    if [[ "$line" == *'export '* ]]; then
-      local var_name
-      var_name="${line#*export }"  # strip everything before "export "
-      var_name="${var_name%%=*}"   # strip from "=" onward
-      if [[ -n "$var_name" ]] && ! echo "$user_vars" | grep -qx "$var_name"; then
-        # New var — emit section header (once), pending comments, then this line
-        if [[ "$header_emitted" == false && -n "$current_header" ]]; then
-          echo "" >> "$tmp_new"
-          echo "$current_header" >> "$tmp_new"
-          header_emitted=true
-        fi
-        if [[ -n "$pending" ]]; then
-          echo "" >> "$tmp_new"
-          printf '%s\n' "$pending" >> "$tmp_new"
-        fi
-        echo "$line" >> "$tmp_new"
-      fi
-      pending=""
-      continue
-    fi
-
-    # Comment line — accumulate as pending (emitted only if next export is new)
-    if [[ -z "$pending" ]]; then
-      pending="$line"
-    else
-      pending+=$'\n'"$line"
-    fi
-  done < "$ENV_LOCAL_TEMPLATE"
-
-  if [[ ! -s "$tmp_new" ]]; then
-    success ".env.local env section up to date"
-    return
-  fi
-
-  # Insert new entries before # --- ENV-END --- in the user's file
-  local tmp_out
-  tmp_out=$(mktemp)
-  awk -v tf="$tmp_new" '
-    /# --- ENV-END ---/ { while ((getline line < tf) > 0) print line }
-    { print }
-  ' "$ENV_LOCAL_FILE" > "$tmp_out" && mv "$tmp_out" "$ENV_LOCAL_FILE"
-
-  success ".env.local: added new env entries"
+  success ".env.local env section updated"
 }
 
 # step_zshrc — ensures ~/.zshrc is connected to the workbench loader and warns
@@ -241,18 +299,17 @@ sync_zsh() {
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
   step_zsh_loader
-  install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"
+  if command -v starship >/dev/null 2>&1; then
+    install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"
+  else
+    echo -e "  ${DIM}⊘ starship.toml (requires starship — install it, then: otto-workbench sync zsh)${NC}"
+  fi
 
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc
 
-  echo; info "Environment variables ($ENV_LOCAL_FILE)"
-  # Regenerate the template so it reflects currently installed tools,
-  # then splice the ENV section into ~/.env.local.
-  if [[ "${WORKBENCH_SKIP_GENERATE:-}" != "1" ]] && command -v yq >/dev/null 2>&1; then
-    bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
-  fi
-  _env_local_bootstrap
+  echo; info "Environment ($ENV_LOCAL_FILE)"
+  step_env_local
 
   echo; info "zsh scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$ZSH_SRC_DIR"

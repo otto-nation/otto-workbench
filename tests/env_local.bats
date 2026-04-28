@@ -203,3 +203,86 @@ EOF
   [ "$count" -eq 1 ]
   rm -rf "$TMPDIR"
 }
+
+@test "migration moves uncommented exports below ENV-END markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# header
+# --- ENV-START ---
+# a comment
+# export COMMENTED_VAR=
+export REAL_TOKEN=my-secret
+export ANOTHER=value
+# --- ENV-END ---
+# existing below
+EOF
+
+  HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+
+  # Uncommented exports should no longer be between markers
+  local env_section
+  env_section=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$FAKE_HOME/.env.local")
+  run grep -c '^export' <<< "$env_section"
+  [ "$output" = "0" ]
+
+  # They should appear below ENV-END
+  grep -q 'export REAL_TOKEN=my-secret' "$FAKE_HOME/.env.local"
+  grep -q 'export ANOTHER=value' "$FAKE_HOME/.env.local"
+
+  # Existing content below markers is preserved
+  grep -q '# existing below' "$FAKE_HOME/.env.local"
+
+  rm -rf "$TMPDIR"
+}
+
+@test "migration is a no-op when no uncommented exports inside markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# --- ENV-START ---
+# export COMMENTED_VAR=
+# --- ENV-END ---
+export BELOW=fine
+EOF
+
+  local before
+  before=$(cat "$FAKE_HOME/.env.local")
+
+  HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+
+  local after
+  after=$(cat "$FAKE_HOME/.env.local")
+  [ "$before" = "$after" ]
+
+  rm -rf "$TMPDIR"
+}
+
+@test "migration skips when ~/.env.local has no markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  echo "export LEGACY=unchanged" > "$FAKE_HOME/.env.local"
+
+  local before
+  before=$(cat "$FAKE_HOME/.env.local")
+
+  HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+
+  local after
+  after=$(cat "$FAKE_HOME/.env.local")
+  [ "$before" = "$after" ]
+
+  rm -rf "$TMPDIR"
+}

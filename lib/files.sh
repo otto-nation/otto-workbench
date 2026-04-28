@@ -230,7 +230,8 @@ is_disabled() {
 # Unlike symlinks, dispatchers resolve at runtime — so worktrees always run
 # their own branch's version of the hook, not main's.
 install_hook_dispatcher() {
-  local source_rel="$1" target="$2" label="${3:-$(basename "$target")}"
+  local source_rel="$1" target="$2"
+  local label="${3:-$(basename "$target")}"
 
   cat > "$target" <<EOF
 #!/usr/bin/env bash

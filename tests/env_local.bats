@@ -47,11 +47,11 @@ setup() {
   grep -q '# --- ENV-END ---' "$REPO_ROOT/zsh/.env.local.template"
 }
 
-@test ".env.local template env section is populated after generation" {
-  # The generated section should contain at least one export line
+@test ".env.local template env section is empty (populated at runtime)" {
+  # The template ships with empty markers — content is generated directly into ~/.env.local
   local content
-  content=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$REPO_ROOT/zsh/.env.local.template")
-  echo "$content" | grep -q 'export'
+  content=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$REPO_ROOT/zsh/.env.local.template")
+  [ -z "$content" ]
 }
 
 # ── step_env_local ───────────────────────────────────────────────────────────
@@ -78,15 +78,18 @@ setup() {
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
-  FAKE_TEMPLATE="$TMPDIR/template"
-  mkdir -p "$FAKE_HOME"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
 
-  # Create a controlled template
-  cat > "$FAKE_TEMPLATE" <<'EOF'
-# --- ENV-START ---
-# new var from registry
-# export NEW_VAR=
-# --- ENV-END ---
+  # Create a minimal registry with one env var
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+  install_check: false
+env:
+  - var: TEST_NEW_VAR
+    comment: a test variable
 EOF
 
   # Create existing .env.local with old marker content and user values below
@@ -99,14 +102,13 @@ EOF
 export MY_SECRET=keep-this
 EOF
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" ENV_LOCAL_TEMPLATE="$FAKE_TEMPLATE" \
-    WORKBENCH_SKIP_GENERATE=1 NO_COLOR=1 \
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
     bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 
-  # New template content is present
-  grep -q 'NEW_VAR' "$FAKE_HOME/.env.local"
-  # Old template content is gone
+  # New registry content is present
+  grep -q 'TEST_NEW_VAR' "$FAKE_HOME/.env.local"
+  # Old content is gone
   run grep 'OLD_VAR' "$FAKE_HOME/.env.local"
   [ "$status" -ne 0 ]
   # User values preserved
@@ -126,7 +128,7 @@ EOF
   local before
   before=$(cat "$FAKE_HOME/.env.local")
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" WORKBENCH_SKIP_GENERATE=1 NO_COLOR=1 \
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
     bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 

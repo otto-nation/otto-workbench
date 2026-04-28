@@ -165,9 +165,91 @@ _zshrc_check_duplicates() {
   fi
 }
 
+# ─── env.local helpers ────────────────────────────────────────────────────────
+
+# _env_entry_plain — callback for iter_registry_env; emits commented export lines.
+_env_entry_plain() {
+  local var="$1" comment="$2" default_val="$3" setup_url="$4" prefix="$5"
+
+  if [[ -n "$comment" && "$comment" != "null" ]]; then
+    local comment_line="# $comment"
+    if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+      comment_line+=" — $setup_url"
+    fi
+    printf '%s\n' "$comment_line"
+  fi
+
+  local export_line="# export ${var}="
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    export_line+="${prefix}"
+  elif [[ -n "$default_val" && "$default_val" != "null" ]]; then
+    export_line+="${default_val}"
+  fi
+  printf '%s\n\n' "$export_line"
+}
+
+# _auth_entry_plain — callback for iter_registry_auth; emits commented auth lines.
+_auth_entry_plain() {
+  local name="$1" env_var="$2" setup_url="$3" prefix="$4"
+
+  local comment="# ${name}"
+  if [[ -n "$setup_url" && "$setup_url" != "null" ]]; then
+    comment+=" — create key at ${setup_url}"
+  fi
+
+  local export_line="# export ${env_var}="
+  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+    export_line+="${prefix}"
+  fi
+
+  printf '%s\n%s\n\n' "$comment" "$export_line"
+}
+
+# _render_registry_env FILE — renders env + auth entries for a single registry.
+_render_registry_env() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  registry_passes_install_check "$file" || return 0
+
+  local entries="" env_entries auth_entries
+  env_entries=$(iter_registry_env "$file" _env_entry_plain)
+  auth_entries=$(iter_registry_auth "$file" _auth_entry_plain)
+  [[ -n "$env_entries" ]] && entries+="$env_entries"$'\n'
+  [[ -n "$auth_entries" ]] && entries+="$auth_entries"$'\n'
+  [[ -n "$entries" ]] || return 0
+
+  local section
+  section=$(yq '.meta.section // "Tools"' "$file")
+  printf '# ── %s %s\n\n' "$section" "$(printf '─%.0s' $(seq 1 $(( 72 - ${#section} ))))"
+  printf '%s' "$entries"
+}
+
+# _generate_env_section — generates env var reference from all registries.
+# Sources lib/registries.sh on first call (lazy load — not needed for other zsh steps).
+_generate_env_section() {
+  if ! declare -f collect_registries >/dev/null 2>&1; then
+    # shellcheck source=../lib/registries.sh
+    . "$WORKBENCH_DIR/lib/registries.sh"
+  fi
+  local output="" section_output first=true
+  local -a unique_registries=()
+  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$WORKBENCH_DIR/brew"
+
+  for registry in "${unique_registries[@]}"; do
+    section_output=$(_render_registry_env "$registry")
+    if [[ -n "$section_output" ]]; then
+      $first || output+=$'\n'
+      first=false
+      output+="$section_output"$'\n'
+    fi
+  done
+
+  if [[ -n "$output" ]]; then printf '%s' "$output"; fi
+}
+
 # step_env_local — ensures ~/.env.local exists and its ENV marker section
 # reflects the current registries. User values below ENV-END are never touched.
-# The marker section is read-only: fully regenerated from the template each sync.
+# The marker section is read-only: fully regenerated from registries each sync.
 step_env_local() {
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
     cp "$ENV_LOCAL_TEMPLATE" "$ENV_LOCAL_FILE"
@@ -179,15 +261,17 @@ step_env_local() {
     return
   fi
 
-  # Extract the marker section content from the regenerated template
-  local new_content
-  new_content=$(awk '/# --- ENV-START ---/{found=1;next} /# --- ENV-END ---/{found=0} found{print}' "$ENV_LOCAL_TEMPLATE")
+  if ! grep -q '# --- ENV-START ---' "$ENV_LOCAL_FILE" 2>/dev/null; then
+    success ".env.local already exists (no ENV markers — add them to enable auto-updates)"
+    return
+  fi
 
-  # Splice it into ~/.env.local between the markers
-  local tmp new_content_file
-  tmp=$(mktemp)
+  # Generate env content from registries and splice into ~/.env.local
+  local new_content_file tmp
   new_content_file=$(mktemp)
-  printf '%s\n' "$new_content" > "$new_content_file"
+  tmp=$(mktemp)
+  _generate_env_section > "$new_content_file"
+
   awk -v cf="$new_content_file" '
     /# --- ENV-START ---/ { print; while ((getline line < cf) > 0) print line; skip=1; next }
     /# --- ENV-END ---/   { skip=0 }
@@ -225,11 +309,6 @@ sync_zsh() {
   step_zshrc
 
   echo; info "Environment ($ENV_LOCAL_FILE)"
-  # Regenerate the template so it reflects currently installed tools,
-  # then splice the ENV section into ~/.env.local.
-  if [[ "${WORKBENCH_SKIP_GENERATE:-}" != "1" ]] && command -v yq >/dev/null 2>&1; then
-    bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
-  fi
   step_env_local
 
   echo; info "zsh scripts → $LOCAL_BIN_DIR/"

@@ -165,45 +165,10 @@ _zshrc_check_duplicates() {
   fi
 }
 
-# _env_collect_var — callback for iter_registry_env; records var name.
-_env_collect_var() { _env_discovered_vars+=("$1"); }
-
-# _env_collect_auth — callback for iter_registry_auth; records env_var name.
-_env_collect_auth() { _env_discovered_vars+=("$2"); }
-
-# _env_format_var — callback for iter_registry_env; emits commented export line.
-_env_format_var() {
-  local var="$1" comment="$2" default_val="$3" setup_url="$4" prefix="$5"
-
-  if [[ -n "$comment" && "$comment" != "null" ]]; then
-    local comment_line="# $comment"
-    [[ -n "$setup_url" && "$setup_url" != "null" ]] && comment_line+=" — $setup_url"
-    printf '%s\n' "$comment_line"
-  fi
-
-  local export_line="# export ${var}="
-  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
-    export_line+="${prefix}"
-  elif [[ -n "$default_val" && "$default_val" != "null" ]]; then
-    export_line+="${default_val}"
-  fi
-  printf '%s\n' "$export_line"
-}
-
-# _env_format_auth — callback for iter_registry_auth; emits commented export line.
-_env_format_auth() {
-  local name="$1" env_var="$2" setup_url="$3" prefix="$4"
-
-  local comment="# ${name}"
-  [[ -n "$setup_url" && "$setup_url" != "null" ]] && comment+=" — create key at ${setup_url}"
-
-  local export_line="# export ${env_var}="
-  [[ -n "$prefix" && "$prefix" != "null" ]] && export_line+="${prefix}"
-
-  printf '%s\n%s\n' "$comment" "$export_line"
-}
-
-_env_local_bootstrap() {
+# step_env_local — ensures ~/.env.local exists and its ENV marker section
+# reflects the current registries. User values below ENV-END are never touched.
+# The marker section is read-only: fully regenerated from the template each sync.
+step_env_local() {
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
     cp "$ENV_LOCAL_TEMPLATE" "$ENV_LOCAL_FILE"
     warn "Created $ENV_LOCAL_FILE from template — review and fill in your values"
@@ -214,93 +179,23 @@ _env_local_bootstrap() {
     return
   fi
 
-  # Source registries library and discover all env vars from registries
-  # shellcheck source=../lib/registries.sh
-  . "$WORKBENCH_DIR/lib/registries.sh"
+  # Extract the marker section content from the regenerated template
+  local new_content
+  new_content=$(awk '/# --- ENV-START ---/{found=1;next} /# --- ENV-END ---/{found=0} found{print}' "$ENV_LOCAL_TEMPLATE")
 
-  local -a registries=()
-  collect_registries registries "$WORKBENCH_DIR" "$WORKBENCH_DIR/brew"
+  # Splice it into ~/.env.local between the markers
+  local tmp new_content_file
+  tmp=$(mktemp)
+  new_content_file=$(mktemp)
+  printf '%s\n' "$new_content" > "$new_content_file"
+  awk -v cf="$new_content_file" '
+    /# --- ENV-START ---/ { print; while ((getline line < cf) > 0) print line; skip=1; next }
+    /# --- ENV-END ---/   { skip=0 }
+    !skip                 { print }
+  ' "$ENV_LOCAL_FILE" > "$tmp" && mv "$tmp" "$ENV_LOCAL_FILE"
+  rm -f "$new_content_file"
 
-  # Collect all var names declared in registries
-  local -a _env_discovered_vars=()
-  for reg in "${registries[@]}"; do
-    registry_passes_install_check "$reg" || continue
-    iter_registry_env "$reg" _env_collect_var
-    iter_registry_auth "$reg" _env_collect_auth
-  done
-
-  [[ ${#_env_discovered_vars[@]} -gt 0 ]] || { success ".env.local up to date"; return; }
-
-  # Find vars not yet in the user's file (commented or uncommented)
-  local existing_vars
-  existing_vars=$(grep -oE 'export [A-Z_][A-Z_0-9]*=' "$ENV_LOCAL_FILE" 2>/dev/null \
-    | sed 's/export //;s/=//' | sort -u) || true
-
-  local -a missing_vars=()
-  for var in "${_env_discovered_vars[@]}"; do
-    echo "$existing_vars" | grep -qx "$var" || missing_vars+=("$var")
-  done
-
-  [[ ${#missing_vars[@]} -gt 0 ]] || { success ".env.local up to date"; return; }
-
-  # Generate entries for missing vars only
-  local -A missing_set=()
-  for var in "${missing_vars[@]}"; do missing_set[$var]=1; done
-
-  local new_entries=""
-  for reg in "${registries[@]}"; do
-    registry_passes_install_check "$reg" || continue
-
-    local section_entries=""
-
-    # Filter env entries to only missing vars
-    local all_env_output
-    all_env_output=$(iter_registry_env "$reg" _env_format_var) || true
-    if [[ -n "$all_env_output" ]]; then
-      while IFS= read -r line; do
-        if [[ "$line" == *'export '* ]]; then
-          local vname="${line#*export }" ; vname="${vname%%=*}"
-          if [[ -n "${missing_set[$vname]:-}" ]]; then
-            [[ -n "$_pending_comment" ]] && section_entries+="$_pending_comment"$'\n'
-            section_entries+="$line"$'\n'
-          fi
-          _pending_comment=""
-        elif [[ "$line" == '#'* ]]; then
-          _pending_comment="$line"$'\n'
-        fi
-      done <<< "$all_env_output"
-    fi
-
-    local all_auth_output
-    all_auth_output=$(iter_registry_auth "$reg" _env_format_auth) || true
-    if [[ -n "$all_auth_output" ]]; then
-      while IFS= read -r line; do
-        if [[ "$line" == *'export '* ]]; then
-          local vname="${line#*export }" ; vname="${vname%%=*}"
-          if [[ -n "${missing_set[$vname]:-}" ]]; then
-            [[ -n "$_pending_comment" ]] && section_entries+="$_pending_comment"$'\n'
-            section_entries+="$line"$'\n'
-          fi
-          _pending_comment=""
-        elif [[ "$line" == '#'* ]]; then
-          _pending_comment="$line"$'\n'
-        fi
-      done <<< "$all_auth_output"
-    fi
-
-    if [[ -n "$section_entries" ]]; then
-      local section
-      section=$(yq '.meta.section // "Tools"' "$reg")
-      new_entries+=$'\n'"# ── ${section} $(printf '─%.0s' $(seq 1 $((72 - ${#section}))))"$'\n'
-      new_entries+="$section_entries"
-    fi
-  done
-
-  [[ -n "$new_entries" ]] || { success ".env.local up to date"; return; }
-
-  # Append new entries to the end of the file
-  printf '%s\n' "$new_entries" >> "$ENV_LOCAL_FILE"
-  success ".env.local: added new env entries"
+  success ".env.local env section updated"
 }
 
 # step_zshrc — ensures ~/.zshrc is connected to the workbench loader and warns
@@ -329,8 +224,13 @@ sync_zsh() {
   echo; info "ZSH configuration (.zshrc)"
   step_zshrc
 
-  echo; info "Environment variables ($ENV_LOCAL_FILE)"
-  _env_local_bootstrap
+  echo; info "Environment ($ENV_LOCAL_FILE)"
+  # Regenerate the template so it reflects currently installed tools,
+  # then splice the ENV section into ~/.env.local.
+  if [[ "${WORKBENCH_SKIP_GENERATE:-}" != "1" ]] && command -v yq >/dev/null 2>&1; then
+    bash "$WORKBENCH_DIR/bin/generate-tool-context" >/dev/null 2>&1
+  fi
+  step_env_local
 
   echo; info "zsh scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$ZSH_SRC_DIR"

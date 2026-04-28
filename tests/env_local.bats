@@ -42,165 +42,97 @@ setup() {
   grep -q 'taskfile.env' "$REPO_ROOT/zsh/.env.local.template"
 }
 
-# ── bootstrap step ────────────────────────────────────────────────────────────
-
-@test "zsh/steps.sh defines _env_local_bootstrap function" {
-  grep -q '_env_local_bootstrap' "$REPO_ROOT/zsh/steps.sh"
+@test ".env.local template has ENV auto-generation markers" {
+  grep -q '# --- ENV-START ---' "$REPO_ROOT/zsh/.env.local.template"
+  grep -q '# --- ENV-END ---' "$REPO_ROOT/zsh/.env.local.template"
 }
 
-@test "_env_local_bootstrap creates ~/.env.local from template when absent" {
+@test ".env.local template env section is populated after generation" {
+  # The generated section should contain at least one export line
+  local content
+  content=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$REPO_ROOT/zsh/.env.local.template")
+  echo "$content" | grep -q 'export'
+}
+
+# ── step_env_local ───────────────────────────────────────────────────────────
+
+@test "zsh/steps.sh defines step_env_local function" {
+  grep -q 'step_env_local' "$REPO_ROOT/zsh/steps.sh"
+}
+
+@test "step_env_local creates ~/.env.local from template when absent" {
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
   HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 
   [ -f "$FAKE_HOME/.env.local" ]
   rm -rf "$TMPDIR"
 }
 
-@test "_env_local_bootstrap does not overwrite existing ~/.env.local" {
+@test "step_env_local regenerates marker section without touching user values" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_TEMPLATE="$TMPDIR/template"
+  mkdir -p "$FAKE_HOME"
+
+  # Create a controlled template
+  cat > "$FAKE_TEMPLATE" <<'EOF'
+# --- ENV-START ---
+# new var from registry
+# export NEW_VAR=
+# --- ENV-END ---
+EOF
+
+  # Create existing .env.local with old marker content and user values below
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# header
+# --- ENV-START ---
+# old var
+# export OLD_VAR=
+# --- ENV-END ---
+export MY_SECRET=keep-this
+EOF
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" ENV_LOCAL_TEMPLATE="$FAKE_TEMPLATE" \
+    WORKBENCH_SKIP_GENERATE=1 NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
+    >/dev/null 2>&1
+
+  # New template content is present
+  grep -q 'NEW_VAR' "$FAKE_HOME/.env.local"
+  # Old template content is gone
+  run grep 'OLD_VAR' "$FAKE_HOME/.env.local"
+  [ "$status" -ne 0 ]
+  # User values preserved
+  grep -q 'MY_SECRET=keep-this' "$FAKE_HOME/.env.local"
+  # Header preserved
+  grep -q '# header' "$FAKE_HOME/.env.local"
+  rm -rf "$TMPDIR"
+}
+
+@test "step_env_local leaves file alone when no markers present" {
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
-  echo "export MY_CUSTOM_VAR=keep_me" > "$FAKE_HOME/.env.local"
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+  echo "export LEGACY_VAR=unchanged" > "$FAKE_HOME/.env.local"
+  local before
+  before=$(cat "$FAKE_HOME/.env.local")
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" WORKBENCH_SKIP_GENERATE=1 NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 
-  grep -q 'MY_CUSTOM_VAR=keep_me' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
-}
-
-# ── registry-driven env sync ─────────────────────────────────────────────────
-
-# _run_bootstrap FAKE_HOME [WORKBENCH_DIR] — runs _env_local_bootstrap in isolation.
-_run_bootstrap() {
-  local fake_home="$1"
-  local wb="${2:-$REPO_ROOT}"
-  HOME="$fake_home" WORKBENCH_DIR="$wb" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$wb/zsh/steps.sh'; _env_local_bootstrap" \
-    2>/dev/null
-}
-
-@test "_env_local_bootstrap adds missing auth vars from registries" {
-  load test_helper
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
-  FAKE_WB="$TMPDIR/wb"
-  mkdir -p "$FAKE_HOME" "$FAKE_WB/zsh" "$FAKE_WB/lib" "$FAKE_WB/tools"
-
-  cp "$REPO_ROOT/lib/ui.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/lib/constants.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/lib/registries.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/zsh/steps.sh" "$FAKE_WB/zsh/"
-  cp "$REPO_ROOT/zsh/.env.local.template" "$FAKE_WB/zsh/"
-
-  cat > "$FAKE_WB/tools/registry.yml" << 'EOF'
-meta:
-  section: "Test Tools"
-  install_check: false
-  validation: none
-
-tools:
-  - name: testtool
-    description: "A test tool"
-    when_to_use: "Testing"
-    auth:
-      env_var: TEST_API_KEY
-      setup_url: "https://example.com/keys"
-      prefix: "tk_"
-EOF
-
-  echo "# existing content" > "$FAKE_HOME/.env.local"
-
-  _run_bootstrap "$FAKE_HOME" "$FAKE_WB"
-
-  grep -q 'TEST_API_KEY' "$FAKE_HOME/.env.local"
-  grep -q 'tk_' "$FAKE_HOME/.env.local"
-  grep -q '# existing content' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
-}
-
-@test "_env_local_bootstrap skips vars already present in env.local" {
-  load test_helper
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
-  FAKE_WB="$TMPDIR/wb"
-  mkdir -p "$FAKE_HOME" "$FAKE_WB/zsh" "$FAKE_WB/lib" "$FAKE_WB/tools"
-
-  cp "$REPO_ROOT/lib/ui.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/lib/constants.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/lib/registries.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/zsh/steps.sh" "$FAKE_WB/zsh/"
-  cp "$REPO_ROOT/zsh/.env.local.template" "$FAKE_WB/zsh/"
-
-  cat > "$FAKE_WB/tools/registry.yml" << 'EOF'
-meta:
-  section: "Test Tools"
-  install_check: false
-  validation: none
-
-tools:
-  - name: testtool
-    description: "A test tool"
-    when_to_use: "Testing"
-    auth:
-      env_var: TEST_API_KEY
-      setup_url: "https://example.com/keys"
-EOF
-
-  echo "export TEST_API_KEY=already_set" > "$FAKE_HOME/.env.local"
-
-  _run_bootstrap "$FAKE_HOME" "$FAKE_WB"
-
-  local count
-  count=$(grep -c 'TEST_API_KEY' "$FAKE_HOME/.env.local")
-  [ "$count" -eq 1 ]
-  grep -q 'already_set' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
-}
-
-@test "_env_local_bootstrap skips commented vars already present" {
-  load test_helper
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
-  FAKE_WB="$TMPDIR/wb"
-  mkdir -p "$FAKE_HOME" "$FAKE_WB/zsh" "$FAKE_WB/lib" "$FAKE_WB/tools"
-
-  cp "$REPO_ROOT/lib/ui.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/lib/constants.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/lib/registries.sh" "$FAKE_WB/lib/"
-  cp "$REPO_ROOT/zsh/steps.sh" "$FAKE_WB/zsh/"
-  cp "$REPO_ROOT/zsh/.env.local.template" "$FAKE_WB/zsh/"
-
-  cat > "$FAKE_WB/tools/registry.yml" << 'EOF'
-meta:
-  section: "Test Tools"
-  install_check: false
-  validation: none
-
-tools:
-  - name: testtool
-    description: "A test tool"
-    when_to_use: "Testing"
-    auth:
-      env_var: TEST_API_KEY
-      setup_url: "https://example.com/keys"
-EOF
-
-  echo "# export TEST_API_KEY=" > "$FAKE_HOME/.env.local"
-
-  _run_bootstrap "$FAKE_HOME" "$FAKE_WB"
-
-  local count
-  count=$(grep -c 'TEST_API_KEY' "$FAKE_HOME/.env.local")
-  [ "$count" -eq 1 ]
+  local after
+  after=$(cat "$FAKE_HOME/.env.local")
+  [ "$before" = "$after" ]
   rm -rf "$TMPDIR"
 }
 

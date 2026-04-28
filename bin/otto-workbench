@@ -5,7 +5,7 @@
 #
 # Commands:
 #   sync                  Re-apply all workbench configuration to ~/
-#   claude [--force]      Sync Claude config + scaffold project .claude/ (see below)
+#   claude [--force] [--analyze]  Sync Claude config + scaffold project .claude/ (see below)
 #   state [regenerate]    Show or re-detect installed component state
 #   changelog             Show recent changes from conventional commits
 #
@@ -187,9 +187,55 @@ cmd_sync() {
   print_warnings_summary
 }
 
+# _stream_progress SESSION_LOG — reads stream-json from stdin, shows tool-use progress, saves raw log.
+_stream_progress() {
+  local session_log="$1"
+  : > "$session_log"
+  local prev_label=""
+  while IFS= read -r line; do
+    echo "$line" >> "$session_log"
+    local msg_type
+    msg_type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null) || continue
+    [[ "$msg_type" == "assistant" ]] || continue
+
+    local labels
+    labels=$(echo "$line" | jq -r '
+      .message.content[]? | select(.type == "tool_use") |
+      if .input.description then
+        .input.description
+      elif .name == "Read" then
+        "Read " + (.input.file_path | split("/") | last)
+      elif .name == "Grep" then
+        "Grep " + (.input.pattern // "")
+      elif .name == "Glob" then
+        "Glob " + (.input.pattern // "")
+      elif .name == "Write" then
+        "Write " + (.input.file_path | split("/") | last)
+      else
+        .name
+      end
+    ' 2>/dev/null)
+    [[ -z "$labels" ]] && continue
+
+    while IFS= read -r label; do
+      [[ -z "$label" ]] && continue
+      [[ "$label" == "$prev_label" ]] && continue
+      echo -e "  ${DIM}▸ ${label}${NC}"
+      prev_label="$label"
+    done <<< "$labels"
+  done
+}
+
 cmd_claude() {
-  local force_flag=""
-  [[ "${2:-}" == "--force" ]] && force_flag="--force"
+  local force_flag="" analyze=false
+
+  local arg
+  for arg in "${@:2}"; do
+    case "$arg" in
+      --force)   force_flag="--force" ;;
+      --analyze) analyze=true ;;
+    esac
+  done
 
   title "Claude setup"
   echo
@@ -200,31 +246,61 @@ cmd_claude() {
   # 2. Scaffold project .claude/ if not already done (or if --force)
   local project_root
   project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
-
-  if [[ -n "$project_root" ]]; then
-    cd "$project_root"
-    echo
-    if [[ -d ".claude" ]] && [[ -z "$force_flag" ]]; then
-      info "Project .claude/ exists — skipping scaffold (use --force to re-scaffold)"
-    else
-      info "Scaffolding project"
-      scaffold_project_claude $force_flag
-    fi
-
-    # 3. Generate project anatomy
-    local anatomy_gen="$CLAUDE_SKILLS_DIR/anatomy/generate-anatomy.sh"
-    if [[ -f "$anatomy_gen" ]]; then
-      echo
-      info "Generating project anatomy"
-      if bash "$anatomy_gen"; then
-        success "anatomy.md"
-      else
-        skip "anatomy.md (generator failed)"
-      fi
-    fi
-  else
+  if [[ -z "$project_root" ]]; then
     echo
     warn "Not in a git repo — skipping project scaffold and anatomy"
+    echo
+    success "Claude setup complete!"
+    return
+  fi
+
+  cd "$project_root"
+  echo
+
+  local did_scaffold=false
+  if [[ -d ".claude" ]] && [[ -z "$force_flag" ]]; then
+    info "Project .claude/ exists — skipping scaffold (use --force to re-scaffold)"
+  else
+    info "Scaffolding project"
+    scaffold_project_claude $force_flag
+    did_scaffold=true
+  fi
+
+  # 3. Generate project anatomy
+  local anatomy_gen="$CLAUDE_SKILLS_DIR/anatomy/generate-anatomy.sh"
+  if [[ -f "$anatomy_gen" ]]; then
+    echo
+    info "Generating project anatomy"
+    if bash "$anatomy_gen"; then
+      success "anatomy.md"
+    else
+      skip "anatomy.md (generator failed)"
+    fi
+  fi
+
+  # 4. Offer to run /analyze-project after a fresh scaffold
+  local skill_file="$CLAUDE_SKILLS_DIR/analyze-project/SKILL.md"
+  if [[ "$did_scaffold" == true ]] && command -v claude >/dev/null 2>&1 && [[ -f "$skill_file" ]]; then
+    echo
+    local run_analyze=false
+    if [[ "$analyze" == true ]] || confirm "Run /analyze-project now to populate the scaffolded files?"; then
+      run_analyze=true
+    fi
+
+    if [[ "$run_analyze" == true ]]; then
+      local session_log=".claude/analyze-project.session.jsonl"
+      info "Running /analyze-project"
+      echo
+      # Strip YAML frontmatter (--- ... --- block) before passing to claude;
+      # claude's argument parser treats leading --- as an unknown option flag.
+      local skill_content
+      skill_content=$(awk 'NR==1 && /^---$/{f=1;next} f && /^---$/{f=0;next} !f{print}' "$skill_file")
+      claude -p --verbose --output-format stream-json \
+        --permission-mode acceptEdits \
+        "$skill_content" \
+        | _stream_progress "$session_log"
+      echo
+    fi
   fi
 
   echo
@@ -438,7 +514,7 @@ Usage: otto-workbench <command>
 
 Commands:
   sync                  Re-apply all workbench configuration to ~/
-  claude [--force]      Sync Claude config + scaffold .claude/ in current repo
+  claude [--force] [--analyze]  Sync Claude config + scaffold .claude/ in current repo
   override <subcmd>     Manage user overrides for AI config (agents, skills, rules)
   state [regenerate]    Show or regenerate installed component state
   changelog             Show recent changes from conventional commits

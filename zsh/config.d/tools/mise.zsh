@@ -9,6 +9,7 @@
 # Install:         curl -fsSL https://mise.run | sh
 # Docs:            https://mise.jdx.dev
 # duplicate-check: mise activate
+# requires-cmd:    mise
 
 # Resolve the path and verify it exists — command -v may return a stale hash
 # entry pointing to a binary that was removed (e.g. after switching from brew

@@ -309,8 +309,8 @@ step_local_hooks() {
   mkdir -p "$dot_git/hooks"
 
   echo; info "local git hooks → .git/hooks/"
-  install_symlink "$GIT_HOOKS_SRC_DIR/pre-commit-workbench" "$dot_git/hooks/pre-commit"
-  install_symlink "$GIT_HOOKS_SRC_DIR/pre-push-workbench"   "$dot_git/hooks/pre-push"
+  install_hook_dispatcher "git/hooks/pre-commit-workbench" "$dot_git/hooks/pre-commit" "pre-commit"
+  install_hook_dispatcher "git/hooks/pre-push-workbench"   "$dot_git/hooks/pre-push"   "pre-push"
 }
 
 # install_git — interactive setup path for gitconfig.

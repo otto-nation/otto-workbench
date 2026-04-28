@@ -232,7 +232,7 @@ step_claude_agents() {
 
 # step_generate_tools — regenerates the AI tool context markdown from registries.
 step_generate_tools() {
-  local generator="$BIN_SRC_DIR/generate-tool-context"
+  local generator="$BIN_SRC_DIR/local/generate-tool-context"
   if [[ ! -x "$generator" ]]; then
     warn "generate-tool-context not found — skipping tool context generation"
     return
@@ -317,7 +317,10 @@ step_install_claude() {
 # worktree-isolated agent sessions. One-time interactive setup; skips if wt is
 # not installed or the plugin is already present.
 step_claude_worktrunk_plugin() {
-  command -v wt >/dev/null 2>&1 || { skip "worktrunk not installed — skipping plugin"; return; }
+  command -v wt >/dev/null 2>&1 || {
+    warn "worktrunk not installed — brew install worktrunk, then re-run: otto-workbench sync ai"
+    return
+  }
 
   if wt config plugins list 2>/dev/null | grep -q "claude"; then
     success "Worktrunk Claude plugin already installed"
@@ -558,9 +561,6 @@ scaffold_project_claude() {
   done
 
   _scaffold_gitignore
-
-  echo
-  info "Next: start a Claude session and run /analyze-project to populate scaffolded files"
 }
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

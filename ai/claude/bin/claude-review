@@ -200,6 +200,8 @@ cmd_review() {
     read -rp "Issue link (optional, Enter to skip): " issue_link
   fi
 
+  local issue_context=""
+
   # Pre-fetch PR metadata so the agent doesn't waste turns on discovery
   info "Fetching PR metadata..."
   local pr_meta
@@ -221,6 +223,14 @@ cmd_review() {
   pr_changed_files=$(echo "$pr_meta" | jq -r '.changedFiles')
   pr_head=$(echo "$pr_meta" | jq -r '.headRefName')
   pr_base=$(echo "$pr_meta" | jq -r '.baseRefName')
+
+  # Auto-fetch Linear issue from branch name when no --issue was provided
+  local issue_id
+  issue_id=$(echo "$pr_head" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+  if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
+    issue_context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
+    [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
+  fi
 
   local pr_url="https://github.com/${repo}/pull/${pr_number}"
 
@@ -343,6 +353,11 @@ Do NOT print the review to stdout — it must be saved as a file using the Write
 
 ## Related issue
 ${issue_link}"
+  elif [[ -n "$issue_context" ]]; then
+    prompt="${prompt}
+
+## Related issue
+${issue_context}"
   fi
 
   if [[ -n "$prior_review" ]]; then

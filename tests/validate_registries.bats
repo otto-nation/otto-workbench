@@ -23,7 +23,7 @@ setup() {
   # Install validator pointing at TMPDIR via a wrapper that overrides REPO_ROOT
   VALIDATOR="$TMPDIR/validate-registries"
   sed "s|REPO_ROOT=.*|REPO_ROOT=\"$TMPDIR\"|" \
-    "$REPO_ROOT/bin/validate-registries" > "$VALIDATOR"
+    "$REPO_ROOT/bin/local/validate-registries" > "$VALIDATOR"
   chmod +x "$VALIDATOR"
 }
 

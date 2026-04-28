@@ -45,6 +45,6 @@ tasks:
     cmds:
       - git config --unset core.hooksPath 2>/dev/null || true
       - mkdir -p .git/hooks
-      - 'ln -sf "$(pwd)/git/hooks/pre-commit-workbench" .git/hooks/pre-commit'
-      - 'ln -sf "$(pwd)/git/hooks/pre-push-workbench" .git/hooks/pre-push'
+      - 'printf "#!/usr/bin/env bash\nexec \"\$(git rev-parse --show-toplevel)/git/hooks/pre-commit-workbench\" \"\$@\"\n" > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit'
+      - 'printf "#!/usr/bin/env bash\nexec \"\$(git rev-parse --show-toplevel)/git/hooks/pre-push-workbench\" \"\$@\"\n" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push'
       - 'echo "✓ Git hooks activated (pre-commit: auto-regenerate, pre-push: lint + test)"'

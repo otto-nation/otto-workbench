@@ -23,7 +23,6 @@ setup() {
 }
 
 @test ".env.local source line is guarded with a file existence check" {
-  # Must use [[ -f ... ]] && source pattern — not a bare source that errors if absent
   grep -qE '\[\[.*-f.*env\.local.*\]\]' "$REPO_ROOT/zsh/config.d/loader.zsh"
 }
 
@@ -48,146 +47,176 @@ setup() {
   grep -q '# --- ENV-END ---' "$REPO_ROOT/zsh/.env.local.template"
 }
 
-@test ".env.local template env section is populated after generation" {
-  # The generated section should contain at least one export line
+@test ".env.local template env section is empty (populated at runtime)" {
+  # The template ships with empty markers — content is generated directly into ~/.env.local
   local content
-  content=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$REPO_ROOT/zsh/.env.local.template")
-  echo "$content" | grep -q 'export'
+  content=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$REPO_ROOT/zsh/.env.local.template")
+  [ -z "$content" ]
 }
 
-# ── bootstrap step ────────────────────────────────────────────────────────────
+# ── step_env_local ───────────────────────────────────────────────────────────
 
-@test "zsh/steps.sh defines _env_local_bootstrap function" {
-  grep -q '_env_local_bootstrap' "$REPO_ROOT/zsh/steps.sh"
+@test "zsh/steps.sh defines step_env_local function" {
+  grep -q 'step_env_local' "$REPO_ROOT/zsh/steps.sh"
 }
 
-@test "_env_local_bootstrap creates ~/.env.local from template when absent" {
+@test "step_env_local creates ~/.env.local from template when absent" {
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
   HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 
   [ -f "$FAKE_HOME/.env.local" ]
   rm -rf "$TMPDIR"
 }
 
-@test "_env_local_bootstrap does not overwrite existing ~/.env.local" {
+@test "step_env_local regenerates marker section without touching user values" {
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
-  mkdir -p "$FAKE_HOME"
-  echo "export MY_CUSTOM_VAR=keep_me" > "$FAKE_HOME/.env.local"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
-    >/dev/null 2>&1
-
-  grep -q 'MY_CUSTOM_VAR=keep_me' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
-}
-
-@test "_env_local_bootstrap adds new vars into existing file with empty markers" {
-  load test_helper
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
-  mkdir -p "$FAKE_HOME"
-
-  # Create an existing .env.local with empty ENV markers and user content
-  cat > "$FAKE_HOME/.env.local" <<'EOF'
-# my header
-# --- ENV-START ---
-# --- ENV-END ---
-export MY_CUSTOM_VAR=keep_me
+  # Create a minimal registry with one env var
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+  install_check: false
+env:
+  - var: TEST_NEW_VAR
+    comment: a test variable
 EOF
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
-    >/dev/null 2>&1
-
-  # User content preserved
-  grep -q 'MY_CUSTOM_VAR=keep_me' "$FAKE_HOME/.env.local"
-  # ENV section populated from template
-  grep -q 'export' "$FAKE_HOME/.env.local"
-  # Header preserved
-  grep -q '# my header' "$FAKE_HOME/.env.local"
-  rm -rf "$TMPDIR"
-}
-
-@test "_env_local_bootstrap preserves user-filled values" {
-  load test_helper
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
-  mkdir -p "$FAKE_HOME"
-
-  # Create a .env.local where the user has uncommented and filled in a value
+  # Create existing .env.local with old marker content and user values below
   cat > "$FAKE_HOME/.env.local" <<'EOF'
+# header
 # --- ENV-START ---
-# user set this
-export LINEAR_API_KEY=lin_api_my-real-key
+# old var
+# export OLD_VAR=
 # --- ENV-END ---
+export MY_SECRET=keep-this
 EOF
 
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 
-  # User's filled-in value is preserved — not overwritten by template default
-  grep -q 'LINEAR_API_KEY=lin_api_my-real-key' "$FAKE_HOME/.env.local"
-  # Template default does NOT appear
-  run grep 'LINEAR_API_KEY=lin_api_$' "$FAKE_HOME/.env.local"
+  # New registry content is present
+  grep -q 'TEST_NEW_VAR' "$FAKE_HOME/.env.local"
+  # Old content is gone
+  run grep 'OLD_VAR' "$FAKE_HOME/.env.local"
   [ "$status" -ne 0 ]
+  # User values preserved
+  grep -q 'MY_SECRET=keep-this' "$FAKE_HOME/.env.local"
+  # Header preserved
+  grep -q '# header' "$FAKE_HOME/.env.local"
   rm -rf "$TMPDIR"
 }
 
-@test "_env_local_bootstrap does not duplicate existing commented vars" {
-  load test_helper
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
-  FAKE_TEMPLATE="$TMPDIR/env.local.template"
-  mkdir -p "$FAKE_HOME"
-
-  # Controlled fixture — independent of which tools are installed on the machine.
-  # Uses a synthetic var so the assertion is never broken by registry changes.
-  cat > "$FAKE_TEMPLATE" <<'EOF'
-# --- ENV-START ---
-# ── Test section ─────────────────────────────────────────────────────────────
-
-# test key
-# export TEST_DEDUP_VAR=
-
-# --- ENV-END ---
-EOF
-
-  # .env.local already contains the template defaults (simulates a file that was
-  # bootstrapped previously — re-running must not duplicate any var)
-  cp "$FAKE_TEMPLATE" "$FAKE_HOME/.env.local"
-
-  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" ENV_LOCAL_TEMPLATE="$FAKE_TEMPLATE" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
-    >/dev/null 2>&1
-
-  local count
-  count=$(grep -c 'TEST_DEDUP_VAR' "$FAKE_HOME/.env.local")
-  [ "$count" -eq 1 ]
-  rm -rf "$TMPDIR"
-}
-
-@test "_env_local_bootstrap preserves content without ENV markers" {
+@test "step_env_local leaves file alone when no markers present" {
   load test_helper
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
   echo "export LEGACY_VAR=unchanged" > "$FAKE_HOME/.env.local"
+  local before
+  before=$(cat "$FAKE_HOME/.env.local")
 
   HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" NO_COLOR=1 \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; _env_local_bootstrap" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" \
     >/dev/null 2>&1
 
-  grep -q 'LEGACY_VAR=unchanged' "$FAKE_HOME/.env.local"
+  local after
+  after=$(cat "$FAKE_HOME/.env.local")
+  [ "$before" = "$after" ]
+  rm -rf "$TMPDIR"
+}
+
+@test "migration moves uncommented exports below ENV-END markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# header
+# --- ENV-START ---
+# a comment
+# export COMMENTED_VAR=
+export REAL_TOKEN=my-secret
+export ANOTHER=value
+# --- ENV-END ---
+# existing below
+EOF
+
+  HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+
+  # Uncommented exports should no longer be between markers
+  local env_section
+  env_section=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$FAKE_HOME/.env.local")
+  run grep -c '^export' <<< "$env_section"
+  [ "$output" = "0" ]
+
+  # They should appear below ENV-END
+  grep -q 'export REAL_TOKEN=my-secret' "$FAKE_HOME/.env.local"
+  grep -q 'export ANOTHER=value' "$FAKE_HOME/.env.local"
+
+  # Existing content below markers is preserved
+  grep -q '# existing below' "$FAKE_HOME/.env.local"
+
+  rm -rf "$TMPDIR"
+}
+
+@test "migration is a no-op when no uncommented exports inside markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# --- ENV-START ---
+# export COMMENTED_VAR=
+# --- ENV-END ---
+export BELOW=fine
+EOF
+
+  local before
+  before=$(cat "$FAKE_HOME/.env.local")
+
+  HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+
+  local after
+  after=$(cat "$FAKE_HOME/.env.local")
+  [ "$before" = "$after" ]
+
+  rm -rf "$TMPDIR"
+}
+
+@test "migration skips when ~/.env.local has no markers" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  mkdir -p "$FAKE_HOME"
+
+  echo "export LEGACY=unchanged" > "$FAKE_HOME/.env.local"
+
+  local before
+  before=$(cat "$FAKE_HOME/.env.local")
+
+  HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+
+  local after
+  after=$(cat "$FAKE_HOME/.env.local")
+  [ "$before" = "$after" ]
+
   rm -rf "$TMPDIR"
 }

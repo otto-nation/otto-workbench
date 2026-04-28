@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Validate migration file conventions across all workbench components.
 #
-# Usage: bin/validate-migrations
+# Usage: bin/local/validate-migrations
 #
 # Checks:
 #   - Filenames match YYYYMMDD-slug.sh (slug: lowercase alphanumeric + dashes)
@@ -15,9 +15,9 @@ set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$(dirname "$_SELF")/../../lib/ui.sh"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/components.sh"
+. "$(dirname "$_SELF")/../../lib/components.sh"
 
 usage() {
   cat <<EOF

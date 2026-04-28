@@ -1,0 +1,31 @@
+# Workbench-internal script registry — scripts run from the repo root, not installed globally.
+# These are only useful within the otto-workbench repo itself.
+# Regenerate: bin/local/generate-tool-context
+
+meta:
+  section: "Workbench Dev Scripts"
+  loading: always
+  install_check: false
+  validation: bindir
+  source: bin/local
+
+tools:
+  - name: validate-registries
+    description: "Validates all tool registry YAML files for schema correctness and cross-file consistency"
+    when_to_use: "After adding or editing any registry.yml; runs automatically on pre-push"
+    usage: "bin/local/validate-registries"
+
+  - name: validate-components
+    description: "Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency"
+    when_to_use: "After adding or modifying any component (steps.sh, setup.conf, install.components)"
+    usage: "bin/local/validate-components"
+
+  - name: validate-migrations
+    description: "Validates migration file naming, function naming, and shebang conventions"
+    when_to_use: "After adding or editing any migration file; runs automatically on pre-push"
+    usage: "bin/local/validate-migrations"
+
+  - name: generate-tool-context
+    description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
+    when_to_use: "After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync"
+    usage: "bin/local/generate-tool-context"

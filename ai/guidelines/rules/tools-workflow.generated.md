@@ -25,26 +25,6 @@ Interactively retrieves a secret from AWS Secrets Manager by listing and selecti
 - **When to use**: Fetching credentials or config values stored in Secrets Manager
 - **Usage**: `get-secret`
 
-### validate-registries
-Validates all tool registry YAML files for schema correctness and cross-file consistency
-- **When to use**: After adding or editing any registry.yml; runs automatically on pre-push
-- **Usage**: `bin/validate-registries`
-
-### validate-components
-Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency
-- **When to use**: After adding or modifying any component (steps.sh, setup.conf, install.components)
-- **Usage**: `bin/validate-components`
-
-### validate-migrations
-Validates migration file naming, function naming, and shebang conventions
-- **When to use**: After adding or editing any migration file; runs automatically on pre-push
-- **Usage**: `bin/validate-migrations`
-
-### generate-tool-context
-Generates ai/guidelines/rules/tools.generated.md from the domain registries
-- **When to use**: After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync
-- **Usage**: `generate-tool-context`
-
 ## Claude Scripts
 
 ### claude-review
@@ -63,3 +43,25 @@ Manages local Claude Code rule additions not tracked in the workbench
 Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence
 - **When to use**: Enabling Serena LSP-based code intelligence in a specific project
 - **Usage**: `serena-mcp init  |  serena-mcp status`
+
+## Workbench Dev Scripts
+
+### validate-registries
+Validates all tool registry YAML files for schema correctness and cross-file consistency
+- **When to use**: After adding or editing any registry.yml; runs automatically on pre-push
+- **Usage**: `bin/local/validate-registries`
+
+### validate-components
+Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency
+- **When to use**: After adding or modifying any component (steps.sh, setup.conf, install.components)
+- **Usage**: `bin/local/validate-components`
+
+### validate-migrations
+Validates migration file naming, function naming, and shebang conventions
+- **When to use**: After adding or editing any migration file; runs automatically on pre-push
+- **Usage**: `bin/local/validate-migrations`
+
+### generate-tool-context
+Generates ai/guidelines/rules/tools.generated.md from the domain registries
+- **When to use**: After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync
+- **Usage**: `bin/local/generate-tool-context`

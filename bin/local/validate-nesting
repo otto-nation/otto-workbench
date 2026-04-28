@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Validate that shell scripts do not exceed a maximum nesting depth per function.
+#
+# Usage: bin/local/validate-nesting [--quiet] [--max-depth N] [file...]
+#
+# Tracks nesting depth from block-opening keywords (if, for, while, until, case)
+# and their closers (fi, done, esac). Depth resets at each function boundary so
+# nesting in one function does not affect another.
+#
+# Reports any line where nesting exceeds the configured maximum (default: 2).
+# When no files are given, discovers all bash scripts in the repo by shebang.
+#
+# Exit code: 0 if all files pass, 1 if any exceed max depth.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=/dev/null
+. "$REPO_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet] [--max-depth N] [file...]
+
+Validate shell script nesting depth (per function).
+
+Options:
+  --quiet         Suppress per-file output; show only the final summary
+  --max-depth N   Maximum allowed nesting depth (default: 2)
+  -h, --help      Show this help
+EOF
+}
+
+QUIET=false
+MAX_DEPTH=2
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)     usage; exit 0 ;;
+    --quiet)       QUIET=true; shift ;;
+    --max-depth)   MAX_DEPTH="${2:-}"; [[ -n "$MAX_DEPTH" ]] || { err "--max-depth requires a value"; exit 1; }; shift 2 ;;
+    *)             FILES+=("$1"); shift ;;
+  esac
+done
+
+if [[ ${#FILES[@]} -eq 0 ]]; then
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' "$REPO_ROOT" \
+    --include='*.sh' --include='*.bash' \
+    | grep -v '\.git/' | sort)
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(find "$REPO_ROOT/bin" "$REPO_ROOT/ai/claude/bin" "$REPO_ROOT/git/hooks" "$REPO_ROOT/git/bin" \
+    -maxdepth 2 -type f ! -name '*.*' -print0 2>/dev/null \
+    | xargs -0 grep -lE '^#!.*(/(ba)?sh|/env (ba)?sh)' 2>/dev/null \
+    | grep -v '\.git/' | sort)
+fi
+
+ERRORS=0
+FILES_CHECKED=0
+
+_strip_strings_and_comments() {
+  sed 's/#.*//' | sed "s/'[^']*'//g" | sed 's/"[^"]*"//g'
+}
+
+_check_file() {
+  local file="$1"
+  local depth=0
+  local sub_depth=0
+  local lineno=0
+  local func_name="(top-level)"
+  local violations=()
+
+  while IFS= read -r line; do
+    lineno=$(( lineno + 1 ))
+
+    local stripped
+    stripped=$(echo "$line" | _strip_strings_and_comments)
+
+    # Track command substitution depth to skip embedded language keywords (jq, awk, etc.)
+    # Balance $( against ) using inner paren tracking — jq/awk parens don't close the substitution
+    local sub_opens inner_opens inner_closes
+    # shellcheck disable=SC2016  # literal $( is intentional — matching the token, not expanding
+    sub_opens=$(echo "$stripped" | grep -oF '$(' | wc -l || true)
+    sub_depth=$(( sub_depth + sub_opens ))
+
+    if (( sub_depth > 0 )); then
+      inner_opens=$(echo "$stripped" | grep -oF '(' | wc -l || true)
+      inner_closes=$(echo "$stripped" | grep -oF ')' | wc -l || true)
+      # $( counts as both a sub_open and an inner_open — don't double-count
+      inner_opens=$(( inner_opens - sub_opens ))
+      # Net unmatched closes reduce sub_depth (they close the $(...) itself)
+      local net_closes=$(( inner_closes - inner_opens ))
+      if (( net_closes > 0 )); then
+        sub_depth=$(( sub_depth - net_closes ))
+        [[ $sub_depth -lt 0 ]] && sub_depth=0
+      fi
+      continue
+    fi
+
+    # Detect function definition — reset depth for the new scope
+    if echo "$stripped" | grep -qE '^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\(\)\s*\{'; then
+      depth=0
+      func_name=$(echo "$stripped" | grep -oE '[a-zA-Z_][a-zA-Z0-9_]*' | head -1)
+      continue
+    fi
+
+    local openers closers
+    openers=$(echo "$stripped" | grep -owE '\b(if|for|while|until|case)\b' | wc -l || true)
+    closers=$(echo "$stripped" | grep -owE '\b(fi|done|esac)\b' | wc -l || true)
+
+    depth=$(( depth - closers ))
+    [[ $depth -lt 0 ]] && depth=0
+
+    depth=$(( depth + openers ))
+
+    if (( depth > MAX_DEPTH )); then
+      violations+=("${lineno}:${depth}:${func_name}")
+    fi
+  done < "$file"
+
+  FILES_CHECKED=$(( FILES_CHECKED + 1 ))
+  local relpath="${file#"$REPO_ROOT"/}"
+
+  if [[ ${#violations[@]} -gt 0 ]]; then
+    ERRORS=$(( ERRORS + 1 ))
+    err "${relpath}: nesting exceeds ${MAX_DEPTH} levels"
+    local prev_func=""
+    for v in "${violations[@]}"; do
+      local vline vdepth vfunc
+      vline="${v%%:*}"
+      local rest="${v#*:}"
+      vdepth="${rest%%:*}"
+      vfunc="${rest#*:}"
+      if [[ "$vfunc" != "$prev_func" ]]; then
+        echo -e "    ${DIM}in ${vfunc}():${NC}" >&2
+        prev_func="$vfunc"
+      fi
+      echo -e "      line ${vline}: depth ${vdepth}" >&2
+    done
+  else
+    $QUIET || echo -e "  ${GREEN}✓${NC} ${relpath}"
+  fi
+}
+
+for f in "${FILES[@]}"; do
+  _check_file "$f"
+done
+
+echo
+if (( ERRORS == 0 )); then
+  success "${FILES_CHECKED} files checked, no excessive nesting"
+  exit 0
+else
+  err "${ERRORS} of ${FILES_CHECKED} files exceed max nesting depth of ${MAX_DEPTH}"
+  exit 1
+fi

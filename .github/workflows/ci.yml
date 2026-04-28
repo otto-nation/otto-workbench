@@ -64,6 +64,9 @@ jobs:
       - name: Validate migrations
         run: bash bin/local/validate-migrations
 
+      - name: Validate nesting depth
+        run: bash bin/local/validate-nesting --quiet
+
       - name: Verify generated files are up to date
         run: |
           bash bin/local/generate-tool-context

@@ -84,6 +84,7 @@ fi
 _run_step "Validating registries"   "$REPO_ROOT/bin/local/validate-registries" --quiet
 _run_step "Validating components"   "$REPO_ROOT/bin/local/validate-components" --quiet
 _run_step "Validating migrations"   "$REPO_ROOT/bin/local/validate-migrations" --quiet
+_run_step "Validating nesting"      "$REPO_ROOT/bin/local/validate-nesting" --quiet
 
 # ── Generation ───────────────────────────────────────────────────────────────
 

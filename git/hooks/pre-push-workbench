@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-push hook for otto-workbench: validation, linting, and tests before push.
-# Symlinked to .git/hooks/pre-push by `task dev:setup`.
+# Dispatched from .git/hooks/pre-push via `task dev:setup`.
 # Called via delegation from the global pre-push hook (~/.git-hooks/pre-push).
 
 set -euo pipefail

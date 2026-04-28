@@ -2,7 +2,8 @@
 # File operation helpers — symlinks, copies, and config patching.
 # Bash-only (uses local, arrays, and prompt helpers).
 #
-# Functions: install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch
+# Functions: install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch,
+#            resolve_layers, is_disabled, install_hook_dispatcher
 
 [[ -n "${_LIB_FILES_SH:-}" ]] && return
 _LIB_FILES_SH=1
@@ -222,6 +223,21 @@ resolve_layers() {
 # is_disabled USER_DIR NAME — returns 0 if a .disabled sentinel exists.
 is_disabled() {
   [[ -f "${1%/}/${2}.disabled" ]]
+}
+
+# install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]
+# Writes a thin dispatcher script that execs the hook from the current worktree.
+# Unlike symlinks, dispatchers resolve at runtime — so worktrees always run
+# their own branch's version of the hook, not main's.
+install_hook_dispatcher() {
+  local source_rel="$1" target="$2" label="${3:-$(basename "$target")}"
+
+  cat > "$target" <<EOF
+#!/usr/bin/env bash
+exec "\$(git rev-parse --show-toplevel)/$source_rel" "\$@"
+EOF
+  chmod +x "$target"
+  echo -e "  ${GREEN}✓${NC} $label ${DIM}(dispatcher → $source_rel)${NC}"
 }
 
 # apply_config_patch FILE OLD NEW

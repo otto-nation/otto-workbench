@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-commit hook for otto-workbench: regenerates generated files and auto-stages them.
-# Symlinked to .git/hooks/pre-commit by `task dev:setup`.
+# Dispatched from .git/hooks/pre-commit via `task dev:setup`.
 # Called via delegation from the global pre-commit hook (~/.git-hooks/pre-commit).
 
 set -euo pipefail

@@ -18,6 +18,9 @@ _assert_not_real_repo() {
 # common_setup — call first in every test's setup().
 # Snapshots real repo state so common_teardown can detect contamination.
 common_setup() {
+  # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
+  # causes git commands in tests to target the real repo instead of temp repos)
+  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
   _REPO_CONFIG_SNAPSHOT="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | sort)"
   _REPO_HEAD_SNAPSHOT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
   _REPO_BRANCHES_SNAPSHOT="$(git -C "$REPO_ROOT" branch --list 2>/dev/null | sort)"
@@ -78,8 +81,7 @@ make_git_repo_with_org() {
   local org="$2"
   local repo="$3"
   mkdir -p "$dir"
-  # Prevent git from discovering the parent workbench repo during parallel test runs
-  # (bats places TMPDIR under the repo tree, so git init would reuse the parent .git)
+  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
   GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" init --quiet
   git -C "$dir" remote add origin "git@github.com:${org}/${repo}.git"
 }
@@ -100,6 +102,7 @@ make_git_remote() {
   local local_dir="$2"
   local branch="${3:-feature/test}"
 
+  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
   export GIT_CONFIG_GLOBAL=/dev/null
   GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
   export GIT_CEILING_DIRECTORIES
@@ -138,6 +141,7 @@ clone_from_shared_remote() {
   local local_dir="$2"
   local branch="${3:-feature/test}"
 
+  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
   export GIT_CONFIG_GLOBAL=/dev/null
   GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
   export GIT_CEILING_DIRECTORIES

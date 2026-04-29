@@ -3,7 +3,8 @@
 bats_require_minimum_version 1.5.0
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  load 'test_helper'
+  common_setup
   VALIDATOR="$REPO_ROOT/bin/local/validate-migrations"
   TMPDIR="$(mktemp -d)"
 
@@ -39,6 +40,7 @@ CONST
 
 teardown() {
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 # Helper: create a valid migration file in the fake workbench

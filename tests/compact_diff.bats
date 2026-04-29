@@ -2,9 +2,14 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   source_lib
   # Small budget keeps chunk sizes manageable in tests
   DIFF_MAX_CHARS=500
+}
+
+teardown() {
+  common_teardown
 }
 
 # _make_chunk PATH BODY_SIZE — builds a minimal but realistic diff chunk.

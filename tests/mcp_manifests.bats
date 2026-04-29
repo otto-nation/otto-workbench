@@ -4,8 +4,13 @@
 # All tests are no-ops when no manifests exist.
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  load 'test_helper'
+  common_setup
   MCP_DIR="$REPO_ROOT/ai/claude/mcps"
+}
+
+teardown() {
+  common_teardown
 }
 
 @test "all MCP manifests are valid JSON" {

@@ -2,6 +2,7 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   source_lib
   ORIG_HOME="$HOME"
   ORIG_DIR="$PWD"
@@ -17,6 +18,7 @@ teardown() {
   export HOME="$ORIG_HOME"
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 @test "fails: no env file exists" {

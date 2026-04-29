@@ -2,6 +2,7 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   source_lib
   # Use fallback path (no commitlint config, no npx) for all tests
   COMMITLINT_CONFIG=""
@@ -12,6 +13,7 @@ setup() {
 
 teardown() {
   PATH="$PATH_ORIG"
+  common_teardown
 }
 
 # ── Valid messages ────────────────────────────────────────────────────────────

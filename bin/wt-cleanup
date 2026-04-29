@@ -48,32 +48,24 @@ for ((i = 0; i < count; i++)); do
   [[ "$is_main" == "true" ]] && continue
   [[ "$is_current" == "true" ]] && continue
 
-  should_remove=false
   reason=""
 
   if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
-    should_remove=true
     reason="merged"
-  fi
-
-  if [[ -n "$max_age_days" && "$should_remove" != "true" ]]; then
-    max_age_secs=$((max_age_days * 86400))
+  elif [[ -n "$max_age_days" ]]; then
     age=$((now - timestamp))
-    if [[ $age -gt $max_age_secs ]]; then
-      should_remove=true
-      days_old=$((age / 86400))
-      reason="${days_old}d inactive"
-    fi
+    max_age_secs=$((max_age_days * 86400))
+    [[ $age -gt $max_age_secs ]] && reason="$((age / 86400))d inactive"
   fi
 
-  if [[ "$should_remove" == "true" ]]; then
-    if [[ "$dry_run" == "true" ]]; then
-      [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
-    else
-      [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
-      wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
-    fi
-    removed=$((removed + 1))
+  [[ -z "$reason" ]] && continue
+
+  removed=$((removed + 1))
+  if [[ "$dry_run" == "true" ]]; then
+    [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
+  else
+    [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
+    wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
   fi
 done
 

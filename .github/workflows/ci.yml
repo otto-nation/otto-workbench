@@ -43,7 +43,7 @@ jobs:
             -exec sh -c 'for f; do jq -e "." "$f" > /dev/null || { echo "Invalid: $f"; exit 1; }; done' _ {} +
 
   tools-freshness:
-    name: Tool Context Freshness
+    name: Validate
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

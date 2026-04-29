@@ -1,6 +1,6 @@
 # Tools & Scripts Reference
 
-Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-generated from [tool registries](architecture.md#tool-registry) — do not edit the generated sections directly.
+Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-generated from [tool registries](registries.md) — do not edit the generated sections directly.
 
 ## Scripts
 
@@ -132,22 +132,4 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 
 ## Adding a Tool
 
-Each tooling directory has a [`registry.yml`](architecture.md#tool-registry) that describes the tools it provides. Add an entry whenever you add a new brew formula, bin script, or alias group:
-
-```yaml
-# brew/registry.yml
-- name: ripgrep
-  description: "Fast regex search tool"
-  when_to_use: "Searching file contents; faster alternative to grep"
-  docs: https://github.com/BurntSushi/ripgrep
-```
-
-Required fields: `name`, `description`, `when_to_use`. Optional: `usage`, `docs`.
-
-After editing a registry, regenerate:
-
-```bash
-generate-tool-context
-```
-
-The pre-push hook enforces that generated files are always up to date.
+See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions.

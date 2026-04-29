@@ -68,62 +68,17 @@ Secrets are split between two files — use the right one:
 
 `~/.env.local` is created from [`zsh/.env.local.template`](../zsh/.env.local.template) on first install. Its auto-generated ENV section is updated on every sync (new vars only, never overwrites your values).
 
+### AI Overrides
+
+The `user/` directory (gitignored) lets you replace, extend, or disable AI config — rules, skills, agents, guidelines, and settings — without editing tracked files. Overrides are layered on top of base config during sync via `resolve_layers()`. See [User Overrides](user-overrides.md) for the full reference.
+
 ## Tool Registry
 
-Each tooling directory owns a [`registry.yml`](../brew/registry.yml) describing the tools it provides — name, description, when to use, usage examples, and docs URL. These are the single source of truth for tool documentation.
+Each tooling directory owns a `registry.yml` describing the tools it provides. Registries are auto-discovered and used to generate tool documentation for AI sessions and the [Tools & Scripts](tools.md) catalog. See [Registries](registries.md) for the full schema, validation modes, and how to add entries.
 
-Registries are auto-discovered by [`lib/registries.sh`](../lib/registries.sh) via glob patterns:
-- `*/registry.yml` — component registries
-- `**/*.registry.yml` — brew stack registries
-- `*.env.yml` — consumer-owned env/auth declarations
+## Execution Details
 
-The generator [`bin/generate-tool-context`](../bin/generate-tool-context) combines all registries into [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) for AI sessions, and splices tables into the docs.
-
-**Registry vs env files**: `registry.yml` owns tool documentation (`tools[]`). `*.env.yml` owns env var and auth declarations (`env[]`, `auth`), colocated with the code that reads them. Env vars set programmatically at runtime (e.g., `DOCKER_HOST`) are not declared in registries.
-
-## Install vs Sync
-
-| Aspect | `install.sh` | `otto-workbench sync` |
-|--------|-------------|----------------------|
-| When to use | First-time setup, adding optional components | After pulling workbench updates |
-| Interactive | Yes — menus, prompts | No — warns and skips conflicts |
-| Scope | Preflight + selected components | All components with `steps.sh` |
-| Brew packages | Installs from Brewfile | Skipped |
-| Docker runtime | Prompts for Colima/OrbStack | Re-symlinks existing socket |
-| Templates | Creates configs from templates | Never overwrites editable configs |
-| Migrations | Runs pending | Runs pending |
-| Real file conflicts | Prompts for overwrite/backup | Warns and skips |
-
-## Migrations
-
-Migrations handle breaking changes — renamed configs, deprecated symlinks, updated defaults. Each is a shell function that runs once and is state-tracked.
-
-**Naming**: `<component>/migrations/YYYYMMDD-slug.sh` defines `migration_YYYYMMDD_slug()`.
-
-**Lifecycle**:
-1. Create the migration file following the naming convention
-2. [`run_all_migrations()`](../lib/migrations.sh) auto-discovers it via glob
-3. On first run: function executes, filename recorded in `~/.config/workbench/migrations.applied`
-4. On subsequent runs: skipped (already recorded)
-5. If the migration file is deleted: stale entry auto-pruned from state
-
-Migrations must be idempotent — a failed migration is not recorded, so it retries on next sync.
-
-## Generated Files
-
-These files are derived from source data and must never be edited directly. Edit the source and regenerate.
-
-| File | Generator | Source | CI Enforcement |
-|------|-----------|--------|----------------|
-| [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) | [`generate-tool-context`](../bin/generate-tool-context) | `*/registry.yml` | Freshness diff |
-| [`git.generated.md`](../ai/guidelines/rules/git.generated.md) | [`generate-git-rules`](../git/bin/generate-git-rules) | [`lib/conventions.sh`](../lib/conventions.sh) | Freshness diff |
-| `docs/tools.md` (tables) | [`generate-tool-context`](../bin/generate-tool-context) | Registries | Freshness diff |
-| `docs/ai-automation.md` (tables) | [`generate-tool-context`](../bin/generate-tool-context) | Skills, agents, Taskfile | Freshness diff |
-| `docs/components.md` (lists) | [`generate-tool-context`](../bin/generate-tool-context) | Component discovery | Freshness diff |
-| `.env.local.template` (ENV section) | [`generate-tool-context`](../bin/generate-tool-context) | `*.env.yml` | — |
-| `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/claude/skills/anatomy/generate-anatomy.sh) | `git ls-files` | — |
-
-Freshness is enforced twice: the pre-push hook runs generators and blocks if output changed, and CI runs the same check on every PR.
+For step-by-step walkthroughs of install and sync, the comparison table, migrations, file operation strategies (symlink vs copy), state tracking, and generated files, see [Execution Flow](execution-flow.md).
 
 ## Key Conventions
 

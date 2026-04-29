@@ -101,13 +101,19 @@ make_git_remote() {
   local local_dir="$2"
   local branch="${3:-feature/test}"
 
-  # Isolate from user's global gitconfig (e.g. empty gpg.format causes failures)
-  # and disable hooks so the workbench pre-commit doesn't fire in temp repos.
   export GIT_CONFIG_GLOBAL=/dev/null
+  export GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
 
   git init --bare "$remote_dir" --quiet --initial-branch=main
   git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null
+
+  [[ -d "$local_dir/.git" ]] || {
+    echo "FATAL: git clone failed — $local_dir/.git does not exist"
+    return 1
+  }
+
   cd "$local_dir" || return 1
+  _assert_not_real_repo || return 1
 
   git config user.email "test@example.com"
   git config user.name "Test"
@@ -133,9 +139,19 @@ clone_from_shared_remote() {
   local branch="${3:-feature/test}"
 
   export GIT_CONFIG_GLOBAL=/dev/null
+  export GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
+
   cd / || return 1
   git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null
+
+  [[ -d "$local_dir/.git" ]] || {
+    echo "FATAL: git clone failed — $local_dir/.git does not exist"
+    return 1
+  }
+
   cd "$local_dir" || return 1
+  _assert_not_real_repo || return 1
+
   git config user.email "test@example.com"
   git config user.name "Test"
   git config core.hooksPath /dev/null

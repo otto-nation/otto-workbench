@@ -206,22 +206,23 @@ cmd_review() {
   info "Fetching PR metadata..."
   local pr_meta
   pr_meta=$(gh pr view "$pr_number" --repo "$repo" \
-    --json title,body,headRefName,baseRefName,additions,deletions,changedFiles,files \
+    --json title,body,headRefName,baseRefName,headRefOid,additions,deletions,changedFiles,files \
     --jq '{
-      title, body, headRefName, baseRefName, additions, deletions, changedFiles,
+      title, body, headRefName, baseRefName, headRefOid, additions, deletions, changedFiles,
       files: [.files[] | {path, additions, deletions}]
     }' 2>/dev/null) || {
     err "Failed to fetch PR #${pr_number} from ${repo}"
     exit 1
   }
 
-  local pr_title pr_body pr_additions pr_deletions pr_changed_files pr_head pr_base
+  local pr_title pr_body pr_additions pr_deletions pr_changed_files pr_head pr_base pr_head_sha
   pr_title=$(echo "$pr_meta" | jq -r '.title')
   pr_body=$(echo "$pr_meta" | jq -r '.body // ""')
   pr_additions=$(echo "$pr_meta" | jq -r '.additions')
   pr_deletions=$(echo "$pr_meta" | jq -r '.deletions')
   pr_changed_files=$(echo "$pr_meta" | jq -r '.changedFiles')
   pr_head=$(echo "$pr_meta" | jq -r '.headRefName')
+  pr_head_sha=$(echo "$pr_meta" | jq -r '.headRefOid')
   pr_base=$(echo "$pr_meta" | jq -r '.baseRefName')
 
   # Auto-fetch Linear issue from branch name when no --issue was provided
@@ -272,26 +273,38 @@ cmd_review() {
 
   # Create a worktree for the PR branch so the agent can read files locally
   info "Setting up worktree for PR #${pr_number}..."
-  local wt_json wt_path
-  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || {
-    err "Failed to create worktree for PR #${pr_number}"
-    exit 1
-  }
-  wt_path=$(echo "$wt_json" | jq -r '.path')
+  local wt_json wt_path wt_fallback="false"
+  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
+  wt_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
 
-  if [[ -z "$wt_path" || "$wt_path" == "null" ]]; then
-    err "Could not determine worktree path from wt output"
-    exit 1
+  if [[ -z "$wt_path" ]]; then
+    # Branch was deleted (merged/closed PR) — fetch via GitHub's PR ref and create a detached worktree
+    info "Branch deleted, fetching via PR ref..."
+    git -C "$repo_root" fetch origin "pull/${pr_number}/head" 2>/dev/null || {
+      err "Failed to fetch PR #${pr_number} ref"
+      exit 1
+    }
+    wt_path="${repo_root}/.worktrees/pr-${pr_number}-review"
+    git -C "$repo_root" worktree add --detach "$wt_path" FETCH_HEAD 2>/dev/null || {
+      err "Failed to create worktree for PR #${pr_number}"
+      exit 1
+    }
+    wt_fallback="true"
+    info "Created detached worktree at ${pr_head_sha:0:7}"
+  else
+    # Ensure the worktree has the latest changes from the PR branch
+    # Use fetch+reset to handle force-pushed branches (common during PR iteration)
+    git -C "$wt_path" fetch origin "$pr_head" 2>/dev/null || true
+    git -C "$wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
   fi
 
-  # Ensure the worktree has the latest changes from the PR branch
-  # Use fetch+reset to handle force-pushed branches (common during PR iteration)
-  git -C "$wt_path" fetch origin "$pr_head" 2>/dev/null || true
-  git -C "$wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
-
   # Clean up worktree when done (review is read-only, so always safe to remove)
-  # shellcheck disable=SC2154
-  trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
+  if [[ "$wt_fallback" == "true" ]]; then
+    trap 'git -C "$repo_root" worktree remove --force "$wt_path" 2>/dev/null || true' EXIT
+  else
+    # shellcheck disable=SC2154
+    trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
+  fi
 
   # Preserve prior review for iterative context
   local prior_review=""

@@ -3,12 +3,12 @@
 # Each test runs the sync function twice and asserts that the resulting
 # filesystem state is identical — meeting the sync_<name>() contract.
 
-load test_helper
-
 FAKE_HOME=""
 ORIG_HOME="$HOME"
 
 setup() {
+  load 'test_helper'
+  common_setup
   TMPDIR="$(mktemp -d)"
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
@@ -16,6 +16,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 # _source_with HOME STEPS_RELPATH — sources lib/ui.sh and a steps.sh with HOME overridden.

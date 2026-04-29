@@ -19,13 +19,12 @@ migration_20260421_worktrunk_migration() {
   local found=false
   local dir
   for dir in "$HOME"/git/*/*/.worktrees "$HOME"/git/*/.worktrees; do
-    if [[ -d "$dir" ]]; then
-      if [[ "$found" == false ]]; then
-        warn "Found .worktrees/ directories from the old worktree system:"
-        found=true
-      fi
-      echo "  ${dir}"
+    [[ -d "$dir" ]] || continue
+    if [[ "$found" == false ]]; then
+      warn "Found .worktrees/ directories from the old worktree system:"
+      found=true
     fi
+    echo "  ${dir}"
   done
 
   if [[ "$found" == true ]]; then

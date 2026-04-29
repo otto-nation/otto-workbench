@@ -98,9 +98,14 @@ Everything else — Task, gh, Docker, and language tooling — is either auto-in
 
 ## Learn More
 
-- [Architecture](docs/architecture.md) — how the system works: components, config layers, registries, migrations
+- [Getting Started](docs/getting-started.md) — installation walkthrough, first sync, reading path
+- [Architecture](docs/architecture.md) — system design: component model, config layers
+- [Execution Flow](docs/execution-flow.md) — what happens during install and sync, step by step
+- [Component Framework](docs/components.md) — tier contracts, discovery, adding components
+- [Registries](docs/registries.md) — tool registry schema, validation, adding entries
+- [Libraries](docs/libraries.md) — all lib/ modules: purpose and key functions
 - [Tools & Scripts](docs/tools.md) — full catalog of installed tools and workbench scripts
 - [AI Automation](docs/ai-automation.md) — Claude Code setup, skills, agents, and task automation
-- [Component Framework](docs/components.md) — adding and modifying components
+- [User Overrides](docs/user-overrides.md) — customizing AI config without editing tracked files
 - [Troubleshooting](docs/troubleshooting.md) — common issues and solutions
 - [Contributing](CONTRIBUTING.md) — dev setup, testing, and code conventions

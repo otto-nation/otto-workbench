@@ -3,6 +3,7 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   TMPDIR="$(mktemp -d)"
 
   # Build a minimal fake docker setup structure
@@ -27,6 +28,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 # ─── Runtime detection from aliases symlink ─────────────────────────────────

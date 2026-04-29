@@ -245,41 +245,29 @@ _brew_select_optional() {
 # Detects nvm and jenv installed via Homebrew (now replaced by mise) and prompts
 # the user to uninstall them. Also offers to remove leftover home directories.
 # Only called during interactive install — not during otto-workbench sync.
+# _brew_remove_version_manager NAME HOME_DIR
+# Offers to uninstall a brew formula and remove its home directory.
+_brew_remove_version_manager() {
+  local name="$1" home_dir="$2"
+  echo
+  warn "${name} is installed — mise replaces it."
+  confirm "  Uninstall ${name} via Homebrew?" && { brew uninstall "$name"; success "${name} uninstalled"; }
+  [[ ! -d "$home_dir" ]] && return
+  echo -e "  ${DIM}  ${home_dir} still exists${NC}"
+  confirm "  Remove ${home_dir}?" && { rm -rf "$home_dir"; success "${home_dir} removed"; }
+}
+
 _brew_migrate_version_managers() {
   local found=0
 
   if _brew_is_installed formula nvm; then
     found=1
-    echo
-    warn "nvm is installed — mise (now in core packages) replaces it."
-    if confirm "  Uninstall nvm via Homebrew?"; then
-      brew uninstall nvm
-      success "nvm uninstalled"
-    fi
-    if [[ -d "$HOME/.nvm" ]]; then
-      echo -e "  ${DIM}  ~/.nvm still exists (your downloaded Node versions are there)${NC}"
-      if confirm "  Remove ~/.nvm?"; then
-        rm -rf "$HOME/.nvm"
-        success "$HOME/.nvm removed"
-      fi
-    fi
+    _brew_remove_version_manager nvm "$HOME/.nvm"
   fi
 
   if _brew_is_installed formula jenv; then
     found=1
-    echo
-    warn "jenv is installed — mise replaces it."
-    if confirm "  Uninstall jenv via Homebrew?"; then
-      brew uninstall jenv
-      success "jenv uninstalled"
-    fi
-    if [[ -d "$HOME/.jenv" ]]; then
-      echo -e "  ${DIM}  ~/.jenv still exists (your shims and version config are there)${NC}"
-      if confirm "  Remove ~/.jenv?"; then
-        rm -rf "$HOME/.jenv"
-        success "$HOME/.jenv removed"
-      fi
-    fi
+    _brew_remove_version_manager jenv "$HOME/.jenv"
   fi
 
   if [[ "$found" -eq 1 ]]; then echo -e "  ${DIM}Re-add runtimes with: mise use node@lts  |  mise use java@21${NC}"; fi

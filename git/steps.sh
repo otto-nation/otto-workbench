@@ -308,6 +308,14 @@ step_local_hooks() {
   [[ -d "$dot_git" ]] || return 0
   mkdir -p "$dot_git/hooks"
 
+  # Auto-heal: if something set core.hooksPath to /dev/null, hooks are silently disabled
+  local hooks_path
+  hooks_path=$(git config --local core.hooksPath 2>/dev/null) || true
+  if [[ "$hooks_path" == "/dev/null" ]]; then
+    git config --unset core.hooksPath
+    warn "removed core.hooksPath=/dev/null from local config (hooks were disabled)"
+  fi
+
   echo; info "local git hooks → .git/hooks/"
   install_hook_dispatcher "git/hooks/pre-commit-workbench" "$dot_git/hooks/pre-commit" "pre-commit"
   install_hook_dispatcher "git/hooks/pre-push-workbench"   "$dot_git/hooks/pre-push"   "pre-push"

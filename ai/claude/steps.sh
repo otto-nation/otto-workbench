@@ -617,11 +617,7 @@ _print_override_summary() {
     [[ -d "$dir" ]] || continue
     for item in "$dir"/*; do
       [[ -e "$item" ]] || continue
-      if [[ "$found" == false ]]; then
-        echo
-        echo -e "  ${CYAN}User overrides${NC} ${DIM}(user/ai/)${NC}"
-        found=true
-      fi
+      [[ "$found" == false ]] && { echo; echo -e "  ${CYAN}User overrides${NC} ${DIM}(user/ai/)${NC}"; found=true; }
       echo -e "  ${DIM}  • $label/$(basename "$item")${NC}"
     done
   done

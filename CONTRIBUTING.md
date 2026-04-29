@@ -59,25 +59,7 @@ See the [Component Framework](docs/components.md) reference for the full Tier 1/
 
 ## Adding a Tool to the Registry
 
-Each tooling directory has a `registry.yml` that describes the tools it provides. Add an entry whenever you add a new brew formula, bin script, or alias group:
-
-```yaml
-# brew/registry.yml
-- name: ripgrep
-  description: "Fast regex search tool"
-  when_to_use: "Searching file contents; faster alternative to grep"
-  docs: https://github.com/BurntSushi/ripgrep
-```
-
-Required fields: `name`, `description`, `when_to_use`. Optional: `usage`, `docs`.
-
-After editing a registry, regenerate the tool context:
-
-```bash
-generate-tool-context
-```
-
-The pre-push hook enforces that `tools.generated.md` is always up to date.
+See [Registries](docs/registries.md#adding-an-entry) for the full schema, validation modes, and step-by-step instructions.
 
 ## Environment Variables
 

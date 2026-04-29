@@ -36,9 +36,9 @@ else:
 
 
 def strip_strings_and_comments(line: str) -> str:
-    line = re.sub(r'#.*', '', line)
     line = re.sub(r"'[^']*'", '', line)
     line = re.sub(r'"[^"]*"', '', line)
+    line = re.sub(r'#.*', '', line)
     return line
 
 
@@ -84,6 +84,9 @@ def check_file(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
             # Function definition — reset depth
             fm = FUNC_DEF.match(stripped)
             if fm:
+                # Single-line function (e.g. `fn() { ...; }`) — skip entirely
+                if stripped.rstrip().endswith('}'):
+                    continue
                 depth = 0
                 in_function = True
                 func_name = fm.group(1)
@@ -99,11 +102,17 @@ def check_file(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
             opener_count = len(OPENERS.findall(stripped))
             closer_count = len(CLOSERS.findall(stripped))
 
-            depth = max(0, depth - closer_count)
-            depth += opener_count
+            # Self-contained blocks (e.g. `for ...; do ...; done` on one line)
+            # cancel out without affecting depth.
+            net_open = opener_count - min(opener_count, closer_count)
+            net_close = closer_count - min(opener_count, closer_count)
+
+            depth += net_open
 
             if depth > max_depth:
                 violations.append((lineno, depth, func_name))
+
+            depth = max(0, depth - net_close)
 
     return violations
 

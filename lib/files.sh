@@ -155,10 +155,9 @@ symlink_dir() {
       [[ -L "$item" ]] || continue
       target=$(readlink "$item")
       [[ "$target" == "$src"/* ]] || continue
-      if [[ ! -e "$target" ]]; then
-        rm "$item"
-        echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"
-      fi
+      [[ -e "$target" ]] && continue
+      rm "$item"
+      echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"
     done
   fi
 

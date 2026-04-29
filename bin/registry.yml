@@ -40,6 +40,11 @@ tools:
     when_to_use: "Diagnosing memory issues, high swap, or identifying memory-hungry processes"
     usage: "mem-analyze"
 
+  - name: wt-cleanup
+    description: "Remove stale git worktrees — merged branches and optionally age-based cleanup"
+    when_to_use: "Cleaning up accumulated worktrees; runs automatically on Claude session stop"
+    usage: "wt-cleanup  |  wt-cleanup --age 7  |  wt-cleanup --dry-run"
+
   - name: get-secret
     description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"
     when_to_use: "Fetching credentials or config values stored in Secrets Manager"

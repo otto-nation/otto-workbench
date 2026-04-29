@@ -1,6 +1,6 @@
 # Tools & Scripts Reference
 
-Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-generated from [tool registries](architecture.md#tool-registry) — do not edit the generated sections directly.
+Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-generated from [tool registries](registries.md) — do not edit the generated sections directly.
 
 ## Scripts
 
@@ -10,6 +10,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
+| `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
@@ -132,22 +133,4 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 
 ## Adding a Tool
 
-Each tooling directory has a [`registry.yml`](architecture.md#tool-registry) that describes the tools it provides. Add an entry whenever you add a new brew formula, bin script, or alias group:
-
-```yaml
-# brew/registry.yml
-- name: ripgrep
-  description: "Fast regex search tool"
-  when_to_use: "Searching file contents; faster alternative to grep"
-  docs: https://github.com/BurntSushi/ripgrep
-```
-
-Required fields: `name`, `description`, `when_to_use`. Optional: `usage`, `docs`.
-
-After editing a registry, regenerate:
-
-```bash
-generate-tool-context
-```
-
-The pre-push hook enforces that generated files are always up to date.
+See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions.

@@ -3,13 +3,15 @@
 # install-needed detection (_check_install_needed in otto-workbench sync).
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  load 'test_helper'
+  common_setup
   TMPDIR="$(mktemp -d)"
   export NO_COLOR=1
 }
 
 teardown() {
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 # ─── Helper: build a minimal workbench layout ────────────────────────────────

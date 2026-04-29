@@ -39,6 +39,12 @@ tasks:
           | xargs shellcheck --severity=warning
         echo "✓ ShellCheck passed"
 
+  wt:cleanup:
+    desc: "Remove stale worktrees (merged branches, optionally age-based)"
+    silent: true
+    cmds:
+      - wt-cleanup {{.CLI_ARGS}}
+
   dev:setup:
     desc: "Activate git hooks for workbench development (run once after cloning)"
     silent: true

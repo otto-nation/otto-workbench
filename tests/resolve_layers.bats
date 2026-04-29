@@ -3,6 +3,7 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   export NO_COLOR=1
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/ui.sh"
@@ -15,6 +16,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 # ─── resolve_layers ──────────────────────────────────────────────────────────

@@ -255,24 +255,26 @@ select_components() {
   fi
 
   # Expand desired set with declared deps (iterate until stable).
-  local _changed=true _comp _deps _dep _found _d
+  _in_desired() { local _d; for _d in "${desired[@]}"; do [[ "$_d" == "$1" ]] && return 0; done; return 1; }
+  _add_missing_deps() {
+    local comp="$1" deps dep
+    deps=$(conf_get "$WORKBENCH_DIR/$comp/setup.conf" depends)
+    [[ -z "$deps" ]] && return
+    for dep in $deps; do
+      _in_desired "$dep" && continue
+      info "Adding $dep (required by $comp)"
+      desired+=("$dep")
+      _changed=true
+    done
+  }
+  local _changed=true _comp
   while [[ "$_changed" == true ]]; do
     _changed=false
     for _comp in "${desired[@]}"; do
-      _deps=$(conf_get "$WORKBENCH_DIR/$_comp/setup.conf" depends)
-      [[ -z "$_deps" ]] && continue
-      for _dep in $_deps; do
-        _found=false
-        for _d in "${desired[@]}"; do [[ "$_d" == "$_dep" ]] && { _found=true; break; }; done
-        if [[ "$_found" == false ]]; then
-          info "Adding $_dep (required by $_comp)"
-          desired+=("$_dep")
-          _changed=true
-        fi
-      done
+      _add_missing_deps "$_comp"
     done
   done
-  unset _changed _comp _deps _dep _found _d
+  unset _changed _comp
 
   # Re-sort by install.components order so deps always precede dependents.
   local _c _d2
@@ -374,52 +376,54 @@ for _f in "$WORKBENCH_DIR"/*/steps.sh; do
   # Parse '# description: ...' from the first 5 lines of steps.sh
   _desc=""
   while IFS= read -r _line; do
-    if [[ "$_line" =~ ^#[[:space:]]*description:[[:space:]]*(.*) ]]; then
-      _desc="${BASH_REMATCH[1]}"
-      break
-    fi
+    [[ "$_line" =~ ^#[[:space:]]*description:[[:space:]]*(.*) ]] || continue
+    _desc="${BASH_REMATCH[1]}"
+    break
   done < <(head -n 5 "$_f")
   _core_descs+=("$_desc")
 done
 unset _f _c _is_preflight _pf _desc _line
 
-if [[ ${#_core_dirs[@]} -gt 0 ]]; then
-  _core_selected=()
+_select_core_components() {
+  local -n __out=$1
+  __out=()
   if [[ "$INSTALL_TARGETED" == true ]]; then
-    # Targeted mode: run only named core components
     for _c in "${_core_dirs[@]}"; do
-      _is_targeted "$_c" && _core_selected+=("$_c")
+      _is_targeted "$_c" && __out+=("$_c")
     done
   elif [[ "$INSTALL_ALL" == "true" ]]; then
-    _core_selected=("${_core_dirs[@]}")
+    __out=("${_core_dirs[@]}")
   else
     info "Core components:"
     for _i in "${!_core_dirs[@]}"; do
       printf "  [%d] %-22s ${DIM}%s${NC}\n" "$(( _i + 1 ))" "${_core_dirs[$_i]}" "${_core_descs[$_i]}"
     done
     echo
-
     _core_sel=""
     select_menu _core_sel "${#_core_dirs[@]}" --default all
-
-    if [[ -n "$_core_sel" ]]; then
-      for _num in $_core_sel; do
-        _core_selected+=("${_core_dirs[$(( _num - 1 ))]}")
-      done
-    fi
-    unset _num
+    local _num
+    for _num in $_core_sel; do
+      __out+=("${_core_dirs[$(( _num - 1 ))]}")
+    done
   fi
+}
 
-  # Run selected core components.
-  # Prefers install_<name>() (interactive) over sync_<name>() (non-interactive).
+_run_component() {
+  local _c="$1"
+  export WORKBENCH_CURRENT_COMPONENT="$_c"
+  if declare -f "install_${_c}" > /dev/null; then
+    "install_${_c}"
+  elif declare -f "sync_${_c}" > /dev/null; then
+    "sync_${_c}"
+  fi
+  state_record "$_c"
+}
+
+if [[ ${#_core_dirs[@]} -gt 0 ]]; then
+  _core_selected=()
+  _select_core_components _core_selected
   for _c in "${_core_selected[@]}"; do
-    export WORKBENCH_CURRENT_COMPONENT="$_c"
-    if declare -f "install_${_c}" > /dev/null; then
-      "install_${_c}"
-    elif declare -f "sync_${_c}" > /dev/null; then
-      "sync_${_c}"
-    fi
-    state_record "$_c"
+    _run_component "$_c"
   done
   unset _c WORKBENCH_CURRENT_COMPONENT
 fi

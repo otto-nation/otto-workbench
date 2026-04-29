@@ -4,7 +4,12 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   export NO_COLOR=1
+}
+
+teardown() {
+  common_teardown
 }
 
 # ─── Facade loads all modules ───────────────────────────────────────────────

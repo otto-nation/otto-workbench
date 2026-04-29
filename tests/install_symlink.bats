@@ -5,6 +5,8 @@
 # symlinks (directory symlinks) on re-runs of install.sh.
 
 setup() {
+  load 'test_helper'
+  common_setup
   # ln -sfh is BSD-specific (macOS); GNU ln does not follow symlinks by default
   # so these regression tests are only meaningful on macOS
   [[ "$OSTYPE" == "darwin"* ]] || skip "macOS only"
@@ -13,6 +15,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 # ── File symlink re-run ───────────────────────────────────────────────────────

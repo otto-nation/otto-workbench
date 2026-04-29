@@ -1,5 +1,5 @@
 {
-  "_workbench": ["confirm_quit", "base_keymap", "theme", "agent", "inlay_hints", "terminal"],
+  "_workbench": ["confirm_quit", "base_keymap", "theme", "agent", "inlay_hints", "terminal", "project_panel"],
 
   "confirm_quit": true,
   "base_keymap": "JetBrains",
@@ -23,5 +23,8 @@
     "font_family": "FiraCode Nerd Font Mono",
     "font_features": null,
     "font_size": null
+  },
+  "project_panel": {
+    "dock": "left"
   }
 }

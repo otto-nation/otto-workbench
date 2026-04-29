@@ -104,10 +104,9 @@ _check_install_needed() {
         | sed 's/^check[[:space:]]*=[[:space:]]*//')
       [[ -z "$check_cmd" ]] && continue
       # shellcheck disable=SC2086
-      if ! bash -c "$check_cmd" >/dev/null 2>&1; then
-        needs_install+=("$component")
-        install_reasons+=("not configured")
-      fi
+      bash -c "$check_cmd" >/dev/null 2>&1 && continue
+      needs_install+=("$component")
+      install_reasons+=("not configured")
     done < "$registry"
   fi
 
@@ -159,11 +158,9 @@ cmd_sync() {
     _path="${_path%/steps.sh}"
 
     # Gate on state: skip uninstalled components (unless no state file = backward compat)
-    if state_file_exists; then
-      if [[ " $_always_sync " != *" $_path "* ]] && ! state_is_installed "$_path"; then
-        skip "$_path (not installed)"
-        continue
-      fi
+    if state_file_exists && [[ " $_always_sync " != *" $_path "* ]] && ! state_is_installed "$_path"; then
+      skip "$_path (not installed)"
+      continue
     fi
 
     export WORKBENCH_CURRENT_COMPONENT="$_c"
@@ -323,15 +320,12 @@ cmd_state() {
       done < "$INSTALLED_STATE_FILE"
       ;;
     "")
-      if state_file_exists; then
-        info "Installed components:"
-        local _entry
-        while IFS= read -r _entry; do
-          echo "  $_entry"
-        done < "$INSTALLED_STATE_FILE"
-      else
-        info "No state file — all components will sync (backward compat)"
-      fi
+      if ! state_file_exists; then info "No state file — all components will sync (backward compat)"; return; fi
+      info "Installed components:"
+      local _entry
+      while IFS= read -r _entry; do
+        echo "  $_entry"
+      done < "$INSTALLED_STATE_FILE"
       ;;
     *)
       echo "Usage: otto-workbench state [regenerate]" >&2
@@ -358,6 +352,31 @@ _override_type_dirs() {
   esac
 }
 
+_show_override_status() {
+  local dir="$1" type="$2" found=false item name
+  for item in "$dir"/*; do
+    [[ -e "$item" ]] || continue
+    name=$(basename "$item")
+    [[ "$found" == false ]] && { echo -e "  ${CYAN}$type${NC}"; found=true; }
+    [[ "$name" == *.disabled ]] \
+      && echo -e "    ${RED}✗${NC} ${name%.disabled} ${DIM}(disabled)${NC}" \
+      || echo -e "    ${GREEN}↻${NC} ${name%.md} ${DIM}(override)${NC}"
+  done
+}
+
+_list_override_dir() {
+  local dir="$1" label="$2" _found=false
+  for item in "$dir"/*; do
+    [[ -e "$item" ]] || continue
+    _found=true
+    local name suffix=""
+    name=$(basename "$item")
+    [[ "$name" == *.disabled ]] && suffix=" (disabled)"
+    echo -e "  ${CYAN}$label/${name}${NC}${DIM}${suffix}${NC}"
+  done
+  [[ "$_found" == true ]]
+}
+
 cmd_override() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
@@ -380,15 +399,7 @@ cmd_override() {
         label="${dir##*:}"
         dir="${dir%%:*}"
         [[ -d "$dir" ]] || continue
-        for item in "$dir"/*; do
-          [[ -e "$item" ]] || continue
-          found=true
-          local name
-          name=$(basename "$item")
-          local suffix=""
-          [[ "$name" == *.disabled ]] && suffix=" (disabled)"
-          echo -e "  ${CYAN}$label/${name}${NC}${DIM}${suffix}${NC}"
-        done
+        _list_override_dir "$dir" "$label" && found=true
       done
 
       [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in user/ai/${NC}"
@@ -470,20 +481,7 @@ cmd_override() {
         _override_type_dirs "$type" default_dir user_dir
         [[ -d "$user_dir" ]] || continue
 
-        local found=false item name
-        for item in "$user_dir"/*; do
-          [[ -e "$item" ]] || continue
-          name=$(basename "$item")
-          if [[ "$found" == false ]]; then
-            echo -e "  ${CYAN}$type${NC}"
-            found=true
-          fi
-          if [[ "$name" == *.disabled ]]; then
-            echo -e "    ${RED}✗${NC} ${name%.disabled} ${DIM}(disabled)${NC}"
-          else
-            echo -e "    ${GREEN}↻${NC} ${name%.md} ${DIM}(override)${NC}"
-          fi
-        done
+        _show_override_status "$user_dir" "$type"
       done
       ;;
 

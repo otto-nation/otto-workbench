@@ -53,14 +53,15 @@ _write_frontmatter() {
   # Extract YAML frontmatter (between first two --- lines)
   local in_fm=false fm=""
   while IFS= read -r line; do
-    if [[ "$line" == "---" ]]; then
-      if [[ "$in_fm" == false ]]; then
-        in_fm=true; fm="---"$'\n'; continue
-      else
-        fm+="---"$'\n'; break
-      fi
+    if [[ "$line" != "---" ]]; then
+      [[ "$in_fm" == true ]] && fm+="$line"$'\n'
+      continue
     fi
-    [[ "$in_fm" == true ]] && fm+="$line"$'\n'
+    # Hit a --- delimiter
+    if [[ "$in_fm" == false ]]; then
+      in_fm=true; fm="---"$'\n'; continue
+    fi
+    fm+="---"$'\n'; break
   done < "$source"
 
   if [[ -n "$fm" ]]; then
@@ -222,15 +223,8 @@ cmd_status() {
     echo -e "  ${CYAN}$(basename "$file")${NC}  ${DIM}$lines lines${NC}"
     local in_frontmatter=false frontmatter_done=false
     while IFS= read -r line; do
-      # Skip the opening --- frontmatter block
-      if [[ "$frontmatter_done" == false && "$line" == "---" ]]; then
-        if [[ "$in_frontmatter" == false ]]; then
-          in_frontmatter=true; continue
-        else
-          in_frontmatter=false; frontmatter_done=true; continue
-        fi
-      fi
-      [[ "$in_frontmatter" == true ]] && continue
+      [[ "$in_frontmatter" == true ]] && { [[ "$line" == "---" ]] && in_frontmatter=false frontmatter_done=true; continue; }
+      [[ "$frontmatter_done" == false && "$line" == "---" ]] && { in_frontmatter=true; continue; }
       [[ -z "$line" ]] && continue
       echo -e "  ${DIM}  $line${NC}"
     done < "$file"

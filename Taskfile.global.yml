@@ -78,6 +78,13 @@ tasks:
         . "{{.TASKFILE_DIR}}/lib/ai/commit.sh"
         load_ai_command || exit 1
 
+        # Auto-heal: core.hooksPath=/dev/null silently disables all git hooks
+        _hooks_path=$(git config --local core.hooksPath 2>/dev/null) || true
+        if [ "$_hooks_path" = "/dev/null" ]; then
+          git config --unset core.hooksPath
+          echo "⚠  Fixed core.hooksPath=/dev/null — git hooks were disabled"
+        fi
+
         STAGED_FILES=$(git diff --cached --name-only)
         if [ -z "$STAGED_FILES" ]; then
           echo "✗ No staged changes found. Use 'git add' first."

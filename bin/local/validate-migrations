@@ -61,28 +61,22 @@ for migrations_dir in "${_migration_dirs[@]}"; do
     ALL_BASENAMES+=("$basename_m")
 
     # Filename format: YYYYMMDD-slug.sh
-    if [[ "$basename_m" =~ ^[0-9]{8}-[a-z0-9-]+\.sh$ ]]; then
-      _pass "$display: filename format valid"
-    else
-      _fail "$display: filename must match YYYYMMDD-slug.sh (lowercase alphanumeric + dashes)"
-    fi
+    [[ "$basename_m" =~ ^[0-9]{8}-[a-z0-9-]+\.sh$ ]] \
+      && _pass "$display: filename format valid" \
+      || _fail "$display: filename must match YYYYMMDD-slug.sh (lowercase alphanumeric + dashes)"
 
     # Shebang check
     first_line="$(head -1 "$migration")"
-    if [[ "$first_line" == "#!/usr/bin/env bash" ]]; then
-      _pass "$display: shebang present"
-    else
-      _fail "$display: missing #!/usr/bin/env bash shebang"
-    fi
+    [[ "$first_line" == "#!/usr/bin/env bash" ]] \
+      && _pass "$display: shebang present" \
+      || _fail "$display: missing #!/usr/bin/env bash shebang"
 
     # Function name: migration_YYYYMMDD_slug (dashes to underscores, .sh stripped)
     expected_fn="migration_${basename_m%.sh}"
     expected_fn="${expected_fn//-/_}"
-    if grep -qE "^${expected_fn}[[:space:]]*\(\)" "$migration"; then
-      _pass "$display: defines ${expected_fn}()"
-    else
-      _fail "$display: expected function ${expected_fn}() not found"
-    fi
+    grep -qE "^${expected_fn}[[:space:]]*\(\)" "$migration" \
+      && _pass "$display: defines ${expected_fn}()" \
+      || _fail "$display: expected function ${expected_fn}() not found"
   done
 done
 
@@ -90,14 +84,11 @@ done
 if (( FOUND > 0 )); then
   if ! $QUIET; then echo; info "Cross-component — no duplicate migration filenames"; fi
   dupes="$(printf '%s\n' "${ALL_BASENAMES[@]}" | sort | uniq -d)"
-  if [[ -n "$dupes" ]]; then
-    while IFS= read -r dup; do
-      [[ -z "$dup" ]] && continue
-      _fail "duplicate migration filename: $dup"
-    done <<< "$dupes"
-  else
-    _pass "no duplicate migration filenames"
-  fi
+  [[ -z "$dupes" ]] && _pass "no duplicate migration filenames"
+  while IFS= read -r dup; do
+    [[ -z "$dup" ]] && continue
+    _fail "duplicate migration filename: $dup"
+  done <<< "${dupes:-}"
 fi
 
 # Summary

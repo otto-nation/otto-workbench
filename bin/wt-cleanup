@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Remove stale git worktrees managed by Worktrunk.
+#
+# By default, removes worktrees whose branches are fully merged (safe to delete).
+# With --age <days>, also removes worktrees with no commits newer than <days> days.
+#
+# Usage:
+#   wt-cleanup              # remove merged-only worktrees
+#   wt-cleanup --age 7      # also remove worktrees inactive for 7+ days
+#   wt-cleanup --dry-run    # show what would be removed
+#   wt-cleanup --quiet      # no output (for hooks)
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+command -v wt >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 1; }
+
+dry_run=false
+quiet=false
+max_age_days=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) dry_run=true; shift ;;
+    --quiet)   quiet=true; shift ;;
+    --age)     max_age_days="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+now=$(date +%s)
+removed=0
+
+worktrees=$(wt list --format json 2>/dev/null) || exit 0
+count=$(echo "$worktrees" | jq 'length')
+
+for ((i = 0; i < count; i++)); do
+  is_main=$(echo "$worktrees" | jq -r ".[$i].is_main")
+  is_current=$(echo "$worktrees" | jq -r ".[$i].is_current")
+  branch=$(echo "$worktrees" | jq -r ".[$i].branch")
+  main_state=$(echo "$worktrees" | jq -r ".[$i].main_state")
+  symbols=$(echo "$worktrees" | jq -r ".[$i].symbols")
+  timestamp=$(echo "$worktrees" | jq -r ".[$i].commit.timestamp")
+
+  [[ "$is_main" == "true" ]] && continue
+  [[ "$is_current" == "true" ]] && continue
+
+  reason=""
+
+  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
+    reason="merged"
+  elif [[ -n "$max_age_days" ]]; then
+    age=$((now - timestamp))
+    max_age_secs=$((max_age_days * 86400))
+    [[ $age -gt $max_age_secs ]] && reason="$((age / 86400))d inactive"
+  fi
+
+  [[ -z "$reason" ]] && continue
+
+  removed=$((removed + 1))
+  if [[ "$dry_run" == "true" ]]; then
+    [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
+  else
+    [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
+    wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
+  fi
+done
+
+if [[ "$quiet" != "true" && "$removed" -eq 0 ]]; then
+  echo "no stale worktrees"
+fi

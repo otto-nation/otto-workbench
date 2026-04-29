@@ -18,7 +18,6 @@ _assert_not_real_repo() {
 # common_setup — call first in every test's setup().
 # Snapshots real repo state so common_teardown can detect contamination.
 common_setup() {
-  export GIT_CONFIG_GLOBAL=/dev/null
   _REPO_CONFIG_SNAPSHOT="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | sort)"
   _REPO_HEAD_SNAPSHOT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
   _REPO_BRANCHES_SNAPSHOT="$(git -C "$REPO_ROOT" branch --list 2>/dev/null | sort)"
@@ -102,7 +101,8 @@ make_git_remote() {
   local branch="${3:-feature/test}"
 
   export GIT_CONFIG_GLOBAL=/dev/null
-  export GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
+  GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
+  export GIT_CEILING_DIRECTORIES
 
   git init --bare "$remote_dir" --quiet --initial-branch=main
   git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null
@@ -139,7 +139,8 @@ clone_from_shared_remote() {
   local branch="${3:-feature/test}"
 
   export GIT_CONFIG_GLOBAL=/dev/null
-  export GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
+  GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
+  export GIT_CEILING_DIRECTORIES
 
   cd / || return 1
   git clone "$remote_dir" "$local_dir" --quiet 2>/dev/null

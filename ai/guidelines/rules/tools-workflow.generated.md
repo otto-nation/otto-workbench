@@ -20,6 +20,11 @@ macOS memory analysis report — pressure, swap usage, top processes, per-user t
 - **When to use**: Diagnosing memory issues, high swap, or identifying memory-hungry processes
 - **Usage**: `mem-analyze`
 
+### wt-cleanup
+Remove stale git worktrees — merged branches and optionally age-based cleanup
+- **When to use**: Cleaning up accumulated worktrees; runs automatically on Claude session stop
+- **Usage**: `wt-cleanup  |  wt-cleanup --age 7  |  wt-cleanup --dry-run`
+
 ### get-secret
 Interactively retrieves a secret from AWS Secrets Manager by listing and selecting
 - **When to use**: Fetching credentials or config values stored in Secrets Manager

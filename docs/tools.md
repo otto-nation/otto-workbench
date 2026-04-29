@@ -10,6 +10,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
+| `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |

@@ -3,6 +3,51 @@
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
+# _assert_not_real_repo — fails hard if PWD is inside the real workbench repo.
+_assert_not_real_repo() {
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  if [[ "$toplevel" == "$REPO_ROOT" ]]; then
+    echo "FATAL: test is operating inside the real repo ($PWD)"
+    echo "  REPO_ROOT=$REPO_ROOT"
+    echo "  git toplevel=$toplevel"
+    return 1
+  fi
+}
+
+# common_setup — call first in every test's setup().
+# Snapshots real repo state so common_teardown can detect contamination.
+common_setup() {
+  export GIT_CONFIG_GLOBAL=/dev/null
+  _REPO_CONFIG_SNAPSHOT="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | sort)"
+  _REPO_HEAD_SNAPSHOT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
+  _REPO_BRANCHES_SNAPSHOT="$(git -C "$REPO_ROOT" branch --list 2>/dev/null | sort)"
+}
+
+# common_teardown — call last in every test's teardown().
+# Fails the test if anything in the real repo changed.
+common_teardown() {
+  local current_config current_head current_branches
+  current_config="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | sort)"
+  current_head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
+  current_branches="$(git -C "$REPO_ROOT" branch --list 2>/dev/null | sort)"
+
+  if [[ "$current_config" != "$_REPO_CONFIG_SNAPSHOT" ]]; then
+    echo "SAFETY: test contaminated real repo git config"
+    diff <(echo "$_REPO_CONFIG_SNAPSHOT") <(echo "$current_config") || true
+    return 1
+  fi
+  if [[ "$current_head" != "$_REPO_HEAD_SNAPSHOT" ]]; then
+    echo "SAFETY: test moved real repo HEAD from $_REPO_HEAD_SNAPSHOT to $current_head"
+    return 1
+  fi
+  if [[ "$current_branches" != "$_REPO_BRANCHES_SNAPSHOT" ]]; then
+    echo "SAFETY: test modified real repo branches"
+    diff <(echo "$_REPO_BRANCHES_SNAPSHOT") <(echo "$current_branches") || true
+    return 1
+  fi
+}
+
 # source_lib — loads all lib/ai/*.sh files into the current test context.
 source_lib() {
   local f

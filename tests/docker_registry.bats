@@ -4,6 +4,11 @@
 
 setup() {
   load 'test_helper'
+  common_setup
+}
+
+teardown() {
+  common_teardown
 }
 
 @test "colima aliases.zsh defaults match docker/registry.yml defaults" {

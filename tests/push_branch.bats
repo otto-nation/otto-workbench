@@ -2,20 +2,13 @@
 
 setup_file() {
   load 'test_helper'
-  # Create a bare remote with one commit on main — tests clone and branch from it.
   SHARED_REMOTE="$BATS_FILE_TMPDIR/remote"
   local tmp_local="$BATS_FILE_TMPDIR/seed"
-  export GIT_CONFIG_GLOBAL=/dev/null
-  git init --bare "$SHARED_REMOTE" --quiet --initial-branch=main
-  git clone "$SHARED_REMOTE" "$tmp_local" --quiet 2>/dev/null
-  cd "$tmp_local" || return 1
-  git config user.email "test@example.com"
-  git config user.name "Test"
-  git config core.hooksPath /dev/null
-  echo "init" > README.md
-  git add .
-  git commit -m "initial" --quiet
-  git push --quiet
+  make_git_remote "$SHARED_REMOTE" "$tmp_local"
+  # Push the feature branch so clone_from_shared_remote can check it out,
+  # but tests start with it as a local-only branch (no upstream tracking).
+  cd "$tmp_local"
+  git push "$SHARED_REMOTE" feature/test --quiet
   cd /
   rm -rf "$tmp_local"
   export SHARED_REMOTE
@@ -23,32 +16,25 @@ setup_file() {
 
 setup() {
   load 'test_helper'
+  common_setup
   source_lib
 
   TMPDIR="$(mktemp -d)"
   LOCAL_DIR="$TMPDIR/local"
   REMOTE_DIR="$TMPDIR/remote"
 
-  # Copy shared remote per-test so pushes don't interfere across tests
   cp -R "$SHARED_REMOTE" "$REMOTE_DIR"
-  export GIT_CONFIG_GLOBAL=/dev/null
-  cd /
-  git clone "$REMOTE_DIR" "$LOCAL_DIR" --quiet 2>/dev/null
-  cd "$LOCAL_DIR" || return 1
-  git config user.email "test@example.com"
-  git config user.name "Test"
-  git config core.hooksPath /dev/null
+  clone_from_shared_remote "$REMOTE_DIR" "$LOCAL_DIR"
 
-  # Create local feature branch (unpushed) — matches original make_git_remote behavior
-  git checkout -b "feature/test" --quiet
-  echo "feature" > feature.txt
-  git add .
-  git commit -m "feat: add feature" --quiet
+  # Remove upstream tracking so tests start with an unpushed local branch
+  git branch --unset-upstream feature/test 2>/dev/null || true
+  git push origin --delete feature/test --quiet 2>/dev/null || true
 }
 
 teardown() {
   cd /
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 @test "pushes new branch to remote" {

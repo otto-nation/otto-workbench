@@ -5,8 +5,13 @@
 #   - filesystem → registry  (every directory with setup.conf is registered)
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  load 'test_helper'
+  common_setup
   REGISTRY="$REPO_ROOT/install.components"
+}
+
+teardown() {
+  common_teardown
 }
 
 # ─── Registry file ────────────────────────────────────────────────────────────

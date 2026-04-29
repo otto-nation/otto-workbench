@@ -2,6 +2,7 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   source_lib
   ORIG_HOME="$HOME"
   ORIG_DIR="$PWD"
@@ -21,6 +22,7 @@ teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
   unset GH_TOKEN
+  common_teardown
 }
 
 # ── Failure cases ─────────────────────────────────────────────────────────────

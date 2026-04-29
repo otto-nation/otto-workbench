@@ -4,8 +4,13 @@
 # no gh api exposure) and that known destructive git operations are denied.
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  load 'test_helper'
+  common_setup
   SETTINGS="$REPO_ROOT/ai/claude/settings.json"
+}
+
+teardown() {
+  common_teardown
 }
 
 # ── Structure ─────────────────────────────────────────────────────────────────

@@ -21,6 +21,15 @@ fi
 # shellcheck source=components.sh
 . "$WORKBENCH_DIR/lib/components.sh"
 
+_array_contains() {
+  local needle="$1"; shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 # run_component_migrations DIR
 # Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs
 # each function, and records success. Failed migrations are not recorded and retry
@@ -97,18 +106,11 @@ _prune_stale_migration_state() {
   done
 
   # Check each state entry against discovered keys
-  local stale_found=false line found key
+  local stale_found=false line
   local -a clean_lines=()
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    found=false
-    for key in "${discovered_keys[@]}"; do
-      if [[ "$line" == "$key" ]]; then
-        found=true
-        break
-      fi
-    done
-    if [[ "$found" == true ]]; then
+    if _array_contains "$line" "${discovered_keys[@]}"; then
       clean_lines+=("$line")
     else
       warn "Pruned stale migration state: $line"

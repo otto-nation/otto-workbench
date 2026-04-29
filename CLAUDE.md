@@ -20,36 +20,6 @@ git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conv
 otto-workbench changelog       # show recent changes from conventional commits
 ```
 
-## Architecture
-
-### Components
-
-Three layers during `install.sh`:
-- **Preflight (mandatory):** `task` and `brew` — ensures tooling is present before anything else runs
-- **Core (selectable, Enter = all):** `<name>/steps.sh` with `sync_<name>()`, no `setup.conf` — currently bin, git, zsh
-- **Optional (selectable, Enter = all):** `<name>/setup.conf` + `setup.sh`, listed in `install.components` — brew packages, docker, terminals, editors, ai
-
-`otto-workbench sync` always syncs all components (no selection). Sub-menus (terminals, editors, AI tools) also default to Enter = all.
-
-### Registries
-
-Each tool domain has a `registry.yml` describing its tools for AI context generation. Consumer-owned `*.env.yml` files declare env vars and auth, colocated with the code that reads them.
-
-Required fields: `meta.section`, `meta.validation`, `meta.source`; per-tool: `name`, `description`, `when_to_use`.
-
-Cross-validation modes: `brewfile` (tools must exist in Brewfile), `bindir` (must exist in directory), `zsh-comments` (must have comment in source), `none`.
-
-### Shared libraries
-
-- `lib/ui.sh` — colors, prompts, install helpers (`install_symlink`, `install_file`, `copy_dir`)
-- `lib/migrations.sh` — migration framework (`run_component_migrations`, `run_all_migrations`)
-- `lib/registries.sh` — `collect_registries`, `iter_registry_env`, `registry_passes_install_check`
-- `lib/ai/core.sh` — commit/PR conventions, constants
-
-### Zsh config layering
-
-`zsh/config.d/` loads in order: `framework/` -> `tools/` -> `aliases/` -> `prompt/`. Order is significant.
-
 ## Conventions
 
 - **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.config/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test. Registry `*.registry.yml` files own tool documentation (`tools[]`). Registry `*.env.yml` files own env var declarations (`env[]`, `auth`), colocated with the consumer code that reads them. Env vars set programmatically at runtime (e.g. DOCKER_HOST) are NOT declared in registries.

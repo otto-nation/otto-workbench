@@ -178,11 +178,8 @@ generate_ansible_section() {
   declare -A svc_containers=()
   if [[ -n "$services_file" ]]; then
     while IFS= read -r line; do
-      if [[ "$line" =~ ^([a-z0-9_]+)_port:[[:space:]]+([0-9]+) ]]; then
-        svc_ports["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
-      elif [[ "$line" =~ ^([a-z0-9_]+)_container:[[:space:]]+([a-z0-9_-]+) ]]; then
-        svc_containers["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
-      fi
+      [[ "$line" =~ ^([a-z0-9_]+)_port:[[:space:]]+([0-9]+) ]] && { svc_ports["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"; continue; }
+      [[ "$line" =~ ^([a-z0-9_]+)_container:[[:space:]]+([a-z0-9_-]+) ]] && svc_containers["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
     done < "$services_file"
   fi
 
@@ -327,25 +324,19 @@ main() {
         local lines="${line_counts[$entry]:-0}"
 
         # Skip very large files
-        if [[ $lines -gt $MAX_FILE_LINES ]]; then
-          continue
-        fi
+        [[ $lines -gt $MAX_FILE_LINES ]] && continue
 
         local tokens=$((lines * TOKENS_PER_LINE))
         total_tokens=$((total_tokens + tokens))
 
         local display_name
-        if [[ "$dir" == "(root)" ]]; then
-          display_name="$entry"
-        else
-          display_name="${entry#"$dir"/}"
-        fi
+        [[ "$dir" == "(root)" ]] \
+          && display_name="$entry" \
+          || display_name="${entry#"$dir"/}"
 
         local desc
         desc="$(extract_description "$entry")"
-        if [[ -z "$desc" ]]; then
-          desc="$(label_from_filename "$entry")"
-        fi
+        [[ -z "$desc" ]] && desc="$(label_from_filename "$entry")"
 
         printf '| %s | %d | %d | %s |\n' "$display_name" "$lines" "$tokens" "$desc"
       done <<< "${dir_files[$dir]}"

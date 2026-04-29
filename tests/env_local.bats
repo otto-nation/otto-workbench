@@ -3,7 +3,12 @@
 # the bootstrap step in zsh/steps.sh.
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  load 'test_helper'
+  common_setup
+}
+
+teardown() {
+  common_teardown
 }
 
 # ── loader.zsh sources .env.local ─────────────────────────────────────────────

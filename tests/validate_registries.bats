@@ -2,6 +2,7 @@
 
 setup() {
   load 'test_helper'
+  common_setup
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
 
@@ -30,6 +31,7 @@ setup() {
 teardown() {
   cd "$ORIG_DIR"
   rm -rf "$TMPDIR"
+  common_teardown
 }
 
 _write_valid_brew() {

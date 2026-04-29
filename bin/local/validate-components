@@ -63,13 +63,13 @@ for _sf in "${_step_files[@]}"; do
   _sync_fns_all+=$(grep -oE "^sync_[a-z_]+[[:space:]]*\(\)" "$_sf" | sed 's/[[:space:]]*()//')$'\n'
 done
 _sync_dupes=$(printf '%s' "$_sync_fns_all" | sort | uniq -d)
-if [[ -n "$_sync_dupes" ]]; then
+if [[ -z "$_sync_dupes" ]]; then
+  _pass "no duplicate sync_<name>() definitions"
+else
   while IFS= read -r _fn; do
     [[ -z "$_fn" ]] && continue
     _fail "duplicate ${_fn}() defined in multiple steps.sh files"
   done <<< "$_sync_dupes"
-else
-  _pass "no duplicate sync_<name>() definitions"
 fi
 unset _sync_fns_all _sync_dupes _sf _fn
 
@@ -80,11 +80,9 @@ if ! $QUIET; then echo; info "Tier 1 — Core components (steps.sh → sync_<nam
 for steps_file in "$WORKBENCH_DIR"/*/steps.sh; do
   [[ -f "$steps_file" ]] || continue
   name=$(basename "$(dirname "$steps_file")")
-  if grep -qE "^sync_${name}[[:space:]]*\(\)" "$steps_file"; then
-    _pass "$name/steps.sh defines sync_${name}()"
-  else
-    _fail "$name/steps.sh is missing sync_${name}()"
-  fi
+  grep -qE "^sync_${name}[[:space:]]*\(\)" "$steps_file" \
+    && _pass "$name/steps.sh defines sync_${name}()" \
+    || _fail "$name/steps.sh is missing sync_${name}()"
 done
 
 # ─── Tier 2: install.components registry ─────────────────────────────────────
@@ -92,47 +90,49 @@ done
 if ! $QUIET; then echo; info "Tier 2 — Optional components (install.components registry)"; fi
 
 REGISTRY="$WORKBENCH_DIR/install.components"
+
 if [[ ! -f "$REGISTRY" ]]; then
   _fail "install.components not found at $REGISTRY"
-else
+fi
+
+_validate_component() {
+  local component="$1"
+
+  # Directory exists
+  if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
+    _fail "$component: directory not found"
+    return
+  fi
+
+  # setup.conf exists with required fields
+  local conf="$WORKBENCH_DIR/$component/setup.conf"
+  if [[ ! -f "$conf" ]]; then
+    _fail "$component: missing setup.conf"
+  else
+    local label desc
+    label=$(conf_get "$conf" label)
+    desc=$(conf_get "$conf" description)
+    [[ -n "$label" ]] && _pass "$component/setup.conf: label present" || _fail "$component/setup.conf: missing label"
+    [[ -n "$desc" ]]  && _pass "$component/setup.conf: description present" || _fail "$component/setup.conf: missing description"
+  fi
+
+  # setup.sh exists
+  [[ -f "$WORKBENCH_DIR/$component/setup.sh" ]] \
+    && _pass "$component/setup.sh: present" \
+    || _fail "$component: missing setup.sh"
+
+  # If steps.sh exists, it must define sync_<name>()
+  local optional_steps="$WORKBENCH_DIR/$component/steps.sh"
+  [[ ! -f "$optional_steps" ]] && return
+  grep -qE "^sync_${component}[[:space:]]*\(\)" "$optional_steps" \
+    && _pass "$component/steps.sh defines sync_${component}()" \
+    || _fail "$component/steps.sh is missing sync_${component}()"
+}
+
+if [[ -f "$REGISTRY" ]]; then
   while IFS= read -r component; do
     [[ -z "$component" || "$component" =~ ^# ]] && continue
-
-    # Directory exists
-    if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
-      _fail "$component: directory not found"
-      continue
-    fi
-
-    # setup.conf exists with required fields
-    conf="$WORKBENCH_DIR/$component/setup.conf"
-    if [[ ! -f "$conf" ]]; then
-      _fail "$component: missing setup.conf"
-    else
-      label=$(conf_get "$conf" label)
-      desc=$(conf_get "$conf" description)
-      if [[ -n "$label" ]]; then _pass "$component/setup.conf: label present"
-      else                       _fail "$component/setup.conf: missing label"; fi
-      if [[ -n "$desc" ]];  then _pass "$component/setup.conf: description present"
-      else                       _fail "$component/setup.conf: missing description"; fi
-    fi
-
-    # setup.sh exists
-    if [[ ! -f "$WORKBENCH_DIR/$component/setup.sh" ]]; then
-      _fail "$component: missing setup.sh"
-    else
-      _pass "$component/setup.sh: present"
-    fi
-
-    # If steps.sh exists, it must define sync_<name>()
-    optional_steps="$WORKBENCH_DIR/$component/steps.sh"
-    if [[ -f "$optional_steps" ]]; then
-      if grep -qE "^sync_${component}[[:space:]]*\(\)" "$optional_steps"; then
-        _pass "$component/steps.sh defines sync_${component}()"
-      else
-        _fail "$component/steps.sh is missing sync_${component}()"
-      fi
-    fi
+    _validate_component "$component"
   done < "$REGISTRY"
 
   # Reverse check: no orphaned setup.conf
@@ -140,11 +140,9 @@ else
   for conf in "$WORKBENCH_DIR"/*/setup.conf; do
     [[ -f "$conf" ]] || continue
     dir=$(basename "$(dirname "$conf")")
-    if grep -qx "$dir" "$REGISTRY" 2>/dev/null; then
-      _pass "$dir: registered in install.components"
-    else
-      _fail "$dir: has setup.conf but is not registered in install.components"
-    fi
+    grep -qx "$dir" "$REGISTRY" 2>/dev/null \
+      && _pass "$dir: registered in install.components" \
+      || _fail "$dir: has setup.conf but is not registered in install.components"
   done
 fi
 
@@ -153,38 +151,46 @@ fi
 #   1. The declared dep exists in install.components
 #   2. The dep appears before the component in install.components
 
-if [[ -f "$REGISTRY" ]]; then
+# _check_dep COMP DEP — validates a single dependency relationship.
+# Reads _comp_index associative array from caller scope.
+_check_dep() {
+  local comp="$1" dep="$2"
+  local comp_idx="${_comp_index[$comp]}"
+  if [[ -z "${_comp_index[$dep]+set}" ]]; then
+    _fail "$comp: depends on '$dep' which is not in install.components"
+  elif [[ ${_comp_index[$dep]} -gt $comp_idx ]]; then
+    _fail "$comp: dependency '$dep' appears after '$comp' in install.components (must come first)"
+  else
+    _pass "$comp: dependency '$dep' correctly precedes '$comp'"
+  fi
+}
+
+_validate_dep_ordering() {
+  [[ -f "$REGISTRY" ]] || return 0
   if ! $QUIET; then echo; info "Dependency ordering"; fi
 
-  # Build ordered list from registry
-  _reg_order=()
+  # Build index: component name → position in install.components
+  declare -A _comp_index=()
+  local _order=() _rc _i=0
   while IFS= read -r _rc; do
     [[ -z "$_rc" || "$_rc" =~ ^# ]] && continue
-    _reg_order+=("$_rc")
+    _comp_index["$_rc"]=$_i
+    _order+=("$_rc")
+    _i=$(( _i + 1 ))
   done < "$REGISTRY"
 
-  for _ri in "${!_reg_order[@]}"; do
-    _rcomp="${_reg_order[$_ri]}"
-    _rconf="$WORKBENCH_DIR/$_rcomp/setup.conf"
-    [[ -f "$_rconf" ]] || continue
-    _rdeps=$(conf_get "$_rconf" depends)
-    [[ -z "$_rdeps" ]] && continue
-    for _rdep in $_rdeps; do
-      _rdep_idx=-1
-      for _rj in "${!_reg_order[@]}"; do
-        [[ "${_reg_order[$_rj]}" == "$_rdep" ]] && { _rdep_idx=$_rj; break; }
-      done
-      if [[ $_rdep_idx -eq -1 ]]; then
-        _fail "$_rcomp: depends on '$_rdep' which is not in install.components"
-      elif [[ $_rdep_idx -gt $_ri ]]; then
-        _fail "$_rcomp: dependency '$_rdep' appears after '$_rcomp' in install.components (must come first)"
-      else
-        _pass "$_rcomp: dependency '$_rdep' correctly precedes '$_rcomp'"
-      fi
+  local comp conf deps dep
+  for comp in "${_order[@]}"; do
+    conf="$WORKBENCH_DIR/$comp/setup.conf"
+    [[ -f "$conf" ]] || continue
+    deps=$(conf_get "$conf" depends)
+    [[ -z "$deps" ]] && continue
+    for dep in $deps; do
+      _check_dep "$comp" "$dep"
     done
   done
-  unset _reg_order _rc _ri _rcomp _rconf _rdeps _rdep _rdep_idx _rj
-fi
+}
+_validate_dep_ordering
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 

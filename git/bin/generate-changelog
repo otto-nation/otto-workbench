@@ -23,17 +23,10 @@ SINCE="30 days ago"
 UNTIL="HEAD"
 
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --since) SINCE="$2"; shift 2 ;;
-    --until) UNTIL="$2"; shift 2 ;;
-    -h|--help)
-      echo "Usage: generate-changelog [--since DATE] [--until DATE]"
-      echo
-      echo "Defaults: --since \"30 days ago\" --until HEAD"
-      exit 0
-      ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
-  esac
+  [[ "$1" == "--since" ]]           && { SINCE="$2"; shift 2; continue; }
+  [[ "$1" == "--until" ]]           && { UNTIL="$2"; shift 2; continue; }
+  [[ "$1" == "-h" || "$1" == "--help" ]] && { echo "Usage: generate-changelog [--since DATE] [--until DATE]"; echo; echo "Defaults: --since \"30 days ago\" --until HEAD"; exit 0; }
+  echo "Unknown option: $1" >&2; exit 1
 done
 
 # ─── Type → section mapping ──────────────────────────────────────────────────
@@ -88,20 +81,17 @@ while IFS= read -r line; do
   hash="${line%% *}"
   subject="${line#* }"
 
-  if [[ "$subject" =~ $CC_PATTERN ]]; then
+  if [[ ! "$subject" =~ $CC_PATTERN ]]; then
+    section="Other"
+    entry="- ${subject} (${hash})"
+  else
     type="${BASH_REMATCH[1]}"
     scope="${BASH_REMATCH[3]}"
     desc="${BASH_REMATCH[4]}"
-
     section="${TYPE_SECTION[$type]:-Other}"
-    if [[ -n "$scope" ]]; then
-      entry="- **${scope}**: ${desc} (${hash})"
-    else
-      entry="- ${desc} (${hash})"
-    fi
-  else
-    section="Other"
-    entry="- ${subject} (${hash})"
+    [[ -n "$scope" ]] \
+      && entry="- **${scope}**: ${desc} (${hash})" \
+      || entry="- ${desc} (${hash})"
   fi
 
   SECTIONS["$section"]+="${entry}"$'\n'

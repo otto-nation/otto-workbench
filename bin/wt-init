@@ -49,6 +49,49 @@ cd "$repo_path" || { err "Invalid path: $repo_path"; exit 1; }
 
 git rev-parse --git-dir >/dev/null 2>&1 || { err "Not a git repo: $(pwd)"; exit 1; }
 
+# _relocate_claude_wt WT_DIR CLAUDE_WT — relocate a single Claude worktree to bare root.
+_relocate_claude_wt() {
+  local claude_wt="$1" wt_name
+  wt_name="$(basename "$claude_wt")"
+  if [[ "$dry_run" == "true" ]]; then
+    echo
+    info "Would relocate Claude worktree: $claude_wt → ./$wt_name"
+    return
+  fi
+  info "Relocating Claude worktree: $wt_name"
+  mv "$claude_wt" "./$wt_name"
+  # Update the gitdir pointer in the worktree's .git file
+  [[ -f "./$wt_name/.git" ]] && echo "gitdir: $(pwd)/.git/worktrees/$wt_name" > "./$wt_name/.git"
+  # Update the bare repo's pointer back to the worktree
+  [[ -f ".git/worktrees/$wt_name/gitdir" ]] && echo "$(pwd)/$wt_name/.git" > ".git/worktrees/$wt_name/gitdir"
+}
+
+# _relocate_claude_worktrees — find and relocate Claude worktrees nested inside other worktrees.
+_relocate_claude_worktrees() {
+  for wt_dir in */; do
+    [[ -d "${wt_dir}.claude/worktrees" ]] || continue
+    for claude_wt in "${wt_dir}.claude/worktrees"/*/; do
+      [[ -d "$claude_wt" ]] || continue
+      _relocate_claude_wt "$claude_wt"
+    done
+    [[ "$dry_run" != "true" ]] && rmdir "${wt_dir}.claude/worktrees" 2>/dev/null || true
+  done
+}
+
+# _ensure_default_branch_worktree — create worktree for default branch if missing.
+_ensure_default_branch_worktree() {
+  local default_branch
+  default_branch=$(_detect_default_branch)
+  git worktree list | grep -q "\[$default_branch\]" && return 0
+  echo
+  if [[ "$dry_run" == "true" ]]; then
+    info "Missing worktree for $default_branch (run without --dry-run to create)"
+  elif confirm "  Create worktree for $default_branch?"; then
+    git worktree add "$default_branch" "$default_branch"
+    success "Created worktree: $default_branch"
+  fi
+}
+
 # Already bare — show status, offer to create missing default branch worktree
 if [[ "$(git config --get core.bare 2>/dev/null)" == "true" ]]; then
   success "Already a bare repo — no conversion needed"
@@ -56,44 +99,12 @@ if [[ "$(git config --get core.bare 2>/dev/null)" == "true" ]]; then
   info "Worktrees:"
   git worktree list
 
-  # Relocate Claude worktrees found inside other worktrees to the bare root
-  for wt_dir in */; do
-    [[ -d "${wt_dir}.claude/worktrees" ]] || continue
-    for claude_wt in "${wt_dir}.claude/worktrees"/*/; do
-      [[ -d "$claude_wt" ]] || continue
-      wt_name="$(basename "$claude_wt")"
-      if [[ "$dry_run" == "true" ]]; then
-        echo
-        info "Would relocate Claude worktree: ${wt_dir}.claude/worktrees/$wt_name → ./$wt_name"
-      else
-        info "Relocating Claude worktree: $wt_name"
-        mv "$claude_wt" "./$wt_name"
-        # Update the gitdir pointer in the worktree's .git file
-        if [[ -f "./$wt_name/.git" ]]; then
-          echo "gitdir: $(pwd)/.git/worktrees/$wt_name" > "./$wt_name/.git"
-        fi
-        # Update the bare repo's pointer back to the worktree
-        if [[ -f ".git/worktrees/$wt_name/gitdir" ]]; then
-          echo "$(pwd)/$wt_name/.git" > ".git/worktrees/$wt_name/gitdir"
-        fi
-      fi
-    done
-    [[ "$dry_run" != "true" ]] && rmdir "${wt_dir}.claude/worktrees" 2>/dev/null || true
-  done
+  _relocate_claude_worktrees
 
   # Prune stale worktree registrations (e.g. from pre-relocation paths)
   [[ "$dry_run" != "true" ]] && git worktree prune 2>/dev/null || true
 
-  default_branch=$(_detect_default_branch)
-  if ! git worktree list | grep -q "\[$default_branch\]"; then
-    echo
-    if [[ "$dry_run" == "true" ]]; then
-      info "Missing worktree for $default_branch (run without --dry-run to create)"
-    elif confirm "  Create worktree for $default_branch?"; then
-      git worktree add "$default_branch" "$default_branch"
-      success "Created worktree: $default_branch"
-    fi
-  fi
+  _ensure_default_branch_worktree
 
   exit 0
 fi

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/otto-nation/otto-workbench/compare/v1.0.0...v1.0.1) (2026-05-11)
+
+
+### Bug Fixes
+
+* write tarball to /tmp to avoid tar self-reference error ([#56](https://github.com/otto-nation/otto-workbench/issues/56)) ([ac49c6a](https://github.com/otto-nation/otto-workbench/commit/ac49c6ab5d93d4628b2cf0fb14e682f43050508f))
+
 ## 1.0.0 (2026-05-11)
 
 

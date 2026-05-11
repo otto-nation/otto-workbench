@@ -88,12 +88,13 @@ jobs:
       - name: Create distributable tarball
         run: |
           TARBALL="otto-workbench-${{ env.VERSION }}.tar.gz"
-          tar czf "$TARBALL" \
+          tar czf "/tmp/$TARBALL" \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='tests' \
             --exclude='.shellcheckrc' \
             .
+          mv "/tmp/$TARBALL" .
           echo "TARBALL=$TARBALL" >> $GITHUB_ENV
 
       - name: Generate checksums

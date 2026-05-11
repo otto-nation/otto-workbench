@@ -7,7 +7,7 @@ How otto-workbench manages your developer environment — the concepts, layers, 
 The workbench has two modes of operation:
 
 ```
-install.sh (first-time, interactive)
+otto-workbench install (first-time, interactive)
 ├── Preflight: task, brew, mise — mandatory, runs first
 ├── Core menu: bin, git, zsh — selectable, Enter = all
 └── Optional menu: brew packages, docker, terminals, editors, ai — selectable, Enter = all
@@ -18,7 +18,7 @@ otto-workbench sync (ongoing, non-interactive)
 └── Calls sync_<name>() for each — idempotent, no prompts
 ```
 
-`install.sh` bootstraps a new machine with interactive menus. `otto-workbench sync` re-applies everything silently after pulling updates. Both are safe to re-run.
+`otto-workbench install` bootstraps a new machine with interactive menus. `otto-workbench sync` re-applies everything silently after pulling updates. Both are safe to re-run.
 
 ## Component Model
 
@@ -26,11 +26,11 @@ Components are organized into three tiers based on when and how they run.
 
 **Preflight** components (`task`, `brew`, `mise`) install unconditionally before anything else — they provide the tooling other components depend on.
 
-**Core** components (`bin`, `git`, `zsh`) are always synced. Each defines a [`sync_<name>()`](../CONTRIBUTING.md#sync_name-contract) function in its `steps.sh`. Adding a new core component requires only creating the directory with `steps.sh` — no edits to [`install.sh`](../install.sh).
+**Core** components (`bin`, `git`, `zsh`) are always synced. Each defines a [`sync_<name>()`](../CONTRIBUTING.md#sync_name-contract) function in its `steps.sh`. Adding a new core component requires only creating the directory with `steps.sh` — no edits to `bin/otto-workbench`.
 
 **Optional** components (`brew`, `docker`, `terminals`, `editors`, `ai`) appear in the install menu. Each has a [`setup.conf`](components.md#tier-2--optional-components) for metadata and a `setup.sh` for interactive install. Components with idempotent operations also define `steps.sh` for sync coverage.
 
-Discovery is automatic — [`install.sh`](../install.sh) globs `*/steps.sh` and skips any with a sibling `setup.conf` (those are optional). See the [Component Framework](components.md) reference for full contracts and examples.
+Discovery is automatic — `otto-workbench install` globs `*/steps.sh` and skips any with a sibling `setup.conf` (those are optional). See the [Component Framework](components.md) reference for full contracts and examples.
 
 ## Configuration Layers
 

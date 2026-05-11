@@ -4,7 +4,7 @@ Common issues and how to resolve them.
 
 ## "command not found: otto-workbench"
 
-`~/.local/bin` is not in your `PATH`. This is added automatically by `install.sh`, but requires a shell reload:
+`~/.local/bin` is not in your `PATH`. This is added automatically by `otto-workbench install`, but requires a shell reload:
 
 ```bash
 exec zsh
@@ -33,7 +33,7 @@ mv ~/.config/zsh/config.d/some-file ~/.config/zsh/config.d/some-file.bak
 otto-workbench sync
 ```
 
-For interactive overwrite prompts (overwrite/backup/skip), use `install.sh` instead.
+For interactive overwrite prompts (overwrite/backup/skip), use `otto-workbench install` instead.
 
 ## "tools.generated.md is out of date" (pre-push failure)
 

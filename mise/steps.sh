@@ -19,7 +19,7 @@ step_mise_install() {
   command -v mise >/dev/null 2>&1 && return
   skip "mise (version manager) is not installed"
   if [[ ! -t 0 ]]; then
-    warn "Non-interactive shell — skipping mise install. Run install.sh manually to install mise."
+    warn "Non-interactive shell — skipping mise install. Run otto-workbench install manually to install mise."
     return
   fi
   confirm "  Install mise?" || return

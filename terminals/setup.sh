@@ -2,7 +2,7 @@
 # Terminal emulator setup.
 #
 # Usage: bash terminals/setup.sh
-#        (also called automatically by install.sh)
+#        (also called automatically by otto-workbench install)
 #
 # What it does:
 #   1. Prompts for which terminal(s) to configure (multi-select)

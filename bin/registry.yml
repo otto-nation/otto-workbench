@@ -45,6 +45,11 @@ tools:
     when_to_use: "Cleaning up accumulated worktrees; runs automatically on Claude session stop"
     usage: "wt-cleanup  |  wt-cleanup --age 7  |  wt-cleanup --dry-run"
 
+  - name: wt-init
+    description: "Convert a regular git repo to a bare repo with worktrees"
+    when_to_use: "Setting up a repo for parallel worktree development with worktrunk"
+    usage: "wt-init  |  wt-init ~/code/myrepo  |  wt-init --dry-run"
+
   - name: get-secret
     description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"
     when_to_use: "Fetching credentials or config values stored in Secrets Manager"

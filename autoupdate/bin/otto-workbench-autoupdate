@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Scheduled auto-updater for otto-workbench.
+# Called by launchd — pulls latest changes and runs sync.
+#
+# Exit codes:
+#   0  Success (updated or already up-to-date)
+#   1  Error (fetch/pull/sync failed)
+
+set -e
+
+WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/workbench"
+LAST_RUN_FILE="$STATE_DIR/autoupdate.last"
+
+mkdir -p "$STATE_DIR"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+cd "$WORKBENCH_DIR"
+
+# Find the main worktree — in a bare repo with worktrees, main is checked out
+# in its own directory. Fall back to WORKBENCH_DIR if no worktree layout.
+MAIN_WORKTREE="$WORKBENCH_DIR"
+if [[ -d "$WORKBENCH_DIR/main/.git" || -f "$WORKBENCH_DIR/main/.git" ]]; then
+  MAIN_WORKTREE="$WORKBENCH_DIR/main"
+fi
+
+log "Fetching origin/main"
+if ! git -C "$MAIN_WORKTREE" fetch origin main 2>&1; then
+  log "ERROR: git fetch failed"
+  exit 1
+fi
+
+# Compare local main to origin/main
+local_main=$(git -C "$MAIN_WORKTREE" rev-parse HEAD)
+remote_main=$(git -C "$MAIN_WORKTREE" rev-parse origin/main)
+
+if [[ "$local_main" == "$remote_main" ]]; then
+  log "Already up-to-date (${local_main:0:7})"
+  date '+%s' > "$LAST_RUN_FILE"
+  exit 0
+fi
+
+log "Updating ${local_main:0:7} -> ${remote_main:0:7}"
+
+# Fast-forward main to fetched origin/main (no second network call)
+if ! git -C "$MAIN_WORKTREE" merge --ff-only origin/main 2>&1; then
+  log "ERROR: fast-forward of main failed (may have diverged)"
+  exit 1
+fi
+
+log "Running sync"
+if "$MAIN_WORKTREE/bin/otto-workbench" sync 2>&1; then
+  log "Sync complete"
+else
+  log "ERROR: sync failed (exit $?)"
+  exit 1
+fi
+
+date '+%s' > "$LAST_RUN_FILE"
+log "Update complete"

@@ -101,6 +101,8 @@ jobs:
         run: |
           sha256sum "${{ env.TARBALL }}" > checksums.txt
           cat checksums.txt
+          TARBALL_SHA256=$(sha256sum "${{ env.TARBALL }}" | cut -d' ' -f1)
+          echo "TARBALL_SHA256=$TARBALL_SHA256" >> $GITHUB_ENV
 
       - name: Upload release assets
         env:
@@ -117,7 +119,7 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ./scripts/homebrew.sh update -v "${{ env.TAG_NAME }}"
+          ./scripts/homebrew.sh update -v "${{ env.TAG_NAME }}" -s "${{ env.TARBALL_SHA256 }}"
           ./scripts/homebrew.sh deploy -v "${{ env.TAG_NAME }}"
 
       - name: Verify Homebrew tap deployment

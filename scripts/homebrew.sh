@@ -34,13 +34,16 @@ get_remote_sha256() {
 # Update formula with version and checksum
 cmd_update() {
     local version=""
+    local checksum=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             -v|--version) version="$2"; shift 2 ;;
+            -s|--sha256) checksum="$2"; shift 2 ;;
             -h|--help)
-                echo "Usage: $0 update -v <version>"
+                echo "Usage: $0 update -v <version> [-s <sha256>]"
                 echo "Update Homebrew formula with checksum for a release."
+                echo "If --sha256 is omitted, downloads the tarball to compute it."
                 return 0
                 ;;
             *) print_error "Unknown option: $1"; return 1 ;;
@@ -58,10 +61,11 @@ cmd_update() {
 
     print_status "Updating Homebrew formula for version $version..."
 
-    local tarball_url="https://github.com/$REPO/releases/download/$version/$APP_NAME-$version_clean.tar.gz"
-    print_status "Calculating SHA256 for tarball..."
-    local checksum
-    checksum=$(get_remote_sha256 "$tarball_url")
+    if [[ -z "$checksum" ]]; then
+        local tarball_url="https://github.com/$REPO/releases/download/$version/$APP_NAME-$version_clean.tar.gz"
+        print_status "Calculating SHA256 for tarball..."
+        checksum=$(get_remote_sha256 "$tarball_url")
+    fi
 
     local formula_path="$project_root/$FORMULA_FILE"
     if [[ ! -f "$formula_path" ]]; then

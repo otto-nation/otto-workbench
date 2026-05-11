@@ -126,42 +126,45 @@ print_workbench_summary() {
   echo -e "  ${CYAN}Editable configs${NC} ${DIM}(never overwritten by sync)${NC}"
 
   # git identity — check if [user] section has a real name configured
-  local _git_status="${DIM}needs setup${NC}"
-  if [[ -f "$GITCONFIG_FILE" ]]; then
-    local _git_name
-    _git_name=$(git config --global user.name 2>/dev/null || true)
-    if [[ -n "$_git_name" && "$_git_name" != *"CHANGEME"* && "$_git_name" != *"Your Name"* ]]; then
-      _git_status="${DIM}${_git_name}${NC}"
-    fi
+  local _git_name
+  _git_name=$(git config --global user.name 2>/dev/null || true)
+  if [[ -n "$_git_name" && "$_git_name" != *"CHANGEME"* && "$_git_name" != *"Your Name"* ]]; then
+    summary_ok "git identity      ${DIM}${GITCONFIG_FILE/#"$HOME"/$home_short}  ${_git_name}${NC}"
+  else
+    summary_warn "git identity      ${DIM}${GITCONFIG_FILE/#"$HOME"/$home_short}  needs setup${NC}"
   fi
-  echo -e "  ${DIM}  git identity      ${GITCONFIG_FILE/#"$HOME"/$home_short}  ${NC}${_git_status}"
 
   # shell secrets — check if file exists and count configured vars
-  local _env_status="${YELLOW}not created${NC} ${DIM}— see ${ENV_LOCAL_FILE/#"$HOME"/$home_short}.template${NC}"
   if [[ -f "$ENV_LOCAL_FILE" ]]; then
     local _env_count
     _env_count=$(grep -c '^export ' "$ENV_LOCAL_FILE" 2>/dev/null) || _env_count=0
-    _env_status="${DIM}${_env_count} var(s) configured${NC}"
+    summary_ok "shell secrets     ${DIM}${ENV_LOCAL_FILE/#"$HOME"/$home_short}  ${_env_count} var(s) configured${NC}"
+  else
+    summary_warn "shell secrets     ${DIM}${ENV_LOCAL_FILE/#"$HOME"/$home_short}  not created — see ${ENV_LOCAL_FILE/#"$HOME"/$home_short}.template${NC}"
   fi
-  echo -e "  ${DIM}  shell secrets     ${ENV_LOCAL_FILE/#"$HOME"/$home_short}  ${NC}${_env_status}"
 
   # AI tokens — check AI_COMMAND and GH_TOKEN in taskfile.env
-  local _ai_status="${YELLOW}not configured${NC} ${DIM}— run: task --global ai:setup${NC}"
-  local _gh_status="${YELLOW}not set${NC}"
+  local _ai_cmd="" _gh_set=false
   if [[ -f "$TASKFILE_ENV" ]]; then
-    local _ai_cmd
     _ai_cmd=$(grep -m1 '^AI_COMMAND=' "$TASKFILE_ENV" 2>/dev/null | sed 's/^AI_COMMAND=//')
-    [[ -n "$_ai_cmd" ]] && _ai_status="${DIM}${_ai_cmd}${NC}"
-    grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null && _gh_status="${DIM}configured${NC}"
+    grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null && _gh_set=true
   fi
-  echo -e "  ${DIM}  AI command        ${TASKFILE_ENV/#"$HOME"/$home_short}  ${NC}${_ai_status}"
-  echo -e "  ${DIM}  GH_TOKEN          ${TASKFILE_ENV/#"$HOME"/$home_short}  ${NC}${_gh_status}"
+  if [[ -n "$_ai_cmd" ]]; then
+    summary_ok "AI command        ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  ${_ai_cmd}${NC}"
+  else
+    summary_warn "AI command        ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  not configured — run: task --global ai:setup${NC}"
+  fi
+  if [[ "$_gh_set" == true ]]; then
+    summary_ok "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  configured${NC}"
+  else
+    summary_warn "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  not set${NC}"
+  fi
 
-  echo -e "  ${DIM}  shell rc          ${ZSHRC_FILE/#"$HOME"/$home_short}${NC}"
+  summary_info "shell rc          ${DIM}${ZSHRC_FILE/#"$HOME"/$home_short}${NC}"
 
   # Ghostty — only if config exists
   if [[ -f "$GHOSTTY_CONFIG_FILE" ]]; then
-    echo -e "  ${DIM}  terminal          ${GHOSTTY_CONFIG_FILE/#"$HOME"/$home_short}${NC}"
+    summary_info "terminal          ${DIM}${GHOSTTY_CONFIG_FILE/#"$HOME"/$home_short}${NC}"
   fi
 
   # ── Environment setup (from registries) ──────────────────────────────

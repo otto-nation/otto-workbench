@@ -53,3 +53,11 @@ title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 
 # skip [label] — print a skip line with optional label
 skip() { echo -e "${DIM}⊘ ${1:-Skipped}${NC}"; }
+
+# Summary status lines — indented for use in post-install/sync summaries.
+# Each prints: "  <icon> <message>"
+# Complement success()/warn()/err() which are for step output during install.
+summary_ok()   { echo -e "  ${GREEN}✓${NC} $*"; }
+summary_warn() { echo -e "  ${YELLOW}⚠${NC}  $*"; }
+summary_err()  { echo -e "  ${RED}✗${NC} $*"; }
+summary_info() { echo -e "  ${DIM}●${NC} $*"; }

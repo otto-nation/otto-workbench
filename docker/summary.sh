@@ -17,15 +17,15 @@ print_docker_summary() {
 
   echo
   echo -e "  ${CYAN}Docker${NC}"
-  case "$runtime" in
-    colima)
-      echo -e "  ${DIM}  Start colima:  colima start${NC}"
-      ;;
-    orbstack)
-      echo -e "  ${DIM}  Launch OrbStack from Applications to start the Docker daemon.${NC}"
-      ;;
-    *)
-      echo -e "  ${DIM}  Start your runtime (colima start, or launch OrbStack).${NC}"
-      ;;
-  esac
+
+  if docker info >/dev/null 2>&1; then
+    summary_ok "running ${DIM}(${runtime:-unknown runtime})${NC}"
+  else
+    local _hint="start your runtime"
+    case "$runtime" in
+      colima)   _hint="colima start" ;;
+      orbstack) _hint="launch OrbStack from Applications" ;;
+    esac
+    summary_warn "not running — ${DIM}${_hint}${NC}"
+  fi
 }

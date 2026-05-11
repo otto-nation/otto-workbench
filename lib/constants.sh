@@ -25,6 +25,18 @@ if [[ -z "${WORKBENCH_DIR:-}" ]]; then
   unset _constants_src
 fi
 
+# Stable symlink target — in bare repos, resolves to the main worktree so
+# symlinks created by install_symlink survive worktree switches.
+# In normal repos (non-bare), equals WORKBENCH_DIR.
+if [[ -z "${WORKBENCH_STABLE_DIR:-}" ]]; then
+  WORKBENCH_STABLE_DIR="$WORKBENCH_DIR"
+  if [[ "$(git -C "$WORKBENCH_DIR" config --get core.bare 2>/dev/null)" == "true" ]]; then
+    _main_wt="$(git -C "$WORKBENCH_DIR" worktree list 2>/dev/null | awk '/\[main\]/{print $1; exit}')"
+    [[ -n "$_main_wt" ]] && WORKBENCH_STABLE_DIR="$_main_wt"
+    unset _main_wt
+  fi
+fi
+
 # ─── Shell dotfiles ───────────────────────────────────────────────────────────
 ZSHRC_FILE="$HOME/.zshrc"
 BASHRC_FILE="$HOME/.bashrc"

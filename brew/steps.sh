@@ -24,7 +24,7 @@ step_brew_install() {
   warn "Homebrew is not installed"
 
   if [[ ! -t 0 ]]; then
-    warn "Non-interactive shell — skipping brew install. Run install.sh manually to install Homebrew."
+    warn "Non-interactive shell — skipping brew install. Run otto-workbench install manually to install Homebrew."
     return
   fi
 

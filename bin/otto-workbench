@@ -4,11 +4,19 @@
 # Usage: otto-workbench <command>
 #
 # Commands:
+#   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
 #   sync                  Re-apply all workbench configuration to ~/
 #   claude [--force] [--analyze]  Sync Claude config + scaffold project .claude/ (see below)
 #   autoupdate <subcmd>   Scheduled pull + sync via launchd
 #   state [regenerate]    Show or re-detect installed component state
 #   changelog             Show recent changes from conventional commits
+#
+# What install does:
+#   Runs first-time setup: installs preflight tools (task, brew, mise),
+#   syncs core components (bin, git, zsh), presents a menu of optional
+#   components (brew packages, docker, terminals, editors, ai), and runs
+#   pending migrations. Safe to re-run — idempotent.
+#   Use --all to skip menus, or name specific components.
 #
 # What claude does:
 #   Syncs machine-level Claude config (settings, rules, skills, agents, MCPs),
@@ -26,14 +34,14 @@
 #   - Checks for install-needed changes (missing brew packages, unconfigured
 #     components) and prints actionable "install.sh <component>" commands
 #
-# What sync does NOT do (one-time setup via install.sh):
+# What sync does NOT do (one-time setup via otto-workbench install):
 #   - Install Homebrew packages or casks
 #   - Configure Docker runtime
 #   - Import iTerm themes
 #   - Create Ghostty config from template
 #   - Regenerate tool context (now runs during sync via sync_zsh)
 #
-# To run first-time setup or those components: bash <workbench>/install.sh [COMPONENT ...]
+# To run first-time setup or those components: otto-workbench install [COMPONENT ...]
 
 set -e
 
@@ -48,13 +56,10 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/migrations.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/install.sh"
 
 WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
-
-# Non-interactive mode: all install_symlink calls warn and skip real files rather
-# than prompting. Users who need interactive overwrite should run install.sh instead.
-# shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
-SYMLINK_MODE=no-prompt
 
 # Auto-discover and source all steps.sh files.
 # Each steps.sh self-derives its own paths; no external variables need to be injected.
@@ -120,13 +125,101 @@ _check_install_needed() {
       printf "    ${YELLOW}%-18s${NC} %s\n" "${needs_install[$i]}" "${install_reasons[$i]}"
     done
     echo
-    echo -e "  Run: ${BOLD}install.sh ${needs_install[*]}${NC}"
+    echo -e "  Run: ${BOLD}otto-workbench install ${needs_install[*]}${NC}"
   fi
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
+# _clone_workbench_repo — clones the workbench repo for Cellar-based installs.
+# After cloning, the caller should re-exec from the cloned copy.
+WORKBENCH_REPO_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/otto-workbench"
+
+_clone_workbench_repo() {
+  local repo_url="https://github.com/otto-nation/otto-workbench.git"
+
+  if [[ -d "$WORKBENCH_REPO_DIR" ]]; then
+    info "Workbench repo already exists at $WORKBENCH_REPO_DIR"
+    return
+  fi
+
+  info "Cloning workbench repo to $WORKBENCH_REPO_DIR"
+  git clone "$repo_url" "$WORKBENCH_REPO_DIR"
+}
+
+cmd_install() {
+  # If running from Homebrew Cellar, clone the full repo and re-exec from there.
+  if [[ "$WORKBENCH_DIR" == */Cellar/* ]]; then
+    _clone_workbench_repo
+    exec "$WORKBENCH_REPO_DIR/bin/otto-workbench" install "$@"
+  fi
+
+  # Parse flags: --all, component targets
+  parse_install_flags "$@"
+
+  # Collect warnings/errors for final summary replay.
+  WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-install.XXXXXX")"
+  export WORKBENCH_INSTALL_LOG
+  trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
+  export WORKBENCH_DIR
+
+  # Interactive mode: install_symlink prompts before overwriting real files.
+  # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
+  SYMLINK_MODE=""
+
+  echo -e "${BOLD}${BLUE}Installing dotfiles...${NC}"
+  echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
+  echo
+
+  # ─── Preflight ──────────────────────────────────────────────────────────
+  step_task_install
+  step_brew_install
+  step_mise_install
+  echo
+
+  # Resolve known components and validate targets (if any).
+  resolve_known_components
+  if [[ "$INSTALL_TARGETED" == true ]]; then
+    validate_install_targets "${INSTALL_TARGETS[@]}"
+  fi
+
+  # ─── Core components ───────────────────────────────────────────────────
+  local -a _core_dirs=() _core_descs=()
+  discover_core_components _core_dirs _core_descs
+
+  if [[ ${#_core_dirs[@]} -gt 0 ]]; then
+    local -a _core_selected=()
+    select_core_components _core_selected _core_dirs _core_descs
+    local _c
+    for _c in "${_core_selected[@]}"; do
+      run_core_component "$_c"
+    done
+  fi
+
+  update_path_in_shell_rc
+
+  # Run pending migrations after core sync, before optional components.
+  echo
+  info "Migrations"
+  run_all_migrations
+
+  echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
+
+  # ─── Optional components ────────────────────────────────────────────────
+  local registry="$WORKBENCH_DIR/install.components"
+  validate_components "$registry"
+  discover_components  "$registry"
+  select_components
+  run_components
+
+  print_install_summary
+}
+
 cmd_sync() {
+  # Non-interactive mode: install_symlink warns and skips real files.
+  # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
+  SYMLINK_MODE=no-prompt
+
   # Collect warnings/errors for final summary replay.
   WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
   export WORKBENCH_INSTALL_LOG
@@ -628,6 +721,7 @@ usage() {
 Usage: otto-workbench <command>
 
 Commands:
+  install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
   sync                  Re-apply all workbench configuration to ~/
   claude [--force] [--analyze]  Sync Claude config + scaffold .claude/ in current repo
   autoupdate <subcmd>   Scheduled pull + sync via launchd
@@ -635,11 +729,13 @@ Commands:
   state [regenerate]    Show or regenerate installed component state
   changelog             Show recent changes from conventional commits
 
+Run 'otto-workbench install --help' for install options.
 Run 'otto-workbench autoupdate' or 'otto-workbench override' for subcommands.
 EOF
 }
 
 case "${1:-}" in
+  install)   shift; cmd_install "$@" ;;
   sync)      cmd_sync ;;
   claude)    cmd_claude "$@" ;;
   autoupdate) cmd_autoupdate "$@" ;;

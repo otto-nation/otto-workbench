@@ -2,7 +2,7 @@
 # Docker runtime setup.
 #
 # Usage: bash docker/setup.sh
-#        (also called automatically by install.sh)
+#        (also called automatically by otto-workbench install)
 #
 # What it does:
 #   1. Prompts for your docker runtime (Colima, OrbStack, etc.)

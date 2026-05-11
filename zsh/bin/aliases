@@ -8,8 +8,8 @@ _CMD="${$(whence -p "${0:t}" 2>/dev/null):-$0}"
 _SELF="$(readlink "$_CMD" 2>/dev/null || echo "$_CMD")"
 . "$(dirname "$_SELF")/../../lib/ui.sh"
 
-# ZSH_CONFIG_DIR comes from lib/constants.sh (bash-only); fall back to known path when running under zsh
-ALIASES_DIR="${ZSH_CONFIG_DIR:-$HOME/.config/zsh/config.d}"
+# Aliases live in the aliases/ subdirectory of the config.d layer tree
+ALIASES_DIR="${ZSH_CONFIG_DIR:-$HOME/.config/zsh/config.d/aliases}"
 FILTER="${1:-}"
 
 # Display layout
@@ -153,17 +153,14 @@ if [[ -f "$GIT_ZSH_FILE" ]]; then
   done < "$GIT_ZSH_FILE"
 fi
 
-# Double-pipe pattern: the first while runs in a subshell and cannot modify git_items directly;
-# piping its output to a second while lets us populate the array in the current shell
-git config --get-regexp '^alias\.' 2>/dev/null | while IFS= read -r line; do
+# Process substitution keeps the while in the current shell so git_items is modified in place
+while IFS= read -r line; do
   line="${line#alias.}"
   name="${line%% *}"
   value="${line#* }"
   matches_filter "$name" || matches_filter "$value" || continue
-  echo "alias|$name|$value"
-done | while IFS='|' read -r type name value; do
-  git_items+=("$type|$name|$value")
-done
+  git_items+=("alias|$name|$value")
+done < <(git config --get-regexp '^alias\.' 2>/dev/null)
 
 if [[ ${#git_items[@]} -gt 0 ]]; then
   print_header "Git" "git"
@@ -213,7 +210,7 @@ fi
 if [[ -z "$FILTER" ]]; then
   echo -e "\n${DIM}Usage: aliases [filter]${NC}"
   echo -e "${DIM}Example: aliases aws, aliases git, aliases docker${NC}"
-  echo -e "${DIM}Add new aliases to: $ALIASES_DIR/*.zsh${NC}"
+  echo -e "${DIM}Add new aliases to: $ALIASES_DIR${NC}"
 else
   echo -e "\n${DIM}Showing results for: ${YELLOW}$FILTER${NC}"
 fi

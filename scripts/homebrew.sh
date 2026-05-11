@@ -19,6 +19,8 @@ get_remote_sha256() {
     local temp_file
 
     temp_file=$(mktemp)
+    # Expand now — temp_file is set on the preceding line
+    # shellcheck disable=SC2064
     trap "rm -f '$temp_file'" RETURN
 
     if ! download_file "$url" "$temp_file" false; then
@@ -124,6 +126,8 @@ cmd_deploy() {
 
     local tap_dir
     tap_dir=$(mktemp -d)
+    # Expand now — tap_dir is set on the preceding line
+    # shellcheck disable=SC2064
     trap "rm -rf '$tap_dir'" RETURN
 
     print_status "Cloning tap repository..."

@@ -1,0 +1,12 @@
+# Central configuration for all release-related settings
+
+# Package managers to update
+package_managers:
+  homebrew:
+    enabled: true
+    tap_repo: "otto-nation/homebrew-tap"
+    formula_path: "Formula/otto-workbench.rb"
+
+# Notification settings (currently disabled)
+notifications:
+  enabled: false

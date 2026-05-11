@@ -364,6 +364,25 @@ _autoupdate_install_plist() {
     "$template" > "$_AUTOUPDATE_PLIST"
 }
 
+_autoupdate_status() {
+  if ! _autoupdate_is_loaded; then
+    echo -e "  ${DIM}Not running${NC}"
+    echo -e "  ${DIM}Start with: otto-workbench autoupdate start${NC}"
+    return
+  fi
+
+  local interval
+  interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$_AUTOUPDATE_PLIST" 2>/dev/null || echo "unknown")
+  echo -e "  ${GREEN}Running${NC}  every $(_format_interval "$interval")"
+
+  local last_run_file="${XDG_CONFIG_HOME:-$HOME/.config}/workbench/autoupdate.last"
+  [[ -f "$last_run_file" ]] || return 0
+  local ts last_date
+  ts=$(cat "$last_run_file")
+  last_date=$(date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+  echo -e "  ${DIM}Last run: $last_date${NC}"
+}
+
 _format_interval() {
   local seconds=$1
   if (( seconds >= 3600 )); then
@@ -402,23 +421,7 @@ cmd_autoupdate() {
       ;;
 
     status)
-      if _autoupdate_is_loaded; then
-        local interval
-        interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$_AUTOUPDATE_PLIST" 2>/dev/null || echo "unknown")
-        echo -e "  ${GREEN}Running${NC}  every $(_format_interval "$interval")"
-
-        local last_run_file="${XDG_CONFIG_HOME:-$HOME/.config}/workbench/autoupdate.last"
-        if [[ -f "$last_run_file" ]]; then
-          local ts
-          ts=$(cat "$last_run_file")
-          local last_date
-          last_date=$(date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
-          echo -e "  ${DIM}Last run: $last_date${NC}"
-        fi
-      else
-        echo -e "  ${DIM}Not running${NC}"
-        echo -e "  ${DIM}Start with: otto-workbench autoupdate start${NC}"
-      fi
+      _autoupdate_status
       ;;
 
     run)

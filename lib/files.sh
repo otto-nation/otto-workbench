@@ -232,6 +232,9 @@ install_hook_dispatcher() {
   local source_rel="$1" target="$2"
   local label="${3:-$(basename "$target")}"
 
+  # Remove broken symlinks left over from pre-bare-repo installs
+  [[ -L "$target" ]] && rm -f "$target"
+
   cat > "$target" <<EOF
 #!/usr/bin/env bash
 exec "\$(git rev-parse --show-toplevel)/$source_rel" "\$@"

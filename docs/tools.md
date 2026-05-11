@@ -11,6 +11,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
+| `wt-init` | Convert a regular git repo to a bare repo with worktrees |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |

@@ -8,8 +8,18 @@
 print_brew_summary() {
   echo
   echo -e "  ${CYAN}Homebrew${NC}"
-  echo -e "  ${DIM}  After installing new packages, sync the Brewfile:${NC}"
-  echo -e "  ${DIM}  \$ task --global brew:dump${NC}"
-  echo -e "  ${DIM}  Optional stacks: brew bundle --file=brew/<category>/<stack>.Brewfile${NC}"
-  echo -e "  ${DIM}  Autoupdate status: brew autoupdate status${NC}"
+
+  if command -v brew >/dev/null 2>&1; then
+    if brew bundle check --file="$WORKBENCH_DIR/brew/Brewfile" >/dev/null 2>&1; then
+      summary_ok "packages in sync"
+    else
+      summary_warn "packages may need install — run: ${DIM}otto-workbench sync${NC}"
+    fi
+  else
+    summary_err "brew not found"
+    return
+  fi
+
+  summary_info "After installing new packages: ${DIM}task --global brew:dump${NC}"
+  summary_info "Optional stacks: ${DIM}brew bundle --file=brew/<category>/<stack>.Brewfile${NC}"
 }

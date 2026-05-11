@@ -68,7 +68,7 @@ teardown() {
 # ── BSD ln regression tests (macOS only) ─────────────────────────────────────
 
 @test "re-running ln -sfh on an existing file symlink replaces the symlink, not the file" {
-  [[ "$OSTYPE" == "darwin"* ]] || skip "macOS only"
+  if [[ "$OSTYPE" != "darwin"* ]]; then skip "macOS only"; return; fi
   echo "original" > "$TMPDIR/file.txt"
   ln -s "$TMPDIR/file.txt" "$TMPDIR/link"
 
@@ -85,7 +85,7 @@ teardown() {
 # ── Directory symlink re-run ──────────────────────────────────────────────────
 
 @test "re-running ln -sfh on an existing directory symlink replaces the symlink, not nesting inside" {
-  [[ "$OSTYPE" == "darwin"* ]] || skip "macOS only"
+  if [[ "$OSTYPE" != "darwin"* ]]; then skip "macOS only"; return; fi
   mkdir "$TMPDIR/source_dir"
   ln -s "$TMPDIR/source_dir" "$TMPDIR/link_dir"
 

@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# Convert a regular git repo to a bare repo with worktrees.
+#
+# The current branch's working tree (including uncommitted changes) is moved
+# into a named worktree directory inside the bare repo root. Existing worktrees
+# (e.g. Claude agent worktrees in .claude/worktrees/) are preserved in place.
+#
+# Usage:
+#   wt-init                  # convert current repo
+#   wt-init ~/code/myrepo    # convert a specific repo
+#   wt-init --dry-run        # preview what would happen
+#
+# Safe to re-run — skips repos that are already bare.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+require_command wt "worktrunk (wt) is required — brew install worktrunk" || exit 1
+
+# Detect default branch: main unless only master exists
+_detect_default_branch() {
+  if git rev-parse --verify master >/dev/null 2>&1 && ! git rev-parse --verify main >/dev/null 2>&1; then
+    echo "master"
+  else
+    echo "main"
+  fi
+}
+
+dry_run=false
+repo_path=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) dry_run=true; shift ;;
+    -h|--help)
+      sed -n '2,/^$/{ s/^# //; s/^#$//; p }' "${BASH_SOURCE[0]}"
+      exit 0
+      ;;
+    -*) err "Unknown option: $1"; exit 1 ;;
+    *)  repo_path="$1"; shift ;;
+  esac
+done
+
+repo_path="${repo_path:-.}"
+cd "$repo_path" || { err "Invalid path: $repo_path"; exit 1; }
+
+git rev-parse --git-dir >/dev/null 2>&1 || { err "Not a git repo: $(pwd)"; exit 1; }
+
+# Already bare — show status, offer to create missing default branch worktree
+if [[ "$(git config --get core.bare 2>/dev/null)" == "true" ]]; then
+  success "Already a bare repo — no conversion needed"
+  echo
+  info "Worktrees:"
+  git worktree list
+
+  # Relocate Claude worktrees found inside other worktrees to the bare root
+  for wt_dir in */; do
+    [[ -d "${wt_dir}.claude/worktrees" ]] || continue
+    for claude_wt in "${wt_dir}.claude/worktrees"/*/; do
+      [[ -d "$claude_wt" ]] || continue
+      wt_name="$(basename "$claude_wt")"
+      if [[ "$dry_run" == "true" ]]; then
+        echo
+        info "Would relocate Claude worktree: ${wt_dir}.claude/worktrees/$wt_name → ./$wt_name"
+      else
+        info "Relocating Claude worktree: $wt_name"
+        mv "$claude_wt" "./$wt_name"
+        # Update the gitdir pointer in the worktree's .git file
+        if [[ -f "./$wt_name/.git" ]]; then
+          echo "gitdir: $(pwd)/.git/worktrees/$wt_name" > "./$wt_name/.git"
+        fi
+        # Update the bare repo's pointer back to the worktree
+        if [[ -f ".git/worktrees/$wt_name/gitdir" ]]; then
+          echo "$(pwd)/$wt_name/.git" > ".git/worktrees/$wt_name/gitdir"
+        fi
+      fi
+    done
+    [[ "$dry_run" != "true" ]] && rmdir "${wt_dir}.claude/worktrees" 2>/dev/null || true
+  done
+
+  # Prune stale worktree registrations (e.g. from pre-relocation paths)
+  [[ "$dry_run" != "true" ]] && git worktree prune 2>/dev/null || true
+
+  default_branch=$(_detect_default_branch)
+  if ! git worktree list | grep -q "\[$default_branch\]"; then
+    echo
+    if [[ "$dry_run" == "true" ]]; then
+      info "Missing worktree for $default_branch (run without --dry-run to create)"
+    elif confirm "  Create worktree for $default_branch?"; then
+      git worktree add "$default_branch" "$default_branch"
+      success "Created worktree: $default_branch"
+    fi
+  fi
+
+  exit 0
+fi
+
+# Must be the repo root
+repo_root=$(git rev-parse --show-toplevel)
+if [[ "$(pwd -P)" != "$(cd "$repo_root" && pwd -P)" ]]; then
+  err "Run from the repo root: $repo_root"
+  exit 1
+fi
+
+current_branch=$(git symbolic-ref --short HEAD 2>/dev/null) || {
+  err "HEAD is detached — checkout a branch first"
+  exit 1
+}
+
+worktree_name="${current_branch//\//-}"
+default_branch=$(_detect_default_branch)
+
+# Collect existing worktrees (excluding the main working tree)
+existing_wts=()
+while IFS= read -r line; do
+  wt_path="${line%% *}"
+  [[ "$wt_path" == "$(pwd -P)" || "$wt_path" == "$repo_root" ]] && continue
+  existing_wts+=("$line")
+done < <(git worktree list)
+
+# Collect Claude agent worktrees that will be relocated
+claude_wts=()
+if [[ -d ".claude/worktrees" ]]; then
+  for d in .claude/worktrees/*/; do
+    [[ -d "$d" ]] && claude_wts+=("$(basename "$d")")
+  done
+fi
+
+# Show plan
+info "Converting $(basename "$repo_root") to bare repo + worktrees"
+echo
+echo "  New worktrees:"
+if [[ "$current_branch" == "$default_branch" ]]; then
+  echo "    $default_branch  ← current working tree (with all changes)"
+else
+  echo "    $default_branch"
+  echo "    $worktree_name  ← current working tree (with all changes)"
+fi
+for wt_line in "${existing_wts[@]}"; do
+  echo "    ${wt_line}"
+done
+if [[ ${#claude_wts[@]} -gt 0 ]]; then
+  echo
+  echo "  Claude worktrees (relocated from .claude/worktrees/):"
+  for name in "${claude_wts[@]}"; do
+    echo "    $name"
+  done
+fi
+echo
+
+if [[ "$dry_run" == "true" ]]; then
+  echo "  Would: convert .git to bare, move working tree to $worktree_name/"
+  exit 0
+fi
+
+if ! confirm "  Proceed?"; then
+  exit 0
+fi
+
+echo
+
+# 1. Extract .git contents to temp location
+bare_tmp=$(mktemp -d "${TMPDIR:-/tmp}/wt-init.XXXXXX")
+trap 'rm -rf "$bare_tmp"' EXIT
+
+info "Converting .git to bare repository"
+shopt -s dotglob
+mv .git/* "$bare_tmp/"
+rmdir .git
+
+git -C "$bare_tmp" config core.bare true
+
+# 2. Relocate Claude agent worktrees to bare root (before moving the rest)
+declare -A _relocated_wts=()
+if [[ -d ".claude/worktrees" ]]; then
+  for wt_dir in .claude/worktrees/*/; do
+    [[ -d "$wt_dir" ]] || continue
+    wt_name="$(basename "$wt_dir")"
+    info "Relocating Claude worktree: $wt_name"
+    mv "$wt_dir" "./$wt_name"
+    _relocated_wts["$wt_name"]=1
+  done
+  rmdir .claude/worktrees 2>/dev/null || true
+fi
+
+# 3. Move working tree files into the worktree directory
+info "Moving working tree → $worktree_name/"
+mkdir -p "$worktree_name"
+
+for item in ./*; do
+  [[ -e "$item" ]] || continue
+  name="$(basename "$item")"
+  [[ "$name" == "$worktree_name" ]] && continue
+  [[ -n "${_relocated_wts[$name]:-}" ]] && continue
+  mv "$item" "$worktree_name/"
+done
+
+# 3. Restore .git as bare repo
+mkdir .git
+mv "$bare_tmp"/* .git/
+shopt -u dotglob
+trap - EXIT
+rmdir "$bare_tmp"
+
+success "Bare repo created"
+
+# 4. Register the worktree with git
+info "Registering worktree: $worktree_name"
+mkdir -p ".git/worktrees/$worktree_name"
+
+echo "gitdir: $(pwd)/.git/worktrees/$worktree_name" > "$worktree_name/.git"
+echo "$(pwd)/$worktree_name" > ".git/worktrees/$worktree_name/gitdir"
+echo "ref: refs/heads/$current_branch" > ".git/worktrees/$worktree_name/HEAD"
+echo "../.." > ".git/worktrees/$worktree_name/commondir"
+
+# Rebuild the index for the new worktree location
+git -C "$worktree_name" reset >/dev/null 2>&1 || warn "Index reset failed — run 'git reset' in the worktree"
+
+# 5. Create a worktree for the default branch (if not already the current branch)
+if [[ "$current_branch" != "$default_branch" ]]; then
+  info "Creating worktree: $default_branch"
+  git worktree add "$default_branch" "$default_branch"
+fi
+
+echo
+success "Done!"
+echo
+echo "  Bare repo:   $(pwd)"
+if [[ "$current_branch" != "$default_branch" ]]; then
+  echo "  Worktree:    $(pwd)/$default_branch"
+fi
+echo "  Worktree:    $(pwd)/$worktree_name"
+for wt_line in "${existing_wts[@]}"; do
+  echo "  Existing:    ${wt_line%% *}"
+done
+echo
+echo "  Next steps:"
+echo "    cd $worktree_name"
+echo "    wt switch --create <branch>   # create more worktrees"
+echo "    wt list                        # show all worktrees"

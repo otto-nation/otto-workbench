@@ -9,11 +9,10 @@
 set -e
 
 WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-LOG_DIR="$HOME/Library/Logs/otto-workbench"
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/workbench"
 LAST_RUN_FILE="$STATE_DIR/autoupdate.last"
 
-mkdir -p "$LOG_DIR" "$STATE_DIR"
+mkdir -p "$STATE_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -44,8 +43,8 @@ fi
 
 log "Updating ${local_main:0:7} -> ${remote_main:0:7}"
 
-# Fast-forward main worktree
-if ! git -C "$MAIN_WORKTREE" pull --ff-only origin main 2>&1; then
+# Fast-forward main to fetched origin/main (no second network call)
+if ! git -C "$MAIN_WORKTREE" merge --ff-only origin/main 2>&1; then
   log "ERROR: fast-forward of main failed (may have diverged)"
   exit 1
 fi

@@ -423,7 +423,7 @@ cmd_autoupdate() {
 
     run)
       info "Running update now"
-      bash "$WORKBENCH_DIR/autoupdate/bin/otto-workbench-autoupdate"
+      "$WORKBENCH_DIR/autoupdate/bin/otto-workbench-autoupdate"
       ;;
 
     logs)

@@ -25,6 +25,11 @@ Remove stale git worktrees — merged branches and optionally age-based cleanup
 - **When to use**: Cleaning up accumulated worktrees; runs automatically on Claude session stop
 - **Usage**: `wt-cleanup  |  wt-cleanup --age 7  |  wt-cleanup --dry-run`
 
+### wt-init
+Convert a regular git repo to a bare repo with worktrees
+- **When to use**: Setting up a repo for parallel worktree development with worktrunk
+- **Usage**: `wt-init  |  wt-init ~/code/myrepo  |  wt-init --dry-run`
+
 ### get-secret
 Interactively retrieves a secret from AWS Secrets Manager by listing and selecting
 - **When to use**: Fetching credentials or config values stored in Secrets Manager

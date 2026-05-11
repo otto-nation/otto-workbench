@@ -303,9 +303,9 @@ step_global_hooks() {
 # The global hooks delegate back to .git/hooks/ if present,
 # so this step is required for repo-local hooks to run.
 step_local_hooks() {
-  local dot_git="$WORKBENCH_DIR/.git"
-  # In a worktree, .git is a file (not a directory) — skip in that case
-  [[ -d "$dot_git" ]] || return 0
+  # Use --git-common-dir so this works from worktrees (where .git is a file)
+  local dot_git
+  dot_git="$(git -C "$WORKBENCH_DIR" rev-parse --git-common-dir)"
   mkdir -p "$dot_git/hooks"
 
   # Auto-heal: if something set core.hooksPath to /dev/null, hooks are silently disabled

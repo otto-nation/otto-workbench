@@ -26,6 +26,12 @@ unset _files_lib_dir
 install_symlink() {
   local source=$1 target=$2
   shift 2
+
+  # In bare repos, redirect symlink targets to the stable (main) worktree
+  # so symlinks survive worktree switches.
+  if [[ "${WORKBENCH_STABLE_DIR:-}" != "${WORKBENCH_DIR:-}" ]]; then
+    source="${source/#"$WORKBENCH_DIR"/"$WORKBENCH_STABLE_DIR"}"
+  fi
   local label="" no_prompt=false
 
   while [[ $# -gt 0 ]]; do
@@ -150,11 +156,13 @@ symlink_dir() {
   fi
 
   if [[ "$prune" == true ]]; then
+    # Stable dir: match symlinks pointing to any worktree's version of this dir
+    local stable_src="${src/#"$WORKBENCH_DIR"/"${WORKBENCH_STABLE_DIR:-$WORKBENCH_DIR}"}"
     local item target
     for item in "$dst"/$glob; do
       [[ -L "$item" ]] || continue
       target=$(readlink "$item")
-      [[ "$target" == "$src"/* ]] || continue
+      [[ "$target" == "$src"/* || "$target" == "$stable_src"/* ]] || continue
       [[ -e "$target" ]] && continue
       rm "$item"
       echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"

@@ -170,20 +170,25 @@ if [[ ${#git_items[@]} -gt 0 ]]; then
   done
 fi
 
-# List custom scripts from this workbench's bin/ directory.
-# Using the resolved script path (via _SELF) makes this work both when run directly
-# from the repo and when run through the ~/.local/bin symlink.
-SCRIPT_DIR="$(dirname "$_SELF")"
+# List workbench scripts — scan ~/.local/bin for symlinks pointing into the workbench repo.
+# Resolving _SELF gives us the workbench repo root to match against.
+WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+SCRIPTS_BIN="$HOME/.local/bin"
 typeset -a script_items=()
 
-for script in "$SCRIPT_DIR"/*; do
+for script in "$SCRIPTS_BIN"/*; do
   [[ ! -f "$script" ]] && continue
   [[ ! -x "$script" ]] && continue
+
+  # Only include symlinks that resolve into the workbench repo
+  local target="$(readlink "$script" 2>/dev/null)"
+  [[ -z "$target" ]] && continue
+  [[ "$target" != "$WORKBENCH_ROOT"* ]] && continue
 
   script_name=$(basename "$script")
 
   # Skip self and the task wrapper
-  [[ "$script_name" == "$(basename "$_SELF")" ]] && continue
+  [[ "$script_name" == "aliases" ]] && continue
   [[ "$script_name" == "task" ]] && continue
 
   matches_filter "$script_name" || continue

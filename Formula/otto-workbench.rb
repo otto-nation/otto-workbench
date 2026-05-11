@@ -10,9 +10,6 @@ class OttoWorkbench < Formula
   def install
     libexec.install Dir["*"]
     bin.install_symlink libexec/"bin/otto-workbench"
-    bin.install_symlink libexec/"bin/wt-init"
-    bin.install_symlink libexec/"bin/wt-cleanup"
-    bin.install_symlink libexec/"bin/mem-analyze"
   end
 
   def caveats

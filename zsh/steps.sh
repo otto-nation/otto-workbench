@@ -167,7 +167,9 @@ _zshrc_check_duplicates() {
 
 # ─── env.local helpers ────────────────────────────────────────────────────────
 
-# _env_entry_plain — callback for iter_registry_env; emits commented export lines.
+# _env_entry_plain — callback for iter_registry_env; emits export lines.
+# Vars with a default value are emitted as active exports; vars without a default
+# (secrets, user-provided values) are emitted commented out as a reference.
 _env_entry_plain() {
   local var="$1" comment="$2" default_val="$3" setup_url="$4" prefix="$5"
 
@@ -179,11 +181,20 @@ _env_entry_plain() {
     printf '%s\n' "$comment_line"
   fi
 
-  local export_line="# export ${var}="
-  if [[ -n "$prefix" && "$prefix" != "null" ]]; then
-    export_line+="${prefix}"
-  elif [[ -n "$default_val" && "$default_val" != "null" ]]; then
-    export_line+="${default_val}"
+  local has_default=false
+  if [[ -n "$default_val" && "$default_val" != "null" ]]; then
+    has_default=true
+  fi
+
+  local export_line
+  if [[ "$has_default" == true ]]; then
+    # Active export — var has a sensible default from the registry
+    export_line="export ${var}=${default_val}"
+  else
+    export_line="# export ${var}="
+    if [[ -n "$prefix" && "$prefix" != "null" ]]; then
+      export_line+="${prefix}"
+    fi
   fi
   printf '%s\n\n' "$export_line"
 }

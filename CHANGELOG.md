@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/otto-nation/otto-workbench/compare/v1.0.2...v1.0.3) (2026-05-11)
+
+
+### Bug Fixes
+
+* scan ~/.local/bin for workbench scripts in aliases command ([#62](https://github.com/otto-nation/otto-workbench/issues/62)) ([dfeb5a2](https://github.com/otto-nation/otto-workbench/commit/dfeb5a29ff05d85abb6c5f03fbe1dc91b7738710))
+* update aliases script for layered config.d structure ([#60](https://github.com/otto-nation/otto-workbench/issues/60)) ([7fe98ba](https://github.com/otto-nation/otto-workbench/commit/7fe98ba0c5ded2034b699b21c486c2af75acacfa))
+
 ## [1.0.2](https://github.com/otto-nation/otto-workbench/compare/v1.0.1...v1.0.2) (2026-05-11)
 
 

@@ -70,7 +70,10 @@ gh api repos/{owner}/{repo}/pulls/<pr_number> \
   --header 'Accept: application/vnd.github.v3.diff'
 ```
 
-If the PR has been updated since the review file was written (compare the `<!-- date: -->` in the review file against the latest commit date), warn the user and ask whether to proceed.
+Check if the PR has been updated since the review was written:
+1. Parse `<!-- head_sha: -->` from the review file header (preferred — exact match)
+2. Fall back to comparing `<!-- date: -->` against the latest commit date if no head_sha
+3. If stale: warn the user and ask whether to proceed or re-run the reviewer first
 
 ### 4. Validate findings against the diff
 
@@ -112,11 +115,20 @@ For each finding that references source code (e.g., `see pkg/service/exampleclas
 
 ### 6. Post or update the review
 
-**Review body:** Keep it short — just a brief note pointing at the inline comments. Example:
+**Review body:** Start with a brief note pointing at the inline comments, then include any unmappable findings (files not in the diff or lines outside changed hunks).
 
-> Have some comments marked as nit, must-fix, or should-fix.
+Format:
 
-Do not repeat the summary, verdict, or out-of-scope findings in the body. All substance belongs in the inline comments.
+```markdown
+Have some comments marked as nit, must-fix, or should-fix.
+
+**Findings not in the diff (file-level):**
+
+- **[S1] [should-fix]** `path/to/file.go:29` — Full finding description with enough context to understand and act on.
+- **[N2] [nit]** `path/to/other.py:115` — Another finding.
+```
+
+If all findings are inline, keep the body short (just the first line). If all findings are unmappable, put them all in the body. Use the same severity tag format as inline comments so formatting is consistent.
 
 **If no existing PENDING review:**
 
@@ -135,7 +147,23 @@ Do NOT pass an `event` field — omitting it creates the review as PENDING. Pass
 
 **JSON payload escaping:** Always use a **quoted heredoc** (`<< 'EOF'`) or write the JSON to a temp file via the Write tool. An unquoted heredoc causes bash to expand `$(...)`, backticks, and `$VAR` inside comment bodies — turning code suggestions like `$(gh api user --jq '.login')` into their evaluated output.
 
-**If updating an existing PENDING review:** add new comments to the existing review and skip findings already posted.
+**If updating an existing PENDING review:** GitHub's API does not support adding comments to an existing PENDING review. Instead, use delete-and-recreate:
+1. Fetch the existing PENDING review's comments:
+   ```bash
+   gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews/<review_id>/comments \
+     --jq '[.[] | {path, line, start_line, side, start_side, body}]'
+   ```
+2. Fetch the existing review body:
+   ```bash
+   gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews/<review_id> --jq '.body'
+   ```
+3. Delete the PENDING review:
+   ```bash
+   gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews/<review_id> --method DELETE
+   ```
+4. Merge old comments with new findings (skip duplicates by matching path + finding ID)
+5. Merge old review body with new body content
+6. Create a new PENDING review with the combined payload
 
 **If replying to threads from Step 1b:** post replies to the appropriate comment threads:
 

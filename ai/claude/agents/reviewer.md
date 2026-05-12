@@ -37,6 +37,11 @@ Follow these phases in order:
      - Note resolved threads (author acknowledged and fixed) — skip these entirely
      - Focus on gaps: issues no one has raised, or threads where the resolution looks incomplete
      - If you disagree with an existing reviewer's assessment, say so explicitly with your reasoning
+  5. **Verify reply claims against actual code.** When a reply says "Fixed" or "Addressed":
+     - Read the referenced file at the referenced line to confirm the fix actually landed
+     - If the reply says a follow-up ticket was filed, check whether the ticket description is adequate (has specific files, approach, and what to remove — not just "move to config")
+     - Only mark a finding as resolved if the code change is verified — "Fixed" replies without corresponding code changes are still open
+     - Classify each reply thread: "verified fix" (strikethrough), "claimed but not fixed" (still open), "filed follow-up" (note ticket quality), "disagreed" (re-evaluate), "asked question" (flag for response)
 
 ### 1. Context
 - Read the repo's CLAUDE.md (and any sub-CLAUDE.md files it references). Use project-specific rules as review criteria throughout
@@ -64,6 +69,12 @@ Follow these phases in order:
 - Off-by-one errors, wrong comparison operators, missing returns
 - Race conditions or ordering issues in concurrent code
 - Whether the changes match the stated intent
+- **Error handling patterns:**
+  - Silent error swallowing (`except: pass`, `_ = err`, ignoring return codes from `subprocess.run`)
+  - Bare catches that discard error context — errors should be wrapped with context, not silently dropped
+  - Missing error checks on operations that can fail (file I/O, network calls, JSON parsing)
+  - Errors caught at the wrong level — catching too broadly hides bugs in unrelated code
+- **Resource cleanup** — unclosed files, connections, or handles; missing context managers (`with`), `defer`, or `try/finally`; threads or goroutines started without a join or shutdown path
 - Before reporting a finding, verify your claim: search for the function, constant, or pattern you reference. If you cannot find evidence, do not report it — false positives erode trust
 - If dependency files are modified: check for major version bumps, removed dependencies, or API changes that affect callers
 - If public API signatures changed: check all callers in the codebase to confirm they still work
@@ -84,13 +95,39 @@ Follow these phases in order:
   - Numeric thresholds or limits without context for what they represent
   - Do NOT flag magic values in tests unless they are repeated — test-only literals (fixture UUIDs, sample names) are fine as inline values
 - **Repeated literals in tests** — when the same literal (UUID, date, amount) appears 2+ times across test functions, flag it for extraction to a package-level var or const. The issue is DRY, not magic values
+- **Hardcoded operational config** — flag values that should be externalized to config files, not just named as constants. Distinguish between:
+  - **Code constants** (timeouts, buffer sizes, retry counts) — a named constant in the source is fine
+  - **Operational config** (team rosters, bot lists, label names, workflow state IDs, credentials, app IDs) — these change based on environment, deployment, or team changes and must live in config files, env vars, or external systems. A named constant in source is NOT sufficient — it still requires a code change and deploy to update
+  - **Credentials and identifiers** (app IDs, installation IDs, API keys, PEM paths) — these must never have hardcoded fallback defaults. Require env vars or config and fail loudly if missing
+  - When the same value appears in multiple files, flag it as a SSOT violation regardless of whether it's a constant or config
 
 ### 6. Design
 - Naming clarity and consistency with the existing codebase
 - Single-responsibility — does any new function do more than one thing?
 - Coupling and cohesion — does the change increase unnecessary dependencies?
 - Single source of truth — does the change duplicate data, logic, or constants that already have a canonical owner? Flag any second source that could drift
-- Repeated code — when the same multi-line block (3+ lines) appears in 2+ places within the PR, flag it. Before suggesting a new helper, search the shared library for an existing one that already does what the block does
+- **Function complexity** — flag functions with excessive nesting (3+ levels of conditionals/loops) or that do too many things. Prefer early returns to reduce nesting. If describing what a function does requires "and" (e.g., "validates input and fetches data and formats output"), it should be split
+- **Parameter threading** — when the same group of 3+ parameters is passed together through multiple function calls, they should be a struct/dataclass/named tuple. Common signs:
+  - The same `(provider_config, model, monorepo_root)` triplet threaded through every function
+  - Argument definitions duplicated across CLI command parsers
+  - Constructor calls repeated with identical field lists — extract a factory method
+- **Repeated code** — look for duplication at multiple levels:
+  - Same multi-line block (3+ lines) appearing in 2+ places within the PR
+  - Same function implemented separately in different files (even with slight variations — divergent implementations are worse than exact copies)
+  - Same value derived/computed in multiple places (e.g., `str(root / "doc-main")` in 4 locations, `[r.name for r in cfg.repos]` in 3 locations)
+  - Same constructor called with identical arguments in multiple places — extract a factory method
+  - Before suggesting a new helper, search the shared library for an existing one
+- **Redundant calls** — flag when:
+  - Two functions hit the same external API endpoint (HTTP, GraphQL, CLI) with different filters when one call could serve both
+  - A function makes a fresh call for data that was already fetched and cached by a prior call in the same flow
+  - The same CLI command is invoked in multiple places when the result could be passed through
+- **Brittle parsing** — flag substring matching or regex on natural language output when structured output (JSON, exit codes, sentinel markers) is feasible. Natural language parsing breaks silently when upstream wording changes
+- **Logging and observability** — flag operations that fail silently without logging, inconsistent log levels (e.g., `print` mixed with structured logging), and error messages missing context (which record, which input, which step failed). Operations that take action on external systems (API calls, file mutations, state transitions) should be observable
+- **Prompt and config quality** — when the PR includes prompt templates, agent instructions, or configuration files that drive automated behavior, review them as carefully as code:
+  - Missing instructions for edge cases (what to do when the happy path fails)
+  - Contradictory guidance (e.g., "make minimal changes" vs "clean up duplicated code")
+  - Misleading automated responses (e.g., "Addressed" replies when nothing was fixed)
+  - Missing structured output requirements when the output will be parsed programmatically
 - Extensibility — will the next developer who adds a similar case need to modify multiple files or copy-paste a block? Prefer designs that extend by addition, not modification
 - Maintainability — are there implicit assumptions, hidden dependencies, or fragile ordering that would break under reasonable future changes?
 - Test coverage — are new behaviors tested? Are edge cases covered?
@@ -114,6 +151,7 @@ Use the Write tool to save the review to the output path specified in the prompt
 ```markdown
 # Review: <repo>#<pr_number> — <PR title>
 <!-- date: YYYY-MM-DD -->
+<!-- head_sha: <full HEAD SHA at time of review> -->
 
 ## Summary
 One sentence on what the change does and overall quality.
@@ -140,6 +178,19 @@ After writing, print the file path so the user can review and edit before drafti
 After writing the review file, print:
 
 Do not post the review automatically. The user should verify the file first, then use `/pr-review` to create a PENDING review on GitHub.
+
+### Supplemental reviews
+
+When the prompt specifies additional review criteria (e.g., "now focus on code repetition" or "review for config-driven issues"), this is an additive pass on an existing review:
+
+1. Read the existing review file at the output path
+2. Preserve all existing findings (resolved and open)
+3. Add new findings with IDs that continue the existing sequence (e.g., if the last must-fix is `[M7]`, new ones start at `[M8]`)
+4. Update the summary to cover both the original and supplemental scope
+5. Update the verdict if the new findings change the assessment
+6. Write the merged result to the same output path
+
+Do NOT create a separate review file — all findings for a PR belong in one file.
 
 ## Constraints
 - NEVER modify source files, apply patches, or create commits — only write to the review output path

@@ -18,7 +18,7 @@
 #   2. Creates a git worktree via `wt switch pr:<N>` with latest changes
 #   3. If a prior review exists, archives it and feeds findings to the agent
 #   4. Runs the reviewer agent with local file access and streams progress
-#   5. Optionally posts the review via the poster agent (--post or interactive)
+#   5. Optionally posts the review via the /pr-review skill (--post or interactive)
 #   6. Cleans up the worktree on exit
 #
 # Iterative reviews:
@@ -30,7 +30,7 @@
 #   - Writes review to ~/.config/workbench/reviews/<repo>-<pr_number>.md
 #   - Archives prior reviews as <repo>-<pr_number>.<timestamp>.md
 #   - Creates/removes a temporary git worktree for the PR branch
-#   - When posting: creates a PENDING review on GitHub via poster agent
+#   - When posting: creates a PENDING review on GitHub via /pr-review skill
 #
 # Non-interactive mode (--no-post):
 #   Skips all prompts — no issue link prompt, no satisfaction confirm, no post
@@ -164,7 +164,7 @@ _print_summary() {
   echo -e "  Review:          ${review_file}"
   echo -e "  Session log:     ${session_log}"
   [[ -n "$post_session_log" && -f "$post_session_log" ]] && \
-    echo -e "  Poster session:  ${post_session_log}"
+    echo -e "  Post session:    ${post_session_log}"
   echo -e "  PR:              ${pr_url}"
   echo
 }
@@ -453,9 +453,8 @@ cmd_post() {
     exit 1
   fi
 
-  local poster_prompt
-  poster_prompt="Post review for PR #${pr_number} in ${repo}.
-Review file: ${review_file}"
+  local post_prompt
+  post_prompt="/pr-review ${pr_number}"
 
   local session_log="${review_file%.md}.post.jsonl"
 
@@ -463,7 +462,7 @@ Review file: ${review_file}"
   echo
   claude -p --verbose --output-format stream-json \
     --permission-mode acceptEdits \
-    --add-dir "$REVIEWS_DIR" --agent poster "$poster_prompt" \
+    --add-dir "$REVIEWS_DIR" "$post_prompt" \
     | _stream_progress "$session_log"
   echo
   # Fetch the PENDING review ID for the submit command

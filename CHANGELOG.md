@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/otto-nation/otto-workbench/compare/v1.0.3...v1.0.4) (2026-05-12)
+
+
+### Code Refactoring
+
+* **claude:** replace poster agent with /pr-review skill ([#63](https://github.com/otto-nation/otto-workbench/issues/63)) ([42a6b69](https://github.com/otto-nation/otto-workbench/commit/42a6b698a477bcf1ef87f5893727ae9470792bd1))
+
 ## [1.0.3](https://github.com/otto-nation/otto-workbench/compare/v1.0.2...v1.0.3) (2026-05-11)
 
 

@@ -93,7 +93,7 @@ _step "Regenerating tool context"
 if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then
   printf "${RED}✗${NC}\n" >&2
   err "Generated tool file was updated — commit it before pushing:"
-  echo "  git add $TOOLS_GENERATED_RELPATH $TOOLS_WORKFLOW_GENERATED_RELPATH"
+  echo "  git add $TOOLS_GENERATED_RELPATH"
   echo "  git commit -m \"chore: regenerate tool context\""
   exit 1
 fi

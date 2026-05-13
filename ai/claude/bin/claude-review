@@ -171,69 +171,70 @@ _print_summary() {
 
 # ─── Multi-phase review helpers ───────────────────────────────────────────────
 
-# _classify_tier FILE_PATH — prints tier number (1, 2, or 3) for a file.
+readonly MULTI_PHASE_LINE_THRESHOLD=500
+readonly MULTI_PHASE_FILE_THRESHOLD=10
+
+# _classify_tier RESULT_VAR FILE_PATH — sets RESULT_VAR to tier number (1, 2, or 3).
 _classify_tier() {
-  local path="$1"
+  local -n __tier=$1
+  local path="$2"
   local base="${path##*/}"
 
-  # Tier 3: generated files, test fixtures, lockfiles
-  case "$path" in
-    */gen/*) echo 3; return ;;
-    */testdata/*) echo 3; return ;;
+  case "$path" in */gen/*|*/testdata/*) __tier=3; return ;; esac
+  case "$base" in
+    *.pb.go|*_pb2.py|*_pb.ts|*_pb2_grpc.py|.latest.sql|go.sum|*.ko.yaml) __tier=3; return ;;
   esac
   case "$base" in
-    *.pb.go|*_pb2.py|*_pb.ts|*_pb2_grpc.py) echo 3; return ;;
-    .latest.sql|go.sum|*.ko.yaml) echo 3; return ;;
-  esac
-
-  # Tier 1: AI config, API contracts, security, migrations, dependencies
-  case "$base" in
-    CLAUDE.md|.cursorrules|AGENTS.md|GEMINI.md) echo 1; return ;;
-    go.mod|package.json|package-lock.json|requirements.txt|Gemfile) echo 1; return ;;
-    *.proto|*.graphql) echo 1; return ;;
+    CLAUDE.md|.cursorrules|AGENTS.md|GEMINI.md) __tier=1; return ;;
+    go.mod|package.json|package-lock.json|requirements.txt|Gemfile) __tier=1; return ;;
+    *.proto|*.graphql) __tier=1; return ;;
   esac
   case "$path" in
-    */migrations/*.sql|*/migrations/*.sh) echo 1; return ;;
-    */auth/*|*/crypto/*|*/permissions/*) echo 1; return ;;
-    */vault/*|*/network-policies/*|*/authorization-policies/*) echo 1; return ;;
+    */migrations/*.sql|*/migrations/*.sh) __tier=1; return ;;
+    */auth/*|*/crypto/*|*/permissions/*) __tier=1; return ;;
+    */vault/*|*/network-policies/*|*/authorization-policies/*) __tier=1; return ;;
   esac
+  __tier=2
+}
 
-  # Tier 2: everything else (application code, tests, config, infra)
-  echo 2
+# _files_to_json ARRAY... — prints compact JSON array from bash array elements.
+_files_to_json() {
+  printf '%s\n' "$@" | jq -R . | jq -cs .
+}
+
+# _emit_group NAME LINES FILES... — prints one JSON group line.
+_emit_group() {
+  local name="$1" lines="$2"
+  shift 2
+  printf '{"group":"%s","files":%s,"lines":%d}\n' "$name" "$(_files_to_json "$@")" "$lines"
 }
 
 # _group_files PR_META — outputs newline-delimited JSON group objects.
-# Each group: {"group": "name", "files": ["path", ...], "lines": N}
 _group_files() {
   local pr_meta="$1"
   local max_group_lines=800
 
-  # Build a lookup table of path -> lines (single jq call)
   local -A file_lines_map
   while IFS=$'\t' read -r path lines; do
     file_lines_map[$path]=$lines
   done < <(echo "$pr_meta" | jq -r '.files[] | [.path, (.additions + .deletions)] | @tsv')
 
-  # Classify files into tiers
   local tier1_files=() tier2_files=() tier3_files=()
   local tier1_lines=0 tier2_lines=0 tier3_lines=0
 
+  local __t
   for path in "${!file_lines_map[@]}"; do
     local lines=${file_lines_map[$path]}
-    local tier
-    tier=$(_classify_tier "$path")
-    case "$tier" in
+    _classify_tier __t "$path"
+    case "$__t" in
       1) tier1_files+=("$path"); tier1_lines=$((tier1_lines + lines)) ;;
       2) tier2_files+=("$path"); tier2_lines=$((tier2_lines + lines)) ;;
       3) tier3_files+=("$path"); tier3_lines=$((tier3_lines + lines)) ;;
     esac
   done
 
-  # Emit tier 1 group
   if (( ${#tier1_files[@]} > 0 )); then
-    printf '{"group":"tier1-critical","files":%s,"lines":%d}\n' \
-      "$(printf '%s\n' "${tier1_files[@]}" | jq -R . | jq -cs .)" \
-      "$tier1_lines"
+    _emit_group "tier1-critical" "$tier1_lines" "${tier1_files[@]}"
   fi
 
   # Group tier 2 files by top-level directory, splitting large groups
@@ -254,49 +255,36 @@ _group_files() {
     local files_str="${dir_file_list[$dir]}"
     local total_lines="${dir_line_total[$dir]}"
 
+    local file_array=()
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      file_array+=("$f")
+    done <<< "$files_str"
+    (( ${#file_array[@]} > 0 )) || continue
+
     if (( total_lines > max_group_lines )); then
       local sub_files=() sub_lines=0 sub_idx=1
-      while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
+      for f in "${file_array[@]}"; do
         local flines=${file_lines_map[$f]}
         if (( sub_lines + flines > max_group_lines && ${#sub_files[@]} > 0 )); then
-          printf '{"group":"%s-%d","files":%s,"lines":%d}\n' \
-            "$dir" "$sub_idx" \
-            "$(printf '%s\n' "${sub_files[@]}" | jq -R . | jq -cs .)" \
-            "$sub_lines"
+          _emit_group "${dir}-${sub_idx}" "$sub_lines" "${sub_files[@]}"
           sub_files=()
           sub_lines=0
           sub_idx=$((sub_idx + 1))
         fi
         sub_files+=("$f")
         sub_lines=$((sub_lines + flines))
-      done <<< "$files_str"
+      done
       if (( ${#sub_files[@]} > 0 )); then
-        printf '{"group":"%s-%d","files":%s,"lines":%d}\n' \
-          "$dir" "$sub_idx" \
-          "$(printf '%s\n' "${sub_files[@]}" | jq -R . | jq -cs .)" \
-          "$sub_lines"
+        _emit_group "${dir}-${sub_idx}" "$sub_lines" "${sub_files[@]}"
       fi
     else
-      local file_array=()
-      while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        file_array+=("$f")
-      done <<< "$files_str"
-      if (( ${#file_array[@]} > 0 )); then
-        printf '{"group":"%s","files":%s,"lines":%d}\n' \
-          "$dir" \
-          "$(printf '%s\n' "${file_array[@]}" | jq -R . | jq -cs .)" \
-          "$total_lines"
-      fi
+      _emit_group "$dir" "$total_lines" "${file_array[@]}"
     fi
   done
 
-  # Emit tier 3 group
   if (( ${#tier3_files[@]} > 0 )); then
-    printf '{"group":"tier3-generated","files":%s,"lines":%d}\n' \
-      "$(printf '%s\n' "${tier3_files[@]}" | jq -R . | jq -cs .)" \
-      "$tier3_lines"
+    _emit_group "tier3-generated" "$tier3_lines" "${tier3_files[@]}"
   fi
 }
 
@@ -352,7 +340,26 @@ _build_issue_section() {
   fi
 }
 
-# _merge_reviews OUTPUT_FILE GROUP_FILES... — merges group review files, renumbering IDs.
+# _renumber_section PREFIX SECTION_TEXT OFFSET_VAR — renumbers [P1] IDs by offset, updates offset.
+_renumber_section() {
+  local prefix="$1" text="$2"
+  local -n __offset=$3
+  local -n __merged=$4
+
+  [[ -n "$text" ]] || return 0
+  local count
+  count=$(echo "$text" | grep -c "\\[${prefix}[0-9]" || true)
+  if (( __offset > 0 )); then
+    local i
+    for (( i=count; i>=1; i-- )); do
+      text=$(echo "$text" | sed "s/\\[${prefix}${i}\\]/[${prefix}$((i + __offset))]/g")
+    done
+  fi
+  __merged+="$text"$'\n'
+  __offset=$((__offset + count))
+}
+
+# _merge_reviews OUTPUT_VAR GROUP_FILES... — merges group review files, renumbering IDs.
 _merge_reviews() {
   local -n __out=$1
   shift
@@ -366,7 +373,6 @@ _merge_reviews() {
     local content
     content=$(cat "$gf")
 
-    # Extract sections
     local triage must should nit
     triage=$(echo "$content" | sed -n '/^## File Triage/,/^## /{ /^## File Triage/d; /^## /d; p; }')
     must=$(echo "$content" | sed -n '/^## Must fix/,/^## /{ /^## Must fix/d; /^## /d; p; }')
@@ -374,47 +380,9 @@ _merge_reviews() {
     nit=$(echo "$content" | sed -n '/^## Nit/,/^## /{ /^## Nit/d; /^## /d; p; }')
 
     merged_triage+="$triage"$'\n'
-
-    # Count findings in this group and renumber
-    if [[ -n "$must" ]]; then
-      local m_count
-      m_count=$(echo "$must" | grep -c '\[M[0-9]' || true)
-      if (( m_offset > 0 )); then
-        # Renumber [M1] -> [M(1+offset)], etc.
-        local i
-        for (( i=m_count; i>=1; i-- )); do
-          must=$(echo "$must" | sed "s/\\[M${i}\\]/[M$((i + m_offset))]/g")
-        done
-      fi
-      merged_must+="$must"$'\n'
-      m_offset=$((m_offset + m_count))
-    fi
-
-    if [[ -n "$should" ]]; then
-      local s_count
-      s_count=$(echo "$should" | grep -c '\[S[0-9]' || true)
-      if (( s_offset > 0 )); then
-        local i
-        for (( i=s_count; i>=1; i-- )); do
-          should=$(echo "$should" | sed "s/\\[S${i}\\]/[S$((i + s_offset))]/g")
-        done
-      fi
-      merged_should+="$should"$'\n'
-      s_offset=$((s_offset + s_count))
-    fi
-
-    if [[ -n "$nit" ]]; then
-      local n_count
-      n_count=$(echo "$nit" | grep -c '\[N[0-9]' || true)
-      if (( n_offset > 0 )); then
-        local i
-        for (( i=n_count; i>=1; i-- )); do
-          nit=$(echo "$nit" | sed "s/\\[N${i}\\]/[N$((i + n_offset))]/g")
-        done
-      fi
-      merged_nit+="$nit"$'\n'
-      n_offset=$((n_offset + n_count))
-    fi
+    _renumber_section M "$must" m_offset merged_must
+    _renumber_section S "$should" s_offset merged_should
+    _renumber_section N "$nit" n_offset merged_nit
   done
 
   local result=""
@@ -594,6 +562,15 @@ cmd_review() {
     mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
   fi
 
+  # Prune old archives — keep latest 3 of each type
+  local _old_archive
+  for _old_archive in $(ls -t "${review_file%.md}".2*.md 2>/dev/null | tail -n +4); do
+    rm -f "$_old_archive"
+  done
+  for _old_archive in $(ls -t "${review_file%.md}".session.2*.jsonl 2>/dev/null | tail -n +4); do
+    rm -f "$_old_archive"
+  done
+
   # ── Single-agent review (small PRs) ──────────────────────────────────────────
   _review_single_agent() {
     local prompt
@@ -641,9 +618,9 @@ ${prior_review}
 
   # ── Multi-phase review (large PRs) ─────────────────────────────────────────
   _review_multi_phase() {
-    local groups group_count
-    groups=$(_group_files "$pr_meta")
-    group_count=$(echo "$groups" | wc -l | tr -d ' ')
+    local -a group_lines_arr
+    mapfile -t group_lines_arr < <(_group_files "$pr_meta")
+    local group_count=${#group_lines_arr[@]}
 
     info "Large PR (${pr_total_lines} lines, ${pr_changed_files} files) — ${group_count} file groups"
 
@@ -700,28 +677,20 @@ Do NOT write per-file findings — those come from the detailed review phase."
     local failed_groups=()
     local i=0
 
-    while IFS= read -r group_json; do
+    for group_json in "${group_lines_arr[@]}"; do
       i=$((i + 1))
       local group_name group_lines
       group_name=$(echo "$group_json" | jq -r '.group')
       group_lines=$(echo "$group_json" | jq -r '.lines')
 
-      local group_files_formatted
-      group_files_formatted=$(echo "$group_json" | jq -r '.files[]' | while IFS= read -r f; do
-        local fl
-        fl=$(echo "$pr_meta" | jq -r --arg p "$f" '.files[] | select(.path == $p) | "(+\(.additions) -\(.deletions))"')
-        echo "  - ${f} ${fl}"
-      done)
+      local group_files_json group_files_formatted
+      group_files_json=$(echo "$group_json" | jq -c '.files')
+      group_files_formatted=$(echo "$pr_meta" | jq -r --argjson gf "$group_files_json" \
+        '[.files[] | select(.path as $p | $gf | index($p))] | .[] | "  - \(.path) (+\(.additions) -\(.deletions))"')
 
       local group_output="${review_file%.md}.group-${i}.md"
       local group_log="${review_file%.md}.group-${i}.jsonl"
       group_outputs+=("$group_output")
-
-      # Filter prior review findings to this group's files
-      local group_prior=""
-      if [[ -n "$prior_review" ]]; then
-        group_prior="$prior_review"
-      fi
 
       local group_prompt
       group_prompt="Review PR #${pr_number} in ${repo} — GROUP ${i}/${group_count}: ${group_name}
@@ -757,7 +726,7 @@ Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit sections o
 Do NOT write a Summary or Verdict — those will be added in a synthesis step.
 Use finding IDs starting at [M1], [S1], [N1] — they will be renumbered during merge."
 
-      if [[ -n "$group_prior" ]]; then
+      if [[ -n "$prior_review" ]]; then
         group_prompt+="
 
 ## Prior review
@@ -765,7 +734,7 @@ This is a re-review. Below are the prior findings. Carry forward findings releva
 Mark fixed findings as resolved.
 
 <prior_review>
-${group_prior}
+${prior_review}
 </prior_review>"
       fi
 
@@ -778,7 +747,7 @@ ${group_prior}
         warn "Group ${i} (${group_name}) produced no output"
         failed_groups+=("$group_name")
       fi
-    done <<< "$groups"
+    done
 
     # ── Phase 3: Merge (bash) ──
     info "Phase 3: Merging findings..."
@@ -854,12 +823,17 @@ Manual review of findings required — synthesis was not completed.
 FALLBACK
     fi
 
-    # Clean up temp files
-    rm -f "$holistic_output" "${group_outputs[@]}" 2>/dev/null || true
+    # Consolidate phase logs into main session log, then clean up
+    cat "$holistic_log" "${review_file%.md}".group-*.jsonl "$synthesis_log" > "$session_log" 2>/dev/null || true
+    rm -f "$holistic_output" "$holistic_log" "${group_outputs[@]}" "$synthesis_log" 2>/dev/null || true
+    local glog
+    for glog in "${review_file%.md}".group-*.jsonl; do
+      rm -f "$glog" 2>/dev/null || true
+    done
   }
 
   # Branch: single-agent for small PRs, multi-phase for large PRs
-  if (( pr_total_lines > 500 || pr_changed_files > 10 )); then
+  if (( pr_total_lines > MULTI_PHASE_LINE_THRESHOLD || pr_changed_files > MULTI_PHASE_FILE_THRESHOLD )); then
     _review_multi_phase
   else
     _review_single_agent

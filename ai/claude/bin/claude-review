@@ -169,6 +169,277 @@ _print_summary() {
   echo
 }
 
+# ─── Multi-phase review helpers ───────────────────────────────────────────────
+
+# _classify_tier FILE_PATH — prints tier number (1, 2, or 3) for a file.
+_classify_tier() {
+  local path="$1"
+  local base="${path##*/}"
+
+  # Tier 3: generated files, test fixtures, lockfiles
+  case "$path" in
+    */gen/*) echo 3; return ;;
+    */testdata/*) echo 3; return ;;
+  esac
+  case "$base" in
+    *.pb.go|*_pb2.py|*_pb.ts|*_pb2_grpc.py) echo 3; return ;;
+    .latest.sql|go.sum|*.ko.yaml) echo 3; return ;;
+  esac
+
+  # Tier 1: AI config, API contracts, security, migrations, dependencies
+  case "$base" in
+    CLAUDE.md|.cursorrules|AGENTS.md|GEMINI.md) echo 1; return ;;
+    go.mod|package.json|package-lock.json|requirements.txt|Gemfile) echo 1; return ;;
+    *.proto|*.graphql) echo 1; return ;;
+  esac
+  case "$path" in
+    */migrations/*.sql|*/migrations/*.sh) echo 1; return ;;
+    */auth/*|*/crypto/*|*/permissions/*) echo 1; return ;;
+    */vault/*|*/network-policies/*|*/authorization-policies/*) echo 1; return ;;
+  esac
+
+  # Tier 2: everything else (application code, tests, config, infra)
+  echo 2
+}
+
+# _group_files PR_META — outputs newline-delimited JSON group objects.
+# Each group: {"group": "name", "files": ["path", ...], "lines": N}
+_group_files() {
+  local pr_meta="$1"
+  local max_group_lines=800
+
+  # Build a lookup table of path -> lines (single jq call)
+  local -A file_lines_map
+  while IFS=$'\t' read -r path lines; do
+    file_lines_map[$path]=$lines
+  done < <(echo "$pr_meta" | jq -r '.files[] | [.path, (.additions + .deletions)] | @tsv')
+
+  # Classify files into tiers
+  local tier1_files=() tier2_files=() tier3_files=()
+  local tier1_lines=0 tier2_lines=0 tier3_lines=0
+
+  for path in "${!file_lines_map[@]}"; do
+    local lines=${file_lines_map[$path]}
+    local tier
+    tier=$(_classify_tier "$path")
+    case "$tier" in
+      1) tier1_files+=("$path"); tier1_lines=$((tier1_lines + lines)) ;;
+      2) tier2_files+=("$path"); tier2_lines=$((tier2_lines + lines)) ;;
+      3) tier3_files+=("$path"); tier3_lines=$((tier3_lines + lines)) ;;
+    esac
+  done
+
+  # Emit tier 1 group
+  if (( ${#tier1_files[@]} > 0 )); then
+    printf '{"group":"tier1-critical","files":%s,"lines":%d}\n' \
+      "$(printf '%s\n' "${tier1_files[@]}" | jq -R . | jq -cs .)" \
+      "$tier1_lines"
+  fi
+
+  # Group tier 2 files by top-level directory, splitting large groups
+  local -A dir_file_list dir_line_total
+  local dir_order=()
+  for f in "${tier2_files[@]}"; do
+    local dir="${f%%/*}"
+    if [[ -z "${dir_file_list[$dir]+x}" ]]; then
+      dir_file_list[$dir]=""
+      dir_line_total[$dir]=0
+      dir_order+=("$dir")
+    fi
+    dir_file_list[$dir]+="${f}"$'\n'
+    dir_line_total[$dir]=$(( ${dir_line_total[$dir]} + ${file_lines_map[$f]} ))
+  done
+
+  for dir in "${dir_order[@]}"; do
+    local files_str="${dir_file_list[$dir]}"
+    local total_lines="${dir_line_total[$dir]}"
+
+    if (( total_lines > max_group_lines )); then
+      local sub_files=() sub_lines=0 sub_idx=1
+      while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local flines=${file_lines_map[$f]}
+        if (( sub_lines + flines > max_group_lines && ${#sub_files[@]} > 0 )); then
+          printf '{"group":"%s-%d","files":%s,"lines":%d}\n' \
+            "$dir" "$sub_idx" \
+            "$(printf '%s\n' "${sub_files[@]}" | jq -R . | jq -cs .)" \
+            "$sub_lines"
+          sub_files=()
+          sub_lines=0
+          sub_idx=$((sub_idx + 1))
+        fi
+        sub_files+=("$f")
+        sub_lines=$((sub_lines + flines))
+      done <<< "$files_str"
+      if (( ${#sub_files[@]} > 0 )); then
+        printf '{"group":"%s-%d","files":%s,"lines":%d}\n' \
+          "$dir" "$sub_idx" \
+          "$(printf '%s\n' "${sub_files[@]}" | jq -R . | jq -cs .)" \
+          "$sub_lines"
+      fi
+    else
+      local file_array=()
+      while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        file_array+=("$f")
+      done <<< "$files_str"
+      if (( ${#file_array[@]} > 0 )); then
+        printf '{"group":"%s","files":%s,"lines":%d}\n' \
+          "$dir" \
+          "$(printf '%s\n' "${file_array[@]}" | jq -R . | jq -cs .)" \
+          "$total_lines"
+      fi
+    fi
+  done
+
+  # Emit tier 3 group
+  if (( ${#tier3_files[@]} > 0 )); then
+    printf '{"group":"tier3-generated","files":%s,"lines":%d}\n' \
+      "$(printf '%s\n' "${tier3_files[@]}" | jq -R . | jq -cs .)" \
+      "$tier3_lines"
+  fi
+}
+
+# _build_pr_header — outputs the common PR metadata prompt section.
+# Uses variables from the caller's scope.
+_build_pr_header() {
+  cat <<HEADER
+## PR metadata
+- **Title:** ${pr_title}
+- **Branch:** ${pr_head} → ${pr_base}
+- **Size:** +${pr_additions} -${pr_deletions} across ${pr_changed_files} files
+
+### Description
+${pr_body:-_No description provided._}
+
+### Commits
+${pr_commits:-_No commits._}
+HEADER
+
+  if [[ -n "$pr_file_stats" ]]; then
+    cat <<STATS
+
+### File breakdown (sorted by churn)
+${pr_file_stats}
+STATS
+  fi
+}
+
+# _build_reviews_section — outputs existing reviews/comments prompt section.
+_build_reviews_section() {
+  cat <<REVIEWS
+
+## Existing reviews and comments
+Skip these — do NOT re-fetch from the GitHub API. This data is current as of script invocation.
+
+### Submitted reviews
+${pr_reviews:-[]}
+
+### Inline review comments
+${pr_review_comments:-[]}
+
+### General PR comments
+${pr_comments:-[]}
+REVIEWS
+}
+
+# _build_issue_section — outputs issue context if available.
+_build_issue_section() {
+  if [[ -n "$issue_link" ]]; then
+    printf '\n## Related issue\n%s' "$issue_link"
+  elif [[ -n "$issue_context" ]]; then
+    printf '\n## Related issue\n%s' "$issue_context"
+  fi
+}
+
+# _merge_reviews OUTPUT_FILE GROUP_FILES... — merges group review files, renumbering IDs.
+_merge_reviews() {
+  local -n __out=$1
+  shift
+  local group_files=("$@")
+
+  local merged_triage="" merged_must="" merged_should="" merged_nit=""
+  local m_offset=0 s_offset=0 n_offset=0
+
+  for gf in "${group_files[@]}"; do
+    [[ -f "$gf" ]] || continue
+    local content
+    content=$(cat "$gf")
+
+    # Extract sections
+    local triage must should nit
+    triage=$(echo "$content" | sed -n '/^## File Triage/,/^## /{ /^## File Triage/d; /^## /d; p; }')
+    must=$(echo "$content" | sed -n '/^## Must fix/,/^## /{ /^## Must fix/d; /^## /d; p; }')
+    should=$(echo "$content" | sed -n '/^## Should fix/,/^## /{ /^## Should fix/d; /^## /d; p; }')
+    nit=$(echo "$content" | sed -n '/^## Nit/,/^## /{ /^## Nit/d; /^## /d; p; }')
+
+    merged_triage+="$triage"$'\n'
+
+    # Count findings in this group and renumber
+    if [[ -n "$must" ]]; then
+      local m_count
+      m_count=$(echo "$must" | grep -c '\[M[0-9]' || true)
+      if (( m_offset > 0 )); then
+        # Renumber [M1] -> [M(1+offset)], etc.
+        local i
+        for (( i=m_count; i>=1; i-- )); do
+          must=$(echo "$must" | sed "s/\\[M${i}\\]/[M$((i + m_offset))]/g")
+        done
+      fi
+      merged_must+="$must"$'\n'
+      m_offset=$((m_offset + m_count))
+    fi
+
+    if [[ -n "$should" ]]; then
+      local s_count
+      s_count=$(echo "$should" | grep -c '\[S[0-9]' || true)
+      if (( s_offset > 0 )); then
+        local i
+        for (( i=s_count; i>=1; i-- )); do
+          should=$(echo "$should" | sed "s/\\[S${i}\\]/[S$((i + s_offset))]/g")
+        done
+      fi
+      merged_should+="$should"$'\n'
+      s_offset=$((s_offset + s_count))
+    fi
+
+    if [[ -n "$nit" ]]; then
+      local n_count
+      n_count=$(echo "$nit" | grep -c '\[N[0-9]' || true)
+      if (( n_offset > 0 )); then
+        local i
+        for (( i=n_count; i>=1; i-- )); do
+          nit=$(echo "$nit" | sed "s/\\[N${i}\\]/[N$((i + n_offset))]/g")
+        done
+      fi
+      merged_nit+="$nit"$'\n'
+      n_offset=$((n_offset + n_count))
+    fi
+  done
+
+  local result=""
+  result+="## File Triage"$'\n'"${merged_triage}"$'\n'
+  [[ -n "$merged_must" ]] && result+="## Must fix"$'\n'"${merged_must}"$'\n'
+  [[ -n "$merged_should" ]] && result+="## Should fix"$'\n'"${merged_should}"$'\n'
+  [[ -n "$merged_nit" ]] && result+="## Nit"$'\n'"${merged_nit}"$'\n'
+
+  __out="$result"
+}
+
+# _invoke_agent PROMPT SESSION_LOG [EXTRA_ARGS...] — invokes claude -p with common flags.
+# Prompt is passed via stdin to work around --add-dir consuming positional args.
+_invoke_agent() {
+  local prompt="$1"
+  local session_log="$2"
+  shift 2
+
+  echo "$prompt" | claude -p --verbose --output-format stream-json \
+    --permission-mode acceptEdits \
+    --add-dir "$REVIEWS_DIR" --add-dir "$wt_path" --agent reviewer \
+    "$@" \
+    | _stream_progress "$session_log"
+}
+
 usage() {
   echo "Usage: claude-review [options] <pr_url_or_number>"
   echo "       claude-review post <pr_number>"
@@ -317,41 +588,19 @@ cmd_review() {
     info "Archived prior review to $(basename "$archive")"
   fi
 
-  # Build the prompt
-  local prompt
-  prompt="Review PR #${pr_number} in ${repo}.
-
-## PR metadata
-- **Title:** ${pr_title}
-- **Branch:** ${pr_head} → ${pr_base}
-- **Size:** +${pr_additions} -${pr_deletions} across ${pr_changed_files} files
-
-### Description
-${pr_body:-_No description provided._}
-
-### Commits
-${pr_commits:-_No commits._}"
-
-  if [[ -n "$pr_file_stats" ]]; then
-    prompt="${prompt}
-
-### File breakdown (sorted by churn)
-${pr_file_stats}"
+  # Archive prior session log
+  local session_log="${review_file%.md}.session.jsonl"
+  if [[ -f "$session_log" ]]; then
+    mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
   fi
 
-  prompt="${prompt}
+  # ── Single-agent review (small PRs) ──────────────────────────────────────────
+  _review_single_agent() {
+    local prompt
+    prompt="Review PR #${pr_number} in ${repo}.
 
-## Existing reviews and comments
-Skip these — do NOT re-fetch from the GitHub API. This data is current as of script invocation.
-
-### Submitted reviews
-${pr_reviews:-[]}
-
-### Inline review comments
-${pr_review_comments:-[]}
-
-### General PR comments
-${pr_comments:-[]}
+$(_build_pr_header)
+$(_build_reviews_section)
 
 ## Environment
 The PR branch is checked out locally at: ${wt_path}
@@ -361,20 +610,10 @@ Read source files directly from this path. Do NOT fetch files via the GitHub API
 You MUST use the Write tool to write the review to: ${review_file}
 Do NOT print the review to stdout — it must be saved as a file using the Write tool."
 
-  if [[ -n "$issue_link" ]]; then
-    prompt="${prompt}
+    prompt+="$(_build_issue_section)"
 
-## Related issue
-${issue_link}"
-  elif [[ -n "$issue_context" ]]; then
-    prompt="${prompt}
-
-## Related issue
-${issue_context}"
-  fi
-
-  if [[ -n "$prior_review" ]]; then
-    prompt="${prompt}
+    if [[ -n "$prior_review" ]]; then
+      prompt+="
 
 ## Prior review
 This is a re-review. Below are the findings from the previous review. For each prior finding:
@@ -385,28 +624,245 @@ This is a re-review. Below are the findings from the previous review. For each p
 <prior_review>
 ${prior_review}
 </prior_review>"
-  fi
+    fi
 
-  local session_log="${review_file%.md}.session.jsonl"
+    info "Running review agent on PR #${pr_number} (${pr_title})..."
+    echo
+    _invoke_agent "$prompt" "$session_log"
+    echo
 
-  # Archive prior session log
-  if [[ -f "$session_log" ]]; then
-    mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
-  fi
+    if [[ ! -f "$review_file" ]]; then
+      err "Review file not found: $review_file"
+      err "The review agent did not produce output. Check the session log for details."
+      [[ -f "$session_log" ]] && echo -e "  ${DIM}Session log: ${session_log}${NC}"
+      exit 1
+    fi
+  }
 
-  info "Running review agent on PR #${pr_number} (${pr_title})..."
-  echo
-  claude -p --verbose --output-format stream-json \
-    --permission-mode acceptEdits \
-    --add-dir "$REVIEWS_DIR" --add-dir "$wt_path" --agent reviewer "$prompt" \
-    | _stream_progress "$session_log"
-  echo
+  # ── Multi-phase review (large PRs) ─────────────────────────────────────────
+  _review_multi_phase() {
+    local groups group_count
+    groups=$(_group_files "$pr_meta")
+    group_count=$(echo "$groups" | wc -l | tr -d ' ')
 
-  if [[ ! -f "$review_file" ]]; then
-    err "Review file not found: $review_file"
-    err "The review agent did not produce output. Check the session log for details."
-    [[ -f "$session_log" ]] && echo -e "  ${DIM}Session log: ${session_log}${NC}"
-    exit 1
+    info "Large PR (${pr_total_lines} lines, ${pr_changed_files} files) — ${group_count} file groups"
+
+    # All files formatted for holistic prompt
+    local all_files_formatted
+    all_files_formatted=$(echo "$pr_meta" | jq -r '.files[] | "  - \(.path) (+\(.additions) -\(.deletions))"')
+
+    # ── Phase 1: Holistic scan ──
+    local holistic_output="${review_file%.md}.holistic.md"
+    local holistic_log="${review_file%.md}.holistic.jsonl"
+
+    local holistic_prompt
+    holistic_prompt="You are doing a holistic scan of PR #${pr_number} in ${repo}.
+
+$(_build_pr_header)
+
+## All files in this PR
+${all_files_formatted}
+
+## Task
+Read EVERY file listed above (scan-level — understand purpose and structure, not line-by-line deep review).
+Then assess:
+1. Does the PR accomplish what the description and commits claim?
+2. Is the scope focused or does it mix unrelated concerns?
+3. Are there cross-module design issues (inconsistent patterns, missing integrations, API mismatches)?
+4. Flag specific things that detailed per-file reviewers should watch for.
+
+$(_build_reviews_section)
+$(_build_issue_section)
+
+## Environment
+PR branch checked out at: ${wt_path}
+Read source files directly from this path. Do NOT fetch files via the GitHub API.
+
+## Output
+Write to: ${holistic_output}
+Sections: ## Holistic Assessment, ## Flags for Detailed Review, ## Cross-module Concerns
+Do NOT write per-file findings — those come from the detailed review phase."
+
+    info "Phase 1/${group_count}: Holistic scan..."
+    echo
+    _invoke_agent "$holistic_prompt" "$holistic_log"
+    echo
+
+    local holistic_content=""
+    if [[ -f "$holistic_output" ]]; then
+      holistic_content=$(cat "$holistic_output")
+    else
+      warn "Holistic scan produced no output — continuing without it"
+    fi
+
+    # ── Phase 2: Group reviews ──
+    local group_outputs=()
+    local failed_groups=()
+    local i=0
+
+    while IFS= read -r group_json; do
+      i=$((i + 1))
+      local group_name group_lines
+      group_name=$(echo "$group_json" | jq -r '.group')
+      group_lines=$(echo "$group_json" | jq -r '.lines')
+
+      local group_files_formatted
+      group_files_formatted=$(echo "$group_json" | jq -r '.files[]' | while IFS= read -r f; do
+        local fl
+        fl=$(echo "$pr_meta" | jq -r --arg p "$f" '.files[] | select(.path == $p) | "(+\(.additions) -\(.deletions))"')
+        echo "  - ${f} ${fl}"
+      done)
+
+      local group_output="${review_file%.md}.group-${i}.md"
+      local group_log="${review_file%.md}.group-${i}.jsonl"
+      group_outputs+=("$group_output")
+
+      # Filter prior review findings to this group's files
+      local group_prior=""
+      if [[ -n "$prior_review" ]]; then
+        group_prior="$prior_review"
+      fi
+
+      local group_prompt
+      group_prompt="Review PR #${pr_number} in ${repo} — GROUP ${i}/${group_count}: ${group_name}
+
+$(_build_pr_header)"
+
+      if [[ -n "$holistic_content" ]]; then
+        group_prompt+="
+
+## Holistic context
+The following assessment was produced by scanning all ${pr_changed_files} files in this PR.
+Use it to inform your detailed review — especially the flags section.
+
+${holistic_content}"
+      fi
+
+      group_prompt+="
+
+## Scope constraint
+Review ONLY the following files. Do NOT read or comment on files outside this list:
+${group_files_formatted}
+
+$(_build_reviews_section)
+$(_build_issue_section)
+
+## Environment
+PR branch checked out at: ${wt_path}
+Read source files directly from this path. Do NOT fetch files via the GitHub API.
+
+## Output
+Write findings to: ${group_output}
+Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit sections only.
+Do NOT write a Summary or Verdict — those will be added in a synthesis step.
+Use finding IDs starting at [M1], [S1], [N1] — they will be renumbered during merge."
+
+      if [[ -n "$group_prior" ]]; then
+        group_prompt+="
+
+## Prior review
+This is a re-review. Below are the prior findings. Carry forward findings relevant to YOUR files only.
+Mark fixed findings as resolved.
+
+<prior_review>
+${group_prior}
+</prior_review>"
+      fi
+
+      info "Phase 2: Group ${i}/${group_count} — ${group_name} (${group_lines} lines)..."
+      echo
+      _invoke_agent "$group_prompt" "$group_log"
+      echo
+
+      if [[ ! -f "$group_output" ]]; then
+        warn "Group ${i} (${group_name}) produced no output"
+        failed_groups+=("$group_name")
+      fi
+    done <<< "$groups"
+
+    # ── Phase 3: Merge (bash) ──
+    info "Phase 3: Merging findings..."
+    local merged_content
+    _merge_reviews merged_content "${group_outputs[@]}"
+
+    if (( ${#failed_groups[@]} > 0 )); then
+      merged_content+=$'\n'"## Review gaps"$'\n'
+      merged_content+="The following file groups were not reviewed due to agent failure:"$'\n'
+      for fg in "${failed_groups[@]}"; do
+        merged_content+="- ${fg}"$'\n'
+      done
+    fi
+
+    # ── Phase 4: Synthesis ──
+    local synthesis_log="${review_file%.md}.synthesis.jsonl"
+
+    local synthesis_prompt
+    synthesis_prompt="You are completing the final review of PR #${pr_number} in ${repo}.
+
+$(_build_pr_header)
+
+## Holistic assessment (from Phase 1)
+${holistic_content:-_No holistic assessment available._}
+
+## Detailed findings (from Phase 2, merged across ${group_count} file groups)
+${merged_content}
+
+## Task
+1. Write the review header: # Review: ${repo}#${pr_number} — ${pr_title}
+   Include <!-- date: $(date +%Y-%m-%d) --> and <!-- head_sha: ${pr_head_sha} --> comments
+2. Include the File Triage section from the merged findings above
+3. Write ## Summary — what the change does, overall quality, incorporating the holistic assessment
+4. Include all Must fix / Should fix / Nit findings from the merged content (preserve IDs and formatting exactly)
+5. Check for cross-file concerns — do findings in one group imply issues in files from another group?
+6. Add any cross-cutting findings with new IDs continuing the sequence
+7. Write ## Verdict (Approve / Request changes / Needs discussion)
+8. Write the COMPLETE review file to: ${review_file}
+
+PR branch checked out at: ${wt_path} — you may read files to verify cross-references."
+
+    if [[ -n "$prior_review" ]]; then
+      synthesis_prompt+="
+
+## Prior review (for resolved findings section)
+Include a ## Resolved section noting which prior findings were fixed.
+
+<prior_review>
+${prior_review}
+</prior_review>"
+    fi
+
+    info "Phase 4: Synthesis..."
+    echo
+    _invoke_agent "$synthesis_prompt" "$synthesis_log"
+    echo
+
+    if [[ ! -f "$review_file" ]]; then
+      # Fallback: write the mechanical merge as the review
+      warn "Synthesis agent failed — falling back to mechanical merge"
+      cat > "$review_file" <<FALLBACK
+# Review: ${repo}#${pr_number} — ${pr_title}
+<!-- date: $(date +%Y-%m-%d) -->
+<!-- head_sha: ${pr_head_sha} -->
+
+## Summary
+Multi-phase review of ${pr_changed_files} files across ${group_count} groups. Synthesis agent failed — findings below are from individual group reviews.
+
+${merged_content}
+
+## Verdict
+Manual review of findings required — synthesis was not completed.
+FALLBACK
+    fi
+
+    # Clean up temp files
+    rm -f "$holistic_output" "${group_outputs[@]}" 2>/dev/null || true
+  }
+
+  # Branch: single-agent for small PRs, multi-phase for large PRs
+  if (( pr_total_lines > 500 || pr_changed_files > 10 )); then
+    _review_multi_phase
+  else
+    _review_single_agent
   fi
 
   _display_review "$review_file"
@@ -463,10 +919,10 @@ cmd_post() {
 
   info "Posting review for PR #${pr_number}..."
   echo
-  claude -p --verbose --output-format stream-json \
+  echo "$post_prompt" | claude -p --verbose --output-format stream-json \
     --permission-mode acceptEdits \
     --system-prompt-file "$skill_file" \
-    --add-dir "$REVIEWS_DIR" "$post_prompt" \
+    --add-dir "$REVIEWS_DIR" \
     | _stream_progress "$session_log"
   echo
   # Fetch the PENDING review ID for the submit command

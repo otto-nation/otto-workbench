@@ -590,6 +590,7 @@ _list_override_dir() {
 cmd_override() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
+  local display_dir="${USER_AI_DIR/#$HOME/\~}"
 
   case "$subcmd" in
     list)
@@ -612,7 +613,7 @@ cmd_override() {
         _list_override_dir "$dir" "$label" && found=true
       done
 
-      [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in user/ai/${NC}"
+      [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in ${display_dir}/${NC}"
       ;;
 
     add)
@@ -640,14 +641,14 @@ cmd_override() {
         skill|skills)
           # Copy skill directory
           cp -R "$src" "$user_dir/"
-          success "Copied $type '$name' to user/ai/ for editing"
+          success "Copied $type '$name' to ${display_dir}/ for editing"
           echo -e "  ${DIM}$user_dir/$name/${NC}"
           ;;
         *)
           # Copy single file
           local dest="$user_dir/${name}.md"
           cp "$src" "$dest"
-          success "Copied $type '$name' to user/ai/ for editing"
+          success "Copied $type '$name' to ${display_dir}/ for editing"
           echo -e "  ${DIM}$dest${NC}"
           ;;
       esac
@@ -683,7 +684,7 @@ cmd_override() {
       ;;
 
     status)
-      info "Override status (user/ai/ vs defaults)"
+      info "Override status (${display_dir}/ vs defaults)"
       echo
 
       local type default_dir user_dir
@@ -700,11 +701,11 @@ cmd_override() {
 Usage: otto-workbench override <command>
 
 Manage user overrides for AI config (agents, skills, rules).
-Override files live in user/ai/ (gitignored).
+Override files live in ~/.config/workbench/overrides/ai/.
 
 Commands:
   list                            List all active overrides
-  add <agent|skill|rule> <name>   Copy default to user/ai/ for editing
+  add <agent|skill|rule> <name>   Copy default for editing
   disable <agent|skill|rule> <name>  Suppress a default (creates .disabled sentinel)
   enable <agent|skill|rule> <name>   Re-enable a disabled default
   status                          Show overrides vs defaults

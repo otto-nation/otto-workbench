@@ -16,6 +16,7 @@ tools:
     docs: "https://docs.gradle.org/"
 
   - name: mvn
+    context: reference
     brew_name: maven
     description: "Apache Maven — build and dependency management for Java projects"
     when_to_use: "Building, testing, or packaging Maven-based projects"

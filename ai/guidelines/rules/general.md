@@ -33,14 +33,6 @@
 
 ## Code Style
 
-### Imports
-- Never use wildcard imports
-- Always sort imports
-
-### Constants & Magic Values
-- Never use magic values (String literals, integers, etc.) — always give them context
-- Check if constants already exist before creating new ones
-
 ### Comments & Documentation
 - Comments should be production-ready; place them above the line, never inline
 - Do not add comments that exist only to explain what a prompt change did

@@ -42,7 +42,6 @@ fi
 # Build comma-separated and bullet-list type displays
 TYPES_DISPLAY=$(echo "$COMMIT_TYPES" | tr ' ' ', ')
 # shellcheck disable=SC2016  # & is a sed back-reference, not a shell variable
-TYPES_BULLETS=$(echo "$COMMIT_TYPES" | tr ' ' '\n' | sed 's/.*/- `&`/')
 
 # Build one header budget example line
 _budget_line() {
@@ -73,33 +72,6 @@ _budget_line() {
     "- Use bullet points for multiple changes in the body" \
     "- Subject should be concise and focus on *what* changed, not *how*" \
     "- Never add a co-author trailer (e.g. \`Co-Authored-By:\`)" \
-    "" \
-    "### Allowed types" \
-    ""
-  printf '%s\n' "$TYPES_BULLETS"
-  printf '%s\n' \
-    "" \
-    "### Header length budgeting" \
-    ""
-  printf '%s\n' "Before writing, calculate available subject characters (header max is ${COMMIT_HEADER_MAX_LEN}):"
-  printf '%s\n' ""
-  _budget_line "feat(auth): "
-  _budget_line "fix: "
-  _budget_line "refactor(payments): "
-  printf '%s\n' \
-    "" \
-    "### Examples" \
-    "" \
-    '```' \
-    "feat(auth): add OAuth2 login flow" \
-    "" \
-    "- Support Google and GitHub providers" \
-    "- Store tokens in encrypted session cookie" \
-    '```' \
-    "" \
-    '```' \
-    "fix: resolve race condition in cache eviction; update TTL default" \
-    '```' \
     "" \
     "## Pull Requests" \
     "" \

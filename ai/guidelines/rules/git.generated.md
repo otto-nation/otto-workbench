@@ -16,42 +16,6 @@
 - Subject should be concise and focus on *what* changed, not *how*
 - Never add a co-author trailer (e.g. `Co-Authored-By:`)
 
-### Allowed types
-
-- `feat`
-- `fix`
-- `perf`
-- `deps`
-- `revert`
-- `docs`
-- `style`
-- `refactor`
-- `test`
-- `build`
-- `ci`
-- `chore`
-
-### Header length budgeting
-
-Before writing, calculate available subject characters (header max is 72):
-
-- `feat(auth): ` is 12 chars → subject ≤ 60 chars
-- `fix: ` is 5 chars → subject ≤ 67 chars
-- `refactor(payments): ` is 20 chars → subject ≤ 52 chars
-
-### Examples
-
-```
-feat(auth): add OAuth2 login flow
-
-- Support Google and GitHub providers
-- Store tokens in encrypted session cookie
-```
-
-```
-fix: resolve race condition in cache eviction; update TTL default
-```
-
 ## Pull Requests
 
 ### Title

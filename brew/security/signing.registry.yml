@@ -10,6 +10,7 @@ meta:
 
 tools:
   - name: gnupg
+    context: none
     description: "GNU Privacy Guard — GPG encryption and signing"
     when_to_use: "Signing git commits with GPG; encrypting/decrypting files"
     usage: "gpg --sign  |  gpg --verify  |  gpg --list-keys"

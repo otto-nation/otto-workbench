@@ -10,12 +10,14 @@ meta:
 
 tools:
   - name: k9s
+    context: reference
     description: "Terminal UI for Kubernetes — real-time cluster monitoring and management"
     when_to_use: "Monitoring and managing Kubernetes clusters interactively"
     usage: "k9s  |  k9s --namespace <ns>  |  k9s --context <ctx>"
     docs: "https://k9scli.io/"
 
   - name: kubectx
+    context: reference
     description: "Fast Kubernetes context and namespace switcher"
     when_to_use: "Switching between Kubernetes clusters or namespaces quickly"
     usage: "kubectx  |  kubectx <context>  |  kubens <namespace>"

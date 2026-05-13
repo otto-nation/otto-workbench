@@ -24,6 +24,7 @@ tools:
     docs: "https://github.com/schpet/linear-cli"
 
   - name: mas
+    context: reference
     description: "Mac App Store CLI — search, install, and update App Store apps from the terminal"
     when_to_use: "Installing or updating App Store apps; scripting machine setup with App Store installs"
     usage: "mas search <app>  |  mas install <id>  |  mas upgrade"

@@ -2,7 +2,7 @@
 # Regenerates generated files and README sections from source registries and config.
 #
 # Writes:
-#   ai/guidelines/rules/tools.generated.md  — tool context for AI sessions
+#   ai/guidelines/rules/tools.generated.md  — always-loaded tool context for AI sessions
 #   README.md sections                      — scripts table, tasks block, AI installs
 #
 # Run automatically via pre-push hook and otto-workbench sync.
@@ -19,6 +19,11 @@
 #     install_check: false             # if true, omit tools not found in PATH
 #     validation:    brewfile          # brewfile | bindir | zsh-comments | none
 #     source:        brew/Brewfile     # relative path used by validate-registries
+#
+# Each tool entry supports a `context` field controlling AI visibility:
+#   context: always     — full entry (default if omitted)
+#   context: reference  — compact one-liner
+#   context: none       — omitted from AI context
 #
 # Environment overrides (for tests):
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
@@ -43,7 +48,6 @@ BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
 MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
 BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
 OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
-WORKFLOW_OUTPUT="${TOOL_WORKFLOW_OUTPUT:-"$REPO_ROOT/$TOOLS_WORKFLOW_GENERATED_RELPATH"}"
 README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
 TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
 AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
@@ -172,21 +176,47 @@ _iter_tools() {
   done
 }
 
+# _iter_tools_by_context FILE CONTEXT CALLBACK [FILTER]
+# Like _iter_tools but only calls CALLBACK for tools matching CONTEXT (always|reference|none).
+_iter_tools_by_context() {
+  local file="$1" target_context="$2" cb="$3" filter="${4:-}"
+  [[ -f "$file" ]] || return 0
+  local count i
+  count=$(yq '.tools | length' "$file")
+  for (( i=0; i<count; i++ )); do
+    local name context
+    name=$(yq ".tools[$i].name" "$file")
+    context=$(yq ".tools[$i].context // \"always\"" "$file")
+    [[ "$context" == "$target_context" ]] || continue
+    if [[ -n "$filter" ]] && ! "$filter" "$name"; then continue; fi
+    "$cb" \
+      "$name" \
+      "$(yq ".tools[$i].description"   "$file")" \
+      "$(yq ".tools[$i].when_to_use"   "$file")" \
+      "$(yq ".tools[$i].usage // \"\""  "$file")" \
+      "$(yq ".tools[$i].docs  // \"\""  "$file")"
+  done
+}
+
 # ── tools.generated.md ────────────────────────────────────────────────────────
 
 _tool_md_entry() {
-  local name="$1" description="$2" when_to_use="$3" usage="$4" docs="$5"
+  local name="$1" description="$2" when_to_use="$3" usage="$4"
   printf '\n### %s\n' "$name"
   printf '%s\n' "$description"
   printf -- '- **When to use**: %s\n' "$when_to_use"
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   if [[ -n "$usage" && "$usage" != "null" ]]; then printf -- '- **Usage**: `%s`\n' "$usage"; fi
-  if [[ -n "$docs"  && "$docs"  != "null" ]]; then printf -- '- **Docs**: %s\n'   "$docs";  fi
+}
+
+_tool_ref_entry() {
+  local name="$1" description="$2"
+  printf -- '- **%s** — %s\n' "$name" "$description"
 }
 
 # _render_registry FILE
-# Reads meta.section and meta.install_check from FILE, then renders all matching
-# tools as a markdown section. Skips the section entirely if no tools pass the filter.
+# Reads meta.section and meta.install_check from FILE, then renders tools by context tier.
+# Skips the section entirely if no tools pass the filter.
 _render_registry() {
   local file="$1"
   [[ -f "$file" ]] || return 0
@@ -199,63 +229,39 @@ _render_registry() {
   install_check=$(yq '.meta.install_check // false' "$file")
   [[ "$install_check" == "true" ]] && filter="is_installed"
 
-  # Accumulate tool entries first; skip the section header if nothing renders
-  local content
-  content=$( _iter_tools "$file" _tool_md_entry "$filter" )
-  [[ -n "$content" ]] || return 0
+  local always_content ref_content
+  always_content=$(_iter_tools_by_context "$file" "always" _tool_md_entry "$filter")
+  ref_content=$(_iter_tools_by_context "$file" "reference" _tool_ref_entry "$filter")
+
+  [[ -n "$always_content" || -n "$ref_content" ]] || return 0
 
   printf '\n## %s\n' "$section"
-  printf '%s\n' "$content"
+  [[ -n "$always_content" ]] && printf '%s\n' "$always_content"
+  [[ -n "$ref_content" ]] && printf '%s\n' "$ref_content"
+  return 0
 }
 
 _tool_registries=()
 collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
 
-# _is_always_loaded FILE — returns 0 if registry meta.loading is "always".
-_is_always_loaded() { [[ "$(yq '.meta.loading // "scoped"' "$1")" == "always" ]]; }
-
-# Split registries into always-loaded (workflow) and path-scoped sets.
-_workflow_registries=()
-_scoped_registries=()
-for _reg in "${_tool_registries[@]}"; do
-  if _is_always_loaded "$_reg"; then
-    _workflow_registries+=("$_reg")
-  else
-    _scoped_registries+=("$_reg")
-  fi
-done
-
-# Always-loaded file — no frontmatter, available in every Claude session.
+# Single always-loaded file — no frontmatter, available in every Claude session.
+# Tools with context: none are omitted; context: reference renders as one-liners.
 {
-  printf '# Workflow Tools\n'
+  printf '# Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
   printf '<!-- Regenerate: generate-tool-context -->\n'
-  for _reg in "${_workflow_registries[@]}"; do
-    _render_registry "$_reg"
-  done
-} > "$WORKFLOW_OUTPUT"
-$QUIET || success "Generated $(basename "$WORKFLOW_OUTPUT")"
-
-# Path-scoped file — loads only when editing Brewfile, registry, bin, Taskfile, or zsh files.
-{
-  printf -- '---\n'
-  printf 'paths:\n'
-  printf '  - "**/Brewfile"\n'
-  printf '  - "**/Brewfile.*"\n'
-  printf '  - "**/registry.yml"\n'
-  printf '  - "**/*.registry.yml"\n'
-  printf '  - "**/bin/*"\n'
-  printf '  - "**/Taskfile*.yml"\n'
-  printf '  - "**/zsh/**"\n'
-  printf -- '---\n\n'
-  printf '# Environment Tools\n'
-  printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Regenerate: generate-tool-context -->\n'
-  for _reg in "${_scoped_registries[@]}"; do
+  for _reg in "${_tool_registries[@]}"; do
     _render_registry "$_reg"
   done
 } > "$OUTPUT"
 $QUIET || success "Generated $(basename "$OUTPUT")"
+
+# Clean up legacy workflow file if it exists
+_legacy_workflow="$REPO_ROOT/ai/guidelines/rules/tools-workflow.generated.md"
+if [[ -f "$_legacy_workflow" ]]; then
+  rm "$_legacy_workflow"
+  $QUIET || info "Removed legacy $(basename "$_legacy_workflow")"
+fi
 
 # ── README sections ───────────────────────────────────────────────────────────
 

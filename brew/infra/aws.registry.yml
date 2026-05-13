@@ -18,6 +18,7 @@ tools:
     docs: "https://docs.aws.amazon.com/cli/"
 
   - name: aws-sso-util
+    context: reference
     description: "Utilities for AWS SSO — simplifies login and credential management for SSO-based AWS accounts"
     when_to_use: "Logging in via AWS SSO; configuring SSO profiles; refreshing SSO credentials"
     usage: "aws-sso-util login  |  aws-sso-util configure populate"

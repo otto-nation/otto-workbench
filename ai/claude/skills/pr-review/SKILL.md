@@ -77,18 +77,24 @@ Check if the PR has been updated since the review was written:
 
 ### 4. Validate findings against the diff
 
-For each finding in the review file:
+1. **Parse finding IDs.** Each finding has an ID like `[M1]`, `[S1]`, `[N1]` (severity letter + sequence). Preserve these IDs and include them in the posted comment body so responses can correlate with specific findings.
 
-1. **Verify the file exists in the diff.** If a file path from the review is not in the diff, skip it and warn the user.
+2. **Extract findings as JSON.** Build a JSON array from the parsed findings: `[{"path": "file.go", "line": 42, "id": "M1", "body": "..."}, ...]`. Write to a temp file (e.g., `/tmp/pr-findings.json`).
 
-2. **Parse finding IDs.** Each finding has an ID like `[M1]`, `[S1]`, `[N1]` (severity letter + sequence). Preserve these IDs and include them in the posted comment body so responses can correlate with specific findings.
+3. **Validate positions using `validate-review-positions`.** This utility checks that each finding's `path:line` falls within a diff hunk:
 
-3. **Map line numbers to diff positions.** The GitHub API requires `line` (the line number in the file at the HEAD of the PR branch) not a raw diff hunk position. For each finding:
-   - Parse the diff hunks for the target file
-   - Confirm the referenced line number falls within a changed hunk (added or context line)
-   - If the line is not in the diff, convert to a file-level comment (no `line` field) and note this in the output
+   ```bash
+   gh api repos/{owner}/{repo}/pulls/<pr_number> \
+     --header 'Accept: application/vnd.github.v3.diff' > /tmp/pr.diff
+   validate-review-positions --diff /tmp/pr.diff --review /tmp/pr-findings.json
+   ```
 
-3. **Report skipped findings.** Print any findings that couldn't be mapped so the user can address them manually.
+   The tool outputs JSON with three arrays:
+   - `valid` — findings that fall within diff hunks (post as inline comments with `path` + `line`)
+   - `file_level` — findings whose path is in the diff but line is outside any hunk (post as file-level comments, omit the `line` field)
+   - `skipped` — findings whose path is not in the diff at all (include in the review body text)
+
+4. **Report skipped findings.** Print any findings that couldn't be mapped so the user can address them manually.
 
 ### 5. Resolve source references to GitHub permalinks
 

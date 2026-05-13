@@ -5,6 +5,9 @@ Brewfile.lock.json
 *.backup
 *.bak
 
+# Python
+__pycache__/
+
 # OS files
 .DS_Store
 Thumbs.db

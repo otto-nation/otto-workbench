@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Validate review finding positions against a PR diff.
+
+Checks that each finding's path:line falls within a diff hunk so GitHub
+will accept the inline comment. Findings outside diff hunks are demoted
+to file-level comments; findings for paths not in the diff are skipped.
+
+Usage:
+  validate-review-positions --diff DIFF_FILE --review FINDINGS_JSON
+  gh api repos/.../pulls/N -H 'Accept: application/vnd.github.v3.diff' \
+    | validate-review-positions --diff - --review findings.json
+
+Exit codes:
+  0  All findings valid (in diff hunks)
+  1  Some findings demoted to file-level
+  2  Some findings skipped (path not in diff)
+"""
+
+import argparse
+import json
+import re
+import sys
+
+
+def parse_diff_hunks(diff_text):
+    """Parse unified diff into {path: [(start, end), ...]} for the new side."""
+    hunks = {}
+    current_file = None
+    file_re = re.compile(r"^\+\+\+ b/(.+)")
+    hunk_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+    for line in diff_text.splitlines():
+        m = file_re.match(line)
+        if m:
+            current_file = m.group(1)
+            hunks.setdefault(current_file, [])
+            continue
+        m = hunk_re.match(line)
+        if m and current_file is not None:
+            start = int(m.group(1))
+            length = int(m.group(2)) if m.group(2) is not None else 1
+            hunks[current_file].append((start, start + length - 1))
+
+    return hunks
+
+
+def validate(hunks, findings):
+    """Classify findings as valid, file_level, or skipped."""
+    valid, file_level, skipped = [], [], []
+
+    for f in findings:
+        path = f.get("path", "")
+        line = f.get("line")
+
+        if path not in hunks:
+            skipped.append({**f, "reason": "path not in diff"})
+        elif line is None:
+            valid.append(f)
+        elif not any(s <= line <= e for s, e in hunks[path]):
+            file_level.append(
+                {**f, "reason": f"line {line} not in any diff hunk"}
+            )
+        else:
+            valid.append(f)
+
+    return valid, file_level, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Validate review finding positions against a PR diff."
+    )
+    parser.add_argument(
+        "--diff",
+        required=True,
+        help="Unified diff file (use '-' for stdin)",
+    )
+    parser.add_argument(
+        "--review",
+        required=True,
+        help="JSON file with findings array [{path, line, ...}, ...]",
+    )
+    args = parser.parse_args()
+
+    if args.diff == "-":
+        diff_text = sys.stdin.read()
+    else:
+        with open(args.diff) as fh:
+            diff_text = fh.read()
+
+    with open(args.review) as fh:
+        findings = json.load(fh)
+
+    if not isinstance(findings, list):
+        print("Error: --review must contain a JSON array", file=sys.stderr)
+        sys.exit(3)
+
+    hunks = parse_diff_hunks(diff_text)
+    valid, file_level, skipped = validate(hunks, findings)
+
+    result = {"valid": valid, "file_level": file_level, "skipped": skipped}
+    json.dump(result, sys.stdout, indent=2)
+    print()
+
+    if skipped:
+        sys.exit(2)
+    if file_level:
+        sys.exit(1)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

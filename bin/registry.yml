@@ -3,7 +3,6 @@
 
 meta:
   section: "Workbench Scripts"
-  loading: always
   install_check: false
   validation: bindir
   source: bin
@@ -36,11 +35,13 @@ tools:
         when: "Reviewing recent changes from conventional commits"
 
   - name: mem-analyze
+    context: reference
     description: "macOS memory analysis report — pressure, swap usage, top processes, per-user totals"
     when_to_use: "Diagnosing memory issues, high swap, or identifying memory-hungry processes"
     usage: "mem-analyze"
 
   - name: wt-cleanup
+    context: reference
     description: "Remove stale git worktrees — merged branches and optionally age-based cleanup"
     when_to_use: "Cleaning up accumulated worktrees; runs automatically on Claude session stop"
     usage: "wt-cleanup  |  wt-cleanup --age 7  |  wt-cleanup --dry-run"
@@ -51,6 +52,7 @@ tools:
     usage: "wt-init  |  wt-init ~/code/myrepo  |  wt-init --dry-run"
 
   - name: get-secret
+    context: reference
     description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"
     when_to_use: "Fetching credentials or config values stored in Secrets Manager"
     usage: "get-secret"

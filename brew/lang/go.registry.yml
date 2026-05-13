@@ -22,6 +22,7 @@ tools:
     docs: "https://golangci-lint.run/"
 
   - name: goreleaser
+    context: reference
     description: "Go release automation — builds cross-platform binaries and publishes GitHub releases"
     when_to_use: "Publishing a Go project as a versioned release with binaries, changelogs, and Homebrew tap"
     usage: "goreleaser release --clean  |  goreleaser build --snapshot"

@@ -34,6 +34,7 @@ tools:
     docs: "https://cli.github.com/manual/"
 
   - name: go-task
+    context: none
     description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
     when_to_use: "Running defined dev workflows: commits, PRs, brew management"
     usage: "task commit  |  task pr:create  |  task --global <cmd>"
@@ -52,30 +53,35 @@ tools:
     docs: "https://bats-core.readthedocs.io/"
 
   - name: parallel
+    context: none
     description: "GNU parallel — run shell commands in parallel across multiple cores"
     brew_name: "parallel"
     when_to_use: "Required by bats --jobs for parallel test execution in pre-push hook"
     docs: "https://www.gnu.org/software/parallel/"
 
   - name: tree
+    context: reference
     description: "Recursive directory listing tool — visualizes folder structure as a tree"
     when_to_use: "Quickly inspecting directory structure; understanding project layout at a glance"
     usage: "tree  |  tree -L 2  |  tree src/"
     docs: "https://oldmanprogrammer.net/source.php?dir=projects/tree"
 
   - name: delta
+    context: none
     description: "Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers"
     when_to_use: "Automatically used for all git diff, show, and log output via core.pager in gitconfig"
     usage: "git diff  |  git show  |  git log -p"
     docs: "https://dandavison.github.io/delta/"
 
   - name: pipx
+    context: none
     description: "Install and run Python CLI tools in isolated environments"
     when_to_use: "Installing Python-based CLI tools globally (e.g. Serena, pre-commit)"
     usage: "pipx install <tool>  |  pipx run <tool>"
     docs: "https://pipx.pypa.io/"
 
   - name: uv
+    context: none
     description: "Fast Python package and project manager (Rust-based pip/venv replacement)"
     when_to_use: "Installing Python tools, managing venvs, running Python scripts without installing"
     usage: "uv pip install <pkg>  |  uvx <tool>"
@@ -88,6 +94,7 @@ tools:
     docs: "https://worktrunk.dev"
 
   - name: gitleaks
+    context: reference
     description: "Secret scanner — detects committed credentials, tokens, and keys"
     when_to_use: "Automatically on every commit and push via git hooks; run manually to audit history"
     usage: "gitleaks protect --staged  |  gitleaks detect"

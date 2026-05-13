@@ -12,7 +12,6 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 _generated_files=(
   "$TOOLS_GENERATED_RELPATH"
-  "$TOOLS_WORKFLOW_GENERATED_RELPATH"
   "$GIT_GENERATED_RELPATH"
 )
 

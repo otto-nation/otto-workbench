@@ -454,7 +454,10 @@ cmd_post() {
   fi
 
   local post_prompt
-  post_prompt="/pr-review ${pr_number}"
+  post_prompt="Post review for PR #${pr_number} in ${repo}. Review file: ${review_file}"
+
+  local skill_file
+  skill_file="$(dirname "$_SELF")/../skills/pr-review/SKILL.md"
 
   local session_log="${review_file%.md}.post.jsonl"
 
@@ -462,6 +465,7 @@ cmd_post() {
   echo
   claude -p --verbose --output-format stream-json \
     --permission-mode acceptEdits \
+    --system-prompt-file "$skill_file" \
     --add-dir "$REVIEWS_DIR" "$post_prompt" \
     | _stream_progress "$session_log"
   echo

@@ -42,7 +42,6 @@ fi
 # Build comma-separated and bullet-list type displays
 TYPES_DISPLAY=$(echo "$COMMIT_TYPES" | tr ' ' ', ')
 # shellcheck disable=SC2016  # & is a sed back-reference, not a shell variable
-TYPES_BULLETS=$(echo "$COMMIT_TYPES" | tr ' ' '\n' | sed 's/.*/- `&`/')
 
 # Build one header budget example line
 _budget_line() {

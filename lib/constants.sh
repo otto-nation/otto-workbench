@@ -123,8 +123,8 @@ CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 
-# ─── User overrides (gitignored, local customizations) ──────────────────────
-USER_AI_DIR="$WORKBENCH_DIR/user/ai"
+# ─── User overrides (machine-local customizations in ~/.config/workbench/) ───
+USER_AI_DIR="$WORKBENCH_STATE_DIR/overrides/ai"
 USER_CLAUDE_DIR="$USER_AI_DIR/claude"
 USER_AGENTS_DIR="$USER_CLAUDE_DIR/agents"
 USER_SKILLS_DIR="$USER_CLAUDE_DIR/skills"

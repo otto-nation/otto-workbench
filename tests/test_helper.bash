@@ -21,7 +21,8 @@ common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)
   unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
-  _REPO_CONFIG_SNAPSHOT="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | sort)"
+  # Exclude worktrunk.state — its marker timestamps update asynchronously
+  _REPO_CONFIG_SNAPSHOT="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | grep -v '^worktrunk\.state\.' | sort)"
   _REPO_HEAD_SNAPSHOT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
   _REPO_BRANCHES_SNAPSHOT="$(git -C "$REPO_ROOT" branch --list 2>/dev/null | sort)"
 }
@@ -30,7 +31,7 @@ common_setup() {
 # Fails the test if anything in the real repo changed.
 common_teardown() {
   local current_config current_head current_branches
-  current_config="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | sort)"
+  current_config="$(git -C "$REPO_ROOT" config --local --list 2>/dev/null | grep -v '^worktrunk\.state\.' | sort)"
   current_head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"
   current_branches="$(git -C "$REPO_ROOT" branch --list 2>/dev/null | sort)"
 

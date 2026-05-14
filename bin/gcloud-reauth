@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# Check GCP application-default credentials and re-login if expired.
-#
-# Usage: gcloud-reauth [command]
-#
-# Commands:
-#   (none)      Check credentials, launch login if expired
-#   install     Install launchd agent (runs every 12h)
-#   uninstall   Remove launchd agent
-#   status      Show agent status
-
 set -e
+
+usage() {
+  cat <<EOF
+Check GCP application-default credentials and re-login if expired.
+
+Usage: $(basename "$0") [command]
+
+Commands:
+  (none)      Check credentials, launch login if expired
+  install     Install launchd agent (runs every 12h)
+  uninstall   Remove launchd agent
+  status      Show agent status
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
 LABEL="com.otto-workbench.gcloud-reauth"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
@@ -105,8 +111,6 @@ case "${1:-}" in
   install)    cmd_install ;;
   uninstall)  cmd_uninstall ;;
   status)     cmd_status ;;
-  -h|--help)
-    sed -n '2,/^$/s/^# \?//p' "$0"
-    ;;
+  -h|--help)  usage ;;
   *)          cmd_check ;;
 esac

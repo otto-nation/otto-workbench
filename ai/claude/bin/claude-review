@@ -44,7 +44,9 @@ SUFFIX_POST_SESSION=".post.jsonl"
 ARCHIVE_KEEP_COUNT=3
 DEFAULT_MAX_PARALLEL=4
 
-LINEAR_ISSUE_PATTERN='[A-Z]+-[0-9]+'
+ISSUE_PATTERN_JIRA_LINEAR='[A-Z]+-[0-9]+'
+ISSUE_PROVIDER_DEFAULT="linear"
+
 PR_URL_PATTERN='/pull/([0-9]+)'
 PR_NUMBER_PATTERN='^[0-9]+$'
 GITHUB_REPO_PATTERN='github\.com/([^/]+/[^/]+)'
@@ -183,18 +185,93 @@ _print_summary() {
   echo
 }
 
-_fetch_linear_context() {
-  local -n __out=$1
-  local branch_name="$2"
-  local issue_link="$3"
+_load_issue_provider() {
+  local -n __provider=$1
+  local -n __provider_opts=$2
+  local wt_path="${3:-}"
 
-  __out=""
-  local issue_id
-  issue_id=$(echo "$branch_name" | grep -oE "$LINEAR_ISSUE_PATTERN" | head -1 || true)
-  if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
-    __out=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
-    [[ -n "$__out" ]] && echo "✓ Found Linear issue: $issue_id"
+  __provider="$ISSUE_PROVIDER_DEFAULT"
+  __provider_opts=""
+
+  local config_file=""
+  if [[ -n "$wt_path" && -f "${wt_path}/.claude/review.yml" ]]; then
+    config_file="${wt_path}/.claude/review.yml"
+  elif [[ -f "${HOME}/.config/workbench/review.yml" ]]; then
+    config_file="${HOME}/.config/workbench/review.yml"
   fi
+  [[ -n "$config_file" ]] || return 0
+
+  if command -v yq &>/dev/null; then
+    __provider=$(yq -r '.issue_tracker.provider // "linear"' "$config_file" 2>/dev/null) || true
+    __provider_opts=$(yq -r '.issue_tracker // {}' "$config_file" 2>/dev/null) || true
+  else
+    __provider=$(grep -E '^\s*provider:' "$config_file" 2>/dev/null | head -1 | sed 's/.*provider:\s*//' | tr -d ' "'"'" || true)
+  fi
+  [[ -n "$__provider" ]] || __provider="$ISSUE_PROVIDER_DEFAULT"
+}
+
+_extract_issue_id() {
+  local -n __id=$1
+  local provider="$2"
+  local branch_name="$3"
+  local pr_body="${4:-}"
+
+  __id=""
+  case "$provider" in
+    linear|jira)
+      __id=$(echo "$branch_name" | grep -oE "$ISSUE_PATTERN_JIRA_LINEAR" | head -1 || true)
+      if [[ -z "$__id" && -n "$pr_body" ]]; then
+        __id=$(echo "$pr_body" | grep -oE "$ISSUE_PATTERN_JIRA_LINEAR" | head -1 || true)
+      fi
+      ;;
+    github)
+      if [[ -n "$pr_body" ]]; then
+        local match
+        match=$(echo "$pr_body" | grep -oiE '(closes|fixes|resolves)\s+#[0-9]+' | head -1 || true)
+        __id=$(echo "$match" | grep -oE '[0-9]+' || true)
+      fi
+      ;;
+    none) ;;
+  esac
+}
+
+_fetch_issue_context() {
+  local -n __link=$1
+  local -n __context=$2
+  local provider="$3"
+  local issue_id="$4"
+  local repo="${5:-}"
+  local provider_opts="${6:-}"
+
+  __link=""
+  __context=""
+  [[ -n "$issue_id" ]] || return 0
+
+  case "$provider" in
+    linear)
+      if command -v linear &>/dev/null; then
+        __context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
+        [[ -n "$__context" ]] && echo "✓ Found Linear issue: $issue_id"
+      fi
+      ;;
+    github)
+      __link="${GITHUB_BASE_URL}/${repo}/issues/${issue_id}"
+      if command -v gh &>/dev/null; then
+        __context=$(gh issue view "$issue_id" --repo "$repo" --json title,body,comments 2>/dev/null) || true
+        [[ -n "$__context" ]] && echo "✓ Found GitHub issue: #${issue_id}"
+      fi
+      ;;
+    jira)
+      local jira_url=""
+      if command -v yq &>/dev/null && [[ -n "$provider_opts" ]]; then
+        jira_url=$(echo "$provider_opts" | yq -r '.jira_url // empty' 2>/dev/null) || true
+      fi
+      if [[ -n "$jira_url" ]]; then
+        __link="${jira_url}/browse/${issue_id}"
+      fi
+      echo "✓ Found Jira issue: $issue_id"
+      ;;
+  esac
 }
 
 _archive_review() {
@@ -304,15 +381,27 @@ cmd_review() {
   local review_file
   _review_file review_file "$repo" "$pr_number"
 
-  if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" ]]; then
-    read -rp "Issue link (optional, Enter to skip): " issue_link
+  # ── Issue detection: auto-detect from branch/PR body before prompting ──
+  local pr_meta
+  pr_meta=$(gh pr view "$pr_number" --repo "$repo" --json headRefName,body 2>/dev/null) || true
+  local pr_head pr_body
+  pr_head=$(echo "$pr_meta" | jq -r '.headRefName // empty' 2>/dev/null) || true
+  pr_body=$(echo "$pr_meta" | jq -r '.body // empty' 2>/dev/null) || true
+
+  local issue_context="" detected_link=""
+  if [[ -z "$issue_link" ]]; then
+    local provider="" provider_opts=""
+    _load_issue_provider provider provider_opts ""
+
+    local issue_id=""
+    _extract_issue_id issue_id "$provider" "$pr_head" "$pr_body"
+    _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
+    [[ -n "$detected_link" ]] && issue_link="$detected_link"
+
+    if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" && -z "$issue_context" ]]; then
+      read -rp "Issue link (optional, Enter to skip): " issue_link
+    fi
   fi
-
-  local pr_head
-  pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
-
-  local issue_context=""
-  _fetch_linear_context issue_context "$pr_head" "$issue_link"
 
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
@@ -469,7 +558,16 @@ cmd_self_review() {
   branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
 
   local issue_context=""
-  _fetch_linear_context issue_context "$branch_name" "$issue_link"
+  if [[ -z "$issue_link" ]]; then
+    local provider="" provider_opts=""
+    _load_issue_provider provider provider_opts "$wt_path"
+
+    local issue_id=""
+    _extract_issue_id issue_id "$provider" "$branch_name"
+    local detected_link=""
+    _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
+    [[ -n "$detected_link" ]] && issue_link="$detected_link"
+  fi
 
   # ── Run orchestrator ──
   local orchestrate_args=(

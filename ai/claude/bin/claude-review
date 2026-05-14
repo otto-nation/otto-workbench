@@ -49,7 +49,16 @@ PR_URL_PATTERN='/pull/([0-9]+)'
 PR_NUMBER_PATTERN='^[0-9]+$'
 GITHUB_REPO_PATTERN='github\.com/([^/]+/[^/]+)'
 
+GITHUB_BASE_URL="https://github.com"
+
 WORKTREE_FALLBACK_DIR=".worktrees"
+
+ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
+
+POST_SKILL_REL="../skills/pr-review/SKILL.md"
+
+ORCHESTRATE_BIN="review-orchestrate"
+STREAM_PROGRESS_BIN="review-stream-progress"
 
 mkdir -p "$REVIEWS_DIR"
 
@@ -155,8 +164,9 @@ _format_usage() {
 _print_summary() {
   local review_file="$1"
   local session_log="$2"
-  local pr_url="$3"
+  local pr_url="${3:-}"
   local post_session_log="${4:-}"
+  local branch_name="${5:-}"
 
   echo
   title "Summary"
@@ -164,7 +174,11 @@ _print_summary() {
   echo -e "  Session log:     ${session_log}"
   [[ -n "$post_session_log" && -f "$post_session_log" ]] && \
     echo -e "  Post session:    ${post_session_log}"
-  echo -e "  PR:              ${pr_url}"
+  if [[ -n "$pr_url" ]]; then
+    echo -e "  PR:              ${pr_url}"
+  elif [[ -n "$branch_name" ]]; then
+    echo -e "  Branch:          ${branch_name}"
+  fi
   _format_usage "$session_log" "$post_session_log"
   echo
 }
@@ -216,7 +230,7 @@ cmd_review() {
     [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
   fi
 
-  local pr_url="https://github.com/${repo}/pull/${pr_number}"
+  local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
   # ── Worktree setup ──
   local repo_root=""
@@ -270,14 +284,14 @@ cmd_review() {
     prior_review_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
     cp "$review_file" "$prior_review_path"
     local archive
-    archive="${review_file%"${REVIEW_EXT}"}.$(date +%Y%m%d-%H%M%S).md"
+    archive="${review_file%"${REVIEW_EXT}"}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
     mv "$review_file" "$archive"
     info "Archived prior review to $(basename "$archive")"
   fi
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
   if [[ -f "$session_log" ]]; then
-    mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
+    mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
   fi
 
   # Prune old archives — keep latest 3
@@ -305,7 +319,7 @@ cmd_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
 
-  "$(dirname "$_SELF")/review-orchestrate" "${orchestrate_args[@]}"
+  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
   # Clean up temporary prior review copy
   rm -f "$prior_review_path" 2>/dev/null || true
@@ -457,24 +471,16 @@ cmd_self_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
 
-  "$(dirname "$_SELF")/review-orchestrate" "${orchestrate_args[@]}"
+  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
   # Clean up temporary prior review copy
   rm -f "$prior_review_path" 2>/dev/null || true
 
   _display_review "$review_file"
 
-  echo
-  title "Summary"
-  echo -e "  Review:          ${review_file}"
-  echo -e "  Session log:     ${session_log}"
-  if [[ -n "$pr_number" ]]; then
-    echo -e "  PR:              https://github.com/${repo}/pull/${pr_number}"
-  else
-    echo -e "  Branch:          ${branch_name}"
-  fi
-  _format_usage "$session_log"
-  echo
+  local pr_url=""
+  [[ -n "$pr_number" ]] && pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
+  _print_summary "$review_file" "$session_log" "$pr_url" "" "$branch_name"
 
   # Clean up worktree if we created one
   if [[ -n "$wt_cleanup" ]]; then
@@ -501,7 +507,7 @@ cmd_post() {
   post_prompt="Post review for PR #${pr_number} in ${repo}. Review file: ${review_file}"
 
   local skill_file
-  skill_file="$(dirname "$_SELF")/../skills/pr-review/SKILL.md"
+  skill_file="$(dirname "$_SELF")/${POST_SKILL_REL}"
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
 
@@ -511,7 +517,7 @@ cmd_post() {
     --permission-mode acceptEdits \
     --system-prompt-file "$skill_file" \
     --add-dir "$REVIEWS_DIR" \
-    | "$(dirname "$_SELF")/review-stream-progress" "$session_log"
+    | "$(dirname "$_SELF")/${STREAM_PROGRESS_BIN}" "$session_log"
   echo
 
   local pending_review_id

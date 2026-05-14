@@ -245,8 +245,12 @@ pr = mod.PRMetadata(
     files=[{"path": "a.go", "additions": 10, "deletions": 5}],
 )
 ctx = mod.PRContext(commits="fix it", reviews="[]", review_comments="[]", comments="[]")
-result = mod.build_prompt("single-agent.md", "org/repo", pr, ctx,
-    "/tmp/wt", "/tmp/review.md", pr_number="99")
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+)
+result = mod.build_prompt("single-agent.md", job)
 print(result)
 ')
   [[ "$result" == *"PR #99"* ]]
@@ -261,8 +265,12 @@ pr = mod.PRMetadata(
     files=[{"path": "a.go", "additions": 10, "deletions": 5}],
 )
 ctx = mod.PRContext()
-result = mod.build_prompt("group.md", "org/repo", pr, ctx,
-    "/tmp/wt", "/tmp/review.md", pr_number="1",
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+)
+result = mod.build_prompt("group.md", job,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
     group_output="/tmp/g1.md",
@@ -281,8 +289,12 @@ pr = mod.PRMetadata(
     files=[{"path": "a.go", "additions": 10, "deletions": 5}],
 )
 ctx = mod.PRContext()
-result = mod.build_prompt("group.md", "org/repo", pr, ctx,
-    "/tmp/wt", "/tmp/review.md", pr_number="1",
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+)
+result = mod.build_prompt("group.md", job,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
     group_output="/tmp/g1.md",

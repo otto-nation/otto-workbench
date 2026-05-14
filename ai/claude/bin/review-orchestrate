@@ -48,21 +48,19 @@ class PRMetadata:
 
     @property
     def file_stats(self):
-        if self.total_lines <= 500:
+        if self.total_lines <= MULTI_PHASE_LINE_THRESHOLD:
             return ""
         sorted_files = sorted(
             self.files, key=lambda f: f["additions"] + f["deletions"], reverse=True
         )
         return "\n".join(
-            f"  - {f['path']} (+{f['additions']} -{f['deletions']})"
-            for f in sorted_files
+            FILE_STAT_FMT.format(**f) for f in sorted_files
         )
 
     @property
     def all_files_formatted(self):
         return "\n".join(
-            f"  - {f['path']} (+{f['additions']} -{f['deletions']})"
-            for f in self.files
+            FILE_STAT_FMT.format(**f) for f in self.files
         )
 
 
@@ -81,11 +79,79 @@ class Group:
     lines: int
 
 
+MODE_PR = "pr"
+MODE_SELF = "self"
+
+
+@dataclass
+class ReviewJob:
+    repo: str
+    pr_number: str
+    pr: PRMetadata
+    ctx: PRContext
+    wt_path: str
+    review_file: str
+    session_log: str
+    reviews_dir: str
+    issue_link: str = ""
+    issue_context: str = ""
+    prior_review: str = ""
+    mode: str = MODE_PR
+
+
 # ── Constants ─────────────────────────────────────────────────────────────────
+
+REVIEW_EXT = ".md"
 
 MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
+DEFAULT_MAX_PARALLEL = 4
+
+DEFAULT_BASE_BRANCH = "main"
+GIT_RANGE_TO_HEAD = f"origin/{DEFAULT_BASE_BRANCH}..HEAD"
+
+SECTION_FILE_TRIAGE = "File Triage"
+SECTION_MUST_FIX = "Must fix"
+SECTION_SHOULD_FIX = "Should fix"
+SECTION_NIT = "Nit"
+
+FINDING_PREFIX_MUST = "M"
+FINDING_PREFIX_SHOULD = "S"
+FINDING_PREFIX_NIT = "N"
+
+GROUP_TIER1 = "tier1-critical"
+GROUP_TIER3 = "tier3-generated"
+
+TEMPLATE_SINGLE = "single-agent.md"
+TEMPLATE_HOLISTIC = "holistic.md"
+TEMPLATE_GROUP = "group.md"
+TEMPLATE_SYNTHESIS = "synthesis.md"
+TEMPLATE_SELF_REVIEW = "self-review.md"
+TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
+
+SUFFIX_PRIOR = ".prior.md"
+SUFFIX_SESSION = ".session.jsonl"
+SUFFIX_HOLISTIC = ".holistic.md"
+SUFFIX_HOLISTIC_LOG = ".holistic.jsonl"
+SUFFIX_SYNTHESIS_LOG = ".synthesis.jsonl"
+SUFFIX_GROUP = ".group-{}.md"
+SUFFIX_GROUP_LOG = ".group-{}.jsonl"
+
+PIPELINE_MULTI = "multi"
+PIPELINE_SINGLE = "single"
+
+TEMPLATE_DIR_REL = Path("lib") / "review-templates"
+
+FILE_STAT_FMT = "  - {path} (+{additions} -{deletions})"
+META_DATE = "<!-- date: {today} -->"
+META_HEAD_SHA = "<!-- head_sha: {head_sha} -->"
+FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
+
+ANSI_DIM = "\033[2m"
+ANSI_RESET = "\033[0m"
+ANSI_INFO = "\033[1;34m▸\033[0m"
+ANSI_WARN = "\033[1;33m⚠\033[0m"
 
 TIER1_BASENAMES = {
     "CLAUDE.md", ".cursorrules", "AGENTS.md", "GEMINI.md",
@@ -96,6 +162,7 @@ TIER1_PATH_SEGMENTS = {
     "migrations", "auth", "crypto", "permissions",
     "vault", "network-policies", "authorization-policies",
 }
+TIER3_BASENAMES = {"go.sum"}
 TIER3_BASENAMES_SUFFIXES = (
     ".pb.go", "_pb2.py", "_pb.ts", "_pb2_grpc.py",
     ".latest.sql", ".ko.yaml",
@@ -111,7 +178,7 @@ def classify_tier(path: str) -> int:
 
     if any(seg in TIER3_PATH_SEGMENTS for seg in parts):
         return 3
-    if basename == "go.sum" or basename.endswith(TIER3_BASENAMES_SUFFIXES):
+    if basename in TIER3_BASENAMES or basename.endswith(TIER3_BASENAMES_SUFFIXES):
         return 3
     if basename in TIER1_BASENAMES:
         return 1
@@ -123,6 +190,25 @@ def classify_tier(path: str) -> int:
 
 
 # ── File grouping ─────────────────────────────────────────────────────────────
+
+def _split_large_dir(name: str, files: list[str], file_lines: dict[str, int]) -> list[Group]:
+    groups: list[Group] = []
+    sub_files: list[str] = []
+    sub_lines = 0
+    sub_idx = 1
+    for f in files:
+        fl = file_lines[f]
+        if sub_lines + fl > MAX_GROUP_LINES and sub_files:
+            groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
+            sub_files = []
+            sub_lines = 0
+            sub_idx += 1
+        sub_files.append(f)
+        sub_lines += fl
+    if sub_files:
+        groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
+    return groups
+
 
 def group_files(pr: PRMetadata) -> list[Group]:
     file_lines = {f["path"]: f["additions"] + f["deletions"] for f in pr.files}
@@ -138,7 +224,7 @@ def group_files(pr: PRMetadata) -> list[Group]:
     groups: list[Group] = []
 
     if tiers[1]:
-        groups.append(Group("tier1-critical", tiers[1], tier_lines[1]))
+        groups.append(Group(GROUP_TIER1, tiers[1], tier_lines[1]))
 
     dir_files: dict[str, list[str]] = {}
     dir_lines: dict[str, int] = {}
@@ -156,25 +242,12 @@ def group_files(pr: PRMetadata) -> list[Group]:
         files = dir_files[d]
         total = dir_lines[d]
         if total > MAX_GROUP_LINES:
-            sub_files: list[str] = []
-            sub_lines = 0
-            sub_idx = 1
-            for f in files:
-                fl = file_lines[f]
-                if sub_lines + fl > MAX_GROUP_LINES and sub_files:
-                    groups.append(Group(f"{d}-{sub_idx}", sub_files, sub_lines))
-                    sub_files = []
-                    sub_lines = 0
-                    sub_idx += 1
-                sub_files.append(f)
-                sub_lines += fl
-            if sub_files:
-                groups.append(Group(f"{d}-{sub_idx}", sub_files, sub_lines))
+            groups.extend(_split_large_dir(d, files, file_lines))
         else:
             groups.append(Group(d, files, total))
 
     if tiers[3]:
-        groups.append(Group("tier3-generated", tiers[3], tier_lines[3]))
+        groups.append(Group(GROUP_TIER3, tiers[3], tier_lines[3]))
 
     return groups
 
@@ -215,47 +288,84 @@ def merge_reviews(group_files: list[str]) -> str:
             continue
         content = p.read_text()
 
-        triage = _extract_section(content, "File Triage")
-        must = _extract_section(content, "Must fix")
-        should = _extract_section(content, "Should fix")
-        nit = _extract_section(content, "Nit")
+        triage = _extract_section(content, SECTION_FILE_TRIAGE)
+        must = _extract_section(content, SECTION_MUST_FIX)
+        should = _extract_section(content, SECTION_SHOULD_FIX)
+        nit = _extract_section(content, SECTION_NIT)
 
         if triage:
             merged_triage += triage + "\n"
 
-        text, count = renumber_section("M", must, m_offset)
+        text, count = renumber_section(FINDING_PREFIX_MUST, must, m_offset)
         if text:
             merged_must += text + "\n"
         m_offset += count
 
-        text, count = renumber_section("S", should, s_offset)
+        text, count = renumber_section(FINDING_PREFIX_SHOULD, should, s_offset)
         if text:
             merged_should += text + "\n"
         s_offset += count
 
-        text, count = renumber_section("N", nit, n_offset)
+        text, count = renumber_section(FINDING_PREFIX_NIT, nit, n_offset)
         if text:
             merged_nit += text + "\n"
         n_offset += count
 
-    parts = [f"## File Triage\n{merged_triage}"]
+    parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
     if merged_must:
-        parts.append(f"## Must fix\n{merged_must}")
+        parts.append(f"## {SECTION_MUST_FIX}\n{merged_must}")
     if merged_should:
-        parts.append(f"## Should fix\n{merged_should}")
+        parts.append(f"## {SECTION_SHOULD_FIX}\n{merged_should}")
     if merged_nit:
-        parts.append(f"## Nit\n{merged_nit}")
+        parts.append(f"## {SECTION_NIT}\n{merged_nit}")
 
     return "\n".join(parts)
 
 
 # ── PR data fetching ──────────────────────────────────────────────────────────
 
-def _run(cmd: list[str], check: bool = True) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if check and r.returncode != 0:
         return ""
     return r.stdout.strip()
+
+
+def fetch_branch_metadata(wt_path: str) -> PRMetadata:
+    head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
+    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
+
+    log_output = _run(["git", "log", GIT_RANGE_TO_HEAD, "--oneline"], cwd=wt_path)
+    first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
+    title = first_subject
+
+    numstat = _run(["git", "diff", "--numstat", GIT_RANGE_TO_HEAD], cwd=wt_path)
+    files = []
+    total_add = 0
+    total_del = 0
+    for line in numstat.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        add = int(parts[0]) if parts[0] != "-" else 0
+        delete = int(parts[1]) if parts[1] != "-" else 0
+        files.append({"path": parts[2], "additions": add, "deletions": delete})
+        total_add += add
+        total_del += delete
+
+    return PRMetadata(
+        title=title,
+        body="",
+        head=branch,
+        base=DEFAULT_BASE_BRANCH,
+        head_sha=head_sha,
+        additions=total_add,
+        deletions=total_del,
+        changed_files=len(files),
+        files=files,
+    )
 
 
 def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
@@ -320,7 +430,7 @@ def fetch_pr_context(repo: str, pr_number: str) -> PRContext:
 # ── Template rendering ────────────────────────────────────────────────────────
 
 def _template_dir() -> Path:
-    return Path(__file__).resolve().parent.parent / "lib" / "review-templates"
+    return Path(__file__).resolve().parent.parent / TEMPLATE_DIR_REL
 
 
 def _build_pr_header(pr: PRMetadata, ctx: PRContext) -> str:
@@ -363,6 +473,18 @@ PR branch checked out at: {wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API."""
 
 
+def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
+    if not holistic_content:
+        return ""
+    return (
+        f"\n## Holistic context\n"
+        f"The following assessment was produced by scanning all "
+        f"{changed_files} files in this PR.\n"
+        f"Use it to inform your detailed review — especially the flags section.\n\n"
+        f"{holistic_content}"
+    )
+
+
 def _build_issue_section(issue_link: str, issue_context: str) -> str:
     if issue_link:
         return f"\n## Related issue\n{issue_link}"
@@ -390,24 +512,54 @@ def render_template(name: str, **kwargs) -> str:
     return tmpl.safe_substitute(**kwargs)
 
 
-def build_prompt(
-    template_name: str,
-    repo: str,
-    pr: PRMetadata,
-    ctx: PRContext,
-    wt_path: str,
-    review_file: str,
-    issue_link: str = "",
-    issue_context: str = "",
-    prior_review: str = "",
-    **extra,
-) -> str:
-    pr_header = _build_pr_header(pr, ctx)
-    reviews_section = _build_reviews_section(ctx)
-    env_section = _build_env_section(wt_path)
-    issue_section = _build_issue_section(issue_link, issue_context)
+def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
+    today = date.today().isoformat()
+    pr_header = _build_pr_header(job.pr, job.ctx)
+    reviews_section = _build_reviews_section(job.ctx)
+    env_section = _build_env_section(job.wt_path)
+    issue_section = _build_issue_section(job.issue_link, job.issue_context)
 
-    if template_name == "single-agent.md":
+    if template_name == TEMPLATE_SELF_REVIEW:
+        prior_ctx = (
+            "This is a re-review of your own code. Below are the findings from the previous self-review. "
+            "For each prior finding:\n"
+            "- If the issue has been fixed, omit it from the new review\n"
+            "- If the issue is still present, carry it forward\n"
+            "- Add any new findings from changes since the last review"
+        )
+        prior_section = _build_prior_section(job.prior_review, prior_ctx)
+        return render_template(
+            TEMPLATE_SELF_REVIEW,
+            branch_name=extra.get("branch_name", job.pr.head),
+            repo=job.repo,
+            pr_header=pr_header,
+            env_section=env_section,
+            issue_section=issue_section,
+            prior_section=prior_section,
+            review_file=job.review_file,
+        )
+
+    if template_name == TEMPLATE_SELF_SYNTHESIS:
+        prior_section = _build_prior_section(
+            job.prior_review,
+            "Omit prior findings that have been fixed. Carry forward open ones.",
+        )
+        return render_template(
+            TEMPLATE_SELF_SYNTHESIS,
+            branch_name=extra.get("branch_name", job.pr.head),
+            repo=job.repo,
+            pr_header=pr_header,
+            pr_head_sha=job.pr.head_sha,
+            holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
+            group_count=extra["group_count"],
+            merged_content=extra["merged_content"],
+            review_file=job.review_file,
+            wt_path=job.wt_path,
+            today=today,
+            prior_section=prior_section,
+        )
+
+    if template_name == TEMPLATE_SINGLE:
         prior_ctx = (
             "This is a re-review. Below are the findings from the previous review. "
             "For each prior finding:\n"
@@ -415,53 +567,46 @@ def build_prompt(
             "- If the issue is still present, carry it forward\n"
             "- Add any new findings from changes since the last review"
         )
-        prior_section = _build_prior_section(prior_review, prior_ctx)
+        prior_section = _build_prior_section(job.prior_review, prior_ctx)
         return render_template(
-            "single-agent.md",
-            pr_number=extra.get("pr_number", ""),
-            repo=repo,
+            TEMPLATE_SINGLE,
+            pr_number=job.pr_number,
+            repo=job.repo,
             pr_header=pr_header,
             reviews_section=reviews_section,
             env_section=env_section,
             issue_section=issue_section,
             prior_section=prior_section,
-            review_file=review_file,
+            review_file=job.review_file,
         )
 
-    if template_name == "holistic.md":
+    if template_name == TEMPLATE_HOLISTIC:
         return render_template(
-            "holistic.md",
-            pr_number=extra.get("pr_number", ""),
-            repo=repo,
+            TEMPLATE_HOLISTIC,
+            pr_number=job.pr_number,
+            repo=job.repo,
             pr_header=pr_header,
-            all_files_formatted=pr.all_files_formatted,
+            all_files_formatted=job.pr.all_files_formatted,
             reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
             holistic_output=extra["holistic_output"],
         )
 
-    if template_name == "group.md":
+    if template_name == TEMPLATE_GROUP:
         prior_section = _build_prior_section(
-            prior_review,
+            job.prior_review,
             "This is a re-review. Below are the prior findings. "
             "Carry forward findings relevant to YOUR files only. "
             "Mark fixed findings as resolved.",
         )
-        holistic_content = extra.get("holistic_content", "")
-        holistic_block = ""
-        if holistic_content:
-            holistic_block = (
-                f"\n## Holistic context\n"
-                f"The following assessment was produced by scanning all "
-                f"{pr.changed_files} files in this PR.\n"
-                f"Use it to inform your detailed review — especially the flags section.\n\n"
-                f"{holistic_content}"
-            )
+        holistic_block = _build_holistic_block(
+            extra.get("holistic_content", ""), job.pr.changed_files,
+        )
         return render_template(
-            "group.md",
-            pr_number=extra.get("pr_number", ""),
-            repo=repo,
+            TEMPLATE_GROUP,
+            pr_number=job.pr_number,
+            repo=job.repo,
             pr_header=pr_header,
             group_idx=extra["group_idx"],
             group_count=extra["group_count"],
@@ -475,24 +620,24 @@ def build_prompt(
             prior_section=prior_section,
         )
 
-    if template_name == "synthesis.md":
+    if template_name == TEMPLATE_SYNTHESIS:
         prior_section = _build_prior_section(
-            prior_review,
+            job.prior_review,
             "Include a ## Resolved section noting which prior findings were fixed.",
         )
         return render_template(
-            "synthesis.md",
-            pr_number=extra.get("pr_number", ""),
-            repo=repo,
+            TEMPLATE_SYNTHESIS,
+            pr_number=job.pr_number,
+            repo=job.repo,
             pr_header=pr_header,
-            pr_title=pr.title,
-            pr_head_sha=pr.head_sha,
+            pr_title=job.pr.title,
+            pr_head_sha=job.pr.head_sha,
             holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
             group_count=extra["group_count"],
             merged_content=extra["merged_content"],
-            review_file=review_file,
-            wt_path=wt_path,
-            today=date.today().isoformat(),
+            review_file=job.review_file,
+            wt_path=job.wt_path,
+            today=today,
             prior_section=prior_section,
         )
 
@@ -501,13 +646,27 @@ def build_prompt(
 
 # ── Stream progress ───────────────────────────────────────────────────────────
 
-DIM = "\033[2m"
-NC = "\033[0m"
+def _tool_label_from_block(block: dict) -> str:
+    if block.get("type") != "tool_use":
+        return ""
+    inp = block.get("input", {})
+    name = block.get("name", "")
+    if inp.get("description"):
+        return inp["description"]
+    if name == "Read":
+        return "Read " + (inp.get("file_path", "").split("/")[-1] or "")
+    if name == "Grep":
+        return "Grep " + inp.get("pattern", "")
+    if name == "Glob":
+        return "Glob " + inp.get("pattern", "")
+    if name == "Write":
+        return "Write " + (inp.get("file_path", "").split("/")[-1] or "")
+    return name
 
 
 def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""):
     prev_tool = ""
-    prefix = f"  {DIM}[{label}]{NC} " if label else ""
+    prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
     with open(session_log, "w") as log:
         for raw_line in process.stdout:
             log.write(raw_line)
@@ -518,28 +677,13 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
                 continue
             if data.get("type") != "assistant":
                 continue
-            contents = data.get("message", {}).get("content", [])
-            for block in contents:
-                if block.get("type") != "tool_use":
+            for block in data.get("message", {}).get("content", []):
+                tool_label = _tool_label_from_block(block)
+                if not tool_label or tool_label == prev_tool:
                     continue
-                inp = block.get("input", {})
-                name = block.get("name", "")
-                if inp.get("description"):
-                    tool_label = inp["description"]
-                elif name == "Read":
-                    tool_label = "Read " + (inp.get("file_path", "").split("/")[-1] or "")
-                elif name == "Grep":
-                    tool_label = "Grep " + inp.get("pattern", "")
-                elif name == "Glob":
-                    tool_label = "Glob " + inp.get("pattern", "")
-                elif name == "Write":
-                    tool_label = "Write " + (inp.get("file_path", "").split("/")[-1] or "")
-                else:
-                    tool_label = name
-                if tool_label and tool_label != prev_tool:
-                    with _print_lock:
-                        print(f"{prefix}  {DIM}▸ {tool_label}{NC}", flush=True)
-                    prev_tool = tool_label
+                with _print_lock:
+                    print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
+                prev_tool = tool_label
 
 
 # ── Agent invocation ──────────────────────────────────────────────────────────
@@ -570,58 +714,50 @@ _print_lock = threading.Lock()
 
 def _info(msg: str):
     with _print_lock:
-        print(f"\033[1;34m▸\033[0m {msg}", flush=True)
+        print(f"{ANSI_INFO} {msg}", flush=True)
 
 
 def _warn(msg: str):
     with _print_lock:
-        print(f"\033[1;33m⚠\033[0m {msg}", file=sys.stderr, flush=True)
+        print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
 
 
-def run_single_agent(
-    repo: str, pr_number: str, pr: PRMetadata, ctx: PRContext,
-    wt_path: str, review_file: str, session_log: str, reviews_dir: str,
-    issue_link: str, issue_context: str, prior_review: str,
-):
+def run_single_agent(job: ReviewJob):
+    template = TEMPLATE_SELF_REVIEW if job.mode == MODE_SELF else TEMPLATE_SINGLE
     prompt = build_prompt(
-        "single-agent.md", repo, pr, ctx, wt_path, review_file,
-        issue_link=issue_link, issue_context=issue_context,
-        prior_review=prior_review, pr_number=pr_number,
+        template, job, branch_name=job.pr.head,
     )
-    _info(f"Running review agent on PR #{pr_number} ({pr.title})...")
+    label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
+    _info(f"Running review agent on {label}...")
     print()
-    invoke_agent(prompt, session_log, wt_path, reviews_dir)
+    invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir)
     print()
 
-    if not Path(review_file).exists():
-        print(f"error: review file not found: {review_file}", file=sys.stderr)
-        print(f"  Session log: {session_log}", file=sys.stderr)
+    if not Path(job.review_file).exists():
+        print(f"error: review file not found: {job.review_file}", file=sys.stderr)
+        print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 
 
 def _review_group(
-    i: int, grp: Group, pr: PRMetadata, ctx: PRContext,
-    repo: str, pr_number: str, wt_path: str, review_file: str,
-    reviews_dir: str, issue_link: str, issue_context: str,
-    prior_review: str, group_count: int, holistic_content: str,
+    i: int, grp: Group, job: ReviewJob,
+    group_count: int, holistic_content: str,
 ) -> tuple[int, str, str | None]:
     group_files_formatted = "\n".join(
-        f"  - {f['path']} (+{f['additions']} -{f['deletions']})"
-        for f in pr.files if f["path"] in grp.files
+        FILE_STAT_FMT.format(**f)
+        for f in job.pr.files if f["path"] in grp.files
     )
-    group_output = review_file.replace(".md", f".group-{i}.md")
-    group_log = review_file.replace(".md", f".group-{i}.jsonl")
+    group_output = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i))
+    group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
 
     group_prompt = build_prompt(
-        "group.md", repo, pr, ctx, wt_path, review_file,
-        issue_link=issue_link, issue_context=issue_context,
-        prior_review=prior_review, pr_number=pr_number,
+        TEMPLATE_GROUP, job,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
         group_output=group_output, holistic_content=holistic_content,
     )
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, wt_path, reviews_dir, label=grp.name)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name)
 
     failed = None
     if not Path(group_output).exists():
@@ -633,29 +769,16 @@ def _review_group(
     return (i, group_output, failed)
 
 
-def run_multi_phase(
-    repo: str, pr_number: str, pr: PRMetadata, ctx: PRContext,
-    wt_path: str, review_file: str, session_log: str, reviews_dir: str,
-    issue_link: str, issue_context: str, prior_review: str,
-    max_parallel: int = 4,
-):
-    groups = group_files(pr)
-    group_count = len(groups)
+def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
+    holistic_output = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC)
+    holistic_log = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC_LOG)
 
-    _info(f"Large PR ({pr.total_lines} lines, {pr.changed_files} files) — {group_count} file groups")
-
-    # Phase 1: Holistic scan
-    holistic_output = review_file.replace(".md", ".holistic.md")
-    holistic_log = review_file.replace(".md", ".holistic.jsonl")
-
-    holistic_prompt = build_prompt(
-        "holistic.md", repo, pr, ctx, wt_path, review_file,
-        issue_link=issue_link, issue_context=issue_context,
-        pr_number=pr_number, holistic_output=holistic_output,
+    prompt = build_prompt(
+        TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(holistic_prompt, holistic_log, wt_path, reviews_dir)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir)
     print()
 
     holistic_content = ""
@@ -664,20 +787,20 @@ def run_multi_phase(
     else:
         _warn("Holistic scan produced no output — continuing without it")
 
-    # Phase 2: Group reviews (parallel)
-    group_outputs = [review_file.replace(".md", f".group-{i}.md") for i in range(1, group_count + 1)]
-    failed_groups: list[str] = []
+    return holistic_content, holistic_output, holistic_log
 
-    shared_args = (
-        pr, ctx, repo, pr_number, wt_path, review_file,
-        reviews_dir, issue_link, issue_context, prior_review,
-        group_count, holistic_content,
-    )
+
+def _phase_group_reviews(
+    groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str, max_parallel: int,
+) -> tuple[list[str], list[str]]:
+    group_outputs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
+    failed_groups: list[str] = []
 
     workers = min(max_parallel, group_count)
     if workers <= 1:
         for i, grp in enumerate(groups, 1):
-            _, _, failed = _review_group(i, grp, *shared_args)
+            _, _, failed = _review_group(i, grp, job, group_count, holistic_content)
             if failed:
                 failed_groups.append(failed)
     else:
@@ -685,7 +808,7 @@ def run_multi_phase(
         print()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
-                pool.submit(_review_group, i, grp, *shared_args): i
+                pool.submit(_review_group, i, grp, job, group_count, holistic_content): i
                 for i, grp in enumerate(groups, 1)
             }
             for future in as_completed(futures):
@@ -694,7 +817,10 @@ def run_multi_phase(
                     failed_groups.append(failed)
         print()
 
-    # Phase 3: Merge
+    return group_outputs, failed_groups
+
+
+def _phase_merge(group_outputs: list[str], failed_groups: list[str]) -> str:
     _info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 
@@ -704,40 +830,63 @@ def run_multi_phase(
         for fg in failed_groups:
             merged_content += f"- {fg}\n"
 
-    # Phase 4: Synthesis
-    synthesis_log = review_file.replace(".md", ".synthesis.jsonl")
+    return merged_content
 
-    synthesis_prompt = build_prompt(
-        "synthesis.md", repo, pr, ctx, wt_path, review_file,
-        prior_review=prior_review, pr_number=pr_number,
+
+def _phase_synthesis(
+    job: ReviewJob, holistic_content: str,
+    group_count: int, merged_content: str,
+) -> str:
+    synthesis_log = job.review_file.replace(REVIEW_EXT, SUFFIX_SYNTHESIS_LOG)
+    synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
+
+    prompt = build_prompt(
+        synthesis_template, job,
         holistic_content=holistic_content, group_count=group_count,
-        merged_content=merged_content,
+        merged_content=merged_content, branch_name=job.pr.head,
     )
     _info("Phase 4: Synthesis...")
     print()
-    invoke_agent(synthesis_prompt, synthesis_log, wt_path, reviews_dir)
+    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir)
     print()
 
-    if not Path(review_file).exists():
+    if not Path(job.review_file).exists():
         _warn("Synthesis agent failed — falling back to mechanical merge")
         today = date.today().isoformat()
-        fallback = (
-            f"# Review: {repo}#{pr_number} — {pr.title}\n"
-            f"<!-- date: {today} -->\n"
-            f"<!-- head_sha: {pr.head_sha} -->\n\n"
-            f"## Summary\n"
-            f"Multi-phase review of {pr.changed_files} files across {group_count} groups. "
-            f"Synthesis agent failed — findings below are from individual group reviews.\n\n"
-            f"{merged_content}\n\n"
-            f"## Verdict\n"
-            f"Manual review of findings required — synthesis was not completed.\n"
-        )
-        Path(review_file).write_text(fallback)
+        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}\n"
+        if job.mode == MODE_SELF:
+            fallback = (
+                f"# Self-Review: {job.repo} — {job.pr.head}\n"
+                f"{meta}\n"
+                f"## Summary\n"
+                f"Multi-phase self-review of {job.pr.changed_files} files across {group_count} groups. "
+                f"{FALLBACK_SUMMARY}\n\n"
+                f"{merged_content}\n"
+            )
+        else:
+            fallback = (
+                f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
+                f"{meta}\n"
+                f"## Summary\n"
+                f"Multi-phase review of {job.pr.changed_files} files across {group_count} groups. "
+                f"{FALLBACK_SUMMARY}\n\n"
+                f"{merged_content}\n\n"
+                f"## Verdict\n"
+                f"Manual review of findings required — synthesis was not completed.\n"
+            )
+        Path(job.review_file).write_text(fallback)
 
-    # Consolidate logs
-    group_logs = [review_file.replace(".md", f".group-{i}.jsonl") for i in range(1, len(group_outputs) + 1)]
+    return synthesis_log
+
+
+def _consolidate_and_cleanup(
+    job: ReviewJob,
+    holistic_output: str, holistic_log: str,
+    group_outputs: list[str], synthesis_log: str,
+):
+    group_logs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i)) for i in range(1, len(group_outputs) + 1)]
     try:
-        with open(session_log, "w") as out:
+        with open(job.session_log, "w") as out:
             for log_path in [holistic_log] + group_logs + [synthesis_log]:
                 p = Path(log_path)
                 if p.exists():
@@ -745,7 +894,6 @@ def run_multi_phase(
     except OSError:
         pass
 
-    # Clean up intermediate files
     for path in [holistic_output, holistic_log] + group_outputs + group_logs + [synthesis_log]:
         try:
             Path(path).unlink()
@@ -753,12 +901,31 @@ def run_multi_phase(
             pass
 
 
+def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
+    groups = group_files(job.pr)
+    group_count = len(groups)
+
+    _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
+
+    holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+
+    group_outputs, failed_groups = _phase_group_reviews(
+        groups, job, group_count, holistic_content, max_parallel,
+    )
+
+    merged_content = _phase_merge(group_outputs, failed_groups)
+
+    synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
+
+    _consolidate_and_cleanup(job, holistic_output, holistic_log, group_outputs, synthesis_log)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Review orchestration for claude-review")
     parser.add_argument("--repo", required=True, help="GitHub owner/repo")
-    parser.add_argument("--pr", required=True, help="PR number")
+    parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
     parser.add_argument("--review-file", required=True, help="Output review file path")
     parser.add_argument("--wt-path", required=True, help="Worktree path")
     parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
@@ -766,47 +933,61 @@ def main():
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
     parser.add_argument("--issue-link", default="", help="Issue URL")
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
-    parser.add_argument("--max-parallel", type=int, default=4,
-                        help="Max concurrent group reviews (default: 4)")
+    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+                        help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
+    parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
+                        help="Review mode: pr (default) or self")
     args = parser.parse_args()
 
-    session_log = args.session_log or args.review_file.replace(".md", ".session.jsonl")
+    if args.mode == MODE_PR and not args.pr:
+        print("error: --pr is required in pr mode", file=sys.stderr)
+        sys.exit(1)
 
-    _info("Fetching PR data...")
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        pr_future = pool.submit(fetch_pr_metadata, args.repo, args.pr)
-        ctx_future = pool.submit(fetch_pr_context, args.repo, args.pr)
-        pr = pr_future.result()
-        ctx = ctx_future.result()
+    session_log = args.session_log or args.review_file.replace(REVIEW_EXT, SUFFIX_SESSION)
+
+    if args.mode == MODE_SELF and not args.pr:
+        _info("Gathering branch metadata...")
+        pr = fetch_branch_metadata(args.wt_path)
+        ctx = PRContext()
+    else:
+        _info("Fetching PR data...")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pr_future = pool.submit(fetch_pr_metadata, args.repo, args.pr)
+            if args.mode == MODE_SELF:
+                ctx = PRContext()
+                pr = pr_future.result()
+            else:
+                ctx_future = pool.submit(fetch_pr_context, args.repo, args.pr)
+                pr = pr_future.result()
+                ctx = ctx_future.result()
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
         prior_review = Path(args.prior_review).read_text()
 
+    job = ReviewJob(
+        repo=args.repo, pr_number=args.pr, pr=pr, ctx=ctx,
+        wt_path=args.wt_path, review_file=args.review_file,
+        session_log=session_log, reviews_dir=args.reviews_dir,
+        issue_link=args.issue_link, issue_context=args.issue_context,
+        prior_review=prior_review, mode=args.mode,
+    )
+
     is_large = (
         pr.total_lines > MULTI_PHASE_LINE_THRESHOLD
         or pr.changed_files > MULTI_PHASE_FILE_THRESHOLD
     )
-    mode = "multi" if is_large else "single"
+    pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
     if is_large:
-        run_multi_phase(
-            args.repo, args.pr, pr, ctx, args.wt_path, args.review_file,
-            session_log, args.reviews_dir,
-            args.issue_link, args.issue_context, prior_review,
-            max_parallel=args.max_parallel,
-        )
+        run_multi_phase(job, max_parallel=args.max_parallel)
     else:
-        run_single_agent(
-            args.repo, args.pr, pr, ctx, args.wt_path, args.review_file,
-            session_log, args.reviews_dir,
-            args.issue_link, args.issue_context, prior_review,
-        )
+        run_single_agent(job)
 
     result = {
-        "review_file": args.review_file,
-        "session_log": session_log,
-        "mode": mode,
+        "review_file": job.review_file,
+        "session_log": job.session_log,
+        "mode": pipeline,
     }
     json.dump(result, sys.stdout)
     print()

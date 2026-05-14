@@ -2,6 +2,7 @@
 # Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
 #
 # Usage: claude-review [options] <pr_url_or_number>
+#        claude-review --self [<pr_url_or_number>]
 #        claude-review post <pr_url_or_number>
 #
 # Commands:
@@ -9,9 +10,11 @@
 #   post <pr_url_or_number>  Post an existing review file headlessly via poster agent
 #
 # Options:
-#   --no-post            Skip all interactive prompts; run review and exit
-#   --post               Run review then post automatically (fully headless)
-#   --issue <link>       Attach an issue link for reviewer context
+#   --no-post                  Skip all interactive prompts; run review and exit
+#   --post                     Run review then post automatically (fully headless)
+#   --issue <link>             Attach an issue link for reviewer context
+#   --self                     Self-review mode: review your own code, output to .claude/self-review.md
+#   --skip-user-verification   Skip ownership check in self-review mode
 #
 # When calling from Claude Code:
 #   Run each review in a foreground Bash call (not backgrounded with &).
@@ -24,13 +27,47 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../../../lib/ui.sh"
 
+# ─── Constants ───────────────────────────────────────────────────────────────
+
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
+LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
+
+SELF_REVIEW_DIR=".claude"
+SELF_REVIEW_FILE="self-review.md"
+
+REVIEW_EXT=".md"
+
+SUFFIX_PRIOR=".prior.md"
+SUFFIX_SESSION=".session.jsonl"
+SUFFIX_POST_SESSION=".post.jsonl"
+
+ARCHIVE_KEEP_COUNT=3
+DEFAULT_MAX_PARALLEL=4
+
+ISSUE_PATTERN_JIRA_LINEAR='[A-Z]+-[0-9]+'
+ISSUE_PROVIDER_DEFAULT="linear"
+
+PR_URL_PATTERN='/pull/([0-9]+)'
+PR_NUMBER_PATTERN='^[0-9]+$'
+GITHUB_REPO_PATTERN='github\.com/([^/]+/[^/]+)'
+
+GITHUB_BASE_URL="https://github.com"
+
+WORKTREE_FALLBACK_DIR=".worktrees"
+
+ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
+
+POST_SKILL_REL="../skills/pr-review/SKILL.md"
+
+ORCHESTRATE_BIN="review-orchestrate"
+STREAM_PROGRESS_BIN="review-stream-progress"
+
 mkdir -p "$REVIEWS_DIR"
 
 # Migrate reviews from legacy location
-if [[ -d "$HOME/.claude/reviews" ]]; then
-  mv "$HOME/.claude/reviews"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
-  mv "$HOME/.claude/reviews"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
+if [[ -d "$LEGACY_REVIEWS_DIR" ]]; then
+  mv "$LEGACY_REVIEWS_DIR"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
+  mv "$LEGACY_REVIEWS_DIR"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
 fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,9 +75,9 @@ fi
 _extract_pr_number() {
   local -n __out=$1
   local input="$2"
-  if [[ "$input" =~ /pull/([0-9]+) ]]; then
+  if [[ "$input" =~ $PR_URL_PATTERN ]]; then
     __out="${BASH_REMATCH[1]}"
-  elif [[ "$input" =~ ^[0-9]+$ ]]; then
+  elif [[ "$input" =~ $PR_NUMBER_PATTERN ]]; then
     __out="$input"
   else
     err "Cannot extract PR number from: $input"
@@ -51,7 +88,7 @@ _extract_pr_number() {
 _extract_repo() {
   local -n __out=$1
   local input="$2"
-  if [[ "$input" =~ github\.com/([^/]+/[^/]+) ]]; then
+  if [[ "$input" =~ $GITHUB_REPO_PATTERN ]]; then
     __out="${BASH_REMATCH[1]}"
   else
     __out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
@@ -65,7 +102,7 @@ _review_file() {
   local -n __out=$1
   local repo_name="${2##*/}"
   local pr_number="$3"
-  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}.md"
+  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}${REVIEW_EXT}"
 }
 
 _display_review() {
@@ -129,8 +166,9 @@ _format_usage() {
 _print_summary() {
   local review_file="$1"
   local session_log="$2"
-  local pr_url="$3"
+  local pr_url="${3:-}"
   local post_session_log="${4:-}"
+  local branch_name="${5:-}"
 
   echo
   title "Summary"
@@ -138,20 +176,191 @@ _print_summary() {
   echo -e "  Session log:     ${session_log}"
   [[ -n "$post_session_log" && -f "$post_session_log" ]] && \
     echo -e "  Post session:    ${post_session_log}"
-  echo -e "  PR:              ${pr_url}"
+  if [[ -n "$pr_url" ]]; then
+    echo -e "  PR:              ${pr_url}"
+  elif [[ -n "$branch_name" ]]; then
+    echo -e "  Branch:          ${branch_name}"
+  fi
   _format_usage "$session_log" "$post_session_log"
   echo
 }
 
+_load_issue_provider() {
+  local -n __provider=$1
+  local -n __provider_opts=$2
+  local wt_path="${3:-}"
+
+  __provider="$ISSUE_PROVIDER_DEFAULT"
+  __provider_opts=""
+
+  local config_file=""
+  if [[ -n "$wt_path" && -f "${wt_path}/.claude/review.yml" ]]; then
+    config_file="${wt_path}/.claude/review.yml"
+  elif [[ -f "${HOME}/.config/workbench/review.yml" ]]; then
+    config_file="${HOME}/.config/workbench/review.yml"
+  fi
+  [[ -n "$config_file" ]] || return 0
+
+  if command -v yq &>/dev/null; then
+    __provider=$(yq -r '.issue_tracker.provider // "linear"' "$config_file" 2>/dev/null) || true
+    __provider_opts=$(yq -r '.issue_tracker // {}' "$config_file" 2>/dev/null) || true
+  else
+    __provider=$(grep -E '^\s*provider:' "$config_file" 2>/dev/null | head -1 | sed 's/.*provider:\s*//' | tr -d ' "'"'" || true)
+  fi
+  [[ -n "$__provider" ]] || __provider="$ISSUE_PROVIDER_DEFAULT"
+}
+
+_extract_issue_id() {
+  local -n __id=$1
+  local provider="$2"
+  local branch_name="$3"
+  local pr_body="${4:-}"
+
+  __id=""
+  case "$provider" in
+    linear|jira)
+      __id=$(echo "$branch_name" | grep -oE "$ISSUE_PATTERN_JIRA_LINEAR" | head -1 || true)
+      if [[ -z "$__id" && -n "$pr_body" ]]; then
+        __id=$(echo "$pr_body" | grep -oE "$ISSUE_PATTERN_JIRA_LINEAR" | head -1 || true)
+      fi
+      ;;
+    github)
+      if [[ -n "$pr_body" ]]; then
+        local match
+        match=$(echo "$pr_body" | grep -oiE '(closes|fixes|resolves)\s+#[0-9]+' | head -1 || true)
+        __id=$(echo "$match" | grep -oE '[0-9]+' || true)
+      fi
+      ;;
+    none) ;;
+  esac
+}
+
+_fetch_issue_context() {
+  local -n __link=$1
+  local -n __context=$2
+  local provider="$3"
+  local issue_id="$4"
+  local repo="${5:-}"
+  local provider_opts="${6:-}"
+
+  __link=""
+  __context=""
+  [[ -n "$issue_id" ]] || return 0
+
+  case "$provider" in
+    linear)
+      if command -v linear &>/dev/null; then
+        __context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
+        [[ -n "$__context" ]] && echo "✓ Found Linear issue: $issue_id"
+      fi
+      ;;
+    github)
+      __link="${GITHUB_BASE_URL}/${repo}/issues/${issue_id}"
+      if command -v gh &>/dev/null; then
+        __context=$(gh issue view "$issue_id" --repo "$repo" --json title,body,comments 2>/dev/null) || true
+        [[ -n "$__context" ]] && echo "✓ Found GitHub issue: #${issue_id}"
+      fi
+      ;;
+    jira)
+      local jira_url=""
+      if command -v yq &>/dev/null && [[ -n "$provider_opts" ]]; then
+        jira_url=$(echo "$provider_opts" | yq -r '.jira_url // empty' 2>/dev/null) || true
+      fi
+      if [[ -n "$jira_url" ]]; then
+        __link="${jira_url}/browse/${issue_id}"
+      fi
+      echo "✓ Found Jira issue: $issue_id"
+      ;;
+  esac
+}
+
+_archive_review() {
+  local -n __prior_path=$1
+  local review_file="$2"
+  local session_log="$3"
+
+  __prior_path=""
+  if [[ -f "$review_file" ]]; then
+    __prior_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
+    cp "$review_file" "$__prior_path"
+    local archive
+    archive="${review_file%"${REVIEW_EXT}"}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
+    mv "$review_file" "$archive"
+    info "Archived prior review to $(basename "$archive")"
+  fi
+
+  if [[ -f "$session_log" ]]; then
+    mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
+  fi
+
+  local _old_archive
+  # shellcheck disable=SC2012
+  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+    rm -f "$_old_archive"
+  done
+  # shellcheck disable=SC2012
+  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+    rm -f "$_old_archive"
+  done
+}
+
+_setup_review_worktree() {
+  local -n __wt_path=$1
+  local repo="$2"
+  local pr_number="$3"
+  local pr_head="$4"
+
+  local repo_root=""
+  _find_repo_root repo_root "$repo"
+  if [[ -z "$repo_root" ]]; then
+    err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
+    exit 1
+  fi
+
+  info "Setting up worktree for PR #${pr_number}..."
+  local wt_json wt_fallback="false"
+  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
+  __wt_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+
+  if [[ -z "$__wt_path" ]]; then
+    info "Branch deleted, fetching via PR ref..."
+    git -C "$repo_root" fetch origin "pull/${pr_number}/head" 2>/dev/null || {
+      err "Failed to fetch PR #${pr_number} ref"
+      exit 1
+    }
+    __wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
+    git -C "$repo_root" worktree add --detach "$__wt_path" FETCH_HEAD 2>/dev/null || {
+      err "Failed to create worktree for PR #${pr_number}"
+      exit 1
+    }
+    wt_fallback="true"
+    local pr_head_sha
+    pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
+    info "Created detached worktree at ${pr_head_sha:0:7}"
+  else
+    git -C "$__wt_path" fetch origin "$pr_head" 2>/dev/null || true
+    git -C "$__wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
+  fi
+
+  if [[ "$wt_fallback" == "true" ]]; then
+    trap 'git -C "$repo_root" worktree remove --force "$__wt_path" 2>/dev/null || true' EXIT
+  else
+    trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
+  fi
+}
+
 usage() {
   echo "Usage: claude-review [options] <pr_url_or_number>"
+  echo "       claude-review --self [<pr_url_or_number>]"
   echo "       claude-review post <pr_number>"
   echo
   echo "Options:"
-  echo "  --no-post          Skip all interactive prompts; run review and exit"
-  echo "  --post             Run review then post automatically (fully headless)"
-  echo "  --issue <link>     Attach an issue link for reviewer context"
-  echo "  --max-parallel <N> Max concurrent group reviews (default: 4)"
+  echo "  --no-post                  Skip all interactive prompts; run review and exit"
+  echo "  --post                     Run review then post automatically (fully headless)"
+  echo "  --issue <link>             Attach an issue link for reviewer context"
+  echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
+  echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
+  echo "  --skip-user-verification   Skip ownership check in --self mode"
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
@@ -161,7 +370,7 @@ cmd_review() {
   local no_post="${2:-false}"
   local issue_link="${3:-}"
   local auto_post="${4:-false}"
-  local max_parallel="${5:-4}"
+  local max_parallel="${5:-$DEFAULT_MAX_PARALLEL}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -172,95 +381,38 @@ cmd_review() {
   local review_file
   _review_file review_file "$repo" "$pr_number"
 
-  if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" ]]; then
-    read -rp "Issue link (optional, Enter to skip): " issue_link
+  # ── Issue detection: auto-detect from branch/PR body before prompting ──
+  local pr_meta
+  pr_meta=$(gh pr view "$pr_number" --repo "$repo" --json headRefName,body 2>/dev/null) || true
+  local pr_head pr_body
+  pr_head=$(echo "$pr_meta" | jq -r '.headRefName // empty' 2>/dev/null) || true
+  pr_body=$(echo "$pr_meta" | jq -r '.body // empty' 2>/dev/null) || true
+
+  local issue_context="" detected_link=""
+  if [[ -z "$issue_link" ]]; then
+    local provider="" provider_opts=""
+    _load_issue_provider provider provider_opts ""
+
+    local issue_id=""
+    _extract_issue_id issue_id "$provider" "$pr_head" "$pr_body"
+    _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
+    [[ -n "$detected_link" ]] && issue_link="$detected_link"
+
+    if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" && -z "$issue_context" ]]; then
+      read -rp "Issue link (optional, Enter to skip): " issue_link
+    fi
   fi
 
-  # Auto-fetch Linear issue from branch name
-  local issue_context=""
-  local pr_head
-  pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
-  local issue_id
-  issue_id=$(echo "$pr_head" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
-  if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
-    issue_context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
-    [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
-  fi
-
-  local pr_url="https://github.com/${repo}/pull/${pr_number}"
+  local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
   # ── Worktree setup ──
-  local repo_root=""
-  local git_toplevel
-  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
-  local repo_name="${repo##*/}"
-  if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
-    repo_root="$git_toplevel"
-  else
-    repo_root=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
-  fi
-  if [[ -z "$repo_root" ]]; then
-    err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
-    exit 1
-  fi
+  local wt_path
+  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head"
 
-  info "Setting up worktree for PR #${pr_number}..."
-  local wt_json wt_path wt_fallback="false"
-  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
-  wt_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
-  if [[ -z "$wt_path" ]]; then
-    info "Branch deleted, fetching via PR ref..."
-    git -C "$repo_root" fetch origin "pull/${pr_number}/head" 2>/dev/null || {
-      err "Failed to fetch PR #${pr_number} ref"
-      exit 1
-    }
-    wt_path="${repo_root}/.worktrees/pr-${pr_number}-review"
-    git -C "$repo_root" worktree add --detach "$wt_path" FETCH_HEAD 2>/dev/null || {
-      err "Failed to create worktree for PR #${pr_number}"
-      exit 1
-    }
-    wt_fallback="true"
-    local pr_head_sha
-    pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
-    info "Created detached worktree at ${pr_head_sha:0:7}"
-  else
-    git -C "$wt_path" fetch origin "$pr_head" 2>/dev/null || true
-    git -C "$wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
-  fi
-
-  if [[ "$wt_fallback" == "true" ]]; then
-    trap 'git -C "$repo_root" worktree remove --force "$wt_path" 2>/dev/null || true' EXIT
-  else
-    trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
-  fi
-
-  # ── Archive management ──
   local prior_review_path=""
-  if [[ -f "$review_file" ]]; then
-    prior_review_path="${review_file%.md}.prior.md"
-    cp "$review_file" "$prior_review_path"
-    local archive
-    archive="${review_file%.md}.$(date +%Y%m%d-%H%M%S).md"
-    mv "$review_file" "$archive"
-    info "Archived prior review to $(basename "$archive")"
-  fi
-
-  local session_log="${review_file%.md}.session.jsonl"
-  if [[ -f "$session_log" ]]; then
-    mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
-  fi
-
-  # Prune old archives — keep latest 3
-  local _old_archive
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%.md}".2*.md 2>/dev/null | tail -n +4); do
-    rm -f "$_old_archive"
-  done
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%.md}".session.2*.jsonl 2>/dev/null | tail -n +4); do
-    rm -f "$_old_archive"
-  done
+  _archive_review prior_review_path "$review_file" "$session_log"
 
   # ── Run orchestrator ──
   local orchestrate_args=(
@@ -276,7 +428,7 @@ cmd_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
 
-  "$(dirname "$_SELF")/review-orchestrate" "${orchestrate_args[@]}"
+  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
   # Clean up temporary prior review copy
   rm -f "$prior_review_path" 2>/dev/null || true
@@ -291,7 +443,7 @@ cmd_review() {
 
   if [[ "$auto_post" == "true" ]]; then
     cmd_post "$repo" "$pr_number"
-    local post_session_log="${review_file%.md}.post.jsonl"
+    local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
     return
   fi
@@ -304,11 +456,150 @@ cmd_review() {
 
   if confirm "Post review to GitHub?"; then
     cmd_post "$repo" "$pr_number"
-    local post_session_log="${review_file%.md}.post.jsonl"
+    local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
   else
     _print_summary "$review_file" "$session_log" "$pr_url"
     echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
+  fi
+}
+
+_verify_pr_ownership() {
+  local pr_number="$1"
+  local repo="$2"
+  local pr_author gh_user
+  pr_author=$(gh pr view "$pr_number" --repo "$repo" --json author --jq '.author.login' 2>/dev/null) || true
+  gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
+  [[ -z "$pr_author" || -z "$gh_user" || "$pr_author" == "$gh_user" ]] && return 0
+  warn "PR #${pr_number} is owned by ${pr_author}, not ${gh_user}"
+  confirm "Continue with self-review?" || exit 0
+}
+
+_find_repo_root() {
+  local -n __out=$1
+  local repo="$2"
+  local git_toplevel repo_name
+  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
+  repo_name="${repo##*/}"
+  if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
+    __out="$git_toplevel"
+  else
+    __out=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
+  fi
+}
+
+_switch_to_pr_branch() {
+  local -n __wt_path=$1
+  local -n __wt_cleanup=$2
+  local pr_number="$3"
+  local repo="$4"
+
+  local pr_head
+  pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
+  [[ -n "$pr_head" ]] || return 0
+
+  local current_branch
+  current_branch=$(git -C "$__wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  [[ "$current_branch" != "$pr_head" ]] || return 0
+
+  local repo_root=""
+  _find_repo_root repo_root "$repo"
+  [[ -n "$repo_root" ]] || return 0
+
+  info "Switching to branch ${pr_head}..."
+  local wt_json switched_path
+  wt_json=$(wt switch "$pr_head" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
+  switched_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+  if [[ -n "$switched_path" ]]; then
+    __wt_path="$switched_path"
+    __wt_cleanup="$pr_head"
+  fi
+}
+
+cmd_self_review() {
+  local pr_input="${1:-}"
+  local issue_link="${2:-}"
+  local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
+  local skip_user_verification="${4:-false}"
+
+  local repo
+  _extract_repo repo "${pr_input:-local}"
+
+  local wt_path
+  wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    err "Not in a git repository"
+    exit 1
+  }
+
+  local pr_number=""
+  local wt_cleanup=""
+
+  if [[ -n "$pr_input" ]]; then
+    _extract_pr_number pr_number "$pr_input"
+    [[ "$skip_user_verification" == "true" ]] || _verify_pr_ownership "$pr_number" "$repo"
+    _switch_to_pr_branch wt_path wt_cleanup "$pr_number" "$repo"
+  fi
+
+  # ── Review file in worktree ──
+  local review_file="${wt_path}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
+  mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
+
+  # ── Archive management ──
+  local prior_review_path=""
+  if [[ -f "$review_file" ]]; then
+    prior_review_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
+    cp "$review_file" "$prior_review_path"
+    info "Preserved prior self-review for context"
+  fi
+
+  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
+
+  local branch_name
+  branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+
+  local issue_context=""
+  if [[ -z "$issue_link" ]]; then
+    local provider="" provider_opts=""
+    _load_issue_provider provider provider_opts "$wt_path"
+
+    local issue_id=""
+    _extract_issue_id issue_id "$provider" "$branch_name"
+    local detected_link=""
+    _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
+    [[ -n "$detected_link" ]] && issue_link="$detected_link"
+  fi
+
+  # ── Run orchestrator ──
+  local orchestrate_args=(
+    --repo "$repo"
+    --review-file "$review_file"
+    --wt-path "$wt_path"
+    --reviews-dir "$REVIEWS_DIR"
+    --session-log "$session_log"
+    --mode self
+  )
+  [[ -n "$pr_number" ]] && orchestrate_args+=(--pr "$pr_number")
+  [[ -n "$prior_review_path" && -f "$prior_review_path" ]] && orchestrate_args+=(--prior-review "$prior_review_path")
+  [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
+  [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
+  orchestrate_args+=(--max-parallel "$max_parallel")
+
+  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
+
+  # Clean up temporary prior review copy
+  rm -f "$prior_review_path" 2>/dev/null || true
+
+  _display_review "$review_file"
+
+  local pr_url=""
+  [[ -n "$pr_number" ]] && pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
+  _print_summary "$review_file" "$session_log" "$pr_url" "" "$branch_name"
+
+  # Clean up worktree if we created one
+  if [[ -n "$wt_cleanup" ]]; then
+    local repo_root
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+    wt remove "$wt_cleanup" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true
   fi
 }
 
@@ -329,9 +620,9 @@ cmd_post() {
   post_prompt="Post review for PR #${pr_number} in ${repo}. Review file: ${review_file}"
 
   local skill_file
-  skill_file="$(dirname "$_SELF")/../skills/pr-review/SKILL.md"
+  skill_file="$(dirname "$_SELF")/${POST_SKILL_REL}"
 
-  local session_log="${review_file%.md}.post.jsonl"
+  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
 
   info "Posting review for PR #${pr_number}..."
   echo
@@ -339,7 +630,7 @@ cmd_post() {
     --permission-mode acceptEdits \
     --system-prompt-file "$skill_file" \
     --add-dir "$REVIEWS_DIR" \
-    | "$(dirname "$_SELF")/review-stream-progress" "$session_log"
+    | "$(dirname "$_SELF")/${STREAM_PROGRESS_BIN}" "$session_log"
   echo
 
   local pending_review_id
@@ -358,20 +649,29 @@ cmd_post() {
 main() {
   local no_post="false"
   local auto_post="false"
+  local self_review="false"
+  local skip_user_verification="false"
   local issue_link=""
-  local max_parallel="4"
+  local max_parallel="$DEFAULT_MAX_PARALLEL"
   local positional=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-post)       no_post="true"; shift ;;
       --post)          auto_post="true"; shift ;;
+      --self)          self_review="true"; shift ;;
+      --skip-user-verification) skip_user_verification="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac
   done
+
+  if [[ "$self_review" == "true" ]]; then
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification"
+    return
+  fi
 
   if [[ "$no_post" == "true" && "$auto_post" == "true" ]]; then
     err "--no-post and --post are mutually exclusive"

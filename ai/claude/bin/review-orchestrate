@@ -191,6 +191,25 @@ def classify_tier(path: str) -> int:
 
 # ── File grouping ─────────────────────────────────────────────────────────────
 
+def _split_large_dir(name: str, files: list[str], file_lines: dict[str, int]) -> list[Group]:
+    groups: list[Group] = []
+    sub_files: list[str] = []
+    sub_lines = 0
+    sub_idx = 1
+    for f in files:
+        fl = file_lines[f]
+        if sub_lines + fl > MAX_GROUP_LINES and sub_files:
+            groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
+            sub_files = []
+            sub_lines = 0
+            sub_idx += 1
+        sub_files.append(f)
+        sub_lines += fl
+    if sub_files:
+        groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
+    return groups
+
+
 def group_files(pr: PRMetadata) -> list[Group]:
     file_lines = {f["path"]: f["additions"] + f["deletions"] for f in pr.files}
 
@@ -223,20 +242,7 @@ def group_files(pr: PRMetadata) -> list[Group]:
         files = dir_files[d]
         total = dir_lines[d]
         if total > MAX_GROUP_LINES:
-            sub_files: list[str] = []
-            sub_lines = 0
-            sub_idx = 1
-            for f in files:
-                fl = file_lines[f]
-                if sub_lines + fl > MAX_GROUP_LINES and sub_files:
-                    groups.append(Group(f"{d}-{sub_idx}", sub_files, sub_lines))
-                    sub_files = []
-                    sub_lines = 0
-                    sub_idx += 1
-                sub_files.append(f)
-                sub_lines += fl
-            if sub_files:
-                groups.append(Group(f"{d}-{sub_idx}", sub_files, sub_lines))
+            groups.extend(_split_large_dir(d, files, file_lines))
         else:
             groups.append(Group(d, files, total))
 
@@ -467,6 +473,18 @@ PR branch checked out at: {wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API."""
 
 
+def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
+    if not holistic_content:
+        return ""
+    return (
+        f"\n## Holistic context\n"
+        f"The following assessment was produced by scanning all "
+        f"{changed_files} files in this PR.\n"
+        f"Use it to inform your detailed review — especially the flags section.\n\n"
+        f"{holistic_content}"
+    )
+
+
 def _build_issue_section(issue_link: str, issue_context: str) -> str:
     if issue_link:
         return f"\n## Related issue\n{issue_link}"
@@ -582,16 +600,9 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             "Carry forward findings relevant to YOUR files only. "
             "Mark fixed findings as resolved.",
         )
-        holistic_content = extra.get("holistic_content", "")
-        holistic_block = ""
-        if holistic_content:
-            holistic_block = (
-                f"\n## Holistic context\n"
-                f"The following assessment was produced by scanning all "
-                f"{job.pr.changed_files} files in this PR.\n"
-                f"Use it to inform your detailed review — especially the flags section.\n\n"
-                f"{holistic_content}"
-            )
+        holistic_block = _build_holistic_block(
+            extra.get("holistic_content", ""), job.pr.changed_files,
+        )
         return render_template(
             TEMPLATE_GROUP,
             pr_number=job.pr_number,
@@ -635,6 +646,24 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
 
 # ── Stream progress ───────────────────────────────────────────────────────────
 
+def _tool_label_from_block(block: dict) -> str:
+    if block.get("type") != "tool_use":
+        return ""
+    inp = block.get("input", {})
+    name = block.get("name", "")
+    if inp.get("description"):
+        return inp["description"]
+    if name == "Read":
+        return "Read " + (inp.get("file_path", "").split("/")[-1] or "")
+    if name == "Grep":
+        return "Grep " + inp.get("pattern", "")
+    if name == "Glob":
+        return "Glob " + inp.get("pattern", "")
+    if name == "Write":
+        return "Write " + (inp.get("file_path", "").split("/")[-1] or "")
+    return name
+
+
 def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""):
     prev_tool = ""
     prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
@@ -648,28 +677,13 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
                 continue
             if data.get("type") != "assistant":
                 continue
-            contents = data.get("message", {}).get("content", [])
-            for block in contents:
-                if block.get("type") != "tool_use":
+            for block in data.get("message", {}).get("content", []):
+                tool_label = _tool_label_from_block(block)
+                if not tool_label or tool_label == prev_tool:
                     continue
-                inp = block.get("input", {})
-                name = block.get("name", "")
-                if inp.get("description"):
-                    tool_label = inp["description"]
-                elif name == "Read":
-                    tool_label = "Read " + (inp.get("file_path", "").split("/")[-1] or "")
-                elif name == "Grep":
-                    tool_label = "Grep " + inp.get("pattern", "")
-                elif name == "Glob":
-                    tool_label = "Glob " + inp.get("pattern", "")
-                elif name == "Write":
-                    tool_label = "Write " + (inp.get("file_path", "").split("/")[-1] or "")
-                else:
-                    tool_label = name
-                if tool_label and tool_label != prev_tool:
-                    with _print_lock:
-                        print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
-                    prev_tool = tool_label
+                with _print_lock:
+                    print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
+                prev_tool = tool_label
 
 
 # ── Agent invocation ──────────────────────────────────────────────────────────
@@ -755,22 +769,16 @@ def _review_group(
     return (i, group_output, failed)
 
 
-def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
-    groups = group_files(job.pr)
-    group_count = len(groups)
-
-    _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
-
-    # Phase 1: Holistic scan
+def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     holistic_output = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC)
     holistic_log = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC_LOG)
 
-    holistic_prompt = build_prompt(
+    prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(holistic_prompt, holistic_log, job.wt_path, job.reviews_dir)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir)
     print()
 
     holistic_content = ""
@@ -779,7 +787,13 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
     else:
         _warn("Holistic scan produced no output — continuing without it")
 
-    # Phase 2: Group reviews (parallel)
+    return holistic_content, holistic_output, holistic_log
+
+
+def _phase_group_reviews(
+    groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str, max_parallel: int,
+) -> tuple[list[str], list[str]]:
     group_outputs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
     failed_groups: list[str] = []
 
@@ -803,7 +817,10 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
                     failed_groups.append(failed)
         print()
 
-    # Phase 3: Merge
+    return group_outputs, failed_groups
+
+
+def _phase_merge(group_outputs: list[str], failed_groups: list[str]) -> str:
     _info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 
@@ -813,18 +830,24 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
         for fg in failed_groups:
             merged_content += f"- {fg}\n"
 
-    # Phase 4: Synthesis
+    return merged_content
+
+
+def _phase_synthesis(
+    job: ReviewJob, holistic_content: str,
+    group_count: int, merged_content: str,
+) -> str:
     synthesis_log = job.review_file.replace(REVIEW_EXT, SUFFIX_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
-    synthesis_prompt = build_prompt(
+    prompt = build_prompt(
         synthesis_template, job,
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
     _info("Phase 4: Synthesis...")
     print()
-    invoke_agent(synthesis_prompt, synthesis_log, job.wt_path, job.reviews_dir)
+    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir)
     print()
 
     if not Path(job.review_file).exists():
@@ -853,7 +876,14 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
             )
         Path(job.review_file).write_text(fallback)
 
-    # Consolidate logs
+    return synthesis_log
+
+
+def _consolidate_and_cleanup(
+    job: ReviewJob,
+    holistic_output: str, holistic_log: str,
+    group_outputs: list[str], synthesis_log: str,
+):
     group_logs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i)) for i in range(1, len(group_outputs) + 1)]
     try:
         with open(job.session_log, "w") as out:
@@ -864,12 +894,30 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
     except OSError:
         pass
 
-    # Clean up intermediate files
     for path in [holistic_output, holistic_log] + group_outputs + group_logs + [synthesis_log]:
         try:
             Path(path).unlink()
         except FileNotFoundError:
             pass
+
+
+def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
+    groups = group_files(job.pr)
+    group_count = len(groups)
+
+    _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
+
+    holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+
+    group_outputs, failed_groups = _phase_group_reviews(
+        groups, job, group_count, holistic_content, max_parallel,
+    )
+
+    merged_content = _phase_merge(group_outputs, failed_groups)
+
+    synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
+
+    _consolidate_and_cleanup(job, holistic_output, holistic_log, group_outputs, synthesis_log)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

@@ -183,6 +183,65 @@ _print_summary() {
   echo
 }
 
+_fetch_linear_context() {
+  local -n __out=$1
+  local branch_name="$2"
+  local issue_link="$3"
+
+  __out=""
+  local issue_id
+  issue_id=$(echo "$branch_name" | grep -oE "$LINEAR_ISSUE_PATTERN" | head -1 || true)
+  if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
+    __out=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
+    [[ -n "$__out" ]] && echo "✓ Found Linear issue: $issue_id"
+  fi
+}
+
+_setup_review_worktree() {
+  local -n __wt_path=$1
+  local repo="$2"
+  local pr_number="$3"
+  local pr_head="$4"
+
+  local repo_root=""
+  _find_repo_root repo_root "$repo"
+  if [[ -z "$repo_root" ]]; then
+    err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
+    exit 1
+  fi
+
+  info "Setting up worktree for PR #${pr_number}..."
+  local wt_json wt_fallback="false"
+  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
+  __wt_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+
+  if [[ -z "$__wt_path" ]]; then
+    info "Branch deleted, fetching via PR ref..."
+    git -C "$repo_root" fetch origin "pull/${pr_number}/head" 2>/dev/null || {
+      err "Failed to fetch PR #${pr_number} ref"
+      exit 1
+    }
+    __wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
+    git -C "$repo_root" worktree add --detach "$__wt_path" FETCH_HEAD 2>/dev/null || {
+      err "Failed to create worktree for PR #${pr_number}"
+      exit 1
+    }
+    wt_fallback="true"
+    local pr_head_sha
+    pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
+    info "Created detached worktree at ${pr_head_sha:0:7}"
+  else
+    git -C "$__wt_path" fetch origin "$pr_head" 2>/dev/null || true
+    git -C "$__wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
+  fi
+
+  if [[ "$wt_fallback" == "true" ]]; then
+    trap 'git -C "$repo_root" worktree remove --force "$__wt_path" 2>/dev/null || true' EXIT
+  else
+    trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
+  fi
+}
+
 usage() {
   echo "Usage: claude-review [options] <pr_url_or_number>"
   echo "       claude-review --self [<pr_url_or_number>]"
@@ -219,64 +278,17 @@ cmd_review() {
     read -rp "Issue link (optional, Enter to skip): " issue_link
   fi
 
-  # Auto-fetch Linear issue from branch name
-  local issue_context=""
   local pr_head
   pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
-  local issue_id
-  issue_id=$(echo "$pr_head" | grep -oE "$LINEAR_ISSUE_PATTERN" | head -1 || true)
-  if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
-    issue_context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
-    [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
-  fi
+
+  local issue_context=""
+  _fetch_linear_context issue_context "$pr_head" "$issue_link"
 
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
   # ── Worktree setup ──
-  local repo_root=""
-  local git_toplevel
-  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
-  local repo_name="${repo##*/}"
-  if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
-    repo_root="$git_toplevel"
-  else
-    repo_root=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
-  fi
-  if [[ -z "$repo_root" ]]; then
-    err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
-    exit 1
-  fi
-
-  info "Setting up worktree for PR #${pr_number}..."
-  local wt_json wt_path wt_fallback="false"
-  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
-  wt_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
-
-  if [[ -z "$wt_path" ]]; then
-    info "Branch deleted, fetching via PR ref..."
-    git -C "$repo_root" fetch origin "pull/${pr_number}/head" 2>/dev/null || {
-      err "Failed to fetch PR #${pr_number} ref"
-      exit 1
-    }
-    wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
-    git -C "$repo_root" worktree add --detach "$wt_path" FETCH_HEAD 2>/dev/null || {
-      err "Failed to create worktree for PR #${pr_number}"
-      exit 1
-    }
-    wt_fallback="true"
-    local pr_head_sha
-    pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
-    info "Created detached worktree at ${pr_head_sha:0:7}"
-  else
-    git -C "$wt_path" fetch origin "$pr_head" 2>/dev/null || true
-    git -C "$wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
-  fi
-
-  if [[ "$wt_fallback" == "true" ]]; then
-    trap 'git -C "$repo_root" worktree remove --force "$wt_path" 2>/dev/null || true' EXIT
-  else
-    trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
-  fi
+  local wt_path
+  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head"
 
   # ── Archive management ──
   local prior_review_path=""
@@ -445,16 +457,11 @@ cmd_self_review() {
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
-  # ── Auto-fetch Linear issue from branch name ──
-  local issue_context=""
   local branch_name
   branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
-  local issue_id
-  issue_id=$(echo "$branch_name" | grep -oE "$LINEAR_ISSUE_PATTERN" | head -1 || true)
-  if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
-    issue_context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
-    [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
-  fi
+
+  local issue_context=""
+  _fetch_linear_context issue_context "$branch_name" "$issue_link"
 
   # ── Run orchestrator ──
   local orchestrate_args=(

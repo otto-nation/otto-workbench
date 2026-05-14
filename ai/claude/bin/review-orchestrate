@@ -251,11 +251,48 @@ def merge_reviews(group_files: list[str]) -> str:
 
 # ── PR data fetching ──────────────────────────────────────────────────────────
 
-def _run(cmd: list[str], check: bool = True) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if check and r.returncode != 0:
         return ""
     return r.stdout.strip()
+
+
+def fetch_branch_metadata(wt_path: str) -> PRMetadata:
+    head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
+    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
+
+    log_output = _run(["git", "log", "origin/main..HEAD", "--oneline"], cwd=wt_path)
+    first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
+    title = first_subject
+
+    numstat = _run(["git", "diff", "--numstat", "origin/main..HEAD"], cwd=wt_path)
+    files = []
+    total_add = 0
+    total_del = 0
+    for line in numstat.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        add = int(parts[0]) if parts[0] != "-" else 0
+        delete = int(parts[1]) if parts[1] != "-" else 0
+        files.append({"path": parts[2], "additions": add, "deletions": delete})
+        total_add += add
+        total_del += delete
+
+    return PRMetadata(
+        title=title,
+        body="",
+        head=branch,
+        base="main",
+        head_sha=head_sha,
+        additions=total_add,
+        deletions=total_del,
+        changed_files=len(files),
+        files=files,
+    )
 
 
 def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
@@ -406,6 +443,46 @@ def build_prompt(
     reviews_section = _build_reviews_section(ctx)
     env_section = _build_env_section(wt_path)
     issue_section = _build_issue_section(issue_link, issue_context)
+
+    if template_name == "self-review.md":
+        prior_ctx = (
+            "This is a re-review of your own code. Below are the findings from the previous self-review. "
+            "For each prior finding:\n"
+            "- If the issue has been fixed, omit it from the new review\n"
+            "- If the issue is still present, carry it forward\n"
+            "- Add any new findings from changes since the last review"
+        )
+        prior_section = _build_prior_section(prior_review, prior_ctx)
+        return render_template(
+            "self-review.md",
+            branch_name=extra.get("branch_name", pr.head),
+            repo=repo,
+            pr_header=pr_header,
+            env_section=env_section,
+            issue_section=issue_section,
+            prior_section=prior_section,
+            review_file=review_file,
+        )
+
+    if template_name == "self-review-synthesis.md":
+        prior_section = _build_prior_section(
+            prior_review,
+            "Omit prior findings that have been fixed. Carry forward open ones.",
+        )
+        return render_template(
+            "self-review-synthesis.md",
+            branch_name=extra.get("branch_name", pr.head),
+            repo=repo,
+            pr_header=pr_header,
+            pr_head_sha=pr.head_sha,
+            holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
+            group_count=extra["group_count"],
+            merged_content=extra["merged_content"],
+            review_file=review_file,
+            wt_path=wt_path,
+            today=date.today().isoformat(),
+            prior_section=prior_section,
+        )
 
     if template_name == "single-agent.md":
         prior_ctx = (
@@ -582,13 +659,17 @@ def run_single_agent(
     repo: str, pr_number: str, pr: PRMetadata, ctx: PRContext,
     wt_path: str, review_file: str, session_log: str, reviews_dir: str,
     issue_link: str, issue_context: str, prior_review: str,
+    mode: str = "pr",
 ):
+    template = "self-review.md" if mode == "self" else "single-agent.md"
     prompt = build_prompt(
-        "single-agent.md", repo, pr, ctx, wt_path, review_file,
+        template, repo, pr, ctx, wt_path, review_file,
         issue_link=issue_link, issue_context=issue_context,
         prior_review=prior_review, pr_number=pr_number,
+        branch_name=pr.head,
     )
-    _info(f"Running review agent on PR #{pr_number} ({pr.title})...")
+    label = f"branch {pr.head}" if mode == "self" else f"PR #{pr_number} ({pr.title})"
+    _info(f"Running review agent on {label}...")
     print()
     invoke_agent(prompt, session_log, wt_path, reviews_dir)
     print()
@@ -637,7 +718,7 @@ def run_multi_phase(
     repo: str, pr_number: str, pr: PRMetadata, ctx: PRContext,
     wt_path: str, review_file: str, session_log: str, reviews_dir: str,
     issue_link: str, issue_context: str, prior_review: str,
-    max_parallel: int = 4,
+    max_parallel: int = 4, mode: str = "pr",
 ):
     groups = group_files(pr)
     group_count = len(groups)
@@ -706,12 +787,13 @@ def run_multi_phase(
 
     # Phase 4: Synthesis
     synthesis_log = review_file.replace(".md", ".synthesis.jsonl")
+    synthesis_template = "self-review-synthesis.md" if mode == "self" else "synthesis.md"
 
     synthesis_prompt = build_prompt(
-        "synthesis.md", repo, pr, ctx, wt_path, review_file,
+        synthesis_template, repo, pr, ctx, wt_path, review_file,
         prior_review=prior_review, pr_number=pr_number,
         holistic_content=holistic_content, group_count=group_count,
-        merged_content=merged_content,
+        merged_content=merged_content, branch_name=pr.head,
     )
     _info("Phase 4: Synthesis...")
     print()
@@ -721,17 +803,28 @@ def run_multi_phase(
     if not Path(review_file).exists():
         _warn("Synthesis agent failed — falling back to mechanical merge")
         today = date.today().isoformat()
-        fallback = (
-            f"# Review: {repo}#{pr_number} — {pr.title}\n"
-            f"<!-- date: {today} -->\n"
-            f"<!-- head_sha: {pr.head_sha} -->\n\n"
-            f"## Summary\n"
-            f"Multi-phase review of {pr.changed_files} files across {group_count} groups. "
-            f"Synthesis agent failed — findings below are from individual group reviews.\n\n"
-            f"{merged_content}\n\n"
-            f"## Verdict\n"
-            f"Manual review of findings required — synthesis was not completed.\n"
-        )
+        if mode == "self":
+            fallback = (
+                f"# Self-Review: {repo} — {pr.head}\n"
+                f"<!-- date: {today} -->\n"
+                f"<!-- head_sha: {pr.head_sha} -->\n\n"
+                f"## Summary\n"
+                f"Multi-phase self-review of {pr.changed_files} files across {group_count} groups. "
+                f"Synthesis agent failed — findings below are from individual group reviews.\n\n"
+                f"{merged_content}\n"
+            )
+        else:
+            fallback = (
+                f"# Review: {repo}#{pr_number} — {pr.title}\n"
+                f"<!-- date: {today} -->\n"
+                f"<!-- head_sha: {pr.head_sha} -->\n\n"
+                f"## Summary\n"
+                f"Multi-phase review of {pr.changed_files} files across {group_count} groups. "
+                f"Synthesis agent failed — findings below are from individual group reviews.\n\n"
+                f"{merged_content}\n\n"
+                f"## Verdict\n"
+                f"Manual review of findings required — synthesis was not completed.\n"
+            )
         Path(review_file).write_text(fallback)
 
     # Consolidate logs
@@ -758,7 +851,7 @@ def run_multi_phase(
 def main():
     parser = argparse.ArgumentParser(description="Review orchestration for claude-review")
     parser.add_argument("--repo", required=True, help="GitHub owner/repo")
-    parser.add_argument("--pr", required=True, help="PR number")
+    parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
     parser.add_argument("--review-file", required=True, help="Output review file path")
     parser.add_argument("--wt-path", required=True, help="Worktree path")
     parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
@@ -768,16 +861,31 @@ def main():
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
     parser.add_argument("--max-parallel", type=int, default=4,
                         help="Max concurrent group reviews (default: 4)")
+    parser.add_argument("--mode", choices=["pr", "self"], default="pr",
+                        help="Review mode: pr (default) or self")
     args = parser.parse_args()
+
+    if args.mode == "pr" and not args.pr:
+        print("error: --pr is required in pr mode", file=sys.stderr)
+        sys.exit(1)
 
     session_log = args.session_log or args.review_file.replace(".md", ".session.jsonl")
 
-    _info("Fetching PR data...")
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        pr_future = pool.submit(fetch_pr_metadata, args.repo, args.pr)
-        ctx_future = pool.submit(fetch_pr_context, args.repo, args.pr)
-        pr = pr_future.result()
-        ctx = ctx_future.result()
+    if args.mode == "self" and not args.pr:
+        _info("Gathering branch metadata...")
+        pr = fetch_branch_metadata(args.wt_path)
+        ctx = PRContext()
+    else:
+        _info("Fetching PR data...")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pr_future = pool.submit(fetch_pr_metadata, args.repo, args.pr)
+            if args.mode == "self":
+                ctx = PRContext()
+                pr = pr_future.result()
+            else:
+                ctx_future = pool.submit(fetch_pr_context, args.repo, args.pr)
+                pr = pr_future.result()
+                ctx = ctx_future.result()
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
@@ -787,26 +895,27 @@ def main():
         pr.total_lines > MULTI_PHASE_LINE_THRESHOLD
         or pr.changed_files > MULTI_PHASE_FILE_THRESHOLD
     )
-    mode = "multi" if is_large else "single"
+    pipeline = "multi" if is_large else "single"
 
     if is_large:
         run_multi_phase(
             args.repo, args.pr, pr, ctx, args.wt_path, args.review_file,
             session_log, args.reviews_dir,
             args.issue_link, args.issue_context, prior_review,
-            max_parallel=args.max_parallel,
+            max_parallel=args.max_parallel, mode=args.mode,
         )
     else:
         run_single_agent(
             args.repo, args.pr, pr, ctx, args.wt_path, args.review_file,
             session_log, args.reviews_dir,
             args.issue_link, args.issue_context, prior_review,
+            mode=args.mode,
         )
 
     result = {
         "review_file": args.review_file,
         "session_log": session_log,
-        "mode": mode,
+        "mode": pipeline,
     }
     json.dump(result, sys.stdout)
     print()

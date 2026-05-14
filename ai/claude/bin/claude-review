@@ -77,6 +77,55 @@ _display_review() {
   echo
 }
 
+_format_usage() {
+  local logs=()
+  local f
+  for f in "$@"; do
+    [[ -f "$f" ]] && logs+=("$f")
+  done
+  [[ ${#logs[@]} -gt 0 ]] || return 0
+
+  local raw
+  raw=$(grep '"type":"result"' "${logs[@]}" 2>/dev/null) || return 0
+  [[ -n "$raw" ]] || return 0
+
+  local usage_json
+  usage_json=$(echo "$raw" | jq -s '{
+    cost: (map(.total_cost_usd // 0) | add),
+    tokens: (map((.usage.input_tokens // 0) + (.usage.output_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)) | add),
+    duration_ms: (map(.duration_ms // 0) | add)
+  }' 2>/dev/null) || return 0
+
+  local cost tokens duration_ms
+  cost=$(echo "$usage_json" | jq -r '.cost') || return 0
+  tokens=$(echo "$usage_json" | jq -r '.tokens') || return 0
+  duration_ms=$(echo "$usage_json" | jq -r '.duration_ms') || return 0
+
+  local tokens_fmt
+  if (( tokens >= 1000000 )); then
+    tokens_fmt="$(echo "$tokens" | awk '{printf "%.1fM", $1/1000000}')"
+  elif (( tokens >= 1000 )); then
+    tokens_fmt="$(echo "$tokens" | awk '{printf "%.0fk", $1/1000}')"
+  else
+    tokens_fmt="$tokens"
+  fi
+
+  local duration_s=$(( duration_ms / 1000 ))
+  local mins=$(( duration_s / 60 ))
+  local secs=$(( duration_s % 60 ))
+  local duration_fmt
+  if (( mins > 0 )); then
+    duration_fmt="${mins}m ${secs}s"
+  else
+    duration_fmt="${secs}s"
+  fi
+
+  local cost_fmt
+  cost_fmt=$(printf '$%.2f' "$cost")
+
+  echo -e "  Usage:           ${cost_fmt} · ${tokens_fmt} tokens · ${duration_fmt}"
+}
+
 _print_summary() {
   local review_file="$1"
   local session_log="$2"
@@ -90,6 +139,7 @@ _print_summary() {
   [[ -n "$post_session_log" && -f "$post_session_log" ]] && \
     echo -e "  Post session:    ${post_session_log}"
   echo -e "  PR:              ${pr_url}"
+  _format_usage "$session_log" "$post_session_log"
   echo
 }
 
@@ -101,6 +151,7 @@ usage() {
   echo "  --no-post          Skip all interactive prompts; run review and exit"
   echo "  --post             Run review then post automatically (fully headless)"
   echo "  --issue <link>     Attach an issue link for reviewer context"
+  echo "  --max-parallel <N> Max concurrent group reviews (default: 4)"
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
@@ -110,6 +161,7 @@ cmd_review() {
   local no_post="${2:-false}"
   local issue_link="${3:-}"
   local auto_post="${4:-false}"
+  local max_parallel="${5:-4}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -222,6 +274,7 @@ cmd_review() {
   [[ -n "$prior_review_path" && -f "$prior_review_path" ]] && orchestrate_args+=(--prior-review "$prior_review_path")
   [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
+  orchestrate_args+=(--max-parallel "$max_parallel")
 
   "$(dirname "$_SELF")/review-orchestrate" "${orchestrate_args[@]}"
 
@@ -306,15 +359,17 @@ main() {
   local no_post="false"
   local auto_post="false"
   local issue_link=""
+  local max_parallel="4"
   local positional=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --no-post)   no_post="true"; shift ;;
-      --post)      auto_post="true"; shift ;;
-      --issue)     issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
-      -h|--help)   usage; exit 0 ;;
-      *)           positional+=("$1"); shift ;;
+      --no-post)       no_post="true"; shift ;;
+      --post)          auto_post="true"; shift ;;
+      --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
+      --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
+      -h|--help)       usage; exit 0 ;;
+      *)               positional+=("$1"); shift ;;
     esac
   done
 
@@ -339,7 +394,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel"
       ;;
   esac
 }

@@ -27,13 +27,36 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../../../lib/ui.sh"
 
+# ─── Constants ───────────────────────────────────────────────────────────────
+
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
+LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
+
+SELF_REVIEW_DIR=".claude"
+SELF_REVIEW_FILE="self-review.md"
+
+REVIEW_EXT=".md"
+
+SUFFIX_PRIOR=".prior.md"
+SUFFIX_SESSION=".session.jsonl"
+SUFFIX_POST_SESSION=".post.jsonl"
+
+ARCHIVE_KEEP_COUNT=3
+DEFAULT_MAX_PARALLEL=4
+
+LINEAR_ISSUE_PATTERN='[A-Z]+-[0-9]+'
+PR_URL_PATTERN='/pull/([0-9]+)'
+PR_NUMBER_PATTERN='^[0-9]+$'
+GITHUB_REPO_PATTERN='github\.com/([^/]+/[^/]+)'
+
+WORKTREE_FALLBACK_DIR=".worktrees"
+
 mkdir -p "$REVIEWS_DIR"
 
 # Migrate reviews from legacy location
-if [[ -d "$HOME/.claude/reviews" ]]; then
-  mv "$HOME/.claude/reviews"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
-  mv "$HOME/.claude/reviews"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
+if [[ -d "$LEGACY_REVIEWS_DIR" ]]; then
+  mv "$LEGACY_REVIEWS_DIR"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
+  mv "$LEGACY_REVIEWS_DIR"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
 fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,9 +64,9 @@ fi
 _extract_pr_number() {
   local -n __out=$1
   local input="$2"
-  if [[ "$input" =~ /pull/([0-9]+) ]]; then
+  if [[ "$input" =~ $PR_URL_PATTERN ]]; then
     __out="${BASH_REMATCH[1]}"
-  elif [[ "$input" =~ ^[0-9]+$ ]]; then
+  elif [[ "$input" =~ $PR_NUMBER_PATTERN ]]; then
     __out="$input"
   else
     err "Cannot extract PR number from: $input"
@@ -54,7 +77,7 @@ _extract_pr_number() {
 _extract_repo() {
   local -n __out=$1
   local input="$2"
-  if [[ "$input" =~ github\.com/([^/]+/[^/]+) ]]; then
+  if [[ "$input" =~ $GITHUB_REPO_PATTERN ]]; then
     __out="${BASH_REMATCH[1]}"
   else
     __out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
@@ -68,7 +91,7 @@ _review_file() {
   local -n __out=$1
   local repo_name="${2##*/}"
   local pr_number="$3"
-  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}.md"
+  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}${REVIEW_EXT}"
 }
 
 _display_review() {
@@ -155,8 +178,8 @@ usage() {
   echo "  --no-post                  Skip all interactive prompts; run review and exit"
   echo "  --post                     Run review then post automatically (fully headless)"
   echo "  --issue <link>             Attach an issue link for reviewer context"
-  echo "  --max-parallel <N>         Max concurrent group reviews (default: 4)"
-  echo "  --self                     Self-review: review your own code, write to .claude/self-review.md"
+  echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
+  echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
 }
 
@@ -167,7 +190,7 @@ cmd_review() {
   local no_post="${2:-false}"
   local issue_link="${3:-}"
   local auto_post="${4:-false}"
-  local max_parallel="${5:-4}"
+  local max_parallel="${5:-$DEFAULT_MAX_PARALLEL}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -187,7 +210,7 @@ cmd_review() {
   local pr_head
   pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
   local issue_id
-  issue_id=$(echo "$pr_head" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+  issue_id=$(echo "$pr_head" | grep -oE "$LINEAR_ISSUE_PATTERN" | head -1 || true)
   if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
     issue_context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
     [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
@@ -221,7 +244,7 @@ cmd_review() {
       err "Failed to fetch PR #${pr_number} ref"
       exit 1
     }
-    wt_path="${repo_root}/.worktrees/pr-${pr_number}-review"
+    wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
     git -C "$repo_root" worktree add --detach "$wt_path" FETCH_HEAD 2>/dev/null || {
       err "Failed to create worktree for PR #${pr_number}"
       exit 1
@@ -244,15 +267,15 @@ cmd_review() {
   # ── Archive management ──
   local prior_review_path=""
   if [[ -f "$review_file" ]]; then
-    prior_review_path="${review_file%.md}.prior.md"
+    prior_review_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
     cp "$review_file" "$prior_review_path"
     local archive
-    archive="${review_file%.md}.$(date +%Y%m%d-%H%M%S).md"
+    archive="${review_file%"${REVIEW_EXT}"}.$(date +%Y%m%d-%H%M%S).md"
     mv "$review_file" "$archive"
     info "Archived prior review to $(basename "$archive")"
   fi
 
-  local session_log="${review_file%.md}.session.jsonl"
+  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
   if [[ -f "$session_log" ]]; then
     mv "$session_log" "${session_log%.jsonl}.$(date +%Y%m%d-%H%M%S).jsonl"
   fi
@@ -260,11 +283,11 @@ cmd_review() {
   # Prune old archives — keep latest 3
   local _old_archive
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%.md}".2*.md 2>/dev/null | tail -n +4); do
+  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%.md}".session.2*.jsonl 2>/dev/null | tail -n +4); do
+  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
     rm -f "$_old_archive"
   done
 
@@ -297,7 +320,7 @@ cmd_review() {
 
   if [[ "$auto_post" == "true" ]]; then
     cmd_post "$repo" "$pr_number"
-    local post_session_log="${review_file%.md}.post.jsonl"
+    local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
     return
   fi
@@ -310,7 +333,7 @@ cmd_review() {
 
   if confirm "Post review to GitHub?"; then
     cmd_post "$repo" "$pr_number"
-    local post_session_log="${review_file%.md}.post.jsonl"
+    local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
   else
     _print_summary "$review_file" "$session_log" "$pr_url"
@@ -373,7 +396,7 @@ _switch_to_pr_branch() {
 cmd_self_review() {
   local pr_input="${1:-}"
   local issue_link="${2:-}"
-  local max_parallel="${3:-4}"
+  local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
   local skip_user_verification="${4:-false}"
 
   local repo
@@ -395,25 +418,25 @@ cmd_self_review() {
   fi
 
   # ── Review file in worktree ──
-  local review_file="${wt_path}/.claude/self-review.md"
-  mkdir -p "${wt_path}/.claude"
+  local review_file="${wt_path}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
+  mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
 
   # ── Archive management ──
   local prior_review_path=""
   if [[ -f "$review_file" ]]; then
-    prior_review_path="${review_file%.md}.prior.md"
+    prior_review_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
     cp "$review_file" "$prior_review_path"
     info "Preserved prior self-review for context"
   fi
 
-  local session_log="${wt_path}/.claude/self-review.session.jsonl"
+  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
   # ── Auto-fetch Linear issue from branch name ──
   local issue_context=""
   local branch_name
   branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
   local issue_id
-  issue_id=$(echo "$branch_name" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
+  issue_id=$(echo "$branch_name" | grep -oE "$LINEAR_ISSUE_PATTERN" | head -1 || true)
   if [[ -z "$issue_link" && -n "$issue_id" ]] && command -v linear &>/dev/null; then
     issue_context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
     [[ -n "$issue_context" ]] && echo "✓ Found Linear issue: $issue_id"
@@ -480,7 +503,7 @@ cmd_post() {
   local skill_file
   skill_file="$(dirname "$_SELF")/../skills/pr-review/SKILL.md"
 
-  local session_log="${review_file%.md}.post.jsonl"
+  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
 
   info "Posting review for PR #${pr_number}..."
   echo
@@ -510,7 +533,7 @@ main() {
   local self_review="false"
   local skip_user_verification="false"
   local issue_link=""
-  local max_parallel="4"
+  local max_parallel="$DEFAULT_MAX_PARALLEL"
   local positional=()
 
   while [[ $# -gt 0 ]]; do

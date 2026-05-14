@@ -26,6 +26,7 @@ _source_with() {
   # Setting HOME before source causes constants.sh to derive all paths from fake_home.
   HOME="$fake_home"
   export WORKBENCH_DIR="$REPO_ROOT"
+  export WORKBENCH_STABLE_DIR="$REPO_ROOT"
   export NO_COLOR=1
   export WORKBENCH_SKIP_GENERATE=1
   # shellcheck source=/dev/null

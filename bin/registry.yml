@@ -51,6 +51,12 @@ tools:
     when_to_use: "Setting up a repo for parallel worktree development with worktrunk"
     usage: "wt-init  |  wt-init ~/code/myrepo  |  wt-init --dry-run"
 
+  - name: gcloud-reauth
+    context: reference
+    description: "Check GCP application-default credentials and re-login if expired, with self-managed launchd agent"
+    when_to_use: "Before running commands that need GCP credentials, or when auth errors appear"
+    usage: "gcloud-reauth  |  gcloud-reauth install  |  gcloud-reauth status  |  gcloud-reauth uninstall"
+
   - name: get-secret
     context: reference
     description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"

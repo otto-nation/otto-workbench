@@ -715,6 +715,51 @@ EOF
   esac
 }
 
+# ─── Discover ────────────────────────────────────────────────────────────────
+
+_discover_scripts() {
+  local registry="$WORKBENCH_DIR/bin/registry.yml"
+  if [[ ! -f "$registry" ]] || ! command -v yq &>/dev/null; then
+    echo -e "    ${DIM}(registry not found or yq not installed)${NC}"
+    return
+  fi
+  local count name desc
+  count=$(yq '.tools | length' "$registry")
+  for (( i = 0; i < count; i++ )); do
+    name=$(yq ".tools[$i].name" "$registry")
+    desc=$(yq ".tools[$i].description" "$registry")
+    printf "    ${GREEN}%-18s${NC} %s\n" "$name" "$desc"
+  done
+}
+
+_discover_agents() {
+  local found=false plist label short interval
+  for plist in "$HOME"/Library/LaunchAgents/com.otto-workbench.*.plist; do
+    [[ -f "$plist" ]] || continue
+    found=true
+    label=$(/usr/libexec/PlistBuddy -c "Print :Label" "$plist" 2>/dev/null)
+    short="${label#com.otto-workbench.}"
+    if launchctl list "$label" &>/dev/null; then
+      interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$plist" 2>/dev/null || echo "")
+      [[ -n "$interval" ]] \
+        && printf "    ${GREEN}%-18s${NC} Running (every %s)\n" "$short" "$(_format_interval "$interval")" \
+        || printf "    ${GREEN}%-18s${NC} Running\n" "$short"
+    else
+      printf "    ${DIM}%-18s Stopped${NC}\n" "$short"
+    fi
+  done
+  [[ "$found" == false ]] && echo -e "    ${DIM}(none installed)${NC}"
+  return 0
+}
+
+cmd_discover() {
+  echo -e "\n  ${BOLD}Scripts${NC}"
+  _discover_scripts
+  echo -e "\n  ${BOLD}Agents${NC}"
+  _discover_agents
+  echo
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -725,6 +770,7 @@ Commands:
   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
   sync                  Re-apply all workbench configuration to ~/
   claude [--force] [--analyze]  Sync Claude config + scaffold .claude/ in current repo
+  discover              Show available scripts and launchd agents
   autoupdate <subcmd>   Scheduled pull + sync via launchd
   override <subcmd>     Manage user overrides for AI config (agents, skills, rules)
   state [regenerate]    Show or regenerate installed component state
@@ -739,6 +785,7 @@ case "${1:-}" in
   install)   shift; cmd_install "$@" ;;
   sync)      cmd_sync ;;
   claude)    cmd_claude "$@" ;;
+  discover)  cmd_discover ;;
   autoupdate) cmd_autoupdate "$@" ;;
   override)  shift; cmd_override "$@" ;;
   state)     cmd_state "$@" ;;

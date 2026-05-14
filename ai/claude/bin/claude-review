@@ -318,6 +318,58 @@ cmd_review() {
   fi
 }
 
+_verify_pr_ownership() {
+  local pr_number="$1"
+  local repo="$2"
+  local pr_author gh_user
+  pr_author=$(gh pr view "$pr_number" --repo "$repo" --json author --jq '.author.login' 2>/dev/null) || true
+  gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
+  [[ -z "$pr_author" || -z "$gh_user" || "$pr_author" == "$gh_user" ]] && return 0
+  warn "PR #${pr_number} is owned by ${pr_author}, not ${gh_user}"
+  confirm "Continue with self-review?" || exit 0
+}
+
+_find_repo_root() {
+  local -n __out=$1
+  local repo="$2"
+  local git_toplevel repo_name
+  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
+  repo_name="${repo##*/}"
+  if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
+    __out="$git_toplevel"
+  else
+    __out=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
+  fi
+}
+
+_switch_to_pr_branch() {
+  local -n __wt_path=$1
+  local -n __wt_cleanup=$2
+  local pr_number="$3"
+  local repo="$4"
+
+  local pr_head
+  pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
+  [[ -n "$pr_head" ]] || return 0
+
+  local current_branch
+  current_branch=$(git -C "$__wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  [[ "$current_branch" != "$pr_head" ]] || return 0
+
+  local repo_root=""
+  _find_repo_root repo_root "$repo"
+  [[ -n "$repo_root" ]] || return 0
+
+  info "Switching to branch ${pr_head}..."
+  local wt_json switched_path
+  wt_json=$(wt switch "$pr_head" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
+  switched_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+  if [[ -n "$switched_path" ]]; then
+    __wt_path="$switched_path"
+    __wt_cleanup="$pr_head"
+  fi
+}
+
 cmd_self_review() {
   local pr_input="${1:-}"
   local issue_link="${2:-}"
@@ -338,47 +390,8 @@ cmd_self_review() {
 
   if [[ -n "$pr_input" ]]; then
     _extract_pr_number pr_number "$pr_input"
-
-    # ── Ownership verification ──
-    if [[ "$skip_user_verification" != "true" ]]; then
-      local pr_author gh_user
-      pr_author=$(gh pr view "$pr_number" --repo "$repo" --json author --jq '.author.login' 2>/dev/null) || true
-      gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
-      if [[ -n "$pr_author" && -n "$gh_user" && "$pr_author" != "$gh_user" ]]; then
-        warn "PR #${pr_number} is owned by ${pr_author}, not ${gh_user}"
-        confirm "Continue with self-review?" || exit 0
-      fi
-    fi
-
-    # ── Switch to PR branch ──
-    local pr_head
-    pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
-    if [[ -n "$pr_head" ]]; then
-      local current_branch
-      current_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
-      if [[ "$current_branch" != "$pr_head" ]]; then
-        local repo_root=""
-        local git_toplevel
-        git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
-        local repo_name="${repo##*/}"
-        if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
-          repo_root="$git_toplevel"
-        else
-          repo_root=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
-        fi
-        if [[ -n "$repo_root" ]]; then
-          info "Switching to branch ${pr_head}..."
-          local wt_json
-          wt_json=$(wt switch "$pr_head" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
-          local switched_path
-          switched_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
-          if [[ -n "$switched_path" ]]; then
-            wt_path="$switched_path"
-            wt_cleanup="$pr_head"
-          fi
-        fi
-      fi
-    fi
+    [[ "$skip_user_verification" == "true" ]] || _verify_pr_ownership "$pr_number" "$repo"
+    _switch_to_pr_branch wt_path wt_cleanup "$pr_number" "$repo"
   fi
 
   # ── Review file in worktree ──

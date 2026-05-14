@@ -197,6 +197,36 @@ _fetch_linear_context() {
   fi
 }
 
+_archive_review() {
+  local -n __prior_path=$1
+  local review_file="$2"
+  local session_log="$3"
+
+  __prior_path=""
+  if [[ -f "$review_file" ]]; then
+    __prior_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
+    cp "$review_file" "$__prior_path"
+    local archive
+    archive="${review_file%"${REVIEW_EXT}"}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
+    mv "$review_file" "$archive"
+    info "Archived prior review to $(basename "$archive")"
+  fi
+
+  if [[ -f "$session_log" ]]; then
+    mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
+  fi
+
+  local _old_archive
+  # shellcheck disable=SC2012
+  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+    rm -f "$_old_archive"
+  done
+  # shellcheck disable=SC2012
+  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+    rm -f "$_old_archive"
+  done
+}
+
 _setup_review_worktree() {
   local -n __wt_path=$1
   local repo="$2"
@@ -290,32 +320,10 @@ cmd_review() {
   local wt_path
   _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head"
 
-  # ── Archive management ──
-  local prior_review_path=""
-  if [[ -f "$review_file" ]]; then
-    prior_review_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
-    cp "$review_file" "$prior_review_path"
-    local archive
-    archive="${review_file%"${REVIEW_EXT}"}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
-    mv "$review_file" "$archive"
-    info "Archived prior review to $(basename "$archive")"
-  fi
-
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
-  if [[ -f "$session_log" ]]; then
-    mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
-  fi
 
-  # Prune old archives — keep latest 3
-  local _old_archive
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
-    rm -f "$_old_archive"
-  done
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
-    rm -f "$_old_archive"
-  done
+  local prior_review_path=""
+  _archive_review prior_review_path "$review_file" "$session_log"
 
   # ── Run orchestrator ──
   local orchestrate_args=(

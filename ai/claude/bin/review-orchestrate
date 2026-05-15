@@ -275,6 +275,54 @@ def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     return text, count
 
 
+def renumber_findings(review_file: str) -> None:
+    """Renumber finding IDs to be sequential in order of first appearance.
+
+    After synthesis, the agent may reorganize findings by category, leaving
+    gaps in the numbering (e.g., S1-S17 then S19, skipping S18). This
+    function scans the file for all [M#], [S#], [N#] IDs and renumbers
+    them so each prefix runs 1, 2, 3, ... in order of first appearance.
+    Also updates unbracketed cross-references (e.g., "see S14" in verdicts).
+    """
+    path = Path(review_file)
+    if not path.exists():
+        return
+    text = path.read_text()
+
+    for prefix in (FINDING_PREFIX_MUST, FINDING_PREFIX_SHOULD, FINDING_PREFIX_NIT):
+        seen_ids: list[int] = []
+        for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
+            num = int(m.group(1))
+            if num not in seen_ids:
+                seen_ids.append(num)
+
+        remap = {}
+        for new_num, old_num in enumerate(seen_ids, 1):
+            if old_num != new_num:
+                remap[old_num] = new_num
+
+        if not remap:
+            continue
+
+        placeholder = "\x00"
+        # Bracketed IDs: [S19] → [S1]
+        for old_num in sorted(remap, reverse=True):
+            text = text.replace(f"[{prefix}{old_num}]", f"[{placeholder}{prefix}{remap[old_num]}]")
+        text = text.replace(placeholder, "")
+
+        # Unbracketed cross-references: "S19" in verdicts, summaries, nit refs
+        # Use word boundary to avoid matching S1 inside S10
+        for old_num in sorted(remap, reverse=True):
+            text = re.sub(
+                rf"(?<!\[)(?<!\x00){prefix}{old_num}(?!\d)(?!\])",
+                f"\x00{prefix}{remap[old_num]}",
+                text,
+            )
+        text = text.replace("\x00", "")
+
+    path.write_text(text)
+
+
 def merge_reviews(group_files: list[str]) -> str:
     merged_triage = ""
     merged_must = ""
@@ -738,6 +786,8 @@ def run_single_agent(job: ReviewJob):
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 
+    renumber_findings(job.review_file)
+
 
 def _review_group(
     i: int, grp: Group, job: ReviewJob,
@@ -875,6 +925,8 @@ def _phase_synthesis(
                 f"Manual review of findings required — synthesis was not completed.\n"
             )
         Path(job.review_file).write_text(fallback)
+
+    renumber_findings(job.review_file)
 
     return synthesis_log
 

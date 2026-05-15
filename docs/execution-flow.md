@@ -4,14 +4,14 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 
 ## Install Flow
 
-`install.sh` bootstraps a new machine interactively. It runs in five stages:
+`install.sh` bootstraps a new machine interactively. It runs in six stages:
 
 ```
-1. Preflight         task, brew, mise — mandatory, runs first
-2. Core components   bin, git, zsh — selectable menu (Enter = all)
+1. Bootstrap         installs Homebrew if missing
+2. Core components   bin, git, task, zsh — selectable menu (Enter = all)
 3. Path setup        adds ~/.local/bin to shell rc if needed
 4. Migrations        runs any pending migration scripts
-5. Optional components  brew, docker, terminals, editors, ai — selectable menu (Enter = all)
+5. Optional components  brew, docker, terminals, editors, ai, mise — selectable menu (Enter = all)
 6. Summary           prints file inventory, warnings, next steps
 ```
 
@@ -32,7 +32,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 4. Summary          print changes, detect uninstalled components
 ```
 
-**State gating:** sync only runs components that are recorded as installed, with one exception — infrastructure components (`bin`, `task`, `mise`, `git`, `zsh`) always sync regardless of state.
+**State gating:** sync only runs components that are recorded as installed, with one exception — infrastructure components (`bin`, `task`, `git`, `zsh`) always sync regardless of state.
 
 **No prompts:** sync runs in `SYMLINK_MODE=no-prompt` — if a real file conflicts with a symlink, it warns and skips instead of prompting. Run `install.sh` for interactive resolution.
 
@@ -42,7 +42,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 |--------|-------------|----------------------|
 | When to use | First-time setup, adding optional components | After pulling workbench updates |
 | Interactive | Yes — menus, prompts | No — warns and skips conflicts |
-| Scope | Preflight + selected components | All installed components |
+| Scope | Bootstrap + selected components | All installed components |
 | Brew packages | Installs from Brewfile | Skipped |
 | Docker runtime | Prompts for Colima/OrbStack | Re-symlinks existing socket |
 | Templates | Creates configs from templates | Never overwrites editable configs |

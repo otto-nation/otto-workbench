@@ -28,10 +28,14 @@ _make_workbench() {
   printf '#!/usr/bin/env bash\n# description: Configure git\nsync_git() { echo "sync_git"; }\n' > "$dir/git/steps.sh"
 
   # Preflight components
-  for pf in task brew mise; do
+  for pf in brew; do
     mkdir -p "$dir/$pf"
     printf '#!/usr/bin/env bash\nstep_%s_install() { true; }\n' "$pf" > "$dir/$pf/steps.sh"
   done
+
+  # Core components that were formerly preflight
+  mkdir -p "$dir/task"
+  printf '#!/usr/bin/env bash\n# description: Task runner\nstep_task_install() { true; }\nsync_task() { echo "sync_task"; }\ninstall_task() { step_task_install; sync_task; }\n' > "$dir/task/steps.sh"
 
   # Optional components (setup.conf + setup.sh)
   printf 'label = Homebrew packages\ndescription = Install formulae and casks\n' > "$dir/brew/setup.conf"
@@ -41,7 +45,12 @@ _make_workbench() {
   printf 'label = Docker\ndescription = Configure Docker runtime\n' > "$dir/docker/setup.conf"
   printf '#!/usr/bin/env bash\necho "docker setup"\n' > "$dir/docker/setup.sh"
 
-  printf 'brew\ndocker\n' > "$dir/install.components"
+  mkdir -p "$dir/mise"
+  printf '#!/usr/bin/env bash\nstep_mise_install() { true; }\nsync_mise() { :; }\n' > "$dir/mise/steps.sh"
+  printf 'label = Mise\ndescription = Install mise version manager\ncheck = command -v mise\n' > "$dir/mise/setup.conf"
+  printf '#!/usr/bin/env bash\necho "mise setup"\n' > "$dir/mise/setup.sh"
+
+  printf 'brew\ndocker\nmise\n' > "$dir/install.components"
 }
 
 # ─── _is_targeted ────────────────────────────────────────────────────────────
@@ -57,7 +66,7 @@ _is_targeted() {
 @test "core components exclude preflight and optional (setup.conf) dirs" {
   _make_workbench "$TMPDIR/wb"
   local WORKBENCH_DIR="$TMPDIR/wb"
-  local PREFLIGHT_COMPONENTS=(task brew mise)
+  local PREFLIGHT_COMPONENTS=(brew)
   local KNOWN_CORE=()
 
   for _f in "$WORKBENCH_DIR"/*/steps.sh; do
@@ -72,7 +81,7 @@ _is_targeted() {
 
   [[ " ${KNOWN_CORE[*]} " == *" bin "* ]]
   [[ " ${KNOWN_CORE[*]} " == *" git "* ]]
-  [[ " ${KNOWN_CORE[*]} " != *" task "* ]]
+  [[ " ${KNOWN_CORE[*]} " == *" task "* ]]
   [[ " ${KNOWN_CORE[*]} " != *" mise "* ]]
   [[ " ${KNOWN_CORE[*]} " != *" brew "* ]]
 }
@@ -88,7 +97,8 @@ _is_targeted() {
 
   [[ " ${KNOWN_OPTIONAL[*]} " == *" brew "* ]]
   [[ " ${KNOWN_OPTIONAL[*]} " == *" docker "* ]]
-  [[ ${#KNOWN_OPTIONAL[@]} -eq 2 ]]
+  [[ " ${KNOWN_OPTIONAL[*]} " == *" mise "* ]]
+  [[ ${#KNOWN_OPTIONAL[@]} -eq 3 ]]
 }
 
 # ─── Targeted install: validation ────────────────────────────────────────────

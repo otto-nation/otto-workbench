@@ -14,7 +14,7 @@ ${env_section}
 
 ## Output
 Write findings to: ${group_output}
-Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit sections only.
+Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit / ## Idioms sections only.
 Do NOT write a Summary or Verdict — those will be added in a synthesis step.
-Use finding IDs starting at [M1], [S1], [N1] — they will be renumbered during merge.
+Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered during merge.
 ${prior_section}

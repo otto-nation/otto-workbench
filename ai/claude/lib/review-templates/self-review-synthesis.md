@@ -12,8 +12,8 @@ ${merged_content}
 1. Write the header: # Self-Review: ${repo} — ${branch_name}
    Include <!-- date: ${today} --> and <!-- head_sha: ${pr_head_sha} --> comments
 2. Write ## Summary — one sentence on what the changes do and overall quality
-3. Include all Must fix / Should fix / Nit findings from the merged content
-4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description`
+3. Include all Must fix / Should fix / Nit / Idioms findings from the merged content
+4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms)
 5. Renumber findings sequentially within each severity category
 6. Check for cross-file concerns — do findings in one group imply issues in files from another group?
 7. Add any cross-cutting findings with new IDs continuing the sequence

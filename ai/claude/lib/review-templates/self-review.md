@@ -23,12 +23,15 @@ One sentence: what the changes do and overall quality assessment.
 
 ## Nit
 - [ ] **[N1]** `path/file.ext:LINE` — Description of the issue
+
+## Idioms
+- [ ] **[I1]** `path/file.ext:LINE` — Description of the issue
 ```
 
 Rules:
 - Every finding MUST start with `- [ ]` (unchecked checkbox)
 - Every finding MUST include a file:line reference
-- Use M/S/N severity prefixes with sequential numbering per category
+- Use M/S/N/I severity prefixes with sequential numbering per category
 - Do NOT include a File Triage section
 - Do NOT include a Verdict section
 - Omit empty severity sections entirely (no "None" or "N/A")

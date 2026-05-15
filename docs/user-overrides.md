@@ -52,16 +52,16 @@ The sentinel is an empty file — only the name matters.
 
 ## When Overrides Apply
 
-Overrides are resolved during `otto-workbench sync` and `otto-workbench claude`. Active overrides (replacements, additions, disables) are printed in the sync summary.
+Overrides are resolved during `otto-workbench sync` and `otto-workbench ai sync`. Active overrides (replacements, additions, disables) are printed in the sync summary.
 
 ## CLI Management
 
 ```bash
-otto-workbench override list                      # list active overrides
-otto-workbench override add agent debugger         # copy default for editing
-otto-workbench override disable skill some-skill   # suppress a default
-otto-workbench override enable skill some-skill    # re-enable a disabled default
-otto-workbench override status                     # show overrides vs defaults
+otto-workbench ai override list                      # list active overrides
+otto-workbench ai override add agent debugger         # copy default for editing
+otto-workbench ai override disable skill some-skill   # suppress a default
+otto-workbench ai override enable skill some-skill    # re-enable a disabled default
+otto-workbench ai override status                     # show overrides vs defaults
 ```
 
 ## Implementation
@@ -76,7 +76,7 @@ otto-workbench override status                     # show overrides vs defaults
 Replace the debugger agent with a custom version:
 
 ```bash
-otto-workbench override add agent debugger
+otto-workbench ai override add agent debugger
 # edit ~/.config/workbench/overrides/ai/claude/agents/debugger.md
 otto-workbench sync
 ```
@@ -84,7 +84,7 @@ otto-workbench sync
 Disable a skill you don't use:
 
 ```bash
-otto-workbench override disable skill some-skill
+otto-workbench ai override disable skill some-skill
 otto-workbench sync
 ```
 

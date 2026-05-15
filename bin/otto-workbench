@@ -6,7 +6,7 @@
 # Commands:
 #   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
 #   sync                  Re-apply all workbench configuration to ~/
-#   claude [--force] [--analyze]  Sync Claude config + scaffold project .claude/ (see below)
+#   ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
 #   autoupdate <subcmd>   Scheduled pull + sync via launchd
 #   state [regenerate]    Show or re-detect installed component state
 #   changelog             Show recent changes from conventional commits
@@ -18,13 +18,12 @@
 #   pending migrations. Safe to re-run — idempotent.
 #   Use --all to skip menus, or name specific components.
 #
-# What claude does:
-#   Syncs machine-level Claude config (settings, rules, skills, agents, MCPs),
-#   then scaffolds a .claude/ directory in the current git repo (if one doesn't
-#   exist) with stack-detected rules and a project anatomy file.
-#   Anatomy is a file index (.claude/anatomy.md) with per-file descriptions and
-#   token estimates — helps Claude decide what to read before exploring.
-#   Use --force to re-scaffold an existing .claude/ directory.
+# What ai does:
+#   ai init — scaffolds a .claude/ directory in the current git repo (if one
+#   doesn't exist) with stack-detected rules and a project anatomy file.
+#   Use --force to re-scaffold, --analyze to run /analyze-project after.
+#   ai sync — syncs machine-level AI config (settings, rules, skills, agents, MCPs).
+#   ai override — manage user overrides for agents, skills, and rules.
 #
 # What sync does (pure config reconciliation):
 #   - Re-symlinks scripts, zsh/, git/.gitconfig, Taskfile, lib/
@@ -321,36 +320,60 @@ _stream_progress() {
   done
 }
 
-cmd_claude() {
+# ─── AI command ──────────────────────────────────────────────────────────────
+
+_ai_usage() {
+  cat <<EOF
+Usage: otto-workbench ai <command>
+
+Manage AI coding tool configuration (Claude Code, etc.).
+
+Commands:
+  init [--force] [--analyze]      Scaffold .claude/ in the current git repo
+  sync                            Sync machine-level AI config (settings, rules, MCPs, skills, agents)
+  override <subcmd>               Manage user overrides (agents, skills, rules)
+
+Run 'otto-workbench ai <command> -h' for command-specific help.
+Run 'otto-workbench sync' to apply changes after editing overrides.
+EOF
+}
+
+_ai_init() {
   local force_flag="" analyze=false
 
   local arg
-  for arg in "${@:2}"; do
+  for arg in "$@"; do
     case "$arg" in
-      --force)   force_flag="--force" ;;
-      --analyze) analyze=true ;;
+      --force)    force_flag="--force" ;;
+      --analyze)  analyze=true ;;
+      -h|--help)
+        cat <<EOF
+Usage: otto-workbench ai init [--force] [--analyze]
+
+Scaffold a .claude/ directory in the current git repo with stack-detected
+rules, conventions, and a project anatomy file.
+
+Options:
+  --force     Re-scaffold an existing .claude/ directory
+  --analyze   Run /analyze-project after scaffolding to populate files
+EOF
+        return 0
+        ;;
     esac
   done
 
-  title "Claude setup"
+  title "AI init"
   echo
 
-  # 1. Sync machine-level Claude config (settings, rules, skills, agents, MCPs)
-  sync_claude
-
-  # 2. Scaffold project .claude/ if not already done (or if --force)
   local project_root
   project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
   if [[ -z "$project_root" ]]; then
     echo
     warn "Not in a git repo — skipping project scaffold and anatomy"
-    echo
-    success "Claude setup complete!"
     return
   fi
 
   cd "$project_root"
-  echo
 
   local did_scaffold=false
   if [[ -d ".claude" ]] && [[ -z "$force_flag" ]]; then
@@ -361,7 +384,6 @@ cmd_claude() {
     did_scaffold=true
   fi
 
-  # 3. Generate project anatomy
   local anatomy_gen="$CLAUDE_SKILLS_DIR/anatomy/generate-anatomy.sh"
   if [[ -f "$anatomy_gen" ]]; then
     echo
@@ -373,7 +395,6 @@ cmd_claude() {
     fi
   fi
 
-  # 4. Offer to run /analyze-project after a fresh scaffold
   local skill_file="$CLAUDE_SKILLS_DIR/analyze-project/SKILL.md"
   if [[ "$did_scaffold" == true ]] && command -v claude >/dev/null 2>&1 && [[ -f "$skill_file" ]]; then
     echo
@@ -386,8 +407,6 @@ cmd_claude() {
       local session_log=".claude/analyze-project.session.jsonl"
       info "Running /analyze-project"
       echo
-      # Strip YAML frontmatter (--- ... --- block) before passing to claude;
-      # claude's argument parser treats leading --- as an unknown option flag.
       local skill_content
       skill_content=$(awk 'NR==1 && /^---$/{f=1;next} f && /^---$/{f=0;next} !f{print}' "$skill_file")
       claude -p --verbose --output-format stream-json \
@@ -399,7 +418,41 @@ cmd_claude() {
   fi
 
   echo
-  success "Claude setup complete!"
+  success "AI init complete!"
+}
+
+_ai_sync() {
+  case "${1:-}" in
+    -h|--help)
+      cat <<EOF
+Usage: otto-workbench ai sync
+
+Sync machine-level AI config: settings, rules, MCPs, skills, agents,
+machine profile, and memory backup. This is the AI-only subset of
+'otto-workbench sync'.
+EOF
+      return 0
+      ;;
+  esac
+
+  title "AI sync"
+  echo
+  sync_claude
+  echo
+  success "AI sync complete!"
+}
+
+cmd_ai() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    init)     _ai_init "$@" ;;
+    sync)     _ai_sync "$@" ;;
+    override) _ai_override "$@" ;;
+    -h|--help) _ai_usage; return 0 ;;
+    *)        _ai_usage >&2; return 1 ;;
+  esac
 }
 
 cmd_changelog() {
@@ -561,7 +614,7 @@ _list_override_dir() {
   [[ "$_found" == true ]]
 }
 
-cmd_override() {
+_ai_override() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
   local display_dir="${USER_AI_DIR/#$HOME/\~}"
@@ -592,7 +645,7 @@ cmd_override() {
 
     add)
       local type="${1:-}" name="${2:-}"
-      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench override add <agent|skill|rule> <name>"; exit 1; }
+      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench ai override add <agent|skill|rule> <name>"; exit 1; }
 
       local default_dir user_dir
       _override_type_dirs "$type" default_dir user_dir
@@ -631,7 +684,7 @@ cmd_override() {
 
     disable)
       local type="${1:-}" name="${2:-}"
-      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench override disable <agent|skill|rule> <name>"; exit 1; }
+      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench ai override disable <agent|skill|rule> <name>"; exit 1; }
 
       local default_dir user_dir
       _override_type_dirs "$type" default_dir user_dir
@@ -643,7 +696,7 @@ cmd_override() {
 
     enable)
       local type="${1:-}" name="${2:-}"
-      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench override enable <agent|skill|rule> <name>"; exit 1; }
+      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench ai override enable <agent|skill|rule> <name>"; exit 1; }
 
       local default_dir user_dir
       _override_type_dirs "$type" default_dir user_dir
@@ -670,9 +723,9 @@ cmd_override() {
       done
       ;;
 
-    *)
+    -h|--help)
       cat <<EOF
-Usage: otto-workbench override <command>
+Usage: otto-workbench ai override <command>
 
 Manage user overrides for AI config (agents, skills, rules).
 Override files live in ~/.config/workbench/overrides/ai/.
@@ -684,7 +737,11 @@ Commands:
   enable <agent|skill|rule> <name>   Re-enable a disabled default
   status                          Show overrides vs defaults
 EOF
-      [[ -z "$subcmd" ]] && exit 1 || exit 0
+      return 0
+      ;;
+    *)
+      _ai_override -h >&2
+      return 1
       ;;
   esac
 }
@@ -775,24 +832,22 @@ Usage: otto-workbench <command>
 Commands:
   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
   sync                  Re-apply all workbench configuration to ~/
-  claude [--force] [--analyze]  Sync Claude config + scaffold .claude/ in current repo
+  ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
   discover [regenerate] Show installed components, scripts, and launchd agents
   autoupdate <subcmd>   Scheduled pull + sync via launchd
-  override <subcmd>     Manage user overrides for AI config (agents, skills, rules)
   changelog             Show recent changes from conventional commits
 
 Run 'otto-workbench install --help' for install options.
-Run 'otto-workbench autoupdate' or 'otto-workbench override' for subcommands.
+Run 'otto-workbench ai' or 'otto-workbench autoupdate' for subcommands.
 EOF
 }
 
 case "${1:-}" in
   install)   shift; cmd_install "$@" ;;
   sync)      cmd_sync ;;
-  claude)    cmd_claude "$@" ;;
+  ai)        shift; cmd_ai "$@" ;;
   discover)  cmd_discover "$@" ;;
   autoupdate) cmd_autoupdate "$@" ;;
-  override)  shift; cmd_override "$@" ;;
   changelog) cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;
   *)

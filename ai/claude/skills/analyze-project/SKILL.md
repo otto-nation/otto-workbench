@@ -7,7 +7,7 @@ source: otto-workbench/ai/claude/skills/analyze-project/SKILL.md
 # Analyze Project
 
 Reads the codebase and proposes content for scaffolded `.claude/CLAUDE.md` and `.claude/rules/` files.
-Run with `/analyze-project` after `otto-workbench claude` scaffolds a new project.
+Run with `/analyze-project` after `otto-workbench ai init` scaffolds a new project.
 
 ---
 
@@ -146,8 +146,8 @@ After all writes:
 
 ## When to use
 
-- After `otto-workbench claude` scaffolds a new project
-- After `otto-workbench claude --force` re-scaffolds an existing project
+- After `otto-workbench ai init` scaffolds a new project
+- After `otto-workbench ai init --force` re-scaffolds an existing project
 - When `.claude/CLAUDE.md` or `.claude/rules/` files have empty sections
 
 ## Output location

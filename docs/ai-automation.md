@@ -106,8 +106,8 @@ claude-rules status                      # check sync status
 After cloning a repo, scaffold Claude Code configuration for it:
 
 ```bash
-otto-workbench claude          # scaffold .claude/ in the current repo
-otto-workbench claude --force  # re-scaffold an existing project
+otto-workbench ai init          # scaffold .claude/ in the current repo
+otto-workbench ai init --force  # re-scaffold an existing project
 ```
 
 This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates).

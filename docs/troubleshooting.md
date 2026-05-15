@@ -102,7 +102,7 @@ This sets `core.hooksPath` to point to the workbench's [`git/hooks/`](../git/hoo
 The AI sync merges `settings.json` rather than overwriting. If you see unexpected values, re-sync:
 
 ```bash
-otto-workbench claude
+otto-workbench ai sync
 ```
 
 This preserves your additions while applying workbench defaults. If the file is corrupted, delete it and re-sync — the workbench will recreate it from its template.

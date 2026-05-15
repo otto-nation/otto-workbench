@@ -17,7 +17,7 @@ tools:
   - name: otto-workbench
     description: "Manage your workbench developer environment"
     when_to_use: "After pulling workbench updates or when config gets out of sync"
-    usage: "otto-workbench sync  |  otto-workbench discover  |  otto-workbench claude [--force]  |  otto-workbench changelog"
+    usage: "otto-workbench sync  |  otto-workbench ai init  |  otto-workbench ai sync  |  otto-workbench changelog"
     commands:
       - name: sync
         scope: "All components"
@@ -30,13 +30,21 @@ tools:
       - name: "discover regenerate"
         scope: "Component state"
         when: "Re-detecting installed components after manual changes"
-      - name: claude
-        scope: "Claude only"
+      - name: "ai init"
+        scope: "Project"
         when: "Setting up Claude in a new project repo"
-        detail: "Syncs machine-level Claude config, then scaffolds a `.claude/` directory in the current git repo (if one doesn't exist) with stack-detected rules and a project anatomy file."
-      - name: "claude --force"
-        scope: "Claude only"
+        detail: "Scaffolds a `.claude/` directory in the current git repo with stack-detected rules and a project anatomy file."
+      - name: "ai init --force"
+        scope: "Project"
         when: "Re-scaffolding an existing project's `.claude/`"
+      - name: "ai sync"
+        scope: "Machine"
+        when: "Syncing just AI config without a full workbench sync"
+        detail: "Syncs machine-level AI config (settings, rules, skills, agents, MCPs). AI-only subset of 'otto-workbench sync'."
+      - name: "ai override"
+        scope: "Machine"
+        when: "Customizing AI agents, skills, or rules without editing tracked files"
+        detail: "Manage user overrides — add, disable, enable, list, and show status of overrides for agents, skills, and rules."
       - name: changelog
         scope: "Git history"
         when: "Reviewing recent changes from conventional commits"

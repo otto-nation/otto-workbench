@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/otto-nation/otto-workbench/compare/v1.1.0...v1.1.1) (2026-05-15)
+
+
+### Code Refactoring
+
+* **cli:** switch ai override to noun-first syntax ([#79](https://github.com/otto-nation/otto-workbench/issues/79)) ([6102276](https://github.com/otto-nation/otto-workbench/commit/61022766d0a1c53342d3db05a5e8c708f6c30827))
+* simplify component tiers; demote task to core, mise to optional ([#77](https://github.com/otto-nation/otto-workbench/issues/77)) ([0693642](https://github.com/otto-nation/otto-workbench/commit/069364215b50eba2be0ceca6caef845b513b349f))
+
 ## [1.1.0](https://github.com/otto-nation/otto-workbench/compare/v1.0.4...v1.1.0) (2026-05-15)
 
 

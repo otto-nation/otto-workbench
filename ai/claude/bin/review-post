@@ -30,17 +30,20 @@ from pathlib import Path
 SEVERITY_MUST = "M"
 SEVERITY_SHOULD = "S"
 SEVERITY_NIT = "N"
+SEVERITY_IDIOMS = "I"
 
 SEVERITY_LABELS = {
     SEVERITY_MUST: "must-fix",
     SEVERITY_SHOULD: "should-fix",
     SEVERITY_NIT: "nit",
+    SEVERITY_IDIOMS: "idiom",
 }
 
 SECTION_HEADERS = {
     "## Must fix": SEVERITY_MUST,
     "## Should fix": SEVERITY_SHOULD,
     "## Nit": SEVERITY_NIT,
+    "## Idioms": SEVERITY_IDIOMS,
 }
 
 CLASS_INLINE = "inline"
@@ -301,7 +304,7 @@ def renumber_for_posting(
     """
     inline_sorted = sorted(inline, key=lambda f: (f.full_path or f.path, f.line or 0))
 
-    counters = {SEVERITY_MUST: 1, SEVERITY_SHOULD: 1, SEVERITY_NIT: 1}
+    counters = {s: 1 for s in SEVERITY_LABELS}
     for f in inline_sorted:
         f.posted_id = f"{f.severity}{counters[f.severity]}"
         counters[f.severity] += 1
@@ -351,7 +354,7 @@ def format_body_text(
     severity_filter: set[str],
 ) -> str:
     """Format the review body text with body/skipped findings."""
-    labels = [SEVERITY_LABELS[s] for s in (SEVERITY_MUST, SEVERITY_SHOULD, SEVERITY_NIT) if s in severity_filter]
+    labels = [SEVERITY_LABELS[s] for s in SEVERITY_LABELS if s in severity_filter]
 
     if has_inline:
         parts = [f"Have some comments marked as {', '.join(labels)}."]

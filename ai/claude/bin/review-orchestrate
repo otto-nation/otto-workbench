@@ -122,6 +122,13 @@ FINDING_PREFIX_SHOULD = "S"
 FINDING_PREFIX_NIT = "N"
 FINDING_PREFIX_IDIOMS = "I"
 
+FINDING_SECTIONS = [
+    (SECTION_MUST_FIX, FINDING_PREFIX_MUST),
+    (SECTION_SHOULD_FIX, FINDING_PREFIX_SHOULD),
+    (SECTION_NIT, FINDING_PREFIX_NIT),
+    (SECTION_IDIOMS, FINDING_PREFIX_IDIOMS),
+]
+
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
 
@@ -291,7 +298,7 @@ def renumber_findings(review_file: str) -> None:
         return
     text = path.read_text()
 
-    for prefix in (FINDING_PREFIX_MUST, FINDING_PREFIX_SHOULD, FINDING_PREFIX_NIT, FINDING_PREFIX_IDIOMS):
+    for _, prefix in FINDING_SECTIONS:
         seen_ids: list[int] = []
         for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
             num = int(m.group(1))
@@ -327,11 +334,8 @@ def renumber_findings(review_file: str) -> None:
 
 def merge_reviews(group_files: list[str]) -> str:
     merged_triage = ""
-    merged_must = ""
-    merged_should = ""
-    merged_nit = ""
-    merged_idioms = ""
-    m_offset = s_offset = n_offset = i_offset = 0
+    merged: dict[str, str] = {section: "" for section, _ in FINDING_SECTIONS}
+    offsets: dict[str, int] = {section: 0 for section, _ in FINDING_SECTIONS}
 
     for path in group_files:
         p = Path(path)
@@ -340,43 +344,20 @@ def merge_reviews(group_files: list[str]) -> str:
         content = p.read_text()
 
         triage = _extract_section(content, SECTION_FILE_TRIAGE)
-        must = _extract_section(content, SECTION_MUST_FIX)
-        should = _extract_section(content, SECTION_SHOULD_FIX)
-        nit = _extract_section(content, SECTION_NIT)
-        idioms = _extract_section(content, SECTION_IDIOMS)
-
         if triage:
             merged_triage += triage + "\n"
 
-        text, count = renumber_section(FINDING_PREFIX_MUST, must, m_offset)
-        if text:
-            merged_must += text + "\n"
-        m_offset += count
-
-        text, count = renumber_section(FINDING_PREFIX_SHOULD, should, s_offset)
-        if text:
-            merged_should += text + "\n"
-        s_offset += count
-
-        text, count = renumber_section(FINDING_PREFIX_NIT, nit, n_offset)
-        if text:
-            merged_nit += text + "\n"
-        n_offset += count
-
-        text, count = renumber_section(FINDING_PREFIX_IDIOMS, idioms, i_offset)
-        if text:
-            merged_idioms += text + "\n"
-        i_offset += count
+        for section, prefix in FINDING_SECTIONS:
+            raw = _extract_section(content, section)
+            text, count = renumber_section(prefix, raw, offsets[section])
+            if text:
+                merged[section] += text + "\n"
+            offsets[section] += count
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
-    if merged_must:
-        parts.append(f"## {SECTION_MUST_FIX}\n{merged_must}")
-    if merged_should:
-        parts.append(f"## {SECTION_SHOULD_FIX}\n{merged_should}")
-    if merged_nit:
-        parts.append(f"## {SECTION_NIT}\n{merged_nit}")
-    if merged_idioms:
-        parts.append(f"## {SECTION_IDIOMS}\n{merged_idioms}")
+    for section, _ in FINDING_SECTIONS:
+        if merged[section]:
+            parts.append(f"## {section}\n{merged[section]}")
 
     return "\n".join(parts)
 

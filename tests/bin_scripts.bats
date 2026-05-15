@@ -20,6 +20,8 @@ _discover_scripts() {
   local f shebang
 
   while IFS= read -r f; do
+    [[ -x "$f" ]] || continue
+
     # Skip non-user-invocable scripts
     [[ "$f" == */migrations/* ]] && continue
     [[ "$f" == */steps.sh ]] && continue
@@ -29,7 +31,7 @@ _discover_scripts() {
     [[ "$shebang" == "#!/usr/bin/env bash" ]] || continue
 
     scripts+=("$f")
-  done < <(find "$REPO_ROOT" -type f -perm +111 -path '*/bin/*' \
+  done < <(find "$REPO_ROOT" -type f -path '*/bin/*' \
     ! -path '*/__pycache__/*' ! -name '*.pyc' | sort)
 
   printf '%s\n' "${scripts[@]}"

@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.1.0](https://github.com/otto-nation/otto-workbench/compare/v1.0.4...v1.1.0) (2026-05-15)
+
+
+### Features
+
+* **bin:** add gcloud-reauth script; claude-review usage stats ([#70](https://github.com/otto-nation/otto-workbench/issues/70)) ([651b058](https://github.com/otto-nation/otto-workbench/commit/651b058d10688fc63b90f3d5aa2364f9927ef57a))
+* **claude-review:** add multi-phase parallel review for large PRs ([#69](https://github.com/otto-nation/otto-workbench/issues/69)) ([1540408](https://github.com/otto-nation/otto-workbench/commit/15404085c98d9e59bedd4477db827f65a892aaf2))
+* **claude-review:** add self-review mode for pre-PR code review ([#71](https://github.com/otto-nation/otto-workbench/issues/71)) ([8177b90](https://github.com/otto-nation/otto-workbench/commit/8177b90d08b7d5279b1d3fa8025813174623bd77))
+* **registries:** add reverse bindir validation; register new tools ([#74](https://github.com/otto-nation/otto-workbench/issues/74)) ([4b17997](https://github.com/otto-nation/otto-workbench/commit/4b17997f300282283c02a278ef8c10322e2ab711))
+* **wt-cleanup:** detect squash-merged PRs via gh CLI fallback ([#76](https://github.com/otto-nation/otto-workbench/issues/76)) ([38c8e29](https://github.com/otto-nation/otto-workbench/commit/38c8e290cfcb7119de0359b2496b9e23e36224e2))
+
+
+### Bug Fixes
+
+* **claude-review:** use explicit prompt and skill file for post command ([#66](https://github.com/otto-nation/otto-workbench/issues/66)) ([792817d](https://github.com/otto-nation/otto-workbench/commit/792817d1168e434de4ed2fa46bed55c915d7bbb8))
+
+
+### Code Refactoring
+
+* add context field to registries; clean up stale references ([#68](https://github.com/otto-nation/otto-workbench/issues/68)) ([0a52e1d](https://github.com/otto-nation/otto-workbench/commit/0a52e1d2090134989a805e37aa395f499d55c660))
+* centralize output helpers; move usage text to usage() ([#72](https://github.com/otto-nation/otto-workbench/issues/72)) ([a73fba6](https://github.com/otto-nation/otto-workbench/commit/a73fba6f83d395dcdd1ca2691cf8768bdbee0394))
+* **cli:** move claude and override commands under ai subcommand ([#75](https://github.com/otto-nation/otto-workbench/issues/75)) ([c7f7e4c](https://github.com/otto-nation/otto-workbench/commit/c7f7e4c7011797b5bb8f61b6cef683a157d44d21))
+* merge state subcommand into discover ([#73](https://github.com/otto-nation/otto-workbench/issues/73)) ([4530724](https://github.com/otto-nation/otto-workbench/commit/453072448605ff79dab7db83b52089b6ed86e48a))
+* relocate user overrides from repo to XDG state dir ([7794730](https://github.com/otto-nation/otto-workbench/commit/77947302744edcd77826856122d60176ac461aab))
+
 ## [1.0.4](https://github.com/otto-nation/otto-workbench/compare/v1.0.3...v1.0.4) (2026-05-12)
 
 

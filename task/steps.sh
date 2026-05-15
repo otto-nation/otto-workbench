@@ -46,6 +46,13 @@ step_task_symlinks() {
   install_symlink "$LIB_SRC_DIR"   "$TASK_CONFIG_DIR/lib"
 }
 
+# install_task — interactive install: installs the task binary, then syncs symlinks.
+# Called by run_core_component() during otto-workbench install.
+install_task() {
+  step_task_install
+  sync_task
+}
+
 # sync_task — re-symlinks Taskfile and lib; safe to run non-interactively.
 # Does not run step_task_install — installation is a one-time interactive operation.
 sync_task() {

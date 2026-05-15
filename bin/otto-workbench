@@ -12,10 +12,10 @@
 #   changelog             Show recent changes from conventional commits
 #
 # What install does:
-#   Runs first-time setup: installs preflight tools (task, brew, mise),
-#   syncs core components (bin, git, zsh), presents a menu of optional
-#   components (brew packages, docker, terminals, editors, ai), and runs
-#   pending migrations. Safe to re-run — idempotent.
+#   Runs first-time setup: installs Homebrew (if missing), syncs core
+#   components (bin, git, task, zsh), presents a menu of optional
+#   components (brew packages, docker, terminals, editors, ai, mise),
+#   and runs pending migrations. Safe to re-run — idempotent.
 #   Use --all to skip menus, or name specific components.
 #
 # What ai does:
@@ -170,10 +170,8 @@ cmd_install() {
   echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
   echo
 
-  # ─── Preflight ──────────────────────────────────────────────────────────
-  step_task_install
+  # ─── Bootstrap ──────────────────────────────────────────────────────────
   step_brew_install
-  step_mise_install
   echo
 
   # Resolve known components and validate targets (if any).
@@ -233,7 +231,7 @@ cmd_sync() {
 
   # Sync components — respects installation state when a state file exists.
   # Without a state file (pre-existing installs), syncs everything (backward compat).
-  # Infrastructure components (bin, task, mise, git, zsh) always sync regardless of state.
+  # Infrastructure components (bin, task, git, zsh) always sync regardless of state.
   #
   # Before syncing, prune any orphaned state entries (renamed/removed components).
   state_prune_orphans
@@ -241,7 +239,7 @@ cmd_sync() {
   local -a _step_files=()
   discover_step_files _step_files
   local _f _c _path
-  local _always_sync="bin task mise git zsh"
+  local _always_sync="bin task git zsh"
   for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
     # Derive component path relative to WORKBENCH_DIR (e.g. ai/claude from ai/claude/steps.sh)

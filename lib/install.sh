@@ -217,7 +217,7 @@ run_components() {
 
 # ─── Core component helpers ─────────────────────────────────────────────────
 
-PREFLIGHT_COMPONENTS=(task brew mise)
+PREFLIGHT_COMPONENTS=(brew)
 
 # resolve_known_components — builds lookup sets of all known core and optional
 # component names. Populates KNOWN_CORE_COMPONENTS and KNOWN_OPTIONAL_COMPONENTS.

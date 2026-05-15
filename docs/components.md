@@ -64,7 +64,7 @@ fi
 ```
 
 <!-- CORE-COMPONENTS-START -->
-**Existing core components:** `bin`, `git`, `mise`, `task`, `zsh`
+**Existing core components:** `bin`, `git`, `task`, `zsh`
 <!-- CORE-COMPONENTS-END -->
 
 ---
@@ -107,7 +107,7 @@ mytool/
 ```
 
 <!-- OPTIONAL-COMPONENTS-START -->
-**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync)
+**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync), `mise` (has sync)
 <!-- OPTIONAL-COMPONENTS-END -->
 
 ---

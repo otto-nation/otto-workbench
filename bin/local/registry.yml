@@ -27,6 +27,12 @@ tools:
     when_to_use: "After adding or editing any migration file; runs automatically on pre-push"
     usage: "bin/local/validate-migrations"
 
+  - name: validate-nesting
+    context: reference
+    description: "Validates bash script nesting depth to enforce flat control flow"
+    when_to_use: "After writing deeply nested bash conditionals or loops; runs automatically on pre-push"
+    usage: "bin/local/validate-nesting [--quiet]"
+
   - name: generate-tool-context
     context: reference
     description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"

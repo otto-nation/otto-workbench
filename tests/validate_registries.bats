@@ -62,6 +62,9 @@ tools:
   - name: mytool
     description: "A script"
     when_to_use: "When needed"
+  - name: othertool
+    description: "Another script"
+    when_to_use: "When needed"
 EOF
 }
 
@@ -268,6 +271,25 @@ EOF
   run bash "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no matching comment found"* ]]
+}
+
+# ── Reverse bindir validation ─────────────────────────────────────────────────
+
+@test "fails when bin script exists but is not in registry" {
+  _write_valid_bin
+  touch "$TMPDIR/bin/newtool" && chmod +x "$TMPDIR/bin/newtool"
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not registered"* ]]
+}
+
+@test "passes reverse check when non-executable files are ignored" {
+  _write_valid_bin
+  touch "$TMPDIR/bin/datafile"
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
 }
 
 # ── Work registry validation ──────────────────────────────────────────────────

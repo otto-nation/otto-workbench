@@ -16,10 +16,14 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
+| `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
+| `review-stream-progress` | Reads Claude stream-json from stdin and shows progress labels during review |
+| `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
+| `validate-nesting` | Validates bash script nesting depth to enforce flat control flow |
 | `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |

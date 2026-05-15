@@ -28,6 +28,11 @@ tools:
     description: "Reads Claude stream-json from stdin and shows progress labels during review"
     when_to_use: "Called internally by claude-review; not invoked directly"
 
+  - name: review-post
+    context: none
+    description: "Deterministic posting of review findings to GitHub as a PENDING PR review"
+    when_to_use: "Called internally by claude-review post; not invoked directly"
+
   - name: validate-review-positions
     context: none
     description: "Validates review finding positions against a PR diff to ensure comment placement accuracy"

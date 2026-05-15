@@ -57,11 +57,13 @@ Overrides are resolved during `otto-workbench sync` and `otto-workbench ai sync`
 ## CLI Management
 
 ```bash
-otto-workbench ai override list                      # list active overrides
-otto-workbench ai override add agent debugger         # copy default for editing
-otto-workbench ai override disable skill some-skill   # suppress a default
-otto-workbench ai override enable skill some-skill    # re-enable a disabled default
-otto-workbench ai override status                     # show overrides vs defaults
+otto-workbench ai override                            # help + list active overrides
+otto-workbench ai override --status                   # show overrides vs defaults
+otto-workbench ai override agent                      # list agents and their status
+otto-workbench ai override agent debugger             # show debugger's override state
+otto-workbench ai override agent debugger --add       # copy default for editing
+otto-workbench ai override skill some-skill --disable # suppress a default
+otto-workbench ai override skill some-skill --enable  # re-enable a disabled default
 ```
 
 ## Implementation
@@ -76,7 +78,7 @@ otto-workbench ai override status                     # show overrides vs defaul
 Replace the debugger agent with a custom version:
 
 ```bash
-otto-workbench ai override add agent debugger
+otto-workbench ai override agent debugger --add
 # edit ~/.config/workbench/overrides/ai/claude/agents/debugger.md
 otto-workbench sync
 ```
@@ -84,7 +86,7 @@ otto-workbench sync
 Disable a skill you don't use:
 
 ```bash
-otto-workbench ai override disable skill some-skill
+otto-workbench ai override skill some-skill --disable
 otto-workbench sync
 ```
 

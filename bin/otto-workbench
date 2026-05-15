@@ -23,7 +23,7 @@
 #   doesn't exist) with stack-detected rules and a project anatomy file.
 #   Use --force to re-scaffold, --analyze to run /analyze-project after.
 #   ai sync — syncs machine-level AI config (settings, rules, skills, agents, MCPs).
-#   ai override — manage user overrides for agents, skills, and rules.
+#   ai override <type> [name] [--add|--disable|--enable|--status] — manage user overrides.
 #
 # What sync does (pure config reconciliation):
 #   - Re-symlinks scripts, zsh/, git/.gitconfig, Taskfile, lib/
@@ -331,7 +331,7 @@ Manage AI coding tool configuration (Claude Code, etc.).
 Commands:
   init [--force] [--analyze]      Scaffold .claude/ in the current git repo
   sync                            Sync machine-level AI config (settings, rules, MCPs, skills, agents)
-  override <subcmd>               Manage user overrides (agents, skills, rules)
+  override <type> [name] [flags]  Manage user overrides (agents, skills, rules)
 
 Run 'otto-workbench ai <command> -h' for command-specific help.
 Run 'otto-workbench sync' to apply changes after editing overrides.
@@ -578,14 +578,20 @@ EOF
 
 # ─── Override management ─────────────────────────────────────────────────────
 
-# _override_type_dir TYPE — echoes the default source dir and user dir for a type.
 _override_type_dirs() {
   local -n __default=$2 __user=$3
   case "$1" in
     agent|agents)   __default="$CLAUDE_AGENTS_SRC_DIR"; __user="$USER_AGENTS_DIR" ;;
     skill|skills)   __default="$CLAUDE_SKILLS_SRC_DIR"; __user="$USER_SKILLS_DIR" ;;
     rule|rules)     __default="$GUIDELINES_RULES_SRC_DIR"; __user="$USER_RULES_DIR" ;;
-    *)              err "Unknown type: $1 (expected: agent, skill, rule)"; exit 1 ;;
+    *)              err "Unknown type: $1 (expected: agent, skill, rule)"; return 1 ;;
+  esac
+}
+
+_is_override_type() {
+  case "$1" in
+    agent|agents|skill|skills|rule|rules) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -614,135 +620,222 @@ _list_override_dir() {
   [[ "$_found" == true ]]
 }
 
-_ai_override() {
-  local subcmd="${1:-}"
-  shift 2>/dev/null || true
-  local display_dir="${USER_AI_DIR/#$HOME/\~}"
+_show_item_status() {
+  local type="$1" name="$2"
+  local default_dir user_dir
+  _override_type_dirs "$type" default_dir user_dir
 
-  case "$subcmd" in
-    list)
-      info "Active user overrides"
-      local found=false item
+  local has_default=false has_override=false is_disabled=false
+  case "$type" in
+    skill|skills) [[ -d "$default_dir/$name" ]] && has_default=true ;;
+    *)            [[ -f "$default_dir/${name}.md" ]] && has_default=true ;;
+  esac
+  case "$type" in
+    skill|skills) [[ -d "$user_dir/$name" ]] && has_override=true ;;
+    *)            [[ -f "$user_dir/${name}.md" ]] && has_override=true ;;
+  esac
+  [[ -f "$user_dir/${name}.disabled" ]] && is_disabled=true
 
-      # Check override files
-      for item in "$USER_GUIDELINES_SRC" "$USER_GUIDELINES_LOCAL" "$USER_SETTINGS_SRC"; do
-        [[ -f "$item" ]] || continue
-        found=true
-        echo -e "  ${CYAN}$(basename "$item")${NC}"
-      done
+  if [[ "$is_disabled" == true ]]; then
+    echo -e "  ${RED}✗${NC} ${name} ${DIM}(disabled)${NC}"
+  elif [[ "$has_override" == true ]]; then
+    echo -e "  ${GREEN}↻${NC} ${name} ${DIM}(override)${NC}"
+  elif [[ "$has_default" == true ]]; then
+    echo -e "  ${DIM}${name} (default)${NC}"
+  else
+    err "No $type named '$name'"
+    return 1
+  fi
+}
 
-      # Check override directories
-      local dir label
-      for dir in "$USER_AGENTS_DIR:agents" "$USER_SKILLS_DIR:skills" "$USER_RULES_DIR:rules"; do
-        label="${dir##*:}"
-        dir="${dir%%:*}"
-        [[ -d "$dir" ]] || continue
-        _list_override_dir "$dir" "$label" && found=true
-      done
+_list_defaults() {
+  local type="$1"
+  local default_dir user_dir
+  _override_type_dirs "$type" default_dir user_dir
 
-      [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in ${display_dir}/${NC}"
-      ;;
+  local item name
+  for item in "$default_dir"/*; do
+    [[ -e "$item" ]] || continue
+    name=$(basename "$item")
+    case "$type" in
+      agent|agents|rule|rules) name="${name%.md}" ;;
+    esac
+    if [[ -f "$user_dir/${name}.disabled" ]]; then
+      echo -e "  ${RED}✗${NC} ${name} ${DIM}(disabled)${NC}"
+    elif { [[ "$type" == skill* ]] && [[ -d "$user_dir/$name" ]]; } \
+      || { [[ "$type" != skill* ]] && [[ -f "$user_dir/${name}.md" ]]; }; then
+      echo -e "  ${GREEN}↻${NC} ${name} ${DIM}(override)${NC}"
+    else
+      echo -e "  ${DIM}${name}${NC}"
+    fi
+  done
+}
 
-    add)
-      local type="${1:-}" name="${2:-}"
-      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench ai override add <agent|skill|rule> <name>"; exit 1; }
-
-      local default_dir user_dir
-      _override_type_dirs "$type" default_dir user_dir
-
-      # Find the source file
-      local src=""
-      case "$type" in
-        agent|agents) src="$default_dir/${name}.md" ;;
-        rule|rules)   src="$default_dir/${name}.md" ;;
-        skill|skills) src="$default_dir/${name}" ;;
-      esac
-
-      if [[ ! -e "$src" ]]; then
-        err "No default $type named '$name' found at $src"
-        exit 1
-      fi
-
-      mkdir -p "$user_dir"
-      case "$type" in
-        skill|skills)
-          # Copy skill directory
-          cp -R "$src" "$user_dir/"
-          success "Copied $type '$name' to ${display_dir}/ for editing"
-          echo -e "  ${DIM}$user_dir/$name/${NC}"
-          ;;
-        *)
-          # Copy single file
-          local dest="$user_dir/${name}.md"
-          cp "$src" "$dest"
-          success "Copied $type '$name' to ${display_dir}/ for editing"
-          echo -e "  ${DIM}$dest${NC}"
-          ;;
-      esac
-      echo -e "  ${DIM}Run 'otto-workbench sync' after editing to apply${NC}"
-      ;;
-
-    disable)
-      local type="${1:-}" name="${2:-}"
-      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench ai override disable <agent|skill|rule> <name>"; exit 1; }
-
-      local default_dir user_dir
-      _override_type_dirs "$type" default_dir user_dir
-      mkdir -p "$user_dir"
-      touch "$user_dir/${name}.disabled"
-      success "Disabled $type '$name'"
-      echo -e "  ${DIM}Run 'otto-workbench sync' to apply${NC}"
-      ;;
-
-    enable)
-      local type="${1:-}" name="${2:-}"
-      [[ -z "$type" || -z "$name" ]] && { err "Usage: otto-workbench ai override enable <agent|skill|rule> <name>"; exit 1; }
-
-      local default_dir user_dir
-      _override_type_dirs "$type" default_dir user_dir
-      local sentinel="$user_dir/${name}.disabled"
-      if [[ -f "$sentinel" ]]; then
-        rm "$sentinel"
-        success "Re-enabled $type '$name'"
-        echo -e "  ${DIM}Run 'otto-workbench sync' to apply${NC}"
-      else
-        warn "No disable sentinel found for $type '$name'"
-      fi
-      ;;
-
-    status)
-      info "Override status (${display_dir}/ vs defaults)"
-      echo
-
-      local type default_dir user_dir
-      for type in agents skills rules; do
-        _override_type_dirs "$type" default_dir user_dir
-        [[ -d "$user_dir" ]] || continue
-
-        _show_override_status "$user_dir" "$type"
-      done
-      ;;
-
-    -h|--help)
-      cat <<EOF
-Usage: otto-workbench ai override <command>
+_ai_override_usage() {
+  cat <<EOF
+Usage: otto-workbench ai override <agent|skill|rule> [name] [--add|--disable|--enable|--status]
 
 Manage user overrides for AI config (agents, skills, rules).
 Override files live in ~/.config/workbench/overrides/ai/.
 
-Commands:
-  list                            List all active overrides
-  add <agent|skill|rule> <name>   Copy default for editing
-  disable <agent|skill|rule> <name>  Suppress a default (creates .disabled sentinel)
-  enable <agent|skill|rule> <name>   Re-enable a disabled default
-  status                          Show overrides vs defaults
+Examples:
+  otto-workbench ai override agent                   List agents and their status
+  otto-workbench ai override agent debugger           Show debugger override status
+  otto-workbench ai override agent debugger --add     Copy default for editing
+  otto-workbench ai override agent debugger --disable Suppress a default
+  otto-workbench ai override agent debugger --enable  Re-enable a disabled default
+
+Flags:
+  --status    Show detailed override status (overrides vs defaults)
+  --help      Show this help
 EOF
-      return 0
-      ;;
-    *)
-      _ai_override -h >&2
-      return 1
-      ;;
+}
+
+_ai_override_list() {
+  local display_dir="${USER_AI_DIR/#$HOME/\~}"
+  _ai_override_usage
+  echo
+  info "Active user overrides"
+  local found=false item
+  for item in "$USER_GUIDELINES_SRC" "$USER_GUIDELINES_LOCAL" "$USER_SETTINGS_SRC"; do
+    [[ -f "$item" ]] || continue
+    found=true
+    echo -e "  ${CYAN}$(basename "$item")${NC}"
+  done
+  local dir label
+  for dir in "$USER_AGENTS_DIR:agents" "$USER_SKILLS_DIR:skills" "$USER_RULES_DIR:rules"; do
+    label="${dir##*:}"
+    dir="${dir%%:*}"
+    [[ -d "$dir" ]] || continue
+    _list_override_dir "$dir" "$label" && found=true
+  done
+  [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in ${display_dir}/${NC}"
+}
+
+_ai_override_add() {
+  local type="$1" name="$2" display_dir="${USER_AI_DIR/#$HOME/\~}"
+  local default_dir user_dir
+  _override_type_dirs "$type" default_dir user_dir
+
+  local src=""
+  case "$type" in
+    agent|agents) src="$default_dir/${name}.md" ;;
+    rule|rules)   src="$default_dir/${name}.md" ;;
+    skill|skills) src="$default_dir/${name}" ;;
+  esac
+
+  if [[ ! -e "$src" ]]; then
+    err "No default $type named '$name' found at $src"
+    return 1
+  fi
+
+  mkdir -p "$user_dir"
+  if [[ "$type" == skill* ]]; then
+    cp -R "$src" "$user_dir/"
+    success "Copied $type '$name' to ${display_dir}/ for editing"
+    echo -e "  ${DIM}$user_dir/$name/${NC}"
+  else
+    local dest="$user_dir/${name}.md"
+    cp "$src" "$dest"
+    success "Copied $type '$name' to ${display_dir}/ for editing"
+    echo -e "  ${DIM}$dest${NC}"
+  fi
+  echo -e "  ${DIM}Run 'otto-workbench sync' after editing to apply${NC}"
+}
+
+_ai_override_disable() {
+  local type="$1" name="$2"
+  local default_dir user_dir
+  _override_type_dirs "$type" default_dir user_dir
+  mkdir -p "$user_dir"
+  touch "$user_dir/${name}.disabled"
+  success "Disabled $type '$name'"
+  echo -e "  ${DIM}Run 'otto-workbench sync' to apply${NC}"
+}
+
+_ai_override_enable() {
+  local type="$1" name="$2"
+  local default_dir user_dir
+  _override_type_dirs "$type" default_dir user_dir
+  local sentinel="$user_dir/${name}.disabled"
+  if [[ -f "$sentinel" ]]; then
+    rm "$sentinel"
+    success "Re-enabled $type '$name'"
+    echo -e "  ${DIM}Run 'otto-workbench sync' to apply${NC}"
+  else
+    warn "No disable sentinel found for $type '$name'"
+  fi
+}
+
+_ai_override_set_positional() {
+  local -n __t=$1 __n=$2
+  local val="$3"
+  if [[ -z "$__t" ]]; then __t="$val"
+  elif [[ -z "$__n" ]]; then __n="$val"
+  else err "Unexpected argument: $val"; _ai_override_usage >&2; return 1
+  fi
+}
+
+_ai_override_parse_args() {
+  local -n __type=$1 __name=$2 __action=$3
+  shift 3
+  __type="" __name="" __action=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --add|--disable|--enable|--status)
+        [[ -n "$__action" ]] && { err "Only one action flag allowed (got $__action and $1)"; return 1; }
+        __action="$1"
+        ;;
+      -h|--help)    __action="--help" ;;
+      -*)           err "Unknown flag: $1"; _ai_override_usage >&2; return 1 ;;
+      *)            _ai_override_set_positional __type __name "$1" || return 1 ;;
+    esac
+    shift
+  done
+}
+
+_ai_override_status() {
+  info "Override status (${USER_AI_DIR/#$HOME/\~}/ vs defaults)"
+  echo
+  local _type default_dir user_dir
+  for _type in agents skills rules; do
+    _override_type_dirs "$_type" default_dir user_dir
+    [[ -d "$user_dir" ]] || continue
+    _show_override_status "$user_dir" "$_type"
+  done
+}
+
+_ai_override() {
+  local type name action
+  _ai_override_parse_args type name action "$@" || return 1
+
+  # No type: top-level
+  if [[ -z "$type" ]]; then
+    [[ "$action" == "--status" ]] && { _ai_override_status; return 0; }
+    _ai_override_list
+    return 0
+  fi
+
+  if ! _is_override_type "$type"; then
+    err "Unknown type: $type (expected: agent, skill, rule)"
+    return 1
+  fi
+
+  # Type only, no name
+  if [[ -z "$name" ]]; then
+    info "$type overrides"
+    _list_defaults "$type"
+    return 0
+  fi
+
+  # Type + name + action
+  case "$action" in
+    --add)     _ai_override_add "$type" "$name" ;;
+    --disable) _ai_override_disable "$type" "$name" ;;
+    --enable)  _ai_override_enable "$type" "$name" ;;
+    --help)    _ai_override_usage ;;
+    --status|"") _show_item_status "$type" "$name" ;;
   esac
 }
 

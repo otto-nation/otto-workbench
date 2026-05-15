@@ -31,6 +31,8 @@ Secrets and machine-specific env vars go in `~/.env.local` — sourced first by 
 | Command | Scope | Description |
 |---------|-------|-------------|
 | `otto-workbench sync` | All components | Re-applies all workbench config — runs pending migrations, re-symlinks scripts and configs, regenerates tool context, and syncs AI settings. Safe to re-run at any time. |
+| `otto-workbench discover` | Environment overview | Shows installed components, available bin scripts (from registry), and launchd agent status. |
+| `otto-workbench discover regenerate` | Component state | Re-detecting installed components after manual changes |
 | `otto-workbench claude` | Claude only | Syncs machine-level Claude config, then scaffolds a `.claude/` directory in the current git repo (if one doesn't exist) with stack-detected rules and a project anatomy file. |
 | `otto-workbench claude --force` | Claude only | Re-scaffolding an existing project's `.claude/` |
 | `otto-workbench changelog` | Git history | Reviewing recent changes from conventional commits |

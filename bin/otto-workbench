@@ -402,36 +402,6 @@ cmd_claude() {
   success "Claude setup complete!"
 }
 
-cmd_state() {
-  local subcmd="${2:-}"
-  case "$subcmd" in
-    regenerate)
-      info "Regenerating installation state"
-      rm -f "$INSTALLED_STATE_FILE"
-      state_detect_installed
-      echo
-      success "Installation state regenerated"
-      echo -e "\n  ${CYAN}Detected components${NC}"
-      local _entry
-      while IFS= read -r _entry; do
-        echo "    $_entry"
-      done < "$INSTALLED_STATE_FILE"
-      ;;
-    "")
-      if ! state_file_exists; then info "No state file — all components will sync (backward compat)"; return; fi
-      info "Installed components:"
-      local _entry
-      while IFS= read -r _entry; do
-        echo "  $_entry"
-      done < "$INSTALLED_STATE_FILE"
-      ;;
-    *)
-      echo "Usage: otto-workbench state [regenerate]" >&2
-      exit 1
-      ;;
-  esac
-}
-
 cmd_changelog() {
   shift  # remove "changelog" from args
   bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
@@ -721,6 +691,18 @@ EOF
 
 # ─── Discover ────────────────────────────────────────────────────────────────
 
+_discover_components() {
+  if ! state_file_exists; then
+    echo -e "    ${DIM}(no state file — run 'otto-workbench discover regenerate' to detect)${NC}"
+    return
+  fi
+  local _entry
+  while IFS= read -r _entry; do
+    [[ -z "$_entry" ]] && continue
+    echo "    $_entry"
+  done < "$INSTALLED_STATE_FILE"
+}
+
 _discover_scripts() {
   local registry="$WORKBENCH_DIR/bin/registry.yml"
   if [[ ! -f "$registry" ]] || ! command -v yq &>/dev/null; then
@@ -757,6 +739,26 @@ _discover_agents() {
 }
 
 cmd_discover() {
+  shift  # remove "discover" from args
+  local subcmd="${1:-}"
+  case "$subcmd" in
+    regenerate)
+      info "Regenerating installation state"
+      rm -f "$INSTALLED_STATE_FILE"
+      state_detect_installed
+      echo
+      success "Installation state regenerated"
+      ;;
+    "")
+      ;;
+    *)
+      echo "Usage: otto-workbench discover [regenerate]" >&2
+      exit 1
+      ;;
+  esac
+
+  echo -e "\n  ${BOLD}Components${NC}"
+  _discover_components
   echo -e "\n  ${BOLD}Scripts${NC}"
   _discover_scripts
   echo -e "\n  ${BOLD}Agents${NC}"
@@ -774,10 +776,9 @@ Commands:
   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
   sync                  Re-apply all workbench configuration to ~/
   claude [--force] [--analyze]  Sync Claude config + scaffold .claude/ in current repo
-  discover              Show available scripts and launchd agents
+  discover [regenerate] Show installed components, scripts, and launchd agents
   autoupdate <subcmd>   Scheduled pull + sync via launchd
   override <subcmd>     Manage user overrides for AI config (agents, skills, rules)
-  state [regenerate]    Show or regenerate installed component state
   changelog             Show recent changes from conventional commits
 
 Run 'otto-workbench install --help' for install options.
@@ -789,10 +790,9 @@ case "${1:-}" in
   install)   shift; cmd_install "$@" ;;
   sync)      cmd_sync ;;
   claude)    cmd_claude "$@" ;;
-  discover)  cmd_discover ;;
+  discover)  cmd_discover "$@" ;;
   autoupdate) cmd_autoupdate "$@" ;;
   override)  shift; cmd_override "$@" ;;
-  state)     cmd_state "$@" ;;
   changelog) cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;
   *)

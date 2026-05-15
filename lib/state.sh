@@ -90,7 +90,7 @@ state_prune_orphans() {
 
 # state_detect_installed — detects currently installed components and records them.
 # Uses heuristics (config files, symlinks, directories) to determine what is present.
-# Called by the initial-state migration and by `otto-workbench state regenerate`.
+# Called by the initial-state migration and by `otto-workbench discover regenerate`.
 state_detect_installed() {
   # Core components — always present in a workbench install
   state_record "bin"

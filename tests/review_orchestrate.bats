@@ -304,3 +304,449 @@ print("FOUND" if "Holistic context" in result else "MISSING")
 ')
   [ "$result" = "MISSING" ]
 }
+
+# ── Pre-flight data collection ───────────────────────────────────────────────
+
+@test "_read_file_safe: reads normal file" {
+  echo "hello world" > "$TMPDIR/normal.txt"
+  result=$(_py "
+from pathlib import Path
+print(mod._read_file_safe(Path('$TMPDIR/normal.txt')))
+")
+  [ "$result" = "hello world" ]
+}
+
+@test "_read_file_safe: handles missing file" {
+  result=$(_py "
+from pathlib import Path
+print(mod._read_file_safe(Path('$TMPDIR/nonexistent.txt')))
+")
+  [ "$result" = "<file deleted>" ]
+}
+
+@test "_read_file_safe: handles binary file" {
+  python3 -c "import sys; sys.stdout.buffer.write(bytes([0x80, 0x81, 0xFF, 0xFE]))" > "$TMPDIR/binary.bin"
+  result=$(_py "
+from pathlib import Path
+print(mod._read_file_safe(Path('$TMPDIR/binary.bin')))
+")
+  [[ "$result" == *"binary file"* ]]
+}
+
+@test "_read_file_safe: truncates large file" {
+  python3 -c "print('x' * 80 + '\n' for _ in range(2000), sep='', end='')" > "$TMPDIR/large.txt" 2>/dev/null || \
+    python3 -c "
+for i in range(2000):
+    print('x' * 80)
+" > "$TMPDIR/large.txt"
+  result=$(_py "
+from pathlib import Path
+content = mod._read_file_safe(Path('$TMPDIR/large.txt'))
+print('truncated' if 'truncated' in content else 'full')
+")
+  [ "$result" = "truncated" ]
+}
+
+@test "format_preflight_data: includes all sections" {
+  result=$(_py '
+data = mod.PreflightData(
+    diff="--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new",
+    commit_log="abc123 fix bug",
+    file_contents={"foo.go": "package main\n", "bar.go": "package bar\n"},
+    file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+    claude_md="# My Project",
+    context_md="## Known Constraints",
+    review_checklists={"security.md": "# Security checks"},
+)
+result = mod.format_preflight_data(data)
+checks = [
+    "Pre-collected data" in result,
+    "```diff" in result,
+    "foo.go" in result,
+    "bar.go" in result,
+    "# My Project" in result,
+    "Known Constraints" in result,
+    "Security checks" in result,
+    "abc123 fix bug" in result,
+]
+print("ok" if all(checks) else "fail")
+')
+  [ "$result" = "ok" ]
+}
+
+@test "format_preflight_data: file_filter scopes file contents" {
+  result=$(_py '
+data = mod.PreflightData(
+    diff="full diff",
+    commit_log="log",
+    file_contents={"foo.go": "package main", "bar.go": "package bar"},
+    file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+    claude_md="",
+    context_md="",
+)
+result = mod.format_preflight_data(data, file_filter=["foo.go"])
+has_foo = "package main" in result
+has_bar = "package bar" in result
+print(f"foo={has_foo},bar={has_bar}")
+')
+  [ "$result" = "foo=True,bar=False" ]
+}
+
+@test "collect_preflight_data: returns None for oversized data" {
+  result=$(_py "
+import tempfile, os
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as td:
+    # Create a git repo with a large file
+    os.system(f'cd {td} && git init -q && git checkout -b main')
+    large_file = Path(td) / 'big.txt'
+    large_file.write_text('x' * 600000)
+    os.system(f'cd {td} && git add . && git commit -q -m init')
+
+    pr = mod.PRMetadata(
+        title='t', body='', head='feat', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1,
+        files=[{'path': 'big.txt', 'additions': 1, 'deletions': 0}],
+    )
+    ctx = mod.PRContext()
+    job = mod.ReviewJob(
+        repo='r', pr_number='1', pr=pr, ctx=ctx,
+        wt_path=td, review_file='/tmp/r.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+    )
+    result = mod.collect_preflight_data(job)
+    print('None' if result is None else 'data')
+")
+  [ "$result" = "None" ]
+}
+
+@test "build_prompt: includes preflight_data when set" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="desc", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext(commits="fix it", reviews="[]", review_comments="[]", comments="[]")
+preflight = mod.PreflightData(
+    diff="--- a/a.go\n+++ b/a.go",
+    commit_log="abc fix",
+    file_contents={"a.go": "package main"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="# Project",
+    context_md="",
+)
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    preflight=preflight,
+)
+result = mod.build_prompt("single-agent.md", job)
+has_preflight = "Pre-collected data" in result
+has_file = "package main" in result
+has_diff = "--- a/a.go" in result
+print(f"preflight={has_preflight},file={has_file},diff={has_diff}")
+')
+  [ "$result" = "preflight=True,file=True,diff=True" ]
+}
+
+@test "build_prompt: no preflight_data when not set" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="desc", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext(commits="fix it", reviews="[]", review_comments="[]", comments="[]")
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+)
+result = mod.build_prompt("single-agent.md", job)
+print("absent" if "Pre-collected data" not in result else "present")
+')
+  [ "$result" = "absent" ]
+}
+
+@test "build_prompt: synthesis includes reviews_section" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext(commits="fix", reviews="[{\"user\":\"bob\",\"state\":\"APPROVED\"}]",
+    review_comments="[]", comments="[]")
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+)
+result = mod.build_prompt("synthesis.md", job,
+    holistic_content="assessment",
+    group_count=1,
+    merged_content="## Must fix\n- [M1] bug",
+)
+print("FOUND" if "bob" in result and "APPROVED" in result else "MISSING")
+')
+  [ "$result" = "FOUND" ]
+}
+
+@test "_file_permissions: returns octal for normal file" {
+  echo "test" > "$TMPDIR/perm.txt"
+  chmod 644 "$TMPDIR/perm.txt"
+  result=$(_py "
+from pathlib import Path
+print(mod._file_permissions(Path('$TMPDIR/perm.txt')))
+")
+  [ "$result" = "0o644" ]
+}
+
+@test "_file_permissions: returns ? for missing file" {
+  result=$(_py "
+from pathlib import Path
+print(mod._file_permissions(Path('$TMPDIR/nonexistent.txt')))
+")
+  [ "$result" = "?" ]
+}
+
+@test "_file_permissions: returns executable mode" {
+  echo "#!/bin/sh" > "$TMPDIR/exec.sh"
+  chmod 755 "$TMPDIR/exec.sh"
+  result=$(_py "
+from pathlib import Path
+print(mod._file_permissions(Path('$TMPDIR/exec.sh')))
+")
+  [ "$result" = "0o755" ]
+}
+
+@test "collect_preflight_data: success path collects all data" {
+  # Create a temp git repo with origin/main ref for diff/log range queries
+  repo="$TMPDIR/repo"
+  mkdir -p "$repo/.claude/review"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  echo "package main" > "$repo/main.go"
+  echo "# Project" > "$repo/CLAUDE.md"
+  echo "## Known Constraints" > "$repo/.claude/context.md"
+  echo "# Security" > "$repo/.claude/review/security.md"
+  git add . && git commit -q --no-verify -m "init"
+  # Create a fake origin/main ref so git diff origin/main...HEAD works
+  git remote add origin "$repo" && git fetch -q origin main
+  git checkout -b feat -q
+  printf "package main\nfunc hello() {}\n" > "$repo/main.go"
+  git add . && git commit -q --no-verify -m "add hello"
+
+  result=$(_py "
+from pathlib import Path
+pr = mod.PRMetadata(
+    title='t', body='', head='feat', base='main', head_sha='abc',
+    additions=1, deletions=0, changed_files=1,
+    files=[{'path': 'main.go', 'additions': 1, 'deletions': 0}],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='r', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='$repo', review_file='/tmp/r.md',
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+)
+data = mod.collect_preflight_data(job)
+checks = [
+    data is not None,
+    'main.go' in data.file_contents,
+    'main.go' in data.file_permissions,
+    data.file_permissions['main.go'] != '?',
+    '# Project' in data.claude_md,
+    '## Known Constraints' in data.context_md,
+    'security.md' in data.review_checklists,
+    len(data.diff) > 0,
+    len(data.commit_log) > 0,
+]
+print('ok' if all(checks) else [i for i, c in enumerate(checks) if not c])
+")
+  [ "$result" = "ok" ]
+}
+
+@test "collect_preflight_data: handles deleted files in PR" {
+  repo="$TMPDIR/repo_del"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  echo "old content" > "$repo/removed.txt"
+  echo "keep" > "$repo/kept.txt"
+  git add . && git commit -q --no-verify -m "init"
+  git checkout -b feat -q
+  rm "$repo/removed.txt"
+  echo "updated" > "$repo/kept.txt"
+  git add . && git commit -q --no-verify -m "remove file"
+
+  result=$(_py "
+pr = mod.PRMetadata(
+    title='t', body='', head='feat', base='main', head_sha='abc',
+    additions=1, deletions=1, changed_files=2,
+    files=[
+        {'path': 'removed.txt', 'additions': 0, 'deletions': 1},
+        {'path': 'kept.txt', 'additions': 1, 'deletions': 0},
+    ],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='r', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='$repo', review_file='/tmp/r.md',
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+)
+data = mod.collect_preflight_data(job)
+removed_ok = data.file_contents['removed.txt'] == '<file deleted>'
+kept_ok = 'updated' in data.file_contents['kept.txt']
+print(f'removed={removed_ok},kept={kept_ok}')
+")
+  [ "$result" = "removed=True,kept=True" ]
+}
+
+@test "format_preflight_data: empty commit_log omits section" {
+  result=$(_py '
+data = mod.PreflightData(
+    diff="--- a/f.go\n+++ b/f.go",
+    commit_log="",
+    file_contents={"f.go": "code"},
+    file_permissions={"f.go": "0o644"},
+    claude_md="",
+    context_md="",
+)
+result = mod.format_preflight_data(data)
+print("absent" if "Commit history" not in result else "present")
+')
+  [ "$result" = "absent" ]
+}
+
+@test "build_prompt: GROUP template gets scoped preflight" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=20, deletions=10, changed_files=2,
+    files=[
+        {"path": "a.go", "additions": 10, "deletions": 5},
+        {"path": "b.go", "additions": 10, "deletions": 5},
+    ],
+)
+ctx = mod.PRContext()
+preflight = mod.PreflightData(
+    diff="full diff here",
+    commit_log="commits",
+    file_contents={"a.go": "package a", "b.go": "package b"},
+    file_permissions={"a.go": "0o644", "b.go": "0o644"},
+    claude_md="",
+    context_md="",
+)
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    preflight=preflight,
+)
+result = mod.build_prompt("group.md", job,
+    group_idx=1, group_count=2, group_name="pkg",
+    group_files_formatted="  - a.go (+10 -5)",
+    group_output="/tmp/g1.md",
+    holistic_content="",
+    group_file_paths=["a.go"],
+)
+has_a = "package a" in result
+has_b = "package b" in result
+print(f"a={has_a},b={has_b}")
+')
+  [ "$result" = "a=True,b=False" ]
+}
+
+@test "build_prompt: holistic template includes preflight" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext(commits="fix", reviews="[]", review_comments="[]", comments="[]")
+preflight = mod.PreflightData(
+    diff="--- a/a.go\n+++ b/a.go",
+    commit_log="abc fix",
+    file_contents={"a.go": "package main"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="# Proj",
+    context_md="",
+)
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    preflight=preflight,
+)
+result = mod.build_prompt("holistic.md", job, holistic_output="/tmp/h.md")
+has_preflight = "Pre-collected data" in result
+has_file = "package main" in result
+print(f"preflight={has_preflight},file={has_file}")
+')
+  [ "$result" = "preflight=True,file=True" ]
+}
+
+@test "build_prompt: self-review template includes preflight" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext()
+preflight = mod.PreflightData(
+    diff="--- a/a.go\n+++ b/a.go",
+    commit_log="abc fix",
+    file_contents={"a.go": "package main"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="",
+    context_md="",
+)
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    preflight=preflight,
+)
+result = mod.build_prompt("self-review.md", job, branch_name="feat")
+has_preflight = "Pre-collected data" in result
+has_file = "package main" in result
+print(f"preflight={has_preflight},file={has_file}")
+')
+  [ "$result" = "preflight=True,file=True" ]
+}
+
+@test "build_prompt: env_section updated when preflight present" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext(commits="fix", reviews="[]", review_comments="[]", comments="[]")
+preflight = mod.PreflightData(
+    diff="diff", commit_log="log",
+    file_contents={"a.go": "pkg"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="", context_md="",
+)
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    preflight=preflight,
+)
+result = mod.build_prompt("single-agent.md", job)
+has_new_msg = "NOT in the PR" in result
+has_old_msg = "Read source files directly" in result
+print(f"new={has_new_msg},old={has_old_msg}")
+')
+  [ "$result" = "new=True,old=False" ]
+}

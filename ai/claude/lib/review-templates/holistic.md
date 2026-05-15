@@ -4,9 +4,11 @@ ${pr_header}
 
 ## All files in this PR
 ${all_files_formatted}
+${preflight_data}
 
 ## Task
-Read EVERY file listed above (scan-level — understand purpose and structure, not line-by-line deep review).
+Review all files listed above (scan-level — understand purpose and structure, not line-by-line deep review).
+Use the pre-collected file contents and diff above. Only use Read/Bash for files outside the PR.
 Then assess:
 1. Does the PR accomplish what the description and commits claim?
 2. Is the scope focused or does it mix unrelated concerns?

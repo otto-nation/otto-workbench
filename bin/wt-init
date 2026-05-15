@@ -23,8 +23,6 @@ Safe to re-run — skips repos that are already bare.
 EOF
 }
 
-require_command wt "worktrunk (wt) is required — brew install worktrunk" || exit 1
-
 # Detect default branch: main unless only master exists
 _detect_default_branch() {
   if git rev-parse --verify master >/dev/null 2>&1 && ! git rev-parse --verify main >/dev/null 2>&1; then
@@ -45,6 +43,8 @@ while [[ $# -gt 0 ]]; do
     *)  repo_path="$1"; shift ;;
   esac
 done
+
+require_command wt "worktrunk (wt) is required — brew install worktrunk" || exit 1
 
 repo_path="${repo_path:-.}"
 cd "$repo_path" || { err "Invalid path: $repo_path"; exit 1; }

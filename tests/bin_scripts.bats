@@ -121,8 +121,8 @@ _discover_scripts() {
   while IFS= read -r f; do
     local name rc
     name=$(basename "$f")
-    "$f" -h &>/dev/null
-    rc=$?
+    rc=0
+    "$f" -h &>/dev/null || rc=$?
     if [[ $rc -ne 0 ]]; then
       failures+=("$name: exit $rc")
     fi

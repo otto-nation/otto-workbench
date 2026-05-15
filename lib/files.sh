@@ -44,7 +44,7 @@ install_symlink() {
   [[ -z "$label" ]] && label=$(basename "$source")
 
   if [[ -L "$target" ]] && [[ "$(readlink "$target")" == "$source" ]]; then
-    echo -e "  ${DIM}✓ $label${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $label${NC}" || true
     return
   fi
 
@@ -79,7 +79,7 @@ install_file() {
   fi
 
   if [[ -f "$target" ]] && diff -q "$source" "$target" &>/dev/null; then
-    echo -e "  ${DIM}✓ $label${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $label${NC}" || true
     return
   fi
 
@@ -110,7 +110,7 @@ copy_dir() {
       [[ -e "$item" || -L "$item" ]] || continue
       [[ ! -e "$src/$(basename "$item")" ]] || continue
       rm "$item"
-      echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}" || true
     done
   fi
 
@@ -165,7 +165,7 @@ symlink_dir() {
       [[ "$target" == "$src"/* || "$target" == "$stable_src"/* ]] || continue
       [[ -e "$target" ]] && continue
       rm "$item"
-      echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $(basename "$item")${NC}" || true
     done
   fi
 
@@ -243,10 +243,15 @@ install_hook_dispatcher() {
   # Remove broken symlinks left over from pre-bare-repo installs
   [[ -L "$target" ]] && rm -f "$target"
 
-  cat > "$target" <<EOF
-#!/usr/bin/env bash
-exec "\$(git rev-parse --show-toplevel)/$source_rel" "\$@"
-EOF
+  local expected
+  expected="$(printf '#!/usr/bin/env bash\nexec "$(git rev-parse --show-toplevel)/%s" "$@"\n' "$source_rel")"
+
+  if [[ -f "$target" ]] && [[ "$(cat "$target")" == "$expected" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $label ${DIM}(dispatcher → $source_rel)${NC}" || true
+    return
+  fi
+
+  printf '%s\n' "$expected" > "$target"
   chmod +x "$target"
   echo -e "  ${GREEN}✓${NC} $label ${DIM}(dispatcher → $source_rel)${NC}"
 }

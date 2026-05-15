@@ -54,10 +54,25 @@ title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 # skip [label] — print a skip line with optional label
 skip() { echo -e "${DIM}⊘ ${1:-Skipped}${NC}"; }
 
+# sync_header LABEL — section header for sync steps. Suppressed during sync.
+sync_header() { [[ "${WORKBENCH_SYNC:-}" == true ]] || { echo; info "$@"; }; }
+
 # Summary status lines — indented for use in post-install/sync summaries.
 # Each prints: "  <icon> <message>"
 # Complement success()/warn()/err() which are for step output during install.
-summary_ok()   { echo -e "  ${GREEN}✓${NC} $*"; }
-summary_warn() { echo -e "  ${YELLOW}⚠${NC}  $*"; }
+
+# summary_section LABEL — cyan section header for summaries. Suppressed during sync.
+summary_section() {
+  [[ "${WORKBENCH_SYNC:-}" == true ]] && return
+  echo; echo -e "  ${CYAN}$*${NC}"
+}
+summary_ok() { [[ "${WORKBENCH_SYNC:-}" == true ]] && return; echo -e "  ${GREEN}✓${NC} $*"; }
+summary_warn() {
+  if [[ "${WORKBENCH_SYNC:-}" == true && -n "${WORKBENCH_INSTALL_LOG:-}" ]]; then
+    echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG"
+  else
+    echo -e "  ${YELLOW}⚠${NC}  $*"
+  fi
+}
 summary_err()  { echo -e "  ${RED}✗${NC} $*"; }
-summary_info() { echo -e "  ${DIM}●${NC} $*"; }
+summary_info() { [[ "${WORKBENCH_SYNC:-}" == true ]] && return; echo -e "  ${DIM}●${NC} $*"; }

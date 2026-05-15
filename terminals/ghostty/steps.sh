@@ -49,23 +49,21 @@ step_ghostty_theme() {
   else
     printf '\n# ─── Theme ───────────────────────────────────────────────────────────────────\ntheme = %s\n' "$theme" >> "$GHOSTTY_CONFIG_FILE"
   fi
-  success "theme = $theme"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success "theme = $theme" || true
 }
 
 # sync_ghostty — re-applies Ghostty config and runs migrations if Ghostty is installed.
 # Called by sync_terminals() in terminals/steps.sh.
 sync_ghostty() {
   if ! command -v ghostty >/dev/null 2>&1 && [[ ! -d "$GHOSTTY_CONFIG_DIR" ]]; then
-    echo -e "  ${DIM}⊘ ghostty not installed — skipping${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ ghostty not installed — skipping${NC}" || true
     return
   fi
 
-  echo; info "ghostty scripts → $LOCAL_BIN_DIR/"
+  sync_header "ghostty scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GHOSTTY_SRC_DIR"
 
-  # Config creation and migrations are one-time setup steps handled by ghostty/setup.sh.
-  # Sync only reconciles the workbench-managed theme key.
-  echo; info "Ghostty theme"
+  sync_header "Ghostty theme"
   step_ghostty_theme
 }
 

@@ -220,19 +220,17 @@ cmd_sync() {
   # shellcheck disable=SC2034  # read by install_symlink in lib/ui.sh
   SYMLINK_MODE=no-prompt
 
+  # Quiet mode: suppresses per-file dim checkmarks, section headers, and
+  # summary noise. Only changes, warnings, and errors surface.
+  WORKBENCH_SYNC=true
+  export WORKBENCH_SYNC
+
   # Collect warnings/errors for final summary replay.
   WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
   export WORKBENCH_INSTALL_LOG
   trap 'rm -f "$WORKBENCH_INSTALL_LOG"' EXIT
 
-  title "Workbench sync"
-  echo
-
-  # Run pending migrations before syncing components.
-  # Migrations clean up state (stale symlinks, old config) that sync functions depend on.
-  info "Migrations"
   run_all_migrations
-  echo
 
   # Sync components — respects installation state when a state file exists.
   # Without a state file (pre-existing installs), syncs everything (backward compat).
@@ -253,7 +251,16 @@ cmd_sync() {
 
     # Gate on state: skip uninstalled components (unless no state file = backward compat)
     if state_file_exists && [[ " $_always_sync " != *" $_path "* ]] && ! state_is_installed "$_path"; then
-      skip "$_path (not installed)"
+      continue
+    fi
+
+    # Skip sub-components whose parent sync function already calls them.
+    # E.g. editors/zed/steps.sh is skipped because editors/steps.sh's
+    # sync_editors calls sync_zed.
+    local _parent_dir="${_path%/*}"
+    if [[ "$_parent_dir" != "$_path" ]] \
+       && [[ -f "$WORKBENCH_DIR/$_parent_dir/steps.sh" ]] \
+       && grep -q "sync_${_c}" "$WORKBENCH_DIR/$_parent_dir/steps.sh"; then
       continue
     fi
 
@@ -265,15 +272,12 @@ cmd_sync() {
   # shellcheck source=/dev/null
   . "$(dirname "$_SELF")/../lib/summary.sh"
 
-  echo
-  success "Workbench synced!"
-  print_workbench_summary
-
   # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
+  # Only warnings/errors surface during sync (summary_ok/summary_info are suppressed).
   run_component_summaries
 
-  # Check if any components need a full install run.
-  _check_install_needed
+  echo
+  success "Workbench synced"
 
   print_warnings_summary
 }

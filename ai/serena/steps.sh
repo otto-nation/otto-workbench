@@ -14,7 +14,7 @@ fi
 # sync_serena — symlinks serena scripts to ~/.local/bin/.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 sync_serena() {
-  echo; info "serena scripts → $LOCAL_BIN_DIR/"
+  sync_header "serena scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$SERENA_SRC_DIR"
 }
 

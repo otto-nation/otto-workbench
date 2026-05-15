@@ -5,8 +5,7 @@
 print_autoupdate_summary() {
   local _label="com.otto-workbench.autoupdate"
 
-  echo
-  echo -e "  ${CYAN}Autoupdate${NC}"
+  summary_section "Autoupdate"
 
   if launchctl list "$_label" >/dev/null 2>&1; then
     local _plist="$HOME/Library/LaunchAgents/${_label}.plist"

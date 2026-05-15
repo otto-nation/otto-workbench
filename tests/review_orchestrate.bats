@@ -529,6 +529,7 @@ print(mod._file_permissions(Path('$TMPDIR/exec.sh')))
   mkdir -p "$repo/.claude/review"
   cd "$repo"
   git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
   echo "package main" > "$repo/main.go"
   echo "# Project" > "$repo/CLAUDE.md"
   echo "## Known Constraints" > "$repo/.claude/context.md"
@@ -575,6 +576,7 @@ print('ok' if all(checks) else [i for i, c in enumerate(checks) if not c])
   mkdir -p "$repo"
   cd "$repo"
   git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
   echo "old content" > "$repo/removed.txt"
   echo "keep" > "$repo/kept.txt"
   git add . && git commit -q --no-verify -m "init"

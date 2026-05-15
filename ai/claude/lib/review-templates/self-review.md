@@ -1,6 +1,7 @@
 Self-review of changes on branch ${branch_name} in ${repo}.
 
 ${pr_header}
+${preflight_data}
 ${env_section}
 
 ## Output format

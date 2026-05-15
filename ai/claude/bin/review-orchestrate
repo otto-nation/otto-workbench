@@ -18,11 +18,12 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from string import Template
@@ -97,6 +98,18 @@ class ReviewJob:
     issue_context: str = ""
     prior_review: str = ""
     mode: str = MODE_PR
+    preflight: "PreflightData | None" = None
+
+
+@dataclass
+class PreflightData:
+    diff: str
+    commit_log: str
+    file_contents: dict[str, str]
+    file_permissions: dict[str, str]
+    claude_md: str
+    context_md: str
+    review_checklists: dict[str, str] = field(default_factory=dict)
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -177,6 +190,130 @@ TIER3_BASENAMES_SUFFIXES = (
     ".latest.sql", ".ko.yaml",
 )
 TIER3_PATH_SEGMENTS = {"gen", "testdata"}
+
+MAX_PREFLIGHT_BYTES = 500_000
+MAX_FILE_BYTES = 100_000
+MAX_TRUNCATED_LINES = 500
+
+
+# ── Pre-flight data collection ───────────────────────────────────────────────
+
+def _read_file_safe(path: Path) -> str:
+    try:
+        content = path.read_text()
+        byte_len = len(content.encode())
+        if byte_len > MAX_FILE_BYTES:
+            lines = content.splitlines(keepends=True)
+            truncated = "".join(lines[:MAX_TRUNCATED_LINES])
+            return f"{truncated}\n\n<truncated — file is {byte_len // 1024}KB, showing first {MAX_TRUNCATED_LINES} lines>"
+        return content
+    except FileNotFoundError:
+        return "<file deleted>"
+    except UnicodeDecodeError:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        return f"<binary file, {size} bytes>"
+    except PermissionError:
+        return "<permission denied>"
+
+
+def _file_permissions(path: Path) -> str:
+    try:
+        mode = path.stat().st_mode
+        return oct(stat.S_IMODE(mode))
+    except OSError:
+        return "?"
+
+
+def collect_preflight_data(job: "ReviewJob") -> "PreflightData | None":
+    wt = Path(job.wt_path)
+    base = job.pr.base or DEFAULT_BASE_BRANCH
+    git_range = f"origin/{base}...HEAD"
+    git_range_log = f"origin/{base}..HEAD"
+
+    diff = _run(["git", "diff", git_range], cwd=job.wt_path)
+    commit_log = _run(["git", "log", "--stat", "--reverse", git_range_log], cwd=job.wt_path)
+
+    file_contents: dict[str, str] = {}
+    file_permissions: dict[str, str] = {}
+    total_size = 0
+    for f in job.pr.files:
+        p = wt / f["path"]
+        content = _read_file_safe(p)
+        file_contents[f["path"]] = content
+        file_permissions[f["path"]] = _file_permissions(p)
+        total_size += len(content.encode())
+    if total_size > MAX_PREFLIGHT_BYTES:
+        _warn(f"Preflight data too large ({total_size // 1024}KB) — agent will read files directly")
+        return None
+
+    claude_md = ""
+    for name in ("CLAUDE.md", ".claude/CLAUDE.md"):
+        p = wt / name
+        if p.exists():
+            claude_md = _read_file_safe(p)
+            break
+
+    context_md = ""
+    ctx_path = wt / ".claude" / "context.md"
+    if ctx_path.exists():
+        context_md = _read_file_safe(ctx_path)
+
+    review_checklists: dict[str, str] = {}
+    review_dir = wt / ".claude" / "review"
+    if review_dir.is_dir():
+        for checklist in sorted(review_dir.glob("*.md")):
+            review_checklists[checklist.name] = _read_file_safe(checklist)
+
+    return PreflightData(
+        diff=diff,
+        commit_log=commit_log,
+        file_contents=file_contents,
+        file_permissions=file_permissions,
+        claude_md=claude_md,
+        context_md=context_md,
+        review_checklists=review_checklists,
+    )
+
+
+def format_preflight_data(
+    data: PreflightData,
+    file_filter: list[str] | None = None,
+) -> str:
+    parts = [
+        "## Pre-collected data",
+        "",
+        "Use this data directly. Do NOT re-read these files, re-run git diff, re-run git log,",
+        "or re-fetch PR reviews via gh api. Only use Read/Bash for files NOT listed here",
+        "(cross-references, callers, tests, config files outside the PR).",
+    ]
+
+    parts += ["", "### Full diff", "", "```diff", data.diff, "```"]
+
+    if data.commit_log:
+        parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
+
+    parts += ["", "### Changed file contents"]
+    files_to_include = file_filter or list(data.file_contents.keys())
+    for path in files_to_include:
+        content = data.file_contents.get(path, "<file not collected>")
+        perms = data.file_permissions.get(path, "?")
+        parts.append(f"\n<file path=\"{path}\" permissions=\"{perms}\">")
+        parts.append(content)
+        parts.append("</file>")
+
+    if data.claude_md:
+        parts += ["", "### Project context", "", "#### CLAUDE.md", "", data.claude_md]
+    if data.context_md:
+        parts += ["", "#### .claude/context.md", "", data.context_md]
+    if data.review_checklists:
+        parts.append("\n#### Review checklists")
+        for name, content in data.review_checklists.items():
+            parts += [f"\n##### {name}", "", content]
+
+    return "\n".join(parts)
 
 
 # ── Tier classification ──────────────────────────────────────────────────────
@@ -506,7 +643,12 @@ Skip these — do NOT re-fetch from the GitHub API. This data is current as of s
 {ctx.comments}"""
 
 
-def _build_env_section(wt_path: str) -> str:
+def _build_env_section(wt_path: str, has_preflight: bool = False) -> str:
+    if has_preflight:
+        return f"""
+## Environment
+PR branch checked out at: {wt_path}
+File contents and diffs are in the Pre-collected data section. Use Read/Bash only for files NOT in the PR (callers, tests, cross-references)."""
     return f"""
 ## Environment
 PR branch checked out at: {wt_path}
@@ -552,11 +694,20 @@ def render_template(name: str, **kwargs) -> str:
     return tmpl.safe_substitute(**kwargs)
 
 
+def _build_preflight_section(
+    job: "ReviewJob", file_filter: list[str] | None = None,
+) -> str:
+    if not job.preflight:
+        return ""
+    return format_preflight_data(job.preflight, file_filter=file_filter)
+
+
 def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
     today = date.today().isoformat()
+    has_preflight = job.preflight is not None
     pr_header = _build_pr_header(job.pr, job.ctx)
     reviews_section = _build_reviews_section(job.ctx)
-    env_section = _build_env_section(job.wt_path)
+    env_section = _build_env_section(job.wt_path, has_preflight=has_preflight)
     issue_section = _build_issue_section(job.issue_link, job.issue_context)
 
     if template_name == TEMPLATE_SELF_REVIEW:
@@ -573,6 +724,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             branch_name=extra.get("branch_name", job.pr.head),
             repo=job.repo,
             pr_header=pr_header,
+            preflight_data=_build_preflight_section(job),
             env_section=env_section,
             issue_section=issue_section,
             prior_section=prior_section,
@@ -593,6 +745,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
             group_count=extra["group_count"],
             merged_content=extra["merged_content"],
+            preflight_data=_build_preflight_section(job),
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
@@ -613,6 +766,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             pr_number=job.pr_number,
             repo=job.repo,
             pr_header=pr_header,
+            preflight_data=_build_preflight_section(job),
             reviews_section=reviews_section,
             env_section=env_section,
             issue_section=issue_section,
@@ -627,6 +781,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             repo=job.repo,
             pr_header=pr_header,
             all_files_formatted=job.pr.all_files_formatted,
+            preflight_data=_build_preflight_section(job),
             reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
@@ -643,6 +798,8 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         holistic_block = _build_holistic_block(
             extra.get("holistic_content", ""), job.pr.changed_files,
         )
+        group_files = extra.get("group_file_paths", [])
+        group_preflight = _build_preflight_section(job, file_filter=group_files or None)
         return render_template(
             TEMPLATE_GROUP,
             pr_number=job.pr_number,
@@ -653,6 +810,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             group_name=extra["group_name"],
             holistic_block=holistic_block,
             group_files_formatted=extra["group_files_formatted"],
+            preflight_data=group_preflight,
             reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
@@ -675,6 +833,8 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
             group_count=extra["group_count"],
             merged_content=extra["merged_content"],
+            preflight_data=_build_preflight_section(job),
+            reviews_section=reviews_section,
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
@@ -796,6 +956,7 @@ def _review_group(
         TEMPLATE_GROUP, job,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
+        group_file_paths=grp.files,
         group_output=group_output, holistic_content=holistic_content,
     )
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
@@ -1016,6 +1177,9 @@ def main():
         issue_link=args.issue_link, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
     )
+
+    _info("Collecting file data...")
+    job.preflight = collect_preflight_data(job)
 
     is_large = (
         pr.total_lines > MULTI_PHASE_LINE_THRESHOLD

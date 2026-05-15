@@ -379,7 +379,7 @@ sync_claude() {
 
 # ─── Project scaffolding ─────────────────────────────────────────────────────
 # These functions scaffold a per-project .claude/ directory. Called by
-# `otto-workbench claude` when run from a project root.
+# `otto-workbench ai init` when run from a project root.
 
 # _detect_project_stacks — populates DETECTED_STACKS array with detected languages.
 _detect_project_stacks() {
@@ -520,7 +520,7 @@ _scaffold_gitignore() {
 }
 
 # scaffold_project_claude [--force] — scaffolds .claude/ in the current directory.
-# Called by `otto-workbench claude` for project-level setup.
+# Called by `otto-workbench ai init` for project-level setup.
 scaffold_project_claude() {
   local force=false
   [[ "${1:-}" == "--force" ]] && force=true

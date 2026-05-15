@@ -6,8 +6,7 @@
 # print_ai_summary — prints AI-specific summary info.
 # AI_COMMAND and GH_TOKEN status are now shown by the central summary in lib/summary.sh.
 print_ai_summary() {
-  echo
-  echo -e "  ${CYAN}AI Tasks${NC}"
+  summary_section "AI Tasks"
 
   if command -v claude >/dev/null 2>&1; then
     summary_ok "Claude CLI installed"

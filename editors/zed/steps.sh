@@ -57,19 +57,19 @@ step_zed_settings() {
 
   printf '%s\n' "$result" > "$ZED_SETTINGS_FILE"
   if [[ "$existing" == "{}" ]]; then
-    success "settings.json written"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "settings.json written" || true
   else
-    success "settings.json synced"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "settings.json synced" || true
   fi
 }
 
 # sync_zed — re-applies Zed settings if Zed's config dir exists.
 sync_zed() {
   if [[ ! -d "$ZED_CONFIG_DIR" ]]; then
-    echo -e "  ${DIM}⊘ Zed config dir not found — skipping${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ Zed config dir not found — skipping${NC}" || true
     return
   fi
-  echo; info "Zed settings ($ZED_SETTINGS_FILE)"
+  sync_header "Zed settings ($ZED_SETTINGS_FILE)"
   step_zed_settings
 }
 

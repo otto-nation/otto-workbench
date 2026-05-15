@@ -95,7 +95,7 @@ Add a local rule:  claude-rules add <domain> "rule text"
 Edit local rules:  claude-rules open [domain]
 Review untracked:  claude-rules status
 EOF
-  success "workbench.md"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success "workbench.md" || true
 }
 
 # _check_local_rules — warns about any *.local.md files not tracked in the workbench.
@@ -105,20 +105,19 @@ _check_local_rules() {
     [[ -e "$file" ]] || continue
     lines=$(wc -l < "$file" | tr -d ' ')
     details+="$(basename "$file") ($lines lines), "
-    if [[ "$found" == false ]]; then
+    if [[ "$found" == false && "${WORKBENCH_SYNC:-}" != true ]]; then
       echo
       echo -e "${YELLOW}⚠${NC}  Local rule additions not tracked in workbench:"
     fi
-    echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}  • $(basename "$file") ($lines lines)${NC}" || true
     found=true
   done
   if [[ "$found" == true ]]; then
     details="${details%, }"
-    # Log the full message for summary replay (warn would double-print to stdout)
     if [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]]; then
       echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }Local rule additions not tracked in workbench: $details" >> "$WORKBENCH_INSTALL_LOG"
     fi
-    echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}  Run 'claude-rules status' to review, or edit $GUIDELINES_RULES_SRC_DIR/ to formalize${NC}" || true
   fi
 }
 
@@ -128,7 +127,7 @@ cmd_sync() {
 
   mkdir -p "$RULES_DIR"
 
-  info "Syncing workbench rules → $RULES_DIR"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Syncing workbench rules → $RULES_DIR" || true
 
   # Build merged layer: default rules + user overrides/additions
   local -A layers
@@ -164,8 +163,10 @@ cmd_sync() {
     install_symlink "$source" "$RULES_DIR/$name" "$label"
   done
 
-  echo
-  info "Generating workbench.md"
+  if [[ "${WORKBENCH_SYNC:-}" != true ]]; then
+    echo
+    info "Generating workbench.md"
+  fi
   _install_workbench_rule
 
   _check_local_rules
@@ -345,16 +346,22 @@ Any domain name is accepted (e.g. general, go, linear, workflow)
 EOF
 }
 
-case "${1:-}" in
-  sync)      cmd_sync ;;
-  add)       shift; cmd_add "$@" ;;
-  list)      cmd_list ;;
-  status)    cmd_status ;;
-  open)      shift; cmd_open "$@" ;;
-  project)   shift; cmd_project "$@" ;;
-  -h|--help) usage; exit 0 ;;
-  *)
-    usage >&2
-    exit 1
-    ;;
-esac
+main() {
+  case "${1:-}" in
+    sync)      cmd_sync ;;
+    add)       shift; cmd_add "$@" ;;
+    list)      cmd_list ;;
+    status)    cmd_status ;;
+    open)      shift; cmd_open "$@" ;;
+    project)   shift; cmd_project "$@" ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

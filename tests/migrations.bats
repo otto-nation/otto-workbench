@@ -168,7 +168,14 @@ EOF
 # ─── Migration execution: skips already applied ─────────────────────────────
 
 @test "migration skips already-applied entries" {
-  create_migration "mycomp" "20250101-test.sh" "migration_20250101_test"
+  # Migration body writes a marker — if it runs again, we'll see a second line
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-test.sh" <<EOF
+#!/usr/bin/env bash
+migration_20250101_test() {
+  echo "EXECUTED" >> "$TMPDIR/exec.log"
+}
+EOF
 
   # Pre-populate state file
   mkdir -p "$FAKE_STATE"
@@ -176,7 +183,8 @@ EOF
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already applied"* ]]
+  # Migration function must not have been called
+  [ ! -f "$TMPDIR/exec.log" ]
 }
 
 # ─── Migration execution: ordering ──────────────────────────────────────────

@@ -46,7 +46,7 @@ step_docker_socket() {
     if [[ -f "$DOCKER_RUNTIME_ALIASES" ]] \
        && [[ "$(readlink "$DOCKER_RUNTIME_ALIASES" 2>/dev/null)" == *"orbstack"* ]]; then
       rm -f "$DOCKER_RUN_DIR/docker.sock"
-      echo -e "  ${DIM}✓ removed stale Colima socket (OrbStack is active runtime)${NC}"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ removed stale Colima socket (OrbStack is active runtime)${NC}" || true
     else
       local profile
       profile=$(basename "$(dirname "$socket_target")")
@@ -54,9 +54,9 @@ step_docker_socket() {
       install_symlink "$COLIMA_DIR/$profile/docker.sock" "$DOCKER_RUN_DIR/docker.sock"
     fi
   elif [[ -n "$socket_target" ]]; then
-    echo -e "  ${DIM}✓ socket managed externally ($(basename "$(dirname "$socket_target")")${NC})"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ socket managed externally ($(basename "$(dirname "$socket_target")")${NC})" || true
   else
-    echo -e "  ${DIM}⊘ no docker runtime detected — run docker/setup.sh to configure${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ no docker runtime detected — run docker/setup.sh to configure${NC}" || true
   fi
 }
 
@@ -87,16 +87,16 @@ step_docker_testcontainers() {
 sync_docker() {
   [[ "$OSTYPE" == "darwin"* ]] || return
 
-  echo; info "docker socket → $DOCKER_RUN_DIR/"
+  sync_header "docker socket → $DOCKER_RUN_DIR/"
   step_docker_socket
 
-  echo; info "runtime aliases → $DOCKER_RUNTIME_ALIASES"
+  sync_header "runtime aliases → $DOCKER_RUNTIME_ALIASES"
   step_docker_runtime_aliases
 
-  echo; info "testcontainers → $TESTCONTAINERS_FILE"
+  sync_header "testcontainers → $TESTCONTAINERS_FILE"
   step_docker_testcontainers
 
-  echo; info "docker scripts → $LOCAL_BIN_DIR/"
+  sync_header "docker scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$DOCKER_SRC_DIR"
 }
 

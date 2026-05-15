@@ -285,7 +285,7 @@ _gitconfig_ensure_include() {
 step_gitconfig() {
   _gitconfig_bootstrap
   _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
-  success "gitconfig includes up to date"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success "gitconfig includes up to date" || true
 }
 
 # step_global_hooks — symlinks the workbench pre-commit hook into $GIT_HOOKS_DIR
@@ -295,7 +295,7 @@ step_global_hooks() {
   install_symlink "$GIT_HOOKS_SRC_DIR/pre-commit"      "$GIT_HOOKS_DIR/pre-commit"
   install_symlink "$GIT_HOOKS_SRC_DIR/pre-push" "$GIT_HOOKS_DIR/pre-push"
   git config --global core.hooksPath "$GIT_HOOKS_DIR"
-  success "global core.hooksPath → $GIT_HOOKS_DIR"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success "global core.hooksPath → $GIT_HOOKS_DIR" || true
 }
 
 # step_local_hooks — installs repo-local hooks into .git/hooks/ for the workbench repo.
@@ -316,7 +316,7 @@ step_local_hooks() {
     warn "removed core.hooksPath=/dev/null from local config (hooks were disabled)"
   fi
 
-  echo; info "local git hooks → .git/hooks/"
+  sync_header "local git hooks → .git/hooks/"
   install_hook_dispatcher "git/hooks/pre-commit-workbench" "$dot_git/hooks/pre-commit" "pre-commit"
   install_hook_dispatcher "git/hooks/pre-push-workbench"   "$dot_git/hooks/pre-push"   "pre-push"
 }
@@ -346,14 +346,14 @@ install_git() {
 # sync_git — runs all git sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_git() {
-  echo; info "git config → $GITCONFIG_FILE"
+  sync_header "git config → $GITCONFIG_FILE"
   step_gitconfig
 
-  echo; info "global git hooks → $GIT_HOOKS_DIR"
+  sync_header "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
   step_local_hooks
 
-  echo; info "git scripts → $LOCAL_BIN_DIR/"
+  sync_header "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"
 }
 

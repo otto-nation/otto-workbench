@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Convert a regular git repo to a bare repo with worktrees.
-#
-# The current branch's working tree (including uncommitted changes) is moved
-# into a named worktree directory inside the bare repo root. Existing worktrees
-# (e.g. Claude agent worktrees in .claude/worktrees/) are preserved in place.
-#
-# Usage:
-#   wt-init                  # convert current repo
-#   wt-init ~/code/myrepo    # convert a specific repo
-#   wt-init --dry-run        # preview what would happen
-#
-# Safe to re-run — skips repos that are already bare.
-
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
-require_command wt "worktrunk (wt) is required — brew install worktrunk" || exit 1
+usage() {
+  cat <<EOF
+Convert a regular git repo to a bare repo with worktrees.
+
+The current branch's working tree (including uncommitted changes) is moved
+into a named worktree directory inside the bare repo root. Existing worktrees
+(e.g. Claude agent worktrees in .claude/worktrees/) are preserved in place.
+
+Usage: $(basename "$0") [options] [path]
+
+Options:
+  --dry-run     Preview what would happen
+  -h, --help    Show this help
+
+Safe to re-run — skips repos that are already bare.
+EOF
+}
 
 # Detect default branch: main unless only master exists
 _detect_default_branch() {
@@ -35,14 +38,13 @@ repo_path=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) dry_run=true; shift ;;
-    -h|--help)
-      sed -n '2,/^$/{ s/^# //; s/^#$//; p }' "${BASH_SOURCE[0]}"
-      exit 0
-      ;;
+    -h|--help) usage; exit 0 ;;
     -*) err "Unknown option: $1"; exit 1 ;;
     *)  repo_path="$1"; shift ;;
   esac
 done
+
+require_command wt "worktrunk (wt) is required — brew install worktrunk" || exit 1
 
 repo_path="${repo_path:-.}"
 cd "$repo_path" || { err "Invalid path: $repo_path"; exit 1; }

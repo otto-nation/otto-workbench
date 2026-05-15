@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
-# Install Ghostty's xterm-ghostty terminfo on a remote host.
-#
-# Fixes "Error opening terminal: xterm-ghostty" on remote servers and in sudo
-# sessions. Installs to both ~/.terminfo (user) and /etc/terminfo (system).
-# Run once per server; safe to re-run.
-#
-# Usage: ghostty-terminfo-push <host>
-#
-# Notes:
-#   - System install requires passwordless sudo on the remote host.
-#     If it fails, a manual fallback command is printed.
-#   - "older tic versions may treat the description field as an alias" is a
-#     harmless warning from older ncurses — the terminfo is still installed.
-
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+. "$(dirname "$_SELF")/../../../lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Install Ghostty's xterm-ghostty terminfo on a remote host.
+
+Fixes "Error opening terminal: xterm-ghostty" on remote servers and in sudo
+sessions. Installs to both ~/.terminfo (user) and /etc/terminfo (system).
+Run once per server; safe to re-run.
+
+Usage: $(basename "$0") <host>
+
+Notes:
+  - System install requires passwordless sudo on the remote host.
+    If it fails, a manual fallback command is printed.
+  - "older tic versions may treat the description field as an alias" is a
+    harmless warning from older ncurses — the terminfo is still installed.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
 HOST="${1:-}"
 if [[ -z "$HOST" ]]; then

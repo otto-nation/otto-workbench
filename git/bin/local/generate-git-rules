@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Generate ai/guidelines/rules/git.generated.md from constants in lib/conventions.sh.
-#
-# Reads:     lib/conventions.sh  (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
-# Writes:    ai/guidelines/rules/git.generated.md
-#
-# Run automatically via pre-push hook and workbench sync.
-# Never edit git.generated.md directly — edit lib/conventions.sh or this script instead.
-#
-# Environment overrides (used in tests):
-#   CONVENTIONS_SH      path to conventions.sh   (default: lib/conventions.sh)
-#   GIT_RULES_OUTPUT    output file path         (default: ai/guidelines/rules/git.generated.md)
-
 set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -18,6 +6,24 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
 
 # shellcheck source=../../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Generate ai/guidelines/rules/git.generated.md from constants in lib/conventions.sh.
+
+Usage: $(basename "$0") [options]
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+
+Environment overrides (used in tests):
+  CONVENTIONS_SH      path to conventions.sh
+  GIT_RULES_OUTPUT    output file path
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
 QUIET=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true

@@ -15,8 +15,7 @@ print_docker_summary() {
     runtime=$(_docker_detect_runtime)
   fi
 
-  echo
-  echo -e "  ${CYAN}Docker${NC}"
+  summary_section "Docker"
 
   if docker info >/dev/null 2>&1; then
     summary_ok "running ${DIM}(${runtime:-unknown runtime})${NC}"

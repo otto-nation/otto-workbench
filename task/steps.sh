@@ -49,7 +49,7 @@ step_task_symlinks() {
 # sync_task — re-symlinks Taskfile and lib; safe to run non-interactively.
 # Does not run step_task_install — installation is a one-time interactive operation.
 sync_task() {
-  echo; info "global Taskfile + lib → $TASK_CONFIG_DIR/"
+  sync_header "global Taskfile + lib → $TASK_CONFIG_DIR/"
   step_task_symlinks
 }
 

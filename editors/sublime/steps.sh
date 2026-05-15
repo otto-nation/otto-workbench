@@ -30,19 +30,19 @@ step_sublime_settings() {
 
   printf '%s\n' "$result" > "$SUBLIME_SETTINGS_FILE"
   if [[ "$existing" == "{}" ]]; then
-    success "Preferences.sublime-settings written"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Preferences.sublime-settings written" || true
   else
-    success "Preferences.sublime-settings synced"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Preferences.sublime-settings synced" || true
   fi
 }
 
 # sync_sublime — re-applies Sublime settings if Packages/User dir exists.
 sync_sublime() {
   if [[ ! -d "$SUBLIME_PREFS_DIR" ]]; then
-    echo -e "  ${DIM}⊘ Sublime Text not installed — skipping${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ Sublime Text not installed — skipping${NC}" || true
     return
   fi
-  echo; info "Sublime Text settings ($SUBLIME_SETTINGS_FILE)"
+  sync_header "Sublime Text settings ($SUBLIME_SETTINGS_FILE)"
   step_sublime_settings
 }
 

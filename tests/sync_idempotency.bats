@@ -113,39 +113,47 @@ _symlinks() {
 }
 
 # ─── sync_zsh ─────────────────────────────────────────────────────────────────
+# Tests call individual step functions instead of the full sync_zsh to avoid
+# the expensive step_env_local (~1s per call) that none of them need.
+
+_zsh_setup() {
+  _source_with "$FAKE_HOME" "zsh/steps.sh"
+  mkdir -p "$ZSH_CONFIG_DIR"
+}
 
 @test "sync_zsh: second run produces identical symlinks in ZSH_CONFIG_DIR" {
-  _source_with "$FAKE_HOME" "zsh/steps.sh"
+  _zsh_setup
 
-  sync_zsh >/dev/null 2>&1
+  step_zsh >/dev/null 2>&1
   state1=$(_symlinks "$FAKE_HOME/.config/zsh/config.d" 2)
 
-  sync_zsh >/dev/null 2>&1
+  step_zsh >/dev/null 2>&1
   state2=$(_symlinks "$FAKE_HOME/.config/zsh/config.d" 2)
 
   [[ "$state1" == "$state2" ]]
 }
 
 @test "sync_zsh: second run does not change .zshrc content" {
-  _source_with "$FAKE_HOME" "zsh/steps.sh"
+  _zsh_setup
+  step_zsh_loader >/dev/null 2>&1
 
-  sync_zsh >/dev/null 2>&1
+  step_zshrc >/dev/null 2>&1
   content1=$(cat "$FAKE_HOME/.zshrc" 2>/dev/null)
 
-  sync_zsh >/dev/null 2>&1
+  step_zshrc >/dev/null 2>&1
   content2=$(cat "$FAKE_HOME/.zshrc" 2>/dev/null)
 
   [[ "$content1" == "$content2" ]]
 }
 
 @test "sync_zsh: loader.zsh is present and unchanged after second run" {
-  _source_with "$FAKE_HOME" "zsh/steps.sh"
+  _zsh_setup
 
-  sync_zsh >/dev/null 2>&1
+  step_zsh_loader >/dev/null 2>&1
   checksum1=$(md5 -q "$FAKE_HOME/.config/zsh/config.d/loader.zsh" 2>/dev/null \
               || md5sum "$FAKE_HOME/.config/zsh/config.d/loader.zsh" 2>/dev/null | awk '{print $1}')
 
-  sync_zsh >/dev/null 2>&1
+  step_zsh_loader >/dev/null 2>&1
   checksum2=$(md5 -q "$FAKE_HOME/.config/zsh/config.d/loader.zsh" 2>/dev/null \
               || md5sum "$FAKE_HOME/.config/zsh/config.d/loader.zsh" 2>/dev/null | awk '{print $1}')
 
@@ -153,10 +161,11 @@ _symlinks() {
 }
 
 @test "sync_zsh: .zshrc contains the workbench loader source line after both runs" {
-  _source_with "$FAKE_HOME" "zsh/steps.sh"
+  _zsh_setup
+  step_zsh_loader >/dev/null 2>&1
 
-  sync_zsh >/dev/null 2>&1
-  sync_zsh >/dev/null 2>&1
+  step_zshrc >/dev/null 2>&1
+  step_zshrc >/dev/null 2>&1
 
   grep -qF ".config/zsh/config.d/loader.zsh" "$FAKE_HOME/.zshrc"
 }

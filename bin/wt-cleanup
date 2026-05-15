@@ -26,6 +26,11 @@ EOF
 command -v wt >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 1; }
 
+use_gh=false
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  use_gh=true
+fi
+
 dry_run=false
 quiet=false
 max_age_days=""
@@ -60,6 +65,9 @@ for ((i = 0; i < count; i++)); do
 
   if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
     reason="merged"
+  elif [[ "$use_gh" == "true" ]] && \
+       gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q MERGED; then
+    reason="pr merged"
   elif [[ -n "$max_age_days" ]]; then
     age=$((now - timestamp))
     max_age_secs=$((max_age_days * 86400))

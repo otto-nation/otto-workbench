@@ -220,3 +220,67 @@ JSON
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+# ── Uncommitted changes protection ──────────────────────────────────────────
+
+@test "worktree with uncommitted changes is skipped" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/dirty","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+}
+
+@test "worktree with untracked files is skipped" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/untracked","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+}
+
+@test "worktree with staged changes is skipped" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/staged","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":true,"modified":false,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+}
+
+@test "clean worktree is still removed when merged" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/clean-merged","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feat/clean-merged"* ]]
+}
+
+# ── Grace period ────────────────────────────────────────────────────────────
+
+@test "recently created worktree is skipped by grace period" {
+  # Create a real directory so stat works
+  local wt_dir="$TMPDIR/recent-worktree"
+  mkdir -p "$wt_dir"
+  _write_worktrees <<JSON
+[{"branch":"feat/new","path":"$wt_dir","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping: feat/new"* ]]
+  [[ "$output" == *"grace period"* ]]
+}
+
+@test "--no-grace-period removes recently created worktree" {
+  local wt_dir="$TMPDIR/recent-worktree"
+  mkdir -p "$wt_dir"
+  _write_worktrees <<JSON
+[{"branch":"feat/new","path":"$wt_dir","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feat/new"* ]]
+}

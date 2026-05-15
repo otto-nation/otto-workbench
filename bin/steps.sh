@@ -25,7 +25,7 @@ step_bin() {
 
 # sync_bin — re-symlinks all bin scripts; safe to run non-interactively.
 sync_bin() {
-  echo; info "bin scripts → $LOCAL_BIN_DIR/"
+  sync_header "bin scripts → $LOCAL_BIN_DIR/"
   step_bin
 }
 

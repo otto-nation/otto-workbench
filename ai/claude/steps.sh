@@ -42,7 +42,7 @@ _mcp_install() {
     local registered
     registered=$(_mcp_registered_cmd "$name")
     if [[ "$registered" == "$expected" ]]; then
-      success "$name already registered"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && success "$name already registered" || true
       return
     fi
     _mcp_update "$name"
@@ -65,7 +65,7 @@ _mcp_install_from_manifest() {
   url=$(jq -r '.url // empty' "$file")
   [[ -z "$url" ]] && { err "$name: manifest is missing required field: url"; return 1; }
 
-  echo -e "  ${DIM}$url${NC}"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}$url${NC}" || true
   while IFS= read -r arg; do
     cmd_args+=("$arg")
   done < <(jq -r '.command[]' "$file")
@@ -73,7 +73,7 @@ _mcp_install_from_manifest() {
   _mcp_install "$name" "${cmd_args[@]}"
 
   note=$(jq -r '.note // empty' "$file")
-  if [[ -n "$note" ]]; then echo -e "  ${DIM}$note${NC}"; fi
+  if [[ -n "$note" && "${WORKBENCH_SYNC:-}" != true ]]; then echo -e "  ${DIM}$note${NC}"; fi
 }
 
 
@@ -99,7 +99,10 @@ _print_item_list() {
 
 # step_claude_mcps — installs all MCP servers discovered from ai/claude/mcps/*.json.
 step_claude_mcps() {
-  [[ -d "$CLAUDE_MCPS_SRC_DIR" ]] || { skip "No MCP configs in $CLAUDE_MCPS_SRC_DIR"; return; }
+  if [[ ! -d "$CLAUDE_MCPS_SRC_DIR" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && skip "No MCP configs in $CLAUDE_MCPS_SRC_DIR" || true
+    return
+  fi
 
   local file
   for file in "$CLAUDE_MCPS_SRC_DIR"/*.json; do
@@ -132,7 +135,7 @@ step_claude_guidelines() {
 
 # step_claude_rules — delegates to claude-rules sync which owns all rules logic.
 step_claude_rules() {
-  claude-rules sync
+  "$CLAUDE_SRC_DIR/bin/claude-rules" sync
 }
 
 # step_claude_settings — merges workbench settings.json template into the live
@@ -164,7 +167,7 @@ step_claude_settings() {
   local label="settings.json synced"
   [[ "$existing" == "{}" ]] && label="settings.json written"
   [[ -f "$USER_SETTINGS_SRC" ]] && label+=" (+ user overrides)"
-  success "$label"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success "$label" || true
 }
 
 # step_claude_skills — symlinks each skill directory into ~/.claude/skills/.
@@ -173,7 +176,7 @@ step_claude_settings() {
 step_claude_skills() {
   [[ -d "$CLAUDE_SKILLS_SRC_DIR" ]] || { warn "No skills found in $CLAUDE_SKILLS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_SKILLS_DIR"
-  info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/" || true
 
   local -A layers
   resolve_layers "$CLAUDE_SKILLS_SRC_DIR" "$USER_SKILLS_DIR" "*/" layers
@@ -186,7 +189,7 @@ step_claude_skills() {
     name=$(basename "$item")
     if [[ -z "${layers[$name]+set}" ]]; then
       rm -f "${item%/}"  # remove symlink
-      echo -e "  ${DIM}⊘ pruned $name${NC}"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $name${NC}" || true
     fi
   done
 
@@ -204,7 +207,7 @@ step_claude_skills() {
 step_claude_agents() {
   [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_AGENTS_DIR"
-  info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/" || true
 
   local -A layers
   resolve_layers "$CLAUDE_AGENTS_SRC_DIR" "$USER_AGENTS_DIR" "*.md" layers
@@ -217,7 +220,7 @@ step_claude_agents() {
     name=$(basename "$item")
     if [[ -z "${layers[$name]+set}" ]]; then
       rm "$item"
-      echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}"
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned ${name%.md}${NC}" || true
     fi
   done
 
@@ -237,7 +240,7 @@ step_generate_tools() {
     warn "generate-tool-context not found — skipping tool context generation"
     return
   fi
-  info "Generating tool context"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating tool context" || true
   bash "$generator"
 }
 
@@ -249,7 +252,7 @@ step_claude_machine_profile() {
     warn "generate-machine-profile.sh not found — skipping"
     return
   fi
-  info "Generating machine profile"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating machine profile" || true
   bash "$generator" --force
 }
 
@@ -274,7 +277,7 @@ step_claude_backup_memory() {
       (( count++ )) || true
     done
   done
-  success "Memory backed up ($count files → ai/memory/)"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Memory backed up ($count files → ai/memory/)" || true
 }
 
 # step_claude_restore_memory — copies ai/memory/ back to ~/.claude/projects/*/memory/.
@@ -323,7 +326,7 @@ step_claude_worktrunk_plugin() {
   }
 
   if wt config plugins list 2>/dev/null | grep -q "claude"; then
-    success "Worktrunk Claude plugin already installed"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Worktrunk Claude plugin already installed" || true
     return
   fi
 
@@ -350,27 +353,27 @@ register_claude_steps() {
 sync_claude() {
   command -v claude >/dev/null 2>&1 || { warn "claude not found in PATH — skipping"; return; }
 
-  echo; info "claude scripts → $LOCAL_BIN_DIR/"
+  sync_header "claude scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$CLAUDE_SRC_DIR"
 
-  echo; info "Claude settings"
+  sync_header "Claude settings"
   step_claude_settings
 
-  echo; info "Claude guidelines + rules"
+  sync_header "Claude guidelines + rules"
   step_claude_guidelines
   step_claude_rules
 
-  echo; info "Claude MCPs"
+  sync_header "Claude MCPs"
   step_claude_mcps
 
-  echo; info "Claude skills + agents"
+  sync_header "Claude skills + agents"
   step_claude_skills
   step_claude_agents
 
-  echo; info "Machine profile"
+  sync_header "Machine profile"
   step_claude_machine_profile
 
-  echo; info "Memory backup"
+  sync_header "Memory backup"
   step_claude_backup_memory
 }
 

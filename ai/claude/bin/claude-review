@@ -123,7 +123,7 @@ _format_usage() {
   [[ ${#logs[@]} -gt 0 ]] || return 0
 
   local raw
-  raw=$(grep '"type":"result"' "${logs[@]}" 2>/dev/null) || return 0
+  raw=$(grep -h '"type":"result"' "${logs[@]}" 2>/dev/null) || return 0
   [[ -n "$raw" ]] || return 0
 
   local usage_json
@@ -699,4 +699,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

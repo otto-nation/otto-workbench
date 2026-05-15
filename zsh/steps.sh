@@ -59,7 +59,7 @@ _deploy_zsh_layer() {
     [[ -f "$dst_item" ]] || continue
     [[ -e "$src/$(basename "$dst_item")" ]] && continue
     rm "$dst_item"
-    echo -e "  ${DIM}⊘ pruned $(basename "$dst_item")${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $(basename "$dst_item")${NC}" || true
   done
 }
 
@@ -86,7 +86,7 @@ step_zsh() {
   for stale in "$ZSH_CONFIG_DIR"/aliases-*.zsh; do
     [[ -L "$stale" ]] || continue
     rm "$stale"
-    echo -e "  ${DIM}⊘ pruned $(basename "$stale") (moved to aliases/)${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $(basename "$stale") (moved to aliases/)${NC}" || true
   done
 }
 
@@ -100,7 +100,7 @@ step_zsh_loader() {
     cp "$ZSH_LOADER_SRC" "$ZSH_LOADER_DST"
     success "$(basename "$ZSH_LOADER_SRC") updated"
   else
-    echo -e "  ${DIM}✓ $(basename "$ZSH_LOADER_SRC")${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $(basename "$ZSH_LOADER_SRC")${NC}" || true
   fi
 }
 
@@ -116,7 +116,7 @@ _zshrc_ensure_integration() {
     success "Created $ZSHRC_FILE from template"
     info "Add secrets and machine-specific config to $ENV_LOCAL_FILE (sourced automatically, never committed)"
   elif grep -qF "$loader_rel" "$ZSHRC_FILE" 2>/dev/null; then
-    success ".zshrc integration block present — up to date"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success ".zshrc integration block present — up to date" || true
   else
     # Append integration block. $loader_rel is expanded now; \$HOME expands at shell-start time.
     cat >> "$ZSHRC_FILE" <<EOF
@@ -268,12 +268,12 @@ step_env_local() {
   fi
 
   if ! command -v yq >/dev/null 2>&1; then
-    success ".env.local exists (yq not found — skipping env var sync)"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success ".env.local exists (yq not found — skipping env var sync)" || true
     return
   fi
 
   if ! grep -q '# --- ENV-START ---' "$ENV_LOCAL_FILE" 2>/dev/null; then
-    success ".env.local already exists (no ENV markers — add them to enable auto-updates)"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success ".env.local already exists (no ENV markers — add them to enable auto-updates)" || true
     return
   fi
 
@@ -290,7 +290,7 @@ step_env_local() {
   ' "$ENV_LOCAL_FILE" > "$tmp" && mv "$tmp" "$ENV_LOCAL_FILE"
   rm -f "$new_content_file"
 
-  success ".env.local env section updated"
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && success ".env.local env section updated" || true
 }
 
 # step_zshrc — ensures ~/.zshrc is connected to the workbench loader and warns
@@ -306,23 +306,23 @@ step_zshrc() {
 # Includes .zshrc integration so otto-workbench sync repairs a disconnected shell.
 # Called automatically by install.sh and otto-workbench sync via the sync_<name> convention.
 sync_zsh() {
-  echo; info "zsh configs → $ZSH_CONFIG_DIR/"
+  sync_header "zsh configs → $ZSH_CONFIG_DIR/"
   mkdir -p "$ZSH_CONFIG_DIR"
   step_zsh
   step_zsh_loader
   if command -v starship >/dev/null 2>&1; then
     install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"
   else
-    echo -e "  ${DIM}⊘ starship.toml (requires starship — install it, then: otto-workbench sync zsh)${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ starship.toml (requires starship — install it, then: otto-workbench sync zsh)${NC}" || true
   fi
 
-  echo; info "ZSH configuration (.zshrc)"
+  sync_header "ZSH configuration (.zshrc)"
   step_zshrc
 
-  echo; info "Environment ($ENV_LOCAL_FILE)"
+  sync_header "Environment ($ENV_LOCAL_FILE)"
   step_env_local
 
-  echo; info "zsh scripts → $LOCAL_BIN_DIR/"
+  sync_header "zsh scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$ZSH_SRC_DIR"
 }
 

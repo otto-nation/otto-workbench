@@ -79,7 +79,7 @@ run_component_migrations() {
     fi
   done
 
-  if (( applied > 0 || skipped > 0 )); then
+  if (( applied > 0 )); then
     echo -e "  ${DIM}migrations: $applied applied, $skipped already applied${NC}"
   fi
 }
@@ -133,7 +133,7 @@ run_all_migrations() {
   discover_migration_dirs _migration_dirs
 
   if [[ ${#_migration_dirs[@]} -eq 0 ]]; then
-    echo -e "  ${DIM}no migrations found${NC}"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}no migrations found${NC}" || true
     return
   fi
 

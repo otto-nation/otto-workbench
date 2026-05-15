@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
-# Remove stale git worktrees managed by Worktrunk.
-#
-# By default, removes worktrees whose branches are fully merged (safe to delete).
-# With --age <days>, also removes worktrees with no commits newer than <days> days.
-#
-# Usage:
-#   wt-cleanup              # remove merged-only worktrees
-#   wt-cleanup --age 7      # also remove worktrees inactive for 7+ days
-#   wt-cleanup --dry-run    # show what would be removed
-#   wt-cleanup --quiet      # no output (for hooks)
-
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Remove stale git worktrees managed by Worktrunk.
+
+By default, removes worktrees whose branches are fully merged (safe to delete).
+With --age <days>, also removes worktrees with no commits newer than <days> days.
+
+Usage: $(basename "$0") [options]
+
+Options:
+  --age <days>  Also remove worktrees inactive for <days>+ days
+  --dry-run     Show what would be removed
+  --quiet       No output (for hooks)
+  -h, --help    Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
 command -v wt >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 1; }

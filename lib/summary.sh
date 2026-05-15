@@ -226,12 +226,15 @@ run_component_summaries() {
     done
   fi
 
-  local summary_file fn
+  local summary_file fn _component
   for summary_file in "${files[@]}"; do
     [[ -f "$summary_file" ]] || continue
     # shellcheck source=/dev/null
     . "$summary_file"
-    fn="print_$(basename "$(dirname "$summary_file")")_summary"
+    _component="$(basename "$(dirname "$summary_file")")"
+    export WORKBENCH_CURRENT_COMPONENT="$_component"
+    fn="print_${_component}_summary"
     declare -f "$fn" > /dev/null 2>&1 && "$fn" || true
   done
+  unset WORKBENCH_CURRENT_COMPONENT
 }

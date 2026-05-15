@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Scaffold Serena MCP into a project's .mcp.json.
-#
-# Usage: serena-mcp <command>
-#
-# Commands:
-#   init      Add Serena to .mcp.json in the current directory (creates if missing)
-#   status    Show whether Serena is configured in the current project
-#
-# Serena is a heavyweight MCP server that starts LSP servers for code intelligence.
-# This script keeps it project-scoped so it only runs where explicitly enabled.
-
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -86,7 +75,19 @@ cmd_status() {
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 usage() {
-  sed -n '2,/^$/s/^# \?//p' "${BASH_SOURCE[0]}"
+  cat <<EOF
+Scaffold Serena MCP into a project's .mcp.json.
+
+Usage: $(basename "$0") <command>
+
+Commands:
+  init        Add Serena to .mcp.json in the current directory (creates if missing)
+  status      Show whether Serena is configured in the current project
+  -h, --help  Show this help
+
+Serena is a heavyweight MCP server that starts LSP servers for code intelligence.
+This script keeps it project-scoped so it only runs where explicitly enabled.
+EOF
 }
 
 main() {

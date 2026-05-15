@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0](https://github.com/otto-nation/otto-workbench/compare/v1.1.1...v1.2.0) (2026-05-15)
+
+
+### Features
+
+* **claude-review:** add language idioms analysis phase ([#85](https://github.com/otto-nation/otto-workbench/issues/85)) ([8023c3f](https://github.com/otto-nation/otto-workbench/commit/8023c3f411e9c79405340a76375aaf95e89ab9a3))
+* **claude-review:** pre-flight checks; refactor(cli): noun-first ai syntax ([#80](https://github.com/otto-nation/otto-workbench/issues/80)) ([2516880](https://github.com/otto-nation/otto-workbench/commit/251688065e9e89cc3fd29aa2f6bfc935a1b8be1c))
+
+
+### Bug Fixes
+
+* enforce PR template usage via rule and hook ([#84](https://github.com/otto-nation/otto-workbench/issues/84)) ([ce9c45f](https://github.com/otto-nation/otto-workbench/commit/ce9c45f436c96fe9e5f6eb372279b0d2d34e127d))
+* **wt-cleanup:** add grace period and dirty worktree protection ([#82](https://github.com/otto-nation/otto-workbench/issues/82)) ([63f24a9](https://github.com/otto-nation/otto-workbench/commit/63f24a9af91b0326402148ad744671dcad022801))
+
+
+### Code Refactoring
+
+* **claude-review:** extract post logic into review-post ([#83](https://github.com/otto-nation/otto-workbench/issues/83)) ([5f58538](https://github.com/otto-nation/otto-workbench/commit/5f58538612749f996348824ef276fad0190947d1))
+
 ## [1.1.1](https://github.com/otto-nation/otto-workbench/compare/v1.1.0...v1.1.1) (2026-05-15)
 
 

@@ -24,6 +24,25 @@ elif [[ "$1" == "remove" ]]; then
 fi
 FAKEWT
   chmod +x "$MOCK_BIN/wt"
+
+  # Fake gh — branches listed in GH_PR_MERGED_FILE return "MERGED"
+  GH_PR_MERGED="$TMPDIR/gh-pr-merged.txt"
+  cat > "$MOCK_BIN/gh" <<'FAKEGH'
+#!/usr/bin/env bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  [[ -f "$GH_PR_MERGED_FILE" ]] && exit 0
+  exit 1
+elif [[ "$1" == "pr" && "$2" == "view" ]]; then
+  branch="$3"
+  if [[ -f "$GH_PR_MERGED_FILE" ]] && grep -qx "$branch" "$GH_PR_MERGED_FILE"; then
+    echo "MERGED"
+    exit 0
+  fi
+  exit 1
+fi
+exit 1
+FAKEGH
+  chmod +x "$MOCK_BIN/gh"
 }
 
 teardown() {
@@ -31,11 +50,12 @@ teardown() {
   common_teardown
 }
 
-# Helper: run wt-cleanup with mocked wt
+# Helper: run wt-cleanup with mocked wt and gh
 _run_cleanup() {
   PATH="$MOCK_BIN:$PATH" \
     WT_JSON_FILE="$WT_JSON" \
     WT_REMOVE_LOG_FILE="$WT_REMOVE_LOG" \
+    GH_PR_MERGED_FILE="$GH_PR_MERGED" \
     NO_COLOR=1 \
     run "$WT_CLEANUP" "$@"
 }
@@ -96,6 +116,30 @@ JSON
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" == *"removing: feat/merged"* ]]
+}
+
+# ── Squash-merged PRs (GitHub fallback) ──────────────────────────────────────
+
+@test "squash-merged PR detected via gh fallback" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/squashed","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]
+JSON
+  echo "feat/squashed" > "$GH_PR_MERGED"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feat/squashed"* ]]
+  [[ "$output" == *"pr merged"* ]]
+  grep -q "feat/squashed" "$WT_REMOVE_LOG"
+}
+
+@test "unmerged PR not removed by gh fallback" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/open-pr","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑3","commit":{"timestamp":0}}]
+JSON
+  echo "feat/other-branch" > "$GH_PR_MERGED"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
 }
 
 # ── Protected worktrees ──────────────────────────────────────────────────────

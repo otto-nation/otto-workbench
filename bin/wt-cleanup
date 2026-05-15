@@ -4,6 +4,8 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../lib/ui.sh"
 
+GRACE_PERIOD_SECS=600
+
 usage() {
   cat <<EOF
 Remove stale git worktrees managed by Worktrunk.
@@ -11,13 +13,17 @@ Remove stale git worktrees managed by Worktrunk.
 By default, removes worktrees whose branches are fully merged (safe to delete).
 With --age <days>, also removes worktrees with no commits newer than <days> days.
 
+Worktrees created less than ${GRACE_PERIOD_SECS}s ago are always skipped to avoid
+removing worktrees that another session is actively using.
+
 Usage: $(basename "$0") [options]
 
 Options:
-  --age <days>  Also remove worktrees inactive for <days>+ days
-  --dry-run     Show what would be removed
-  --quiet       No output (for hooks)
-  -h, --help    Show this help
+  --age <days>       Also remove worktrees inactive for <days>+ days
+  --no-grace-period  Skip the ${GRACE_PERIOD_SECS}s grace period (remove immediately)
+  --dry-run          Show what would be removed
+  --quiet            No output (for hooks)
+  -h, --help         Show this help
 EOF
 }
 
@@ -34,12 +40,14 @@ fi
 dry_run=false
 quiet=false
 max_age_days=""
+grace_period=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dry-run) dry_run=true; shift ;;
-    --quiet)   quiet=true; shift ;;
-    --age)     max_age_days="$2"; shift 2 ;;
+    --dry-run)          dry_run=true; shift ;;
+    --quiet)            quiet=true; shift ;;
+    --age)              max_age_days="$2"; shift 2 ;;
+    --no-grace-period)  grace_period=false; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -50,10 +58,55 @@ removed=0
 worktrees=$(wt list --format json 2>/dev/null) || exit 0
 count=$(echo "$worktrees" | jq 'length')
 
+_worktree_age_secs() {
+  local wt_path="$1"
+  [[ -d "$wt_path" ]] || return 1
+  local created
+  # macOS: stat -f %B (birth time); Linux: stat -c %W (birth time, 0 if unsupported)
+  created=$(stat -f %B "$wt_path" 2>/dev/null) \
+    || created=$(stat -c %W "$wt_path" 2>/dev/null) \
+    || return 1
+  [[ "$created" -gt 0 ]] || return 1
+  echo $((now - created))
+}
+
+_has_uncommitted_changes() {
+  local idx="$1"
+  local result
+  result=$(echo "$worktrees" | jq -r "
+    .[$idx].working_tree | (.staged or .modified or .untracked or .renamed or .deleted)")
+  [[ "$result" == "true" ]]
+}
+
+_within_grace_period() {
+  local wt_path="$1"
+  [[ "$grace_period" != "true" ]] && return 1
+  local wt_age
+  wt_age=$(_worktree_age_secs "$wt_path") || return 1
+  [[ $wt_age -lt $GRACE_PERIOD_SECS ]]
+}
+
+_detect_reason() {
+  local main_state="$1" symbols="$2" branch="$3" timestamp="$4"
+  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
+    echo "merged"
+  elif [[ "$use_gh" == "true" ]] && \
+       gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q MERGED; then
+    echo "pr merged"
+  elif [[ -n "$max_age_days" ]]; then
+    local age=$((now - timestamp))
+    local max_age_secs=$((max_age_days * 86400))
+    if [[ $age -gt $max_age_secs ]]; then
+      echo "$((age / 86400))d inactive"
+    fi
+  fi
+}
+
 for ((i = 0; i < count; i++)); do
   is_main=$(echo "$worktrees" | jq -r ".[$i].is_main")
   is_current=$(echo "$worktrees" | jq -r ".[$i].is_current")
   branch=$(echo "$worktrees" | jq -r ".[$i].branch")
+  wt_path=$(echo "$worktrees" | jq -r ".[$i].path")
   main_state=$(echo "$worktrees" | jq -r ".[$i].main_state")
   symbols=$(echo "$worktrees" | jq -r ".[$i].symbols")
   timestamp=$(echo "$worktrees" | jq -r ".[$i].commit.timestamp")
@@ -61,19 +114,19 @@ for ((i = 0; i < count; i++)); do
   [[ "$is_main" == "true" ]] && continue
   [[ "$is_current" == "true" ]] && continue
 
-  reason=""
-
-  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
-    reason="merged"
-  elif [[ "$use_gh" == "true" ]] && \
-       gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q MERGED; then
-    reason="pr merged"
-  elif [[ -n "$max_age_days" ]]; then
-    age=$((now - timestamp))
-    max_age_secs=$((max_age_days * 86400))
-    [[ $age -gt $max_age_secs ]] && reason="$((age / 86400))d inactive"
+  if _has_uncommitted_changes "$i"; then
+    [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+      echo "skipping: $branch (has uncommitted changes)"
+    continue
   fi
 
+  if _within_grace_period "$wt_path"; then
+    [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+      echo "skipping: $branch (grace period)"
+    continue
+  fi
+
+  reason=$(_detect_reason "$main_state" "$symbols" "$branch" "$timestamp")
   [[ -z "$reason" ]] && continue
 
   removed=$((removed + 1))

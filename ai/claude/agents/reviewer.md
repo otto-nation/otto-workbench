@@ -21,7 +21,7 @@ Categorize all changed files into review tiers:
 - **Tier 3 (scan):** Generated files (verify generator input instead), vendored code, pure formatting/rename changes
 
 Write the triage as a `## File Triage` section in the review output, listing every file with its tier. Then read and review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped
-- Check for `.claude/review/` in the project root. For each checklist file, read its `paths:` frontmatter and match against the files in the diff. Load matching checklists as supplementary review criteria for Phases 3–7
+- Check for `.claude/review/` in the project root. For each checklist file, read its `paths:` frontmatter and match against the files in the diff. Load matching checklists as supplementary review criteria for Phases 3–8
 - Read `.claude/context.md` Known Constraints section if it exists — use it to avoid findings that contradict known project constraints
 - If dependency files are modified, flag for breaking-change analysis in Phase 3
 - If no `.claude/review/` directory exists or no checklists match, proceed normally — checklists are optional
@@ -41,7 +41,7 @@ Write the triage as a `## File Triage` section in the review output, listing eve
      gh api repos/{owner}/{repo}/issues/<pr_number>/comments \
        --jq '.[] | {user: .user.login, body}'
      ```
-  4. Use this context throughout Phases 3–6:
+  4. Use this context throughout Phases 3–8:
      - Do not re-raise findings already covered by another reviewer — reference them instead if relevant
      - Note resolved threads (author acknowledged and fixed) — skip these entirely
      - Focus on gaps: issues no one has raised, or threads where the resolution looks incomplete
@@ -60,7 +60,7 @@ Write the triage as a `## File Triage` section in the review output, listing eve
   - GitHub issues (`#123` or URL): `gh issue view <number> --json title,body,comments`
   - Linear issues (URL or ID like `PROJ-123`): fetch via `linear issue view <ID>` or WebFetch the URL
   - Other URLs: fetch via WebFetch
-  - Use the issue's requirements as baseline criteria throughout Phases 2–6:
+  - Use the issue's requirements as baseline criteria throughout Phases 2–8:
     - **Completeness** — does the PR fully address what the issue describes? Flag requirements mentioned in the issue but missing from the implementation
     - **Scope creep** — does the PR introduce changes not motivated by the issue? Note them (they may be intentional, but should be called out)
     - **Acceptance criteria** — if the issue lists specific criteria or test cases, verify each is addressed
@@ -151,7 +151,17 @@ Write the triage as a `## File Triage` section in the review output, listing eve
 - Test coverage — are new behaviors tested? Are edge cases covered?
 - If checklists were loaded in Phase 0, check for anti-pattern matches and lookup table violations. Reference the checklist in the finding
 
-### 8. Back up claims with source references
+### 8. Language Idioms
+
+Auto-detect languages from file extensions in the diff. For each language present in the changed files, check the **changed lines** (not pre-existing code) through three lenses:
+
+- **Modern alternatives** — flag deprecated patterns, old APIs, or verbose constructs that have cleaner standard library replacements. Examples: `errors.Is`/`errors.As` over `==` comparison in Go; `pathlib` over `os.path` in Python; `[[ ]]` over `[ ]` in Bash; `async`/`await` over `.then` chains in TypeScript
+- **Common pitfalls** — language-specific footguns that cause subtle bugs: nil map/slice writes and goroutine leaks in Go; mutable default arguments and bare `except:` in Python; unquoted variables and parsing `ls` output in Bash; `==` vs `===` and `any` type escape hatches in TypeScript
+- **Idiomatic style** — following language conventions and community norms: short receiver names and table-driven tests in Go; list comprehensions and context managers in Python; `"$@"` quoting and `local` for function variables in Bash; discriminated unions and optional chaining in TypeScript
+
+Use `[I#]` finding IDs (`[I1]`, `[I2]`, ...). If an idiom issue also constitutes a correctness or security problem (e.g., nil map write, unquoted variable causing word splitting), report it in Must-fix or Should-fix with its normal severity — do not duplicate it in Idioms.
+
+### 9. Back up claims with source references
 
 Every finding that asserts something about the codebase (wrong API name, missing field, incorrect behavior, existing utility not used) must include a source reference proving the claim. Do not just say "X is wrong" — show where the correct version lives.
 
@@ -162,7 +172,7 @@ For each such finding:
 
 This allows `/pr-review` to convert references into GitHub permalink URLs when posting.
 
-### 9. Verdict
+### 10. Verdict
 
 Use the Write tool to save the review to the output path specified in the prompt. Do NOT print the review to stdout — it must be written as a file.
 
@@ -188,6 +198,9 @@ One sentence on what the change does and overall quality.
 ## Nit
 - **[N1]** **<file>:<line>** — <finding>
 
+## Idioms
+- **[I1]** **<file>:<line>** — <finding>
+
 ## Verdict
 Approve / Request changes / Needs discussion
 ```
@@ -196,7 +209,7 @@ Omit severity sections with no findings. Skip files with no issues.
 
 After writing, print the file path so the user can review and edit before drafting.
 
-### 10. Next steps
+### 11. Next steps
 
 After writing the review file, print:
 

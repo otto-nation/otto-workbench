@@ -87,7 +87,7 @@ class Finding:
 FINDING_ID_RE = re.compile(
     r"^- (?:\[ \] )?"           # list item, optional checkbox
     r"(?:~~)?"                   # optional strikethrough start
-    r"\*\*\[([MSN])(\d+)\]\*\*" # [S1] in bold
+    r"\*\*\[([MSNI])(\d+)\]\*\*" # [S1] or [I1] in bold
     r"\s+"
 )
 

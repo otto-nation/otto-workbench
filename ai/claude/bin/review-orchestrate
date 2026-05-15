@@ -115,10 +115,12 @@ SECTION_FILE_TRIAGE = "File Triage"
 SECTION_MUST_FIX = "Must fix"
 SECTION_SHOULD_FIX = "Should fix"
 SECTION_NIT = "Nit"
+SECTION_IDIOMS = "Idioms"
 
 FINDING_PREFIX_MUST = "M"
 FINDING_PREFIX_SHOULD = "S"
 FINDING_PREFIX_NIT = "N"
+FINDING_PREFIX_IDIOMS = "I"
 
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
@@ -289,7 +291,7 @@ def renumber_findings(review_file: str) -> None:
         return
     text = path.read_text()
 
-    for prefix in (FINDING_PREFIX_MUST, FINDING_PREFIX_SHOULD, FINDING_PREFIX_NIT):
+    for prefix in (FINDING_PREFIX_MUST, FINDING_PREFIX_SHOULD, FINDING_PREFIX_NIT, FINDING_PREFIX_IDIOMS):
         seen_ids: list[int] = []
         for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
             num = int(m.group(1))
@@ -328,7 +330,8 @@ def merge_reviews(group_files: list[str]) -> str:
     merged_must = ""
     merged_should = ""
     merged_nit = ""
-    m_offset = s_offset = n_offset = 0
+    merged_idioms = ""
+    m_offset = s_offset = n_offset = i_offset = 0
 
     for path in group_files:
         p = Path(path)
@@ -340,6 +343,7 @@ def merge_reviews(group_files: list[str]) -> str:
         must = _extract_section(content, SECTION_MUST_FIX)
         should = _extract_section(content, SECTION_SHOULD_FIX)
         nit = _extract_section(content, SECTION_NIT)
+        idioms = _extract_section(content, SECTION_IDIOMS)
 
         if triage:
             merged_triage += triage + "\n"
@@ -359,6 +363,11 @@ def merge_reviews(group_files: list[str]) -> str:
             merged_nit += text + "\n"
         n_offset += count
 
+        text, count = renumber_section(FINDING_PREFIX_IDIOMS, idioms, i_offset)
+        if text:
+            merged_idioms += text + "\n"
+        i_offset += count
+
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
     if merged_must:
         parts.append(f"## {SECTION_MUST_FIX}\n{merged_must}")
@@ -366,6 +375,8 @@ def merge_reviews(group_files: list[str]) -> str:
         parts.append(f"## {SECTION_SHOULD_FIX}\n{merged_should}")
     if merged_nit:
         parts.append(f"## {SECTION_NIT}\n{merged_nit}")
+    if merged_idioms:
+        parts.append(f"## {SECTION_IDIOMS}\n{merged_idioms}")
 
     return "\n".join(parts)
 

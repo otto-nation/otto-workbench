@@ -361,6 +361,60 @@ usage() {
   echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
   echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
+  echo "  --force                    Skip pending review and stale review warnings"
+}
+
+_check_pending_review() {
+  local repo="$1"
+  local pr_number="$2"
+  local force="$3"
+
+  [[ "$force" == "true" ]] && return 0
+
+  local gh_user
+  gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
+
+  local pending_json
+  pending_json=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
+    --jq "[.[] | select(.user.login == \"${gh_user}\" and .state == \"PENDING\")] | first // empty" 2>/dev/null) || true
+
+  if [[ -n "$pending_json" && "$pending_json" != "null" ]]; then
+    local pending_id comment_count
+    pending_id=$(echo "$pending_json" | jq -r '.id') || true
+    comment_count=$(gh api "repos/${repo}/pulls/${pr_number}/reviews/${pending_id}/comments" \
+      --jq 'length' 2>/dev/null) || true
+
+    warn "PENDING review exists with ${comment_count:-0} comments (not yet submitted)"
+    if confirm "Delete the pending review before re-reviewing?"; then
+      gh api "repos/${repo}/pulls/${pr_number}/reviews/${pending_id}" --method DELETE >/dev/null 2>&1 || true
+      info "Deleted pending review"
+    else
+      info "Keeping pending review — new review will replace it at post time"
+    fi
+  fi
+}
+
+_check_stale_review() {
+  local repo="$1"
+  local pr_number="$2"
+  local review_file="$3"
+  local force="$4"
+
+  [[ "$force" == "true" ]] && return 0
+  [[ -f "$review_file" ]] || return 0
+
+  local review_sha
+  review_sha=$(grep -oP '<!-- head_sha: \K[a-f0-9]+' "$review_file" 2>/dev/null | head -1) || true
+  [[ -n "$review_sha" ]] || return 0
+
+  local pr_head_sha
+  pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
+  [[ -n "$pr_head_sha" ]] || return 0
+
+  if [[ "$review_sha" == "$pr_head_sha" ]]; then
+    warn "No new commits since the last review (HEAD ${pr_head_sha:0:7})"
+    confirm "Re-review anyway?" || exit 0
+  fi
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
@@ -371,6 +425,7 @@ cmd_review() {
   local issue_link="${3:-}"
   local auto_post="${4:-false}"
   local max_parallel="${5:-$DEFAULT_MAX_PARALLEL}"
+  local force="${6:-false}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -404,6 +459,10 @@ cmd_review() {
   fi
 
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
+
+  # ── Pre-flight checks ──
+  _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
+  _check_pending_review "$repo" "$pr_number" "$force"
 
   # ── Worktree setup ──
   local wt_path
@@ -651,6 +710,7 @@ main() {
   local auto_post="false"
   local self_review="false"
   local skip_user_verification="false"
+  local force="false"
   local issue_link=""
   local max_parallel="$DEFAULT_MAX_PARALLEL"
   local positional=()
@@ -661,6 +721,7 @@ main() {
       --post)          auto_post="true"; shift ;;
       --self)          self_review="true"; shift ;;
       --skip-user-verification) skip_user_verification="true"; shift ;;
+      --force)         force="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       -h|--help)       usage; exit 0 ;;
@@ -694,7 +755,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force"
       ;;
   esac
 }

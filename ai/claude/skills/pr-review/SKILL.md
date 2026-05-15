@@ -1,12 +1,14 @@
 ---
 name: pr-review
-description: "Post or update a GitHub PR review from ~/.config/workbench/reviews/. Creates PENDING reviews with inline comments, and can analyze and respond to existing review threads."
+description: "Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script."
 source: otto-workbench/ai/claude/skills/pr-review/SKILL.md
 ---
 
 # PR Review
 
-Manages the lifecycle of GitHub PR reviews: post new reviews, update existing ones, and respond to review threads.
+Manages the thread lifecycle of GitHub PR reviews: analyze responses, update review files, and post replies.
+
+**Initial posting** of review findings is handled by `review-post` (called via `claude-review post <N>` or `cmd_post()`). This skill is for thread management after a review has been posted.
 
 Run with `/pr-review <pr_number>`.
 
@@ -14,7 +16,7 @@ Run with `/pr-review <pr_number>`.
 
 ## Steps
 
-### 1. Check for existing review
+### 1. Check for existing review threads
 
 ```bash
 repo=$(basename $(git rev-parse --show-toplevel))
@@ -35,10 +37,10 @@ gh api repos/{owner}/{repo}/pulls/<pr_number>/comments \
 **If an existing review has unanswered responses:**
 - Show the user a summary: how many threads, which files, who responded
 - Ask: "There are N unanswered threads on this PR. Would you like to analyze them and update the review file?"
-- If yes, proceed to Step 1b
-- If no, skip to Step 2
+- If yes, proceed to Step 2
+- If no, stop
 
-### 1b. Analyze unanswered threads (on request)
+### 2. Analyze unanswered threads
 
 For each unanswered thread:
 1. Read the original comment and all replies
@@ -49,129 +51,9 @@ For each unanswered thread:
    - Append an `## Open Threads` section with threads needing a response
 4. Present the updates to the user for confirmation before writing
 
-### 2. Load the review file
+### 3. Post replies
 
-Read `~/.config/workbench/reviews/<repo>-<pr_number>.md`. If the file doesn't exist, stop and tell the user to run the reviewer agent first.
-
-Parse the file to extract:
-- Summary (from the `## Summary` section)
-- Findings with file paths, line numbers, severity tags, and descriptions
-- Verdict
-- Skip any `~~strikethrough~~` findings (resolved)
-
-### 3. Fetch the latest PR state
-
-```bash
-# Get the latest commit SHA on the PR
-gh pr view <pr_number> --json headRefOid --jq '.headRefOid'
-
-# Get the diff to validate file paths and line positions
-gh api repos/{owner}/{repo}/pulls/<pr_number> \
-  --header 'Accept: application/vnd.github.v3.diff'
-```
-
-Check if the PR has been updated since the review was written:
-1. Parse `<!-- head_sha: -->` from the review file header (preferred — exact match)
-2. Fall back to comparing `<!-- date: -->` against the latest commit date if no head_sha
-3. If stale: warn the user and ask whether to proceed or re-run the reviewer first
-
-### 4. Validate findings against the diff
-
-1. **Parse finding IDs.** Each finding has an ID like `[M1]`, `[S1]`, `[N1]` (severity letter + sequence). Preserve these IDs and include them in the posted comment body so responses can correlate with specific findings.
-
-2. **Extract findings as JSON.** Build a JSON array from the parsed findings: `[{"path": "file.go", "line": 42, "id": "M1", "body": "..."}, ...]`. Write to a temp file (e.g., `/tmp/pr-findings.json`).
-
-3. **Validate positions using `validate-review-positions`.** This utility checks that each finding's `path:line` falls within a diff hunk:
-
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/<pr_number> \
-     --header 'Accept: application/vnd.github.v3.diff' > /tmp/pr.diff
-   validate-review-positions --diff /tmp/pr.diff --review /tmp/pr-findings.json
-   ```
-
-   The tool outputs JSON with three arrays:
-   - `valid` — findings that fall within diff hunks (post as inline comments with `path` + `line`)
-   - `file_level` — findings whose path is in the diff but line is outside any hunk (post as file-level comments, omit the `line` field)
-   - `skipped` — findings whose path is not in the diff at all (include in the review body text)
-
-4. **Report skipped findings.** Print any findings that couldn't be mapped so the user can address them manually.
-
-### 5. Resolve source references to GitHub permalinks
-
-For each finding that references source code (e.g., `see pkg/service/exampleclass.go:13-22`):
-
-1. Get the SHA of `origin/main` for permalink stability:
-   ```bash
-   git rev-parse origin/main
-   ```
-
-2. Verify the referenced file and line still exist on main (the source may have changed since the review was written)
-
-3. Convert each reference to a GitHub permalink:
-   ```
-   https://github.com/{owner}/{repo}/blob/<main_sha>/<file_path>#L<start>-L<end>
-   ```
-
-4. Build each comment body as a thorough, self-contained explanation:
-   - Lead with the finding ID and severity tag: `**[M1] [must-fix]**`, `**[S1] [should-fix]**`, or `**[N1] [nit]**`
-   - Explain the problem completely — a reader should understand the issue from the comment alone without needing to cross-reference the review file
-   - Embed permalink URLs inline to back up claims (e.g., "should be [`ExampleClass`](permalink)")
-   - Suggestions must show the **complete corrected text** that should replace the problematic code — not just a fragment or variable assignment. The reader should be able to copy-paste the fix
-   - If a working example exists elsewhere in the codebase, link to it
-
-### 6. Post or update the review
-
-**Review body:** Start with a brief note pointing at the inline comments, then include any unmappable findings (files not in the diff or lines outside changed hunks).
-
-Format:
-
-```markdown
-Have some comments marked as nit, must-fix, or should-fix.
-
-**Findings not in the diff (file-level):**
-
-- **[S1] [should-fix]** `path/to/file.go:29` — Full finding description with enough context to understand and act on.
-- **[N2] [nit]** `path/to/other.py:115` — Another finding.
-```
-
-If all findings are inline, keep the body short (just the first line). If all findings are unmappable, put them all in the body. Use the same severity tag format as inline comments so formatting is consistent.
-
-**If no existing PENDING review:**
-
-```bash
-gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews \
-  --method POST \
-  -f commit_id="<head_sha>" \
-  -f body="<brief note>" \
-  -f 'comments[][path]=<file>' \
-  -f 'comments[][line]=<line_in_file>' \
-  -f 'comments[][side]=RIGHT' \
-  -f 'comments[][body]=<severity_tag + finding>'
-```
-
-Do NOT pass an `event` field — omitting it creates the review as PENDING. Passing `event="PENDING"` causes a 422 error.
-
-**JSON payload escaping:** Always use a **quoted heredoc** (`<< 'EOF'`) or write the JSON to a temp file via the Write tool. An unquoted heredoc causes bash to expand `$(...)`, backticks, and `$VAR` inside comment bodies — turning code suggestions like `$(gh api user --jq '.login')` into their evaluated output.
-
-**If updating an existing PENDING review:** GitHub's API does not support adding comments to an existing PENDING review. Instead, use delete-and-recreate:
-1. Fetch the existing PENDING review's comments:
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews/<review_id>/comments \
-     --jq '[.[] | {path, line, start_line, side, start_side, body}]'
-   ```
-2. Fetch the existing review body:
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews/<review_id> --jq '.body'
-   ```
-3. Delete the PENDING review:
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/<pr_number>/reviews/<review_id> --method DELETE
-   ```
-4. Merge old comments with new findings (skip duplicates by matching path + finding ID)
-5. Merge old review body with new body content
-6. Create a new PENDING review with the combined payload
-
-**If replying to threads from Step 1b:** post replies to the appropriate comment threads:
+For threads that need a response, post replies:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies \
@@ -179,14 +61,13 @@ gh api repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies \
   -f body="<response>"
 ```
 
-### 7. Report
+### 4. Report
 
 Print:
-- Number of inline comments posted (new + replies)
-- Number of findings skipped (with reasons)
-- Number of threads responded to
+- Number of threads analyzed
+- Number of findings resolved / still open
+- Number of replies posted
 - Link to the PR
-- Reminder: review is PENDING — verify and submit from the GitHub UI
 
 ---
 
@@ -195,4 +76,3 @@ Print:
 - NEVER submit the review (`APPROVE`, `REQUEST_CHANGES`, `COMMENT`) — only create as `PENDING`
 - NEVER modify the review file without user confirmation
 - If the PR has been updated since the review file was written, warn and ask before proceeding
-- If no findings can be mapped to the diff, stop and explain why rather than posting an empty review

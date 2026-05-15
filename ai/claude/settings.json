@@ -3,6 +3,17 @@
     "gopls-lsp@claude-plugins-official": true
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *\"gh pr create\"* ]]; then echo 'BLOCKED: Use task pr:create instead of gh pr create — it auto-loads the repo PR template.' >&2; exit 2; fi"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",

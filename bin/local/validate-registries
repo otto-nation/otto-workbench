@@ -7,6 +7,7 @@
 #   - Cross-file check based on meta.validation:
 #       brewfile      — every tool name (or brew_name override) exists in meta.source Brewfile
 #       bindir        — every tool name exists as a file in meta.source directory
+#                       + every executable in meta.source is registered (reverse check)
 #       zsh-comments  — every tool name has a matching header comment under meta.source
 #       none          — schema-only, no cross-check
 #
@@ -131,6 +132,28 @@ _validate_against_bindir() {
   done
 }
 
+# _validate_bindir_reverse REGISTRY DIR
+# Every executable file in DIR must be registered in REGISTRY.
+_validate_bindir_reverse() {
+  local file="$1" dir="$2"
+  local -A registered=()
+  local name
+  while IFS= read -r name; do
+    registered[$name]=1
+  done < <(yq '.tools[].name' "$file")
+
+  local item basename
+  for item in "$dir"/*; do
+    [[ -f "$item" ]] || continue
+    [[ -x "$item" ]] || continue
+    basename=$(basename "$item")
+    [[ "$basename" == "registry.yml" ]] && continue
+    if [[ -z "${registered[$basename]+set}" ]]; then
+      _fail "$(basename "$file"): '$basename' exists in ${dir#"$REPO_ROOT/"} but is not registered"
+    fi
+  done
+}
+
 # _validate_against_zsh REGISTRY DIR
 # Every tool name must have a matching header comment somewhere under DIR.
 _validate_against_zsh() {
@@ -247,6 +270,7 @@ _validate_registry() {
       ;;
     bindir)
       [[ -n "$source" ]] && _validate_against_bindir "$file" "$REPO_ROOT/$source"
+      [[ -n "$source" ]] && _validate_bindir_reverse "$file" "$REPO_ROOT/$source"
       ;;
     zsh-comments)
       [[ -n "$source" ]] && _validate_against_zsh "$file" "$REPO_ROOT/$source"

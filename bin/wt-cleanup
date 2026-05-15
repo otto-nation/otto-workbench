@@ -62,7 +62,11 @@ _worktree_age_secs() {
   local wt_path="$1"
   [[ -d "$wt_path" ]] || return 1
   local created
-  created=$(stat -f %B "$wt_path" 2>/dev/null) || return 1
+  # macOS: stat -f %B (birth time); Linux: stat -c %W (birth time, 0 if unsupported)
+  created=$(stat -f %B "$wt_path" 2>/dev/null) \
+    || created=$(stat -c %W "$wt_path" 2>/dev/null) \
+    || return 1
+  [[ "$created" -gt 0 ]] || return 1
   echo $((now - created))
 }
 

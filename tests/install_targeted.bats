@@ -47,7 +47,7 @@ _make_workbench() {
 
   mkdir -p "$dir/mise"
   printf '#!/usr/bin/env bash\nstep_mise_install() { true; }\nsync_mise() { :; }\n' > "$dir/mise/steps.sh"
-  printf 'label = Mise\ndescription = Install mise version manager\ncheck = command -v mise\n' > "$dir/mise/setup.conf"
+  printf 'label = Mise\ndescription = Install mise version manager\n' > "$dir/mise/setup.conf"
   printf '#!/usr/bin/env bash\necho "mise setup"\n' > "$dir/mise/setup.sh"
 
   printf 'brew\ndocker\nmise\n' > "$dir/install.components"

@@ -135,7 +135,7 @@ step_claude_guidelines() {
 
 # step_claude_rules — delegates to claude-rules sync which owns all rules logic.
 step_claude_rules() {
-  claude-rules sync
+  "$CLAUDE_SRC_DIR/bin/claude-rules" sync
 }
 
 # step_claude_settings — merges workbench settings.json template into the live

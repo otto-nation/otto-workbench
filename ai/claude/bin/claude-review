@@ -57,10 +57,7 @@ WORKTREE_FALLBACK_DIR=".worktrees"
 
 ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
 
-POST_SKILL_REL="../skills/pr-review/SKILL.md"
-
 ORCHESTRATE_BIN="review-orchestrate"
-STREAM_PROGRESS_BIN="review-stream-progress"
 
 mkdir -p "$REVIEWS_DIR"
 
@@ -675,28 +672,15 @@ cmd_post() {
     exit 1
   fi
 
-  local post_prompt
-  post_prompt="Post review for PR #${pr_number} in ${repo}. Review file: ${review_file}"
-
-  local skill_file
-  skill_file="$(dirname "$_SELF")/${POST_SKILL_REL}"
-
-  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
-
-  info "Posting review for PR #${pr_number}..."
-  echo
-  echo "$post_prompt" | claude -p --verbose --output-format stream-json \
-    --permission-mode acceptEdits \
-    --system-prompt-file "$skill_file" \
-    --add-dir "$REVIEWS_DIR" \
-    | "$(dirname "$_SELF")/${STREAM_PROGRESS_BIN}" "$session_log"
-  echo
+  "$(dirname "$_SELF")/review-post" \
+    --repo "$repo" \
+    --pr "$pr_number" \
+    --review-file "$review_file"
 
   local pending_review_id
   pending_review_id=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
     --jq '[.[] | select(.state == "PENDING")] | first | .id' 2>/dev/null) || true
 
-  info "Done. Review is PENDING — verify and submit from the GitHub UI."
   if [[ -n "$pending_review_id" && "$pending_review_id" != "null" ]]; then
     echo
     echo -e "  ${DIM}Submit: gh api repos/${repo}/pulls/${pr_number}/reviews/${pending_review_id}/events --method POST -f event=\"COMMENT\"${NC}"

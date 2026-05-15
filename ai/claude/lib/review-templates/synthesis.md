@@ -7,6 +7,8 @@ ${holistic_content}
 
 ## Detailed findings (from Phase 2, merged across ${group_count} file groups)
 ${merged_content}
+${preflight_data}
+${reviews_section}
 
 ## Task
 1. Write the review header: # Review: ${repo}#${pr_number} — ${pr_title}

@@ -7,6 +7,7 @@ ${holistic_content}
 
 ## Detailed findings (from Phase 2, merged across ${group_count} file groups)
 ${merged_content}
+${preflight_data}
 
 ## Task
 1. Write the header: # Self-Review: ${repo} — ${branch_name}

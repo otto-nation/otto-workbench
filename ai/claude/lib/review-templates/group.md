@@ -6,6 +6,7 @@ ${holistic_block}
 ## Scope constraint
 Review ONLY the following files. Do NOT read or comment on files outside this list:
 ${group_files_formatted}
+${preflight_data}
 
 ${reviews_section}
 ${issue_section}

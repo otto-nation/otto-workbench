@@ -13,7 +13,7 @@ cd ~/otto-workbench
 exec zsh
 ```
 
-The installer symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu (<!-- COMPONENT-MENU-START -->Homebrew packages, Docker, Terminals, Editors, AI tools<!-- COMPONENT-MENU-END -->).
+The installer installs Homebrew (if missing), symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu (<!-- COMPONENT-MENU-START -->Homebrew packages, Docker, Terminals, Editors, AI tools, Mise<!-- COMPONENT-MENU-END -->).
 
 ## After Install
 
@@ -51,13 +51,12 @@ Secrets and machine-specific env vars go in `~/.env.local` — sourced first by 
 
 ## How It Works
 
-The workbench uses a [component framework](docs/architecture.md#component-model) with three tiers:
+The workbench uses a [component framework](docs/architecture.md#component-model) with two tiers:
 
-1. **Preflight** (`task`, `brew`, `mise`) — mandatory tooling, runs first
-2. **Core** (`bin`, `git`, `zsh`) — always synced on every machine
-3. **Optional** (`brew`, `docker`, `terminals`, `editors`, `ai`) — opt-in via install menu
+1. **Core** (`bin`, `git`, `task`, `zsh`) — always synced on every machine
+2. **Optional** (`brew`, `docker`, `terminals`, `editors`, `ai`, `mise`) — opt-in via install menu
 
-`install.sh` bootstraps interactively. `otto-workbench sync` re-applies everything non-interactively. Both auto-discover components via glob patterns — adding a new component requires no edits to the installer.
+On first run, `install.sh` installs Homebrew (if missing), then presents menus for core and optional components. `otto-workbench sync` re-applies everything non-interactively. Both auto-discover components via glob patterns — adding a new component requires no edits to the installer.
 
 See [Architecture](docs/architecture.md) for the full picture: configuration layers, registries, migrations, and generated files.
 
@@ -91,14 +90,6 @@ These are created once (from templates or by first-time setup) and never modifie
 | `~/.config/task/taskfile.env` | AI automation tokens (`GH_TOKEN`, `AI_COMMAND`) | `task --global ai:setup` |
 | `~/.zshrc` | Shell rc file | `zsh/.zshrc` |
 | `~/.config/ghostty/config` | Terminal config | `terminals/ghostty/config.template` |
-
-## Requirements
-
-- macOS or Linux
-- bash (to run `install.sh`)
-- git (to clone the repo)
-
-Everything else — Task, gh, Docker, and language tooling — is either auto-installed by `install.sh` or available through the optional component menu.
 
 ## Learn More
 

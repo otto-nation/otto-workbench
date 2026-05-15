@@ -162,6 +162,8 @@ def _parse_finding_line(stripped: str) -> Finding | None:
 def _finalize_finding(finding: Finding, body_lines: list[str]):
     """Set a finding's body from accumulated continuation lines."""
     body = "\n".join(body_lines).strip()
+    if not body:
+        return
     body = re.sub(r"\n+###[^\n]*$", "", body, flags=re.DOTALL).strip()
     finding.body = body
 

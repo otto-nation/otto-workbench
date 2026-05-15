@@ -5,11 +5,3 @@
 ## Why
 
 <!-- Why is this change needed? -->
-
-## Type
-
-- [ ] Fix
-- [ ] Feature
-- [ ] Breaking
-- [ ] Docs
-- [ ] Refactor

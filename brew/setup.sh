@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Interactive Homebrew package installer.
-# Called by otto-workbench install; can also be run standalone: bash brew/setup.sh
+# Called by otto-workbench install; can also be run standalone: ./brew/setup.sh
 
 set -e
 

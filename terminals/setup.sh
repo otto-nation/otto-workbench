@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Terminal emulator setup.
 #
-# Usage: bash terminals/setup.sh
+# Usage: ./terminals/setup.sh
 #        (also called automatically by otto-workbench install)
 #
 # What it does:

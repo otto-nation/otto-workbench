@@ -12,6 +12,10 @@
 - Never run tests, builds, or git-mutating commands in a worktree other than the current session's — test harnesses create temporary git repos that can corrupt the target worktree's branch and commit state
 - When applying changes to another worktree, only use `git apply` and file copies — then tell the user to run tests there themselves
 
+## PR Creation
+
+- Always use `task --global pr:create -- --no-issue` to create a PR — `task pr:create` does not exist (no local target), and omitting `-- --no-issue` blocks on an interactive issue-number prompt
+
 ## Rebase, Cherry-Pick, Merge Conflicts
 
 - During interactive git operations (rebase, cherry-pick, merge conflict resolution), use only Bash commands — the Edit tool can corrupt git's index state and abort the operation

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Editor setup.
 #
-# Usage: bash editors/setup.sh
+# Usage: ./editors/setup.sh
 #        (also called automatically by otto-workbench install)
 #
 # What it does:

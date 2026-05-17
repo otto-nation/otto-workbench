@@ -7,6 +7,11 @@
 - Read-only operations (searching, reading files, exploring code) do not require a worktree
 - Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never use the built-in `EnterWorktree` tool or the `superpowers:using-git-worktrees` skill
 
+## Protected Branches
+
+- Never remove the `main` (or default branch) worktree — use `wt remove` only on feature branches
+- Never push directly to `main` — all changes must go through a PR
+
 ## Cross-Worktree Safety
 
 - Never run tests, builds, or git-mutating commands in a worktree other than the current session's — test harnesses create temporary git repos that can corrupt the target worktree's branch and commit state

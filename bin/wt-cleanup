@@ -54,6 +54,9 @@ done
 
 now=$(date +%s)
 removed=0
+default_branch=$(git config worktrunk.default-branch 2>/dev/null \
+  || git config init.defaultBranch 2>/dev/null \
+  || echo "main")
 
 worktrees=$(wt list --format json 2>/dev/null) || exit 0
 count=$(echo "$worktrees" | jq 'length')
@@ -112,6 +115,7 @@ for ((i = 0; i < count; i++)); do
   timestamp=$(echo "$worktrees" | jq -r ".[$i].commit.timestamp")
 
   [[ "$is_main" == "true" ]] && continue
+  [[ "$branch" == "$default_branch" ]] && continue
   [[ "$is_current" == "true" ]] && continue
 
   if _has_uncommitted_changes "$i"; then

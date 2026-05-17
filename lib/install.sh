@@ -357,7 +357,7 @@ parse_install_flags() {
       *)     INSTALL_TARGETS+=("$_arg") ;;
     esac
   done
-  [[ ${#INSTALL_TARGETS[@]} -gt 0 ]] && INSTALL_TARGETED=true
+  if [[ ${#INSTALL_TARGETS[@]} -gt 0 ]]; then INSTALL_TARGETED=true; fi
 }
 
 # ─── Install summary ────────────────────────────────────────────────────────

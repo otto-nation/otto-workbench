@@ -888,12 +888,20 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
 
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
-def invoke_agent(prompt: str, session_log: str, wt_path: str, reviews_dir: str, label: str = ""):
+def invoke_agent(
+    prompt: str, session_log: str, wt_path: str, reviews_dir: str,
+    label: str = "", review_file: str = "",
+):
+    add_dir_args = ["--add-dir", reviews_dir, "--add-dir", wt_path]
+    if review_file:
+        review_dir = str(Path(review_file).parent)
+        if review_dir not in (reviews_dir, wt_path):
+            add_dir_args += ["--add-dir", review_dir]
     proc = subprocess.Popen(
         [
             "claude", "-p", "--verbose", "--output-format", "stream-json",
             "--permission-mode", "acceptEdits",
-            "--add-dir", reviews_dir, "--add-dir", wt_path,
+            *add_dir_args,
             "--agent", "reviewer",
         ],
         stdin=subprocess.PIPE,
@@ -930,7 +938,7 @@ def run_single_agent(job: ReviewJob):
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
     _info(f"Running review agent on {label}...")
     print()
-    invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir)
+    invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file)
     print()
 
     if not Path(job.review_file).exists():
@@ -1050,7 +1058,7 @@ def _phase_synthesis(
     )
     _info("Phase 4: Synthesis...")
     print()
-    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir)
+    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file)
     print()
 
     if not Path(job.review_file).exists():

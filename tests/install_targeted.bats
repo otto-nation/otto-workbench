@@ -328,5 +328,6 @@ _is_targeted() {
   run bash -c "
     '$REPO_ROOT/bin/otto-workbench' install <<< ''
   "
+  [ "$status" -ne 127 ]
   [[ "$output" == *"Installing dotfiles"* ]]
 }

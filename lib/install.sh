@@ -60,7 +60,7 @@ validate_components() {
   local registry=$1 errors=0 component dir conf
 
   while IFS= read -r component; do
-    [[ -z "$component" || "$component" =~ ^# ]] && continue
+    if [[ -z "$component" || "$component" =~ ^# ]]; then continue; fi
     if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
       err "install.components: '$component' — directory not found"
       errors=$(( errors + 1 ))
@@ -91,7 +91,7 @@ discover_components() {
   local registry=$1 component conf
 
   while IFS= read -r component; do
-    [[ -z "$component" || "$component" =~ ^# ]] && continue
+    if [[ -z "$component" || "$component" =~ ^# ]]; then continue; fi
     conf="$WORKBENCH_DIR/$component/setup.conf"
     COMPONENT_DIRS+=("$component")
     COMPONENT_LABELS+=("$(conf_get "$conf" label)")
@@ -128,9 +128,9 @@ select_components() {
   if [[ "$INSTALL_TARGETED" == true ]]; then
     # Targeted mode: select only named optional components
     for _d in "${eligible_dirs[@]}"; do
-      _is_targeted "$_d" && desired+=("$_d")
+      if _is_targeted "$_d"; then desired+=("$_d"); fi
     done
-    [[ ${#desired[@]} -eq 0 ]] && return
+    if [[ ${#desired[@]} -eq 0 ]]; then return; fi
   elif [[ "$INSTALL_ALL" == "true" ]]; then
     desired=("${eligible_dirs[@]}")
   else
@@ -143,7 +143,7 @@ select_components() {
 
     local _sel
     select_menu _sel "${#eligible_dirs[@]}" --default all
-    [[ -z "$_sel" ]] && return
+    if [[ -z "$_sel" ]]; then return; fi
 
     local num
     for num in $_sel; do
@@ -156,9 +156,9 @@ select_components() {
   _add_missing_deps() {
     local comp="$1" deps dep
     deps=$(conf_get "$WORKBENCH_DIR/$comp/setup.conf" depends)
-    [[ -z "$deps" ]] && return
+    if [[ -z "$deps" ]]; then return; fi
     for dep in $deps; do
-      _in_desired "$dep" && continue
+      if _in_desired "$dep"; then continue; fi
       info "Adding $dep (required by $comp)"
       desired+=("$dep")
       _changed=true
@@ -190,7 +190,7 @@ select_components() {
 # Error recovery strategy: component setup failures warn and continue (non-fatal).
 # Framework contract violations (missing functions, bad registry) hard-fail before setup runs.
 run_components() {
-  [[ ${#SELECTED_COMPONENTS[@]} -eq 0 ]] && return
+  if [[ ${#SELECTED_COMPONENTS[@]} -eq 0 ]]; then return; fi
 
   local total=${#SELECTED_COMPONENTS[@]} index=1 component label check_cmd
 
@@ -230,15 +230,15 @@ resolve_known_components() {
     [[ -f "$_f" ]] || continue
     local _c _is_pf=false
     _c=$(basename "$(dirname "$_f")")
-    [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
+    if [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]]; then continue; fi
     for _pf in "${PREFLIGHT_COMPONENTS[@]}"; do [[ "$_pf" == "$_c" ]] && { _is_pf=true; break; }; done
-    [[ "$_is_pf" == true ]] && continue
+    if [[ "$_is_pf" == true ]]; then continue; fi
     KNOWN_CORE_COMPONENTS+=("$_c")
   done
 
   # Optional: listed in install.components
   while IFS= read -r _c; do
-    [[ -z "$_c" || "$_c" =~ ^# ]] && continue
+    if [[ -z "$_c" || "$_c" =~ ^# ]]; then continue; fi
     KNOWN_OPTIONAL_COMPONENTS+=("$_c")
   done < "$WORKBENCH_DIR/install.components"
 }
@@ -249,7 +249,7 @@ validate_install_targets() {
   for target in "$@"; do
     found=false
     for _c in "${KNOWN_CORE_COMPONENTS[@]}" "${KNOWN_OPTIONAL_COMPONENTS[@]}"; do
-      [[ "$_c" == "$target" ]] && { found=true; break; }
+      if [[ "$_c" == "$target" ]]; then found=true; break; fi
     done
     if [[ "$found" == false ]]; then
       err "Unknown component: '$target'"
@@ -276,9 +276,9 @@ discover_core_components() {
     [[ -f "$_f" ]] || continue
     local _c _is_preflight=false
     _c=$(basename "$(dirname "$_f")")
-    [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]] && continue
+    if [[ -f "$WORKBENCH_DIR/$_c/setup.conf" ]]; then continue; fi
     for _pf in "${PREFLIGHT_COMPONENTS[@]}"; do [[ "$_pf" == "$_c" ]] && { _is_preflight=true; break; }; done
-    [[ "$_is_preflight" == true ]] && continue
+    if [[ "$_is_preflight" == true ]]; then continue; fi
     __dirs+=("$_c")
     # Parse '# description: ...' from the first 5 lines of steps.sh
     local _desc=""
@@ -302,7 +302,7 @@ select_core_components() {
 
   if [[ "$INSTALL_TARGETED" == true ]]; then
     for _c in "${__dirs[@]}"; do
-      _is_targeted "$_c" && __out+=("$_c")
+      if _is_targeted "$_c"; then __out+=("$_c"); fi
     done
   elif [[ "$INSTALL_ALL" == "true" ]]; then
     __out=("${__dirs[@]}")

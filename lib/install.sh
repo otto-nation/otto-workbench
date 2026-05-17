@@ -60,7 +60,9 @@ validate_components() {
   local registry=$1 errors=0 component dir conf
 
   while IFS= read -r component; do
-    if [[ -z "$component" || "$component" =~ ^# ]]; then continue; fi
+    if [[ -z "$component" || "$component" =~ ^# ]]; then
+      continue
+    fi
     if [[ ! -d "$WORKBENCH_DIR/$component" ]]; then
       err "install.components: '$component' — directory not found"
       errors=$(( errors + 1 ))
@@ -91,7 +93,9 @@ discover_components() {
   local registry=$1 component conf
 
   while IFS= read -r component; do
-    if [[ -z "$component" || "$component" =~ ^# ]]; then continue; fi
+    if [[ -z "$component" || "$component" =~ ^# ]]; then
+      continue
+    fi
     conf="$WORKBENCH_DIR/$component/setup.conf"
     COMPONENT_DIRS+=("$component")
     COMPONENT_LABELS+=("$(conf_get "$conf" label)")
@@ -130,7 +134,9 @@ select_components() {
     for _d in "${eligible_dirs[@]}"; do
       if _is_targeted "$_d"; then desired+=("$_d"); fi
     done
-    if [[ ${#desired[@]} -eq 0 ]]; then return; fi
+    if [[ ${#desired[@]} -eq 0 ]]; then
+      return
+    fi
   elif [[ "$INSTALL_ALL" == "true" ]]; then
     desired=("${eligible_dirs[@]}")
   else
@@ -190,7 +196,9 @@ select_components() {
 # Error recovery strategy: component setup failures warn and continue (non-fatal).
 # Framework contract violations (missing functions, bad registry) hard-fail before setup runs.
 run_components() {
-  if [[ ${#SELECTED_COMPONENTS[@]} -eq 0 ]]; then return; fi
+  if [[ ${#SELECTED_COMPONENTS[@]} -eq 0 ]]; then
+    return
+  fi
 
   local total=${#SELECTED_COMPONENTS[@]} index=1 component label check_cmd
 
@@ -238,7 +246,9 @@ resolve_known_components() {
 
   # Optional: listed in install.components
   while IFS= read -r _c; do
-    if [[ -z "$_c" || "$_c" =~ ^# ]]; then continue; fi
+    if [[ -z "$_c" || "$_c" =~ ^# ]]; then
+      continue
+    fi
     KNOWN_OPTIONAL_COMPONENTS+=("$_c")
   done < "$WORKBENCH_DIR/install.components"
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for targeted install (install.sh COMPONENT ...) and
 # install-needed detection (_check_install_needed in otto-workbench sync).
+# Also covers parse_install_flags set -e safety (regression: silent exit with no args).
 
 setup() {
   load 'test_helper'
@@ -246,4 +247,87 @@ _is_targeted() {
   done < "$registry"
 
   [[ ${#needs_install[@]} -eq 0 ]]
+}
+
+# ─── parse_install_flags: set -e safety ──────────────────────────────────────
+# Regression: parse_install_flags ended with `[[ ... ]] && INSTALL_TARGETED=true`.
+# When INSTALL_TARGETS was empty the [[ ]] returned 1 and the function's last
+# exit code was 1, silently killing the caller under set -e.
+
+@test "parse_install_flags does not exit under set -e with no arguments" {
+  run bash -c "
+    set -e
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/install.sh'
+    parse_install_flags
+    echo 'still running'
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"still running"* ]]
+}
+
+@test "parse_install_flags does not exit under set -e with --all flag" {
+  run bash -c "
+    set -e
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/install.sh'
+    parse_install_flags --all
+    echo 'still running'
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"still running"* ]]
+}
+
+@test "parse_install_flags sets INSTALL_TARGETED=false when no targets given" {
+  run bash -c "
+    set -e
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/install.sh'
+    parse_install_flags
+    echo \"targeted=\$INSTALL_TARGETED all=\$INSTALL_ALL targets=\${#INSTALL_TARGETS[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"targeted=false"* ]]
+  [[ "$output" == *"all=false"* ]]
+  [[ "$output" == *"targets=0"* ]]
+}
+
+@test "parse_install_flags sets INSTALL_TARGETED=true when component targets given" {
+  run bash -c "
+    set -e
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/install.sh'
+    parse_install_flags brew git
+    echo \"targeted=\$INSTALL_TARGETED all=\$INSTALL_ALL targets=\${INSTALL_TARGETS[*]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"targeted=true"* ]]
+  [[ "$output" == *"all=false"* ]]
+  [[ "$output" == *"targets=brew git"* ]]
+}
+
+@test "parse_install_flags sets INSTALL_ALL=true with --all and INSTALL_TARGETED=false" {
+  run bash -c "
+    set -e
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/install.sh'
+    parse_install_flags --all
+    echo \"targeted=\$INSTALL_TARGETED all=\$INSTALL_ALL targets=\${#INSTALL_TARGETS[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"targeted=false"* ]]
+  [[ "$output" == *"all=true"* ]]
+  [[ "$output" == *"targets=0"* ]]
+}
+
+# ─── otto-workbench install: output smoke test ───────────────────────────────
+# Regression: otto-workbench install produced no output due to the
+# parse_install_flags set -e bug silently terminating the process.
+
+@test "otto-workbench install prints install header before prompting" {
+  run bash -c "
+    '$REPO_ROOT/bin/otto-workbench' install <<< ''
+  "
+  [ "$status" -ne 127 ]
+  [[ "$output" == *"Installing dotfiles"* ]]
 }

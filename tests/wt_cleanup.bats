@@ -153,6 +153,15 @@ JSON
   [[ "$output" == *"no stale worktrees"* ]]
 }
 
+@test "main branch worktree is skipped even when is_main flag is false" {
+  _write_worktrees <<'JSON'
+[{"branch":"main","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no stale worktrees"* ]]
+}
+
 @test "current worktree is skipped even if merged" {
   _write_worktrees <<'JSON'
 [{"branch":"feat/active","is_main":false,"is_current":true,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0}}]

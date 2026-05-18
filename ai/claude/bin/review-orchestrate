@@ -98,6 +98,7 @@ class ReviewJob:
     issue_context: str = ""
     prior_review: str = ""
     mode: str = MODE_PR
+    generator_version: str = ""
     preflight: "PreflightData | None" = None
 
 
@@ -169,6 +170,7 @@ TEMPLATE_DIR_REL = Path("lib") / "review-templates"
 FILE_STAT_FMT = "  - {path} (+{additions} -{deletions})"
 META_DATE = "<!-- date: {today} -->"
 META_HEAD_SHA = "<!-- head_sha: {head_sha} -->"
+META_GENERATOR = "<!-- generator: {generator_version} -->"
 FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
 
 ANSI_DIM = "\033[2m"
@@ -705,6 +707,7 @@ def _build_preflight_section(
 
 def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
     today = date.today().isoformat()
+    generator_version = job.generator_version
     has_preflight = job.preflight is not None
     pr_header = _build_pr_header(job.pr, job.ctx)
     reviews_section = _build_reviews_section(job.ctx)
@@ -730,6 +733,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             issue_section=issue_section,
             prior_section=prior_section,
             review_file=job.review_file,
+            generator_version=generator_version,
         )
 
     if template_name == TEMPLATE_SELF_SYNTHESIS:
@@ -751,6 +755,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             wt_path=job.wt_path,
             today=today,
             prior_section=prior_section,
+            generator_version=generator_version,
         )
 
     if template_name == TEMPLATE_SINGLE:
@@ -773,6 +778,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             issue_section=issue_section,
             prior_section=prior_section,
             review_file=job.review_file,
+            generator_version=generator_version,
         )
 
     if template_name == TEMPLATE_HOLISTIC:
@@ -839,6 +845,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             wt_path=job.wt_path,
             today=today,
             prior_section=prior_section,
+            generator_version=generator_version,
         )
 
     raise ValueError(f"Unknown template: {template_name}")
@@ -1071,7 +1078,8 @@ def _phase_synthesis(
     if not Path(job.review_file).exists():
         _warn("Synthesis agent failed — falling back to mechanical merge")
         today = date.today().isoformat()
-        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}\n"
+        gen = f"\n{META_GENERATOR.format(generator_version=job.generator_version)}" if job.generator_version else ""
+        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}{gen}\n"
         if job.mode == MODE_SELF:
             fallback = (
                 f"# Self-Review: {job.repo} — {job.pr.head}\n"
@@ -1158,7 +1166,8 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL, sk
     if not _has_findings(merged_content) and not failed_groups:
         _info("No findings from any group — writing clean review")
         today = date.today().isoformat()
-        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}\n"
+        gen = f"\n{META_GENERATOR.format(generator_version=job.generator_version)}" if job.generator_version else ""
+        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}{gen}\n"
         if job.mode == MODE_SELF:
             clean = (
                 f"# Self-Review: {job.repo} — {job.pr.head}\n"
@@ -1202,6 +1211,8 @@ def main():
                         help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
     parser.add_argument("--no-holistic", action="store_true",
                         help="Skip holistic phase in multi-phase reviews")
+    parser.add_argument("--generator-version", default="",
+                        help="Version string to embed in review metadata")
     parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
                         help="Review mode: pr (default) or self")
     args = parser.parse_args()
@@ -1238,6 +1249,7 @@ def main():
         session_log=session_log, reviews_dir=args.reviews_dir,
         issue_link=args.issue_link, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
+        generator_version=args.generator_version,
     )
 
     _info("Collecting file data...")

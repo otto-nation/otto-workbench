@@ -29,6 +29,11 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
+_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
+_WORKBENCH_VERSION=$(jq -r '.["."]' "${_WORKBENCH_ROOT}/.github/.release-please-manifest.json" 2>/dev/null || echo "unknown")
+_WORKBENCH_SHA=$(git -C "$_WORKBENCH_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GENERATOR_VERSION="otto-workbench ${_WORKBENCH_VERSION} (${_WORKBENCH_SHA})"
+
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
 LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
 
@@ -482,6 +487,7 @@ cmd_review() {
   [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
+  orchestrate_args+=(--generator-version "$GENERATOR_VERSION")
   [[ "$no_holistic" == "true" ]] && orchestrate_args+=(--no-holistic)
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
@@ -640,6 +646,7 @@ cmd_self_review() {
   [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
+  orchestrate_args+=(--generator-version "$GENERATOR_VERSION")
   [[ "$no_holistic" == "true" ]] && orchestrate_args+=(--no-holistic)
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"

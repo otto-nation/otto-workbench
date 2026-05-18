@@ -12,7 +12,7 @@ ${reviews_section}
 
 ## Task
 1. Write the review header: # Review: ${repo}#${pr_number} — ${pr_title}
-   Include <!-- date: ${today} --> and <!-- head_sha: ${pr_head_sha} --> comments
+   Include <!-- date: ${today} -->, <!-- head_sha: ${pr_head_sha} -->, and <!-- generator: ${generator_version} --> comments
 2. Include the File Triage section from the merged findings above
 3. Write ## Summary — what the change does, overall quality, incorporating the holistic assessment
 4. Include all Must fix / Should fix / Nit / Idioms findings from the merged content (use any IDs — they will be mechanically renumbered after you write the file)

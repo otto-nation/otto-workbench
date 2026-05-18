@@ -8,5 +8,6 @@ ${env_section}
 ## Output
 You MUST use the Write tool to write the review to: ${review_file}
 Do NOT print the review to stdout — it must be saved as a file using the Write tool.
+Include this metadata comment after the head_sha line: <!-- generator: ${generator_version} -->
 ${issue_section}
 ${prior_section}

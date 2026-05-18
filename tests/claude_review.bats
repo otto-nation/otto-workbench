@@ -419,3 +419,85 @@ GHEOF
   _extract_repo result "https://github.com/org/my-repo"
   [ "$result" = "org/my-repo" ]
 }
+
+# ── _archive_review: self-review paths ──────────────────────────────────────
+
+@test "_archive_review: works with .claude/ self-review paths" {
+  local review_file="$TMPDIR/project/.claude/self-review.md"
+  local session_log="$TMPDIR/project/.claude/self-review.session.jsonl"
+  mkdir -p "$TMPDIR/project/.claude"
+  echo "self-review content" > "$review_file"
+  echo "session data" > "$session_log"
+
+  local prior_path
+  _archive_review prior_path "$review_file" "$session_log"
+
+  [ -f "$prior_path" ]
+  [[ "$prior_path" == *".claude/self-review.prior.md" ]]
+  [ "$(cat "$prior_path")" = "self-review content" ]
+  [ ! -f "$review_file" ]
+  [ ! -f "$session_log" ]
+  local md_archives
+  md_archives=$(ls "$TMPDIR/project/.claude/self-review".2*.md 2>/dev/null | wc -l | tr -d ' ')
+  [ "$md_archives" -eq 1 ]
+  local session_archives
+  session_archives=$(ls "$TMPDIR/project/.claude/self-review".session.2*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+  [ "$session_archives" -eq 1 ]
+}
+
+@test "_archive_review: self-review prunes old archives in .claude/" {
+  local review_file="$TMPDIR/project/.claude/self-review.md"
+  local session_log="$TMPDIR/project/.claude/self-review.session.jsonl"
+  mkdir -p "$TMPDIR/project/.claude"
+
+  for i in 1 2 3 4 5; do
+    echo "archive $i" > "$TMPDIR/project/.claude/self-review.2025010${i}-120000.md"
+    echo "session $i" > "$TMPDIR/project/.claude/self-review.session.2025010${i}-120000.jsonl"
+  done
+
+  echo "current" > "$review_file"
+  echo "current session" > "$session_log"
+
+  local prior_path
+  _archive_review prior_path "$review_file" "$session_log"
+
+  local md_count
+  md_count=$(ls "$TMPDIR/project/.claude/self-review".2*.md 2>/dev/null | wc -l | tr -d ' ')
+  [ "$md_count" -le "$ARCHIVE_KEEP_COUNT" ]
+}
+
+# ── self-review rule ────────────────────────────────────────────────────────
+
+@test "self-review rule does not suggest --no-post" {
+  local rule_file="$REPO_ROOT/ai/guidelines/rules/self-review.md"
+  [ -f "$rule_file" ]
+  run grep -c '\-\-no-post' "$rule_file"
+  [ "$output" = "0" ]
+}
+
+# ── cmd_self_review parameter ordering ──────────────────────────────────────
+
+@test "cmd_self_review: force parameter is accepted at position 5" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    # Verify the function signature accepts force at position 5
+    declare -f cmd_self_review | grep -q "force=.*5"
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -eq 0 ]
+}
+
+@test "main: --force is forwarded to cmd_self_review at position 5" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    cmd_self_review() {
+      local IFS="|"; echo "$*"
+    }
+    main --self --force 2>/dev/null
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -eq 0 ]
+  # Args: pr_input|issue_link|max_parallel|skip_user_verification|force|no_holistic|max_cost|model
+  IFS='|' read -ra args <<< "$output"
+  [ "${args[4]}" = "true" ]
+}

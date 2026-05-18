@@ -474,6 +474,53 @@ print("--model" in cmd, cmd[cmd.index("--model") + 1] if "--model" in cmd else "
   [[ "$result" == *"sonnet"* ]]
 }
 
+# ── Cost tracking ────────────────────────────────────────────────────────────
+
+@test "_parse_session_cost: extracts cost from JSONL" {
+  cat > "$TMPDIR/cost.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"working..."}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":60000,"total_cost_usd":3.50,"usage":{"input_tokens":100,"output_tokens":200}}
+EOF
+  result=$(_py "
+cost = mod._parse_session_cost('$TMPDIR/cost.jsonl')
+print(f'{cost:.2f}')
+")
+  [ "$result" = "3.50" ]
+}
+
+@test "_parse_session_cost: returns 0 for missing file" {
+  result=$(_py "
+cost = mod._parse_session_cost('/tmp/nonexistent.jsonl')
+print(f'{cost:.2f}')
+")
+  [ "$result" = "0.00" ]
+}
+
+@test "_check_budget: sums costs and detects exceeded" {
+  cat > "$TMPDIR/log1.jsonl" <<'EOF'
+{"type":"result","subtype":"success","total_cost_usd":5.00}
+EOF
+  cat > "$TMPDIR/log2.jsonl" <<'EOF'
+{"type":"result","subtype":"success","total_cost_usd":8.00}
+EOF
+  result=$(_py "
+total, exceeded = mod._check_budget(['$TMPDIR/log1.jsonl', '$TMPDIR/log2.jsonl'], 10.0)
+print(f'{total:.2f} {exceeded}')
+")
+  [ "$result" = "13.00 True" ]
+}
+
+@test "_check_budget: under budget returns False" {
+  cat > "$TMPDIR/log.jsonl" <<'EOF'
+{"type":"result","subtype":"success","total_cost_usd":2.00}
+EOF
+  result=$(_py "
+total, exceeded = mod._check_budget(['$TMPDIR/log.jsonl'], 10.0)
+print(f'{total:.2f} {exceeded}')
+")
+  [ "$result" = "2.00 False" ]
+}
+
 # ── Prompt building ──────────────────────────────────────────────────────────
 
 @test "build_prompt: single-agent includes review file" {

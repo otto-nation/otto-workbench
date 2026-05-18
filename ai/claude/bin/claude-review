@@ -375,6 +375,7 @@ usage() {
   echo "  --post                     Run review then post automatically (fully headless)"
   echo "  --issue <link>             Attach an issue link for reviewer context"
   echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
+  echo "  --max-cost <USD>           Max total review cost in USD (default: 20)"
   echo "  --no-holistic              Skip holistic phase in multi-phase reviews"
   echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
@@ -444,6 +445,7 @@ cmd_review() {
   local max_parallel="${5:-$DEFAULT_MAX_PARALLEL}"
   local force="${6:-false}"
   local no_holistic="${7:-false}"
+  local max_cost="${8:-}"
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -506,6 +508,7 @@ cmd_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   orchestrate_args+=(--generator-version "$GENERATOR_VERSION")
   [[ "$no_holistic" == "true" ]] && orchestrate_args+=(--no-holistic)
+  [[ -n "$max_cost" ]] && orchestrate_args+=(--max-cost "$max_cost")
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
@@ -601,6 +604,7 @@ cmd_self_review() {
   local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
   local skip_user_verification="${4:-false}"
   local no_holistic="${5:-false}"
+  local max_cost="${6:-}"
 
   local repo
   _extract_repo repo "${pr_input:-local}"
@@ -665,6 +669,7 @@ cmd_self_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   orchestrate_args+=(--generator-version "$GENERATOR_VERSION")
   [[ "$no_holistic" == "true" ]] && orchestrate_args+=(--no-holistic)
+  [[ -n "$max_cost" ]] && orchestrate_args+=(--max-cost "$max_cost")
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
@@ -724,6 +729,7 @@ main() {
   local no_holistic="false"
   local issue_link=""
   local max_parallel="$DEFAULT_MAX_PARALLEL"
+  local max_cost=""
   local positional=()
 
   while [[ $# -gt 0 ]]; do
@@ -736,13 +742,14 @@ main() {
       --no-holistic)   no_holistic="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
+      --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac
   done
 
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$no_holistic"
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$no_holistic" "$max_cost"
     return
   fi
 
@@ -767,7 +774,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost"
       ;;
   esac
 }

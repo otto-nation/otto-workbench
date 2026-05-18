@@ -1001,6 +1001,32 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
                 prev_tool = tool_label
 
 
+# ── Cost tracking ────────────────────────────────────────────────────────────
+
+DEFAULT_MAX_COST = 20.0
+
+
+def _parse_session_cost(log_path: str) -> float:
+    try:
+        total = 0.0
+        with open(log_path) as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") == "result":
+                    total += data.get("total_cost_usd", 0.0)
+        return total
+    except FileNotFoundError:
+        return 0.0
+
+
+def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
+    total = sum(_parse_session_cost(log) for log in logs)
+    return total, total > max_cost
+
+
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 DEFAULT_MAX_TURNS = 10
@@ -1293,25 +1319,51 @@ def _consolidate_and_cleanup(
             pass
 
 
-def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL, skip_holistic: bool = False):
+def run_multi_phase(
+    job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
+    skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
+):
     groups = group_files(job.pr)
+    groups = _merge_smallest_groups(groups, DEFAULT_MAX_GROUPS)
     group_count = len(groups)
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
+    all_logs: list[str] = []
+    budget_exceeded = False
+
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
     if run_holistic:
         holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+        if holistic_log:
+            all_logs.append(holistic_log)
+        total, budget_exceeded = _check_budget(all_logs, max_cost)
+        if budget_exceeded:
+            _warn(f"Budget exceeded after holistic phase (${total:.2f}/${max_cost:.2f}) — skipping groups")
     else:
         reason = "--no-holistic" if skip_holistic else f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
         _info(f"Holistic phase skipped ({reason})")
         holistic_content, holistic_output, holistic_log = "", "", ""
 
-    group_outputs, failed_groups = _phase_group_reviews(
-        groups, job, group_count, holistic_content, max_parallel,
-    )
+    if not budget_exceeded:
+        group_outputs, failed_groups = _phase_group_reviews(
+            groups, job, group_count, holistic_content, max_parallel,
+        )
+    else:
+        group_outputs, failed_groups = [], [g.name for g in groups]
 
     merged_content = _phase_merge(group_outputs, failed_groups)
+
+    # Collect group logs for budget tracking
+    for go in group_outputs:
+        gl = go.replace(".md", ".jsonl")
+        if Path(gl).exists():
+            all_logs.append(gl)
+
+    if not budget_exceeded:
+        total, budget_exceeded = _check_budget(all_logs, max_cost)
+        if budget_exceeded:
+            _warn(f"Budget exceeded after groups (${total:.2f}/${max_cost:.2f}) — skipping synthesis")
 
     if not _has_findings(merged_content) and not failed_groups:
         _info("No findings from any group — writing clean review")
@@ -1337,6 +1389,11 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL, sk
                 f"Approve — clean review.\n"
             )
         Path(job.review_file).write_text(clean)
+        _write_review_sidecar(job)
+        synthesis_log = ""
+    elif budget_exceeded:
+        _warn("Using merged group output as final review (synthesis skipped due to budget)")
+        Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)
         synthesis_log = ""
     else:
@@ -1366,6 +1423,8 @@ def main():
                         help="Version string to embed in review metadata")
     parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
                         help="Review mode: pr (default) or self")
+    parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
+                        help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     args = parser.parse_args()
 
     if args.mode == MODE_PR and not args.pr:
@@ -1413,7 +1472,7 @@ def main():
     pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
     if is_large:
-        run_multi_phase(job, max_parallel=args.max_parallel, skip_holistic=args.no_holistic)
+        run_multi_phase(job, max_parallel=args.max_parallel, skip_holistic=args.no_holistic, max_cost=args.max_cost)
     else:
         run_single_agent(job)
 

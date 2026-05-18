@@ -308,6 +308,104 @@ EOF
   [ "$md_count" -le "$ARCHIVE_KEEP_COUNT" ]
 }
 
+@test "_archive_review: cleans orphaned intermediate files" {
+  local review_file="$TMPDIR/reviews/test-repo-50.md"
+  local session_log="$TMPDIR/reviews/test-repo-50.session.jsonl"
+  mkdir -p "$TMPDIR/reviews"
+
+  # Create orphaned intermediates from a prior failed multi-phase run (no current review)
+  echo "group1" > "$TMPDIR/reviews/test-repo-50.group-1.jsonl"
+  echo "group2" > "$TMPDIR/reviews/test-repo-50.group-2.jsonl"
+  echo "group1md" > "$TMPDIR/reviews/test-repo-50.group-1.md"
+  echo "holistic" > "$TMPDIR/reviews/test-repo-50.holistic.jsonl"
+  echo "holisticmd" > "$TMPDIR/reviews/test-repo-50.holistic.md"
+  echo "synthesis" > "$TMPDIR/reviews/test-repo-50.synthesis.jsonl"
+  echo "prior" > "$TMPDIR/reviews/test-repo-50.prior.md"
+  echo "meta" > "$TMPDIR/reviews/test-repo-50.meta.json"
+
+  local prior_path
+  _archive_review prior_path "$review_file" "$session_log"
+
+  # All intermediates should be cleaned up
+  [ ! -f "$TMPDIR/reviews/test-repo-50.group-1.jsonl" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.group-2.jsonl" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.group-1.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.holistic.jsonl" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.holistic.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.synthesis.jsonl" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.prior.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-50.meta.json" ]
+}
+
+@test "_archive_review: archives post.jsonl with timestamp" {
+  local review_file="$TMPDIR/reviews/test-repo-60.md"
+  local session_log="$TMPDIR/reviews/test-repo-60.session.jsonl"
+  mkdir -p "$TMPDIR/reviews"
+  echo "review" > "$review_file"
+  echo "post data" > "$TMPDIR/reviews/test-repo-60.post.jsonl"
+
+  local prior_path
+  _archive_review prior_path "$review_file" "$session_log"
+
+  # post.jsonl should be archived (moved to timestamped version)
+  [ ! -f "$TMPDIR/reviews/test-repo-60.post.jsonl" ]
+  local post_archives
+  post_archives=$(ls "$TMPDIR/reviews/test-repo-60".post.2*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+  [ "$post_archives" -eq 1 ]
+}
+
+# ── _prune_merged_reviews ────────────────────────────────────────────────────
+
+@test "_prune_merged_reviews: removes files for merged PR" {
+  local reviews_dir="$TMPDIR/reviews"
+  mkdir -p "$reviews_dir"
+
+  echo "review content" > "$reviews_dir/my-repo-42.md"
+  echo "session data" > "$reviews_dir/my-repo-42.session.jsonl"
+  echo '{"repo":"org/my-repo","pr_number":"42","head_sha":"abc"}' > "$reviews_dir/my-repo-42.meta.json"
+
+  local fake_bin="$TMPDIR/bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "MERGED"
+GHEOF
+  chmod +x "$fake_bin/gh"
+
+  REVIEWS_DIR="$reviews_dir" PATH="$fake_bin:$PATH" run bash -c \
+    'export HOME="$1"; NO_COLOR=1 source "$2" && REVIEWS_DIR="$3" _prune_merged_reviews' \
+    -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
+  [ "$status" -eq 0 ]
+
+  [ ! -f "$reviews_dir/my-repo-42.md" ]
+  [ ! -f "$reviews_dir/my-repo-42.session.jsonl" ]
+  [ ! -f "$reviews_dir/my-repo-42.meta.json" ]
+}
+
+@test "_prune_merged_reviews: keeps files for open PR" {
+  local reviews_dir="$TMPDIR/reviews"
+  mkdir -p "$reviews_dir"
+
+  echo "review content" > "$reviews_dir/my-repo-99.md"
+  echo '{"repo":"org/my-repo","pr_number":"99","head_sha":"def"}' > "$reviews_dir/my-repo-99.meta.json"
+
+  local fake_bin="$TMPDIR/bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "OPEN"
+GHEOF
+  chmod +x "$fake_bin/gh"
+
+  REVIEWS_DIR="$reviews_dir" PATH="$fake_bin:$PATH" run bash -c \
+    'export HOME="$1"; NO_COLOR=1 source "$2" && REVIEWS_DIR="$3" _prune_merged_reviews' \
+    -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
+  [ "$status" -eq 0 ]
+
+  [ -f "$reviews_dir/my-repo-99.md" ]
+  [ -f "$reviews_dir/my-repo-99.meta.json" ]
+}
+
 # ── _extract_repo ────────────────────────────────────────────────────────────
 
 @test "_extract_repo: GitHub URL extracts owner/repo" {

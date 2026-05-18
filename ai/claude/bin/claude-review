@@ -30,9 +30,13 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 _WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
-_WORKBENCH_VERSION=$(jq -r '.["."]' "${_WORKBENCH_ROOT}/.github/.release-please-manifest.json" 2>/dev/null || echo "unknown")
-_WORKBENCH_SHA=$(git -C "$_WORKBENCH_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GENERATOR_VERSION="otto-workbench ${_WORKBENCH_VERSION} (${_WORKBENCH_SHA})"
+
+_generator_version() {
+  local version sha
+  version=$(jq -r '.["."]' "${_WORKBENCH_ROOT}/.github/.release-please-manifest.json" 2>/dev/null || echo "unknown")
+  sha=$(git -C "$_WORKBENCH_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  echo "otto-workbench ${version} (${sha})"
+}
 
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
 LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
@@ -277,34 +281,50 @@ _archive_review() {
   local -n __prior_path=$1
   local review_file="$2"
   local session_log="$3"
+  local base="${review_file%"${REVIEW_EXT}"}"
+
+  # Remove orphaned intermediates from prior runs — keep only files about to be archived
+  local _f
+  for _f in "${base}".*; do
+    [[ -f "$_f" ]] || continue
+    case "$_f" in
+      "${base}${REVIEW_EXT}"|"${base}${SUFFIX_SESSION}"|"${base}${SUFFIX_POST_SESSION}") continue ;;
+    esac
+    [[ "$_f" =~ [0-9]{8}-[0-9]{6} ]] && continue
+    rm -f "$_f"
+  done
 
   __prior_path=""
   if [[ -f "$review_file" ]]; then
-    __prior_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
+    __prior_path="${base}${SUFFIX_PRIOR}"
     cp "$review_file" "$__prior_path"
     local archive
-    archive="${review_file%"${REVIEW_EXT}"}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
+    archive="${base}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
     mv "$review_file" "$archive"
     info "Archived prior review to $(basename "$archive")"
-  fi
-
-  # Clean up sidecar metadata file
-  local meta_file="${review_file%"${REVIEW_EXT}"}.meta.json"
-  if [[ -f "$meta_file" ]]; then
-    rm -f "$meta_file"
   fi
 
   if [[ -f "$session_log" ]]; then
     mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
   fi
 
+  # Archive post.jsonl alongside session log
+  local post_log="${base}${SUFFIX_POST_SESSION}"
+  if [[ -f "$post_log" ]]; then
+    mv "$post_log" "${base}.post.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
+  fi
+
   local _old_archive
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+    rm -f "$_old_archive"
+  done
+  # shellcheck disable=SC2012
+  for _old_archive in $(ls -1t "${base}".post.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
     rm -f "$_old_archive"
   done
 }
@@ -364,6 +384,8 @@ usage() {
   echo "  --post                     Run review then post automatically (fully headless)"
   echo "  --issue <link>             Attach an issue link for reviewer context"
   echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
+  echo "  --max-cost <USD>           Max total review cost in USD (default: 20)"
+  echo "  --model <name>             Override model for all agents (e.g. sonnet, opus)"
   echo "  --no-holistic              Skip holistic phase in multi-phase reviews"
   echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
@@ -423,6 +445,17 @@ _check_stale_review() {
   fi
 }
 
+_append_orchestrate_flags() {
+  local -n __args=$1
+  local no_holistic="$2"
+  local max_cost="$3"
+  local model="$4"
+  __args+=(--generator-version "$(_generator_version)")
+  [[ "$no_holistic" == "true" ]] && __args+=(--no-holistic)
+  [[ -n "$max_cost" ]] && __args+=(--max-cost "$max_cost")
+  [[ -n "$model" ]] && __args+=(--model "$model")
+}
+
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_review() {
@@ -433,6 +466,10 @@ cmd_review() {
   local max_parallel="${5:-$DEFAULT_MAX_PARALLEL}"
   local force="${6:-false}"
   local no_holistic="${7:-false}"
+  local max_cost="${8:-}"
+  local model="${9:-}"
+
+  _prune_merged_reviews
 
   local pr_number
   _extract_pr_number pr_number "$pr_input"
@@ -493,8 +530,7 @@ cmd_review() {
   [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
-  orchestrate_args+=(--generator-version "$GENERATOR_VERSION")
-  [[ "$no_holistic" == "true" ]] && orchestrate_args+=(--no-holistic)
+  _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
@@ -590,6 +626,10 @@ cmd_self_review() {
   local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
   local skip_user_verification="${4:-false}"
   local no_holistic="${5:-false}"
+  local max_cost="${6:-}"
+  local model="${7:-}"
+
+  _prune_merged_reviews
 
   local repo
   _extract_repo repo "${pr_input:-local}"
@@ -652,8 +692,7 @@ cmd_self_review() {
   [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
-  orchestrate_args+=(--generator-version "$GENERATOR_VERSION")
-  [[ "$no_holistic" == "true" ]] && orchestrate_args+=(--no-holistic)
+  _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
@@ -713,6 +752,8 @@ main() {
   local no_holistic="false"
   local issue_link=""
   local max_parallel="$DEFAULT_MAX_PARALLEL"
+  local max_cost=""
+  local model=""
   local positional=()
 
   while [[ $# -gt 0 ]]; do
@@ -725,13 +766,15 @@ main() {
       --no-holistic)   no_holistic="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
+      --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
+      --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac
   done
 
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$no_holistic"
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$no_holistic" "$max_cost" "$model"
     return
   fi
 
@@ -756,9 +799,37 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model"
       ;;
   esac
+}
+
+_prune_merged_reviews() {
+  local pruned=0
+
+  for meta_file in "$REVIEWS_DIR"/*.meta.json; do
+    [[ -f "$meta_file" ]] || continue
+
+    local repo pr_number
+    read -r repo pr_number <<< "$(jq -r '[.repo // "", .pr_number // ""] | @tsv' "$meta_file" 2>/dev/null)" || continue
+
+    if [[ -z "$repo" || -z "$pr_number" ]]; then
+      continue
+    fi
+
+    local state
+    state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
+
+    if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
+      rm -f "${meta_file%.meta.json}"*
+      info "Pruned ${repo}#${pr_number} (${state})"
+      pruned=$((pruned + 1))
+    fi
+  done
+
+  if [[ "$pruned" -gt 0 ]]; then
+    info "Pruned ${pruned} merged/closed PRs"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

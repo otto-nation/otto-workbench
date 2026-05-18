@@ -1125,7 +1125,11 @@ SUFFIX_META = ".meta.json"
 
 def _write_review_sidecar(job: ReviewJob):
     sidecar_path = job.review_file.replace(REVIEW_EXT, SUFFIX_META)
-    meta: dict = {"head_sha": job.pr.head_sha}
+    meta: dict = {
+        "repo": job.repo,
+        "pr_number": job.pr_number,
+        "head_sha": job.pr.head_sha,
+    }
     if job.preflight and job.preflight.diff:
         meta["diff"] = job.preflight.diff
     Path(sidecar_path).write_text(json.dumps(meta))

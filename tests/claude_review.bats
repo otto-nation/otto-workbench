@@ -354,6 +354,89 @@ EOF
   [ "$post_archives" -eq 1 ]
 }
 
+# ── cmd_prune ────────────────────────────────────────────────────────────────
+
+@test "cmd_prune: removes files for merged PR" {
+  local reviews_dir="$TMPDIR/reviews"
+  mkdir -p "$reviews_dir"
+
+  # Create review files with meta.json containing repo info
+  echo "review content" > "$reviews_dir/my-repo-42.md"
+  echo "session data" > "$reviews_dir/my-repo-42.session.jsonl"
+  echo '{"repo":"org/my-repo","pr_number":"42","head_sha":"abc"}' > "$reviews_dir/my-repo-42.meta.json"
+
+  # Create a fake gh that returns MERGED
+  local fake_bin="$TMPDIR/bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "MERGED"
+GHEOF
+  chmod +x "$fake_bin/gh"
+
+  # Run prune with fake gh
+  REVIEWS_DIR="$reviews_dir" PATH="$fake_bin:$PATH" run bash -c \
+    'export HOME="$1"; NO_COLOR=1 source "$2" && REVIEWS_DIR="$3" cmd_prune' \
+    -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
+  [ "$status" -eq 0 ]
+
+  # All files for this PR should be removed
+  [ ! -f "$reviews_dir/my-repo-42.md" ]
+  [ ! -f "$reviews_dir/my-repo-42.session.jsonl" ]
+  [ ! -f "$reviews_dir/my-repo-42.meta.json" ]
+}
+
+@test "cmd_prune: keeps files for open PR" {
+  local reviews_dir="$TMPDIR/reviews"
+  mkdir -p "$reviews_dir"
+
+  echo "review content" > "$reviews_dir/my-repo-99.md"
+  echo '{"repo":"org/my-repo","pr_number":"99","head_sha":"def"}' > "$reviews_dir/my-repo-99.meta.json"
+
+  local fake_bin="$TMPDIR/bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "OPEN"
+GHEOF
+  chmod +x "$fake_bin/gh"
+
+  REVIEWS_DIR="$reviews_dir" PATH="$fake_bin:$PATH" run bash -c \
+    'export HOME="$1"; NO_COLOR=1 source "$2" && REVIEWS_DIR="$3" cmd_prune' \
+    -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
+  [ "$status" -eq 0 ]
+
+  # Files should still exist
+  [ -f "$reviews_dir/my-repo-99.md" ]
+  [ -f "$reviews_dir/my-repo-99.meta.json" ]
+}
+
+@test "cmd_prune: dry-run does not delete files" {
+  local reviews_dir="$TMPDIR/reviews"
+  mkdir -p "$reviews_dir"
+
+  echo "review" > "$reviews_dir/my-repo-10.md"
+  echo '{"repo":"org/my-repo","pr_number":"10","head_sha":"ghi"}' > "$reviews_dir/my-repo-10.meta.json"
+
+  local fake_bin="$TMPDIR/bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+echo "MERGED"
+GHEOF
+  chmod +x "$fake_bin/gh"
+
+  REVIEWS_DIR="$reviews_dir" PATH="$fake_bin:$PATH" run bash -c \
+    'export HOME="$1"; NO_COLOR=1 source "$2" && REVIEWS_DIR="$3" cmd_prune --dry-run' \
+    -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
+  [ "$status" -eq 0 ]
+
+  # Files should still exist
+  [ -f "$reviews_dir/my-repo-10.md" ]
+  [ -f "$reviews_dir/my-repo-10.meta.json" ]
+  [[ "$output" == *"dry-run"* ]] || [[ "$output" == *"Would prune"* ]]
+}
+
 # ── _extract_repo ────────────────────────────────────────────────────────────
 
 @test "_extract_repo: GitHub URL extracts owner/repo" {

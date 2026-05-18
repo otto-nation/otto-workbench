@@ -23,11 +23,6 @@ tools:
     description: "Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging"
     when_to_use: "Called internally by claude-review; not invoked directly"
 
-  - name: review-stream-progress
-    context: none
-    description: "Reads Claude stream-json from stdin and shows progress labels during review"
-    when_to_use: "Called internally by claude-review; not invoked directly"
-
   - name: review-post
     context: none
     description: "Deterministic posting of review findings to GitHub as a PENDING PR review"

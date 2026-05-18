@@ -283,11 +283,16 @@ _archive_review() {
   local session_log="$3"
   local base="${review_file%"${REVIEW_EXT}"}"
 
-  # Clean up orphaned intermediates from prior failed runs (before creating new .prior.md)
-  rm -f "${base}.meta.json"
-  rm -f "${base}".group-*.jsonl "${base}".group-*.md
-  rm -f "${base}.holistic.jsonl" "${base}.holistic.md"
-  rm -f "${base}.synthesis.jsonl" "${base}.prior.md"
+  # Remove orphaned intermediates from prior runs — keep only files about to be archived
+  local _f
+  for _f in "${base}".*; do
+    [[ -f "$_f" ]] || continue
+    case "$_f" in
+      "${base}${REVIEW_EXT}"|"${base}${SUFFIX_SESSION}"|"${base}${SUFFIX_POST_SESSION}") continue ;;
+    esac
+    [[ "$_f" =~ [0-9]{8}-[0-9]{6} ]] && continue
+    rm -f "$_f"
+  done
 
   __prior_path=""
   if [[ -f "$review_file" ]]; then

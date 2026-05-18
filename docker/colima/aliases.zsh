@@ -15,11 +15,19 @@
 # Overrides the bare 'docker' command; all other docker aliases call this wrapper.
 docker() {
   if ! command docker info >/dev/null 2>&1; then
-    echo "Starting Colima..."
     local -a colima_args=(--arch "$COLIMA_ARCH" --vm-type="$COLIMA_VM_TYPE" --cpu "$COLIMA_CPU" --memory "$COLIMA_MEMORY")
     [[ "$COLIMA_ROSETTA" == "true" ]] && colima_args+=(--vz-rosetta)
-    colima start "${colima_args[@]}"
-    docker context use colima
+
+    if colima status &>/dev/null; then
+      # VM is running but socket is stale (common after sleep/wake) — full restart needed.
+      echo "Restarting Colima (stale socket)..."
+      colima stop
+      colima start "${colima_args[@]}"
+    else
+      echo "Starting Colima..."
+      colima start "${colima_args[@]}"
+    fi
+    command docker context use colima
   fi
   command docker "$@"
 }

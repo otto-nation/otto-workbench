@@ -8,7 +8,7 @@ Review ONLY the following files. Do NOT read or comment on files outside this li
 ${group_files_formatted}
 ${preflight_data}
 
-${reviews_section}
+Prior reviews exist and will be consulted during synthesis. Focus only on your assigned files.
 ${issue_section}
 
 ${env_section}

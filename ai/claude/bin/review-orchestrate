@@ -811,7 +811,6 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_block=holistic_block,
             group_files_formatted=extra["group_files_formatted"],
             preflight_data=group_preflight,
-            reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
             group_output=extra["group_output"],

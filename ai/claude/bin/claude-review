@@ -277,34 +277,45 @@ _archive_review() {
   local -n __prior_path=$1
   local review_file="$2"
   local session_log="$3"
+  local base="${review_file%"${REVIEW_EXT}"}"
+
+  # Clean up orphaned intermediates from prior failed runs (before creating new .prior.md)
+  rm -f "${base}.meta.json"
+  rm -f "${base}".group-*.jsonl "${base}".group-*.md
+  rm -f "${base}.holistic.jsonl" "${base}.holistic.md"
+  rm -f "${base}.synthesis.jsonl" "${base}.prior.md"
 
   __prior_path=""
   if [[ -f "$review_file" ]]; then
-    __prior_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
+    __prior_path="${base}${SUFFIX_PRIOR}"
     cp "$review_file" "$__prior_path"
     local archive
-    archive="${review_file%"${REVIEW_EXT}"}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
+    archive="${base}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
     mv "$review_file" "$archive"
     info "Archived prior review to $(basename "$archive")"
-  fi
-
-  # Clean up sidecar metadata file
-  local meta_file="${review_file%"${REVIEW_EXT}"}.meta.json"
-  if [[ -f "$meta_file" ]]; then
-    rm -f "$meta_file"
   fi
 
   if [[ -f "$session_log" ]]; then
     mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
   fi
 
+  # Archive post.jsonl alongside session log
+  local post_log="${base}${SUFFIX_POST_SESSION}"
+  if [[ -f "$post_log" ]]; then
+    mv "$post_log" "${base}.post.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
+  fi
+
   local _old_archive
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -t "${review_file%"${REVIEW_EXT}"}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+    rm -f "$_old_archive"
+  done
+  # shellcheck disable=SC2012
+  for _old_archive in $(ls -1t "${base}".post.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
     rm -f "$_old_archive"
   done
 }

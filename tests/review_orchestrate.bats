@@ -130,6 +130,55 @@ print(",".join(names))
   [[ "$result" == *"pkg-2"* ]]
 }
 
+# ── Group merging ────────────────────────────────────────────────────────────
+
+@test "_merge_smallest_groups: reduces count to max" {
+  result=$(_py '
+groups = [
+    mod.Group("a", ["a.go"], 100),
+    mod.Group("b", ["b.go"], 200),
+    mod.Group("c", ["c.go"], 50),
+    mod.Group("d", ["d.go"], 150),
+    mod.Group("e", ["e.go"], 75),
+]
+merged = mod._merge_smallest_groups(groups, 3)
+print(len(merged))
+')
+  [ "$result" = "3" ]
+}
+
+@test "_merge_smallest_groups: merges smallest groups first" {
+  result=$(_py '
+groups = [
+    mod.Group("big", ["big.go"], 500),
+    mod.Group("small1", ["s1.go"], 10),
+    mod.Group("small2", ["s2.go"], 20),
+    mod.Group("medium", ["m.go"], 100),
+]
+merged = mod._merge_smallest_groups(groups, 3)
+names = [g.name for g in merged]
+lines = [g.lines for g in merged]
+print(sorted(names))
+print(sorted(lines))
+')
+  # small1 (10) + small2 (20) should be merged into one group (30 lines)
+  [[ "$result" == *"30"* ]]
+  [[ "$result" == *"500"* ]]
+  [[ "$result" == *"100"* ]]
+}
+
+@test "_merge_smallest_groups: noop when under cap" {
+  result=$(_py '
+groups = [
+    mod.Group("a", ["a.go"], 100),
+    mod.Group("b", ["b.go"], 200),
+]
+merged = mod._merge_smallest_groups(groups, 5)
+print(len(merged))
+')
+  [ "$result" = "2" ]
+}
+
 # ── Review merging ────────────────────────────────────────────────────────────
 
 @test "merge_reviews: merges sections and renumbers" {

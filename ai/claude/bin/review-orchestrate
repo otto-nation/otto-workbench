@@ -418,6 +418,23 @@ def group_files(pr: PRMetadata) -> list[Group]:
     return groups
 
 
+DEFAULT_MAX_GROUPS = 12
+
+
+def _merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
+    groups = list(groups)
+    while len(groups) > max_groups:
+        groups.sort(key=lambda g: g.lines)
+        a, b = groups[0], groups[1]
+        merged = Group(
+            name=f"{a.name}+{b.name}",
+            files=a.files + b.files,
+            lines=a.lines + b.lines,
+        )
+        groups = [merged] + groups[2:]
+    return groups
+
+
 # ── Review merging ────────────────────────────────────────────────────────────
 
 def _extract_section(content: str, header: str) -> str:

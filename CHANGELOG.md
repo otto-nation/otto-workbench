@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.4.0](https://github.com/otto-nation/otto-workbench/compare/v1.3.0...v1.4.0) (2026-05-18)
+
+
+### Features
+
+* **zsh:** export GITHUB_TOKEN from gh CLI credential ([#96](https://github.com/otto-nation/otto-workbench/issues/96)) ([cf20782](https://github.com/otto-nation/otto-workbench/commit/cf2078295ad58693ed5ec6ab539bbc5b9141ab2b))
+
+
+### Bug Fixes
+
+* **claude-review:** self-review archive, --force, and --no-post rule ([#100](https://github.com/otto-nation/otto-workbench/issues/100)) ([eeac16a](https://github.com/otto-nation/otto-workbench/commit/eeac16aa08dd38a9fa0747e5a3da88978688b597))
+* **docker:** handle stale Colima socket after sleep/wake ([#99](https://github.com/otto-nation/otto-workbench/issues/99)) ([c49916a](https://github.com/otto-nation/otto-workbench/commit/c49916a54266368531a566edb5f4bae961499a9f))
+* **install:** replace set -e-unsafe patterns in parse_install_flags ([#91](https://github.com/otto-nation/otto-workbench/issues/91)) ([9645607](https://github.com/otto-nation/otto-workbench/commit/9645607b979bba021ba864ea03185f02718d310c))
+* **review-post:** derive default severity filter from SEVERITY_LABELS ([#94](https://github.com/otto-nation/otto-workbench/issues/94)) ([37f0db6](https://github.com/otto-nation/otto-workbench/commit/37f0db61c077d3850a69d81156a8478e8f4776f5))
+* **review:** grant write access to review file's parent directory ([#92](https://github.com/otto-nation/otto-workbench/issues/92)) ([1450e2b](https://github.com/otto-nation/otto-workbench/commit/1450e2bbc4e7922abc783a00c60ff78be905171b))
+* **setup:** restore execute bits and fix invocation in setup scripts ([#89](https://github.com/otto-nation/otto-workbench/issues/89)) ([82a581a](https://github.com/otto-nation/otto-workbench/commit/82a581a0c7780d64f6546be3ec936c9a866a936c))
+* **wt-cleanup:** guard default branch by name, not just is_main flag ([#93](https://github.com/otto-nation/otto-workbench/issues/93)) ([15d2bef](https://github.com/otto-nation/otto-workbench/commit/15d2bef5829da26752b8cb910f1be9337e5aa311))
+
+
+### Performance Improvements
+
+* **claude-review:** budget controls, scoped diffs; reduce review cost ([#98](https://github.com/otto-nation/otto-workbench/issues/98)) ([4f09035](https://github.com/otto-nation/otto-workbench/commit/4f090352c340725e4a5a2fa857edd1e0b0f5b63e))
+* **claude-review:** optimize review pipeline and add metadata tracking ([#95](https://github.com/otto-nation/otto-workbench/issues/95)) ([8ea407a](https://github.com/otto-nation/otto-workbench/commit/8ea407a1fe873d3570a3e99733954580d6d173f8))
+
 ## [1.3.0](https://github.com/otto-nation/otto-workbench/compare/v1.2.0...v1.3.0) (2026-05-15)
 
 

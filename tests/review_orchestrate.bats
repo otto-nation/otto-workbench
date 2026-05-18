@@ -757,6 +757,52 @@ with tempfile.TemporaryDirectory() as td:
   [ "$result" = "None" ]
 }
 
+@test "collect_preflight_data: rejects when diff+files exceed budget" {
+  repo="$TMPDIR/budget-repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  # Create 5 files with 10k lines each to produce a large diff
+  python3 -c "
+for i in range(1, 6):
+    with open(f'file{i}.go', 'w') as f:
+        for j in range(10000):
+            f.write(f'original_line_content_padding_{j}\n')
+"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  git checkout -b feat -q
+  python3 -c "
+for i in range(1, 6):
+    with open(f'file{i}.go', 'w') as f:
+        for j in range(10000):
+            f.write(f'modified_line_content_padding_{j}\n')
+"
+  git add . && git commit -q --no-verify -m "change"
+
+  result=$(_py "
+pr = mod.PRMetadata(
+    title='t', body='', head='feat', base='main', head_sha='abc',
+    additions=50000, deletions=50000, changed_files=5,
+    files=[
+        {'path': f'file{i}.go', 'additions': 10000, 'deletions': 10000}
+        for i in range(1, 6)
+    ],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='r', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='$repo', review_file='/tmp/r.md',
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+)
+result = mod.collect_preflight_data(job)
+print('None' if result is None else 'data')
+")
+  [ "$result" = "None" ]
+}
+
 @test "build_prompt: includes preflight_data when set" {
   result=$(_py '
 pr = mod.PRMetadata(

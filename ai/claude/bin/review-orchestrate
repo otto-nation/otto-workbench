@@ -194,7 +194,9 @@ TIER3_BASENAMES_SUFFIXES = (
 )
 TIER3_PATH_SEGMENTS = {"gen", "testdata"}
 
-MAX_PREFLIGHT_BYTES = 500_000
+MAX_PROMPT_TOKENS = 120_000
+MAX_PROMPT_BYTES = MAX_PROMPT_TOKENS * 4
+TEMPLATE_OVERHEAD_BYTES = 20_000
 MAX_FILE_BYTES = 100_000
 MAX_TRUNCATED_LINES = 500
 
@@ -241,15 +243,22 @@ def collect_preflight_data(job: "ReviewJob") -> "PreflightData | None":
 
     file_contents: dict[str, str] = {}
     file_permissions: dict[str, str] = {}
-    total_size = 0
+    total_file_size = 0
     for f in job.pr.files:
         p = wt / f["path"]
         content = _read_file_safe(p)
         file_contents[f["path"]] = content
         file_permissions[f["path"]] = _file_permissions(p)
-        total_size += len(content.encode())
-    if total_size > MAX_PREFLIGHT_BYTES:
-        _warn(f"Preflight data too large ({total_size // 1024}KB) — agent will read files directly")
+        total_file_size += len(content.encode())
+
+    estimated_total = (
+        len(diff.encode())
+        + len(commit_log.encode())
+        + total_file_size
+        + TEMPLATE_OVERHEAD_BYTES
+    )
+    if estimated_total > MAX_PROMPT_BYTES:
+        _warn(f"Preflight data too large (~{estimated_total // 1024}KB) — agent will read files directly")
         return None
 
     claude_md = ""

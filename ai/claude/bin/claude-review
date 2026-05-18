@@ -123,17 +123,14 @@ _format_usage() {
   raw=$(grep -h '"type":"result"' "${logs[@]}" 2>/dev/null) || return 0
   [[ -n "$raw" ]] || return 0
 
-  local usage_json
-  usage_json=$(echo "$raw" | jq -s '{
-    cost: (map(.total_cost_usd // 0) | add),
-    tokens: (map((.usage.input_tokens // 0) + (.usage.output_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)) | add),
-    duration_ms: (map(.duration_ms // 0) | add)
-  }' 2>/dev/null) || return 0
-
   local cost tokens duration_ms
-  cost=$(echo "$usage_json" | jq -r '.cost') || return 0
-  tokens=$(echo "$usage_json" | jq -r '.tokens') || return 0
-  duration_ms=$(echo "$usage_json" | jq -r '.duration_ms') || return 0
+  read -r cost tokens duration_ms <<< "$(echo "$raw" | jq -rs '
+    {
+      cost: (map(.total_cost_usd // 0) | add),
+      tokens: (map((.usage.input_tokens // 0) + (.usage.output_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)) | add),
+      duration_ms: (map(.duration_ms // 0) | add)
+    } | [.cost, .tokens, .duration_ms] | @tsv
+  ' 2>/dev/null)" || return 0
 
   local tokens_fmt
   if (( tokens >= 1000000 )); then

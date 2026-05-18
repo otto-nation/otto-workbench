@@ -15,9 +15,9 @@ ${reviews_section}
    Include <!-- date: ${today} --> and <!-- head_sha: ${pr_head_sha} --> comments
 2. Include the File Triage section from the merged findings above
 3. Write ## Summary — what the change does, overall quality, incorporating the holistic assessment
-4. Include all Must fix / Should fix / Nit / Idioms findings from the merged content (preserve IDs and formatting exactly)
+4. Include all Must fix / Should fix / Nit / Idioms findings from the merged content (use any IDs — they will be mechanically renumbered after you write the file)
 5. Check for cross-file concerns — do findings in one group imply issues in files from another group?
-6. Add any cross-cutting findings with new IDs continuing the sequence
+6. Add any cross-cutting findings
 7. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
 8. Write the COMPLETE review file to: ${review_file}
 

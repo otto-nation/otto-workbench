@@ -15,9 +15,9 @@ ${preflight_data}
 2. Write ## Summary — one sentence on what the changes do and overall quality
 3. Include all Must fix / Should fix / Nit / Idioms findings from the merged content
 4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms)
-5. Renumber findings sequentially within each severity category
+5. Use any finding IDs — they will be mechanically renumbered after you write the file
 6. Check for cross-file concerns — do findings in one group imply issues in files from another group?
-7. Add any cross-cutting findings with new IDs continuing the sequence
+7. Add any cross-cutting findings
 8. Omit empty severity sections entirely
 9. Do NOT include a File Triage or Verdict section
 10. Write the COMPLETE review file to: ${review_file}

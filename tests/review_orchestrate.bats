@@ -523,6 +523,67 @@ print(f'{total:.2f} {exceeded}')
 
 # ── Prompt building ──────────────────────────────────────────────────────────
 
+# ── Model selection ───────────────────────────────────────────────────────────
+
+@test "model defaults: group uses sonnet, others use opus" {
+  result=$(_py "
+print(mod.DEFAULT_MODEL_GROUP)
+print(mod.DEFAULT_MODEL_HOLISTIC)
+print(mod.DEFAULT_MODEL_SYNTHESIS)
+print(mod.DEFAULT_MODEL_SINGLE)
+")
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done <<< "$result"
+  [ "${lines[0]}" = "sonnet" ]
+  [ "${lines[1]}" = "opus" ]
+  [ "${lines[2]}" = "opus" ]
+  [ "${lines[3]}" = "opus" ]
+}
+
+@test "_resolve_model: explicit override wins" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+")
+  [ "$result" = "haiku" ]
+}
+
+@test "_resolve_model: env var beats default" {
+  result=$(_py "
+import os
+os.environ['CLAUDE_REVIEW_GROUP_MODEL'] = 'haiku'
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
+")
+  [ "$result" = "haiku" ]
+}
+
+@test "_resolve_model: global env var beats default" {
+  result=$(_py "
+import os
+os.environ['CLAUDE_REVIEW_MODEL'] = 'haiku'
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['CLAUDE_REVIEW_MODEL']
+")
+  [ "$result" = "haiku" ]
+}
+
+@test "_resolve_model: default when no override" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+")
+  [ "$result" = "sonnet" ]
+}
+
+# ── Prompt building ──────────────────────────────────────────────────────────
+
 @test "build_prompt: single-agent includes review file" {
   result=$(_py '
 pr = mod.PRMetadata(

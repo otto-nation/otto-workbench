@@ -100,6 +100,7 @@ class ReviewJob:
     mode: str = MODE_PR
     generator_version: str = ""
     preflight: "PreflightData | None" = None
+    model: str = ""
 
 
 @dataclass
@@ -1027,6 +1028,26 @@ def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
     return total, total > max_cost
 
 
+# ── Model selection ───────────────────────────────────────────────────────────
+
+DEFAULT_MODEL_GROUP = "sonnet"
+DEFAULT_MODEL_HOLISTIC = "opus"
+DEFAULT_MODEL_SYNTHESIS = "opus"
+DEFAULT_MODEL_SINGLE = "opus"
+
+
+def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
+    if explicit:
+        return explicit
+    from_env = os.environ.get(env_key)
+    if from_env:
+        return from_env
+    global_env = os.environ.get("CLAUDE_REVIEW_MODEL")
+    if global_env:
+        return global_env
+    return default
+
+
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 DEFAULT_MAX_TURNS = 10
@@ -1118,7 +1139,8 @@ def run_single_agent(job: ReviewJob):
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
     _info(f"Running review agent on {label}...")
     print()
-    invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
+    invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
     print()
 
     if not Path(job.review_file).exists():
@@ -1148,8 +1170,9 @@ def _review_group(
         group_file_paths=grp.files,
         group_output=group_output, holistic_content=holistic_content,
     )
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model)
 
     failed = None
     if not Path(group_output).exists():
@@ -1169,9 +1192,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model)
     print()
 
     holistic_content = ""
@@ -1245,9 +1269,10 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
     _info("Phase 4: Synthesis...")
     print()
-    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file)
+    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
     print()
 
     if not Path(job.review_file).exists():
@@ -1425,6 +1450,8 @@ def main():
                         help="Review mode: pr (default) or self")
     parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
+    parser.add_argument("--model", default="",
+                        help="Override model for all agents (e.g. sonnet, opus)")
     args = parser.parse_args()
 
     if args.mode == MODE_PR and not args.pr:
@@ -1460,6 +1487,7 @@ def main():
         issue_link=args.issue_link, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
+        model=args.model,
     )
 
     _info("Collecting file data...")

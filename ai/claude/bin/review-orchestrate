@@ -281,6 +281,22 @@ def collect_preflight_data(job: "ReviewJob") -> "PreflightData | None":
     )
 
 
+_DIFF_HEADER_RE = re.compile(r"^diff --git a/(\S+) b/\S+", re.MULTILINE)
+
+
+def _scope_diff(full_diff: str, file_filter: list[str]) -> str:
+    filter_set = set(file_filter)
+    sections: list[str] = []
+    for m in _DIFF_HEADER_RE.finditer(full_diff):
+        path = m.group(1)
+        start = m.start()
+        next_m = _DIFF_HEADER_RE.search(full_diff, m.end())
+        end = next_m.start() if next_m else len(full_diff)
+        if path in filter_set:
+            sections.append(full_diff[start:end])
+    return "".join(sections).strip()
+
+
 def format_preflight_data(
     data: PreflightData,
     file_filter: list[str] | None = None,
@@ -293,7 +309,8 @@ def format_preflight_data(
         "(cross-references, callers, tests, config files outside the PR).",
     ]
 
-    parts += ["", "### Full diff", "", "```diff", data.diff, "```"]
+    diff_text = _scope_diff(data.diff, file_filter) if file_filter else data.diff
+    parts += ["", "### Full diff", "", "```diff", diff_text, "```"]
 
     if data.commit_log:
         parts += ["", "### Commit history", "", "```", data.commit_log, "```"]

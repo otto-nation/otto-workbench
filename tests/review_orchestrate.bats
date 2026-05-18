@@ -467,6 +467,103 @@ print(f"foo={has_foo},bar={has_bar}")
   [ "$result" = "foo=True,bar=False" ]
 }
 
+@test "_scope_diff: returns only matching file hunks" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+index 123..456 100644
+--- a/foo.go
++++ b/foo.go
+@@ -1,3 +1,4 @@
+ package main
++import "fmt"
+
+diff --git a/bar.go b/bar.go
+index 789..abc 100644
+--- a/bar.go
++++ b/bar.go
+@@ -1,3 +1,3 @@
+-package old
++package bar
+
+diff --git a/baz.go b/baz.go
+index def..012 100644
+--- a/baz.go
++++ b/baz.go
+@@ -1 +1 @@
+-old
++new
+"""
+result = mod._scope_diff(diff_text, ["foo.go", "baz.go"])
+has_foo = "foo.go" in result
+has_bar = "bar.go" in result
+has_baz = "baz.go" in result
+print(f"foo={has_foo},bar={has_bar},baz={has_baz}")
+')
+  [ "$result" = "foo=True,bar=False,baz=True" ]
+}
+
+@test "_scope_diff: no matches returns empty" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
++new
+"""
+result = mod._scope_diff(diff_text, ["other.go"])
+print(repr(result))
+')
+  [ "$result" = "''" ]
+}
+
+@test "_scope_diff: all files match returns full diff" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
++new
+"""
+result = mod._scope_diff(diff_text, ["foo.go"])
+print("foo.go" in result)
+')
+  [ "$result" = "True" ]
+}
+
+@test "format_preflight_data: file_filter scopes diff" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
++new
+
+diff --git a/bar.go b/bar.go
+--- a/bar.go
++++ b/bar.go
+@@ -1 +1 @@
+-old
++new
+"""
+data = mod.PreflightData(
+    diff=diff_text,
+    commit_log="log",
+    file_contents={"foo.go": "package main", "bar.go": "package bar"},
+    file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+    claude_md="",
+    context_md="",
+)
+result = mod.format_preflight_data(data, file_filter=["foo.go"])
+has_foo_diff = "a/foo.go" in result
+has_bar_diff = "a/bar.go" in result
+print(f"foo_diff={has_foo_diff},bar_diff={has_bar_diff}")
+')
+  [ "$result" = "foo_diff=True,bar_diff=False" ]
+}
+
 @test "collect_preflight_data: returns None for oversized data" {
   result=$(_py "
 import tempfile, os

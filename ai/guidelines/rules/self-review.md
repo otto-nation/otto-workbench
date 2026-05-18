@@ -4,7 +4,7 @@
 
 Before creating a PR (via `task pr:create`, `gh pr create`, or any method):
 
-1. Run `claude-review --self --no-post` on the current branch
+1. Run `claude-review --self` on the current branch
 2. Read `.claude/self-review.md` and present the findings summary
 3. Work through findings as the user directs
 4. Only proceed to PR creation when the user is satisfied

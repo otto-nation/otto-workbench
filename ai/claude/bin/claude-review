@@ -625,9 +625,10 @@ cmd_self_review() {
   local issue_link="${2:-}"
   local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
   local skip_user_verification="${4:-false}"
-  local no_holistic="${5:-false}"
-  local max_cost="${6:-}"
-  local model="${7:-}"
+  local force="${5:-false}"
+  local no_holistic="${6:-false}"
+  local max_cost="${7:-}"
+  local model="${8:-}"
 
   _prune_merged_reviews
 
@@ -653,15 +654,10 @@ cmd_self_review() {
   local review_file="${wt_path}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
 
-  # ── Archive management ──
-  local prior_review_path=""
-  if [[ -f "$review_file" ]]; then
-    prior_review_path="${review_file%"${REVIEW_EXT}"}${SUFFIX_PRIOR}"
-    cp "$review_file" "$prior_review_path"
-    info "Preserved prior self-review for context"
-  fi
-
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
+
+  local prior_review_path=""
+  _archive_review prior_review_path "$review_file" "$session_log"
 
   local branch_name
   branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
@@ -774,7 +770,7 @@ main() {
   done
 
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$no_holistic" "$max_cost" "$model"
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model"
     return
   fi
 

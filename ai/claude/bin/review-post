@@ -554,8 +554,9 @@ def main():
     parser.add_argument("--repo", required=True, help="GitHub owner/repo")
     parser.add_argument("--pr", required=True, help="PR number")
     parser.add_argument("--review-file", required=True, help="Path to review markdown file")
-    parser.add_argument("--severity", default="M,S,N",
-                        help="Severity levels to post (comma-separated, default: M,S,N)")
+    all_sevs = ",".join(SEVERITY_LABELS)
+    parser.add_argument("--severity", default=all_sevs,
+                        help=f"Severity levels to post (comma-separated, default: {all_sevs})")
     parser.add_argument("--dry-run", action="store_true",
                         help="Parse and classify without posting")
     args = parser.parse_args()

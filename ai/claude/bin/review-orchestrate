@@ -122,7 +122,17 @@ MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
 DEFAULT_MAX_PARALLEL = 4
+DEFAULT_MAX_GROUPS = 12
 HOLISTIC_MIN_GROUPS = 4
+
+DEFAULT_MAX_COST = 20.0
+DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
+
+DEFAULT_MODEL_GROUP = "sonnet"
+DEFAULT_MODEL_HOLISTIC = "opus"
+DEFAULT_MODEL_SYNTHESIS = "opus"
+DEFAULT_MODEL_SINGLE = "opus"
 
 DEFAULT_BASE_BRANCH = "main"
 GIT_RANGE_TO_HEAD = f"origin/{DEFAULT_BASE_BRANCH}..HEAD"
@@ -162,6 +172,7 @@ SUFFIX_HOLISTIC_LOG = ".holistic.jsonl"
 SUFFIX_SYNTHESIS_LOG = ".synthesis.jsonl"
 SUFFIX_GROUP = ".group-{}.md"
 SUFFIX_GROUP_LOG = ".group-{}.jsonl"
+SUFFIX_META = ".meta.json"
 
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
@@ -426,9 +437,6 @@ def group_files(pr: PRMetadata) -> list[Group]:
     return groups
 
 
-DEFAULT_MAX_GROUPS = 12
-
-
 def _merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
     groups = list(groups)
     while len(groups) > max_groups:
@@ -463,14 +471,14 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
     content = Path(output_path).read_text()
     if not content.strip():
         return True
-    for line in content.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            header_text = stripped[3:].strip().lower()
-            if header_text in _VALID_SECTION_HEADERS:
-                return True
-    _warn(f"Group {group_name} output has no recognized sections — findings may be lost")
-    return False
+    has_section = any(
+        line.strip()[3:].strip().lower() in _VALID_SECTION_HEADERS
+        for line in content.split("\n")
+        if line.strip().startswith("## ")
+    )
+    if not has_section:
+        _warn(f"Group {group_name} output has no recognized sections — findings may be lost")
+    return has_section
 
 
 def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
@@ -760,13 +768,8 @@ def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
         m = _FINDING_LINE_RE.match(stripped)
         if m:
             in_matched_finding = m.group(1) in filter_set
-            if in_matched_finding:
-                current_lines.append(line)
-        elif in_matched_finding and stripped and not stripped.startswith("## "):
+        if in_matched_finding:
             current_lines.append(line)
-        elif not stripped:
-            if in_matched_finding:
-                current_lines.append(line)
 
     if current_header:
         sections.append((current_header, current_lines))
@@ -1002,23 +1005,19 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
 
 # ── Cost tracking ────────────────────────────────────────────────────────────
 
-DEFAULT_MAX_COST = 20.0
-
-
 def _parse_session_cost(log_path: str) -> float:
-    try:
-        total = 0.0
-        with open(log_path) as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if data.get("type") == "result":
-                    total += data.get("total_cost_usd", 0.0)
-        return total
-    except FileNotFoundError:
+    if not Path(log_path).exists():
         return 0.0
+    total = 0.0
+    with open(log_path) as f:
+        for line in f:
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "result":
+                total += data.get("total_cost_usd", 0.0)
+    return total
 
 
 def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
@@ -1027,12 +1026,6 @@ def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
 
 
 # ── Model selection ───────────────────────────────────────────────────────────
-
-DEFAULT_MODEL_GROUP = "sonnet"
-DEFAULT_MODEL_HOLISTIC = "opus"
-DEFAULT_MODEL_SYNTHESIS = "opus"
-DEFAULT_MODEL_SINGLE = "opus"
-
 
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     if explicit:
@@ -1047,10 +1040,6 @@ def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
 
 
 # ── Agent invocation ──────────────────────────────────────────────────────────
-
-DEFAULT_MAX_TURNS = 10
-DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
-
 
 def _build_agent_cmd(
     reviews_dir: str, wt_path: str,
@@ -1116,9 +1105,6 @@ def _info(msg: str):
 def _warn(msg: str):
     with _print_lock:
         print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
-
-
-SUFFIX_META = ".meta.json"
 
 
 def _write_review_sidecar(job: ReviewJob):
@@ -1350,6 +1336,38 @@ def _consolidate_and_cleanup(
             pass
 
 
+def _write_clean_review(job: ReviewJob, group_count: int):
+    meta = _build_meta_header(job)
+    if job.mode == MODE_SELF:
+        content = (
+            f"# Self-Review: {job.repo} — {job.pr.head}\n"
+            f"{meta}\n"
+            f"## Summary\n"
+            f"Multi-phase self-review of {job.pr.changed_files} files across {group_count} groups. "
+            f"No issues found.\n"
+        )
+    else:
+        content = (
+            f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
+            f"{meta}\n"
+            f"## Summary\n"
+            f"Multi-phase review of {job.pr.changed_files} files across {group_count} groups. "
+            f"No issues found.\n\n"
+            f"## Verdict\n"
+            f"Approve — clean review.\n"
+        )
+    Path(job.review_file).write_text(content)
+    _write_review_sidecar(job)
+
+
+def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
+    total = 0.0
+    for i in range(1, group_count + 1):
+        gl = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
+        total += _parse_session_cost(gl)
+    return total
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
@@ -1361,64 +1379,33 @@ def run_multi_phase(
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
     cost_so_far = 0.0
-    budget_exceeded = False
 
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
     if run_holistic:
         holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
         if holistic_log:
             cost_so_far += _parse_session_cost(holistic_log)
-        if cost_so_far > max_cost:
-            budget_exceeded = True
-            _warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
     else:
         reason = "--no-holistic" if skip_holistic else f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
         _info(f"Holistic phase skipped ({reason})")
         holistic_content, holistic_output, holistic_log = "", "", ""
 
-    if not budget_exceeded:
+    if cost_so_far > max_cost:
+        _warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
+        group_outputs, failed_groups = [], [g.name for g in groups]
+    else:
         group_outputs, failed_groups = _phase_group_reviews(
             groups, job, group_count, holistic_content, max_parallel,
         )
-    else:
-        group_outputs, failed_groups = [], [g.name for g in groups]
+        cost_so_far += _accumulate_group_costs(job, len(group_outputs))
 
     merged_content = _phase_merge(group_outputs, failed_groups)
 
-    for i in range(1, len(group_outputs) + 1):
-        gl = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
-        if Path(gl).exists():
-            cost_so_far += _parse_session_cost(gl)
-
-    if not budget_exceeded and cost_so_far > max_cost:
-        budget_exceeded = True
-        _warn(f"Budget exceeded after groups (${cost_so_far:.2f}/${max_cost:.2f}) — skipping synthesis")
-
     if not _has_findings(merged_content) and not failed_groups:
         _info("No findings from any group — writing clean review")
-        meta = _build_meta_header(job)
-        if job.mode == MODE_SELF:
-            clean = (
-                f"# Self-Review: {job.repo} — {job.pr.head}\n"
-                f"{meta}\n"
-                f"## Summary\n"
-                f"Multi-phase self-review of {job.pr.changed_files} files across {group_count} groups. "
-                f"No issues found.\n"
-            )
-        else:
-            clean = (
-                f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
-                f"{meta}\n"
-                f"## Summary\n"
-                f"Multi-phase review of {job.pr.changed_files} files across {group_count} groups. "
-                f"No issues found.\n\n"
-                f"## Verdict\n"
-                f"Approve — clean review.\n"
-            )
-        Path(job.review_file).write_text(clean)
-        _write_review_sidecar(job)
+        _write_clean_review(job, group_count)
         synthesis_log = ""
-    elif budget_exceeded:
+    elif cost_so_far > max_cost:
         _warn("Using merged group output as final review (synthesis skipped due to budget)")
         Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)

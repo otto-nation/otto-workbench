@@ -405,7 +405,7 @@ def group_files(pr: PRMetadata) -> list[Group]:
 
 def _extract_section(content: str, header: str) -> str:
     pattern = rf"^## {re.escape(header)}\s*\n"
-    m = re.search(pattern, content, re.MULTILINE)
+    m = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
     if not m:
         return ""
     start = m.end()

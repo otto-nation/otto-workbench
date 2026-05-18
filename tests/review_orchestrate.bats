@@ -180,6 +180,40 @@ print(result)
   [[ "$result" == *"a.go"* ]]
 }
 
+# ── _extract_section ─────────────────────────────────────────────────────────
+
+@test "_extract_section: case-insensitive header matching" {
+  result=$(_py "
+content = '''## Must Fix
+- [M1] bug in auth
+
+## Should fix
+- [S1] cleanup
+'''
+result = mod._extract_section(content, 'Must fix')
+print(result)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" == *"bug in auth"* ]]
+}
+
+@test "merge_reviews: case-insensitive section headers merge correctly" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## Must Fix
+- **[M1]** a.go:10 — bug
+
+## NIT
+- **[N1]** a.go:20 — style
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md'])
+print(result)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" == *"[N1]"* ]]
+}
+
 # ── renumber_section ──────────────────────────────────────────────────────────
 
 @test "renumber_section: no offset keeps IDs" {

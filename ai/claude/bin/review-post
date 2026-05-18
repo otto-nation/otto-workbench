@@ -39,12 +39,13 @@ SEVERITY_LABELS = {
     SEVERITY_IDIOMS: "idiom",
 }
 
-SECTION_HEADERS = {
-    "## Must fix": SEVERITY_MUST,
-    "## Should fix": SEVERITY_SHOULD,
-    "## Nit": SEVERITY_NIT,
-    "## Idioms": SEVERITY_IDIOMS,
+_SECTION_HEADERS_RAW = {
+    "## must fix": SEVERITY_MUST,
+    "## should fix": SEVERITY_SHOULD,
+    "## nit": SEVERITY_NIT,
+    "## idioms": SEVERITY_IDIOMS,
 }
+SECTION_HEADERS = _SECTION_HEADERS_RAW
 
 CLASS_INLINE = "inline"
 CLASS_FILE_LEVEL = "file_level"
@@ -177,11 +178,12 @@ def parse_findings(text: str) -> list[Finding]:
     for raw_line in text.split("\n"):
         stripped = raw_line.strip()
 
-        if stripped in SECTION_HEADERS:
+        stripped_lower = stripped.lower()
+        if stripped_lower in SECTION_HEADERS:
             if findings:
                 _finalize_finding(findings[-1], body_lines)
                 body_lines = []
-            current_severity = SECTION_HEADERS[stripped]
+            current_severity = SECTION_HEADERS[stripped_lower]
             continue
 
         if stripped.startswith("## "):

@@ -197,6 +197,47 @@ print(result)
   [[ "$result" == *"bug in auth"* ]]
 }
 
+@test "_validate_group_output: valid output with sections returns True" {
+  cat > "$TMPDIR/valid.md" <<'EOF'
+## Must fix
+- **[M1]** a.go:10 — bug
+EOF
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/valid.md', 'test-group'))
+")
+  [ "$result" = "True" ]
+}
+
+@test "_validate_group_output: no sections warns and returns False" {
+  cat > "$TMPDIR/nosections.md" <<'EOF'
+I looked at all the files and found nothing notable.
+The code looks good overall.
+EOF
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/nosections.md', 'test-group'))
+")
+  [ "$result" = "False" ]
+}
+
+@test "_validate_group_output: empty file returns True" {
+  : > "$TMPDIR/empty.md"
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/empty.md', 'test-group'))
+")
+  [ "$result" = "True" ]
+}
+
+@test "_validate_group_output: File Triage section counts as valid" {
+  cat > "$TMPDIR/triage.md" <<'EOF'
+## File Triage
+- `a.go` — Tier 2
+EOF
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/triage.md', 'triage-group'))
+")
+  [ "$result" = "True" ]
+}
+
 @test "merge_reviews: case-insensitive section headers merge correctly" {
   cat > "$TMPDIR/group1.md" <<'EOF'
 ## Must Fix

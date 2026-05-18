@@ -414,6 +414,23 @@ def _extract_section(content: str, header: str) -> str:
     return content[start:end].strip()
 
 
+_VALID_SECTION_HEADERS = {s.lower() for s, _ in FINDING_SECTIONS} | {SECTION_FILE_TRIAGE.lower()}
+
+
+def _validate_group_output(output_path: str, group_name: str) -> bool:
+    content = Path(output_path).read_text()
+    if not content.strip():
+        return True
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            header_text = stripped[3:].strip().lower()
+            if header_text in _VALID_SECTION_HEADERS:
+                return True
+    _warn(f"Group {group_name} output has no recognized sections — findings may be lost")
+    return False
+
+
 def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     if not text:
         return "", 0
@@ -994,6 +1011,7 @@ def _review_group(
         _warn(f"Group {i} ({grp.name}) produced no output")
         failed = grp.name
     else:
+        _validate_group_output(group_output, grp.name)
         _info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
 
     return (i, group_output, failed)

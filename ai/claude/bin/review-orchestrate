@@ -937,6 +937,17 @@ def _warn(msg: str):
         print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
 
 
+SUFFIX_META = ".meta.json"
+
+
+def _write_review_sidecar(job: ReviewJob):
+    sidecar_path = job.review_file.replace(REVIEW_EXT, SUFFIX_META)
+    meta: dict = {"head_sha": job.pr.head_sha}
+    if job.preflight and job.preflight.diff:
+        meta["diff"] = job.preflight.diff
+    Path(sidecar_path).write_text(json.dumps(meta))
+
+
 def run_single_agent(job: ReviewJob):
     template = TEMPLATE_SELF_REVIEW if job.mode == MODE_SELF else TEMPLATE_SINGLE
     prompt = build_prompt(
@@ -954,6 +965,7 @@ def run_single_agent(job: ReviewJob):
         sys.exit(1)
 
     renumber_findings(job.review_file)
+    _write_review_sidecar(job)
 
 
 def _review_group(
@@ -1103,6 +1115,7 @@ def _phase_synthesis(
         Path(job.review_file).write_text(fallback)
 
     renumber_findings(job.review_file)
+    _write_review_sidecar(job)
 
     return synthesis_log
 
@@ -1187,6 +1200,7 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL, sk
                 f"Approve — clean review.\n"
             )
         Path(job.review_file).write_text(clean)
+        _write_review_sidecar(job)
         synthesis_log = ""
     else:
         synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)

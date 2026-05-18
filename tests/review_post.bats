@@ -412,6 +412,31 @@ print(repr(findings[0].body))
   [ "$result" = "''" ]
 }
 
+@test "parse_findings: case-insensitive section headers" {
+  result=$(_py "
+text = '''## Must Fix
+
+- **[M1]** **\`file.go:10\`** — Bug found
+
+## SHOULD FIX
+
+- **[S1]** **\`file.go:20\`** — Cleanup needed
+
+## nit
+
+- **[N1]** **\`file.go:30\`** — Style issue
+'''
+findings = mod.parse_findings(text)
+print(len(findings))
+for f in findings:
+    print(f'{f.severity}:{f.body}')
+")
+  [[ "$result" == *"3"* ]]
+  [[ "$result" == *"M:Bug found"* ]]
+  [[ "$result" == *"S:Cleanup needed"* ]]
+  [[ "$result" == *"N:Style issue"* ]]
+}
+
 # ── parse_diff_hunks ─────────────────────────────────────────────────────────
 
 @test "parse_diff_hunks: single file single hunk" {

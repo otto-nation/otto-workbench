@@ -130,6 +130,55 @@ print(",".join(names))
   [[ "$result" == *"pkg-2"* ]]
 }
 
+# ── Group merging ────────────────────────────────────────────────────────────
+
+@test "_merge_smallest_groups: reduces count to max" {
+  result=$(_py '
+groups = [
+    mod.Group("a", ["a.go"], 100),
+    mod.Group("b", ["b.go"], 200),
+    mod.Group("c", ["c.go"], 50),
+    mod.Group("d", ["d.go"], 150),
+    mod.Group("e", ["e.go"], 75),
+]
+merged = mod._merge_smallest_groups(groups, 3)
+print(len(merged))
+')
+  [ "$result" = "3" ]
+}
+
+@test "_merge_smallest_groups: merges smallest groups first" {
+  result=$(_py '
+groups = [
+    mod.Group("big", ["big.go"], 500),
+    mod.Group("small1", ["s1.go"], 10),
+    mod.Group("small2", ["s2.go"], 20),
+    mod.Group("medium", ["m.go"], 100),
+]
+merged = mod._merge_smallest_groups(groups, 3)
+names = [g.name for g in merged]
+lines = [g.lines for g in merged]
+print(sorted(names))
+print(sorted(lines))
+')
+  # small1 (10) + small2 (20) should be merged into one group (30 lines)
+  [[ "$result" == *"30"* ]]
+  [[ "$result" == *"500"* ]]
+  [[ "$result" == *"100"* ]]
+}
+
+@test "_merge_smallest_groups: noop when under cap" {
+  result=$(_py '
+groups = [
+    mod.Group("a", ["a.go"], 100),
+    mod.Group("b", ["b.go"], 200),
+]
+merged = mod._merge_smallest_groups(groups, 5)
+print(len(merged))
+')
+  [ "$result" = "2" ]
+}
+
 # ── Review merging ────────────────────────────────────────────────────────────
 
 @test "merge_reviews: merges sections and renumbers" {
@@ -178,6 +227,159 @@ print(result)
 ")
   [[ "$result" == *"[S1]"* ]]
   [[ "$result" == *"a.go"* ]]
+}
+
+# ── _extract_section ─────────────────────────────────────────────────────────
+
+@test "_extract_section: case-insensitive header matching" {
+  result=$(_py "
+content = '''## Must Fix
+- [M1] bug in auth
+
+## Should fix
+- [S1] cleanup
+'''
+result = mod._extract_section(content, 'Must fix')
+print(result)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" == *"bug in auth"* ]]
+}
+
+@test "_validate_group_output: valid output with sections returns True" {
+  cat > "$TMPDIR/valid.md" <<'EOF'
+## Must fix
+- **[M1]** a.go:10 — bug
+EOF
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/valid.md', 'test-group'))
+")
+  [ "$result" = "True" ]
+}
+
+@test "_validate_group_output: no sections warns and returns False" {
+  cat > "$TMPDIR/nosections.md" <<'EOF'
+I looked at all the files and found nothing notable.
+The code looks good overall.
+EOF
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/nosections.md', 'test-group'))
+")
+  [ "$result" = "False" ]
+}
+
+@test "_validate_group_output: empty file returns True" {
+  : > "$TMPDIR/empty.md"
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/empty.md', 'test-group'))
+")
+  [ "$result" = "True" ]
+}
+
+@test "_validate_group_output: File Triage section counts as valid" {
+  cat > "$TMPDIR/triage.md" <<'EOF'
+## File Triage
+- `a.go` — Tier 2
+EOF
+  result=$(_py "
+print(mod._validate_group_output('$TMPDIR/triage.md', 'triage-group'))
+")
+  [ "$result" = "True" ]
+}
+
+@test "merge_reviews: case-insensitive section headers merge correctly" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## Must Fix
+- **[M1]** a.go:10 — bug
+
+## NIT
+- **[N1]** a.go:20 — style
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md'])
+print(result)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" == *"[N1]"* ]]
+}
+
+# ── _scope_prior_review ──────────────────────────────────────────────────────
+
+@test "_scope_prior_review: keeps only findings for matching files" {
+  prior='## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug
+- [ ] **[M2]** src/db.go:20 — db bug
+
+## Should fix
+- [ ] **[S1]** src/auth.go:30 — cleanup'
+
+  result=$(_py "
+prior = '''$prior'''
+scoped = mod._scope_prior_review(prior, ['src/auth.go'])
+print(scoped)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" != *"[M2]"* ]]
+  [[ "$result" == *"[S1]"* ]]
+  [[ "$result" == *"## Must fix"* ]]
+  [[ "$result" == *"## Should fix"* ]]
+}
+
+@test "_scope_prior_review: no matches returns empty" {
+  prior='## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug'
+
+  result=$(_py "
+prior = '''$prior'''
+scoped = mod._scope_prior_review(prior, ['src/unrelated.go'])
+print(repr(scoped))
+")
+  [ "$result" = "''" ]
+}
+
+@test "_scope_prior_review: multiline finding continuation kept" {
+  prior='## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug
+  This is a continuation line with more detail
+- [ ] **[M2]** src/db.go:20 — db bug'
+
+  result=$(_py "
+prior = '''$prior'''
+scoped = mod._scope_prior_review(prior, ['src/auth.go'])
+print(scoped)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" == *"continuation line"* ]]
+  [[ "$result" != *"[M2]"* ]]
+}
+
+@test "build_prompt: GROUP template gets scoped prior review" {
+  result=$(_py "
+import types
+pr = mod.PRMetadata(
+    title='test', body='', base='main', head='feat', head_sha='abc123',
+    additions=30, deletions=15, changed_files=2,
+    files=[
+        {'path': 'src/auth.go', 'additions': 10, 'deletions': 5, 'status': 'modified'},
+        {'path': 'src/db.go', 'additions': 20, 'deletions': 10, 'status': 'modified'},
+    ],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='/tmp/wt', review_file='/tmp/review.md',
+    session_log='/tmp/session.jsonl', reviews_dir='/tmp/reviews',
+    prior_review='## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n- [ ] **[M2]** src/db.go:20 — db bug',
+)
+result = mod.build_prompt(mod.TEMPLATE_GROUP, job,
+    group_idx=1, group_count=2, group_name='auth',
+    group_files_formatted='src/auth.go', group_output='/tmp/out.md',
+    holistic_content='', group_file_paths=['src/auth.go'],
+)
+print('[M1]' in result and '[M2]' not in result)
+")
+  [ "$result" = "True" ]
 }
 
 # ── renumber_section ──────────────────────────────────────────────────────────
@@ -233,6 +435,151 @@ result = mod.render_template("single-agent.md",
 print("ok" if "${" not in result or "issue_section" in result else "fail")
 ')
   [ "$result" = "ok" ]
+}
+
+# ── Agent command building ───────────────────────────────────────────────────
+
+@test "_build_agent_cmd: includes max-turns when set" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", max_turns=10)
+print("--max-turns" in cmd, cmd[cmd.index("--max-turns") + 1] if "--max-turns" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"10"* ]]
+}
+
+@test "_build_agent_cmd: includes max-budget-usd when set" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", max_budget=5.0)
+print("--max-budget-usd" in cmd, cmd[cmd.index("--max-budget-usd") + 1] if "--max-budget-usd" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"5.0"* ]]
+}
+
+@test "_build_agent_cmd: omits flags when None" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt")
+print("--max-turns" not in cmd and "--max-budget-usd" not in cmd)
+')
+  [ "$result" = "True" ]
+}
+
+@test "_build_agent_cmd: includes model when set" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", model="sonnet")
+print("--model" in cmd, cmd[cmd.index("--model") + 1] if "--model" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"sonnet"* ]]
+}
+
+# ── Cost tracking ────────────────────────────────────────────────────────────
+
+@test "_parse_session_cost: extracts cost from JSONL" {
+  cat > "$TMPDIR/cost.jsonl" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"working..."}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":60000,"total_cost_usd":3.50,"usage":{"input_tokens":100,"output_tokens":200}}
+EOF
+  result=$(_py "
+cost = mod._parse_session_cost('$TMPDIR/cost.jsonl')
+print(f'{cost:.2f}')
+")
+  [ "$result" = "3.50" ]
+}
+
+@test "_parse_session_cost: returns 0 for missing file" {
+  result=$(_py "
+cost = mod._parse_session_cost('/tmp/nonexistent.jsonl')
+print(f'{cost:.2f}')
+")
+  [ "$result" = "0.00" ]
+}
+
+@test "_check_budget: sums costs and detects exceeded" {
+  cat > "$TMPDIR/log1.jsonl" <<'EOF'
+{"type":"result","subtype":"success","total_cost_usd":5.00}
+EOF
+  cat > "$TMPDIR/log2.jsonl" <<'EOF'
+{"type":"result","subtype":"success","total_cost_usd":8.00}
+EOF
+  result=$(_py "
+total, exceeded = mod._check_budget(['$TMPDIR/log1.jsonl', '$TMPDIR/log2.jsonl'], 10.0)
+print(f'{total:.2f} {exceeded}')
+")
+  [ "$result" = "13.00 True" ]
+}
+
+@test "_check_budget: under budget returns False" {
+  cat > "$TMPDIR/log.jsonl" <<'EOF'
+{"type":"result","subtype":"success","total_cost_usd":2.00}
+EOF
+  result=$(_py "
+total, exceeded = mod._check_budget(['$TMPDIR/log.jsonl'], 10.0)
+print(f'{total:.2f} {exceeded}')
+")
+  [ "$result" = "2.00 False" ]
+}
+
+# ── Prompt building ──────────────────────────────────────────────────────────
+
+# ── Model selection ───────────────────────────────────────────────────────────
+
+@test "model defaults: group uses sonnet, others use opus" {
+  result=$(_py "
+print(mod.DEFAULT_MODEL_GROUP)
+print(mod.DEFAULT_MODEL_HOLISTIC)
+print(mod.DEFAULT_MODEL_SYNTHESIS)
+print(mod.DEFAULT_MODEL_SINGLE)
+")
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done <<< "$result"
+  [ "${lines[0]}" = "sonnet" ]
+  [ "${lines[1]}" = "opus" ]
+  [ "${lines[2]}" = "opus" ]
+  [ "${lines[3]}" = "opus" ]
+}
+
+@test "_resolve_model: explicit override wins" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+")
+  [ "$result" = "haiku" ]
+}
+
+@test "_resolve_model: env var beats default" {
+  result=$(_py "
+import os
+os.environ['CLAUDE_REVIEW_GROUP_MODEL'] = 'haiku'
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
+")
+  [ "$result" = "haiku" ]
+}
+
+@test "_resolve_model: global env var beats default" {
+  result=$(_py "
+import os
+os.environ['CLAUDE_REVIEW_MODEL'] = 'haiku'
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['CLAUDE_REVIEW_MODEL']
+")
+  [ "$result" = "haiku" ]
+}
+
+@test "_resolve_model: default when no override" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+")
+  [ "$result" = "sonnet" ]
 }
 
 # ── Prompt building ──────────────────────────────────────────────────────────
@@ -392,6 +739,103 @@ print(f"foo={has_foo},bar={has_bar}")
   [ "$result" = "foo=True,bar=False" ]
 }
 
+@test "_scope_diff: returns only matching file hunks" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+index 123..456 100644
+--- a/foo.go
++++ b/foo.go
+@@ -1,3 +1,4 @@
+ package main
++import "fmt"
+
+diff --git a/bar.go b/bar.go
+index 789..abc 100644
+--- a/bar.go
++++ b/bar.go
+@@ -1,3 +1,3 @@
+-package old
++package bar
+
+diff --git a/baz.go b/baz.go
+index def..012 100644
+--- a/baz.go
++++ b/baz.go
+@@ -1 +1 @@
+-old
++new
+"""
+result = mod._scope_diff(diff_text, ["foo.go", "baz.go"])
+has_foo = "foo.go" in result
+has_bar = "bar.go" in result
+has_baz = "baz.go" in result
+print(f"foo={has_foo},bar={has_bar},baz={has_baz}")
+')
+  [ "$result" = "foo=True,bar=False,baz=True" ]
+}
+
+@test "_scope_diff: no matches returns empty" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
++new
+"""
+result = mod._scope_diff(diff_text, ["other.go"])
+print(repr(result))
+')
+  [ "$result" = "''" ]
+}
+
+@test "_scope_diff: all files match returns full diff" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
++new
+"""
+result = mod._scope_diff(diff_text, ["foo.go"])
+print("foo.go" in result)
+')
+  [ "$result" = "True" ]
+}
+
+@test "format_preflight_data: file_filter scopes diff" {
+  result=$(_py '
+diff_text = """diff --git a/foo.go b/foo.go
+--- a/foo.go
++++ b/foo.go
+@@ -1 +1 @@
+-old
++new
+
+diff --git a/bar.go b/bar.go
+--- a/bar.go
++++ b/bar.go
+@@ -1 +1 @@
+-old
++new
+"""
+data = mod.PreflightData(
+    diff=diff_text,
+    commit_log="log",
+    file_contents={"foo.go": "package main", "bar.go": "package bar"},
+    file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+    claude_md="",
+    context_md="",
+)
+result = mod.format_preflight_data(data, file_filter=["foo.go"])
+has_foo_diff = "a/foo.go" in result
+has_bar_diff = "a/bar.go" in result
+print(f"foo_diff={has_foo_diff},bar_diff={has_bar_diff}")
+')
+  [ "$result" = "foo_diff=True,bar_diff=False" ]
+}
+
 @test "collect_preflight_data: returns None for oversized data" {
   result=$(_py "
 import tempfile, os
@@ -417,6 +861,52 @@ with tempfile.TemporaryDirectory() as td:
     )
     result = mod.collect_preflight_data(job)
     print('None' if result is None else 'data')
+")
+  [ "$result" = "None" ]
+}
+
+@test "collect_preflight_data: rejects when diff+files exceed budget" {
+  repo="$TMPDIR/budget-repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  # Create 5 files with 10k lines each to produce a large diff
+  python3 -c "
+for i in range(1, 6):
+    with open(f'file{i}.go', 'w') as f:
+        for j in range(10000):
+            f.write(f'original_line_content_padding_{j}\n')
+"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  git checkout -b feat -q
+  python3 -c "
+for i in range(1, 6):
+    with open(f'file{i}.go', 'w') as f:
+        for j in range(10000):
+            f.write(f'modified_line_content_padding_{j}\n')
+"
+  git add . && git commit -q --no-verify -m "change"
+
+  result=$(_py "
+pr = mod.PRMetadata(
+    title='t', body='', head='feat', base='main', head_sha='abc',
+    additions=50000, deletions=50000, changed_files=5,
+    files=[
+        {'path': f'file{i}.go', 'additions': 10000, 'deletions': 10000}
+        for i in range(1, 6)
+    ],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='r', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='$repo', review_file='/tmp/r.md',
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+)
+result = mod.collect_preflight_data(job)
+print('None' if result is None else 'data')
 ")
   [ "$result" = "None" ]
 }

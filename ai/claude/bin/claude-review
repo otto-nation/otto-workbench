@@ -449,6 +449,8 @@ cmd_review() {
   local max_cost="${8:-}"
   local model="${9:-}"
 
+  _prune_merged_reviews
+
   local pr_number
   _extract_pr_number pr_number "$pr_input"
 
@@ -609,6 +611,8 @@ cmd_self_review() {
   local no_holistic="${5:-false}"
   local max_cost="${6:-}"
   local model="${7:-}"
+
+  _prune_merged_reviews
 
   local repo
   _extract_repo repo "${pr_input:-local}"
@@ -776,10 +780,6 @@ main() {
       _extract_repo post_repo "$post_input"
       cmd_post "$post_repo" "$post_pr_number"
       ;;
-    prune)
-      shift
-      cmd_prune "${positional[@]:1}"
-      ;;
     "")
       usage
       exit 1
@@ -790,16 +790,8 @@ main() {
   esac
 }
 
-cmd_prune() {
-  local dry_run="false"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --dry-run) dry_run="true"; shift ;;
-      *) shift ;;
-    esac
-  done
-
-  local pruned=0 skipped=0 files_removed=0
+_prune_merged_reviews() {
+  local pruned=0 files_removed=0
 
   for meta_file in "$REVIEWS_DIR"/*.meta.json; do
     [[ -f "$meta_file" ]] || continue
@@ -820,23 +812,15 @@ cmd_prune() {
       local count
       # shellcheck disable=SC2012
       count=$(ls -1 "${base}"* 2>/dev/null | wc -l | tr -d ' ')
-      if [[ "$dry_run" == "true" ]]; then
-        info "Would prune ${repo}#${pr_number} (${state}) — ${count} files"
-      else
-        rm -f "${base}"*
-        info "Pruned ${repo}#${pr_number} (${state}) — ${count} files"
-        files_removed=$((files_removed + count))
-      fi
+      rm -f "${base}"*
+      info "Pruned ${repo}#${pr_number} (${state}) — ${count} files"
+      files_removed=$((files_removed + count))
       pruned=$((pruned + 1))
-    else
-      skipped=$((skipped + 1))
     fi
   done
 
-  if [[ "$dry_run" == "true" ]]; then
-    info "dry-run: would prune ${pruned} PRs, skipped ${skipped} open"
-  else
-    info "Pruned ${pruned} PRs (${files_removed} files), skipped ${skipped} open"
+  if [[ "$pruned" -gt 0 ]]; then
+    info "Pruned ${pruned} merged/closed PRs (${files_removed} files)"
   fi
 }
 

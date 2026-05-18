@@ -39,13 +39,12 @@ SEVERITY_LABELS = {
     SEVERITY_IDIOMS: "idiom",
 }
 
-_SECTION_HEADERS_RAW = {
+SECTION_HEADERS = {
     "## must fix": SEVERITY_MUST,
     "## should fix": SEVERITY_SHOULD,
     "## nit": SEVERITY_NIT,
     "## idioms": SEVERITY_IDIOMS,
 }
-SECTION_HEADERS = _SECTION_HEADERS_RAW
 
 CLASS_INLINE = "inline"
 CLASS_FILE_LEVEL = "file_level"

@@ -296,14 +296,12 @@ _DIFF_HEADER_RE = re.compile(r"^diff --git a/(\S+) b/\S+", re.MULTILINE)
 
 def _scope_diff(full_diff: str, file_filter: list[str]) -> str:
     filter_set = set(file_filter)
+    matches = list(_DIFF_HEADER_RE.finditer(full_diff))
     sections: list[str] = []
-    for m in _DIFF_HEADER_RE.finditer(full_diff):
-        path = m.group(1)
-        start = m.start()
-        next_m = _DIFF_HEADER_RE.search(full_diff, m.end())
-        end = next_m.start() if next_m else len(full_diff)
-        if path in filter_set:
-            sections.append(full_diff[start:end])
+    for i, m in enumerate(matches):
+        if m.group(1) in filter_set:
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(full_diff)
+            sections.append(full_diff[m.start():end])
     return "".join(sections).strip()
 
 
@@ -1254,6 +1252,12 @@ def _phase_merge(group_outputs: list[str], failed_groups: list[str]) -> str:
     return merged_content
 
 
+def _build_meta_header(job: ReviewJob) -> str:
+    today = date.today().isoformat()
+    gen = f"\n{META_GENERATOR.format(generator_version=job.generator_version)}" if job.generator_version else ""
+    return f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}{gen}\n"
+
+
 def _has_findings(merged_content: str) -> bool:
     for _, prefix in FINDING_SECTIONS:
         if re.search(rf"\[{prefix}\d+\]", merged_content):
@@ -1281,9 +1285,7 @@ def _phase_synthesis(
 
     if not Path(job.review_file).exists():
         _warn("Synthesis agent failed — falling back to mechanical merge")
-        today = date.today().isoformat()
-        gen = f"\n{META_GENERATOR.format(generator_version=job.generator_version)}" if job.generator_version else ""
-        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}{gen}\n"
+        meta = _build_meta_header(job)
         if job.mode == MODE_SELF:
             fallback = (
                 f"# Self-Review: {job.repo} — {job.pr.head}\n"
@@ -1358,17 +1360,17 @@ def run_multi_phase(
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
-    all_logs: list[str] = []
+    cost_so_far = 0.0
     budget_exceeded = False
 
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
     if run_holistic:
         holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
         if holistic_log:
-            all_logs.append(holistic_log)
-        total, budget_exceeded = _check_budget(all_logs, max_cost)
-        if budget_exceeded:
-            _warn(f"Budget exceeded after holistic phase (${total:.2f}/${max_cost:.2f}) — skipping groups")
+            cost_so_far += _parse_session_cost(holistic_log)
+        if cost_so_far > max_cost:
+            budget_exceeded = True
+            _warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
     else:
         reason = "--no-holistic" if skip_holistic else f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
         _info(f"Holistic phase skipped ({reason})")
@@ -1383,22 +1385,18 @@ def run_multi_phase(
 
     merged_content = _phase_merge(group_outputs, failed_groups)
 
-    # Collect group logs for budget tracking
-    for go in group_outputs:
-        gl = go.replace(".md", ".jsonl")
+    for i in range(1, len(group_outputs) + 1):
+        gl = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
         if Path(gl).exists():
-            all_logs.append(gl)
+            cost_so_far += _parse_session_cost(gl)
 
-    if not budget_exceeded:
-        total, budget_exceeded = _check_budget(all_logs, max_cost)
-        if budget_exceeded:
-            _warn(f"Budget exceeded after groups (${total:.2f}/${max_cost:.2f}) — skipping synthesis")
+    if not budget_exceeded and cost_so_far > max_cost:
+        budget_exceeded = True
+        _warn(f"Budget exceeded after groups (${cost_so_far:.2f}/${max_cost:.2f}) — skipping synthesis")
 
     if not _has_findings(merged_content) and not failed_groups:
         _info("No findings from any group — writing clean review")
-        today = date.today().isoformat()
-        gen = f"\n{META_GENERATOR.format(generator_version=job.generator_version)}" if job.generator_version else ""
-        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}{gen}\n"
+        meta = _build_meta_header(job)
         if job.mode == MODE_SELF:
             clean = (
                 f"# Self-Review: {job.repo} — {job.pr.head}\n"

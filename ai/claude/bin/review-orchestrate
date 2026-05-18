@@ -729,16 +729,63 @@ def _build_issue_section(issue_link: str, issue_context: str) -> str:
     return ""
 
 
-def _build_prior_section(prior_review: str, context: str = "") -> str:
+_FINDING_LINE_RE = re.compile(r"- \[[ x]\] \*\*\[[A-Z]\d+\]\*\* (\S+?):\d+")
+
+
+def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
+    filter_set = set(file_filter)
+    sections: list[tuple[str, list[str]]] = []
+    current_header = ""
+    current_lines: list[str] = []
+    in_matched_finding = False
+
+    for line in prior_text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if current_header:
+                sections.append((current_header, current_lines))
+            current_header = line
+            current_lines = []
+            in_matched_finding = False
+            continue
+
+        m = _FINDING_LINE_RE.match(stripped)
+        if m:
+            in_matched_finding = m.group(1) in filter_set
+            if in_matched_finding:
+                current_lines.append(line)
+        elif in_matched_finding and stripped and not stripped.startswith("## "):
+            current_lines.append(line)
+        elif not stripped:
+            if in_matched_finding:
+                current_lines.append(line)
+
+    if current_header:
+        sections.append((current_header, current_lines))
+
+    parts: list[str] = []
+    for header, lines in sections:
+        if lines:
+            parts.append(header)
+            parts.extend(lines)
+    return "\n".join(parts).strip()
+
+
+def _build_prior_section(prior_review: str, context: str = "", file_filter: list[str] | None = None) -> str:
     if not prior_review:
         return ""
+    review_text = prior_review
+    if file_filter:
+        review_text = _scope_prior_review(review_text, file_filter)
+        if not review_text:
+            return ""
     default = "This is a re-review. For each prior finding, mark fixed findings as resolved and carry forward open ones."
     return f"""
 ## Prior review
 {context or default}
 
 <prior_review>
-{prior_review}
+{review_text}
 </prior_review>"""
 
 
@@ -847,16 +894,17 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         )
 
     if template_name == TEMPLATE_GROUP:
+        group_files = extra.get("group_file_paths", [])
         prior_section = _build_prior_section(
             job.prior_review,
             "This is a re-review. Below are the prior findings. "
             "Carry forward findings relevant to YOUR files only. "
             "Mark fixed findings as resolved.",
+            file_filter=group_files or None,
         )
         holistic_block = _build_holistic_block(
             extra.get("holistic_content", ""), job.pr.changed_files,
         )
-        group_files = extra.get("group_file_paths", [])
         group_preflight = _build_preflight_section(job, file_filter=group_files or None)
         return render_template(
             TEMPLATE_GROUP,

@@ -304,6 +304,84 @@ print(result)
   [[ "$result" == *"[N1]"* ]]
 }
 
+# ── _scope_prior_review ──────────────────────────────────────────────────────
+
+@test "_scope_prior_review: keeps only findings for matching files" {
+  prior='## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug
+- [ ] **[M2]** src/db.go:20 — db bug
+
+## Should fix
+- [ ] **[S1]** src/auth.go:30 — cleanup'
+
+  result=$(_py "
+prior = '''$prior'''
+scoped = mod._scope_prior_review(prior, ['src/auth.go'])
+print(scoped)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" != *"[M2]"* ]]
+  [[ "$result" == *"[S1]"* ]]
+  [[ "$result" == *"## Must fix"* ]]
+  [[ "$result" == *"## Should fix"* ]]
+}
+
+@test "_scope_prior_review: no matches returns empty" {
+  prior='## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug'
+
+  result=$(_py "
+prior = '''$prior'''
+scoped = mod._scope_prior_review(prior, ['src/unrelated.go'])
+print(repr(scoped))
+")
+  [ "$result" = "''" ]
+}
+
+@test "_scope_prior_review: multiline finding continuation kept" {
+  prior='## Must fix
+- [ ] **[M1]** src/auth.go:10 — auth bug
+  This is a continuation line with more detail
+- [ ] **[M2]** src/db.go:20 — db bug'
+
+  result=$(_py "
+prior = '''$prior'''
+scoped = mod._scope_prior_review(prior, ['src/auth.go'])
+print(scoped)
+")
+  [[ "$result" == *"[M1]"* ]]
+  [[ "$result" == *"continuation line"* ]]
+  [[ "$result" != *"[M2]"* ]]
+}
+
+@test "build_prompt: GROUP template gets scoped prior review" {
+  result=$(_py "
+import types
+pr = mod.PRMetadata(
+    title='test', body='', base='main', head='feat', head_sha='abc123',
+    additions=30, deletions=15, changed_files=2,
+    files=[
+        {'path': 'src/auth.go', 'additions': 10, 'deletions': 5, 'status': 'modified'},
+        {'path': 'src/db.go', 'additions': 20, 'deletions': 10, 'status': 'modified'},
+    ],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='/tmp/wt', review_file='/tmp/review.md',
+    session_log='/tmp/session.jsonl', reviews_dir='/tmp/reviews',
+    prior_review='## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n- [ ] **[M2]** src/db.go:20 — db bug',
+)
+result = mod.build_prompt(mod.TEMPLATE_GROUP, job,
+    group_idx=1, group_count=2, group_name='auth',
+    group_files_formatted='src/auth.go', group_output='/tmp/out.md',
+    holistic_content='', group_file_paths=['src/auth.go'],
+)
+print('[M1]' in result and '[M2]' not in result)
+")
+  [ "$result" = "True" ]
+}
+
 # ── renumber_section ──────────────────────────────────────────────────────────
 
 @test "renumber_section: no offset keeps IDs" {

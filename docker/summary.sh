@@ -19,6 +19,8 @@ print_docker_summary() {
 
   if docker info >/dev/null 2>&1; then
     summary_ok "running ${DIM}(${runtime:-unknown runtime})${NC}"
+  elif [[ "$runtime" == "colima" ]] && colima status &>/dev/null; then
+    summary_warn "socket stale — ${DIM}colima restart${NC}"
   else
     local _hint="start your runtime"
     case "$runtime" in

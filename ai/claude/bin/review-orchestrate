@@ -1044,6 +1044,13 @@ def _phase_merge(group_outputs: list[str], failed_groups: list[str]) -> str:
     return merged_content
 
 
+def _has_findings(merged_content: str) -> bool:
+    for _, prefix in FINDING_SECTIONS:
+        if re.search(rf"\[{prefix}\d+\]", merged_content):
+            return True
+    return False
+
+
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
@@ -1148,7 +1155,32 @@ def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL, sk
 
     merged_content = _phase_merge(group_outputs, failed_groups)
 
-    synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
+    if not _has_findings(merged_content) and not failed_groups:
+        _info("No findings from any group — writing clean review")
+        today = date.today().isoformat()
+        meta = f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}\n"
+        if job.mode == MODE_SELF:
+            clean = (
+                f"# Self-Review: {job.repo} — {job.pr.head}\n"
+                f"{meta}\n"
+                f"## Summary\n"
+                f"Multi-phase self-review of {job.pr.changed_files} files across {group_count} groups. "
+                f"No issues found.\n"
+            )
+        else:
+            clean = (
+                f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
+                f"{meta}\n"
+                f"## Summary\n"
+                f"Multi-phase review of {job.pr.changed_files} files across {group_count} groups. "
+                f"No issues found.\n\n"
+                f"## Verdict\n"
+                f"Approve — clean review.\n"
+            )
+        Path(job.review_file).write_text(clean)
+        synthesis_log = ""
+    else:
+        synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
 
     _consolidate_and_cleanup(job, holistic_output, holistic_log, group_outputs, synthesis_log)
 

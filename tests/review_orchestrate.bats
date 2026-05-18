@@ -310,6 +310,43 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
   [ "$result" = "ok" ]
 }
 
+# ── Agent command building ───────────────────────────────────────────────────
+
+@test "_build_agent_cmd: includes max-turns when set" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", max_turns=10)
+print("--max-turns" in cmd, cmd[cmd.index("--max-turns") + 1] if "--max-turns" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"10"* ]]
+}
+
+@test "_build_agent_cmd: includes max-budget-usd when set" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", max_budget=5.0)
+print("--max-budget-usd" in cmd, cmd[cmd.index("--max-budget-usd") + 1] if "--max-budget-usd" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"5.0"* ]]
+}
+
+@test "_build_agent_cmd: omits flags when None" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt")
+print("--max-turns" not in cmd and "--max-budget-usd" not in cmd)
+')
+  [ "$result" = "True" ]
+}
+
+@test "_build_agent_cmd: includes model when set" {
+  result=$(_py '
+cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", model="sonnet")
+print("--model" in cmd, cmd[cmd.index("--model") + 1] if "--model" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"sonnet"* ]]
+}
+
 # ── Prompt building ──────────────────────────────────────────────────────────
 
 @test "build_prompt: single-agent includes review file" {

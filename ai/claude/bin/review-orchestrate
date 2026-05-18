@@ -929,22 +929,50 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
 
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
-def invoke_agent(
-    prompt: str, session_log: str, wt_path: str, reviews_dir: str,
-    label: str = "", review_file: str = "",
-):
+DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
+
+
+def _build_agent_cmd(
+    reviews_dir: str, wt_path: str,
+    review_file: str = "",
+    max_turns: int | None = None,
+    max_budget: float | None = None,
+    model: str | None = None,
+) -> list[str]:
     add_dir_args = ["--add-dir", reviews_dir, "--add-dir", wt_path]
     if review_file:
         review_dir = str(Path(review_file).parent)
         if review_dir not in (reviews_dir, wt_path):
             add_dir_args += ["--add-dir", review_dir]
+    cmd = [
+        "claude", "-p", "--verbose", "--output-format", "stream-json",
+        "--permission-mode", "acceptEdits",
+        *add_dir_args,
+        "--agent", "reviewer",
+    ]
+    if max_turns is not None:
+        cmd += ["--max-turns", str(max_turns)]
+    if max_budget is not None:
+        cmd += ["--max-budget-usd", str(max_budget)]
+    if model:
+        cmd += ["--model", model]
+    return cmd
+
+
+def invoke_agent(
+    prompt: str, session_log: str, wt_path: str, reviews_dir: str,
+    label: str = "", review_file: str = "",
+    max_turns: int | None = DEFAULT_MAX_TURNS,
+    max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
+    model: str | None = None,
+):
+    cmd = _build_agent_cmd(
+        reviews_dir, wt_path, review_file=review_file,
+        max_turns=max_turns, max_budget=max_budget, model=model,
+    )
     proc = subprocess.Popen(
-        [
-            "claude", "-p", "--verbose", "--output-format", "stream-json",
-            "--permission-mode", "acceptEdits",
-            *add_dir_args,
-            "--agent", "reviewer",
-        ],
+        cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

@@ -120,6 +120,7 @@ MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
 DEFAULT_MAX_PARALLEL = 4
+HOLISTIC_MIN_GROUPS = 4
 
 DEFAULT_BASE_BRANCH = "main"
 GIT_RANGE_TO_HEAD = f"origin/{DEFAULT_BASE_BRANCH}..HEAD"
@@ -1097,29 +1098,49 @@ def _consolidate_and_cleanup(
     group_outputs: list[str], synthesis_log: str,
 ):
     group_logs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i)) for i in range(1, len(group_outputs) + 1)]
+    all_logs = group_logs[:]
+    if holistic_log:
+        all_logs.insert(0, holistic_log)
+    if synthesis_log:
+        all_logs.append(synthesis_log)
+
     try:
         with open(job.session_log, "w") as out:
-            for log_path in [holistic_log] + group_logs + [synthesis_log]:
+            for log_path in all_logs:
                 p = Path(log_path)
                 if p.exists():
                     out.write(p.read_text())
     except OSError:
         pass
 
-    for path in [holistic_output, holistic_log] + group_outputs + group_logs + [synthesis_log]:
+    cleanup = group_outputs + group_logs
+    if holistic_output:
+        cleanup.append(holistic_output)
+    if holistic_log:
+        cleanup.append(holistic_log)
+    if synthesis_log:
+        cleanup.append(synthesis_log)
+
+    for path in cleanup:
         try:
             Path(path).unlink()
         except FileNotFoundError:
             pass
 
 
-def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL):
+def run_multi_phase(job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL, skip_holistic: bool = False):
     groups = group_files(job.pr)
     group_count = len(groups)
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
-    holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+    run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
+    if run_holistic:
+        holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+    else:
+        reason = "--no-holistic" if skip_holistic else f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
+        _info(f"Holistic phase skipped ({reason})")
+        holistic_content, holistic_output, holistic_log = "", "", ""
 
     group_outputs, failed_groups = _phase_group_reviews(
         groups, job, group_count, holistic_content, max_parallel,
@@ -1147,6 +1168,8 @@ def main():
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
                         help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
+    parser.add_argument("--no-holistic", action="store_true",
+                        help="Skip holistic phase in multi-phase reviews")
     parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
                         help="Review mode: pr (default) or self")
     args = parser.parse_args()
@@ -1195,7 +1218,7 @@ def main():
     pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
     if is_large:
-        run_multi_phase(job, max_parallel=args.max_parallel)
+        run_multi_phase(job, max_parallel=args.max_parallel, skip_holistic=args.no_holistic)
     else:
         run_single_agent(job)
 

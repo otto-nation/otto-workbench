@@ -54,6 +54,7 @@ REVIEW_EXT=".md"
 SUFFIX_PRIOR=".prior.md"
 SUFFIX_SESSION=".session.jsonl"
 SUFFIX_POST_SESSION=".post.jsonl"
+SUFFIX_PIPELINE_STATE=".pipeline.json"
 
 ARCHIVE_KEEP_COUNT=3
 DEFAULT_MAX_PARALLEL=4
@@ -395,6 +396,7 @@ usage() {
   echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
   echo "  --force                    Skip pending review and stale review warnings"
+  echo "  --resume                   Resume from existing intermediate files"
 }
 
 _check_pending_review() {
@@ -462,6 +464,31 @@ _append_orchestrate_flags() {
   return 0
 }
 
+_resolve_prior_review() {
+  local -n __prior=$1
+  local review_file="$2"
+  local session_log="$3"
+  local resume="$4"
+
+  __prior=""
+  if [[ "$resume" == "true" ]]; then
+    local base="${review_file%"${REVIEW_EXT}"}"
+    [[ -f "${base}${SUFFIX_PRIOR}" ]] && __prior="${base}${SUFFIX_PRIOR}"
+  else
+    _archive_review __prior "$review_file" "$session_log"
+  fi
+}
+
+_cleanup_prior_review() {
+  local review_file="$1"
+  local prior_review_path="$2"
+
+  local pipeline_state="${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}"
+  if [[ ! -f "$pipeline_state" ]]; then
+    rm -f "$prior_review_path" 2>/dev/null
+  fi
+}
+
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_review() {
@@ -474,6 +501,7 @@ cmd_review() {
   local no_holistic="${7:-false}"
   local max_cost="${8:-}"
   local model="${9:-}"
+  local resume="${10:-false}"
 
   _prune_merged_reviews
 
@@ -511,7 +539,7 @@ cmd_review() {
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
   # ── Pre-flight checks ──
-  _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
+  [[ "$resume" != "true" ]] && _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
   _check_pending_review "$repo" "$pr_number" "$force"
 
   # ── Worktree setup ──
@@ -521,7 +549,7 @@ cmd_review() {
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
   local prior_review_path=""
-  _archive_review prior_review_path "$review_file" "$session_log"
+  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$resume"
 
   # ── Run orchestrator ──
   local orchestrate_args=(
@@ -537,11 +565,11 @@ cmd_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
+  [[ "$resume" == "true" ]] && orchestrate_args+=(--resume)
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
-  # Clean up temporary prior review copy
-  rm -f "$prior_review_path" 2>/dev/null || true
+  _cleanup_prior_review "$review_file" "$prior_review_path"
 
   _display_review "$review_file"
 
@@ -635,6 +663,7 @@ cmd_self_review() {
   local no_holistic="${6:-false}"
   local max_cost="${7:-}"
   local model="${8:-}"
+  local resume="${9:-false}"
 
   _prune_merged_reviews
 
@@ -663,7 +692,7 @@ cmd_self_review() {
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
   local prior_review_path=""
-  _archive_review prior_review_path "$review_file" "$session_log"
+  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$resume"
 
   local branch_name
   branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
@@ -695,11 +724,11 @@ cmd_self_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
+  [[ "$resume" == "true" ]] && orchestrate_args+=(--resume)
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
-  # Clean up temporary prior review copy
-  rm -f "$prior_review_path" 2>/dev/null || true
+  _cleanup_prior_review "$review_file" "$prior_review_path"
 
   _display_review "$review_file"
 
@@ -752,6 +781,7 @@ main() {
   local skip_user_verification="false"
   local force="false"
   local no_holistic="false"
+  local resume="false"
   local issue_link=""
   local max_parallel="$DEFAULT_MAX_PARALLEL"
   local max_cost=""
@@ -766,6 +796,7 @@ main() {
       --skip-user-verification) skip_user_verification="true"; shift ;;
       --force)         force="true"; shift ;;
       --no-holistic)   no_holistic="true"; shift ;;
+      --resume)        resume="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
@@ -776,7 +807,7 @@ main() {
   done
 
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model"
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$resume"
     return
   fi
 
@@ -801,7 +832,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume"
       ;;
   esac
 }

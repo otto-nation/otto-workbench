@@ -112,7 +112,9 @@
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:gist.github.com)",
       "WebFetch(domain:github.com)",
-      "WebSearch"
+      "WebSearch",
+      "Edit(/tmp)",
+      "Write(/tmp)"
     ],
     "deny": [
       "Bash(git reset:*)",

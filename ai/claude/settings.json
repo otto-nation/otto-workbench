@@ -12,6 +12,15 @@
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *\"gh pr create\"* ]]; then echo 'BLOCKED: Use task pr:create instead of gh pr create — it auto-loads the repo PR template.' >&2; exit 2; fi"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file_path=$(jq -r '.tool_input.file_path // empty'); [[ -z \"$file_path\" ]] && exit 0; repo_dir=$(cd \"$(dirname \"$file_path\")\" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0; branch=$(git -C \"$repo_dir\" branch --show-current 2>/dev/null); [[ -z \"$branch\" ]] && exit 0; if [[ \"$branch\" == \"main\" || \"$branch\" == \"master\" ]]; then echo \"BLOCKED: Cannot edit files on $branch. Create a worktree first: wt switch -c <branch>\" >&2; exit 2; fi"
+          }
+        ]
       }
     ],
     "PostToolUse": [

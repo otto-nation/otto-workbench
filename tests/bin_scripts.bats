@@ -63,7 +63,7 @@ _discover_scripts() {
   local failures=()
 
   while IFS= read -r f; do
-    if ! grep -qE '^set -e' "$f"; then
+    if ! grep -qE '^set -[A-Za-z]*e' "$f"; then
       failures+=("$(basename "$f")")
     fi
   done < <(_discover_scripts)

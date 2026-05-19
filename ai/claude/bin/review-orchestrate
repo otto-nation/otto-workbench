@@ -112,6 +112,7 @@ class PreflightData:
     claude_md: str
     context_md: str
     review_checklists: dict[str, str] = field(default_factory=dict)
+    omitted_files: list[str] = field(default_factory=list)
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ HOLISTIC_MIN_GROUPS = 4
 
 DEFAULT_MAX_COST = 20.0
 DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_TURNS_NO_PREFLIGHT = 30
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 
 DEFAULT_MODEL_GROUP = "sonnet"
@@ -244,7 +246,7 @@ def _file_permissions(path: Path) -> str:
         return "?"
 
 
-def collect_preflight_data(job: "ReviewJob") -> "PreflightData | None":
+def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     wt = Path(job.wt_path)
     base = job.pr.base or DEFAULT_BASE_BRANCH
     git_range = f"origin/{base}...HEAD"
@@ -252,26 +254,6 @@ def collect_preflight_data(job: "ReviewJob") -> "PreflightData | None":
 
     diff = _run(["git", "diff", git_range], cwd=job.wt_path)
     commit_log = _run(["git", "log", "--stat", "--reverse", git_range_log], cwd=job.wt_path)
-
-    file_contents: dict[str, str] = {}
-    file_permissions: dict[str, str] = {}
-    total_file_size = 0
-    for f in job.pr.files:
-        p = wt / f["path"]
-        content = _read_file_safe(p)
-        file_contents[f["path"]] = content
-        file_permissions[f["path"]] = _file_permissions(p)
-        total_file_size += len(content.encode())
-
-    estimated_total = (
-        len(diff.encode())
-        + len(commit_log.encode())
-        + total_file_size
-        + TEMPLATE_OVERHEAD_BYTES
-    )
-    if estimated_total > MAX_PROMPT_BYTES:
-        _warn(f"Preflight data too large (~{estimated_total // 1024}KB) — agent will read files directly")
-        return None
 
     claude_md = ""
     for name in ("CLAUDE.md", ".claude/CLAUDE.md"):
@@ -291,14 +273,54 @@ def collect_preflight_data(job: "ReviewJob") -> "PreflightData | None":
         for checklist in sorted(review_dir.glob("*.md")):
             review_checklists[checklist.name] = _read_file_safe(checklist)
 
+    all_contents: dict[str, str] = {}
+    all_permissions: dict[str, str] = {}
+    for f in job.pr.files:
+        p = wt / f["path"]
+        all_contents[f["path"]] = _read_file_safe(p)
+        all_permissions[f["path"]] = _file_permissions(p)
+
+    file_sizes = {p: len(c.encode()) for p, c in all_contents.items()}
+
+    base_size = (
+        len(diff.encode())
+        + len(commit_log.encode())
+        + len(claude_md.encode())
+        + len(context_md.encode())
+        + sum(len(v.encode()) for v in review_checklists.values())
+        + TEMPLATE_OVERHEAD_BYTES
+    )
+    remaining = max(0, MAX_PROMPT_BYTES - base_size)
+
+    sorted_paths = sorted(
+        all_contents.keys(),
+        key=lambda p: (classify_tier(p), file_sizes[p]),
+    )
+
+    included: dict[str, str] = {}
+    included_perms: dict[str, str] = {}
+    omitted: list[str] = []
+    for path in sorted_paths:
+        if file_sizes[path] <= remaining:
+            included[path] = all_contents[path]
+            included_perms[path] = all_permissions[path]
+            remaining -= file_sizes[path]
+        else:
+            omitted.append(path)
+
+    if omitted:
+        omitted_kb = sum(file_sizes[p] for p in omitted) // 1024
+        _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+
     return PreflightData(
         diff=diff,
         commit_log=commit_log,
-        file_contents=file_contents,
-        file_permissions=file_permissions,
+        file_contents=included,
+        file_permissions=included_perms,
         claude_md=claude_md,
         context_md=context_md,
         review_checklists=review_checklists,
+        omitted_files=omitted,
     )
 
 
@@ -334,14 +356,25 @@ def format_preflight_data(
     if data.commit_log:
         parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
 
-    parts += ["", "### Changed file contents"]
-    files_to_include = file_filter or list(data.file_contents.keys())
-    for path in files_to_include:
-        content = data.file_contents.get(path, "<file not collected>")
-        perms = data.file_permissions.get(path, "?")
-        parts.append(f"\n<file path=\"{path}\" permissions=\"{perms}\">")
-        parts.append(content)
-        parts.append("</file>")
+    files_to_include = [
+        p for p in (file_filter or data.file_contents.keys())
+        if p in data.file_contents
+    ]
+    if files_to_include:
+        parts += ["", "### Changed file contents"]
+        for path in files_to_include:
+            perms = data.file_permissions.get(path, "?")
+            parts.append(f"\n<file path=\"{path}\" permissions=\"{perms}\">")
+            parts.append(data.file_contents[path])
+            parts.append("</file>")
+
+    omitted = data.omitted_files
+    if file_filter:
+        omitted = [p for p in omitted if p in set(file_filter)]
+    if omitted:
+        parts += ["", "### Files not pre-collected (read directly)"]
+        for path in omitted:
+            parts.append(f"- {path}")
 
     if data.claude_md:
         parts += ["", "### Project context", "", "#### CLAUDE.md", "", data.claude_md]
@@ -713,12 +746,17 @@ Skip these — do NOT re-fetch from the GitHub API. This data is current as of s
 {ctx.comments}"""
 
 
-def _build_env_section(wt_path: str, has_preflight: bool = False) -> str:
-    if has_preflight:
+def _build_env_section(wt_path: str, preflight: "PreflightData | None" = None) -> str:
+    if preflight and not preflight.omitted_files:
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
 File contents and diffs are in the Pre-collected data section. Use Read/Bash only for files NOT in the PR (callers, tests, cross-references)."""
+    if preflight and preflight.omitted_files:
+        return f"""
+## Environment
+PR branch checked out at: {wt_path}
+Diffs and some file contents are pre-collected. Files listed under "Files not pre-collected" must be read directly from this path."""
     return f"""
 ## Environment
 PR branch checked out at: {wt_path}
@@ -817,10 +855,9 @@ def _build_preflight_section(
 def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
     today = date.today().isoformat()
     generator_version = job.generator_version
-    has_preflight = job.preflight is not None
     pr_header = _build_pr_header(job.pr, job.ctx)
     reviews_section = _build_reviews_section(job.ctx)
-    env_section = _build_env_section(job.wt_path, has_preflight=has_preflight)
+    env_section = _build_env_section(job.wt_path, preflight=job.preflight)
     issue_section = _build_issue_section(job.issue_link, job.issue_context)
 
     if template_name == TEMPLATE_SELF_REVIEW:
@@ -1025,6 +1062,29 @@ def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
     return total, total > max_cost
 
 
+def _diagnose_missing_output(log_path: str) -> str:
+    if not Path(log_path).exists():
+        return "no session log found"
+    last_result = None
+    with open(log_path) as f:
+        for line in f:
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "result":
+                last_result = data
+    if not last_result:
+        return "no result record in session log"
+    subtype = last_result.get("subtype", "")
+    if subtype == "max_turns":
+        num_turns = last_result.get("num_turns", "?")
+        return f"agent hit max turns ({num_turns})"
+    if last_result.get("is_error"):
+        return f"agent error: {last_result.get('error', 'unknown')}"
+    return f"agent completed (subtype={subtype}) but did not write output"
+
+
 # ── Model selection ───────────────────────────────────────────────────────────
 
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
@@ -1090,6 +1150,7 @@ def invoke_agent(
     proc.stdin.close()
     stream_progress(proc, session_log, label=label)
     proc.wait()
+    return proc.returncode
 
 
 # ── Review pipelines ──────────────────────────────────────────────────────────
@@ -1164,7 +1225,8 @@ def _review_group(
 
     failed = None
     if not Path(group_output).exists():
-        _warn(f"Group {i} ({grp.name}) produced no output")
+        reason = _diagnose_missing_output(group_log)
+        _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = grp.name
     else:
         _validate_group_output(group_output, grp.name)
@@ -1180,17 +1242,20 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
+    has_omitted = job.preflight is not None and job.preflight.omitted_files
+    max_turns = DEFAULT_MAX_TURNS_NO_PREFLIGHT if has_omitted else DEFAULT_MAX_TURNS
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=max_turns)
     print()
 
     holistic_content = ""
     if Path(holistic_output).exists():
         holistic_content = Path(holistic_output).read_text()
     else:
-        _warn("Holistic scan produced no output — continuing without it")
+        reason = _diagnose_missing_output(holistic_log)
+        _warn(f"Holistic scan produced no output ({reason}) — continuing without it")
 
     return holistic_content, holistic_output, holistic_log
 

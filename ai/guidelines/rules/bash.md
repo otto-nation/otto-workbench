@@ -26,3 +26,10 @@ paths:
 - Return values via `local -n` (nameref), never `printf -v` — `printf -v "$var"` silently writes to a same-named `local` in the current scope instead of the caller's variable. Use `local -n __out=$1` and assign `__out="value"`. The `__` prefix prevents collisions
 - All scripts source `lib/ui.sh` via the `_SELF` readlink pattern for portability
 - All setup scripts, sync functions, and migrations must be idempotent — safe to re-run with no side effects
+
+## Portability
+- Target macOS BSD userland — avoid GNU-specific flags and syntax
+- `sed -i ''` (BSD) not `sed -i` (GNU) — or use `sed ... > tmp && mv tmp file` for full portability
+- `find . -perm +111` (BSD) not `find . -perm /111` (GNU) — or use `test -x` per-file
+- `grep -P` (PCRE) is unavailable on BSD — use `grep -E` (extended regex) instead
+- `date` flags differ — avoid GNU-only formats; use `date -u` for UTC

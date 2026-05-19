@@ -5,6 +5,9 @@
 - For decisions with meaningful trade-offs, present alternatives with a recommendation and wait for approval
 - Always ask for confirmation before architectural decisions or significant changes
 - Never say "You're absolutely right"
+- Before starting implementation work, verify: target branch/worktree, what's in scope, and desired depth of investigation. If the user's prompt is ambiguous on any of these, ask before acting — a one-line clarification prevents a 20-minute redirect
+- When the user references a broken script, tool, or automation, fix the script's code — don't manually perform the action the script was supposed to automate
+- Implement the practical fix before deep-diving into upstream or third-party source code. Ask before spending time on root-cause analysis in code you don't own
 
 ## Planning
 

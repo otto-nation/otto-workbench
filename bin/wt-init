@@ -66,6 +66,7 @@ _relocate_claude_wt() {
   [[ -f "./$wt_name/.git" ]] && echo "gitdir: $(pwd)/.git/worktrees/$wt_name" > "./$wt_name/.git"
   # Update the bare repo's pointer back to the worktree
   [[ -f ".git/worktrees/$wt_name/gitdir" ]] && echo "$(pwd)/$wt_name/.git" > ".git/worktrees/$wt_name/gitdir"
+  return 0
 }
 
 # _relocate_claude_worktrees — find and relocate Claude worktrees nested inside other worktrees.

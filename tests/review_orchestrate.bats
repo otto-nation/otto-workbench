@@ -836,17 +836,21 @@ print(f"foo_diff={has_foo_diff},bar_diff={has_bar_diff}")
   [ "$result" = "foo_diff=True,bar_diff=False" ]
 }
 
-@test "collect_preflight_data: returns None for oversized data" {
+@test "collect_preflight_data: oversized file included in diff but omitted from contents" {
   result=$(_py "
 import tempfile, os
 from pathlib import Path
 
 with tempfile.TemporaryDirectory() as td:
-    # Create a git repo with a large file
     os.system(f'cd {td} && git init -q && git checkout -b main')
+    os.system(f'cd {td} && git config user.email test@test.com && git config user.name Test && git config commit.gpgsign false')
     large_file = Path(td) / 'big.txt'
     large_file.write_text('x' * 600000)
-    os.system(f'cd {td} && git add . && git commit -q -m init')
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m init')
+    os.system(f'cd {td} && git remote add origin {td} && git fetch -q origin main')
+    os.system(f'cd {td} && git checkout -b feat -q')
+    large_file.write_text('y' * 600000)
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m change')
 
     pr = mod.PRMetadata(
         title='t', body='', head='feat', base='main', head_sha='abc',
@@ -859,13 +863,21 @@ with tempfile.TemporaryDirectory() as td:
         wt_path=td, review_file='/tmp/r.md',
         session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
     )
-    result = mod.collect_preflight_data(job)
-    print('None' if result is None else 'data')
+    import io, contextlib
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = mod.collect_preflight_data(job)
+    checks = [
+        result is not None,
+        len(result.diff) > 0,
+        result.omitted_files == ['big.txt'],
+        result.file_contents == {},
+    ]
+    print('ok' if all(checks) else [i for i,c in enumerate(checks) if not c])
 ")
-  [ "$result" = "None" ]
+  [ "$result" = "ok" ]
 }
 
-@test "collect_preflight_data: rejects when diff+files exceed budget" {
+@test "collect_preflight_data: large diff+files includes diff but omits some files" {
   repo="$TMPDIR/budget-repo"
   mkdir -p "$repo"
   cd "$repo"
@@ -905,10 +917,18 @@ job = mod.ReviewJob(
     wt_path='$repo', review_file='/tmp/r.md',
     session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
 )
-result = mod.collect_preflight_data(job)
-print('None' if result is None else 'data')
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    result = mod.collect_preflight_data(job)
+checks = [
+    result is not None,
+    len(result.diff) > 0,
+    len(result.omitted_files) > 0,
+    len(result.file_contents) + len(result.omitted_files) == 5,
+]
+print('ok' if all(checks) else [i for i,c in enumerate(checks) if not c])
 ")
-  [ "$result" = "None" ]
+  [ "$result" = "ok" ]
 }
 
 @test "build_prompt: includes preflight_data when set" {
@@ -1056,6 +1076,7 @@ checks = [
     'security.md' in data.review_checklists,
     len(data.diff) > 0,
     len(data.commit_log) > 0,
+    data.omitted_files == [],
 ]
 print('ok' if all(checks) else [i for i, c in enumerate(checks) if not c])
 ")
@@ -1215,7 +1236,7 @@ print(f"preflight={has_preflight},file={has_file}")
   [ "$result" = "preflight=True,file=True" ]
 }
 
-@test "build_prompt: env_section updated when preflight present" {
+@test "build_prompt: env_section — all files pre-collected" {
   result=$(_py '
 pr = mod.PRMetadata(
     title="Fix", body="", head="feat", base="main", head_sha="abc",
@@ -1236,9 +1257,149 @@ job = mod.ReviewJob(
     preflight=preflight,
 )
 result = mod.build_prompt("single-agent.md", job)
-has_new_msg = "NOT in the PR" in result
-has_old_msg = "Read source files directly" in result
-print(f"new={has_new_msg},old={has_old_msg}")
+has_full = "NOT in the PR" in result
+has_partial = "Files not pre-collected" in result
+has_none = "Read source files directly" in result
+print(f"full={has_full},partial={has_partial},none={has_none}")
 ')
-  [ "$result" = "new=True,old=False" ]
+  [ "$result" = "full=True,partial=False,none=False" ]
+}
+
+@test "build_prompt: env_section — partial preflight with omitted files" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=2,
+    files=[
+        {"path": "a.go", "additions": 5, "deletions": 2},
+        {"path": "b.go", "additions": 5, "deletions": 3},
+    ],
+)
+ctx = mod.PRContext(commits="fix", reviews="[]", review_comments="[]", comments="[]")
+preflight = mod.PreflightData(
+    diff="diff", commit_log="log",
+    file_contents={"a.go": "pkg"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="", context_md="",
+    omitted_files=["b.go"],
+)
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    preflight=preflight,
+)
+result = mod.build_prompt("single-agent.md", job)
+has_full = "NOT in the PR" in result
+has_partial = "must be read directly" in result
+has_none = "Read source files directly" in result
+print(f"full={has_full},partial={has_partial},none={has_none}")
+')
+  [ "$result" = "full=False,partial=True,none=False" ]
+}
+
+@test "build_prompt: env_section — no preflight" {
+  result=$(_py '
+pr = mod.PRMetadata(
+    title="Fix", body="", head="feat", base="main", head_sha="abc",
+    additions=10, deletions=5, changed_files=1,
+    files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+)
+ctx = mod.PRContext(commits="fix", reviews="[]", review_comments="[]", comments="[]")
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+    wt_path="/tmp/wt", review_file="/tmp/review.md",
+    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+)
+result = mod.build_prompt("single-agent.md", job)
+has_full = "NOT in the PR" in result
+has_partial = "must be read directly" in result
+has_none = "Read source files directly" in result
+print(f"full={has_full},partial={has_partial},none={has_none}")
+')
+  [ "$result" = "full=False,partial=False,none=True" ]
+}
+
+@test "format_preflight_data: omitted_files listed in output" {
+  result=$(_py '
+data = mod.PreflightData(
+    diff="--- a/a.go\n+++ b/a.go",
+    commit_log="log",
+    file_contents={"a.go": "code"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="", context_md="",
+    omitted_files=["big.go", "huge.go"],
+)
+result = mod.format_preflight_data(data)
+has_section = "Files not pre-collected" in result
+has_big = "- big.go" in result
+has_huge = "- huge.go" in result
+has_a = "a.go" in result
+print(f"section={has_section},big={has_big},huge={has_huge},a={has_a}")
+')
+  [ "$result" = "section=True,big=True,huge=True,a=True" ]
+}
+
+@test "format_preflight_data: no omitted section when all files included" {
+  result=$(_py '
+data = mod.PreflightData(
+    diff="--- a/a.go\n+++ b/a.go",
+    commit_log="log",
+    file_contents={"a.go": "code"},
+    file_permissions={"a.go": "0o644"},
+    claude_md="", context_md="",
+)
+result = mod.format_preflight_data(data)
+print("absent" if "Files not pre-collected" not in result else "present")
+')
+  [ "$result" = "absent" ]
+}
+
+@test "collect_preflight_data: tier-1 files prioritized over tier-2 when budget tight" {
+  result=$(_py "
+import tempfile, os, io, contextlib
+from pathlib import Path
+import orch
+
+with tempfile.TemporaryDirectory() as td:
+    os.system(f'cd {td} && git init -q && git checkout -b main 2>/dev/null')
+    os.system(f'cd {td} && git config user.email test@test.com && git config user.name Test && git config commit.gpgsign false')
+    # tier-1 file (CLAUDE.md, small) and tier-2 file (util.go, 50KB)
+    Path(td, 'CLAUDE.md').write_text('# Rules\\n' * 10)
+    Path(td, 'util.go').write_text('package main\\n' + 'func f() {}\\n' * 3000)
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m init 2>/dev/null')
+    os.system(f'cd {td} && git remote add origin {td} && git fetch -q origin main 2>/dev/null')
+    os.system(f'cd {td} && git checkout -b feat -q 2>/dev/null')
+    Path(td, 'CLAUDE.md').write_text('# Updated rules\\n' * 10)
+    Path(td, 'util.go').write_text('package main\\n' + 'func g() {}\\n' * 3000)
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m change 2>/dev/null')
+
+    pr = mod.PRMetadata(
+        title='t', body='', head='feat', base='main', head_sha='abc',
+        additions=2, deletions=2, changed_files=2,
+        files=[
+            {'path': 'util.go', 'additions': 3000, 'deletions': 3000},
+            {'path': 'CLAUDE.md', 'additions': 10, 'deletions': 10},
+        ],
+    )
+    ctx = mod.PRContext()
+    job = mod.ReviewJob(
+        repo='r', pr_number='1', pr=pr, ctx=ctx,
+        wt_path=td, review_file='/tmp/r.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+    )
+    # Set budget so diff fits but only ~200 bytes remain — enough for CLAUDE.md, not util.go
+    original = orch.MAX_PROMPT_BYTES
+    diff_size = len(mod._run(['git', 'diff', 'origin/main...HEAD'], cwd=td).encode())
+    orch.MAX_PROMPT_BYTES = diff_size + orch.TEMPLATE_OVERHEAD_BYTES + 1000
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        data = mod.collect_preflight_data(job)
+    orch.MAX_PROMPT_BYTES = original
+
+    claude_in = 'CLAUDE.md' in data.file_contents
+    util_out = 'util.go' in data.omitted_files
+    print(f'claude_in={claude_in},util_out={util_out}')
+")
+  [ "$result" = "claude_in=True,util_out=True" ]
 }

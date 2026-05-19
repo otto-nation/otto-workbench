@@ -708,6 +708,7 @@ _ai_override_list() {
     _list_override_dir "$dir" "$label" && found=true
   done
   [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in ${display_dir}/${NC}"
+  return 0
 }
 
 _ai_override_add() {

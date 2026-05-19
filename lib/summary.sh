@@ -39,6 +39,7 @@ _env_print_var() {
 }
 
 # _env_is_configured VAR — returns 0 if VAR has an active export in ~/.env.local.
+# Returns non-zero when not configured — callers must guard with && or if.
 _env_is_configured() {
   local var="$1"
   [[ -f "$ENV_LOCAL_FILE" ]] && grep -q "^export ${var}=" "$ENV_LOCAL_FILE" 2>/dev/null

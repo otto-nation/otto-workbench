@@ -22,6 +22,7 @@ paths:
 - Validate required arguments
 - Use functions for reusable logic
 - Under `set -e`, commands that return non-zero on no-match (grep, find, diff) must be guarded with `|| true` or wrapped in `if`/`while` — unguarded usage causes silent script exits
+- **Function-last-statement pitfall**: `[[ condition ]] && cmd` as the final statement of a function returns exit code 1 when the condition is false — the `[[ ]]` is exempt from `set -e`, but the function's return code propagates to the caller and triggers `set -e` there. Fix: end the function with `return 0`, or use `if/then/fi` instead of `&&`
 - Return values via `local -n` (nameref), never `printf -v` — `printf -v "$var"` silently writes to a same-named `local` in the current scope instead of the caller's variable. Use `local -n __out=$1` and assign `__out="value"`. The `__` prefix prevents collisions
 - All scripts source `lib/ui.sh` via the `_SELF` readlink pattern for portability
 - All setup scripts, sync functions, and migrations must be idempotent — safe to re-run with no side effects

@@ -280,6 +280,8 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         all_contents[f["path"]] = _read_file_safe(p)
         all_permissions[f["path"]] = _file_permissions(p)
 
+    file_sizes = {p: len(c.encode()) for p, c in all_contents.items()}
+
     base_size = (
         len(diff.encode())
         + len(commit_log.encode())
@@ -292,23 +294,22 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
 
     sorted_paths = sorted(
         all_contents.keys(),
-        key=lambda p: (classify_tier(p), len(all_contents[p].encode())),
+        key=lambda p: (classify_tier(p), file_sizes[p]),
     )
 
     included: dict[str, str] = {}
     included_perms: dict[str, str] = {}
     omitted: list[str] = []
     for path in sorted_paths:
-        size = len(all_contents[path].encode())
-        if size <= remaining:
+        if file_sizes[path] <= remaining:
             included[path] = all_contents[path]
             included_perms[path] = all_permissions[path]
-            remaining -= size
+            remaining -= file_sizes[path]
         else:
             omitted.append(path)
 
     if omitted:
-        omitted_kb = sum(len(all_contents[p].encode()) for p in omitted) // 1024
+        omitted_kb = sum(file_sizes[p] for p in omitted) // 1024
         _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
     return PreflightData(
@@ -355,14 +356,16 @@ def format_preflight_data(
     if data.commit_log:
         parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
 
-    files_to_include = file_filter or list(data.file_contents.keys())
+    files_to_include = [
+        p for p in (file_filter or data.file_contents.keys())
+        if p in data.file_contents
+    ]
     if files_to_include:
         parts += ["", "### Changed file contents"]
         for path in files_to_include:
-            content = data.file_contents.get(path, "<file not collected>")
             perms = data.file_permissions.get(path, "?")
             parts.append(f"\n<file path=\"{path}\" permissions=\"{perms}\">")
-            parts.append(content)
+            parts.append(data.file_contents[path])
             parts.append("</file>")
 
     omitted = data.omitted_files
@@ -1239,7 +1242,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
-    max_turns = DEFAULT_MAX_TURNS if not job.preflight.omitted_files else DEFAULT_MAX_TURNS_NO_PREFLIGHT
+    has_omitted = job.preflight is not None and job.preflight.omitted_files
+    max_turns = DEFAULT_MAX_TURNS_NO_PREFLIGHT if has_omitted else DEFAULT_MAX_TURNS
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()

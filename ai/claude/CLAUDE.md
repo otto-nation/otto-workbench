@@ -39,6 +39,14 @@ protocol before taking action. Agent files live at `~/.claude/agents/`.
 | Dependency upgrade or framework migration | `migrate.md` | Plan before changing |
 | Code review (PR or diff) | `reviewer.md` | Review before approving |
 
+## claude-review Development
+
+When adding or modifying a review phase, verify these integration points:
+- `review-orchestrate`: `FINDING_SECTIONS` list, `SECTION_*` and `FINDING_PREFIX_*` constants, `renumber_section()`, `merge_reviews()`, `build_prompt()` template rendering
+- `review-post`: `SECTION_HEADERS`, `SEVERITY_LABELS`, `renumber_for_posting()`, `parse_findings()` parser
+- `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
+- `lib/review-templates/`: section headers referenced in synthesis and group templates
+
 ## Output
 
 - Do not summarize changes at the end of a response — the diff speaks for itself

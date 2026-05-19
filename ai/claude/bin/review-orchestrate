@@ -1147,7 +1147,7 @@ def invoke_agent(
     max_turns: int | None = DEFAULT_MAX_TURNS,
     max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
     model: str | None = None,
-):
+) -> int:
     cmd = _build_agent_cmd(
         reviews_dir, wt_path, review_file=review_file,
         max_turns=max_turns, max_budget=max_budget, model=model,
@@ -1163,6 +1163,11 @@ def invoke_agent(
     proc.stdin.close()
     stream_progress(proc, session_log, label=label)
     proc.wait()
+    if proc.returncode != 0:
+        stderr_output = proc.stderr.read()
+        if stderr_output:
+            with open(session_log, "a") as f:
+                f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
     return proc.returncode
 
 
@@ -1576,7 +1581,6 @@ def run_multi_phase(
     if state is None:
         state = PipelineState(
             head_sha=job.pr.head_sha,
-            group_count=group_count,
             group_names=[g.name for g in groups],
         )
         _write_pipeline_state(job, state)

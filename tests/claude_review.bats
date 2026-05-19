@@ -629,3 +629,31 @@ GHEOF
   fn_body=$(declare -f cmd_review)
   [[ "$fn_body" == *'orchestrate_args+=(--resume)'* ]]
 }
+
+@test "_append_orchestrate_flags: empty model does not exit under set -e" {
+  local args=()
+  _append_orchestrate_flags args "false" "" ""
+  # If we reach here, the function didn't cause set -e to exit
+  [[ ${#args[@]} -ge 1 ]]
+}
+
+@test "auto-resume: .pipeline.json triggers automatic resume" {
+  local review_file="$TMPDIR/reviews/test-repo-42.md"
+  mkdir -p "$TMPDIR/reviews"
+  echo '{}' > "${review_file%.md}${SUFFIX_PIPELINE_STATE}"
+
+  # Verify cmd_review body contains the auto-detect logic
+  local fn_body
+  fn_body=$(declare -f cmd_review)
+  [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
+  [[ "$fn_body" == *'resuming automatically'* ]]
+
+  rm -f "${review_file%.md}${SUFFIX_PIPELINE_STATE}"
+}
+
+@test "auto-resume: cmd_self_review detects .pipeline.json" {
+  local fn_body
+  fn_body=$(declare -f cmd_self_review)
+  [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
+  [[ "$fn_body" == *'resuming automatically'* ]]
+}

@@ -1734,3 +1734,38 @@ print(f'groups={loaded.groups_done}')
 ")
   [ "$result" = "groups=[1, 2, 3]" ]
 }
+
+@test "invoke_agent: returns subprocess exit code" {
+  result=$(_py "
+import subprocess
+# Patch _build_agent_cmd to return a simple failing command
+original = mod._build_agent_cmd
+mod._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
+rc = mod.invoke_agent('test', '$TMPDIR/test.jsonl', '/tmp', '/tmp')
+mod._build_agent_cmd = original
+print(rc)
+")
+  [ "$result" = "42" ]
+}
+
+@test "invoke_agent: logs stderr on failure" {
+  result=$(_py "
+import subprocess, os
+mod._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
+mod.invoke_agent('test', '$TMPDIR/stderr_test.jsonl', '/tmp', '/tmp')
+content = open('$TMPDIR/stderr_test.jsonl').read()
+print('has_stderr=' + str('agent-error-msg' in content))
+")
+  [ "$result" = "has_stderr=True" ]
+}
+
+@test "PipelineState: rejects group_count as constructor arg" {
+  result=$(_py "
+try:
+    state = mod.PipelineState(head_sha='abc', group_count=2, group_names=['a', 'b'])
+    print('accepted')
+except TypeError:
+    print('rejected')
+")
+  [ "$result" = "rejected" ]
+}

@@ -538,6 +538,12 @@ cmd_review() {
 
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
+  # ── Auto-detect incomplete pipeline ──
+  if [[ "$resume" != "true" && -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
+    info "Detected incomplete pipeline state — resuming automatically"
+    resume="true"
+  fi
+
   # ── Pre-flight checks ──
   [[ "$resume" != "true" ]] && _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
   _check_pending_review "$repo" "$pr_number" "$force"
@@ -690,6 +696,12 @@ cmd_self_review() {
   mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
+
+  # ── Auto-detect incomplete pipeline ──
+  if [[ "$resume" != "true" && -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
+    info "Detected incomplete pipeline state — resuming automatically"
+    resume="true"
+  fi
 
   local prior_review_path=""
   _resolve_prior_review prior_review_path "$review_file" "$session_log" "$resume"

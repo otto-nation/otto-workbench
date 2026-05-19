@@ -466,6 +466,69 @@ GHEOF
   [ "$md_count" -le "$ARCHIVE_KEEP_COUNT" ]
 }
 
+# ── _append_orchestrate_flags ───────────────────────────────────────────────
+
+@test "_append_orchestrate_flags: no optional flags returns 0 under set -e" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    set -e
+    declare -a args=()
+    _append_orchestrate_flags args "false" "" ""
+    echo "${args[@]}"
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--generator-version"* ]]
+  [[ "$output" != *"--no-holistic"* ]]
+  [[ "$output" != *"--max-cost"* ]]
+  [[ "$output" != *"--model"* ]]
+}
+
+@test "_append_orchestrate_flags: all flags present when set" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    set -e
+    declare -a args=()
+    _append_orchestrate_flags args "true" "5" "sonnet"
+    echo "${args[@]}"
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--generator-version"* ]]
+  [[ "$output" == *"--no-holistic"* ]]
+  [[ "$output" == *"--max-cost 5"* ]]
+  [[ "$output" == *"--model sonnet"* ]]
+}
+
+@test "_append_orchestrate_flags: mixed flags — only max-cost set" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    set -e
+    declare -a args=()
+    _append_orchestrate_flags args "false" "20" ""
+    echo "${args[@]}"
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--max-cost 20"* ]]
+  [[ "$output" != *"--no-holistic"* ]]
+  [[ "$output" != *"--model"* ]]
+}
+
+# ── ERR trap ───────────────────────────────────────────────────────────────
+
+@test "ERR trap fires with diagnostic output on unexpected failure" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    _will_fail() { false; }
+    _will_fail
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unexpected failure"* ]]
+  [[ "$output" == *"_will_fail"* ]]
+}
+
 # ── self-review rule ────────────────────────────────────────────────────────
 
 @test "self-review rule does not suggest --no-post" {

@@ -92,4 +92,5 @@ run_migrations() {
   local file="$1/migrations.sh"
   # shellcheck source=/dev/null
   [[ -f "$file" ]] && . "$file"
+  return 0
 }

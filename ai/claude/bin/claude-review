@@ -21,11 +21,16 @@
 #   To review multiple PRs in parallel, use the Agent tool to dispatch
 #   separate subagents — each runs one `claude-review --no-post <N>` call.
 
-set -eo pipefail
+set -Eeo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../../../lib/ui.sh"
+
+_on_err() {
+  err "Unexpected failure at line $1 in ${3}(): $2" >&2
+}
+trap '_on_err $LINENO "$BASH_COMMAND" "${FUNCNAME[0]:-main}"' ERR
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -454,6 +459,7 @@ _append_orchestrate_flags() {
   [[ "$no_holistic" == "true" ]] && __args+=(--no-holistic)
   [[ -n "$max_cost" ]] && __args+=(--max-cost "$max_cost")
   [[ -n "$model" ]] && __args+=(--model "$model")
+  return 0
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────

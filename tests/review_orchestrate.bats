@@ -846,11 +846,11 @@ with tempfile.TemporaryDirectory() as td:
     os.system(f'cd {td} && git config user.email test@test.com && git config user.name Test && git config commit.gpgsign false')
     large_file = Path(td) / 'big.txt'
     large_file.write_text('x' * 600000)
-    os.system(f'cd {td} && git add . && git commit -q -m init')
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m init')
     os.system(f'cd {td} && git remote add origin {td} && git fetch -q origin main')
     os.system(f'cd {td} && git checkout -b feat -q')
     large_file.write_text('y' * 600000)
-    os.system(f'cd {td} && git add . && git commit -q -m change')
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m change')
 
     pr = mod.PRMetadata(
         title='t', body='', head='feat', base='main', head_sha='abc',
@@ -1367,12 +1367,12 @@ with tempfile.TemporaryDirectory() as td:
     # tier-1 file (CLAUDE.md, small) and tier-2 file (util.go, 50KB)
     Path(td, 'CLAUDE.md').write_text('# Rules\\n' * 10)
     Path(td, 'util.go').write_text('package main\\n' + 'func f() {}\\n' * 3000)
-    os.system(f'cd {td} && git add . && git commit -q -m init 2>/dev/null')
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m init 2>/dev/null')
     os.system(f'cd {td} && git remote add origin {td} && git fetch -q origin main 2>/dev/null')
     os.system(f'cd {td} && git checkout -b feat -q 2>/dev/null')
     Path(td, 'CLAUDE.md').write_text('# Updated rules\\n' * 10)
     Path(td, 'util.go').write_text('package main\\n' + 'func g() {}\\n' * 3000)
-    os.system(f'cd {td} && git add . && git commit -q -m change 2>/dev/null')
+    os.system(f'cd {td} && git add . && git commit -q --no-verify -m change 2>/dev/null')
 
     pr = mod.PRMetadata(
         title='t', body='', head='feat', base='main', head_sha='abc',

@@ -10,7 +10,9 @@
 ## Protected Branches
 
 - Never remove the `main` (or default branch) worktree — use `wt remove` only on feature branches
-- Never push directly to `main` — all changes must go through a PR
+- Never commit on `main` — create a feature branch first, even for one-line changes
+- Never run `git push` while on `main` or targeting `main` — branch protection will reject it, so don't attempt it at all
+- All changes reach `main` through a merged PR, no exceptions
 
 ## Cross-Worktree Safety
 

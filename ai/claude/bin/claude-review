@@ -13,7 +13,7 @@
 #   --no-post                  Skip all interactive prompts; run review and exit
 #   --post                     Run review then post automatically (fully headless)
 #   --issue <link>             Attach an issue link for reviewer context
-#   --self                     Self-review mode: review your own code, output to .claude/self-review.md
+#   --self                     Self-review mode: review your own code, output to ignore/reviews/self-review.md
 #   --skip-user-verification   Skip ownership check in self-review mode
 #
 # When calling from Claude Code:
@@ -46,7 +46,7 @@ _generator_version() {
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
 LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
 
-SELF_REVIEW_DIR=".claude"
+SELF_REVIEW_DIR="ignore/reviews"
 SELF_REVIEW_FILE="self-review.md"
 
 REVIEW_EXT=".md"
@@ -83,6 +83,15 @@ if [[ -d "$LEGACY_REVIEWS_DIR" ]]; then
 fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+_ensure_ignore_dir() {
+  local wt_path="$1"
+  mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
+  local gitignore="${wt_path}/.gitignore"
+  if [[ ! -f "$gitignore" ]] || ! grep -qx "ignore/" "$gitignore"; then
+    echo "ignore/" >> "$gitignore"
+  fi
+}
 
 _extract_pr_number() {
   local -n __out=$1
@@ -694,8 +703,8 @@ cmd_self_review() {
   fi
 
   # ── Review file in worktree ──
+  _ensure_ignore_dir "$wt_path"
   local review_file="${wt_path}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
-  mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 

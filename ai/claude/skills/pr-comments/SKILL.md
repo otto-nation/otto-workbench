@@ -115,29 +115,36 @@ Group all fixes into a single commit. Do not create separate commits per comment
 
 Reply inline to every addressed comment. Commit and push before replying so replies reference the fix.
 
+**IMPORTANT:** The PR number is required in the URL path — `pulls/{number}/comments/...`, not `pulls/comments/...`.
+
+**Never use `-f body="..."`** — backticks and special characters cause shell escaping failures. Use `-F body=@-` with a quoted heredoc:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+  --method POST -F body=@- <<'REPLY_BODY'
+<reply text — backticks, quotes, markdown all safe here>
+REPLY_BODY
+```
+
+Examples:
+
 **Accepted:**
 ```bash
 gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-  --method POST -f body="Fixed."
+  --method POST -F body=@- <<'REPLY_BODY'
+Fixed.
+REPLY_BODY
 ```
 
-**Rejected (invalid suggestion):**
+**Rejected:**
 ```bash
 gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-  --method POST -f body="Not applying — <specific reason>. <what was checked>"
+  --method POST -F body=@- <<'REPLY_BODY'
+Not applying — `helperFn()` does not exist in the `utils` package. Checked `pkg/utils/` and `internal/utils/`.
+REPLY_BODY
 ```
 
-**Question answered:**
-```bash
-gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-  --method POST -f body="<answer>"
-```
-
-**Conflicting:**
-```bash
-gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-  --method POST -f body="This conflicts with @<other-reviewer>'s suggestion. Leaving for discussion."
-```
+**Question answered / Conflicting:** Same pattern.
 
 ### 6. Emit feedback signals
 

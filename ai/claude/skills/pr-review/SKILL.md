@@ -53,12 +53,13 @@ For each unanswered thread:
 
 ### 3. Post replies
 
-For threads that need a response, post replies:
+For threads that need a response, post replies. Never use `-f body="..."` — use `-F body=@-` with a quoted heredoc to avoid shell escaping failures:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies \
-  --method POST \
-  -f body="<response>"
+  --method POST -F body=@- <<'REPLY_BODY'
+<reply text — backticks, quotes, markdown all safe here>
+REPLY_BODY
 ```
 
 ### 4. Report

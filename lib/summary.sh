@@ -42,7 +42,10 @@ _env_print_var() {
 # Returns non-zero when not configured — callers must guard with && or if.
 _env_is_configured() {
   local var="$1"
-  [[ -f "$ENV_LOCAL_FILE" ]] && grep -q "^export ${var}=" "$ENV_LOCAL_FILE" 2>/dev/null
+  if [[ -f "$ENV_LOCAL_FILE" ]]; then
+    if grep -q "^export ${var}=" "$ENV_LOCAL_FILE" 2>/dev/null; then return 0; fi
+  fi
+  return 1
 }
 
 # _env_setup_entry — callback for iter_registry_env.
@@ -158,7 +161,9 @@ print_workbench_summary() {
   local _ai_cmd="" _gh_set=false
   if [[ -f "$TASKFILE_ENV" ]]; then
     _ai_cmd=$(grep -m1 '^AI_COMMAND=' "$TASKFILE_ENV" 2>/dev/null | sed 's/^AI_COMMAND=//')
-    grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null && _gh_set=true
+    if grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null; then
+      _gh_set=true
+    fi
   fi
   if [[ -n "$_ai_cmd" ]]; then
     summary_ok "AI command        ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  ${_ai_cmd}${NC}"
@@ -219,7 +224,9 @@ run_component_summaries() {
   if [[ $# -eq 0 ]]; then
     # Auto-discover all components with summary.sh (skip lib/ — it's not a component)
     for _f in "$WORKBENCH_DIR"/*/summary.sh; do
-      [[ -f "$_f" && "$(dirname "$_f")" != "$WORKBENCH_DIR/lib" ]] && files+=("$_f")
+      if [[ -f "$_f" && "$(dirname "$_f")" != "$WORKBENCH_DIR/lib" ]]; then
+        files+=("$_f")
+      fi
     done
   else
     for _c in "$@"; do

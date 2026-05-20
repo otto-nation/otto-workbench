@@ -115,13 +115,15 @@ _splice_readme() {
   # shellcheck disable=SC2064
   trap "rm -f '$tmp_content' '$tmp_out'" RETURN
   cat > "$tmp_content"
-  awk -v tf="$tmp_content" \
+  if awk -v tf="$tmp_content" \
       -v s="$start_marker" \
       -v e="$end_marker" '
     $0 == s { print; while ((getline line < tf) > 0) print line; skip=1; next }
     $0 == e { skip=0 }
     !skip   { print }
-  ' "$readme" > "$tmp_out" && mv "$tmp_out" "$readme"
+  ' "$readme" > "$tmp_out"; then
+    mv "$tmp_out" "$readme"
+  fi
 }
 
 # _splice_inline FILE MARKER
@@ -152,7 +154,9 @@ _splice_inline() {
       print
     }
 AWK
-  awk -v s="$start_marker" -v e="$end_marker" -v r="$replacement" "$_awk_prog" "$file" > "$tmp_out" && mv "$tmp_out" "$file"
+  if awk -v s="$start_marker" -v e="$end_marker" -v r="$replacement" "$_awk_prog" "$file" > "$tmp_out"; then
+    mv "$tmp_out" "$file"
+  fi
 }
 
 # _iter_tools FILE CALLBACK [FILTER]
@@ -361,7 +365,9 @@ _readme_ai_installs() {
   # MCPs
   local mcps=()
   for f in "$claude_mcps_src"/*.json; do
-    [[ -f "$f" ]] && mcps+=("$(jq -r '.name // ""' "$f")")
+    if [[ -f "$f" ]]; then
+      mcps+=("$(jq -r '.name // ""' "$f")")
+    fi
   done
   if [[ ${#mcps[@]} -gt 0 ]]; then
     printf '\n**MCP Servers:** %s\n' "$(_join ', ' "${mcps[@]}")"

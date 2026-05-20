@@ -262,7 +262,9 @@ cmd_sync() {
     fi
 
     export WORKBENCH_CURRENT_COMPONENT="$_c"
-    declare -f "sync_${_c}" > /dev/null && "sync_${_c}"
+    if declare -f "sync_${_c}" > /dev/null; then
+      "sync_${_c}"
+    fi
   done
   unset WORKBENCH_CURRENT_COMPONENT
 
@@ -625,12 +627,12 @@ _show_item_status() {
 
   local has_default=false has_override=false is_disabled=false
   case "$type" in
-    skill|skills) [[ -d "$default_dir/$name" ]] && has_default=true ;;
-    *)            [[ -f "$default_dir/${name}.md" ]] && has_default=true ;;
+    skill|skills) if [[ -d "$default_dir/$name" ]]; then has_default=true; fi ;;
+    *)            if [[ -f "$default_dir/${name}.md" ]]; then has_default=true; fi ;;
   esac
   case "$type" in
-    skill|skills) [[ -d "$user_dir/$name" ]] && has_override=true ;;
-    *)            [[ -f "$user_dir/${name}.md" ]] && has_override=true ;;
+    skill|skills) if [[ -d "$user_dir/$name" ]]; then has_override=true; fi ;;
+    *)            if [[ -f "$user_dir/${name}.md" ]]; then has_override=true; fi ;;
   esac
   [[ -f "$user_dir/${name}.disabled" ]] && is_disabled=true
 
@@ -705,7 +707,9 @@ _ai_override_list() {
     label="${dir##*:}"
     dir="${dir%%:*}"
     [[ -d "$dir" ]] || continue
-    _list_override_dir "$dir" "$label" && found=true
+    if _list_override_dir "$dir" "$label"; then
+      found=true
+    fi
   done
   [[ "$found" == false ]] && echo -e "  ${DIM}No overrides in ${display_dir}/${NC}"
   return 0

@@ -45,7 +45,9 @@ step_zed_settings() {
   local existing="{}" content
   if [[ -f "$ZED_SETTINGS_FILE" ]]; then
     content=$(_zed_strip_jsonc < "$ZED_SETTINGS_FILE")
-    [[ -n "$content" ]] && existing="$content"
+    if [[ -n "$content" ]]; then
+      existing="$content"
+    fi
   fi
 
   local result

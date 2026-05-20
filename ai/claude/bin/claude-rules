@@ -152,7 +152,7 @@ cmd_sync() {
     [[ -f "$item" && ! -L "$item" ]] || continue
     local name
     name=$(basename "$item")
-    [[ -n "${layers[$name]+set}" ]] && rm "$item"
+    if [[ -n "${layers[$name]+set}" ]]; then rm "$item"; fi
   done
 
   # Install from merged layers

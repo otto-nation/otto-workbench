@@ -87,7 +87,9 @@ _brew_install_file() {
     return
   fi
   if confirm "  Install $label?"; then
-    brew bundle --file="$file" && success "$label installed"
+    if brew bundle --file="$file"; then
+      success "$label installed"
+    fi
   fi
 }
 
@@ -139,9 +141,11 @@ _brew_select_packages() {
     if _brew_is_installed "$type" "$full"; then
       echo -e "  ${DIM}✓ $short already installed${NC}"
     elif [[ "$type" == "cask" ]]; then
-      brew install --cask "$full" && success "Installed $short"
+      if brew install --cask "$full"; then success "Installed $short"; fi
     else
-      brew install "$full" && success "Installed $short"
+      if brew install "$full"; then
+        success "Installed $short"
+      fi
     fi
   done
 }
@@ -251,10 +255,16 @@ _brew_remove_version_manager() {
   local name="$1" home_dir="$2"
   echo
   warn "${name} is installed — mise replaces it."
-  confirm "  Uninstall ${name} via Homebrew?" && { brew uninstall "$name"; success "${name} uninstalled"; }
+  if confirm "  Uninstall ${name} via Homebrew?"; then
+    brew uninstall "$name"
+    success "${name} uninstalled"
+  fi
   [[ ! -d "$home_dir" ]] && return
   echo -e "  ${DIM}  ${home_dir} still exists${NC}"
-  confirm "  Remove ${home_dir}?" && { rm -rf "$home_dir"; success "${home_dir} removed"; }
+  if confirm "  Remove ${home_dir}?"; then
+    rm -rf "$home_dir"
+    success "${home_dir} removed"
+  fi
 }
 
 _brew_migrate_version_managers() {

@@ -25,7 +25,9 @@ _array_contains() {
   local needle="$1"; shift
   local item
   for item in "$@"; do
-    [[ "$item" == "$needle" ]] && return 0
+    if [[ "$item" == "$needle" ]]; then
+      return 0
+    fi
   done
   return 1
 }

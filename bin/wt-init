@@ -139,7 +139,9 @@ done < <(git worktree list)
 claude_wts=()
 if [[ -d ".claude/worktrees" ]]; then
   for d in .claude/worktrees/*/; do
-    [[ -d "$d" ]] && claude_wts+=("$(basename "$d")")
+    if [[ -d "$d" ]]; then
+      claude_wts+=("$(basename "$d")")
+    fi
   done
 fi
 

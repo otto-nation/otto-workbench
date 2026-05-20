@@ -50,7 +50,7 @@ is_binary_ext() {
   ext="${ext,,}"  # lowercase
   local b
   for b in "${BINARY_EXTS[@]}"; do
-    [[ "$ext" == "$b" ]] && return 0
+    if [[ "$ext" == "$b" ]]; then return 0; fi
   done
   return 1
 }
@@ -95,7 +95,7 @@ extract_description() {
       desc="${BASH_REMATCH[2]}"
       # Skip common noise: shellcheck, eslint, pragma, license headers
       [[ "$desc" =~ ^(shellcheck|eslint|prettier|@|TODO|FIXME|NOTE|Copyright|License|SPDX) ]] && continue
-      [[ -n "$desc" ]] && break
+      if [[ -n "$desc" ]]; then break; fi
     fi
 
     # Block comment openers: /* /** """ '''
@@ -103,7 +103,7 @@ extract_description() {
       desc="${BASH_REMATCH[1]}"
       desc="${desc%\*/}"  # strip inline close
       desc="${desc# }"
-      [[ -n "$desc" ]] && break
+      if [[ -n "$desc" ]]; then break; fi
     fi
 
     # Python/Ruby docstrings
@@ -111,13 +111,13 @@ extract_description() {
       desc="${BASH_REMATCH[2]}"
       desc="${desc%\"\"\"}"
       desc="${desc%\'\'\'}"
-      [[ -n "$desc" ]] && break
+      if [[ -n "$desc" ]]; then break; fi
     fi
 
     # Markdown: use first heading text as description
     if [[ "$line" =~ ^#+(\ |	)+(.*) ]]; then
       desc="${BASH_REMATCH[2]}"
-      [[ -n "$desc" ]] && break
+      if [[ -n "$desc" ]]; then break; fi
     fi
 
   done < "$file"
@@ -205,7 +205,7 @@ generate_ansible_section() {
       # Special case: caddy has separate http/https ports
       if [[ "$svc" == "caddy" ]]; then
         local http="${svc_ports[caddy_http]:-}" https="${svc_ports[caddy_https]:-}"
-        [[ -n "$http" && -n "$https" ]] && port="${http}/${https}"
+        if [[ -n "$http" && -n "$https" ]]; then port="${http}/${https}"; fi
       fi
 
       printf '| %s | %s | %s | %s |\n' "$svc" "$container" "$version" "$port"

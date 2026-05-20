@@ -147,7 +147,10 @@
       "WebFetch(domain:github.com)",
       "WebSearch",
       "Edit",
-      "Write"
+      "Write",
+      "Read(//tmp/**)",
+      "Write(//tmp/**)",
+      "Edit(//tmp/**)"
     ],
     "deny": [
       "Bash(git reset:*)",

@@ -210,7 +210,7 @@ tasks:
         fi
 
   pr:content:
-    desc: "Preview AI-generated PR title and description (pass -- --no-issue to skip issue prompts)"
+    desc: "Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
@@ -220,8 +220,9 @@ tasks:
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "{{.CLI_ARGS}}" || exit 1
 
+        TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
+        generate_pr_content "$BRANCH" "$TARGET_BASE"
         echo "✓ Content ready"
         echo ""
         echo "→ PR Title:"
@@ -231,7 +232,7 @@ tasks:
         echo "$PR_DESCRIPTION"
 
   pr:create:
-    desc: "Create AI-powered pull request with smart title and description (pass -- --no-issue to skip issue prompts)"
+    desc: "Create AI-powered pull request (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
@@ -242,12 +243,15 @@ tasks:
         load_pr "{{.CLI_ARGS}}" || exit 1
         push_branch "$BRANCH" || exit 1
 
+        TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
+        generate_pr_content "$BRANCH" "$TARGET_BASE"
         echo "✓ Content ready"
         echo "→ Creating PR..."
 
-        PR_OUTPUT=$(gh pr create --title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me 2>&1) || true
+        GH_ARGS=(--title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me)
+        [[ -n "${PR_BASE:-}" ]] && GH_ARGS+=(--base "$PR_BASE")
+        PR_OUTPUT=$(gh pr create "${GH_ARGS[@]}" 2>&1) || true
         PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github[^[:space:]]*' || true)
 
         if [ -n "$PR_URL" ]; then
@@ -260,7 +264,7 @@ tasks:
         fi
 
   pr:update:
-    desc: "Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)"
+    desc: "Update current PR description with AI-generated content (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
@@ -279,8 +283,9 @@ tasks:
           exit 1
         fi
 
+        TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$DEFAULT_BRANCH"
+        generate_pr_content "$BRANCH" "$TARGET_BASE"
         echo "✓ Content ready"
         echo "→ Updating PR #$PR_NUMBER..."
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Post a review file to GitHub as a PENDING PR review.
+"""Post a review file to GitHub as a PR review.
 
 Parses a markdown review file (produced by claude-review), validates
 finding positions against the PR diff, renumbers findings by posted
 location (inline first, then body), and creates a PENDING review via
-the GitHub API.
+the GitHub API. Pass --submit to submit the review immediately.
 
 Usage:
   review-post --repo OWNER/REPO --pr NUMBER --review-file PATH
@@ -333,6 +333,7 @@ def format_inline_comment(f: Finding) -> dict:
         "path": f.full_path,
         "side": DIFF_SIDE_RIGHT,
         "body": body,
+        "subject_type": "line",
     }
 
     if f.end_line is not None and f.line is not None and f.end_line > f.line:
@@ -511,8 +512,8 @@ def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
     sys.exit(1)
 
 
-def post_review(repo: str, pr: str, payload: dict) -> dict | None:
-    """Post a PENDING review to GitHub."""
+def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict | None:
+    """Post a review to GitHub, optionally submitting it."""
     existing_id = _check_existing_pending(repo, pr)
     if existing_id:
         _warn(f"Deleting existing PENDING review #{existing_id}")
@@ -525,7 +526,35 @@ def post_review(repo: str, pr: str, payload: dict) -> dict | None:
         tmp_path = tmp.name
 
     try:
-        return _post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
+        result = _post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    if result and submit:
+        review_id = result.get("id")
+        if review_id:
+            _submit_review(repo, pr, review_id)
+
+    return result
+
+
+def _submit_review(repo: str, pr: str, review_id: int):
+    """Submit a PENDING review with event=COMMENT."""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix="review-submit-", delete=False
+    ) as tmp:
+        json.dump({"event": "COMMENT"}, tmp)
+        tmp_path = tmp.name
+
+    try:
+        rc, stdout = _gh_api(
+            f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
+            method="POST", input_file=tmp_path,
+        )
+        if rc != 0:
+            _warn(f"Failed to submit review #{review_id}: {stdout[:200]}")
+    except subprocess.TimeoutExpired:
+        _warn(f"Timed out submitting review #{review_id}")
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -549,6 +578,7 @@ def _err(msg: str):
 def write_post_tracking(
     review_file: str, review_id: int, commit_id: str,
     inline_count: int, body_count: int, skipped_count: int,
+    submitted: bool = False,
 ):
     """Write a post tracking entry alongside the review file."""
     base = review_file.removesuffix(".md") if review_file.endswith(".md") else review_file
@@ -560,6 +590,7 @@ def write_post_tracking(
         "inline_count": inline_count,
         "body_count": body_count,
         "skipped_count": skipped_count,
+        "submitted": submitted,
     }
     with open(post_file, "w") as f:
         json.dump(entry, f)
@@ -582,21 +613,33 @@ def _print_dry_run(
         _warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
 
 
+def _format_submit_command(repo: str, pr: str, review_id: int) -> str:
+    return f"gh api repos/{repo}/pulls/{pr}/reviews/{review_id}/events --method POST -f event=COMMENT"
+
+
 def _post_and_track(
     args: argparse.Namespace, payload: dict,
     inline_comments: list[dict], body_findings: list[Finding],
     skipped: list[Finding], commit_id: str,
 ):
+    submit = getattr(args, "submit", False)
     _info(f"Posting review ({len(inline_comments)} inline, {len(body_findings)} body)...")
-    result = post_review(args.repo, args.pr, payload)
+    result = post_review(args.repo, args.pr, payload, submit=submit)
     if not result:
         return
 
     review_id = result.get("id", 0)
-    _info(f"Review created: #{review_id} ({REVIEW_STATE_PENDING})")
+    if submit:
+        _info(f"Review submitted: #{review_id}")
+    else:
+        _info(f"Review created: #{review_id} (PENDING)")
+        print()
+        print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_id)}")
+
     write_post_tracking(
         args.review_file, review_id, commit_id,
         len(inline_comments), len(body_findings), len(skipped),
+        submitted=submit,
     )
 
 
@@ -610,6 +653,8 @@ def main():
                         help=f"Severity levels to post (comma-separated, default: {all_sevs})")
     parser.add_argument("--dry-run", action="store_true",
                         help="Parse and classify without posting")
+    parser.add_argument("--submit", action="store_true",
+                        help="Submit the review after posting (default: leave PENDING)")
     args = parser.parse_args()
 
     review_path = Path(args.review_file)

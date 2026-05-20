@@ -396,7 +396,8 @@ usage() {
   echo
   echo "Options:"
   echo "  --no-post                  Skip all interactive prompts; run review and exit"
-  echo "  --post                     Run review then post automatically (fully headless)"
+  echo "  --post                     Run review then post automatically (leaves review PENDING)"
+  echo "  --submit                   Submit the review (use with --post for fully headless)"
   echo "  --issue <link>             Attach an issue link for reviewer context"
   echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
   echo "  --max-cost <USD>           Max total review cost in USD (default: 20)"
@@ -513,6 +514,7 @@ cmd_review() {
   local max_cost="${8:-}"
   local model="${9:-}"
   local resume="${10:-false}"
+  local auto_submit="${11:-false}"
 
   _prune_merged_reviews
 
@@ -597,7 +599,7 @@ cmd_review() {
   fi
 
   if [[ "$auto_post" == "true" ]]; then
-    cmd_post "$repo" "$pr_number"
+    cmd_post "$repo" "$pr_number" "$auto_submit"
     local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
     return
@@ -609,14 +611,20 @@ cmd_review() {
     exit 0
   fi
 
-  if confirm "Post review to GitHub?"; then
-    cmd_post "$repo" "$pr_number"
-    local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
-    _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
-  else
+  if ! confirm "Post review to GitHub?"; then
     _print_summary "$review_file" "$session_log" "$pr_url"
     echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
+    return
   fi
+
+  cmd_post "$repo" "$pr_number" "false"
+  local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
+
+  if confirm "Submit review now?"; then
+    _submit_pending_review "$repo" "$pr_number" "$review_file"
+  fi
+
+  _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
 }
 
 _verify_pr_ownership() {
@@ -767,9 +775,39 @@ cmd_self_review() {
   fi
 }
 
+_submit_pending_review() {
+  local repo="$1"
+  local pr_number="$2"
+  local review_file="$3"
+
+  local post_file="${review_file%.md}.post.jsonl"
+  if [[ ! -f "$post_file" ]]; then
+    err "No post tracking file found: $post_file"
+    return 1
+  fi
+
+  local review_id
+  review_id=$(jq -r '.review_id' "$post_file" 2>/dev/null) || true
+  if [[ -z "$review_id" || "$review_id" == "null" ]]; then
+    err "Could not read review_id from $post_file"
+    return 1
+  fi
+
+  info "Submitting review #${review_id}..."
+  gh api "repos/${repo}/pulls/${pr_number}/reviews/${review_id}/events" \
+    --method POST -f event=COMMENT >/dev/null 2>&1 \
+    && info "Review #${review_id} submitted" \
+    || warn "Failed to submit review #${review_id}"
+
+  local tmp
+  tmp=$(jq '.submitted = true' "$post_file") && echo "$tmp" > "$post_file"
+}
+
+
 cmd_post() {
   local repo="$1"
   local pr_number="$2"
+  local submit="${3:-false}"
 
   local review_file
   _review_file review_file "$repo" "$pr_number"
@@ -780,19 +818,14 @@ cmd_post() {
     exit 1
   fi
 
+  local submit_flag=()
+  [[ "$submit" == "true" ]] && submit_flag=(--submit)
+
   "$(dirname "$_SELF")/review-post" \
     --repo "$repo" \
     --pr "$pr_number" \
-    --review-file "$review_file"
-
-  local pending_review_id
-  pending_review_id=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
-    --jq '[.[] | select(.state == "PENDING")] | first | .id' 2>/dev/null) || true
-
-  if [[ -n "$pending_review_id" && "$pending_review_id" != "null" ]]; then
-    echo
-    echo -e "  ${DIM}Submit: gh api repos/${repo}/pulls/${pr_number}/reviews/${pending_review_id}/events --method POST -f event=\"COMMENT\"${NC}"
-  fi
+    --review-file "$review_file" \
+    "${submit_flag[@]}"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -800,6 +833,7 @@ cmd_post() {
 main() {
   local no_post="false"
   local auto_post="false"
+  local auto_submit="false"
   local self_review="false"
   local skip_user_verification="false"
   local force="false"
@@ -815,6 +849,7 @@ main() {
     case "$1" in
       --no-post)       no_post="true"; shift ;;
       --post)          auto_post="true"; shift ;;
+      --submit)        auto_submit="true"; shift ;;
       --self)          self_review="true"; shift ;;
       --skip-user-verification) skip_user_verification="true"; shift ;;
       --force)         force="true"; shift ;;
@@ -848,14 +883,14 @@ main() {
       local post_pr_number post_repo
       _extract_pr_number post_pr_number "$post_input"
       _extract_repo post_repo "$post_input"
-      cmd_post "$post_repo" "$post_pr_number"
+      cmd_post "$post_repo" "$post_pr_number" "$auto_submit"
       ;;
     "")
       usage
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit"
       ;;
   esac
 }

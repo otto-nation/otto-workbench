@@ -3,12 +3,12 @@
 # Requires lib/ai/core.sh to be sourced first.
 #
 # Typical call sequence:
-#   load_pr [ARGS]                          → sets SKIP_ISSUE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
+#   load_pr [ARGS]                          → sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
 #   push_branch BRANCH                      → pushes branch if needed
 #   generate_pr_content BRANCH DEFAULT      → sets PR_TITLE, PR_DESCRIPTION
 #
-# State set by functions: BRANCH, DEFAULT_BRANCH, SKIP_ISSUE, PR_ISSUE,
-#                         PR_TEMPLATE, PR_HAS_TEMPLATE, PR_TITLE, PR_DESCRIPTION
+# State set by functions: BRANCH, DEFAULT_BRANCH, SKIP_ISSUE, PR_BASE,
+#                         PR_ISSUE, PR_TEMPLATE, PR_HAS_TEMPLATE, PR_TITLE, PR_DESCRIPTION
 
 # push_branch BRANCH
 # Pushes BRANCH to remote, handling first-push and divergence cases.
@@ -100,22 +100,34 @@ load_pr_context() {
 
 # parse_pr_flags ARGS
 # Parses PR-specific flags from the CLI_ARGS string.
-# Sets SKIP_ISSUE. Returns 1 on unknown flag.
+# Sets SKIP_ISSUE and PR_BASE. Returns 1 on unknown flag.
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false
-  local arg
+  PR_BASE=""
+  local arg next_is_base=false
   for arg in $args; do
+    if [[ "$next_is_base" = "true" ]]; then
+      # shellcheck disable=SC2034  # read by Taskfile callers
+      PR_BASE="$arg"
+      next_is_base=false
+      continue
+    fi
     case "$arg" in
       --no-issue) SKIP_ISSUE=true ;;
+      --base) next_is_base=true ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
     esac
   done
+  if [[ "$next_is_base" = "true" ]]; then
+    echo "✗ --base requires a branch name"
+    return 1
+  fi
 }
 
 # load_pr [ARGS]
 # Parses PR flags from ARGS, then loads the PR context.
-# Sets SKIP_ISSUE, AI_COMMAND, BRANCH, DEFAULT_BRANCH. Returns 1 on failure.
+# Sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH. Returns 1 on failure.
 load_pr() {
   local args="${1:-}"
   parse_pr_flags "$args" || return 1

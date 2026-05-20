@@ -263,23 +263,21 @@ SCRIPT
 
 @test "check_file_bash: @test blocks reset depth in bats files" {
   local f
-  f=$(_write_script "tests.bats" <<'SCRIPT'
-#!/usr/bin/env bats
-@test "first test" {
-  if true; then
-    if true; then
-      echo "depth 2"
-    fi
-  fi
-}
-
-@test "second test" {
-  if true; then
-    echo "depth 1 — reset by @test boundary"
-  fi
-}
-SCRIPT
-  )
+  f="$BATS_TEST_TMPDIR/tests.bats"
+  printf '%s\n' '#!/usr/bin/env bats' \
+    '@test "first test" {' \
+    '  if true; then' \
+    '    if true; then' \
+    '      echo "depth 2"' \
+    '    fi' \
+    '  fi' \
+    '}' \
+    '' \
+    '@test "second test" {' \
+    '  if true; then' \
+    '    echo "depth 1 — reset by @test boundary"' \
+    '  fi' \
+    '}' > "$f"
   result=$(_py "print(len(mod.check_file_bash('$f', 2)))")
   [ "$result" = "0" ]
 }

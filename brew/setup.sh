@@ -143,9 +143,7 @@ _brew_select_packages() {
     elif [[ "$type" == "cask" ]]; then
       if brew install --cask "$full"; then success "Installed $short"; fi
     else
-      if brew install "$full"; then
-        success "Installed $short"
-      fi
+      if brew install "$full"; then success "Installed $short"; fi
     fi
   done
 }

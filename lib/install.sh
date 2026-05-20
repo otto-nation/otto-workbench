@@ -183,10 +183,7 @@ select_components() {
   local _c _d2
   for _c in "${COMPONENT_DIRS[@]}"; do
     for _d2 in "${desired[@]}"; do
-      if [[ "$_c" == "$_d2" ]]; then
-        SELECTED_COMPONENTS+=("$_c")
-        break
-      fi
+      if [[ "$_c" == "$_d2" ]]; then SELECTED_COMPONENTS+=("$_c"); break; fi
     done
   done
   unset _c _d2

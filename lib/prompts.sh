@@ -131,9 +131,7 @@ select_menu() {
     for _num in $_raw; do
       [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )) || { warn "Unknown option: $_num"; _invalid=true; continue; }
       _selected+="$_num "
-      if [[ "$_single" == true ]]; then
-        break
-      fi
+      if [[ "$_single" == true ]]; then break; fi
     done
 
     if [[ "$_invalid" == true ]]; then

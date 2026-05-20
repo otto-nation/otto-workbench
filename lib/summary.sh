@@ -224,9 +224,7 @@ run_component_summaries() {
   if [[ $# -eq 0 ]]; then
     # Auto-discover all components with summary.sh (skip lib/ — it's not a component)
     for _f in "$WORKBENCH_DIR"/*/summary.sh; do
-      if [[ -f "$_f" && "$(dirname "$_f")" != "$WORKBENCH_DIR/lib" ]]; then
-        files+=("$_f")
-      fi
+      if [[ -f "$_f" && "$(dirname "$_f")" != "$WORKBENCH_DIR/lib" ]]; then files+=("$_f"); fi
     done
   else
     for _c in "$@"; do

@@ -42,9 +42,7 @@ run_steps() {
 
     if [[ "$_accept_all" != true ]]; then
       confirm_step _decision "  Run this step?"
-      if [[ "$_decision" == "all" ]]; then
-        _accept_all=true
-      fi
+      if [[ "$_decision" == "all" ]]; then _accept_all=true; fi
     fi
 
     if [[ "$_accept_all" == true || "$_decision" == "yes" || "$_decision" == "all" ]]; then

@@ -115,6 +115,18 @@ class PreflightData:
     omitted_files: list[str] = field(default_factory=list)
 
 
+@dataclass
+class PipelineState:
+    head_sha: str
+    group_names: list[str]
+    holistic_done: bool = False
+    groups_done: list[int] = field(default_factory=list)
+
+    @property
+    def group_count(self):
+        return len(self.group_names)
+
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 REVIEW_EXT = ".md"
@@ -175,6 +187,7 @@ SUFFIX_SYNTHESIS_LOG = ".synthesis.jsonl"
 SUFFIX_GROUP = ".group-{}.md"
 SUFFIX_GROUP_LOG = ".group-{}.jsonl"
 SUFFIX_META = ".meta.json"
+SUFFIX_PIPELINE_STATE = ".pipeline.json"
 
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
@@ -1134,7 +1147,7 @@ def invoke_agent(
     max_turns: int | None = DEFAULT_MAX_TURNS,
     max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
     model: str | None = None,
-):
+) -> int:
     cmd = _build_agent_cmd(
         reviews_dir, wt_path, review_file=review_file,
         max_turns=max_turns, max_budget=max_budget, model=model,
@@ -1150,7 +1163,75 @@ def invoke_agent(
     proc.stdin.close()
     stream_progress(proc, session_log, label=label)
     proc.wait()
+    if proc.returncode != 0:
+        stderr_output = proc.stderr.read()
+        if stderr_output:
+            with open(session_log, "a") as f:
+                f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
     return proc.returncode
+
+
+# ── Pipeline state (resume/retry) ────────────────────────────────────────────
+
+_state_lock = threading.Lock()
+
+
+def _pipeline_state_path(job: ReviewJob) -> str:
+    return job.review_file.replace(REVIEW_EXT, SUFFIX_PIPELINE_STATE)
+
+
+def _write_pipeline_state(job: ReviewJob, state: PipelineState):
+    from dataclasses import asdict
+    dest = _pipeline_state_path(job)
+    tmp = dest + ".tmp"
+    Path(tmp).write_text(json.dumps(asdict(state)))
+    os.replace(tmp, dest)
+
+
+def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
+    path = Path(_pipeline_state_path(job))
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        return PipelineState(
+            head_sha=data["head_sha"],
+            group_names=data["group_names"],
+            holistic_done=data.get("holistic_done", False),
+            groups_done=data.get("groups_done", []),
+        )
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
+    total = 0.0
+    if state.holistic_done:
+        log = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC_LOG)
+        total += _parse_session_cost(log)
+    for idx in state.groups_done:
+        log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(idx))
+        total += _parse_session_cost(log)
+    return total
+
+
+def _validate_resume_state(
+    state: PipelineState, head_sha: str, groups: list[Group],
+) -> bool:
+    if state.head_sha != head_sha:
+        return False
+    current_names = [g.name for g in groups]
+    if state.group_names != current_names:
+        return False
+    return True
+
+
+def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
+    with _state_lock:
+        if group_idx not in state.groups_done:
+            state.groups_done.append(group_idx)
+            state.groups_done.sort()
+        _write_pipeline_state(job, state)
 
 
 # ── Review pipelines ──────────────────────────────────────────────────────────
@@ -1204,13 +1285,23 @@ def run_single_agent(job: ReviewJob):
 def _review_group(
     i: int, grp: Group, job: ReviewJob,
     group_count: int, holistic_content: str,
+    skip: bool = False,
+    pipeline_state: "PipelineState | None" = None,
 ) -> tuple[int, str, str | None]:
+    group_output = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i))
+    group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
+
+    if skip:
+        if Path(group_output).exists():
+            _info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
+            return (i, group_output, None)
+        _warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
+        return (i, group_output, grp.name)
+
     group_files_formatted = "\n".join(
         FILE_STAT_FMT.format(**f)
         for f in job.pr.files if f["path"] in grp.files
     )
-    group_output = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i))
-    group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
 
     group_prompt = build_prompt(
         TEMPLATE_GROUP, job,
@@ -1231,6 +1322,8 @@ def _review_group(
     else:
         _validate_group_output(group_output, grp.name)
         _info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
+        if pipeline_state is not None:
+            _update_group_done(job, i, pipeline_state)
 
     return (i, group_output, failed)
 
@@ -1263,6 +1356,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
+    skip_groups: "set[int] | None" = None,
+    pipeline_state: "PipelineState | None" = None,
 ) -> tuple[list[str], list[str]]:
     group_outputs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
     failed_groups: list[str] = []
@@ -1270,7 +1365,11 @@ def _phase_group_reviews(
     workers = min(max_parallel, group_count)
     if workers <= 1:
         for i, grp in enumerate(groups, 1):
-            _, _, failed = _review_group(i, grp, job, group_count, holistic_content)
+            skip = skip_groups is not None and i in skip_groups
+            _, _, failed = _review_group(
+                i, grp, job, group_count, holistic_content,
+                skip=skip, pipeline_state=pipeline_state,
+            )
             if failed:
                 failed_groups.append(failed)
     else:
@@ -1278,7 +1377,11 @@ def _phase_group_reviews(
         print()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
-                pool.submit(_review_group, i, grp, job, group_count, holistic_content): i
+                pool.submit(
+                    _review_group, i, grp, job, group_count, holistic_content,
+                    skip=(skip_groups is not None and i in skip_groups),
+                    pipeline_state=pipeline_state,
+                ): i
                 for i, grp in enumerate(groups, 1)
             }
             for future in as_completed(futures):
@@ -1365,12 +1468,15 @@ def _phase_synthesis(
     return synthesis_log
 
 
-def _consolidate_and_cleanup(
+def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
+    return [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
+
+
+def _consolidate_logs(
     job: ReviewJob,
-    holistic_output: str, holistic_log: str,
-    group_outputs: list[str], synthesis_log: str,
+    holistic_log: str, group_count: int, synthesis_log: str,
 ):
-    group_logs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i)) for i in range(1, len(group_outputs) + 1)]
+    group_logs = _group_log_paths(job, group_count)
     all_logs = group_logs[:]
     if holistic_log:
         all_logs.insert(0, holistic_log)
@@ -1386,6 +1492,13 @@ def _consolidate_and_cleanup(
     except OSError:
         pass
 
+
+def _cleanup_intermediates(
+    job: ReviewJob,
+    holistic_output: str, holistic_log: str,
+    group_outputs: list[str], group_count: int, synthesis_log: str,
+):
+    group_logs = _group_log_paths(job, group_count)
     cleanup = group_outputs + group_logs
     if holistic_output:
         cleanup.append(holistic_output)
@@ -1393,6 +1506,7 @@ def _consolidate_and_cleanup(
         cleanup.append(holistic_log)
     if synthesis_log:
         cleanup.append(synthesis_log)
+    cleanup.append(_pipeline_state_path(job))
 
     for path in cleanup:
         try:
@@ -1436,6 +1550,7 @@ def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
+    resume: bool = False,
 ):
     groups = group_files(job.pr)
     groups = _merge_smallest_groups(groups, DEFAULT_MAX_GROUPS)
@@ -1444,12 +1559,45 @@ def run_multi_phase(
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
     cost_so_far = 0.0
+    skip_groups: set[int] | None = None
+    skip_holistic_phase = False
+    state: PipelineState | None = None
+
+    if resume:
+        state = _read_pipeline_state(job)
+        if state and _validate_resume_state(state, job.pr.head_sha, groups):
+            _info("Resuming from pipeline state")
+            cost_so_far = _sum_existing_costs(job, state)
+            if state.holistic_done:
+                skip_holistic_phase = True
+            if state.groups_done:
+                skip_groups = set(state.groups_done)
+        elif state:
+            _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+            state = None
+        else:
+            _info("No pipeline state found — starting fresh")
+
+    if state is None:
+        state = PipelineState(
+            head_sha=job.pr.head_sha,
+            group_names=[g.name for g in groups],
+        )
+        _write_pipeline_state(job, state)
 
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
-    if run_holistic:
+    holistic_output = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC)
+    holistic_log = job.review_file.replace(REVIEW_EXT, SUFFIX_HOLISTIC_LOG)
+
+    if run_holistic and skip_holistic_phase and Path(holistic_output).exists():
+        _info("Phase 1: Holistic scan skipped (exists)")
+        holistic_content = Path(holistic_output).read_text()
+    elif run_holistic:
         holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
         if holistic_log:
             cost_so_far += _parse_session_cost(holistic_log)
+        state.holistic_done = True
+        _write_pipeline_state(job, state)
     else:
         reason = "--no-holistic" if skip_holistic else f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
         _info(f"Holistic phase skipped ({reason})")
@@ -1461,8 +1609,15 @@ def run_multi_phase(
     else:
         group_outputs, failed_groups = _phase_group_reviews(
             groups, job, group_count, holistic_content, max_parallel,
+            skip_groups=skip_groups, pipeline_state=state,
         )
-        cost_so_far += _accumulate_group_costs(job, len(group_outputs))
+        new_group_indices = [
+            i for i in range(1, len(group_outputs) + 1)
+            if skip_groups is None or i not in skip_groups
+        ]
+        for i in new_group_indices:
+            gl = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
+            cost_so_far += _parse_session_cost(gl)
 
     merged_content = _phase_merge(group_outputs, failed_groups)
 
@@ -1478,7 +1633,10 @@ def run_multi_phase(
     else:
         synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
 
-    _consolidate_and_cleanup(job, holistic_output, holistic_log, group_outputs, synthesis_log)
+    _consolidate_logs(job, holistic_log, group_count, synthesis_log)
+
+    if not failed_groups:
+        _cleanup_intermediates(job, holistic_output, holistic_log, group_outputs, group_count, synthesis_log)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1506,6 +1664,8 @@ def main():
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
                         help="Override model for all agents (e.g. sonnet, opus)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from existing intermediate files")
     args = parser.parse_args()
 
     if args.mode == MODE_PR and not args.pr:
@@ -1554,8 +1714,14 @@ def main():
     pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
     if is_large:
-        run_multi_phase(job, max_parallel=args.max_parallel, skip_holistic=args.no_holistic, max_cost=args.max_cost)
+        run_multi_phase(
+            job, max_parallel=args.max_parallel,
+            skip_holistic=args.no_holistic, max_cost=args.max_cost,
+            resume=args.resume,
+        )
     else:
+        if args.resume:
+            _warn("--resume ignored for single-agent reviews")
         run_single_agent(job)
 
     result = {

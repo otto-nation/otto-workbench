@@ -1403,3 +1403,369 @@ with tempfile.TemporaryDirectory() as td:
 ")
   [ "$result" = "claude_in=True,util_out=True" ]
 }
+
+# ── Pipeline state (resume/retry) ───────────────────────────────────────────
+
+@test "PipelineState: write/read round-trip preserves all fields" {
+  result=$(_py "
+import json, io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc123',
+        group_names=['tier1', 'services', 'tests'],
+        holistic_done=True,
+        groups_done=[1, 3],
+    )
+review_file = '$TMPDIR/review.md'
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc123',
+        additions=10, deletions=5, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt', review_file=review_file,
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._write_pipeline_state(job, state)
+loaded = mod._read_pipeline_state(job)
+print(f'sha={loaded.head_sha}')
+print(f'count={loaded.group_count}')
+print(f'names={loaded.group_names}')
+print(f'holistic={loaded.holistic_done}')
+print(f'groups={loaded.groups_done}')
+")
+  echo "$result"
+  [[ "$result" == *"sha=abc123"* ]]
+  [[ "$result" == *"count=3"* ]]
+  [[ "$result" == *"names=['tier1', 'services', 'tests']"* ]]
+  [[ "$result" == *"holistic=True"* ]]
+  [[ "$result" == *"groups=[1, 3]"* ]]
+}
+
+@test "_read_pipeline_state: missing file returns None" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/nonexistent-review.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    result = mod._read_pipeline_state(job)
+print(result)
+")
+  [ "$result" = "None" ]
+}
+
+@test "_read_pipeline_state: corrupt JSON returns None" {
+  echo "not valid json" > "$TMPDIR/review.pipeline.json"
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    result = mod._read_pipeline_state(job)
+print(result)
+")
+  [ "$result" = "None" ]
+}
+
+@test "_sum_existing_costs: sums costs from log files" {
+  # Create fake JSONL log files with cost data
+  echo '{"type": "result", "total_cost_usd": 1.50}' > "$TMPDIR/review.holistic.jsonl"
+  echo '{"type": "result", "total_cost_usd": 0.75}' > "$TMPDIR/review.group-1.jsonl"
+  echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/review.group-2.jsonl"
+
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc',
+        group_names=['a', 'b', 'c'],
+        holistic_done=True,
+        groups_done=[1, 2],
+    )
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    cost = mod._sum_existing_costs(job, state)
+print(f'{cost:.2f}')
+")
+  [ "$result" = "2.75" ]
+}
+
+@test "_sum_existing_costs: missing log files return 0" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc',
+        group_names=['a', 'b'],
+        holistic_done=True,
+        groups_done=[1],
+    )
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    cost = mod._sum_existing_costs(job, state)
+print(f'{cost:.2f}')
+")
+  [ "$result" = "0.00" ]
+}
+
+@test "SUFFIX_PIPELINE_STATE constant exists" {
+  result=$(_py "print(mod.SUFFIX_PIPELINE_STATE)")
+  [ "$result" = ".pipeline.json" ]
+}
+
+@test "--resume flag accepted in CLI" {
+  run "$ORCHESTRATE" --help
+  [[ "$output" == *"--resume"* ]]
+}
+
+@test "_consolidate_logs: merges log files without deleting intermediates" {
+  echo '{"type":"result","total_cost_usd":1.0}' > "$TMPDIR/review.holistic.jsonl"
+  echo '{"type":"result","total_cost_usd":0.5}' > "$TMPDIR/review.group-1.jsonl"
+  echo '{"type":"result","total_cost_usd":0.3}' > "$TMPDIR/review.synthesis.jsonl"
+  echo "holistic content" > "$TMPDIR/review.holistic.md"
+  echo "group content" > "$TMPDIR/review.group-1.md"
+
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/review.session.jsonl',
+        reviews_dir='/tmp/reviews',
+    )
+    mod._consolidate_logs(
+        job,
+        holistic_log='$TMPDIR/review.holistic.jsonl',
+        group_count=1,
+        synthesis_log='$TMPDIR/review.synthesis.jsonl',
+    )
+import os
+session_exists = os.path.exists('$TMPDIR/review.session.jsonl')
+holistic_exists = os.path.exists('$TMPDIR/review.holistic.md')
+group_exists = os.path.exists('$TMPDIR/review.group-1.md')
+holistic_log_exists = os.path.exists('$TMPDIR/review.holistic.jsonl')
+print(f'session={session_exists},holistic={holistic_exists},group={group_exists},hlog={holistic_log_exists}')
+")
+  echo "$result"
+  [ "$result" = "session=True,holistic=True,group=True,hlog=True" ]
+}
+
+@test "_cleanup_intermediates: removes intermediate files and pipeline state" {
+  echo "holistic" > "$TMPDIR/review.holistic.md"
+  echo "log" > "$TMPDIR/review.holistic.jsonl"
+  echo "group" > "$TMPDIR/review.group-1.md"
+  echo "glog" > "$TMPDIR/review.group-1.jsonl"
+  echo "glog2" > "$TMPDIR/review.group-2.jsonl"
+  echo "synth" > "$TMPDIR/review.synthesis.jsonl"
+  echo '{}' > "$TMPDIR/review.pipeline.json"
+
+  result=$(_py "
+import io, contextlib, os
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/review.session.jsonl',
+        reviews_dir='/tmp/reviews',
+    )
+    mod._cleanup_intermediates(
+        job,
+        holistic_output='$TMPDIR/review.holistic.md',
+        holistic_log='$TMPDIR/review.holistic.jsonl',
+        group_outputs=['$TMPDIR/review.group-1.md'],
+        group_count=2,
+        synthesis_log='$TMPDIR/review.synthesis.jsonl',
+    )
+remaining = []
+for f in ['review.holistic.md', 'review.holistic.jsonl', 'review.group-1.md',
+          'review.group-1.jsonl', 'review.synthesis.jsonl', 'review.pipeline.json']:
+    if os.path.exists('$TMPDIR/' + f):
+        remaining.append(f)
+print(f'remaining={remaining}')
+")
+  echo "$result"
+  [ "$result" = "remaining=[]" ]
+}
+
+@test "_review_group: skip=True returns early when output exists" {
+  echo "existing group review" > "$TMPDIR/review.group-1.md"
+
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=10, deletions=5, changed_files=1,
+            files=[{'path': 'a.go', 'additions': 10, 'deletions': 5}]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    grp = mod.Group(name='services', files=['a.go'], lines=15)
+    idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
+print(f'idx={idx},failed={failed}')
+import os
+print(f'output_exists={os.path.exists(output)}')
+")
+  echo "$result"
+  [[ "$result" == *"idx=1,failed=None"* ]]
+  [[ "$result" == *"output_exists=True"* ]]
+}
+
+@test "_review_group: skip=True with missing output reports failure" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=10, deletions=5, changed_files=1,
+            files=[{'path': 'a.go', 'additions': 10, 'deletions': 5}]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    grp = mod.Group(name='services', files=['a.go'], lines=15)
+    idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
+print(f'idx={idx},failed={failed}')
+")
+  echo "$result"
+  [[ "$result" == *"idx=1,failed=services"* ]]
+}
+
+@test "_validate_resume_state: matching state returns valid" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc123',
+        group_names=['services', 'tests'],
+        holistic_done=True, groups_done=[1],
+    )
+    groups = [mod.Group('services', ['a.go'], 10), mod.Group('tests', ['b_test.go'], 5)]
+    valid = mod._validate_resume_state(state, 'abc123', groups)
+print(valid)
+")
+  [ "$result" = "True" ]
+}
+
+@test "_validate_resume_state: stale SHA returns invalid" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='old_sha',
+        group_names=['services', 'tests'],
+    )
+    groups = [mod.Group('services', ['a.go'], 10), mod.Group('tests', ['b_test.go'], 5)]
+    valid = mod._validate_resume_state(state, 'new_sha', groups)
+print(valid)
+")
+  [ "$result" = "False" ]
+}
+
+@test "_validate_resume_state: group name mismatch returns invalid" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc',
+        group_names=['services', 'tests'],
+    )
+    groups = [mod.Group('services', ['a.go'], 10), mod.Group('infra', ['c.go'], 5)]
+    valid = mod._validate_resume_state(state, 'abc', groups)
+print(valid)
+")
+  [ "$result" = "False" ]
+}
+
+@test "_update_group_done: thread-safe state update" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc',
+        group_names=['a', 'b', 'c'],
+        groups_done=[1],
+    )
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    mod._update_group_done(job, 3, state)
+    mod._update_group_done(job, 2, state)
+    mod._update_group_done(job, 1, state)  # duplicate, should not add
+    loaded = mod._read_pipeline_state(job)
+print(f'groups={loaded.groups_done}')
+")
+  [ "$result" = "groups=[1, 2, 3]" ]
+}
+
+@test "invoke_agent: returns subprocess exit code" {
+  result=$(_py "
+import subprocess
+# Patch _build_agent_cmd to return a simple failing command
+original = mod._build_agent_cmd
+mod._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
+rc = mod.invoke_agent('test', '$TMPDIR/test.jsonl', '/tmp', '/tmp')
+mod._build_agent_cmd = original
+print(rc)
+")
+  [ "$result" = "42" ]
+}
+
+@test "invoke_agent: logs stderr on failure" {
+  result=$(_py "
+import subprocess, os
+mod._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
+mod.invoke_agent('test', '$TMPDIR/stderr_test.jsonl', '/tmp', '/tmp')
+content = open('$TMPDIR/stderr_test.jsonl').read()
+print('has_stderr=' + str('agent-error-msg' in content))
+")
+  [ "$result" = "has_stderr=True" ]
+}
+
+@test "PipelineState: rejects group_count as constructor arg" {
+  result=$(_py "
+try:
+    state = mod.PipelineState(head_sha='abc', group_count=2, group_names=['a', 'b'])
+    print('accepted')
+except TypeError:
+    print('rejected')
+")
+  [ "$result" = "rejected" ]
+}

@@ -66,9 +66,9 @@ Use `--global` to run tasks from `~/.config/task/` rather than a local project T
 task --global ai:setup             # Setup AI configuration
 task --global commit               # Generate AI-powered commit message based on staged changes
 task --global commit:reword        # Reword a commit message with AI (default: HEAD; or: task reword -- SHA)
-task --global pr:content           # Preview AI-generated PR title and description (pass -- --no-issue to skip issue prompts)
-task --global pr:create            # Create AI-powered pull request with smart title and description (pass -- --no-issue to skip issue prompts)
-task --global pr:update            # Update current PR description with AI-generated content (pass -- --no-issue to skip issue prompts)
+task --global pr:content           # Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)
+task --global pr:create            # Create AI-powered pull request (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)
+task --global pr:update            # Update current PR description with AI-generated content (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)
 task --global review               # AI review of staged, unstaged, and committed branch changes
 task --global pr:review            # AI review of the current PR
 ```

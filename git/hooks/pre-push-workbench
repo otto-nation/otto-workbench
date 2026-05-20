@@ -91,11 +91,23 @@ _run_step "Validating errexit"     "$REPO_ROOT/bin/local/validate-errexit" --qui
 
 _step "Regenerating tool context"
 "$REPO_ROOT/bin/local/generate-tool-context" --quiet
-if ! git -C "$REPO_ROOT" diff --quiet "$TOOLS_GENERATED_RELPATH"; then
+_tool_gen_files=(
+  "$TOOLS_GENERATED_RELPATH"
+  docs/tools.md
+  docs/ai-automation.md
+  docs/components.md
+  README.md
+)
+_stale_files=()
+for _f in "${_tool_gen_files[@]}"; do
+  git -C "$REPO_ROOT" diff --quiet "$_f" || _stale_files+=("$_f")
+done
+if [[ ${#_stale_files[@]} -gt 0 ]]; then
   printf "${RED}✗${NC}\n" >&2
-  err "Generated tool file was updated — commit it before pushing:"
-  echo "  git add $TOOLS_GENERATED_RELPATH"
-  echo "  git commit -m \"chore: regenerate tool context\""
+  err "Generated files were updated — commit them before pushing:"
+  for _f in "${_stale_files[@]}"; do
+    echo "  $_f"
+  done
   exit 1
 fi
 _pass

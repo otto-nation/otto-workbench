@@ -131,7 +131,7 @@ select_menu() {
     for _num in $_raw; do
       [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= _count )) || { warn "Unknown option: $_num"; _invalid=true; continue; }
       _selected+="$_num "
-      [[ "$_single" == true ]] && break
+      if [[ "$_single" == true ]]; then break; fi
     done
 
     if [[ "$_invalid" == true ]]; then
@@ -157,7 +157,9 @@ select_subdirs() {
 
   local _items=() _dir
   for _dir in "$_parent_dir"/*/; do
-    [[ -f "${_dir}setup.sh" ]] && _items+=("$(basename "$_dir")")
+    if [[ -f "${_dir}setup.sh" ]]; then
+      _items+=("$(basename "$_dir")")
+    fi
   done
 
   if [[ ${#_items[@]} -eq 0 ]]; then

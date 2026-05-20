@@ -630,6 +630,22 @@ GHEOF
   [[ "$fn_body" == *'orchestrate_args+=(--resume)'* ]]
 }
 
+@test "_resolve_prior_review: resume with no prior file returns 0 under set -e" {
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    _test_resolve() {
+      set -e
+      local prior=""
+      _resolve_prior_review prior "$3/nonexistent.md" "$3/nonexistent.session.jsonl" "true"
+      echo "prior=$prior"
+    }
+    _test_resolve
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW" "$TMPDIR"
+  [ "$status" -eq 0 ]
+  [ "$output" = "prior=" ]
+}
+
 @test "_append_orchestrate_flags: empty model does not exit under set -e" {
   local args=()
   _append_orchestrate_flags args "false" "" ""

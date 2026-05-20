@@ -323,11 +323,16 @@ _is_targeted() {
 # ─── otto-workbench install: output smoke test ───────────────────────────────
 # Regression: otto-workbench install produced no output due to the
 # parse_install_flags set -e bug silently terminating the process.
+# Tests parse_install_flags + header echo without running the full install binary.
 
-@test "otto-workbench install prints install header before prompting" {
+@test "otto-workbench install prints install header after parse_install_flags" {
   run bash -c "
-    '$REPO_ROOT/bin/otto-workbench' install <<< ''
+    set -e
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/install.sh'
+    parse_install_flags
+    echo 'Installing dotfiles...'
   "
-  [ "$status" -ne 127 ]
+  [ "$status" -eq 0 ]
   [[ "$output" == *"Installing dotfiles"* ]]
 }

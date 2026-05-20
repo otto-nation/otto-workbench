@@ -25,7 +25,9 @@ discover_step_files() {
   __out=()
   local file
   for file in "$WORKBENCH_DIR"/*/steps.sh "$WORKBENCH_DIR"/*/*/steps.sh; do
-    [[ -f "$file" ]] && __out+=("$file")
+    if [[ -f "$file" ]]; then
+      __out+=("$file")
+    fi
   done
   return 0
 }
@@ -39,7 +41,9 @@ discover_migration_dirs() {
   __out=()
   local dir
   for dir in "$WORKBENCH_DIR"/*/migrations "$WORKBENCH_DIR"/*/*/migrations; do
-    [[ -d "$dir" ]] && __out+=("$dir")
+    if [[ -d "$dir" ]]; then
+      __out+=("$dir")
+    fi
   done
   return 0
 }

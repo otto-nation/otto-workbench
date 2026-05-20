@@ -67,6 +67,9 @@ jobs:
       - name: Validate nesting depth
         run: python3 bin/local/validate-nesting --quiet
 
+      - name: Validate errexit safety
+        run: python3 bin/local/validate-errexit --quiet
+
       - name: Verify generated files are up to date
         run: |
           bash bin/local/generate-tool-context

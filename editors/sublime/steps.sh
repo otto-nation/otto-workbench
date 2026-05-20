@@ -18,7 +18,9 @@ step_sublime_settings() {
   local existing="{}" content
   if [[ -f "$SUBLIME_SETTINGS_FILE" ]]; then
     content=$(cat "$SUBLIME_SETTINGS_FILE")
-    [[ -n "$content" ]] && existing="$content"
+    if [[ -n "$content" ]]; then
+      existing="$content"
+    fi
   fi
 
   local result

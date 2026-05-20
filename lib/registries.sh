@@ -34,7 +34,9 @@ collect_registries() {
 
   # Component registries (top-level + nested)
   for f in "$scan_dir"/*/registry.yml "$scan_dir"/*/*/registry.yml; do
-    [[ -f "$f" ]] && raw+=("$f")
+    if [[ -f "$f" ]]; then
+      raw+=("$f")
+    fi
   done
 
   # Consumer-owned env files (colocated with the code that reads the vars)
@@ -95,7 +97,9 @@ registry_passes_install_check() {
   for (( i=0; i<count; i++ )); do
     local name
     name=$(yq ".tools[$i].name" "$file")
-    is_installed "$name" && return 0
+    if is_installed "$name"; then
+      return 0
+    fi
   done
   return 1
 }

@@ -219,6 +219,72 @@ print(result)
   [[ "$result" == *"b.go"* ]]
 }
 
+@test "merge_reviews: strips narrative paragraphs from file triage" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## File Triage
+- `a.go` — Tier 2
+
+Both files are straightforward. No issues found.
+
+### a.go
+
+This file has a simple handler implementation.
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md'])
+has_entry = '\`a.go\`' in result
+has_narrative = 'Both files' in result
+has_subsection = '### a.go' in result
+print(f'entry={has_entry},narrative={has_narrative},subsection={has_subsection}')
+")
+  [ "$result" = "entry=True,narrative=False,subsection=False" ]
+}
+
+@test "merge_reviews: deduplicates triage entries across groups" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## File Triage
+- `shared.go` — Tier 1
+- `a.go` — Tier 2
+EOF
+
+  cat > "$TMPDIR/group2.md" <<'EOF'
+## File Triage
+- `shared.go` — Tier 1
+- `b.go` — Tier 2
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md', '$TMPDIR/group2.md'])
+count = result.count('\`shared.go\`')
+print(count)
+")
+  [ "$result" = "1" ]
+}
+
+@test "merge_reviews: strips --- separators from triage" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## File Triage
+- `a.go` — Tier 2
+EOF
+
+  cat > "$TMPDIR/group2.md" <<'EOF'
+## File Triage
+- `b.go` — Tier 2
+
+---
+
+Some paragraph about the files above.
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md', '$TMPDIR/group2.md'])
+has_separator = '---' in result
+print(f'separator={has_separator}')
+")
+  [ "$result" = "separator=False" ]
+}
+
 @test "merge_reviews: skips missing files" {
   cat > "$TMPDIR/exists.md" <<'EOF'
 ## File Triage
@@ -1363,6 +1429,116 @@ result = mod.format_preflight_data(data)
 print("absent" if "Files not pre-collected" not in result else "present")
 ')
   [ "$result" = "absent" ]
+}
+
+@test "format_preflight_data: skip_file_contents omits file contents and omitted list" {
+  result=$(_py '
+data = mod.PreflightData(
+    diff="--- a/foo.go\n+++ b/foo.go",
+    commit_log="abc123 fix bug",
+    file_contents={"foo.go": "package main"},
+    file_permissions={"foo.go": "0o644"},
+    claude_md="# Project",
+    context_md="",
+    omitted_files=["bar.go"],
+)
+result = mod.format_preflight_data(data, skip_file_contents=True)
+checks = [
+    "```diff" in result,
+    "abc123 fix bug" in result,
+    "# Project" in result,
+    "package main" not in result,
+    "Changed file contents" not in result,
+    "Files not pre-collected" not in result,
+]
+print("ok" if all(checks) else "fail")
+')
+  [ "$result" = "ok" ]
+}
+
+# ── _clean_triage ───────────────────────────────────────────────────────────
+
+@test "_clean_triage: keeps only file triage entries" {
+  result=$(_py "
+text = '''- \`a.go\` — Tier 2
+Both files are fine.
+
+### a.go
+
+Some narrative paragraph.
+---
+- \`b.go\` — Tier 1'''
+result = mod._clean_triage(text)
+print(result)
+")
+  [[ "$result" == *'`a.go`'* ]]
+  [[ "$result" == *'`b.go`'* ]]
+  [[ "$result" != *"Both files"* ]]
+  [[ "$result" != *"###"* ]]
+  [[ "$result" != *"---"* ]]
+  [[ "$result" != *"narrative"* ]]
+}
+
+# ── _dedup_triage ───────────────────────────────────────────────────────────
+
+@test "_dedup_triage: removes duplicate file entries" {
+  result=$(_py "
+text = '''- \`shared.go\` — Tier 1 (security)
+- \`a.go\` — Tier 2
+- \`shared.go\` — Tier 1 (security)
+- \`b.go\` — Tier 2'''
+result = mod._dedup_triage(text)
+count = result.count('\`shared.go\`')
+total = len([l for l in result.split(chr(10)) if l.strip()])
+print(f'count={count},total={total}')
+")
+  [ "$result" = "count=1,total=3" ]
+}
+
+# ── _count_findings / _mechanical_verdict ────────────────────────────────────
+
+@test "_count_findings: counts by prefix" {
+  result=$(_py "
+text = '[M1] a [M2] b [S1] c [N1] d [N2] e [N3] f [I1] g'
+counts = mod._count_findings(text)
+print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
+")
+  [ "$result" = "M=2,S=1,N=3,I=1" ]
+}
+
+@test "_mechanical_verdict: must-fix triggers request changes" {
+  result=$(_py "
+counts = {'M': 2, 'S': 1, 'N': 0, 'I': 0}
+print(mod._mechanical_verdict(counts))
+")
+  [[ "$result" == *"Request changes"* ]]
+  [[ "$result" == *"2 must-fix"* ]]
+}
+
+@test "_mechanical_verdict: should-fix only triggers needs discussion" {
+  result=$(_py "
+counts = {'M': 0, 'S': 3, 'N': 1, 'I': 0}
+print(mod._mechanical_verdict(counts))
+")
+  [[ "$result" == *"Needs discussion"* ]]
+}
+
+@test "_mechanical_verdict: nits only triggers approve" {
+  result=$(_py "
+counts = {'M': 0, 'S': 0, 'N': 2, 'I': 1}
+print(mod._mechanical_verdict(counts))
+")
+  [[ "$result" == *"Approve"* ]]
+  [[ "$result" == *"2 nit"* ]]
+}
+
+@test "_mechanical_verdict: no findings triggers approve" {
+  result=$(_py "
+counts = {'M': 0, 'S': 0, 'N': 0, 'I': 0}
+print(mod._mechanical_verdict(counts))
+")
+  [[ "$result" == *"Approve"* ]]
+  [[ "$result" == *"no findings"* ]]
 }
 
 @test "collect_preflight_data: tier-1 files prioritized over tier-2 when budget tight" {

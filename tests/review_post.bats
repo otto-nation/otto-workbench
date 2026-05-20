@@ -715,6 +715,15 @@ print('start_line' in c)
   [[ "$result" == *"False"* ]]
 }
 
+@test "format_inline_comment: includes subject_type line" {
+  result=$(_py "
+f = mod.Finding(id='S1', severity='S', seq=1, path='file.go', line=10, end_line=None, body='Fix', full_path='pkg/file.go', posted_id='S1')
+c = mod.format_inline_comment(f)
+print(c.get('subject_type'))
+")
+  [ "$result" = "line" ]
+}
+
 @test "format_inline_comment: multi-line range" {
   result=$(_py "
 f = mod.Finding(id='S1', severity='S', seq=1, path='file.go', line=10, end_line=20, body='Refactor', full_path='pkg/file.go', posted_id='S1')
@@ -870,4 +879,31 @@ for f in findings:
   [[ "$result" == *"M2=Must-fix beta (last in section)"* ]]
   [[ "$result" == *"S1=Should-fix only (last in section)"* ]]
   [[ "$result" == *"N2=Nit beta (last in section)"* ]]
+}
+
+# ── write_post_tracking ─────────────────────────────────────────────────────
+
+@test "write_post_tracking: includes submitted field" {
+  result=$(_py "
+import json
+mod.write_post_tracking('$TMPDIR/test-review.md', 123, 'abc', 5, 2, 1, submitted=True)
+data = json.loads(open('$TMPDIR/test-review.post.jsonl').readline())
+print(f\"submitted={data['submitted']}\")
+")
+  [ "$result" = "submitted=True" ]
+}
+
+@test "write_post_tracking: submitted defaults to false" {
+  result=$(_py "
+import json
+mod.write_post_tracking('$TMPDIR/test-review.md', 123, 'abc', 5, 2, 1)
+data = json.loads(open('$TMPDIR/test-review.post.jsonl').readline())
+print(f\"submitted={data['submitted']}\")
+")
+  [ "$result" = "submitted=False" ]
+}
+
+@test "_format_submit_command: produces correct gh api command" {
+  result=$(_py "print(mod._format_submit_command('org/repo', '42', 12345))")
+  [ "$result" = "gh api repos/org/repo/pulls/42/reviews/12345/events --method POST -f event=COMMENT" ]
 }

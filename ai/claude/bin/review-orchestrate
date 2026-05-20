@@ -351,24 +351,10 @@ def _scope_diff(full_diff: str, file_filter: list[str]) -> str:
     return "".join(sections).strip()
 
 
-def format_preflight_data(
-    data: PreflightData,
-    file_filter: list[str] | None = None,
-) -> str:
-    parts = [
-        "## Pre-collected data",
-        "",
-        "Use this data directly. Do NOT re-read these files, re-run git diff, re-run git log,",
-        "or re-fetch PR reviews via gh api. Only use Read/Bash for files NOT listed here",
-        "(cross-references, callers, tests, config files outside the PR).",
-    ]
-
-    diff_text = _scope_diff(data.diff, file_filter) if file_filter else data.diff
-    parts += ["", "### Full diff", "", "```diff", diff_text, "```"]
-
-    if data.commit_log:
-        parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
-
+def _format_file_contents(
+    data: PreflightData, file_filter: list[str] | None,
+) -> list[str]:
+    parts: list[str] = []
     files_to_include = [
         p for p in (file_filter or data.file_contents.keys())
         if p in data.file_contents
@@ -388,6 +374,30 @@ def format_preflight_data(
         parts += ["", "### Files not pre-collected (read directly)"]
         for path in omitted:
             parts.append(f"- {path}")
+    return parts
+
+
+def format_preflight_data(
+    data: PreflightData,
+    file_filter: list[str] | None = None,
+    skip_file_contents: bool = False,
+) -> str:
+    parts = [
+        "## Pre-collected data",
+        "",
+        "Use this data directly. Do NOT re-read these files, re-run git diff, re-run git log,",
+        "or re-fetch PR reviews via gh api. Only use Read/Bash for files NOT listed here",
+        "(cross-references, callers, tests, config files outside the PR).",
+    ]
+
+    diff_text = _scope_diff(data.diff, file_filter) if file_filter else data.diff
+    parts += ["", "### Full diff", "", "```diff", diff_text, "```"]
+
+    if data.commit_log:
+        parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
+
+    if not skip_file_contents:
+        parts += _format_file_contents(data, file_filter)
 
     if data.claude_md:
         parts += ["", "### Project context", "", "#### CLAUDE.md", "", data.claude_md]
@@ -586,13 +596,25 @@ def renumber_findings(review_file: str) -> None:
     path.write_text(text)
 
 
+_TRIAGE_LINE_RE = re.compile(r"^- `[^`]+`\s")
+
+
+def _clean_triage(text: str) -> str:
+    return "\n".join(
+        line for line in text.split("\n")
+        if _TRIAGE_LINE_RE.match(line)
+    )
+
+
 def _merge_one_review(
     content: str, merged_triage: str,
     merged: dict[str, str], offsets: dict[str, int],
 ) -> str:
     triage = _extract_section(content, SECTION_FILE_TRIAGE)
     if triage:
-        merged_triage += triage + "\n"
+        cleaned = _clean_triage(triage)
+        if cleaned:
+            merged_triage += cleaned + "\n"
 
     for section, prefix in FINDING_SECTIONS:
         raw = _extract_section(content, section)
@@ -602,6 +624,18 @@ def _merge_one_review(
         offsets[section] += count
 
     return merged_triage
+
+
+def _dedup_triage(triage: str) -> str:
+    seen: set[str] = set()
+    lines = []
+    for line in triage.split("\n"):
+        m = re.match(r"^- `([^`]+)`", line)
+        key = m.group(1) if m else line
+        if key not in seen:
+            seen.add(key)
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def merge_reviews(group_files: list[str]) -> str:
@@ -614,6 +648,8 @@ def merge_reviews(group_files: list[str]) -> str:
         if not p.exists():
             continue
         merged_triage = _merge_one_review(p.read_text(), merged_triage, merged, offsets)
+
+    merged_triage = _dedup_triage(merged_triage)
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
     for section, _ in FINDING_SECTIONS:
@@ -879,10 +915,14 @@ def render_template(name: str, **kwargs) -> str:
 
 def _build_preflight_section(
     job: "ReviewJob", file_filter: list[str] | None = None,
+    skip_file_contents: bool = False,
 ) -> str:
     if not job.preflight:
         return ""
-    return format_preflight_data(job.preflight, file_filter=file_filter)
+    return format_preflight_data(
+        job.preflight, file_filter=file_filter,
+        skip_file_contents=skip_file_contents,
+    )
 
 
 def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
@@ -929,7 +969,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
             group_count=extra["group_count"],
             merged_content=extra["merged_content"],
-            preflight_data=_build_preflight_section(job),
+            preflight_data=_build_preflight_section(job, skip_file_contents=True),
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
@@ -1019,7 +1059,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
             group_count=extra["group_count"],
             merged_content=extra["merged_content"],
-            preflight_data=_build_preflight_section(job),
+            preflight_data=_build_preflight_section(job, skip_file_contents=True),
             reviews_section=reviews_section,
             review_file=job.review_file,
             wt_path=job.wt_path,
@@ -1472,6 +1512,67 @@ def _has_findings(merged_content: str) -> bool:
     return False
 
 
+def _count_findings(text: str) -> dict[str, int]:
+    return {
+        prefix: len(re.findall(rf"\[{prefix}\d+\]", text))
+        for _, prefix in FINDING_SECTIONS
+    }
+
+
+def _mechanical_verdict(counts: dict[str, int]) -> str:
+    must = counts.get(FINDING_PREFIX_MUST, 0)
+    should = counts.get(FINDING_PREFIX_SHOULD, 0)
+    nit = counts.get(FINDING_PREFIX_NIT, 0)
+    idiom = counts.get(FINDING_PREFIX_IDIOMS, 0)
+    parts = []
+    if must:
+        parts.append(f"{must} must-fix")
+    if should:
+        parts.append(f"{should} should-fix")
+    if nit:
+        parts.append(f"{nit} nit")
+    if idiom:
+        parts.append(f"{idiom} idiom")
+
+    if must:
+        return f"Request changes — {', '.join(parts)} (mechanically merged, not synthesized).\n"
+    if should:
+        return f"Needs discussion — {', '.join(parts)} (mechanically merged, not synthesized).\n"
+    if parts:
+        return f"Approve — {', '.join(parts)} only (mechanically merged, not synthesized).\n"
+    return "Approve — no findings (mechanically merged, not synthesized).\n"
+
+
+def _build_mechanical_fallback(
+    job: ReviewJob, group_count: int, merged_content: str,
+) -> str:
+    meta = _build_meta_header(job)
+    counts = _count_findings(merged_content)
+    total = sum(counts.values())
+    count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
+
+    if job.mode == MODE_SELF:
+        return (
+            f"# Self-Review: {job.repo} — {job.pr.head}\n"
+            f"{meta}\n"
+            f"## Summary\n"
+            f"{count_summary} across {job.pr.changed_files} files in {group_count} groups. "
+            f"{FALLBACK_SUMMARY}\n\n"
+            f"{merged_content}\n"
+        )
+    verdict = _mechanical_verdict(counts)
+    return (
+        f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
+        f"{meta}\n"
+        f"## Summary\n"
+        f"{count_summary} across {job.pr.changed_files} files in {group_count} groups. "
+        f"{FALLBACK_SUMMARY}\n\n"
+        f"{merged_content}\n\n"
+        f"## Verdict\n"
+        f"{verdict}"
+    )
+
+
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
@@ -1492,27 +1593,9 @@ def _phase_synthesis(
 
     if not Path(job.review_file).exists():
         _warn("Synthesis agent failed — falling back to mechanical merge")
-        meta = _build_meta_header(job)
-        if job.mode == MODE_SELF:
-            fallback = (
-                f"# Self-Review: {job.repo} — {job.pr.head}\n"
-                f"{meta}\n"
-                f"## Summary\n"
-                f"Multi-phase self-review of {job.pr.changed_files} files across {group_count} groups. "
-                f"{FALLBACK_SUMMARY}\n\n"
-                f"{merged_content}\n"
-            )
-        else:
-            fallback = (
-                f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
-                f"{meta}\n"
-                f"## Summary\n"
-                f"Multi-phase review of {job.pr.changed_files} files across {group_count} groups. "
-                f"{FALLBACK_SUMMARY}\n\n"
-                f"{merged_content}\n\n"
-                f"## Verdict\n"
-                f"Manual review of findings required — synthesis was not completed.\n"
-            )
+        fallback = _build_mechanical_fallback(
+            job, group_count, merged_content,
+        )
         Path(job.review_file).write_text(fallback)
 
     renumber_findings(job.review_file)

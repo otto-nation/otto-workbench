@@ -7,6 +7,8 @@ ${holistic_content}
 
 ## Detailed findings (from Phase 2, merged across ${group_count} file groups)
 ${merged_content}
+
+## Reference data
 ${preflight_data}
 
 ## Task

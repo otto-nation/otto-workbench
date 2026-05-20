@@ -23,6 +23,12 @@
 
 - Always use `task --global pr:create -- --no-issue` to create a PR — `task pr:create` does not exist (no local target), and omitting `-- --no-issue` blocks on an interactive issue-number prompt
 
+## Branch Freshness
+
+- Before starting work on an existing worktree branch, rebase it onto `origin/main` — stale branches cause merge conflicts that grow with every commit to main
+- When creating a new branch, always branch from `origin/main` (already covered in git.generated.md) — never from a local `main` that may be behind
+- If a rebase has conflicts, resolve them before writing new code — don't add commits on top of a stale base
+
 ## Rebase, Cherry-Pick, Merge Conflicts
 
 - During interactive git operations (rebase, cherry-pick, merge conflict resolution), use only Bash commands — the Edit tool can corrupt git's index state and abort the operation

@@ -104,7 +104,7 @@ for candidate in \
     "$HOME/git/otto-nation/otto-workbench" \
     "$HOME/src/otto-nation/otto-workbench" \
     "$HOME/otto-workbench"; do
-  [[ -d "$candidate" ]] && { workbench_dir="$candidate"; break; }
+  if [[ -d "$candidate" ]]; then workbench_dir="$candidate"; break; fi
 done
 
 # ── Project registry ──────────────────────────────────────────────────────────

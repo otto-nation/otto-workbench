@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Validate that bash scripts do not use && as the last statement before a
+scope closer (}, fi, done, esac, ;;) — this pattern silently exits under set -e.
+
+Usage: bin/local/validate-errexit [--quiet] [file...]
+
+Under set -e (errexit), a command like `[[ test ]] && action` returns exit
+code 1 when the test is false.  When this is the last statement in a function
+body or if/else branch, the non-zero exit propagates and kills the script.
+The fix is to use `if/then/fi` or append `|| true`.
+
+When no files are given, discovers all bash scripts in the repo by shebang.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import os
+import re
+import sys
+
+FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
+FUNC_END = re.compile(r'^\}\s*$')
+HEREDOC_START = re.compile(r"<<-?\s*'?([A-Za-z_]\w*)'?")
+CMD_SUB_OPEN = re.compile(r'\$\(')
+SCOPE_CLOSER = re.compile(r'^\s*(fi|done|esac|\})\s*(#.*)?$')
+CONDITION_LEADER = re.compile(r'^\s*(if|elif|while|until)\b')
+CASE_TERMINATOR = re.compile(r';;\s*(#.*)?$')
+
+if os.environ.get('NO_COLOR') or not sys.stderr.isatty():
+    RED = GREEN = DIM = NC = ''
+else:
+    RED, GREEN, DIM, NC = '\033[0;31m', '\033[0;32m', '\033[2m', '\033[0m'
+
+
+def strip_strings_and_comments(line: str) -> str:
+    line = re.sub(r"'[^']*'", '', line)
+    line = re.sub(r'"[^"]*"', '', line)
+    line = re.sub(r'#.*', '', line)
+    return line
+
+
+def join_continuations(lines: list[str]) -> list[tuple[int, str]]:
+    """Join backslash-continued lines, returning (original_lineno, joined_line) pairs."""
+    result = []
+    buf = ''
+    start_lineno = 1
+
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.rstrip('\n')
+        if buf:
+            buf += ' ' + stripped.lstrip()
+        else:
+            buf = stripped
+            start_lineno = lineno
+
+        if not stripped.endswith('\\'):
+            result.append((start_lineno, buf))
+            buf = ''
+        else:
+            buf = buf[:-1].rstrip()
+
+    if buf:
+        result.append((start_lineno, buf))
+
+    return result
+
+
+def has_unguarded_and(stripped: str) -> bool:
+    """Check if line has && as command separator without || fallback."""
+    if '&&' not in stripped:
+        return False
+    if '||' in stripped:
+        return False
+    if CONDITION_LEADER.match(stripped):
+        return False
+    return True
+
+
+def check_file(filepath: str) -> list[tuple[int, str, str]]:
+    """Return list of (line_number, line_content, function_name) violations."""
+    violations = []
+    sub_depth = 0
+    heredoc_end = None
+    func_name = '(top-level)'
+
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    joined = join_continuations(lines)
+
+    prev_dangerous = None  # (lineno, line, func_name) if previous line had unguarded &&
+
+    for lineno, raw_line in joined:
+        line = raw_line.rstrip()
+
+        if heredoc_end is not None:
+            if line.strip() == heredoc_end:
+                heredoc_end = None
+            continue
+
+        m = HEREDOC_START.search(line)
+        if m:
+            heredoc_end = m.group(1)
+
+        stripped = strip_strings_and_comments(line)
+
+        opens = len(CMD_SUB_OPEN.findall(stripped))
+        sub_depth += opens
+        if sub_depth > 0:
+            inner_opens = stripped.count('(') - opens
+            inner_closes = stripped.count(')')
+            net = inner_closes - inner_opens
+            if net > 0:
+                sub_depth = max(0, sub_depth - net)
+            continue
+
+        fm = FUNC_DEF.match(stripped)
+        if fm:
+            if stripped.rstrip().endswith('}'):
+                continue
+            func_name = fm.group(1)
+            prev_dangerous = None
+            continue
+
+        if FUNC_END.match(stripped):
+            if prev_dangerous:
+                violations.append(prev_dangerous)
+            func_name = '(top-level)'
+            prev_dangerous = None
+            continue
+
+        trimmed = stripped.strip()
+        if not trimmed:
+            continue
+
+        is_closer = bool(SCOPE_CLOSER.match(stripped))
+
+        if prev_dangerous and is_closer:
+            violations.append(prev_dangerous)
+            prev_dangerous = None
+            continue
+
+        if has_unguarded_and(stripped):
+            if CASE_TERMINATOR.search(stripped):
+                violations.append((lineno, line.strip(), func_name))
+                prev_dangerous = None
+            else:
+                prev_dangerous = (lineno, line.strip(), func_name)
+        else:
+            prev_dangerous = None
+
+    if prev_dangerous:
+        violations.append(prev_dangerous)
+
+    return violations
+
+
+def discover_scripts(repo_root: str) -> list[str]:
+    """Find all bash scripts in the repo by shebang."""
+    shebang_re = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
+    scripts = set()
+
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d != '.git']
+        for fname in filenames:
+            if fname.endswith(('.sh', '.bash')):
+                path = os.path.join(dirpath, fname)
+                try:
+                    with open(path, 'rb') as f:
+                        first_line = f.readline()
+                    if shebang_re.search(first_line):
+                        scripts.add(path)
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+    for subdir in ('bin', 'ai/claude/bin', 'git/hooks', 'git/bin'):
+        search_dir = os.path.join(repo_root, subdir)
+        if not os.path.isdir(search_dir):
+            continue
+        for dirpath, _, filenames in os.walk(search_dir):
+            rel = os.path.relpath(dirpath, search_dir)
+            if rel != '.' and rel.count(os.sep) >= 2:
+                continue
+            for fname in filenames:
+                if '.' in fname:
+                    continue
+                path = os.path.join(dirpath, fname)
+                try:
+                    with open(path, 'rb') as f:
+                        first_line = f.readline()
+                    if shebang_re.search(first_line):
+                        scripts.add(path)
+                except (OSError, UnicodeDecodeError):
+                    pass
+
+    return sorted(scripts)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Validate bash scripts for unsafe && before scope closers.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    files = args.files if args.files else discover_scripts(repo_root)
+
+    errors = 0
+    files_checked = 0
+
+    for filepath in files:
+        files_checked += 1
+        violations = check_file(filepath)
+        relpath = os.path.relpath(filepath, repo_root)
+
+        if violations:
+            errors += 1
+            print(f'{RED}✗{NC} {relpath}: unsafe && before scope closer', file=sys.stderr)
+            prev_func = None
+            for lineno, line, func in violations:
+                if func != prev_func:
+                    print(f'    {DIM}in {func}():{NC}', file=sys.stderr)
+                    prev_func = func
+                print(f'      line {lineno}: {line}', file=sys.stderr)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, no unsafe && patterns')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files have unsafe && before scope closers', file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

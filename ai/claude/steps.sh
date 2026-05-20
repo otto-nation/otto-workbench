@@ -27,8 +27,9 @@ _mcp_update() {
   tmp=$(mktemp)
   # shellcheck disable=SC2064  # $tmp must expand now to capture this invocation's value
   trap "rm -f '$tmp'" RETURN
-  jq --arg n "$name" 'del(.mcpServers[$n])' "$CLAUDE_CONFIG_FILE" > "$tmp" \
-    && mv "$tmp" "$CLAUDE_CONFIG_FILE"
+  if jq --arg n "$name" 'del(.mcpServers[$n])' "$CLAUDE_CONFIG_FILE" > "$tmp"; then
+    mv "$tmp" "$CLAUDE_CONFIG_FILE"
+  fi
 }
 
 # _mcp_install NAME COMMAND... — registers an MCP server at user scope.
@@ -147,7 +148,7 @@ step_claude_settings() {
   local existing="{}" content
   if [[ -f "$CLAUDE_SETTINGS_FILE" ]]; then
     content=$(cat "$CLAUDE_SETTINGS_FILE")
-    [[ -n "$content" ]] && existing="$content"
+    if [[ -n "$content" ]]; then existing="$content"; fi
   fi
 
   local template
@@ -549,7 +550,7 @@ scaffold_project_claude() {
   local s
   for s in "${DETECTED_STACKS[@]}"; do
     local tmpl="$CLAUDE_TEMPLATES_DIR/rules/${s}.md"
-    [[ -f "$tmpl" ]] && _scaffold_file "$tmpl" ".claude/rules/${s}.md" "${s}.md" "$force"
+    if [[ -f "$tmpl" ]]; then _scaffold_file "$tmpl" ".claude/rules/${s}.md" "${s}.md" "$force"; fi
   done
 
   # Scaffold context.md for stacks that benefit from architecture narrative

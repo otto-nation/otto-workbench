@@ -130,7 +130,7 @@ _format_usage() {
   local logs=()
   local f
   for f in "$@"; do
-    [[ -f "$f" ]] && logs+=("$f")
+    if [[ -f "$f" ]]; then logs+=("$f"); fi
   done
   [[ ${#logs[@]} -gt 0 ]] || return 0
 
@@ -260,14 +260,14 @@ _fetch_issue_context() {
     linear)
       if command -v linear &>/dev/null; then
         __context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
-        [[ -n "$__context" ]] && echo "✓ Found Linear issue: $issue_id"
+        if [[ -n "$__context" ]]; then echo "✓ Found Linear issue: $issue_id"; fi
       fi
       ;;
     github)
       __link="${GITHUB_BASE_URL}/${repo}/issues/${issue_id}"
       if command -v gh &>/dev/null; then
         __context=$(gh issue view "$issue_id" --repo "$repo" --json title,body,comments 2>/dev/null) || true
-        [[ -n "$__context" ]] && echo "✓ Found GitHub issue: #${issue_id}"
+        if [[ -n "$__context" ]]; then echo "✓ Found GitHub issue: #${issue_id}"; fi
       fi
       ;;
     jira)
@@ -322,15 +322,15 @@ _archive_review() {
 
   local _old_archive
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${base}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${base}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${base}".post.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1))); do
+  for _old_archive in $(ls -1t "${base}".post.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
     rm -f "$_old_archive"
   done
 }
@@ -473,7 +473,9 @@ _resolve_prior_review() {
   __prior=""
   if [[ "$resume" == "true" ]]; then
     local base="${review_file%"${REVIEW_EXT}"}"
-    [[ -f "${base}${SUFFIX_PRIOR}" ]] && __prior="${base}${SUFFIX_PRIOR}"
+    if [[ -f "${base}${SUFFIX_PRIOR}" ]]; then
+      __prior="${base}${SUFFIX_PRIOR}"
+    fi
   else
     _archive_review __prior "$review_file" "$session_log"
   fi
@@ -529,7 +531,7 @@ cmd_review() {
     local issue_id=""
     _extract_issue_id issue_id "$provider" "$pr_head" "$pr_body"
     _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
-    [[ -n "$detected_link" ]] && issue_link="$detected_link"
+    if [[ -n "$detected_link" ]]; then issue_link="$detected_link"; fi
 
     if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" && -z "$issue_context" ]]; then
       read -rp "Issue link (optional, Enter to skip): " issue_link
@@ -718,7 +720,7 @@ cmd_self_review() {
     _extract_issue_id issue_id "$provider" "$branch_name"
     local detected_link=""
     _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
-    [[ -n "$detected_link" ]] && issue_link="$detected_link"
+    if [[ -n "$detected_link" ]]; then issue_link="$detected_link"; fi
   fi
 
   # ── Run orchestrator ──

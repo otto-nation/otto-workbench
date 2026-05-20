@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source all tool step files — any subdirectory containing steps.sh is a tool
 for _dir in "$SCRIPT_DIR"/*/; do
   # shellcheck source=/dev/null
-  [[ -f "${_dir}steps.sh" ]] && . "${_dir}steps.sh"
+  if [[ -f "${_dir}steps.sh" ]]; then . "${_dir}steps.sh"; fi
 done
 unset _dir
 
@@ -46,7 +46,7 @@ SELECTED_TOOLS=()
 _ai_discover_tools() {
   local dir
   for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}steps.sh" ]] && basename "$dir"
+    if [[ -f "${dir}steps.sh" ]]; then basename "$dir"; fi
   done
 }
 
@@ -125,7 +125,7 @@ done
 echo
 success "AI tools setup complete!"
 for _tool in "${SELECTED_TOOLS[@]}"; do
-  declare -f "print_${_tool}_summary" > /dev/null && "print_${_tool}_summary"
+  if declare -f "print_${_tool}_summary" > /dev/null; then "print_${_tool}_summary"; fi
 done
 unset _tool
 

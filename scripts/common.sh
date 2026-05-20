@@ -5,7 +5,11 @@
 get_project_root() {
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
-    cd "$script_dir/.." && pwd
+    if cd "$script_dir/.."; then
+        pwd
+    else
+        return 1
+    fi
 }
 
 # Brand constants

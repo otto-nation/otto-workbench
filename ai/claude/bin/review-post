@@ -168,6 +168,18 @@ def _finalize_finding(finding: Finding, body_lines: list[str]):
     finding.body = body
 
 
+def _close_previous(findings: list[Finding], body_lines: list[str]):
+    """Finalize the last finding and clear accumulated body lines."""
+    if findings:
+        _finalize_finding(findings[-1], body_lines)
+    body_lines.clear()
+
+
+def _is_section_boundary(stripped: str) -> bool:
+    """Check if a line is a subsection header or struck-through finding."""
+    return stripped.startswith("### ") or bool(STRIKETHROUGH_RE.match(stripped))
+
+
 def parse_findings(text: str) -> list[Finding]:
     """Extract findings from review markdown."""
     findings: list[Finding] = []
@@ -179,32 +191,25 @@ def parse_findings(text: str) -> list[Finding]:
 
         stripped_lower = stripped.lower()
         if stripped_lower in SECTION_HEADERS:
-            if findings:
-                _finalize_finding(findings[-1], body_lines)
-                body_lines = []
+            _close_previous(findings, body_lines)
             current_severity = SECTION_HEADERS[stripped_lower]
             continue
 
         if stripped.startswith("## "):
-            if findings:
-                _finalize_finding(findings[-1], body_lines)
-                body_lines = []
+            _close_previous(findings, body_lines)
             current_severity = None
             continue
 
         if current_severity is None:
             continue
 
-        if stripped.startswith("### ") or STRIKETHROUGH_RE.match(stripped):
-            if findings:
-                _finalize_finding(findings[-1], body_lines)
-                body_lines = []
+        if _is_section_boundary(stripped):
+            _close_previous(findings, body_lines)
             continue
 
         finding = _parse_finding_line(stripped)
         if finding:
-            if findings:
-                _finalize_finding(findings[-1], body_lines)
+            _close_previous(findings, body_lines)
             body_lines = [finding.body] if finding.body else []
             findings.append(finding)
             continue
@@ -212,8 +217,7 @@ def parse_findings(text: str) -> list[Finding]:
         if findings and stripped:
             body_lines.append(stripped)
 
-    if findings:
-        _finalize_finding(findings[-1], body_lines)
+    _close_previous(findings, body_lines)
 
     return findings
 
@@ -472,9 +476,43 @@ def _check_existing_pending(repo: str, pr: str) -> int | None:
     return None
 
 
+def _is_rate_limited(stdout: str) -> bool:
+    """Check if the API response indicates rate limiting."""
+    lower = stdout.lower()
+    return "secondary rate limit" in lower or '"message": "forbidden"' in lower
+
+
+def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
+    """Handle a single API attempt result. Returns parsed JSON on success, None to retry."""
+    if rc == 0:
+        return json.loads(stdout)
+
+    if _is_rate_limited(stdout):
+        wait = 2 ** attempt * RETRY_BACKOFF_BASE
+        _warn(f"Rate limited, waiting {wait}s...")
+        time.sleep(wait)
+        return None
+
+    _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {stdout[:200]}")
+    if attempt < MAX_RETRIES - 1:
+        time.sleep(RETRY_DELAY)
+    return None
+
+
+def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
+    """Post to GitHub API with retry logic. Returns parsed response or exits."""
+    for attempt in range(MAX_RETRIES):
+        rc, stdout = _gh_api(endpoint, method="POST", input_file=tmp_path)
+        result = _handle_api_attempt(attempt, rc, stdout)
+        if result is not None:
+            return result
+
+    _err(f"Failed to post review after {MAX_RETRIES} attempts")
+    sys.exit(1)
+
+
 def post_review(repo: str, pr: str, payload: dict) -> dict | None:
     """Post a PENDING review to GitHub."""
-    # Check for existing PENDING review
     existing_id = _check_existing_pending(repo, pr)
     if existing_id:
         _warn(f"Deleting existing PENDING review #{existing_id}")
@@ -487,27 +525,7 @@ def post_review(repo: str, pr: str, payload: dict) -> dict | None:
         tmp_path = tmp.name
 
     try:
-        for attempt in range(MAX_RETRIES):
-            rc, stdout = _gh_api(
-                f"repos/{repo}/pulls/{pr}/reviews",
-                method="POST",
-                input_file=tmp_path,
-            )
-            if rc == 0:
-                return json.loads(stdout)
-
-            if "secondary rate limit" in stdout.lower() or '"message": "forbidden"' in stdout.lower():
-                wait = 2 ** attempt * RETRY_BACKOFF_BASE
-                _warn(f"Rate limited, waiting {wait}s...")
-                time.sleep(wait)
-                continue
-
-            _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {stdout[:200]}")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
-
-        _err(f"Failed to post review after {MAX_RETRIES} attempts")
-        sys.exit(1)
+        return _post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -549,6 +567,38 @@ def write_post_tracking(
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def _print_dry_run(
+    payload: dict, inline: list[Finding],
+    body_findings: list[Finding], skipped: list[Finding],
+):
+    print()
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    print()
+    _info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
+    _info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
+    for f in skipped:
+        _warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
+
+
+def _post_and_track(
+    args: argparse.Namespace, payload: dict,
+    inline_comments: list[dict], body_findings: list[Finding],
+    skipped: list[Finding], commit_id: str,
+):
+    _info(f"Posting review ({len(inline_comments)} inline, {len(body_findings)} body)...")
+    result = post_review(args.repo, args.pr, payload)
+    if not result:
+        return
+
+    review_id = result.get("id", 0)
+    _info(f"Review created: #{review_id} ({REVIEW_STATE_PENDING})")
+    write_post_tracking(
+        args.review_file, review_id, commit_id,
+        len(inline_comments), len(body_findings), len(skipped),
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Post a review file to GitHub")
@@ -637,27 +687,10 @@ def main():
 
     # 10. Dry-run output or post
     if args.dry_run:
-        print()
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        print()
-        _info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
-        _info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
-        if skipped:
-            for f in skipped:
-                _warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
+        _print_dry_run(payload, inline, body_findings, skipped)
         return
 
-    # Post
-    _info(f"Posting review ({len(inline_comments)} inline, {len(body_findings)} body)...")
-    result = post_review(args.repo, args.pr, payload)
-
-    if result:
-        review_id = result.get("id", 0)
-        _info(f"Review created: #{review_id} ({REVIEW_STATE_PENDING})")
-        write_post_tracking(
-            args.review_file, review_id, commit_id,
-            len(inline_comments), len(body_findings), len(skipped),
-        )
+    _post_and_track(args, payload, inline_comments, body_findings, skipped, commit_id)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,13 @@ $1
 "
 }
 
+# Helper: like _py but reads code from stdin (heredoc-safe for the nesting validator)
+_py_here() {
+  local code
+  code=$(cat)
+  _py "$code"
+}
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 @test "review-orchestrate --help exits 0" {
@@ -837,7 +844,7 @@ print(f"foo_diff={has_foo_diff},bar_diff={has_bar_diff}")
 }
 
 @test "collect_preflight_data: oversized file included in diff but omitted from contents" {
-  result=$(_py "
+  result=$(_py_here <<'PYEOF'
 import tempfile, os
 from pathlib import Path
 
@@ -873,7 +880,8 @@ with tempfile.TemporaryDirectory() as td:
         result.file_contents == {},
     ]
     print('ok' if all(checks) else [i for i,c in enumerate(checks) if not c])
-")
+PYEOF
+)
   [ "$result" = "ok" ]
 }
 
@@ -885,24 +893,24 @@ with tempfile.TemporaryDirectory() as td:
   git config user.email "test@test.com" && git config user.name "Test"
   git config commit.gpgsign false
   # Create 5 files with 10k lines each to produce a large diff
-  python3 -c "
+  python3 <<'PYEOF'
 for i in range(1, 6):
     with open(f'file{i}.go', 'w') as f:
         for j in range(10000):
             f.write(f'original_line_content_padding_{j}\n')
-"
+PYEOF
   git add . && git commit -q --no-verify -m "init"
   git remote add origin "$repo" && git fetch -q origin main
   git checkout -b feat -q
-  python3 -c "
+  python3 <<'PYEOF'
 for i in range(1, 6):
     with open(f'file{i}.go', 'w') as f:
         for j in range(10000):
             f.write(f'modified_line_content_padding_{j}\n')
-"
+PYEOF
   git add . && git commit -q --no-verify -m "change"
 
-  result=$(_py "
+  result=$(_py_here <<PYEOF
 pr = mod.PRMetadata(
     title='t', body='', head='feat', base='main', head_sha='abc',
     additions=50000, deletions=50000, changed_files=5,
@@ -927,7 +935,8 @@ checks = [
     len(result.file_contents) + len(result.omitted_files) == 5,
 ]
 print('ok' if all(checks) else [i for i,c in enumerate(checks) if not c])
-")
+PYEOF
+)
   [ "$result" = "ok" ]
 }
 
@@ -1052,7 +1061,7 @@ print(mod._file_permissions(Path('$TMPDIR/exec.sh')))
   printf "package main\nfunc hello() {}\n" > "$repo/main.go"
   git add . && git commit -q --no-verify -m "add hello"
 
-  result=$(_py "
+  result=$(_py_here <<PYEOF
 from pathlib import Path
 pr = mod.PRMetadata(
     title='t', body='', head='feat', base='main', head_sha='abc',
@@ -1079,7 +1088,8 @@ checks = [
     data.omitted_files == [],
 ]
 print('ok' if all(checks) else [i for i, c in enumerate(checks) if not c])
-")
+PYEOF
+)
   [ "$result" = "ok" ]
 }
 

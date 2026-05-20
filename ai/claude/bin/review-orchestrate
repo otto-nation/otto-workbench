@@ -537,6 +537,35 @@ def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     return text, count
 
 
+def _renumber_prefix(text: str, prefix: str) -> str:
+    seen_ids: list[int] = []
+    for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
+        num = int(m.group(1))
+        if num not in seen_ids:
+            seen_ids.append(num)
+
+    remap = {}
+    for new_num, old_num in enumerate(seen_ids, 1):
+        if old_num != new_num:
+            remap[old_num] = new_num
+
+    if not remap:
+        return text
+
+    placeholder = "\x00"
+    for old_num in sorted(remap, reverse=True):
+        text = text.replace(f"[{prefix}{old_num}]", f"[{placeholder}{prefix}{remap[old_num]}]")
+    text = text.replace(placeholder, "")
+
+    for old_num in sorted(remap, reverse=True):
+        text = re.sub(
+            rf"(?<!\[)(?<!\x00){prefix}{old_num}(?!\d)(?!\])",
+            f"\x00{prefix}{remap[old_num]}",
+            text,
+        )
+    return text.replace("\x00", "")
+
+
 def renumber_findings(review_file: str) -> None:
     """Renumber finding IDs to be sequential in order of first appearance.
 
@@ -552,37 +581,27 @@ def renumber_findings(review_file: str) -> None:
     text = path.read_text()
 
     for _, prefix in FINDING_SECTIONS:
-        seen_ids: list[int] = []
-        for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
-            num = int(m.group(1))
-            if num not in seen_ids:
-                seen_ids.append(num)
-
-        remap = {}
-        for new_num, old_num in enumerate(seen_ids, 1):
-            if old_num != new_num:
-                remap[old_num] = new_num
-
-        if not remap:
-            continue
-
-        placeholder = "\x00"
-        # Bracketed IDs: [S19] → [S1]
-        for old_num in sorted(remap, reverse=True):
-            text = text.replace(f"[{prefix}{old_num}]", f"[{placeholder}{prefix}{remap[old_num]}]")
-        text = text.replace(placeholder, "")
-
-        # Unbracketed cross-references: "S19" in verdicts, summaries, nit refs
-        # Use word boundary to avoid matching S1 inside S10
-        for old_num in sorted(remap, reverse=True):
-            text = re.sub(
-                rf"(?<!\[)(?<!\x00){prefix}{old_num}(?!\d)(?!\])",
-                f"\x00{prefix}{remap[old_num]}",
-                text,
-            )
-        text = text.replace("\x00", "")
+        text = _renumber_prefix(text, prefix)
 
     path.write_text(text)
+
+
+def _merge_one_review(
+    content: str, merged_triage: str,
+    merged: dict[str, str], offsets: dict[str, int],
+) -> str:
+    triage = _extract_section(content, SECTION_FILE_TRIAGE)
+    if triage:
+        merged_triage += triage + "\n"
+
+    for section, prefix in FINDING_SECTIONS:
+        raw = _extract_section(content, section)
+        text, count = renumber_section(prefix, raw, offsets[section])
+        if text:
+            merged[section] += text + "\n"
+        offsets[section] += count
+
+    return merged_triage
 
 
 def merge_reviews(group_files: list[str]) -> str:
@@ -594,18 +613,7 @@ def merge_reviews(group_files: list[str]) -> str:
         p = Path(path)
         if not p.exists():
             continue
-        content = p.read_text()
-
-        triage = _extract_section(content, SECTION_FILE_TRIAGE)
-        if triage:
-            merged_triage += triage + "\n"
-
-        for section, prefix in FINDING_SECTIONS:
-            raw = _extract_section(content, section)
-            text, count = renumber_section(prefix, raw, offsets[section])
-            if text:
-                merged[section] += text + "\n"
-            offsets[section] += count
+        merged_triage = _merge_one_review(p.read_text(), merged_triage, merged, offsets)
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
     for section, _ in FINDING_SECTIONS:
@@ -799,31 +807,43 @@ def _build_issue_section(issue_link: str, issue_context: str) -> str:
 _FINDING_LINE_RE = re.compile(r"- \[[ x]\] \*\*\[[A-Z]\d+\]\*\* (\S+?):\d+")
 
 
-def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
-    filter_set = set(file_filter)
+def _classify_prior_line(stripped: str, filter_set: set[str], in_matched: bool) -> bool:
+    m = _FINDING_LINE_RE.match(stripped)
+    if m:
+        return m.group(1) in filter_set
+    return in_matched
+
+
+def _collect_scoped_sections(
+    lines: list[str], filter_set: set[str],
+) -> list[tuple[str, list[str]]]:
     sections: list[tuple[str, list[str]]] = []
     current_header = ""
     current_lines: list[str] = []
     in_matched_finding = False
 
-    for line in prior_text.split("\n"):
+    for line in lines:
         stripped = line.strip()
-        if stripped.startswith("## "):
-            if current_header:
-                sections.append((current_header, current_lines))
+        is_header = stripped.startswith("## ")
+        if is_header and current_header:
+            sections.append((current_header, current_lines))
+        if is_header:
             current_header = line
             current_lines = []
             in_matched_finding = False
             continue
-
-        m = _FINDING_LINE_RE.match(stripped)
-        if m:
-            in_matched_finding = m.group(1) in filter_set
+        in_matched_finding = _classify_prior_line(stripped, filter_set, in_matched_finding)
         if in_matched_finding:
             current_lines.append(line)
 
     if current_header:
         sections.append((current_header, current_lines))
+    return sections
+
+
+def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
+    filter_set = set(file_filter)
+    sections = _collect_scoped_sections(prior_text.split("\n"), filter_set)
 
     parts: list[str] = []
     for header, lines in sections:
@@ -1031,6 +1051,23 @@ def _tool_label_from_block(block: dict) -> str:
     return name
 
 
+def _process_stream_line(raw_line: str, prev_tool: str, prefix: str) -> str:
+    try:
+        data = json.loads(raw_line)
+    except (json.JSONDecodeError, ValueError):
+        return prev_tool
+    if data.get("type") != "assistant":
+        return prev_tool
+    for block in data.get("message", {}).get("content", []):
+        tool_label = _tool_label_from_block(block)
+        if not tool_label or tool_label == prev_tool:
+            continue
+        with _print_lock:
+            print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
+        prev_tool = tool_label
+    return prev_tool
+
+
 def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""):
     prev_tool = ""
     prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
@@ -1038,36 +1075,30 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
         for raw_line in process.stdout:
             log.write(raw_line)
             log.flush()
-            try:
-                data = json.loads(raw_line)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if data.get("type") != "assistant":
-                continue
-            for block in data.get("message", {}).get("content", []):
-                tool_label = _tool_label_from_block(block)
-                if not tool_label or tool_label == prev_tool:
-                    continue
-                with _print_lock:
-                    print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
-                prev_tool = tool_label
+            prev_tool = _process_stream_line(raw_line, prev_tool, prefix)
 
 
 # ── Cost tracking ────────────────────────────────────────────────────────────
 
+def _try_parse_json(line: str) -> dict | None:
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+def _parse_jsonl_records(log_path: str, record_type: str) -> list[dict]:
+    with open(log_path) as f:
+        lines = f.readlines()
+    parsed = (_try_parse_json(line) for line in lines)
+    return [d for d in parsed if d is not None and d.get("type") == record_type]
+
+
 def _parse_session_cost(log_path: str) -> float:
     if not Path(log_path).exists():
         return 0.0
-    total = 0.0
-    with open(log_path) as f:
-        for line in f:
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if data.get("type") == "result":
-                total += data.get("total_cost_usd", 0.0)
-    return total
+    results = _parse_jsonl_records(log_path, "result")
+    return sum(r.get("total_cost_usd", 0.0) for r in results)
 
 
 def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
@@ -1075,27 +1106,23 @@ def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
     return total, total > max_cost
 
 
+def _diagnose_result_type(result: dict) -> str:
+    subtype = result.get("subtype", "")
+    if subtype == "max_turns":
+        num_turns = result.get("num_turns", "?")
+        return f"agent hit max turns ({num_turns})"
+    if result.get("is_error"):
+        return f"agent error: {result.get('error', 'unknown')}"
+    return f"agent completed (subtype={subtype}) but did not write output"
+
+
 def _diagnose_missing_output(log_path: str) -> str:
     if not Path(log_path).exists():
         return "no session log found"
-    last_result = None
-    with open(log_path) as f:
-        for line in f:
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if data.get("type") == "result":
-                last_result = data
-    if not last_result:
+    results = _parse_jsonl_records(log_path, "result")
+    if not results:
         return "no result record in session log"
-    subtype = last_result.get("subtype", "")
-    if subtype == "max_turns":
-        num_turns = last_result.get("num_turns", "?")
-        return f"agent hit max turns ({num_turns})"
-    if last_result.get("is_error"):
-        return f"agent error: {last_result.get('error', 'unknown')}"
-    return f"agent completed (subtype={subtype}) but did not write output"
+    return _diagnose_result_type(results[-1])
 
 
 # ── Model selection ───────────────────────────────────────────────────────────
@@ -1141,6 +1168,14 @@ def _build_agent_cmd(
     return cmd
 
 
+def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
+    stderr_output = proc.stderr.read()
+    if not stderr_output:
+        return
+    with open(session_log, "a") as f:
+        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+
+
 def invoke_agent(
     prompt: str, session_log: str, wt_path: str, reviews_dir: str,
     label: str = "", review_file: str = "",
@@ -1164,10 +1199,7 @@ def invoke_agent(
     stream_progress(proc, session_log, label=label)
     proc.wait()
     if proc.returncode != 0:
-        stderr_output = proc.stderr.read()
-        if stderr_output:
-            with open(session_log, "a") as f:
-                f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+        _log_stderr_on_failure(proc, session_log)
     return proc.returncode
 
 
@@ -1353,6 +1385,46 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     return holistic_content, holistic_output, holistic_log
 
 
+def _run_serial_reviews(
+    groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str,
+    skip_groups: "set[int] | None",
+    pipeline_state: "PipelineState | None",
+) -> list[str]:
+    failed_groups: list[str] = []
+    for i, grp in enumerate(groups, 1):
+        skip = skip_groups is not None and i in skip_groups
+        _, _, failed = _review_group(
+            i, grp, job, group_count, holistic_content,
+            skip=skip, pipeline_state=pipeline_state,
+        )
+        if failed:
+            failed_groups.append(failed)
+    return failed_groups
+
+
+def _run_parallel_reviews(
+    groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str, workers: int,
+    skip_groups: "set[int] | None",
+    pipeline_state: "PipelineState | None",
+) -> list[str]:
+    _info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
+    print()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(
+                _review_group, i, grp, job, group_count, holistic_content,
+                skip=(skip_groups is not None and i in skip_groups),
+                pipeline_state=pipeline_state,
+            )
+            for i, grp in enumerate(groups, 1)
+        ]
+    results = [f.result() for f in futures]
+    print()
+    return [name for _, _, name in results if name]
+
+
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
@@ -1360,35 +1432,16 @@ def _phase_group_reviews(
     pipeline_state: "PipelineState | None" = None,
 ) -> tuple[list[str], list[str]]:
     group_outputs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
-    failed_groups: list[str] = []
 
     workers = min(max_parallel, group_count)
     if workers <= 1:
-        for i, grp in enumerate(groups, 1):
-            skip = skip_groups is not None and i in skip_groups
-            _, _, failed = _review_group(
-                i, grp, job, group_count, holistic_content,
-                skip=skip, pipeline_state=pipeline_state,
-            )
-            if failed:
-                failed_groups.append(failed)
+        failed_groups = _run_serial_reviews(
+            groups, job, group_count, holistic_content, skip_groups, pipeline_state,
+        )
     else:
-        _info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
-        print()
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(
-                    _review_group, i, grp, job, group_count, holistic_content,
-                    skip=(skip_groups is not None and i in skip_groups),
-                    pipeline_state=pipeline_state,
-                ): i
-                for i, grp in enumerate(groups, 1)
-            }
-            for future in as_completed(futures):
-                _, _, failed = future.result()
-                if failed:
-                    failed_groups.append(failed)
-        print()
+        failed_groups = _run_parallel_reviews(
+            groups, job, group_count, holistic_content, workers, skip_groups, pipeline_state,
+        )
 
     return group_outputs, failed_groups
 
@@ -1472,6 +1525,15 @@ def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
     return [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
 
 
+def _read_existing_logs(log_paths: list[str]) -> str:
+    parts = []
+    for log_path in log_paths:
+        p = Path(log_path)
+        if p.exists():
+            parts.append(p.read_text())
+    return "".join(parts)
+
+
 def _consolidate_logs(
     job: ReviewJob,
     holistic_log: str, group_count: int, synthesis_log: str,
@@ -1484,11 +1546,7 @@ def _consolidate_logs(
         all_logs.append(synthesis_log)
 
     try:
-        with open(job.session_log, "w") as out:
-            for log_path in all_logs:
-                p = Path(log_path)
-                if p.exists():
-                    out.write(p.read_text())
+        Path(job.session_log).write_text(_read_existing_logs(all_logs))
     except OSError:
         pass
 
@@ -1547,6 +1605,25 @@ def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
     return total
 
 
+def _resolve_resume(
+    resume: bool, job: ReviewJob, groups: list[Group],
+) -> tuple[float, "set[int] | None", bool, "PipelineState | None"]:
+    if not resume:
+        return 0.0, None, False, None
+    state = _read_pipeline_state(job)
+    if not state:
+        _info("No pipeline state found — starting fresh")
+        return 0.0, None, False, None
+    if not _validate_resume_state(state, job.pr.head_sha, groups):
+        _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+        return 0.0, None, False, None
+    _info("Resuming from pipeline state")
+    cost_so_far = _sum_existing_costs(job, state)
+    skip_holistic = state.holistic_done
+    skip_groups = set(state.groups_done) if state.groups_done else None
+    return cost_so_far, skip_groups, skip_holistic, state
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
@@ -1558,25 +1635,9 @@ def run_multi_phase(
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
-    cost_so_far = 0.0
-    skip_groups: set[int] | None = None
-    skip_holistic_phase = False
-    state: PipelineState | None = None
-
-    if resume:
-        state = _read_pipeline_state(job)
-        if state and _validate_resume_state(state, job.pr.head_sha, groups):
-            _info("Resuming from pipeline state")
-            cost_so_far = _sum_existing_costs(job, state)
-            if state.holistic_done:
-                skip_holistic_phase = True
-            if state.groups_done:
-                skip_groups = set(state.groups_done)
-        elif state:
-            _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
-            state = None
-        else:
-            _info("No pipeline state found — starting fresh")
+    cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_resume(
+        resume, job, groups,
+    )
 
     if state is None:
         state = PipelineState(
@@ -1639,6 +1700,21 @@ def run_multi_phase(
         _cleanup_intermediates(job, holistic_output, holistic_log, group_outputs, group_count, synthesis_log)
 
 
+def _fetch_metadata(
+    repo: str, pr_number: str, mode: str, wt_path: str,
+) -> tuple[PRMetadata, PRContext]:
+    if mode == MODE_SELF and not pr_number:
+        _info("Gathering branch metadata...")
+        return fetch_branch_metadata(wt_path), PRContext()
+    _info("Fetching PR data...")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
+        if mode == MODE_SELF:
+            return pr_future.result(), PRContext()
+        ctx_future = pool.submit(fetch_pr_context, repo, pr_number)
+        return pr_future.result(), ctx_future.result()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1674,21 +1750,7 @@ def main():
 
     session_log = args.session_log or args.review_file.replace(REVIEW_EXT, SUFFIX_SESSION)
 
-    if args.mode == MODE_SELF and not args.pr:
-        _info("Gathering branch metadata...")
-        pr = fetch_branch_metadata(args.wt_path)
-        ctx = PRContext()
-    else:
-        _info("Fetching PR data...")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            pr_future = pool.submit(fetch_pr_metadata, args.repo, args.pr)
-            if args.mode == MODE_SELF:
-                ctx = PRContext()
-                pr = pr_future.result()
-            else:
-                ctx_future = pool.submit(fetch_pr_context, args.repo, args.pr)
-                pr = pr_future.result()
-                ctx = ctx_future.result()
+    pr, ctx = _fetch_metadata(args.repo, args.pr, args.mode, args.wt_path)
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():

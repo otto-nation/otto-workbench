@@ -53,13 +53,17 @@ For each unanswered thread:
 
 ### 3. Post replies
 
-For threads that need a response, post replies:
+For threads that need a response, post replies using a heredoc pipe to avoid shell escaping issues:
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies \
-  --method POST \
-  -f body="<response>"
+cat <<'REPLY_BODY' | jq -Rs '{body: .}' | \
+  gh api repos/{owner}/{repo}/pulls/<pr_number>/comments/<comment_id>/replies \
+    --method POST --input -
+<response text — backticks, quotes, markdown all safe here>
+REPLY_BODY
 ```
+
+**Never use `-f body="..."`** — backticks and special characters cause shell escaping failures.
 
 ### 4. Report
 

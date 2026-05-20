@@ -117,12 +117,11 @@ Reply inline to every addressed comment. Commit and push before replying so repl
 
 **IMPORTANT:** The PR number is required in the URL path — `pulls/{number}/comments/...`, not `pulls/comments/...`.
 
-**Never use `-f body="..."`** — backticks and special characters in the reply text cause shell escaping failures. Always use a heredoc pipe:
+**Never use `-f body="..."`** — backticks and special characters cause shell escaping failures. Use `-F body=@-` with a quoted heredoc:
 
 ```bash
-cat <<'REPLY_BODY' | jq -Rs '{body: .}' | \
-  gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-    --method POST --input -
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+  --method POST -F body=@- <<'REPLY_BODY'
 <reply text — backticks, quotes, markdown all safe here>
 REPLY_BODY
 ```
@@ -131,23 +130,21 @@ Examples:
 
 **Accepted:**
 ```bash
-cat <<'REPLY_BODY' | jq -Rs '{body: .}' | \
-  gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-    --method POST --input -
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+  --method POST -F body=@- <<'REPLY_BODY'
 Fixed.
 REPLY_BODY
 ```
 
-**Rejected (invalid suggestion):**
+**Rejected:**
 ```bash
-cat <<'REPLY_BODY' | jq -Rs '{body: .}' | \
-  gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-    --method POST --input -
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+  --method POST -F body=@- <<'REPLY_BODY'
 Not applying — `helperFn()` does not exist in the `utils` package. Checked `pkg/utils/` and `internal/utils/`.
 REPLY_BODY
 ```
 
-**Question answered / Conflicting:** Same heredoc pattern — put reply text between `<<'REPLY_BODY'` and `REPLY_BODY`.
+**Question answered / Conflicting:** Same pattern.
 
 ### 6. Emit feedback signals
 

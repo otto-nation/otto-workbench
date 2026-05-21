@@ -715,13 +715,13 @@ print('start_line' in c)
   [[ "$result" == *"False"* ]]
 }
 
-@test "format_inline_comment: includes subject_type line" {
+@test "format_inline_comment: omits subject_type" {
   result=$(_py "
 f = mod.Finding(id='S1', severity='S', seq=1, path='file.go', line=10, end_line=None, body='Fix', full_path='pkg/file.go', posted_id='S1')
 c = mod.format_inline_comment(f)
-print(c.get('subject_type'))
+print('subject_type' not in c)
 ")
-  [ "$result" = "line" ]
+  [ "$result" = "True" ]
 }
 
 @test "format_inline_comment: multi-line range" {

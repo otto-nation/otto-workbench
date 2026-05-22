@@ -230,3 +230,21 @@ if [[ -n "$_slow_tests" ]]; then
   warn "Slow tests (>${_slow_threshold_ms}ms):"
   echo "$_slow_tests"
 fi
+
+# ── Pytest ──────────────────────────────────────────────────────────────────
+
+if ! command -v pytest >/dev/null 2>&1; then
+  warn "pytest not found — skipping Python tests (pip install pytest)"
+else
+  _step "Running pytest"
+  _pytest_start=$SECONDS
+  _pytest_output=$(pytest "$REPO_ROOT/tests/" --tb=short -q 2>&1) || {
+    printf "${RED}✗${NC}\n" >&2
+    echo "$_pytest_output"
+    err "Pytest failed"
+    exit 1
+  }
+  _pytest_elapsed=$(( SECONDS - _pytest_start ))
+  _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
+  _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
+fi

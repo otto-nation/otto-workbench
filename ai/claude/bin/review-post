@@ -277,6 +277,14 @@ def _resolve_path(path: str, hunks: dict[str, list]) -> str | None:
     return None
 
 
+def _hunk_end(line: int, hunks: list[tuple[int, int]]) -> int | None:
+    """Return the end of the hunk containing line, or None."""
+    for s, e in hunks:
+        if s <= line <= e:
+            return e
+    return None
+
+
 def classify_findings(
     findings: list[Finding], diff_text: str
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
@@ -291,20 +299,28 @@ def classify_findings(
             f.classification = CLASS_SKIPPED
             f.skip_reason = "path not in diff"
             skipped.append(f)
-        elif f.line is None:
+            continue
+
+        f.full_path = resolved
+
+        if f.line is None:
             f.classification = CLASS_FILE_LEVEL
-            f.full_path = resolved
             f.skip_reason = "no line number"
             file_level.append(f)
-        elif not any(s <= f.line <= e for s, e in hunks[resolved]):
+            continue
+
+        hunk_e = _hunk_end(f.line, hunks[resolved])
+        if hunk_e is None:
             f.classification = CLASS_FILE_LEVEL
-            f.full_path = resolved
             f.skip_reason = f"line {f.line} not in any diff hunk"
             file_level.append(f)
-        else:
-            f.classification = CLASS_INLINE
-            f.full_path = resolved
-            inline.append(f)
+            continue
+
+        if f.end_line is not None and f.end_line > hunk_e:
+            f.end_line = hunk_e
+
+        f.classification = CLASS_INLINE
+        inline.append(f)
 
     return inline, file_level, skipped
 
@@ -522,7 +538,11 @@ def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
         return None
 
     try:
-        error_msg = json.loads(stdout).get("message", stdout[:200])
+        parsed = json.loads(stdout)
+        error_msg = parsed.get("message", stdout[:200])
+        errors = parsed.get("errors", [])
+        if errors:
+            error_msg += " — " + "; ".join(str(e) for e in errors)
     except (json.JSONDecodeError, AttributeError):
         error_msg = stdout[:200]
     _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}")

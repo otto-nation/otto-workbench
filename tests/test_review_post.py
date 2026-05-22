@@ -389,6 +389,20 @@ class TestClassifyFindings:
         assert len(inline) == 1
         assert inline[0].full_path == "pkg/handler.go"
 
+    def test_end_line_snapped_to_hunk_boundary(self, rp):
+        """end_line beyond the hunk gets snapped to hunk end."""
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=5, end_line=50, body="x")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF_INLINE)
+        assert (len(inline), len(fl), len(skipped)) == (1, 0, 0)
+        assert inline[0].end_line == 10
+
+    def test_end_line_within_hunk_unchanged(self, rp):
+        """end_line inside the hunk stays as-is."""
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=3, end_line=8, body="x")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF_INLINE)
+        assert (len(inline), len(fl), len(skipped)) == (1, 0, 0)
+        assert inline[0].end_line == 8
+
 
 class TestRenumberForPosting:
     def test_inline_sorted_by_path_then_line(self, rp):
@@ -692,6 +706,18 @@ class TestHandleApiAttempt:
             result = rp._handle_api_attempt(rp.MAX_RETRIES - 1, 1, '{"message": "error"}')
             assert result is None
             mock_sleep.assert_not_called()
+
+    def test_line_resolution_error_takes_priority(self, rp):
+        stdout = '{"message": "Unprocessable Entity", "errors": ["Line could not be resolved"]}'
+        with pytest.raises(rp.LineResolutionError):
+            rp._handle_api_attempt(0, 1, stdout)
+
+    def test_errors_array_logged_for_non_line_errors(self, rp, capsys):
+        stdout = '{"message": "Unprocessable Entity", "errors": ["Something else"]}'
+        with patch.object(rp.time, "sleep"):
+            rp._handle_api_attempt(0, 1, stdout)
+        captured = capsys.readouterr()
+        assert "Something else" in captured.err
 
 
 class TestCheckExistingPending:

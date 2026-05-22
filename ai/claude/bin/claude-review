@@ -28,9 +28,18 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(dirname "$_SELF")/../../../lib/ui.sh"
 
 _on_err() {
+  local rc=$?
+  (( rc == 130 )) && return 0
   err "Unexpected failure at line $1 in ${3}(): $2"
 }
 trap '_on_err $LINENO "$BASH_COMMAND" "${FUNCNAME[0]:-main}"' ERR
+
+_on_int() {
+  echo "" >&2
+  info "Interrupted"
+  exit 130
+}
+trap '_on_int' INT
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 

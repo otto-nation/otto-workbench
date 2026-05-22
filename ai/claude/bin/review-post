@@ -53,9 +53,13 @@ CLASS_SKIPPED = "skipped"
 DIFF_SIDE_RIGHT = "RIGHT"
 REVIEW_STATE_PENDING = "PENDING"
 
-MAX_RETRIES = 3
-RETRY_BACKOFF_BASE = 5
-RETRY_DELAY = 2
+MAX_RETRIES = 5
+RATE_LIMIT_WAIT = 60
+RATE_LIMIT_BACKOFF = 1.5
+RATE_LIMIT_MAX_WAIT = 300
+NON_RATE_LIMIT_DELAY = 5
+DEFAULT_CHUNK_SIZE = 30
+INTER_CHUNK_DELAY = 30
 
 HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 
@@ -479,66 +483,153 @@ def _check_existing_pending(repo: str, pr: str) -> int | None:
 def _is_rate_limited(stdout: str) -> bool:
     """Check if the API response indicates rate limiting."""
     lower = stdout.lower()
-    return "secondary rate limit" in lower or '"message": "forbidden"' in lower
+    return (
+        "secondary rate limit" in lower
+        or '"message": "forbidden"' in lower
+        or "abuse detection" in lower
+        or "retry later" in lower
+    )
 
 
 def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
     """Handle a single API attempt result. Returns parsed JSON on success, None to retry."""
     if rc == 0:
-        return json.loads(stdout)
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError:
+            _err(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
+            return None
 
     if _is_rate_limited(stdout):
-        wait = 2 ** attempt * RETRY_BACKOFF_BASE
-        _warn(f"Rate limited, waiting {wait}s...")
+        wait = int(min(RATE_LIMIT_WAIT * (RATE_LIMIT_BACKOFF ** attempt), RATE_LIMIT_MAX_WAIT))
+        _warn(f"Rate limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s...")
         time.sleep(wait)
         return None
 
-    _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {stdout[:200]}")
+    try:
+        error_msg = json.loads(stdout).get("message", stdout[:200])
+    except (json.JSONDecodeError, AttributeError):
+        error_msg = stdout[:200]
+    _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}")
     if attempt < MAX_RETRIES - 1:
-        time.sleep(RETRY_DELAY)
+        time.sleep(NON_RATE_LIMIT_DELAY)
     return None
 
 
 def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
-    """Post to GitHub API with retry logic. Returns parsed response or exits."""
+    """Post to GitHub API with retry logic. Returns parsed response or None."""
     for attempt in range(MAX_RETRIES):
         rc, stdout = _gh_api(endpoint, method="POST", input_file=tmp_path)
         result = _handle_api_attempt(attempt, rc, stdout)
         if result is not None:
             return result
 
-    _err(f"Failed to post review after {MAX_RETRIES} attempts")
-    sys.exit(1)
+    _err(f"Failed after {MAX_RETRIES} attempts")
+    return None
 
 
-def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict | None:
-    """Post a review to GitHub, optionally submitting it."""
+def _chunk_comments(
+    inline_comments: list[dict], chunk_size: int,
+) -> list[list[dict]]:
+    """Split inline comments into chunks of at most chunk_size."""
+    if not inline_comments or len(inline_comments) <= chunk_size:
+        return [inline_comments]
+    return [
+        inline_comments[i:i + chunk_size]
+        for i in range(0, len(inline_comments), chunk_size)
+    ]
+
+
+def _post_chunked_review(
+    repo: str, pr: str, commit_id: str,
+    body_text: str, inline_comments: list[dict],
+    chunk_size: int, submit: bool,
+) -> list[dict]:
+    """Post a review, chunking if the comment count exceeds chunk_size.
+
+    Chunked reviews are submitted immediately (event=COMMENT) because
+    GitHub only allows one PENDING review per user at a time.
+    """
+    chunks = _chunk_comments(inline_comments, chunk_size)
+    is_chunked = len(chunks) > 1
+    results: list[dict] = []
+
     existing_id = _check_existing_pending(repo, pr)
     if existing_id:
         _warn(f"Deleting existing PENDING review #{existing_id}")
         _gh_api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="review-post-", delete=False
-    ) as tmp:
-        json.dump(payload, tmp, ensure_ascii=False)
-        tmp_path = tmp.name
+    for i, chunk in enumerate(chunks):
+        chunk_num = i + 1
+        total_chunks = len(chunks)
 
-    try:
-        result = _post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        payload: dict = {"commit_id": commit_id}
 
-    if result and submit:
-        review_id = result.get("id")
-        if review_id:
-            _submit_review(repo, pr, review_id)
+        if i == 0:
+            payload["body"] = body_text
+        else:
+            payload["body"] = f"*(continued — part {chunk_num}/{total_chunks})*"
 
-    return result
+        if chunk:
+            payload["comments"] = chunk
+
+        if is_chunked or submit:
+            payload["event"] = "COMMENT"
+
+        if is_chunked:
+            _info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
+        else:
+            _info(f"Posting review ({len(chunk)} inline)...")
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", prefix="review-post-", delete=False
+        ) as tmp:
+            json.dump(payload, tmp, ensure_ascii=False)
+            tmp_path = tmp.name
+
+        try:
+            result = _post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        if result is None:
+            _err(f"Failed to post chunk {chunk_num}/{total_chunks}")
+            if results:
+                posted_ids = [r.get("id", "?") for r in results]
+                _warn(f"Partial post: chunks 1-{i} succeeded (review IDs: {posted_ids})")
+            sys.exit(1)
+
+        results.append(result)
+
+        if is_chunked:
+            _info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
+            if i < len(chunks) - 1:
+                _info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
+                time.sleep(INTER_CHUNK_DELAY)
+
+    return results
 
 
-def _submit_review(repo: str, pr: str, review_id: int):
-    """Submit a PENDING review with event=COMMENT."""
+def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict | None:
+    """Post a review to GitHub, optionally submitting it.
+
+    Legacy single-review interface. Delegates to _post_chunked_review
+    with no chunking.
+    """
+    comments = payload.get("comments", [])
+    body_text = payload.get("body", "")
+    commit_id = payload["commit_id"]
+
+    results = _post_chunked_review(
+        repo, pr, commit_id, body_text, comments,
+        chunk_size=len(comments) + 1,
+        submit=submit,
+    )
+    return results[0] if results else None
+
+
+def _submit_review(repo: str, pr: str, review_id: int) -> bool:
+    """Submit a PENDING review with event=COMMENT. Returns True on success."""
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", prefix="review-submit-", delete=False
     ) as tmp:
@@ -546,14 +637,14 @@ def _submit_review(repo: str, pr: str, review_id: int):
         tmp_path = tmp.name
 
     try:
-        rc, stdout = _gh_api(
+        result = _post_with_retries(
             f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
-            method="POST", input_file=tmp_path,
+            tmp_path,
         )
-        if rc != 0:
-            _warn(f"Failed to submit review #{review_id}: {stdout[:200]}")
-    except subprocess.TimeoutExpired:
-        _warn(f"Timed out submitting review #{review_id}")
+        if result is None:
+            _warn(f"Failed to submit review #{review_id} after {MAX_RETRIES} attempts")
+            return False
+        return True
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -575,21 +666,27 @@ def _err(msg: str):
 # ── Post tracking ───────────────────────────────────────────────────────────
 
 def write_post_tracking(
-    review_file: str, review_id: int, commit_id: str,
+    review_file: str, review_ids: list[int] | int, commit_id: str,
     inline_count: int, body_count: int, skipped_count: int,
     submitted: bool = False,
+    chunk_count: int = 1,
 ):
     """Write a post tracking entry alongside the review file."""
     base = review_file.removesuffix(".md") if review_file.endswith(".md") else review_file
     post_file = base + ".post.jsonl"
+
+    ids = [review_ids] if isinstance(review_ids, int) else review_ids
+
     entry = {
-        "review_id": review_id,
+        "review_id": ids[0],
+        "review_ids": ids,
         "commit_id": commit_id,
         "posted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "inline_count": inline_count,
         "body_count": body_count,
         "skipped_count": skipped_count,
         "submitted": submitted,
+        "chunk_count": chunk_count,
     }
     with open(post_file, "w") as f:
         json.dump(entry, f)
@@ -602,7 +699,15 @@ def write_post_tracking(
 def _print_dry_run(
     payload: dict, inline: list[Finding],
     body_findings: list[Finding], skipped: list[Finding],
+    chunk_size: int,
 ):
+    comments = payload.get("comments", [])
+    chunks = _chunk_comments(comments, chunk_size)
+    if len(chunks) > 1:
+        _info(f"Would post in {len(chunks)} chunks of <={chunk_size} comments")
+        for i, chunk in enumerate(chunks):
+            _info(f"  Chunk {i + 1}: {len(chunk)} comments")
+
     print()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     print()
@@ -617,28 +722,39 @@ def _format_submit_command(repo: str, pr: str, review_id: int) -> str:
 
 
 def _post_and_track(
-    args: argparse.Namespace, payload: dict,
-    inline_comments: list[dict], body_findings: list[Finding],
-    skipped: list[Finding], commit_id: str,
+    args: argparse.Namespace,
+    inline_comments: list[dict], body_text: str,
+    body_findings: list[Finding], skipped: list[Finding],
+    commit_id: str, chunk_size: int,
 ):
     submit = getattr(args, "submit", False)
-    _info(f"Posting review ({len(inline_comments)} inline, {len(body_findings)} body)...")
-    result = post_review(args.repo, args.pr, payload, submit=submit)
-    if not result:
+
+    results = _post_chunked_review(
+        args.repo, args.pr, commit_id,
+        body_text, inline_comments,
+        chunk_size, submit,
+    )
+
+    if not results:
         return
 
-    review_id = result.get("id", 0)
-    if submit:
-        _info(f"Review submitted: #{review_id}")
+    is_chunked = len(results) > 1
+    review_ids = [r.get("id", 0) for r in results]
+
+    if is_chunked:
+        _info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
+    elif submit:
+        _info(f"Review submitted: #{review_ids[0]}")
     else:
-        _info(f"Review created: #{review_id} (PENDING)")
+        _info(f"Review created: #{review_ids[0]} (PENDING)")
         print()
-        print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_id)}")
+        print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
 
     write_post_tracking(
-        args.review_file, review_id, commit_id,
+        args.review_file, review_ids, commit_id,
         len(inline_comments), len(body_findings), len(skipped),
-        submitted=submit,
+        submitted=submit or is_chunked,
+        chunk_count=len(results),
     )
 
 
@@ -654,6 +770,8 @@ def main():
                         help="Parse and classify without posting")
     parser.add_argument("--submit", action="store_true",
                         help="Submit the review after posting (default: leave PENDING)")
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE,
+                        help=f"Max inline comments per review chunk (default: {DEFAULT_CHUNK_SIZE})")
     args = parser.parse_args()
 
     review_path = Path(args.review_file)
@@ -720,21 +838,24 @@ def main():
     inline_comments = [format_inline_comment(f) for f in inline]
     body_text = format_body_text(body_findings, len(inline) > 0, severity_filter)
 
-    # 9. Build payload
+    # 9. Build payload (for dry-run display) or post
     commit_id = review_sha or head_sha
-    payload = {
-        "commit_id": commit_id,
-        "body": body_text,
-    }
-    if inline_comments:
-        payload["comments"] = inline_comments
+    chunk_size = args.chunk_size
 
-    # 10. Dry-run output or post
     if args.dry_run:
-        _print_dry_run(payload, inline, body_findings, skipped)
+        payload = {
+            "commit_id": commit_id,
+            "body": body_text,
+        }
+        if inline_comments:
+            payload["comments"] = inline_comments
+        _print_dry_run(payload, inline, body_findings, skipped, chunk_size)
         return
 
-    _post_and_track(args, payload, inline_comments, body_findings, skipped, commit_id)
+    _post_and_track(
+        args, inline_comments, body_text,
+        body_findings, skipped, commit_id, chunk_size,
+    )
 
 
 if __name__ == "__main__":

@@ -540,6 +540,17 @@ def _chunk_comments(
     ]
 
 
+def _handle_chunk_failure(
+    chunk_num: int, total_chunks: int, prior_results: list[dict],
+) -> None:
+    """Log chunk failure details and exit."""
+    _err(f"Failed to post chunk {chunk_num}/{total_chunks}")
+    if prior_results:
+        posted_ids = [r.get("id", "?") for r in prior_results]
+        _warn(f"Partial post: chunks 1-{chunk_num - 1} succeeded (review IDs: {posted_ids})")
+    sys.exit(1)
+
+
 def _post_chunked_review(
     repo: str, pr: str, commit_id: str,
     body_text: str, inline_comments: list[dict],
@@ -593,19 +604,16 @@ def _post_chunked_review(
             Path(tmp_path).unlink(missing_ok=True)
 
         if result is None:
-            _err(f"Failed to post chunk {chunk_num}/{total_chunks}")
-            if results:
-                posted_ids = [r.get("id", "?") for r in results]
-                _warn(f"Partial post: chunks 1-{i} succeeded (review IDs: {posted_ids})")
-            sys.exit(1)
+            _handle_chunk_failure(chunk_num, total_chunks, results)
 
         results.append(result)
 
-        if is_chunked:
-            _info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
-            if i < len(chunks) - 1:
-                _info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
-                time.sleep(INTER_CHUNK_DELAY)
+        if not is_chunked:
+            continue
+        _info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
+        if i < len(chunks) - 1:
+            _info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
+            time.sleep(INTER_CHUNK_DELAY)
 
     return results
 

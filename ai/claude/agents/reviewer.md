@@ -108,12 +108,13 @@ Write the triage as a `## File Triage` section in the review output, listing eve
 
 ### 5. Consistency
 - Does the change follow existing patterns in the same file/package? If every other handler does X, a new handler should too — or justify the deviation
+- **Convention evaluation** — don't blindly enforce existing patterns. If the prevailing convention is itself an anti-pattern (e.g., every test hardcodes a list length, every handler swallows errors, every config value is copy-pasted), flag it as a should-fix and recommend a follow-up to fix the convention across the codebase. Consistency with a bad pattern is not a virtue
 - Are there existing constants, helpers, or utilities that should be used instead of inline reimplementations?
 - **Magic values in production code** — flag string literals, numeric literals, and addresses that should be named constants. Common cases:
   - Service or component names passed to functions (e.g. interceptors, loggers, clients) — check if a constant already exists in config, envconfig, or a const block
   - Addresses or URLs assembled from string literals instead of configuration
   - Numeric thresholds or limits without context for what they represent
-  - Do NOT flag magic values in tests unless they are repeated — test-only literals (fixture UUIDs, sample names) are fine as inline values
+  - Single-use fixture data in tests (UUIDs, sample names, placeholder strings) is fine inline. But values that carry semantic meaning — thresholds, status codes, field names used in assertions — should be named constants so the test communicates *what* it asserts, not just *a number*. Expected counts are covered separately under "Test design quality" in Phase 7 — they should be derived from the source data, not hardcoded
 - **Repeated literals in tests** — when the same literal (UUID, date, amount) appears 2+ times across test functions, flag it for extraction to a package-level var or const. The issue is DRY, not magic values
 - **Hardcoded operational config** — flag values that should be externalized to config files, not just named as constants. Distinguish between:
   - **Code constants** (timeouts, buffer sizes, retry counts) — a named constant in the source is fine
@@ -159,7 +160,12 @@ Write the triage as a `## File Triage` section in the review output, listing eve
   - Missing structured output requirements when the output will be parsed programmatically
 - Extensibility — will the next developer who adds a similar case need to modify multiple files or copy-paste a block? Prefer designs that extend by addition, not modification
 - Maintainability — are there implicit assumptions, hidden dependencies, or fragile ordering that would break under reasonable future changes?
+- **Resilience** — flag code that breaks when the input set grows: hardcoded switch/case or if/else chains that require a new branch for every new variant (use a map/registry); functions that assume a fixed number of items; string-based type dispatch that could use an enum or the type system. Code should accommodate new entries by default, not require edits for each one
 - Test coverage — are new behaviors tested? Are edge cases covered?
+- **Test design quality:**
+  - **Dynamic over static** — tests should derive expected values from the source data or iterate over cases rather than hardcoding assertions that must be manually updated. Prefer table-driven / parameterized tests over copy-paste test functions. When a test asserts "there are N items," N should be computed from the source, not hardcoded — otherwise adding an item breaks an unrelated test
+  - **Brittleness** — flag tests that will break from unrelated changes: assertions on exact list length when the test doesn't control the list contents; snapshot/golden-file assertions on large structures where only a few fields matter; tests that depend on insertion order when the contract doesn't guarantee it; string matching on error messages instead of error types or codes
+  - **Meaningful assertions** — tests should assert behavior and outcomes, not implementation details. Flag tests that round-trip a value through a constructor and assert equality (tautological), assert a mocked return value equals itself, or simply confirm that constants haven't changed
 - If checklists were loaded in Phase 0, check for anti-pattern matches and lookup table violations. Reference the checklist in the finding
 
 ### 8. Language Idioms

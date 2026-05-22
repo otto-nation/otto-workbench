@@ -121,8 +121,14 @@ jobs:
       - name: Verify Taskfile parses
         run: task --list
 
-      - name: Run tests
+      - name: Install pytest
+        run: pipx install pytest==8.3.5
+
+      - name: Run bats tests
         run: bats tests/ --recursive --timing
+
+      - name: Run pytest
+        run: pytest tests/ -v
 
       - name: Check tests did not pollute repo config
         run: |

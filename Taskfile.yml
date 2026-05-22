@@ -13,10 +13,16 @@ includes:
 
 tasks:
   test:
-    desc: "Run bats test suite"
+    desc: "Run bats and pytest test suites"
     silent: true
     cmds:
       - bats tests/ --recursive --timing
+      - task: test:pytest
+  test:pytest:
+    desc: "Run Python (pytest) tests only"
+    silent: true
+    cmds:
+      - pytest tests/ -v
   test:*:
     desc: "Run a single test suite by filename"
     vars:

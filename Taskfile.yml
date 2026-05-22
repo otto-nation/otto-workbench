@@ -17,8 +17,8 @@ tasks:
     silent: true
     cmds:
       - bats tests/ --recursive --timing
-      - pytest tests/ -v
-  test:py:
+      - task: test:pytest
+  test:pytest:
     desc: "Run Python (pytest) tests only"
     silent: true
     cmds:

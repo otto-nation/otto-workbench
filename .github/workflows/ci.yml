@@ -122,7 +122,7 @@ jobs:
         run: task --list
 
       - name: Install pytest
-        run: pipx install pytest
+        run: pipx install pytest==8.3.5
 
       - name: Run bats tests
         run: bats tests/ --recursive --timing

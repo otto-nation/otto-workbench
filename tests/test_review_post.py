@@ -412,6 +412,13 @@ class TestRenumberForPosting:
         inline, _ = rp.renumber_for_posting([f1, f2, f3], [])
         assert [f.posted_id for f in inline] == ["M1", "S1", "M2"]
 
+    def test_same_file_sorted_by_line(self, rp):
+        f1 = rp.Finding(id="M1", severity="M", seq=1, path="a.go", line=30, end_line=None, body="x", full_path="a.go")
+        f2 = rp.Finding(id="M2", severity="M", seq=2, path="a.go", line=5, end_line=None, body="y", full_path="a.go")
+        inline, _ = rp.renumber_for_posting([f1, f2], [])
+        assert inline[0].line == 5
+        assert inline[1].line == 30
+
 
 class TestFormatInlineComment:
     def test_single_line(self, rp):
@@ -773,10 +780,20 @@ class TestPostReview:
     def test_with_submit(self, rp):
         pending_result = MagicMock(returncode=0, stdout="null\n")
         post_result = MagicMock(returncode=0, stdout='{"id": 42}')
+        dumped_payloads = []
+        orig_dump = rp.json.dump
 
-        with patch.object(rp.subprocess, "run", side_effect=[pending_result, post_result]) as mock_run:
+        def capture_dump(obj, fp, **kw):
+            dumped_payloads.append(obj)
+            return orig_dump(obj, fp, **kw)
+
+        with (
+            patch.object(rp.subprocess, "run", side_effect=[pending_result, post_result]),
+            patch.object(rp.json, "dump", side_effect=capture_dump),
+        ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD, submit=True)
             assert result == {"id": 42}
+            assert any(p.get("event") == "COMMENT" for p in dumped_payloads)
 
 
 class TestSubmitReview:

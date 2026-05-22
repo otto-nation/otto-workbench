@@ -68,6 +68,13 @@ ANSI_WARN = "\033[1;33m●\033[0m"
 ANSI_ERR = "\033[1;31m●\033[0m"
 
 
+# ── Exceptions ───────────────────────────────────────────────────────────────
+
+
+class LineResolutionError(Exception):
+    """GitHub cannot resolve line positions for inline comments."""
+
+
 # ── Data structures ──────────────────────────────────────────────────────────
 
 
@@ -491,6 +498,11 @@ def _is_rate_limited(stdout: str) -> bool:
     )
 
 
+def _is_line_resolution_error(stdout: str) -> bool:
+    """Check if the API response indicates unresolvable line positions."""
+    return "line could not be resolved" in stdout.lower()
+
+
 def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
     """Handle a single API attempt result. Returns parsed JSON on success, None to retry."""
     if rc == 0:
@@ -499,6 +511,9 @@ def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
         except json.JSONDecodeError:
             _err(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
             return None
+
+    if _is_line_resolution_error(stdout):
+        raise LineResolutionError(stdout[:200])
 
     if _is_rate_limited(stdout):
         wait = int(min(RATE_LIMIT_WAIT * (RATE_LIMIT_BACKOFF ** attempt), RATE_LIMIT_MAX_WAIT))
@@ -732,16 +747,31 @@ def _format_submit_command(repo: str, pr: str, review_id: int) -> str:
 def _post_and_track(
     args: argparse.Namespace,
     inline_comments: list[dict], body_text: str,
+    inline: list[Finding],
     body_findings: list[Finding], skipped: list[Finding],
-    commit_id: str, chunk_size: int,
+    commit_id: str, head_sha: str,
+    chunk_size: int, severity_filter: set[str],
 ):
     submit = getattr(args, "submit", False)
 
-    results = _post_chunked_review(
-        args.repo, args.pr, commit_id,
-        body_text, inline_comments,
-        chunk_size, submit,
-    )
+    try:
+        results = _post_chunked_review(
+            args.repo, args.pr, commit_id,
+            body_text, inline_comments,
+            chunk_size, submit,
+        )
+    except LineResolutionError:
+        _warn("Inline comments could not be resolved — demoting all to body-level")
+        all_body = list(inline) + list(body_findings)
+        _, all_body = renumber_for_posting([], all_body)
+        body_text = format_body_text(all_body, False, severity_filter)
+        inline_comments = []
+        body_findings = all_body
+        results = _post_chunked_review(
+            args.repo, args.pr, head_sha,
+            body_text, [],
+            chunk_size, submit,
+        )
 
     if not results:
         return
@@ -862,7 +892,8 @@ def main():
 
     _post_and_track(
         args, inline_comments, body_text,
-        body_findings, skipped, commit_id, chunk_size,
+        inline, body_findings, skipped,
+        commit_id, head_sha, chunk_size, severity_filter,
     )
 
 

@@ -1955,3 +1955,104 @@ except TypeError:
 ")
   [ "$result" = "rejected" ]
 }
+
+# ── Uncommitted changes (self-review before commit) ────────────────────────
+
+@test "fetch_branch_metadata: includes uncommitted changes when no commits on branch" {
+  repo="$TMPDIR/uncommitted-repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  echo "package main" > "$repo/main.go"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  # Stay on main (no new commits) but modify a file
+  printf "package main\nfunc hello() {}\n" > "$repo/main.go"
+
+  result=$(_py "
+pr = mod.fetch_branch_metadata('$repo')
+print(f'files={pr.changed_files},add={pr.additions},del={pr.deletions}')
+print(f'path={pr.files[0][\"path\"] if pr.files else \"none\"}')
+")
+  [[ "$result" == *"files=1"* ]]
+  [[ "$result" == *"path=main.go"* ]]
+}
+
+@test "fetch_branch_metadata: includes staged changes when no commits on branch" {
+  repo="$TMPDIR/staged-repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  echo "package main" > "$repo/main.go"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  # Stage changes without committing
+  printf "package main\nfunc staged() {}\n" > "$repo/main.go"
+  git add main.go
+
+  result=$(_py "
+pr = mod.fetch_branch_metadata('$repo')
+print(f'files={pr.changed_files},add={pr.additions}')
+")
+  [[ "$result" == *"files=1"* ]]
+}
+
+@test "fetch_branch_metadata: prefers committed diff over uncommitted when commits exist" {
+  repo="$TMPDIR/committed-repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  echo "package main" > "$repo/main.go"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  git checkout -b feat -q
+  printf "package main\nfunc committed() {}\n" > "$repo/main.go"
+  git add . && git commit -q --no-verify -m "add committed"
+  # Also add an uncommitted file — should NOT appear
+  echo "uncommitted" > "$repo/extra.go"
+
+  result=$(_py "
+pr = mod.fetch_branch_metadata('$repo')
+paths = [f['path'] for f in pr.files]
+print(f'files={pr.changed_files},paths={paths}')
+")
+  [[ "$result" == *"files=1"* ]]
+  [[ "$result" == *"main.go"* ]]
+  [[ "$result" != *"extra.go"* ]]
+}
+
+@test "collect_preflight_data: captures uncommitted diff when no commits on branch" {
+  repo="$TMPDIR/preflight-uncommitted"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  echo "package main" > "$repo/main.go"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  printf "package main\nfunc hello() {}\n" > "$repo/main.go"
+
+  result=$(_py_here <<PYEOF
+pr = mod.fetch_branch_metadata('$repo')
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='r', pr_number='', pr=pr, ctx=ctx,
+    wt_path='$repo', review_file='/tmp/r.md',
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+    mode='self',
+)
+data = mod.collect_preflight_data(job)
+has_diff = 'func hello' in data.diff
+has_file = 'main.go' in data.file_contents
+print(f'has_diff={has_diff},has_file={has_file}')
+PYEOF
+)
+  [ "$result" = "has_diff=True,has_file=True" ]
+}

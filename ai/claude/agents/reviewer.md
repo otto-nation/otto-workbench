@@ -114,7 +114,7 @@ Write the triage as a `## File Triage` section in the review output, listing eve
   - Service or component names passed to functions (e.g. interceptors, loggers, clients) — check if a constant already exists in config, envconfig, or a const block
   - Addresses or URLs assembled from string literals instead of configuration
   - Numeric thresholds or limits without context for what they represent
-  - Single-use fixture data in tests (UUIDs, sample names, placeholder strings) is fine inline. But values that carry semantic meaning — expected counts, thresholds, status codes, field names used in assertions — should be named constants or derived from the source data so the test communicates *what* it asserts, not just *a number*
+  - Single-use fixture data in tests (UUIDs, sample names, placeholder strings) is fine inline. But values that carry semantic meaning — thresholds, status codes, field names used in assertions — should be named constants so the test communicates *what* it asserts, not just *a number*. Expected counts are covered separately under "Test design quality" in Phase 7 — they should be derived from the source data, not hardcoded
 - **Repeated literals in tests** — when the same literal (UUID, date, amount) appears 2+ times across test functions, flag it for extraction to a package-level var or const. The issue is DRY, not magic values
 - **Hardcoded operational config** — flag values that should be externalized to config files, not just named as constants. Distinguish between:
   - **Code constants** (timeouts, buffer sizes, retry counts) — a named constant in the source is fine

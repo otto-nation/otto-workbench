@@ -903,7 +903,107 @@ print(f\"submitted={data['submitted']}\")
   [ "$result" = "submitted=False" ]
 }
 
+@test "write_post_tracking: single int review_id backward compat" {
+  result=$(_py "
+import json
+mod.write_post_tracking('$TMPDIR/test-review.md', 456, 'abc', 3, 1, 0)
+data = json.loads(open('$TMPDIR/test-review.post.jsonl').readline())
+print(f\"id={data['review_id']}\")
+print(f\"ids={data['review_ids']}\")
+print(f\"chunks={data['chunk_count']}\")
+")
+  [[ "$result" == *"id=456"* ]]
+  [[ "$result" == *"ids=[456]"* ]]
+  [[ "$result" == *"chunks=1"* ]]
+}
+
+@test "write_post_tracking: list of review_ids with chunk_count" {
+  result=$(_py "
+import json
+mod.write_post_tracking('$TMPDIR/test-review.md', [100, 200, 300], 'abc', 90, 5, 2, submitted=True, chunk_count=3)
+data = json.loads(open('$TMPDIR/test-review.post.jsonl').readline())
+print(f\"id={data['review_id']}\")
+print(f\"ids={data['review_ids']}\")
+print(f\"chunks={data['chunk_count']}\")
+print(f\"submitted={data['submitted']}\")
+")
+  [[ "$result" == *"id=100"* ]]
+  [[ "$result" == *"ids=[100, 200, 300]"* ]]
+  [[ "$result" == *"chunks=3"* ]]
+  [[ "$result" == *"submitted=True"* ]]
+}
+
 @test "_format_submit_command: produces correct gh api command" {
   result=$(_py "print(mod._format_submit_command('org/repo', '42', 12345))")
   [ "$result" = "gh api repos/org/repo/pulls/42/reviews/12345/events --method POST -f event=COMMENT" ]
+}
+
+# ── _chunk_comments ─────────────────────────────────────────────────────────
+
+@test "_chunk_comments: no chunking when under threshold" {
+  result=$(_py "
+comments = [{'body': f'c{i}'} for i in range(10)]
+chunks = mod._chunk_comments(comments, 30)
+print(len(chunks))
+print(len(chunks[0]))
+")
+  [[ "$result" == *"1"* ]]
+  [[ "$result" == *"10"* ]]
+}
+
+@test "_chunk_comments: exact boundary is not chunked" {
+  result=$(_py "
+comments = [{'body': f'c{i}'} for i in range(30)]
+chunks = mod._chunk_comments(comments, 30)
+print(len(chunks))
+print(len(chunks[0]))
+")
+  [[ "$result" == *"1"* ]]
+  [[ "$result" == *"30"* ]]
+}
+
+@test "_chunk_comments: splits correctly above threshold" {
+  result=$(_py "
+comments = [{'body': f'c{i}'} for i in range(82)]
+chunks = mod._chunk_comments(comments, 30)
+print(len(chunks))
+for i, c in enumerate(chunks):
+    print(f'chunk{i+1}={len(c)}')
+")
+  [[ "$result" == *"3"* ]]
+  [[ "$result" == *"chunk1=30"* ]]
+  [[ "$result" == *"chunk2=30"* ]]
+  [[ "$result" == *"chunk3=22"* ]]
+}
+
+@test "_chunk_comments: empty input returns single empty list" {
+  result=$(_py "
+chunks = mod._chunk_comments([], 30)
+print(len(chunks))
+print(len(chunks[0]))
+")
+  [[ "$result" == *"1"* ]]
+  [[ "$result" == *"0"* ]]
+}
+
+# ── _is_rate_limited ────────────────────────────────────────────────────────
+
+@test "_is_rate_limited: detects secondary rate limit" {
+  result=$(_py "print(mod._is_rate_limited('{\"message\": \"You have exceeded a secondary rate limit\"}'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_rate_limited: detects abuse detection" {
+  result=$(_py "print(mod._is_rate_limited('{\"message\": \"abuse detection triggered\"}'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_rate_limited: detects retry later" {
+  result=$(_py "print(mod._is_rate_limited('{\"message\": \"Please retry later\"}'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_rate_limited: normal error is not rate limited" {
+  result=$(_py "print(mod._is_rate_limited('{\"message\": \"Not Found\"}'))")
+  [ "$result" = "False" ]
 }

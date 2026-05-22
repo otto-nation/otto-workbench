@@ -268,6 +268,10 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     diff = _run(["git", "diff", git_range], cwd=job.wt_path)
     commit_log = _run(["git", "log", "--stat", "--reverse", git_range_log], cwd=job.wt_path)
 
+    # Fall back to uncommitted diff when no commits exist on the branch
+    if not diff and job.pr.files:
+        diff = _run(["git", "diff", "HEAD"], cwd=job.wt_path)
+
     claude_md = ""
     for name in ("CLAUDE.md", ".claude/CLAUDE.md"):
         p = wt / name
@@ -668,15 +672,7 @@ def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
     return r.stdout.strip()
 
 
-def fetch_branch_metadata(wt_path: str) -> PRMetadata:
-    head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
-    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
-
-    log_output = _run(["git", "log", GIT_RANGE_TO_HEAD, "--oneline"], cwd=wt_path)
-    first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
-    title = first_subject
-
-    numstat = _run(["git", "diff", "--numstat", GIT_RANGE_TO_HEAD], cwd=wt_path)
+def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:
     files = []
     total_add = 0
     total_del = 0
@@ -691,6 +687,25 @@ def fetch_branch_metadata(wt_path: str) -> PRMetadata:
         files.append({"path": parts[2], "additions": add, "deletions": delete})
         total_add += add
         total_del += delete
+    return files, total_add, total_del
+
+
+def fetch_branch_metadata(wt_path: str) -> PRMetadata:
+    head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
+    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
+
+    log_output = _run(["git", "log", GIT_RANGE_TO_HEAD, "--oneline"], cwd=wt_path)
+    first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
+    title = first_subject
+
+    numstat = _run(["git", "diff", "--numstat", GIT_RANGE_TO_HEAD], cwd=wt_path)
+    files, total_add, total_del = _parse_numstat(numstat)
+
+    # Fall back to uncommitted changes when there are no commits on the
+    # branch yet — common in self-review before first commit.
+    if not files:
+        numstat = _run(["git", "diff", "--numstat", "HEAD"], cwd=wt_path)
+        files, total_add, total_del = _parse_numstat(numstat)
 
     return PRMetadata(
         title=title,

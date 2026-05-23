@@ -327,7 +327,7 @@ step_worktrunk_config() {
   command -v wt >/dev/null 2>&1 || return 0
 
   local config_file="$WORKTRUNK_CONFIG_FILE"
-  local desired='worktree-path = "{{ repo_path }}/{{ branch | sanitize }}"'
+  local desired='worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"'
 
   if [[ -f "$config_file" ]] && grep -q '^worktree-path' "$config_file"; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "worktrunk worktree-path already set" || true

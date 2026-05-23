@@ -321,6 +321,32 @@ step_local_hooks() {
   install_hook_dispatcher "git/hooks/pre-push-workbench"   "$dot_git/hooks/pre-push"   "pre-push"
 }
 
+# step_worktrunk_config — ensures the global worktrunk config has a default
+# worktree-path so bare repos get clean directory names instead of .git.* prefix.
+step_worktrunk_config() {
+  command -v wt >/dev/null 2>&1 || return 0
+
+  local config_file="$WORKTRUNK_CONFIG_FILE"
+  local desired='worktree-path = "{{ repo_path }}/{{ branch | sanitize }}"'
+
+  if [[ -f "$config_file" ]] && grep -q '^worktree-path' "$config_file"; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "worktrunk worktree-path already set" || true
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$config_file")"
+  if [[ -f "$config_file" ]]; then
+    # Prepend before any [sections] so it's a top-level key
+    local tmp
+    tmp=$(mktemp)
+    { echo "$desired"; echo ""; cat "$config_file"; } > "$tmp"
+    mv "$tmp" "$config_file"
+  else
+    echo "$desired" > "$config_file"
+  fi
+  success "worktrunk worktree-path default set"
+}
+
 # install_git — interactive setup path for gitconfig.
 # Called by install.sh (prefers install_<name> over sync_<name> for core components).
 # Prompts for identity and offers overwrite/backup for existing configs.
@@ -341,6 +367,9 @@ install_git() {
 
   echo; info "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"
+
+  echo; info "worktrunk config"
+  step_worktrunk_config
 }
 
 # sync_git — runs all git sync steps non-interactively.
@@ -355,6 +384,9 @@ sync_git() {
 
   sync_header "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"
+
+  sync_header "worktrunk config"
+  step_worktrunk_config
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

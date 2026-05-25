@@ -14,6 +14,11 @@ setup() {
   export INSTALL_YML_FILE="$FAKE_STATE/install.yml"
   export CORE_COMPONENTS="bin git zsh task"
 
+  # Stub UI functions not available outside lib/ui.sh
+  info() { echo "$*"; }
+  warn() { echo "$*"; }
+  export -f info warn
+
   # Source the real state library
   . "$REPO_ROOT/lib/state.sh"
 }
@@ -358,4 +363,45 @@ teardown() {
 
   run state_get_list "brew.stacks"
   [[ "$output" == "lang/go" ]]
+}
+
+# ─── state_load_selections ─────────────────────────────────────────────────
+
+@test "state_load_selections returns 0 and populates array when saved selections exist" {
+  mkdir -p "$TMPDIR/tools/claude" "$TMPDIR/tools/serena"
+  state_append_list "ai.tools" "claude"
+  state_append_list "ai.tools" "serena"
+
+  local RESULT=()
+  state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+  [[ ${#RESULT[@]} -eq 2 ]]
+}
+
+@test "state_load_selections returns 1 and clears list when no saved selections" {
+  echo "components: {}" > "$INSTALL_YML_FILE"
+  mkdir -p "$TMPDIR/tools/claude"
+
+  local RESULT=()
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+}
+
+@test "state_load_selections skips items whose directory is missing" {
+  mkdir -p "$TMPDIR/tools/claude"
+  state_append_list "ai.tools" "claude"
+  state_append_list "ai.tools" "deleted_tool"
+
+  local RESULT=()
+  state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+  [[ ${#RESULT[@]} -eq 1 ]]
+  [[ "${RESULT[0]}" == "claude" ]]
+}
+
+@test "state_load_selections clears list when WORKBENCH_INTERACTIVE=1" {
+  mkdir -p "$TMPDIR/tools/claude"
+  state_append_list "ai.tools" "claude"
+
+  export WORKBENCH_INTERACTIVE=1
+  local RESULT=()
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+  unset WORKBENCH_INTERACTIVE
 }

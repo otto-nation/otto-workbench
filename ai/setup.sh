@@ -94,19 +94,7 @@ STEPS=()
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-_saved_tools=$(state_get_list "ai.tools")
-if [[ -n "$_saved_tools" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
-  while IFS= read -r _t; do
-    if [[ -d "$SCRIPT_DIR/$_t" ]]; then SELECTED_TOOLS+=("$_t"); fi
-  done <<< "$_saved_tools"
-  if [[ ${#SELECTED_TOOLS[@]} -gt 0 ]]; then
-    info "Using saved selections: ${SELECTED_TOOLS[*]}"
-  else
-    state_clear_list "ai.tools"
-    select_tools
-  fi
-else
-  state_clear_list "ai.tools"
+if ! state_load_selections "ai.tools" "$SCRIPT_DIR" SELECTED_TOOLS; then
   select_tools
 fi
 

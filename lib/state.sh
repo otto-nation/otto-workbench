@@ -40,16 +40,12 @@ state_record() {
     mise)
       yq -i '.components.mise = true' "$INSTALL_YML_FILE"
       ;;
-    brew|docker|ai|terminals|editors)
-      yq -i '.components.'"$entry"' |= (. // {})' "$INSTALL_YML_FILE"
-      ;;
     */*)
       local parent="${entry%%/*}" child="${entry#*/}"
       v="$child" yq -i '.components.'"$parent"' |= (. // {}) | .components.'"$parent"'.tools |= ((. // []) + [strenv(v)] | unique)' "$INSTALL_YML_FILE"
       ;;
     *)
-      echo "WARNING: state_record: unrecognized entry: $entry" >&2
-      return 1
+      yq -i '.components.'"$entry"' |= (. // {})' "$INSTALL_YML_FILE"
       ;;
   esac
 }
@@ -61,18 +57,12 @@ state_is_installed() {
   [[ -f "$INSTALL_YML_FILE" ]] || return 1
 
   case "$entry" in
-    mise)
-      yq -e '.components.mise' "$INSTALL_YML_FILE" &>/dev/null
-      ;;
-    brew|docker|ai|terminals|editors)
-      yq -e '.components.'"$entry" "$INSTALL_YML_FILE" &>/dev/null
-      ;;
     */*)
       local parent="${entry%%/*}" child="${entry#*/}"
       v="$child" yq -e '.components.'"$parent"'.tools[] | select(. == strenv(v))' "$INSTALL_YML_FILE" &>/dev/null
       ;;
     *)
-      return 1
+      yq -e '.components.'"$entry" "$INSTALL_YML_FILE" &>/dev/null
       ;;
   esac
 }
@@ -229,4 +219,30 @@ state_get() {
 state_get_list() {
   [[ -f "$INSTALL_YML_FILE" ]] || return 0
   yq '.components.'"$1"' | (. // []) | .[]' "$INSTALL_YML_FILE" 2>/dev/null || true
+}
+
+# state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY
+# Loads saved selections from YAML, validates each against SCRIPT_DIR.
+# Returns 0 (replaying) if valid saved selections found.
+# Returns 1 (fresh) and clears the list if interactive or no valid saves.
+state_load_selections() {
+  local state_key="$1" script_dir="$2"
+  local -n __selections=$3
+  __selections=()
+
+  local _saved
+  _saved=$(state_get_list "$state_key")
+  if [[ -n "$_saved" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
+    local _item
+    while IFS= read -r _item; do
+      if [[ -d "$script_dir/$_item" ]]; then __selections+=("$_item"); fi
+    done <<< "$_saved"
+    if [[ ${#__selections[@]} -gt 0 ]]; then
+      info "Using saved selections: ${__selections[*]}"
+      return 0
+    fi
+  fi
+
+  state_clear_list "$state_key"
+  return 1
 }

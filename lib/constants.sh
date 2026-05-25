@@ -56,6 +56,9 @@ TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 # Never committed — machine-specific, lives in ~/.config/workbench/.
 WORKBENCH_STATE_DIR="$HOME/.config/workbench"
 
+# Core components — always synced, never tracked in install.yml.
+CORE_COMPONENTS="bin git zsh task"
+
 # ─── Docker / Colima ──────────────────────────────────────────────────────────
 DOCKER_RUN_DIR="$HOME/.docker/run"
 COLIMA_DIR="$HOME/.colima"
@@ -65,6 +68,7 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
 MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
+INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"

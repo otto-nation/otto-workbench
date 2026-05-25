@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_command brew "Homebrew not found — skipping package install" || exit 0
 require_command jq  "jq not found — required for brew install status" || exit 1
 
+_BREW_STATE_KEY="brew.stacks"
+
 # Build installed package sets once from brew's own metadata.
 # Using brew info JSON (formula name / cask token) rather than keg names means
 # aliases like delta→git-delta resolve correctly without per-package subprocesses.
@@ -197,6 +199,7 @@ _brew_select_category() {
 _brew_select_optional() {
   local brew_dir="$1"
   local category_dirs=() category_labels=()
+  local _rel
 
   for d in "$brew_dir"/*/; do
     [[ -d "$d" ]] || continue
@@ -236,6 +239,13 @@ _brew_select_optional() {
   local num
   for num in $_sel; do
     _brew_select_category "${category_dirs[$((num - 1))]}" "${category_labels[$((num - 1))]}"
+  done
+
+  # Record selected stacks in install.yml
+  for i in "${!_SELECTED_FILES[@]}"; do
+    _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
+    _rel="${_rel%.Brewfile}"
+    state_append_list "$_BREW_STATE_KEY" "$_rel"
   done
 
   for i in "${!_SELECTED_FILES[@]}"; do
@@ -281,8 +291,31 @@ _brew_migrate_version_managers() {
   if [[ "$found" -eq 1 ]]; then echo -e "  ${DIM}Re-add runtimes with: mise use node@lts  |  mise use java@21${NC}"; fi
 }
 
+_brew_replay_saved() {
+  local brew_dir="$1" stacks="$2"
+  info "Using saved brew stacks"
+  local _stack _brewfile
+  while IFS= read -r _stack; do
+    _brewfile="$brew_dir/${_stack}.Brewfile"
+    if [[ -f "$_brewfile" ]]; then
+      _brew_install_file "$_brewfile" "$_stack"
+    else
+      warn "Saved stack not found: $_stack"
+    fi
+  done <<< "$stacks"
+}
+
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
-_brew_select_optional "$SCRIPT_DIR"
+
+# Replay saved stacks or run interactive selection
+_saved_stacks=$(state_get_list "$_BREW_STATE_KEY")
+if [[ -n "$_saved_stacks" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
+  _brew_replay_saved "$SCRIPT_DIR" "$_saved_stacks"
+else
+  state_clear_list "$_BREW_STATE_KEY"
+  _brew_select_optional "$SCRIPT_DIR"
+fi
+
 _brew_migrate_version_managers
 
 # --- Autoupdate ---------------------------------------------------------------

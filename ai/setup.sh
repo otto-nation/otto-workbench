@@ -94,7 +94,11 @@ STEPS=()
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-select_tools
+_STATE_KEY="ai.tools"
+
+if ! state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TOOLS; then
+  select_tools
+fi
 
 # Install scripts for each selected tool before running steps —
 # tools like claude-rules must be in PATH for their setup steps.
@@ -119,7 +123,7 @@ run_steps
 # Record installed component and sub-tools in state
 state_record "ai"
 for _tool in "${SELECTED_TOOLS[@]}"; do
-  state_record "ai/$_tool"
+  state_append_list "$_STATE_KEY" "$_tool"
 done
 
 echo

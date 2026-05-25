@@ -31,9 +31,7 @@ _source_with_fake_home() {
 @test "sync gates on state file: skips uninstalled component" {
   _source_with_fake_home
 
-  # Create state file with only bin and git
-  state_record "bin"
-  state_record "git"
+  state_record "ai"
 
   run state_file_exists
   [[ "$status" -eq 0 ]]
@@ -45,9 +43,9 @@ _source_with_fake_home() {
 @test "sync runs installed component" {
   _source_with_fake_home
 
-  state_record "git"
+  state_record "ai"
 
-  run state_is_installed "git"
+  run state_is_installed "ai"
   [[ "$status" -eq 0 ]]
 }
 
@@ -62,19 +60,21 @@ _source_with_fake_home() {
 # ─── Infrastructure always-sync list ────────────────────────────────────────
 
 @test "infrastructure components match always-sync list" {
-  local _always_sync="bin task git zsh"
+  # Source the real constant — CORE_COMPONENTS is the SSOT for always-synced components
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/constants.sh"
 
   # Infrastructure entries match
-  [[ " $_always_sync " == *" bin "* ]]
-  [[ " $_always_sync " == *" task "* ]]
-  [[ " $_always_sync " == *" git "* ]]
-  [[ " $_always_sync " == *" zsh "* ]]
+  [[ " $CORE_COMPONENTS " == *" bin "* ]]
+  [[ " $CORE_COMPONENTS " == *" task "* ]]
+  [[ " $CORE_COMPONENTS " == *" git "* ]]
+  [[ " $CORE_COMPONENTS " == *" zsh "* ]]
 
   # Non-infrastructure entries do not match
-  [[ " $_always_sync " != *" docker "* ]]
-  [[ " $_always_sync " != *" mise "* ]]
-  [[ " $_always_sync " != *" ai "* ]]
-  [[ " $_always_sync " != *" ai/claude "* ]]
+  [[ " $CORE_COMPONENTS " != *" docker "* ]]
+  [[ " $CORE_COMPONENTS " != *" mise "* ]]
+  [[ " $CORE_COMPONENTS " != *" ai "* ]]
+  [[ " $CORE_COMPONENTS " != *" ai/claude "* ]]
 }
 
 # ─── Component path derivation ──────────────────────────────────────────────

@@ -215,7 +215,7 @@ state_get() {
   [[ -f "$INSTALL_YML_FILE" ]] || return 0
   local val
   val=$(yq '.components.'"$1"' // ""' "$INSTALL_YML_FILE" 2>/dev/null)
-  [[ -n "$val" ]] && echo "$val"
+  if [[ -n "$val" ]]; then echo "$val"; fi
 }
 
 # state_get_list KEY — reads a YAML list, one item per line.

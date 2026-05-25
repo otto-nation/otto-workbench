@@ -858,11 +858,8 @@ _discover_components() {
     [[ -z "$comp" ]] && continue
     echo "    $comp"
     val=$(c="$comp" yq -r '.components[env(c)]' "$INSTALL_YML_FILE" 2>/dev/null)
-    if [[ "$val" != "true" ]]; then
-      c="$comp" yq -r '.components[env(c)] | to_entries[] | "      " + .key + ": " + (.value | tostring)' "$INSTALL_YML_FILE" 2>/dev/null | while IFS= read -r line; do
-        echo "$line"
-      done
-    fi
+    [[ "$val" == "true" ]] && continue
+    c="$comp" yq -r '.components[env(c)] | to_entries[] | "      " + .key + ": " + (.value | tostring)' "$INSTALL_YML_FILE" 2>/dev/null
   done < <(yq '.components | keys | .[]' "$INSTALL_YML_FILE" 2>/dev/null)
 }
 

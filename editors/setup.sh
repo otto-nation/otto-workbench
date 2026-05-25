@@ -32,8 +32,10 @@ select_editors() {
 
 echo -e "${BOLD}${BLUE}Editor setup${NC}\n"
 
+_STATE_KEY="editors.tools"
+
 SELECTED_EDITORS=()
-if state_load_selections "editors.tools" "$SCRIPT_DIR" SELECTED_EDITORS; then
+if state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_EDITORS; then
   _replaying=true
 else
   select_editors
@@ -51,7 +53,7 @@ for _editor in "${SELECTED_EDITORS[@]}"; do
   # shellcheck source=/dev/null
   . "$_EDITORS_DIR/$_editor/setup.sh"
   if [[ "$_replaying" != true ]]; then
-    state_append_list "editors.tools" "$_editor"
+    state_append_list "$_STATE_KEY" "$_editor"
   fi
 done
 unset _editor _replaying

@@ -36,8 +36,10 @@ select_terminals() {
 
 echo -e "${BOLD}${BLUE}Terminal setup${NC}\n"
 
+_STATE_KEY="terminals.tools"
+
 SELECTED_TERMINALS=()
-if state_load_selections "terminals.tools" "$SCRIPT_DIR" SELECTED_TERMINALS; then
+if state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TERMINALS; then
   _replaying=true
 else
   select_terminals
@@ -54,7 +56,7 @@ for _terminal in "${SELECTED_TERMINALS[@]}"; do
   # shellcheck source=/dev/null
   . "$SCRIPT_DIR/$_terminal/setup.sh"
   if [[ "$_replaying" != true ]]; then
-    state_append_list "terminals.tools" "$_terminal"
+    state_append_list "$_STATE_KEY" "$_terminal"
   fi
 done
 unset _terminal _replaying

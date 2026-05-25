@@ -94,7 +94,9 @@ STEPS=()
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-if ! state_load_selections "ai.tools" "$SCRIPT_DIR" SELECTED_TOOLS; then
+_STATE_KEY="ai.tools"
+
+if ! state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TOOLS; then
   select_tools
 fi
 
@@ -121,7 +123,7 @@ run_steps
 # Record installed component and sub-tools in state
 state_record "ai"
 for _tool in "${SELECTED_TOOLS[@]}"; do
-  state_append_list "ai.tools" "$_tool"
+  state_append_list "$_STATE_KEY" "$_tool"
 done
 
 echo

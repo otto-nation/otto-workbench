@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_command brew "Homebrew not found — skipping package install" || exit 0
 require_command jq  "jq not found — required for brew install status" || exit 1
 
+_BREW_STATE_KEY="brew.stacks"
+
 # Build installed package sets once from brew's own metadata.
 # Using brew info JSON (formula name / cask token) rather than keg names means
 # aliases like delta→git-delta resolve correctly without per-package subprocesses.
@@ -243,7 +245,7 @@ _brew_select_optional() {
   for i in "${!_SELECTED_FILES[@]}"; do
     _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
     _rel="${_rel%.Brewfile}"
-    state_append_list "brew.stacks" "$_rel"
+    state_append_list "$_BREW_STATE_KEY" "$_rel"
   done
 
   for i in "${!_SELECTED_FILES[@]}"; do
@@ -306,11 +308,11 @@ _brew_replay_saved() {
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
 
 # Replay saved stacks or run interactive selection
-_saved_stacks=$(state_get_list "brew.stacks")
+_saved_stacks=$(state_get_list "$_BREW_STATE_KEY")
 if [[ -n "$_saved_stacks" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   _brew_replay_saved "$SCRIPT_DIR" "$_saved_stacks"
 else
-  state_clear_list "brew.stacks"
+  state_clear_list "$_BREW_STATE_KEY"
   _brew_select_optional "$SCRIPT_DIR"
 fi
 

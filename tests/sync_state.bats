@@ -31,9 +31,7 @@ _source_with_fake_home() {
 @test "sync gates on state file: skips uninstalled component" {
   _source_with_fake_home
 
-  # Create state file with only bin and git
-  state_record "bin"
-  state_record "git"
+  state_record "ai"
 
   run state_file_exists
   [[ "$status" -eq 0 ]]
@@ -45,9 +43,9 @@ _source_with_fake_home() {
 @test "sync runs installed component" {
   _source_with_fake_home
 
-  state_record "git"
+  state_record "ai"
 
-  run state_is_installed "git"
+  run state_is_installed "ai"
   [[ "$status" -eq 0 ]]
 }
 

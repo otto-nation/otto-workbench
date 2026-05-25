@@ -28,9 +28,10 @@ teardown() {
 
 # ─── Core components ──────────────────────────────────────────────────────────
 
-@test "records core components unconditionally" {
+@test "core components are always installed (no state needed)" {
   migration_20260422_generate_initial_state
 
+  # Core components return 0 regardless of state file
   run state_is_installed "bin"
   [[ "$status" -eq 0 ]]
 
@@ -45,7 +46,7 @@ teardown() {
 
 @test "detects docker by runtime aliases symlink" {
   mkdir -p "$(dirname "$DOCKER_RUNTIME_ALIASES")"
-  ln -s /dev/null "$DOCKER_RUNTIME_ALIASES"
+  ln -s "$REPO_ROOT/docker/orbstack/aliases.zsh" "$DOCKER_RUNTIME_ALIASES"
 
   migration_20260422_generate_initial_state
 
@@ -136,17 +137,28 @@ teardown() {
 
 # ─── Idempotency ──────────────────────────────────────────────────────────────
 
-@test "skips when state file already exists" {
-  state_record "something"
+@test "skips when YAML state file already exists" {
+  state_record "docker"
 
   migration_20260422_generate_initial_state
 
-  # Migration was a no-op — only "something" should be present
-  run state_is_installed "something"
+  # Migration was a no-op — only "docker" should be present
+  run state_is_installed "docker"
   [[ "$status" -eq 0 ]]
 
-  run state_is_installed "bin"
+  # Terminals should not have been detected (ghostty dir absent)
+  run state_is_installed "terminals"
   [[ "$status" -ne 0 ]]
+}
+
+@test "skips when legacy state file exists" {
+  mkdir -p "$(dirname "$INSTALLED_STATE_FILE")"
+  echo "something" > "$INSTALLED_STATE_FILE"
+
+  migration_20260422_generate_initial_state
+
+  # Migration was a no-op — YAML file should not exist
+  [[ ! -f "$INSTALL_YML_FILE" ]]
 }
 
 # ─── Multiple components ──────────────────────────────────────────────────────
@@ -165,14 +177,6 @@ teardown() {
 
   migration_20260422_generate_initial_state
 
-  # Core components
-  run state_is_installed "bin"
-  [[ "$status" -eq 0 ]]
-  run state_is_installed "git"
-  [[ "$status" -eq 0 ]]
-  run state_is_installed "zsh"
-  [[ "$status" -eq 0 ]]
-
   # Detected optional components
   run state_is_installed "docker"
   [[ "$status" -eq 0 ]]
@@ -190,4 +194,38 @@ teardown() {
   [[ "$status" -ne 0 ]]
   run state_is_installed "ai/serena"
   [[ "$status" -ne 0 ]]
+}
+
+# ─── YAML migration ──────────────────────────────────────────────────────────
+
+@test "migration converts legacy state file to YAML" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/migrations/20260524-migrate-state-to-yaml.sh"
+
+  # Create a legacy state file
+  mkdir -p "$(dirname "$INSTALLED_STATE_FILE")"
+  cat > "$INSTALLED_STATE_FILE" <<'EOF'
+ai
+ai/claude
+docker
+terminals
+terminals/ghostty
+EOF
+
+  migration_20260524_migrate_state_to_yaml
+
+  # YAML should exist with correct content
+  [[ -f "$INSTALL_YML_FILE" ]]
+  run state_is_installed "ai"
+  [[ "$status" -eq 0 ]]
+  run state_is_installed "ai/claude"
+  [[ "$status" -eq 0 ]]
+  run state_is_installed "docker"
+  [[ "$status" -eq 0 ]]
+  run state_is_installed "terminals/ghostty"
+  [[ "$status" -eq 0 ]]
+
+  # Old file should be renamed
+  [[ ! -f "$INSTALLED_STATE_FILE" ]]
+  [[ -f "${INSTALLED_STATE_FILE}.migrated" ]]
 }

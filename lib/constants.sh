@@ -65,6 +65,7 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
 MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
+INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"

@@ -238,6 +238,13 @@ _brew_select_optional() {
     _brew_select_category "${category_dirs[$((num - 1))]}" "${category_labels[$((num - 1))]}"
   done
 
+  # Record selected stacks in install.yml
+  for i in "${!_SELECTED_FILES[@]}"; do
+    local _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
+    _rel="${_rel%.Brewfile}"
+    state_append_list "brew.stacks" "$_rel"
+  done
+
   for i in "${!_SELECTED_FILES[@]}"; do
     _brew_select_packages "${_SELECTED_FILES[$i]}" "${_SELECTED_LABELS[$i]}"
   done
@@ -281,8 +288,30 @@ _brew_migrate_version_managers() {
   if [[ "$found" -eq 1 ]]; then echo -e "  ${DIM}Re-add runtimes with: mise use node@lts  |  mise use java@21${NC}"; fi
 }
 
+_brew_replay_saved() {
+  local brew_dir="$1"
+  info "Using saved brew stacks"
+  local _stack _brewfile
+  while IFS= read -r _stack; do
+    _brewfile="$brew_dir/${_stack}.Brewfile"
+    if [[ -f "$_brewfile" ]]; then
+      _brew_install_file "$_brewfile" "$_stack"
+    else
+      warn "Saved stack not found: $_stack"
+    fi
+  done <<< "$2"
+}
+
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
-_brew_select_optional "$SCRIPT_DIR"
+
+# Replay saved stacks or run interactive selection
+_saved_stacks=$(state_get_list "brew.stacks")
+if [[ -n "$_saved_stacks" ]]; then
+  _brew_replay_saved "$SCRIPT_DIR" "$_saved_stacks"
+else
+  _brew_select_optional "$SCRIPT_DIR"
+fi
+
 _brew_migrate_version_managers
 
 # --- Autoupdate ---------------------------------------------------------------

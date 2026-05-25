@@ -33,7 +33,19 @@ select_editors() {
 echo -e "${BOLD}${BLUE}Editor setup${NC}\n"
 
 SELECTED_EDITORS=()
-select_editors
+_saved_tools=$(state_get_list "editors.tools")
+if [[ -n "$_saved_tools" ]]; then
+  while IFS= read -r _e; do
+    [[ -d "$SCRIPT_DIR/$_e" ]] && SELECTED_EDITORS+=("$_e")
+  done <<< "$_saved_tools"
+  if [[ ${#SELECTED_EDITORS[@]} -gt 0 ]]; then
+    info "Using saved selections: ${SELECTED_EDITORS[*]}"
+  else
+    select_editors
+  fi
+else
+  select_editors
+fi
 
 if [[ ${#SELECTED_EDITORS[@]} -eq 0 ]]; then
   skip "Editor setup"
@@ -45,6 +57,7 @@ for _editor in "${SELECTED_EDITORS[@]}"; do
   echo
   # shellcheck source=/dev/null
   . "$_EDITORS_DIR/$_editor/setup.sh"
+  state_append_list "editors.tools" "$_editor"
 done
 unset _editor
 

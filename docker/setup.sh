@@ -79,6 +79,9 @@ if [[ -L "$DOCKER_RUNTIME_ALIASES" ]]; then
   _existing="${_existing%%/aliases.zsh}"  # strip suffix → orbstack
 fi
 
+# Check install.yml for a saved runtime (enables non-interactive re-install)
+_saved_runtime=$(state_get "docker.runtime")
+
 if [[ -n "$_existing" && -d "$SCRIPT_DIR/$_existing" ]]; then
   info "Current docker runtime: $_existing"
   if confirm_n "Change runtime?"; then
@@ -86,6 +89,9 @@ if [[ -n "$_existing" && -d "$SCRIPT_DIR/$_existing" ]]; then
   else
     DOCKER_RUNTIME="$_existing"
   fi
+elif [[ -n "$_saved_runtime" && "$_saved_runtime" != "null" && -d "$SCRIPT_DIR/$_saved_runtime" ]]; then
+  info "Using saved runtime: $_saved_runtime"
+  DOCKER_RUNTIME="$_saved_runtime"
 else
   select_runtime
 fi
@@ -117,6 +123,8 @@ _docker_write_runtime_aliases "$DOCKER_RUNTIME"
 echo
 info "Testcontainers"
 install_symlink "$SCRIPT_DIR/testcontainers.properties" ~/.testcontainers.properties
+
+state_set "docker.runtime" "$DOCKER_RUNTIME"
 
 echo
 success "Docker setup complete!"

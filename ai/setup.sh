@@ -94,7 +94,19 @@ STEPS=()
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-select_tools
+_saved_tools=$(state_get_list "ai.tools")
+if [[ -n "$_saved_tools" ]]; then
+  while IFS= read -r _t; do
+    [[ -d "$SCRIPT_DIR/$_t" ]] && SELECTED_TOOLS+=("$_t")
+  done <<< "$_saved_tools"
+  if [[ ${#SELECTED_TOOLS[@]} -gt 0 ]]; then
+    info "Using saved selections: ${SELECTED_TOOLS[*]}"
+  else
+    select_tools
+  fi
+else
+  select_tools
+fi
 
 # Install scripts for each selected tool before running steps —
 # tools like claude-rules must be in PATH for their setup steps.

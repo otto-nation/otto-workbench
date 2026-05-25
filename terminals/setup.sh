@@ -37,7 +37,19 @@ select_terminals() {
 echo -e "${BOLD}${BLUE}Terminal setup${NC}\n"
 
 SELECTED_TERMINALS=()
-select_terminals
+_saved_tools=$(state_get_list "terminals.tools")
+if [[ -n "$_saved_tools" ]]; then
+  while IFS= read -r _t; do
+    [[ -d "$SCRIPT_DIR/$_t" ]] && SELECTED_TERMINALS+=("$_t")
+  done <<< "$_saved_tools"
+  if [[ ${#SELECTED_TERMINALS[@]} -gt 0 ]]; then
+    info "Using saved selections: ${SELECTED_TERMINALS[*]}"
+  else
+    select_terminals
+  fi
+else
+  select_terminals
+fi
 
 if [[ ${#SELECTED_TERMINALS[@]} -eq 0 ]]; then
   skip "Terminal setup"
@@ -48,6 +60,7 @@ for _terminal in "${SELECTED_TERMINALS[@]}"; do
   echo
   # shellcheck source=/dev/null
   . "$SCRIPT_DIR/$_terminal/setup.sh"
+  state_append_list "terminals.tools" "$_terminal"
 done
 unset _terminal
 

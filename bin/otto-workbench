@@ -849,11 +849,23 @@ _discover_components() {
     echo -e "    ${DIM}(no state file — run 'otto-workbench discover regenerate' to detect)${NC}"
     return
   fi
-  local _entry
-  while IFS= read -r _entry; do
-    [[ -z "$_entry" ]] && continue
-    echo "    $_entry"
-  done < "$INSTALLED_STATE_FILE"
+  if [[ ! -f "$INSTALL_YML_FILE" ]]; then
+    echo -e "    ${DIM}(legacy state file — run 'otto-workbench sync' to migrate)${NC}"
+    return
+  fi
+  local comp
+  for comp in $(yq '.components | keys | .[]' "$INSTALL_YML_FILE" 2>/dev/null); do
+    local val
+    val=$(yq -r '.components.'"$comp" "$INSTALL_YML_FILE" 2>/dev/null)
+    if [[ "$val" == "true" ]]; then
+      echo "    $comp"
+    else
+      echo "    $comp"
+      yq -r '.components.'"$comp"' | to_entries[] | "      " + .key + ": " + (.value | tostring)' "$INSTALL_YML_FILE" 2>/dev/null | while IFS= read -r line; do
+        echo "$line"
+      done
+    fi
+  done
 }
 
 _discover_scripts() {
@@ -897,7 +909,7 @@ cmd_discover() {
   case "$subcmd" in
     regenerate)
       info "Regenerating installation state"
-      rm -f "$INSTALLED_STATE_FILE"
+      rm -f "$INSTALL_YML_FILE" "$INSTALLED_STATE_FILE"
       state_detect_installed
       echo
       success "Installation state regenerated"

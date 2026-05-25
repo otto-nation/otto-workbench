@@ -239,7 +239,7 @@ cmd_sync() {
   local -a _step_files=()
   discover_step_files _step_files
   local _f _c _path
-  local _always_sync="bin task git zsh"
+  local _always_sync="$CORE_COMPONENTS"
   for _f in "${_step_files[@]}"; do
     _c=$(basename "$(dirname "$_f")")
     # Derive component path relative to WORKBENCH_DIR (e.g. ai/claude from ai/claude/steps.sh)
@@ -853,19 +853,17 @@ _discover_components() {
     echo -e "    ${DIM}(legacy state file — run 'otto-workbench sync' to migrate)${NC}"
     return
   fi
-  local comp
-  for comp in $(yq '.components | keys | .[]' "$INSTALL_YML_FILE" 2>/dev/null); do
-    local val
-    val=$(yq -r '.components.'"$comp" "$INSTALL_YML_FILE" 2>/dev/null)
-    if [[ "$val" == "true" ]]; then
-      echo "    $comp"
-    else
-      echo "    $comp"
-      yq -r '.components.'"$comp"' | to_entries[] | "      " + .key + ": " + (.value | tostring)' "$INSTALL_YML_FILE" 2>/dev/null | while IFS= read -r line; do
+  local comp val
+  while IFS= read -r comp; do
+    [[ -z "$comp" ]] && continue
+    echo "    $comp"
+    val=$(c="$comp" yq -r '.components[env(c)]' "$INSTALL_YML_FILE" 2>/dev/null)
+    if [[ "$val" != "true" ]]; then
+      c="$comp" yq -r '.components[env(c)] | to_entries[] | "      " + .key + ": " + (.value | tostring)' "$INSTALL_YML_FILE" 2>/dev/null | while IFS= read -r line; do
         echo "$line"
       done
     fi
-  done
+  done < <(yq '.components | keys | .[]' "$INSTALL_YML_FILE" 2>/dev/null)
 }
 
 _discover_scripts() {

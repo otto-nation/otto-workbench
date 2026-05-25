@@ -56,6 +56,9 @@ TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 # Never committed — machine-specific, lives in ~/.config/workbench/.
 WORKBENCH_STATE_DIR="$HOME/.config/workbench"
 
+# Core components — always synced, never tracked in install.yml.
+CORE_COMPONENTS="bin git zsh task"
+
 # ─── Docker / Colima ──────────────────────────────────────────────────────────
 DOCKER_RUN_DIR="$HOME/.docker/run"
 COLIMA_DIR="$HOME/.colima"

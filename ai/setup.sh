@@ -95,9 +95,9 @@ STEPS=()
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 _saved_tools=$(state_get_list "ai.tools")
-if [[ -n "$_saved_tools" ]]; then
+if [[ -n "$_saved_tools" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   while IFS= read -r _t; do
-    [[ -d "$SCRIPT_DIR/$_t" ]] && SELECTED_TOOLS+=("$_t")
+    if [[ -d "$SCRIPT_DIR/$_t" ]]; then SELECTED_TOOLS+=("$_t"); fi
   done <<< "$_saved_tools"
   if [[ ${#SELECTED_TOOLS[@]} -gt 0 ]]; then
     info "Using saved selections: ${SELECTED_TOOLS[*]}"
@@ -131,7 +131,7 @@ run_steps
 # Record installed component and sub-tools in state
 state_record "ai"
 for _tool in "${SELECTED_TOOLS[@]}"; do
-  state_record "ai/$_tool"
+  state_append_list "ai.tools" "$_tool"
 done
 
 echo

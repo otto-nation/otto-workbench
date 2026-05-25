@@ -222,6 +222,8 @@ EOF
   [[ "$status" -eq 0 ]]
   run state_is_installed "docker"
   [[ "$status" -eq 0 ]]
+  run state_is_installed "terminals"
+  [[ "$status" -eq 0 ]]
   run state_is_installed "terminals/ghostty"
   [[ "$status" -eq 0 ]]
 

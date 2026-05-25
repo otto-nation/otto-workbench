@@ -18,7 +18,6 @@ if [[ -z "${INSTALL_YML_FILE:-}" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
-_CORE_COMPONENTS="bin git zsh task"
 
 # _state_ensure_yml — creates the YAML file with an empty components map if missing.
 _state_ensure_yml() {
@@ -28,7 +27,7 @@ _state_ensure_yml() {
 
 # _state_is_core ENTRY — returns 0 if entry is a core component (always synced).
 _state_is_core() {
-  [[ " $_CORE_COMPONENTS " == *" $1 "* ]]
+  [[ " $CORE_COMPONENTS " == *" $1 "* ]]
 }
 
 # state_record ENTRY — records a component or sub-tool in install.yml. Idempotent.
@@ -46,7 +45,11 @@ state_record() {
       ;;
     */*)
       local parent="${entry%%/*}" child="${entry#*/}"
-      yq -i '.components.'"$parent"' |= (. // {}) | .components.'"$parent"'.tools |= ((. // []) + ["'"$child"'"] | unique)' "$INSTALL_YML_FILE"
+      v="$child" yq -i '.components.'"$parent"' |= (. // {}) | .components.'"$parent"'.tools |= ((. // []) + [strenv(v)] | unique)' "$INSTALL_YML_FILE"
+      ;;
+    *)
+      echo "WARNING: state_record: unrecognized entry: $entry" >&2
+      return 1
       ;;
   esac
 }
@@ -66,7 +69,7 @@ state_is_installed() {
       ;;
     */*)
       local parent="${entry%%/*}" child="${entry#*/}"
-      yq -e '.components.'"$parent"'.tools[] | select(. == "'"$child"'")' "$INSTALL_YML_FILE" &>/dev/null
+      v="$child" yq -e '.components.'"$parent"'.tools[] | select(. == strenv(v))' "$INSTALL_YML_FILE" &>/dev/null
       ;;
     *)
       return 1
@@ -83,7 +86,7 @@ state_remove() {
   case "$entry" in
     */*)
       local parent="${entry%%/*}" child="${entry#*/}"
-      yq -i 'del(.components.'"$parent"'.tools[] | select(. == "'"$child"'"))' "$INSTALL_YML_FILE"
+      v="$child" yq -i 'del(.components.'"$parent"'.tools[] | select(. == strenv(v)))' "$INSTALL_YML_FILE"
       ;;
     *)
       yq -i 'del(.components.'"$entry"')' "$INSTALL_YML_FILE"
@@ -99,14 +102,15 @@ state_file_exists() {
 # state_list — prints all installed entries, one per line (flat format for compat).
 state_list() {
   [[ -f "$INSTALL_YML_FILE" ]] || return 0
-  local comp
-  for comp in $(yq '.components | keys | .[]' "$INSTALL_YML_FILE" 2>/dev/null); do
+  local comp tool
+  while IFS= read -r comp; do
+    [[ -z "$comp" ]] && continue
     echo "$comp"
-    local tool
-    for tool in $(yq '.components.'"$comp"'.tools | (. // []) | .[]' "$INSTALL_YML_FILE" 2>/dev/null); do
+    while IFS= read -r tool; do
+      [[ -z "$tool" ]] && continue
       echo "$comp/$tool"
-    done
-  done
+    done < <(yq '.components.'"$comp"'.tools | (. // []) | .[]' "$INSTALL_YML_FILE" 2>/dev/null)
+  done < <(yq '.components | keys | .[]' "$INSTALL_YML_FILE" 2>/dev/null)
 }
 
 # state_prune_orphans — removes YAML entries that have no matching steps.sh.
@@ -195,7 +199,7 @@ state_detect_installed() {
 state_set() {
   local key="$1" value="$2"
   _state_ensure_yml
-  yq -i '.components.'"$key"' = "'"$value"'"' "$INSTALL_YML_FILE"
+  v="$value" yq -i '.components.'"$key"' = strenv(v)' "$INSTALL_YML_FILE"
 }
 
 # state_append_list KEY VALUE — appends VALUE to a YAML list (idempotent).
@@ -203,18 +207,15 @@ state_set() {
 state_append_list() {
   local key="$1" value="$2"
   _state_ensure_yml
-  yq -i '.components.'"$key"' |= ((. // []) + ["'"$value"'"] | unique)' "$INSTALL_YML_FILE"
+  v="$value" yq -i '.components.'"$key"' |= ((. // []) + [strenv(v)] | unique)' "$INSTALL_YML_FILE"
 }
 
-# state_get KEY — reads a YAML value. Prints empty string if missing.
+# state_get KEY — reads a YAML value. Returns empty string for missing/null keys.
 state_get() {
   [[ -f "$INSTALL_YML_FILE" ]] || return 0
   local val
-  val=$(yq '.components.'"$1" "$INSTALL_YML_FILE" 2>/dev/null)
-  if [[ "$val" == "null" || -z "$val" ]]; then
-    return 0
-  fi
-  echo "$val"
+  val=$(yq '.components.'"$1"' // ""' "$INSTALL_YML_FILE" 2>/dev/null)
+  [[ -n "$val" ]] && echo "$val"
 }
 
 # state_get_list KEY — reads a YAML list, one item per line.

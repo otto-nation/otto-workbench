@@ -197,6 +197,7 @@ _brew_select_category() {
 _brew_select_optional() {
   local brew_dir="$1"
   local category_dirs=() category_labels=()
+  local _rel
 
   for d in "$brew_dir"/*/; do
     [[ -d "$d" ]] || continue
@@ -240,7 +241,7 @@ _brew_select_optional() {
 
   # Record selected stacks in install.yml
   for i in "${!_SELECTED_FILES[@]}"; do
-    local _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
+    _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
     _rel="${_rel%.Brewfile}"
     state_append_list "brew.stacks" "$_rel"
   done
@@ -289,7 +290,7 @@ _brew_migrate_version_managers() {
 }
 
 _brew_replay_saved() {
-  local brew_dir="$1"
+  local brew_dir="$1" stacks="$2"
   info "Using saved brew stacks"
   local _stack _brewfile
   while IFS= read -r _stack; do
@@ -299,16 +300,17 @@ _brew_replay_saved() {
     else
       warn "Saved stack not found: $_stack"
     fi
-  done <<< "$2"
+  done <<< "$stacks"
 }
 
 _brew_install_file "$SCRIPT_DIR/Brewfile" "core packages"
 
 # Replay saved stacks or run interactive selection
 _saved_stacks=$(state_get_list "brew.stacks")
-if [[ -n "$_saved_stacks" ]]; then
+if [[ -n "$_saved_stacks" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   _brew_replay_saved "$SCRIPT_DIR" "$_saved_stacks"
 else
+  state_set "brew.stacks" "[]"
   _brew_select_optional "$SCRIPT_DIR"
 fi
 

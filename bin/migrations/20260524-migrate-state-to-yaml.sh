@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Migration: convert installed.components flat file to install.yml YAML.
 # Reads each line from the old state file and calls state_record (which now
-# writes YAML). Enriches docker runtime from the existing symlink target.
+# writes YAML). Sub-selections (docker runtime, brew stacks) are populated
+# on the next interactive install or via `otto-workbench discover regenerate`.
 
 migration_20260524_migrate_state_to_yaml() {
   [[ -f "$INSTALL_YML_FILE" ]] && return 0

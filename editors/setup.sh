@@ -33,17 +33,20 @@ select_editors() {
 echo -e "${BOLD}${BLUE}Editor setup${NC}\n"
 
 SELECTED_EDITORS=()
+_replaying=false
 _saved_tools=$(state_get_list "editors.tools")
-if [[ -n "$_saved_tools" ]]; then
+if [[ -n "$_saved_tools" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   while IFS= read -r _e; do
-    [[ -d "$SCRIPT_DIR/$_e" ]] && SELECTED_EDITORS+=("$_e")
+    if [[ -d "$SCRIPT_DIR/$_e" ]]; then SELECTED_EDITORS+=("$_e"); fi
   done <<< "$_saved_tools"
   if [[ ${#SELECTED_EDITORS[@]} -gt 0 ]]; then
+    _replaying=true
     info "Using saved selections: ${SELECTED_EDITORS[*]}"
   else
     select_editors
   fi
 else
+  state_set "editors.tools" "[]"
   select_editors
 fi
 
@@ -57,9 +60,11 @@ for _editor in "${SELECTED_EDITORS[@]}"; do
   echo
   # shellcheck source=/dev/null
   . "$_EDITORS_DIR/$_editor/setup.sh"
-  state_append_list "editors.tools" "$_editor"
+  if [[ "$_replaying" == false ]]; then
+    state_append_list "editors.tools" "$_editor"
+  fi
 done
-unset _editor
+unset _editor _replaying
 
 echo
 success "Editor setup complete!"

@@ -12,6 +12,7 @@ setup() {
   # Provide the constants that state.sh requires
   export INSTALLED_STATE_FILE="$FAKE_STATE/installed.components"
   export INSTALL_YML_FILE="$FAKE_STATE/install.yml"
+  export CORE_COMPONENTS="bin git zsh task"
 
   # Source the real state library
   . "$REPO_ROOT/lib/state.sh"
@@ -193,9 +194,9 @@ teardown() {
 
   run state_list
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ai"* ]]
-  [[ "$output" == *"ai/claude"* ]]
-  [[ "$output" == *"docker"* ]]
+  echo "$output" | grep -xF "ai"
+  echo "$output" | grep -xF "ai/claude"
+  echo "$output" | grep -xF "docker"
 }
 
 @test "state_list returns 0 when no state file" {
@@ -300,7 +301,7 @@ teardown() {
 }
 
 @test "state_get returns empty for missing key" {
-  _state_ensure_yml
+  echo "components: {}" > "$INSTALL_YML_FILE"
   run state_get "docker.runtime"
   [[ -z "$output" ]]
 }
@@ -335,7 +336,7 @@ teardown() {
 }
 
 @test "state_get_list returns empty for missing key" {
-  _state_ensure_yml
+  echo "components: {}" > "$INSTALL_YML_FILE"
   run state_get_list "brew.stacks"
   [[ -z "$output" ]]
 }

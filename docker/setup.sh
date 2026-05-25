@@ -79,17 +79,19 @@ if [[ -L "$DOCKER_RUNTIME_ALIASES" ]]; then
   _existing="${_existing%%/aliases.zsh}"  # strip suffix → orbstack
 fi
 
-# Check install.yml for a saved runtime (enables non-interactive re-install)
+# Fallback for first-time install or after symlink removal
 _saved_runtime=$(state_get "docker.runtime")
 
-if [[ -n "$_existing" && -d "$SCRIPT_DIR/$_existing" ]]; then
+if [[ "${WORKBENCH_INTERACTIVE:-}" == "1" ]]; then
+  select_runtime
+elif [[ -n "$_existing" && -d "$SCRIPT_DIR/$_existing" ]]; then
   info "Current docker runtime: $_existing"
   if confirm_n "Change runtime?"; then
     select_runtime
   else
     DOCKER_RUNTIME="$_existing"
   fi
-elif [[ -n "$_saved_runtime" && "$_saved_runtime" != "null" && -d "$SCRIPT_DIR/$_saved_runtime" ]]; then
+elif [[ -n "$_saved_runtime" && -d "$SCRIPT_DIR/$_saved_runtime" ]]; then
   info "Using saved runtime: $_saved_runtime"
   DOCKER_RUNTIME="$_saved_runtime"
 else

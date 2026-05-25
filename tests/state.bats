@@ -340,3 +340,22 @@ teardown() {
   run state_get_list "brew.stacks"
   [[ -z "$output" ]]
 }
+
+# ─── state_clear_list ──────────────────────────────────────────────────────
+
+@test "state_clear_list resets list to empty sequence" {
+  state_append_list "brew.stacks" "infra/kubernetes"
+  state_clear_list "brew.stacks"
+
+  run state_get_list "brew.stacks"
+  [[ -z "$output" ]]
+}
+
+@test "state_clear_list allows subsequent appends" {
+  state_append_list "brew.stacks" "infra/kubernetes"
+  state_clear_list "brew.stacks"
+  state_append_list "brew.stacks" "lang/go"
+
+  run state_get_list "brew.stacks"
+  [[ "$output" == "lang/go" ]]
+}

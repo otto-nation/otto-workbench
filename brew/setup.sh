@@ -310,7 +310,7 @@ _saved_stacks=$(state_get_list "brew.stacks")
 if [[ -n "$_saved_stacks" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   _brew_replay_saved "$SCRIPT_DIR" "$_saved_stacks"
 else
-  state_set "brew.stacks" "[]"
+  state_clear_list "brew.stacks"
   _brew_select_optional "$SCRIPT_DIR"
 fi
 

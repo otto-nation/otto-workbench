@@ -47,10 +47,11 @@ if [[ -n "$_saved_tools" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
     _replaying=true
     info "Using saved selections: ${SELECTED_TERMINALS[*]}"
   else
+    state_clear_list "terminals.tools"
     select_terminals
   fi
 else
-  state_set "terminals.tools" "[]"
+  state_clear_list "terminals.tools"
   select_terminals
 fi
 unset _saved_tools _t

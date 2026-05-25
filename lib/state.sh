@@ -202,6 +202,13 @@ state_set() {
   v="$value" yq -i '.components.'"$key"' = strenv(v)' "$INSTALL_YML_FILE"
 }
 
+# state_clear_list KEY — resets a YAML list to empty sequence.
+state_clear_list() {
+  local key="$1"
+  _state_ensure_yml
+  yq -i '.components.'"$key"' = []' "$INSTALL_YML_FILE"
+}
+
 # state_append_list KEY VALUE — appends VALUE to a YAML list (idempotent).
 # Example: state_append_list "brew.stacks" "infra/kubernetes"
 state_append_list() {

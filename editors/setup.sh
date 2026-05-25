@@ -43,10 +43,11 @@ if [[ -n "$_saved_tools" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
     _replaying=true
     info "Using saved selections: ${SELECTED_EDITORS[*]}"
   else
+    state_clear_list "editors.tools"
     select_editors
   fi
 else
-  state_set "editors.tools" "[]"
+  state_clear_list "editors.tools"
   select_editors
 fi
 

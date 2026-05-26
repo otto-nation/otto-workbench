@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Package claude-review into a self-contained tarball for Homebrew distribution.
+#
+# Usage: build-claude-review-tarball [VERSION]
+#
+# If VERSION is omitted, reads from .github/.release-please-manifest.json.
+#
+# Produces: claude-review-<version>.tar.gz in the current directory.
+# The tarball contains a claude-review-<version>/ directory with:
+#   bin/          — review binaries (patched for standalone paths)
+#   lib/          — output.sh, prompts.sh, ui.sh facade, review-templates/
+#   agents/       — reviewer.md
+#   VERSION       — version string
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
+WORKBENCH_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# ─── Version ─────────────────────────────────────────────────────────────
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "Usage: build-claude-review-tarball [VERSION]"
+  echo "Package claude-review into a self-contained tarball."
+  echo "If VERSION is omitted, reads from .release-please-manifest.json."
+  exit 0
+fi
+
+VERSION="${1:-}"
+if [[ -z "$VERSION" ]]; then
+  MANIFEST="$WORKBENCH_ROOT/.github/.release-please-manifest.json"
+  if [[ ! -f "$MANIFEST" ]]; then
+    echo "ERROR: No version argument and $MANIFEST not found" >&2
+    exit 1
+  fi
+  VERSION=$(jq -r '.["ai/claude"]' "$MANIFEST")
+  if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+    echo "ERROR: Could not read version from $MANIFEST" >&2
+    exit 1
+  fi
+fi
+
+echo "Building claude-review tarball v${VERSION}"
+
+# ─── Staging ──────────────────────────────────────────────────────────────
+
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+
+DEST="$STAGING/claude-review-${VERSION}"
+mkdir -p "$DEST/bin" "$DEST/lib/review-templates" "$DEST/agents"
+
+# ─── Copy files ───────────────────────────────────────────────────────────
+
+# Binaries
+cp "$SCRIPT_DIR/claude-review" "$DEST/bin/"
+cp "$SCRIPT_DIR/review-orchestrate" "$DEST/bin/"
+cp "$SCRIPT_DIR/review-post" "$DEST/bin/"
+cp "$SCRIPT_DIR/validate-review-positions" "$DEST/bin/"
+
+# Library files
+cp "$WORKBENCH_ROOT/lib/output.sh" "$DEST/lib/"
+cp "$WORKBENCH_ROOT/lib/prompts.sh" "$DEST/lib/"
+
+# Templates
+cp "$SCRIPT_DIR/../lib/review-templates/"*.md "$DEST/lib/review-templates/"
+
+# Agent definition
+cp "$SCRIPT_DIR/../agents/reviewer.md" "$DEST/agents/"
+
+# Version file
+echo "$VERSION" > "$DEST/VERSION"
+
+# ─── Create standalone ui.sh facade ──────────────────────────────────────
+# The monorepo's lib/ui.sh sources constants.sh, files.sh, setup.sh, state.sh —
+# none of which are needed by claude-review. This facade sources only the two
+# modules it uses.
+
+cat > "$DEST/lib/ui.sh" << 'FACADE'
+#!/usr/bin/env bash
+# Standalone ui.sh facade for claude-review distribution.
+# Sources only output and prompt helpers — no workbench framework dependencies.
+
+_ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=output.sh
+. "$_ui_lib_dir/output.sh"
+
+# shellcheck source=prompts.sh
+. "$_ui_lib_dir/prompts.sh"
+
+unset _ui_lib_dir
+FACADE
+
+# ─── Patch claude-review for standalone layout ────────────────────────────
+# In the monorepo, claude-review is at ai/claude/bin/ and sources
+# ../../../lib/ui.sh. In the standalone tarball it's at bin/ and needs
+# ../lib/ui.sh. Similarly, _WORKBENCH_ROOT goes from ../../.. to ..
+
+REVIEW="$DEST/bin/claude-review"
+
+# shellcheck source=lib/portability.sh
+source "$WORKBENCH_ROOT/lib/portability.sh"
+
+# Patch lib/ui.sh source path
+# shellcheck disable=SC2016  # single quotes intentional — literal string replacement
+_sed_i 's|"$(dirname "\$_SELF")/../../../lib/ui.sh"|"$(dirname "$_SELF")/../lib/ui.sh"|' "$REVIEW"
+
+# Patch _WORKBENCH_ROOT
+# shellcheck disable=SC2016
+_sed_i 's|_WORKBENCH_ROOT="$(cd "$(dirname "\$_SELF")/../../.." && pwd)"|_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/.." \&\& pwd)"|' "$REVIEW"
+
+# Patch _generator_version to read VERSION file instead of release-please manifest
+# shellcheck disable=SC2016
+_sed_i '/_generator_version()/,/^}/c\
+_generator_version() {\
+  local version\
+  version=$(cat "${_WORKBENCH_ROOT}/VERSION" 2>/dev/null || echo "unknown")\
+  echo "claude-review ${version}"\
+}' "$REVIEW"
+
+# ─── Build tarball ────────────────────────────────────────────────────────
+
+TARBALL="claude-review-${VERSION}.tar.gz"
+tar -czf "$TARBALL" -C "$STAGING" "claude-review-${VERSION}"
+
+echo "Created $TARBALL"
+echo "SHA256: $(shasum -a 256 "$TARBALL" | cut -d' ' -f1)"

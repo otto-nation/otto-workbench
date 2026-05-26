@@ -24,6 +24,7 @@ tools:
     docs: "https://github.com/ahmetb/kubectx"
 
   - name: kubectl
+    allow: true
     brew_name: kubernetes-cli
     description: "Kubernetes CLI — manage clusters, deployments, pods, and services"
     when_to_use: "Inspecting or modifying Kubernetes resources; debugging pods; applying manifests"

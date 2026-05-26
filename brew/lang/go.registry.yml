@@ -10,18 +10,21 @@ meta:
 
 tools:
   - name: go
+    allow: true
     description: "Go programming language toolchain — compiler, formatter, and standard tooling"
     when_to_use: "Building, running, or testing Go projects"
     usage: "go build ./...  |  go test ./...  |  go run main.go  |  go fmt ./..."
     docs: "https://go.dev/doc/"
 
   - name: golangci-lint
+    allow: true
     description: "Fast Go linter runner — aggregates and runs many linters in one pass"
     when_to_use: "Linting Go code before committing; enforcing code quality in CI"
     usage: "golangci-lint run  |  golangci-lint run ./...  |  golangci-lint run --fix"
     docs: "https://golangci-lint.run/"
 
   - name: goreleaser
+    allow: true
     context: reference
     description: "Go release automation — builds cross-platform binaries and publishes GitHub releases"
     when_to_use: "Publishing a Go project as a versioned release with binaries, changelogs, and Homebrew tap"

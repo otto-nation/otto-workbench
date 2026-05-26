@@ -13,7 +13,6 @@ source "$SCRIPT_DIR/common.sh"
 
 readonly REPO="${GITHUB_ORG}/${GITHUB_REPO}"
 readonly TAP_REPO="otto-nation/homebrew-tap"
-readonly TAP_URL="https://github.com/${TAP_REPO}.git"
 
 # shellcheck source=lib/portability.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/portability.sh"
@@ -113,7 +112,7 @@ cmd_deploy() {
             --dry-run) dry_run=true; shift ;;
             -h|--help)
                 echo "Usage: $0 deploy -v <version> --app <name> [--dry-run]"
-                echo "Deploy Homebrew formula to tap repository."
+                echo "Deploy Homebrew formula to tap repository via GitHub API."
                 return 0
                 ;;
             *) print_error "Unknown option: $1"; return 1 ;;
@@ -142,42 +141,39 @@ cmd_deploy() {
 
     print_status "Deploying ${app_name} formula for version $version to $TAP_REPO..."
 
-    local tap_dir
-    tap_dir=$(mktemp -d)
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tap_dir'" RETURN
+    local api_path="repos/${TAP_REPO}/contents/${formula_file}"
 
-    print_status "Cloning tap repository..."
-    if [[ -n "$token" ]]; then
-        git clone "https://x-access-token:${token}@github.com/${TAP_REPO}.git" "$tap_dir" 2>&1 | grep -v "x-access-token" || true
-    else
-        git clone "$TAP_URL" "$tap_dir"
+    # Fetch current blob SHA for atomic compare-and-swap
+    local current_sha=""
+    current_sha=$(GH_TOKEN="$token" gh api "$api_path" --jq '.sha' 2>/dev/null) || true
+
+    # Skip if the local formula already matches the remote
+    if [[ -n "$current_sha" ]]; then
+        local local_sha
+        local_sha=$(git hash-object "$formula_source")
+        if [[ "$current_sha" == "$local_sha" ]]; then
+            print_info "No changes to formula"
+            return 0
+        fi
     fi
-
-    local formula_dest="$tap_dir/$formula_file"
-    mkdir -p "$(dirname "$formula_dest")"
-    cp "$formula_source" "$formula_dest"
-
-    cd "$tap_dir"
-    git config user.name "GitHub Actions"
-    git config user.email "actions@github.com"
-
-    if git diff --quiet; then
-        print_info "No changes to formula"
-        return 0
-    fi
-
-    git add "$formula_file"
-    git commit -m "Update ${app_name} to $version"
 
     if [[ "$dry_run" == true ]]; then
-        print_warning "Dry run — would push:"
-        git show --stat
+        print_warning "Dry run — would update ${formula_file} in ${TAP_REPO}"
         return 0
     fi
 
-    print_status "Pushing to tap repository..."
-    git push origin main
+    local content
+    content=$(base64 < "$formula_source" | tr -d '\n')
+
+    local api_args=(
+        --method PUT
+        -f "message=Update ${app_name} to $version"
+        -f "content=$content"
+        -f "branch=main"
+    )
+    [[ -n "$current_sha" ]] && api_args+=(-f "sha=$current_sha")
+
+    GH_TOKEN="$token" gh api "$api_path" "${api_args[@]}" --silent
 
     print_success "Formula deployed successfully to $TAP_REPO"
 }

@@ -81,6 +81,11 @@ WORKTREE_FALLBACK_DIR=".worktrees"
 
 ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
 
+# Severity definitions: parallel arrays map prefix → JSON key.
+# Order determines JSON field order in --json-summary output.
+SEVERITY_PREFIXES=(M S N I)
+SEVERITY_JSON_KEYS=(must_fix should_fix nit idiom)
+
 ORCHESTRATE_BIN="review-orchestrate"
 
 mkdir -p "$REVIEWS_DIR"
@@ -210,6 +215,58 @@ _print_summary() {
   fi
   _format_usage "$session_log" "$post_session_log"
   echo
+}
+
+_count_severity() {
+  local -n __out=$1
+  local file="$2" prefix="$3"
+  if [[ ! -f "$file" ]]; then
+    __out=0
+    return 0
+  fi
+  __out=$(grep -cE "^\s*- (\[ \] )?\*\*\[${prefix}[0-9]+\]\*\*" "$file" 2>/dev/null) || __out=0
+  return 0
+}
+
+_json_summary() {
+  local repo="$1"
+  local pr_number="$2"
+  local review_file="$3"
+
+  local total=0 must_count=0
+  local jq_args=(
+    --arg repo "$repo"
+    --arg pr "${pr_number:-}"
+    --arg review_file "${review_file:-}"
+  )
+  local keys_expr=""
+
+  local i
+  for i in "${!SEVERITY_PREFIXES[@]}"; do
+    local prefix="${SEVERITY_PREFIXES[$i]}"
+    local key="${SEVERITY_JSON_KEYS[$i]}"
+    local count
+    _count_severity count "$review_file" "$prefix"
+    total=$(( total + count ))
+    jq_args+=(--argjson "$key" "$count")
+    keys_expr+="${key}: \$${key}, "
+    if [[ "$prefix" == "M" ]]; then must_count=$count; fi
+  done
+
+  local verdict="approve"
+  if (( must_count > 0 )); then verdict="changes_requested"; fi
+
+  jq_args+=(--argjson total "$total" --arg verdict "$verdict")
+
+  jq -n "${jq_args[@]}" \
+    "{
+      repo: \$repo,
+      pr_number: (if \$pr == \"\" then null else (\$pr | tonumber) end),
+      review_file: \$review_file,
+      findings: { ${keys_expr}total: \$total },
+      verdict: \$verdict
+    }"
+  return 0
 }
 
 _load_issue_provider() {
@@ -416,6 +473,7 @@ usage() {
   echo "  --skip-user-verification   Skip ownership check in --self mode"
   echo "  --force                    Skip pending review and stale review warnings"
   echo "  --resume                   Resume from existing intermediate files"
+  echo "  --json-summary             Suppress human output; emit JSON summary to stdout"
 }
 
 _check_pending_review() {
@@ -852,6 +910,7 @@ main() {
   local max_parallel="$DEFAULT_MAX_PARALLEL"
   local max_cost=""
   local model=""
+  local json_summary="false"
   local positional=()
 
   while [[ $# -gt 0 ]]; do
@@ -864,6 +923,7 @@ main() {
       --force)         force="true"; shift ;;
       --no-holistic)   no_holistic="true"; shift ;;
       --resume)        resume="true"; shift ;;
+      --json-summary)  json_summary="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
@@ -873,8 +933,27 @@ main() {
     esac
   done
 
+  # When --json-summary is set, redirect stdout to stderr so all human-readable
+  # output (info, warn, subprocess progress) goes to stderr. JSON is emitted
+  # to the saved original stdout fd at the end.
+  local _json_stdout=""
+  if [[ "$json_summary" == "true" ]]; then
+    exec {_json_stdout}>&1
+    exec 1>&2
+  fi
+
   if [[ "$self_review" == "true" ]]; then
     cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$resume"
+    if [[ "$json_summary" == "true" ]]; then
+      local sr_repo="" sr_pr_number="" sr_review_file=""
+      _extract_repo sr_repo "${positional[0]:-local}"
+      [[ -n "${positional[0]:-}" ]] && _extract_pr_number sr_pr_number "${positional[0]}"
+      local sr_wt_path
+      sr_wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || true
+      sr_review_file="${sr_wt_path:-.}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
+      _json_summary "$sr_repo" "$sr_pr_number" "$sr_review_file" >&"$_json_stdout"
+      exec {_json_stdout}>&-
+    fi
     return
   fi
 
@@ -893,6 +972,12 @@ main() {
       _extract_pr_number post_pr_number "$post_input"
       _extract_repo post_repo "$post_input"
       cmd_post "$post_repo" "$post_pr_number" "$auto_submit"
+      if [[ "$json_summary" == "true" ]]; then
+        local post_review_file
+        _review_file post_review_file "$post_repo" "$post_pr_number"
+        _json_summary "$post_repo" "$post_pr_number" "$post_review_file" >&"$_json_stdout"
+        exec {_json_stdout}>&-
+      fi
       ;;
     "")
       usage
@@ -900,6 +985,14 @@ main() {
       ;;
     *)
       cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit"
+      if [[ "$json_summary" == "true" ]]; then
+        local rev_pr_number rev_repo rev_review_file
+        _extract_pr_number rev_pr_number "$command"
+        _extract_repo rev_repo "$command"
+        _review_file rev_review_file "$rev_repo" "$rev_pr_number"
+        _json_summary "$rev_repo" "$rev_pr_number" "$rev_review_file" >&"$_json_stdout"
+        exec {_json_stdout}>&-
+      fi
       ;;
   esac
 }

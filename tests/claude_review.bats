@@ -673,3 +673,137 @@ GHEOF
   [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
   [[ "$fn_body" == *'resuming automatically'* ]]
 }
+
+# ── _count_severity ────────────────────────────────────────────────────────
+
+@test "_count_severity: counts must-fix findings" {
+  cat > "$TMPDIR/review.md" <<'EOF'
+## Must fix
+- **[M1]** path:1 — description
+- **[M2]** path:2 — description
+## Should fix
+- **[S1]** path:3 — description
+EOF
+  local count
+  _count_severity count "$TMPDIR/review.md" "M"
+  [ "$count" -eq 2 ]
+}
+
+@test "_count_severity: excludes struck-through findings" {
+  cat > "$TMPDIR/review.md" <<'EOF'
+## Must fix
+- **[M1]** path:1 — active
+- ~~**[M2]** path:2 — resolved~~
+EOF
+  local count
+  _count_severity count "$TMPDIR/review.md" "M"
+  [ "$count" -eq 1 ]
+}
+
+@test "_count_severity: counts checkbox findings" {
+  cat > "$TMPDIR/review.md" <<'EOF'
+## Must fix
+- [ ] **[M1]** path:1 — with checkbox
+- **[M2]** path:2 — without checkbox
+EOF
+  local count
+  _count_severity count "$TMPDIR/review.md" "M"
+  [ "$count" -eq 2 ]
+}
+
+@test "_count_severity: returns 0 for missing file" {
+  local count
+  _count_severity count "$TMPDIR/nonexistent.md" "M"
+  [ "$count" -eq 0 ]
+}
+
+@test "_count_severity: returns 0 for empty file" {
+  touch "$TMPDIR/empty.md"
+  local count
+  _count_severity count "$TMPDIR/empty.md" "M"
+  [ "$count" -eq 0 ]
+}
+
+# ── _json_summary ──────────────────────────────────────────────────────────
+
+@test "_json_summary: complete review with findings" {
+  cat > "$TMPDIR/review.md" <<'EOF'
+## Must fix
+- **[M1]** path:1 — bug
+## Should fix
+- **[S1]** path:2 — improvement
+- **[S2]** path:3 — improvement
+## Nit
+- **[N1]** path:4 — style
+## Idioms
+- **[I1]** path:5 — idiom
+- **[I2]** path:6 — idiom
+EOF
+  run _json_summary "org/repo" "42" "$TMPDIR/review.md"
+  [ "$status" -eq 0 ]
+  local json="$output"
+  [ "$(echo "$json" | jq -r '.repo')" = "org/repo" ]
+  [ "$(echo "$json" | jq '.pr_number')" = "42" ]
+  [ "$(echo "$json" | jq '.findings.must_fix')" = "1" ]
+  [ "$(echo "$json" | jq '.findings.should_fix')" = "2" ]
+  [ "$(echo "$json" | jq '.findings.nit')" = "1" ]
+  [ "$(echo "$json" | jq '.findings.idiom')" = "2" ]
+  [ "$(echo "$json" | jq '.findings.total')" = "6" ]
+  [ "$(echo "$json" | jq -r '.verdict')" = "changes_requested" ]
+}
+
+@test "_json_summary: approve when no must-fix" {
+  cat > "$TMPDIR/review.md" <<'EOF'
+## Should fix
+- **[S1]** path:1 — improvement
+## Nit
+- **[N1]** path:2 — style
+EOF
+  run _json_summary "org/repo" "10" "$TMPDIR/review.md"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.verdict')" = "approve" ]
+  [ "$(echo "$output" | jq '.findings.total')" = "2" ]
+}
+
+@test "_json_summary: missing review file" {
+  run _json_summary "org/repo" "42" "$TMPDIR/nonexistent.md"
+  [ "$status" -eq 0 ]
+  local json="$output"
+  [ "$(echo "$json" | jq '.findings.total')" = "0" ]
+  [ "$(echo "$json" | jq -r '.verdict')" = "approve" ]
+}
+
+@test "_json_summary: self-review without PR" {
+  cat > "$TMPDIR/self-review.md" <<'EOF'
+## Must fix
+- **[M1]** path:1 — bug
+EOF
+  run _json_summary "org/repo" "" "$TMPDIR/self-review.md"
+  [ "$status" -eq 0 ]
+  local json="$output"
+  [ "$(echo "$json" | jq '.pr_number')" = "null" ]
+  [ "$(echo "$json" | jq -r '.verdict')" = "changes_requested" ]
+}
+
+# ── --json-summary flag ────────────────────────────────────────────────────
+
+@test "usage: --json-summary appears in help text" {
+  run usage
+  [[ "$output" == *"--json-summary"* ]]
+}
+
+@test "main: --json-summary is parsed and not treated as positional" {
+  # Mock all external dependencies so nothing touches gh or the filesystem.
+  # If --json-summary were treated as positional, _extract_pr_number would fail
+  # with "Cannot extract PR number from: --json-summary".
+  run bash -c '
+    export HOME="$1"; NO_COLOR=1
+    source "$2"
+    cmd_review() { :; }
+    _extract_repo() { local -n __out=$1; __out="org/repo"; }
+    _review_file() { local -n __out=$1; __out="/tmp/review.md"; }
+    _json_summary() { echo "{}"; }
+    main --json-summary 42
+  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
+  [ "$status" -eq 0 ]
+}

@@ -108,7 +108,7 @@ EOF
   _write_valid_bin
   _write_valid_zsh
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -126,7 +126,7 @@ tools:
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: description"* ]]
 }
@@ -145,7 +145,7 @@ tools:
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: when_to_use"* ]]
 }
@@ -168,7 +168,7 @@ tools:
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"duplicate tool name: mytool"* ]]
 }
@@ -190,7 +190,7 @@ tools:
 EOF
   printf 'brew "something-else"\n' > "$TMPDIR/brew/Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"not found in brew/Brewfile"* ]]
 }
@@ -210,7 +210,7 @@ tools:
 EOF
   printf 'cask "mycask"\n' > "$TMPDIR/brew/Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -230,7 +230,7 @@ tools:
 EOF
   printf 'brew "maven"\n' > "$TMPDIR/brew/Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -248,7 +248,7 @@ tools:
     when_to_use: "Never"
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"not found in bin/"* ]]
 }
@@ -268,7 +268,7 @@ tools:
 EOF
   # No matching comment in any zsh file
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no matching comment found"* ]]
 }
@@ -279,7 +279,7 @@ EOF
   _write_valid_bin
   touch "$TMPDIR/bin/newtool" && chmod +x "$TMPDIR/bin/newtool"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"not registered"* ]]
 }
@@ -288,7 +288,7 @@ EOF
   _write_valid_bin
   touch "$TMPDIR/bin/datafile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -297,7 +297,7 @@ EOF
 @test "validates work registry schema" {
   _write_valid_work
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -316,7 +316,7 @@ tools:
 EOF
   printf 'brew "something-else"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"not found in brew/work/mystack.Brewfile"* ]]
 }
@@ -337,7 +337,7 @@ tools:
 EOF
   printf 'brew "kubernetes-cli"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -358,7 +358,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -375,7 +375,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: var"* ]]
 }
@@ -393,7 +393,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"invalid var name"* ]]
 }
@@ -412,7 +412,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"duplicate env var: MY_VAR"* ]]
 }
@@ -441,7 +441,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"defined in multiple registries"* ]]
 }
@@ -459,7 +459,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"requires install_check_command"* ]]
 }
@@ -478,7 +478,7 @@ env:
 tools: []
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -498,7 +498,25 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "passes with allow: false" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: false
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -516,8 +534,27 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
+}
+
+@test "fails with allow: empty string" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: ""
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"allow string must be non-empty"* ]]
 }
 
 @test "passes with allow: array of Bash patterns" {
@@ -536,7 +573,7 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
@@ -554,7 +591,7 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"allow must be boolean, string, or array"* ]]
 }
@@ -574,7 +611,7 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"must match Bash(...) pattern"* ]]
 }
@@ -584,6 +621,6 @@ EOF
 @test "succeeds and warns when registries are missing" {
   # No registry files written
 
-  run bash "$VALIDATOR"
+  run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }

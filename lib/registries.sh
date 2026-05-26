@@ -162,15 +162,7 @@ iter_registry_auth() {
   done
 }
 
-# collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
-# Populates the caller's array (via nameref) with Claude Code Bash permission
-# patterns derived from tools that declare an allow field in their registry.
-#
-# allow field semantics:
-#   true           → Bash(name:*)
-#   "cmd"          → Bash(cmd:*)   (CLI name differs from registry name)
-#   ["Bash(…):*"]  → verbatim      (granular subcommand patterns)
-#   false / absent → skipped
+# _collect_tool_allow ARRAY_REF FILE INDEX
 _collect_tool_allow() {
   local -n __tool_perms=$1
   local file="$2" i="$3"
@@ -179,6 +171,7 @@ _collect_tool_allow() {
   allow_tag=$(yq ".tools[$i].allow | tag" "$file")
 
   case "$allow_tag" in
+    '!!null') return 0 ;;
     '!!bool')
       allow_val=$(yq ".tools[$i].allow" "$file")
       [[ "$allow_val" == "true" ]] || return 0
@@ -187,6 +180,7 @@ _collect_tool_allow() {
       ;;
     '!!str')
       allow_val=$(yq ".tools[$i].allow" "$file")
+      [[ -n "$allow_val" ]] || return 0
       __tool_perms+=("Bash($allow_val:*)")
       ;;
     '!!seq')
@@ -200,6 +194,15 @@ _collect_tool_allow() {
   esac
 }
 
+# collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
+# Populates the caller's array (via nameref) with Claude Code Bash permission
+# patterns derived from tools that declare an allow field in their registry.
+#
+# allow field semantics:
+#   true           → Bash(name:*)
+#   "cmd"          → Bash(cmd:*)   (CLI name differs from registry name)
+#   ["Bash(…):*"]  → verbatim      (granular subcommand patterns)
+#   false / absent → skipped
 collect_registry_permissions() {
   local _perms_var=$1
   local -n __perms_out=$1

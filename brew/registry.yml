@@ -46,7 +46,7 @@ tools:
       - "Bash(gh gist:*)"
       - "Bash(gh label:*)"
       - "Bash(gh milestone:*)"
-      - "Bash(gh api:*)"
+      - "Bash(gh api:*)" # broad — needed for review workflows and scripted API calls
     description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
     when_to_use: "Creating/viewing PRs, checking CI status, managing issues, cloning repos, viewing runs"
     usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"

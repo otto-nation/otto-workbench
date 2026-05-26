@@ -86,21 +86,18 @@ teardown() {
 }
 
 @test "gh registry allow does not permit gh secret management" {
-  local count
-  count=$(yq '.tools[] | select(.name == "gh") | .allow[] | select(test("gh secret"))' "$BREW_REGISTRY" | wc -l | tr -d ' ')
-  [ "$count" -eq 0 ]
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(test("gh secret"))' "$BREW_REGISTRY"
+  [ "$status" -ne 0 ]
 }
 
 @test "gh registry allow does not permit gh auth login or token" {
-  local count
-  count=$(yq '.tools[] | select(.name == "gh") | .allow[] | select(test("gh auth (login|logout|token|refresh)"))' "$BREW_REGISTRY" | wc -l | tr -d ' ')
-  [ "$count" -eq 0 ]
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(test("gh auth (login|logout|token|refresh)"))' "$BREW_REGISTRY"
+  [ "$status" -ne 0 ]
 }
 
 @test "gh registry allow does not permit destructive gh repo operations" {
-  local count
-  count=$(yq '.tools[] | select(.name == "gh") | .allow[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$BREW_REGISTRY" | wc -l | tr -d ' ')
-  [ "$count" -eq 0 ]
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$BREW_REGISTRY"
+  [ "$status" -ne 0 ]
 }
 
 # ── git deny list ─────────────────────────────────────────────────────────────

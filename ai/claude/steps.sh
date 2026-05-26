@@ -167,9 +167,12 @@ step_claude_settings() {
   fi
   local -a registry_perms=()
   collect_registry_permissions registry_perms "$WORKBENCH_STABLE_DIR"
+  if [[ ${#registry_perms[@]} -eq 0 ]]; then
+    warn "No registry permissions collected — check registries under $WORKBENCH_STABLE_DIR"
+  fi
   if [[ ${#registry_perms[@]} -gt 0 ]]; then
     local perms_json
-    perms_json=$(printf '%s\n' "${registry_perms[@]}" | jq -R . | jq -s .)
+    perms_json=$(printf '%s\n' "${registry_perms[@]}" | jq -Rn '[inputs]')
     template=$(jq --argjson rp "$perms_json" \
       '.permissions.allow = (.permissions.allow + $rp | unique)' <<< "$template")
   fi

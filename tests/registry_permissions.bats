@@ -6,10 +6,7 @@ setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
-  mkdir -p "$TMPDIR/bin" "$TMPDIR/lib"
-  cp "$REPO_ROOT/lib/registries.sh" "$TMPDIR/lib/registries.sh"
 
-  # Source registries.sh so collect_registry_permissions is available
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/registries.sh"
 }
@@ -149,21 +146,44 @@ tools:
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
   [[ "${#perms[@]}" -eq 2 ]]
-  [[ "${perms[0]}" == "Bash(tool-a:*)" ]]
-  [[ "${perms[1]}" == "Bash(tc:*)" ]]
+  local found_a=0 found_tc=0
+  for p in "${perms[@]}"; do
+    case "$p" in
+      "Bash(tool-a:*)") found_a=1 ;;
+      "Bash(tc:*)")     found_tc=1 ;;
+    esac
+  done
+  [[ "$found_a" -eq 1 ]]
+  [[ "$found_tc" -eq 1 ]]
+}
+
+# ── Empty registries ────────────────────────────────────────────────────────
+
+@test "allow: empty string generates nothing" {
+  _write_registry "$TMPDIR/comp" 'meta:
+  section: Test
+  install_check: false
+  validation: none
+tools:
+  - name: mytool
+    allow: ""
+    description: "A tool"
+    when_to_use: "Testing"'
+
+  local -a perms=()
+  collect_registry_permissions perms "$TMPDIR"
+  [[ "${#perms[@]}" -eq 0 ]]
 }
 
 # ── Empty registries ────────────────────────────────────────────────────────
 
 @test "empty scan directory produces empty output" {
   local empty_dir
-  empty_dir="$(mktemp -d)"
+  empty_dir="$(mktemp -d "$TMPDIR/empty-XXXXX")"
 
   local -a perms=()
   collect_registry_permissions perms "$empty_dir"
   [[ "${#perms[@]}" -eq 0 ]]
-
-  rm -rf "$empty_dir"
 }
 
 # ── Real registries ─────────────────────────────────────────────────────────

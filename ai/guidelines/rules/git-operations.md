@@ -20,6 +20,10 @@
 - Never run `git push` while on `main` or targeting `main` — branch protection will reject it, so don't attempt it at all
 - All changes reach `main` through a merged PR, no exceptions
 
+## Commit History
+
+- Never use `git commit --amend` — always create a new commit. Amending a pushed commit causes force-push situations, and amending after a failed pre-commit hook silently modifies the previous commit instead of creating the intended one
+
 ## Cross-Worktree Safety
 
 - Never run tests, builds, or git-mutating commands in a worktree other than the current session's — test harnesses create temporary git repos that can corrupt the target worktree's branch and commit state

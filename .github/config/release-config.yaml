@@ -5,7 +5,11 @@ package_managers:
   homebrew:
     enabled: true
     tap_repo: "otto-nation/homebrew-tap"
-    formula_path: "Formula/otto-workbench.rb"
+    formulas:
+      otto-workbench:
+        formula_path: "Formula/otto-workbench.rb"
+      claude-review:
+        formula_path: "Formula/claude-review.rb"
 
 # Notification settings (currently disabled)
 notifications:

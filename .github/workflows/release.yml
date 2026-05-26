@@ -3,24 +3,31 @@ name: Release
 # ---------------------------------------------------------------------------
 # Triggers
 # ---------------------------------------------------------------------------
-# Standard path: push to main runs release-please, which opens/updates the
-# release PR. When that PR is merged, release-please creates the tag and the
-# package job creates the tarball + deploys the Homebrew formula.
+# Push to main runs release-please, which opens/updates the release PR.
+# When that PR is merged, release-please creates tags and the package jobs
+# build tarballs and deploy Homebrew formulas.
 #
 # Manual overrides:
-#   deploy_homebrew_tag — re-deploy the formula for an existing release tag
-#   without creating a new release. Use this when a deploy fails mid-release
-#   or when HOMEBREW_TAP_TOKEN is first configured.
+#   deploy_homebrew_tag — re-deploy a formula for an existing release tag.
+#   deploy_homebrew_app — which formula to deploy (otto-workbench or claude-review).
 on:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       deploy_homebrew_tag:
-        description: "Re-deploy Homebrew formula for an existing tag (e.g. v0.1.0)"
+        description: "Re-deploy Homebrew formula for an existing tag (e.g. v1.5.0 or claude-review-v1.0.1)"
         required: false
         default: ""
         type: string
+      deploy_homebrew_app:
+        description: "Which formula to deploy"
+        required: false
+        default: "otto-workbench"
+        type: choice
+        options:
+          - otto-workbench
+          - claude-review
 
 permissions:
   contents: write
@@ -32,18 +39,24 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Create or update the release PR; publish the GitHub release when merged.
+  # Create or update the release PR; publish GitHub releases when merged.
+  # Handles both otto-workbench (root) and claude-review (ai/claude) packages.
   # ---------------------------------------------------------------------------
   release:
     name: Release
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-      version: ${{ steps.release.outputs.version }}
+      # Root package (otto-workbench)
+      wb_release_created: ${{ steps.release.outputs.release_created }}
+      wb_tag_name: ${{ steps.release.outputs.tag_name }}
+      wb_version: ${{ steps.release.outputs.version }}
+      # claude-review package
+      cr_release_created: ${{ steps.release.outputs['ai/claude--release_created'] }}
+      cr_tag_name: ${{ steps.release.outputs['ai/claude--tag_name'] }}
+      cr_version: ${{ steps.release.outputs['ai/claude--version'] }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -55,24 +68,28 @@ jobs:
           config-file: .github/.release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
-      - name: Release created
+      - name: Release summary
         if: steps.release.outputs.releases_created
         run: |
-          echo "Release created: ${{ steps.release.outputs.tag_name }}"
-          echo "URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.release.outputs.tag_name }}"
+          echo "Releases created:"
+          if [ "${{ steps.release.outputs.release_created }}" = "true" ]; then
+            echo "  otto-workbench: ${{ steps.release.outputs.tag_name }}"
+          fi
+          if [ "${{ steps.release.outputs['ai/claude--release_created'] }}" = "true" ]; then
+            echo "  claude-review: ${{ steps.release.outputs['ai/claude--tag_name'] }}"
+          fi
 
   # ---------------------------------------------------------------------------
-  # Package a distributable tarball, upload to GitHub release, deploy formula.
-  # Only runs when a GitHub release was just created by the release job.
+  # Package otto-workbench: tarball + Homebrew formula
   # ---------------------------------------------------------------------------
-  package:
-    name: Package & Deploy
+  package-workbench:
+    name: Package otto-workbench
     runs-on: ubuntu-latest
     needs: release
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.wb_release_created == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Load release configuration
         id: release-config
@@ -80,14 +97,10 @@ jobs:
           HOMEBREW_ENABLED=$(yq eval '.package_managers.homebrew.enabled' .github/config/release-config.yaml)
           echo "homebrew-enabled=$HOMEBREW_ENABLED" >> $GITHUB_OUTPUT
 
-      - name: Set build variables
-        run: |
-          echo "TAG_NAME=${{ needs.release.outputs.tag_name }}" >> $GITHUB_ENV
-          echo "VERSION=${{ needs.release.outputs.version }}" >> $GITHUB_ENV
-
       - name: Create distributable tarball
         run: |
-          TARBALL="otto-workbench-${{ env.VERSION }}.tar.gz"
+          VERSION="${{ needs.release.outputs.wb_version }}"
+          TARBALL="otto-workbench-${VERSION}.tar.gz"
           tar czf "/tmp/$TARBALL" \
             --exclude='.git' \
             --exclude='.github' \
@@ -108,7 +121,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ env.TAG_NAME }}" \
+          gh release upload "${{ needs.release.outputs.wb_tag_name }}" \
             "${{ env.TARBALL }}" \
             checksums.txt \
             --clobber
@@ -119,56 +132,130 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ./scripts/homebrew.sh update -v "${{ env.TAG_NAME }}" -s "${{ env.TARBALL_SHA256 }}"
-          ./scripts/homebrew.sh deploy -v "${{ env.TAG_NAME }}"
+          TAG="${{ needs.release.outputs.wb_tag_name }}"
+          ./scripts/homebrew.sh update -v "$TAG" -s "${{ env.TARBALL_SHA256 }}" --app otto-workbench
+          ./scripts/homebrew.sh deploy -v "$TAG" --app otto-workbench
 
       - name: Verify Homebrew tap deployment
         if: steps.release-config.outputs.homebrew-enabled == 'true'
         run: |
-          EXPECTED_VERSION="${{ env.VERSION }}"
+          EXPECTED_VERSION="${{ needs.release.outputs.wb_version }}"
           TAP_FORMULA_URL="https://raw.githubusercontent.com/otto-nation/homebrew-tap/main/Formula/otto-workbench.rb"
-
           sleep 5
-
           TAP_CONTENT=$(curl -fsSL "$TAP_FORMULA_URL")
-
           if ! echo "$TAP_CONTENT" | grep -qF "version \"$EXPECTED_VERSION\""; then
             echo "Tap formula does not contain expected version '$EXPECTED_VERSION'"
-            echo "Formula content (first 20 lines):"
             echo "$TAP_CONTENT" | head -20
             exit 1
           fi
-
           echo "Tap formula verified at version $EXPECTED_VERSION"
 
   # ---------------------------------------------------------------------------
-  # Write a summary for the completed release.
+  # Package claude-review: tarball + Homebrew formula
+  # ---------------------------------------------------------------------------
+  package-claude-review:
+    name: Package claude-review
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.cr_release_created == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Load release configuration
+        id: release-config
+        run: |
+          HOMEBREW_ENABLED=$(yq eval '.package_managers.homebrew.enabled' .github/config/release-config.yaml)
+          echo "homebrew-enabled=$HOMEBREW_ENABLED" >> $GITHUB_OUTPUT
+
+      - name: Build claude-review tarball
+        run: |
+          VERSION="${{ needs.release.outputs.cr_version }}"
+          ./ai/claude/bin/build-claude-review-tarball "$VERSION"
+          TARBALL="claude-review-${VERSION}.tar.gz"
+          TARBALL_SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+          echo "TARBALL=$TARBALL" >> $GITHUB_ENV
+          echo "TARBALL_SHA256=$TARBALL_SHA256" >> $GITHUB_ENV
+
+      - name: Generate checksums
+        run: |
+          sha256sum "${{ env.TARBALL }}" > checksums.txt
+          cat checksums.txt
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.release.outputs.cr_tag_name }}" \
+            "${{ env.TARBALL }}" \
+            checksums.txt \
+            --clobber
+
+      - name: Deploy Homebrew formula
+        if: steps.release-config.outputs.homebrew-enabled == 'true'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.release.outputs.cr_tag_name }}"
+          ./scripts/homebrew.sh update -v "$TAG" -s "${{ env.TARBALL_SHA256 }}" --app claude-review
+          ./scripts/homebrew.sh deploy -v "$TAG" --app claude-review
+
+      - name: Verify Homebrew tap deployment
+        if: steps.release-config.outputs.homebrew-enabled == 'true'
+        run: |
+          EXPECTED_VERSION="${{ needs.release.outputs.cr_version }}"
+          TAP_FORMULA_URL="https://raw.githubusercontent.com/otto-nation/homebrew-tap/main/Formula/claude-review.rb"
+          sleep 5
+          TAP_CONTENT=$(curl -fsSL "$TAP_FORMULA_URL")
+          if ! echo "$TAP_CONTENT" | grep -qF "version \"$EXPECTED_VERSION\""; then
+            echo "Tap formula does not contain expected version '$EXPECTED_VERSION'"
+            echo "$TAP_CONTENT" | head -20
+            exit 1
+          fi
+          echo "Tap formula verified at version $EXPECTED_VERSION"
+
+      - name: Notify homelab of new release
+        if: steps.release-config.outputs.homebrew-enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMELAB_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/isaacgarza/homelab/dispatches \
+            -f event_type=claude-review-release \
+            -f "client_payload[version]=${{ needs.release.outputs.cr_version }}"
+
+  # ---------------------------------------------------------------------------
+  # Post-release summary
   # ---------------------------------------------------------------------------
   post-release:
     name: Post-Release
     runs-on: ubuntu-latest
-    needs: [release, package]
-    if: always() && needs.release.outputs.release_created == 'true'
+    needs: [release, package-workbench, package-claude-review]
+    if: always() && (needs.release.outputs.wb_release_created == 'true' || needs.release.outputs.cr_release_created == 'true')
     steps:
       - name: Release summary
         run: |
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Tag:** ${{ needs.release.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Assets" >> $GITHUB_STEP_SUMMARY
-          echo "- [Release page](https://github.com/${{ github.repository }}/releases/tag/${{ needs.release.outputs.tag_name }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ needs.package.result }}" = "success" ]; then
-            echo "**Status**: Release completed successfully" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Status**: Release completed with issues — package: ${{ needs.package.result }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.release.outputs.wb_release_created }}" = "true" ]; then
+            echo "### otto-workbench" >> $GITHUB_STEP_SUMMARY
+            echo "- **Version:** ${{ needs.release.outputs.wb_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Tag:** ${{ needs.release.outputs.wb_tag_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Package:** ${{ needs.package-workbench.result }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.release.outputs.cr_release_created }}" = "true" ]; then
+            echo "### claude-review" >> $GITHUB_STEP_SUMMARY
+            echo "- **Version:** ${{ needs.release.outputs.cr_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Tag:** ${{ needs.release.outputs.cr_tag_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Package:** ${{ needs.package-claude-review.result }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
   # ---------------------------------------------------------------------------
-  # Manual escape hatch: re-deploy the Homebrew formula for an existing tag.
+  # Manual: re-deploy a Homebrew formula for an existing tag.
   # ---------------------------------------------------------------------------
   deploy-homebrew:
     name: Deploy Homebrew Formula
@@ -176,7 +263,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.deploy_homebrew_tag != ''
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Deploy formula
         env:
@@ -184,37 +271,34 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ inputs.deploy_homebrew_tag }}"
-          echo "Deploying Homebrew formula for $TAG..."
-          ./scripts/homebrew.sh update -v "$TAG"
-          ./scripts/homebrew.sh deploy -v "$TAG"
+          APP="${{ inputs.deploy_homebrew_app }}"
+          echo "Deploying ${APP} formula for $TAG..."
+          ./scripts/homebrew.sh update -v "$TAG" --app "$APP"
+          ./scripts/homebrew.sh deploy -v "$TAG" --app "$APP"
 
       - name: Verify deployment
         run: |
           TAG="${{ inputs.deploy_homebrew_tag }}"
-          VERSION="${TAG#v}"
-          TAP_FORMULA_URL="https://raw.githubusercontent.com/otto-nation/homebrew-tap/main/Formula/otto-workbench.rb"
-
+          APP="${{ inputs.deploy_homebrew_app }}"
+          VERSION="${TAG##*v}"
+          TAP_FORMULA_URL="https://raw.githubusercontent.com/otto-nation/homebrew-tap/main/Formula/${APP}.rb"
           sleep 5
           TAP_CONTENT=$(curl -fsSL "$TAP_FORMULA_URL")
-
           if ! echo "$TAP_CONTENT" | grep -qF "version \"$VERSION\""; then
             echo "Tap formula does not contain expected version '$VERSION'"
-            echo "Formula content (first 20 lines):"
             echo "$TAP_CONTENT" | head -20
             exit 1
           fi
-
           echo "Tap formula verified at version $VERSION"
 
   # ---------------------------------------------------------------------------
-  # Surface a clear failure signal when a release was created but the package
-  # or post-release steps did not complete successfully.
+  # Failure notification
   # ---------------------------------------------------------------------------
   notify-failure:
     name: Notify Failure
     runs-on: ubuntu-latest
-    needs: [release, package, post-release]
-    if: failure() && needs.release.outputs.release_created == 'true'
+    needs: [release, package-workbench, package-claude-review, post-release]
+    if: failure() && (needs.release.outputs.wb_release_created == 'true' || needs.release.outputs.cr_release_created == 'true')
     steps:
       - name: Failure summary
         run: |
@@ -223,7 +307,8 @@ jobs:
           echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Release | ${{ needs.release.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | ${{ needs.package.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package workbench | ${{ needs.package-workbench.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package claude-review | ${{ needs.package-claude-review.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Post-Release | ${{ needs.post-release.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details." >> $GITHUB_STEP_SUMMARY

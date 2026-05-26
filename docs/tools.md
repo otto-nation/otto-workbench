@@ -19,6 +19,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
+| `build-claude-review-tarball` | Package claude-review into a self-contained tarball for Homebrew distribution |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |

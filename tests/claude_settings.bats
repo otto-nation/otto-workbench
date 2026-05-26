@@ -1,19 +1,23 @@
 #!/usr/bin/env bats
-# Validates the Claude Code settings.json allow/deny lists.
-# Ensures gh permissions follow the allow-list model (no broad wildcard,
-# no gh api exposure) and that known destructive git operations are denied.
+# Validates Claude Code settings.json template and registry-derived permissions.
+# The template contains static permissions (shell builtins, filesystem ops).
+# Tool permissions (gh, go, etc.) are derived from registry allow fields.
 
 setup() {
   load 'test_helper'
   common_setup
   SETTINGS="$REPO_ROOT/ai/claude/settings.json"
+  BREW_REGISTRY="$REPO_ROOT/brew/registry.yml"
+
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/registries.sh"
 }
 
 teardown() {
   common_teardown
 }
 
-# ── Structure ─────────────────────────────────────────────────────────────────
+# ── Template structure ───────────────────────────────────────────────────────
 
 @test "settings.json is valid JSON" {
   run jq empty "$SETTINGS"
@@ -30,57 +34,73 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-# ── gh allow-list: no bare wildcard ──────────────────────────────────────────
+# ── Template does not contain registry-derived entries ───────────────────────
 
-@test "allow list does not contain the broad Bash(gh:*) wildcard" {
+@test "template does not hardcode tool permissions that come from registries" {
   local count
-  count=$(jq '[.permissions.allow[] | select(. == "Bash(gh:*)")] | length' "$SETTINGS")
+  count=$(jq '[.permissions.allow[] | select(
+    startswith("Bash(gh ") or
+    . == "Bash(task:*)" or
+    . == "Bash(go:*)" or
+    . == "Bash(wt:*)" or
+    . == "Bash(shellcheck:*)" or
+    . == "Bash(jq:*)" or
+    . == "Bash(yq:*)"
+  )] | length' "$SETTINGS")
   [ "$count" -eq 0 ]
 }
 
-@test "allow list includes gh api for review comment workflows" {
-  run jq -e '[.permissions.allow[] | select(startswith("Bash(gh api:"))] | length > 0' "$SETTINGS"
+# ── gh allow-list via registry ───────────────────────────────────────────────
+
+@test "gh registry entry does not contain broad Bash(gh:*) wildcard" {
+  local -a perms=()
+  collect_registry_permissions perms "$REPO_ROOT"
+  for p in "${perms[@]}"; do
+    [[ "$p" != "Bash(gh:*)" ]] || { echo "broad gh wildcard found"; return 1; }
+  done
+}
+
+@test "gh registry allow includes gh pr operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh pr:*)")' "$BREW_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
-@test "allow list does not permit gh secret management" {
+@test "gh registry allow includes gh issue operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh issue:*)")' "$BREW_REGISTRY"
+  [ "$status" -eq 0 ]
+}
+
+@test "gh registry allow includes gh run operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh run:*)")' "$BREW_REGISTRY"
+  [ "$status" -eq 0 ]
+}
+
+@test "gh registry allow includes gh auth status (read-only check)" {
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh auth status:*)")' "$BREW_REGISTRY"
+  [ "$status" -eq 0 ]
+}
+
+@test "gh registry allow includes gh api for review comment workflows" {
+  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh api:*)")' "$BREW_REGISTRY"
+  [ "$status" -eq 0 ]
+}
+
+@test "gh registry allow does not permit gh secret management" {
   local count
-  count=$(jq '[.permissions.allow[] | select(test("Bash\\(gh secret"))] | length' "$SETTINGS")
+  count=$(yq '.tools[] | select(.name == "gh") | .allow[] | select(test("gh secret"))' "$BREW_REGISTRY" | wc -l | tr -d ' ')
   [ "$count" -eq 0 ]
 }
 
-@test "allow list does not permit gh auth login or token" {
+@test "gh registry allow does not permit gh auth login or token" {
   local count
-  count=$(jq '[.permissions.allow[] | select(test("Bash\\(gh auth (login|logout|token|refresh)"))] | length' "$SETTINGS")
+  count=$(yq '.tools[] | select(.name == "gh") | .allow[] | select(test("gh auth (login|logout|token|refresh)"))' "$BREW_REGISTRY" | wc -l | tr -d ' ')
   [ "$count" -eq 0 ]
 }
 
-@test "allow list does not permit destructive gh repo operations" {
+@test "gh registry allow does not permit destructive gh repo operations" {
   local count
-  count=$(jq '[.permissions.allow[] | select(test("Bash\\(gh repo (delete|edit|rename|transfer)"))] | length' "$SETTINGS")
+  count=$(yq '.tools[] | select(.name == "gh") | .allow[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$BREW_REGISTRY" | wc -l | tr -d ' ')
   [ "$count" -eq 0 ]
-}
-
-# ── gh allow-list: safe operations present ────────────────────────────────────
-
-@test "allow list includes gh pr operations" {
-  run jq -e '[.permissions.allow[] | select(startswith("Bash(gh pr:"))] | length > 0' "$SETTINGS"
-  [ "$status" -eq 0 ]
-}
-
-@test "allow list includes gh issue operations" {
-  run jq -e '[.permissions.allow[] | select(startswith("Bash(gh issue:"))] | length > 0' "$SETTINGS"
-  [ "$status" -eq 0 ]
-}
-
-@test "allow list includes gh run operations" {
-  run jq -e '[.permissions.allow[] | select(startswith("Bash(gh run:"))] | length > 0' "$SETTINGS"
-  [ "$status" -eq 0 ]
-}
-
-@test "allow list includes gh auth status (read-only check)" {
-  run jq -e '[.permissions.allow[] | select(. == "Bash(gh auth status:*)")] | length > 0' "$SETTINGS"
-  [ "$status" -eq 0 ]
 }
 
 # ── git deny list ─────────────────────────────────────────────────────────────

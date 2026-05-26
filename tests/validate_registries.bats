@@ -482,6 +482,103 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# ── Allow field validation ────────────────────────────────────────────────────
+
+@test "passes with allow: true" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: true
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "passes with allow: string" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: "mt"
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "passes with allow: array of Bash patterns" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow:
+      - "Bash(mt sub:*)"
+      - "Bash(mt other:*)"
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails with allow: integer (invalid type)" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: 42
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"allow must be boolean, string, or array"* ]]
+}
+
+@test "fails with allow array entry not matching Bash pattern" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow:
+      - "not-a-bash-pattern"
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run bash "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must match Bash(...) pattern"* ]]
+}
+
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds and warns when registries are missing" {

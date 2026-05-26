@@ -10,36 +10,42 @@ meta:
 
 tools:
   - name: validate-registries
+    allow: true
     context: reference
     description: "Validates all tool registry YAML files for schema correctness and cross-file consistency"
     when_to_use: "After adding or editing any registry.yml; runs automatically on pre-push"
     usage: "bin/local/validate-registries"
 
   - name: validate-components
+    allow: true
     context: reference
     description: "Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency"
     when_to_use: "After adding or modifying any component (steps.sh, setup.conf, install.components)"
     usage: "bin/local/validate-components"
 
   - name: validate-migrations
+    allow: true
     context: reference
     description: "Validates migration file naming, function naming, and shebang conventions"
     when_to_use: "After adding or editing any migration file; runs automatically on pre-push"
     usage: "bin/local/validate-migrations"
 
   - name: validate-nesting
+    allow: true
     context: reference
     description: "Validates bash script nesting depth to enforce flat control flow"
     when_to_use: "After writing deeply nested bash conditionals or loops; runs automatically on pre-push"
     usage: "bin/local/validate-nesting [--quiet]"
 
   - name: validate-errexit
+    allow: true
     context: reference
     description: "Validates bash scripts for dangerous && patterns that silently exit under set -e"
     when_to_use: "After writing bash functions with conditional && chains; runs automatically on pre-push"
     usage: "bin/local/validate-errexit [--quiet]"
 
   - name: generate-tool-context
+    allow: true
     context: reference
     description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
     when_to_use: "After adding/updating any registry.yml entry; runs automatically on pre-push and workbench sync"

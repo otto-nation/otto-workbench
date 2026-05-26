@@ -16,18 +16,37 @@ tools:
     docs: "https://docs.docker.com/engine/reference/commandline/cli/"
 
   - name: jq
+    allow: true
     description: "JSON processor for querying, filtering, and transforming JSON data"
     when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"
     usage: "jq '.field' file.json  |  echo '{}' | jq '.key'"
     docs: "https://jqlang.github.io/jq/manual/"
 
   - name: yq
+    allow: true
     description: "YAML/JSON/TOML processor — like jq but for YAML"
     when_to_use: "Reading or modifying YAML files (Taskfile.yml, docker-compose.yml, k8s manifests)"
     usage: "yq '.key' file.yaml  |  yq -i '.key = \"value\"' file.yaml"
     docs: "https://mikefarah.gitbook.io/yq/"
 
   - name: gh
+    allow:
+      - "Bash(gh pr:*)"
+      - "Bash(gh issue:*)"
+      - "Bash(gh run:*)"
+      - "Bash(gh workflow:*)"
+      - "Bash(gh release:*)"
+      - "Bash(gh search:*)"
+      - "Bash(gh repo view:*)"
+      - "Bash(gh repo list:*)"
+      - "Bash(gh repo clone:*)"
+      - "Bash(gh repo fork:*)"
+      - "Bash(gh repo sync:*)"
+      - "Bash(gh auth status:*)"
+      - "Bash(gh gist:*)"
+      - "Bash(gh label:*)"
+      - "Bash(gh milestone:*)"
+      - "Bash(gh api:*)"
     description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
     when_to_use: "Creating/viewing PRs, checking CI status, managing issues, cloning repos, viewing runs"
     usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"
@@ -41,12 +60,14 @@ tools:
     docs: "https://taskfile.dev"
 
   - name: shellcheck
+    allow: true
     description: "Static analysis tool for shell scripts — catches bugs and style issues"
     when_to_use: "Before committing any .sh file; run automatically in pre-push and CI"
     usage: "shellcheck script.sh"
     docs: "https://www.shellcheck.net/"
 
   - name: bats-core
+    allow: "bats"
     description: "Bash Automated Testing System — unit testing framework for shell scripts"
     when_to_use: "Writing or running tests for bash scripts in this repo"
     usage: "bats tests/  |  bats tests/foo.bats"
@@ -60,6 +81,7 @@ tools:
     docs: "https://www.gnu.org/software/parallel/"
 
   - name: tree
+    allow: true
     context: reference
     description: "Recursive directory listing tool — visualizes folder structure as a tree"
     when_to_use: "Quickly inspecting directory structure; understanding project layout at a glance"
@@ -88,6 +110,7 @@ tools:
     docs: "https://docs.astral.sh/uv/"
 
   - name: worktrunk
+    allow: "wt"
     description: "Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration"
     when_to_use: "Managing parallel git worktrees for concurrent feature development or isolating Claude Code agents in separate worktrees"
     usage: "wt switch -c feat/auth  |  wt list  |  wt merge  |  wt remove feat/auth"

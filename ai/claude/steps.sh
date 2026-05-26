@@ -160,6 +160,20 @@ step_claude_settings() {
       '$base * $user')
   fi
 
+  # Inject registry-derived permissions into the template
+  # shellcheck source=../../lib/registries.sh
+  if ! declare -F collect_registry_permissions >/dev/null 2>&1; then
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+  local -a registry_perms=()
+  collect_registry_permissions registry_perms "$WORKBENCH_STABLE_DIR"
+  if [[ ${#registry_perms[@]} -gt 0 ]]; then
+    local perms_json
+    perms_json=$(printf '%s\n' "${registry_perms[@]}" | jq -R . | jq -s .)
+    template=$(jq --argjson rp "$perms_json" \
+      '.permissions.allow = (.permissions.allow + $rp | unique)' <<< "$template")
+  fi
+
   local result
   result=$(jq -n --argjson t "$template" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }

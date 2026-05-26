@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Shared registry discovery, install-check, and env/auth iteration.
 #
-# Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries
+# Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries,
+#          ai/claude/steps.sh
 #
 # Functions:
 #   is_installed NAME             — returns 0 if NAME is in PATH
 #   collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 #                                 — populates array with deduplicated registry paths
+#   collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
+#                                 — populates array with Bash(...) permission patterns
+#                                   from tools that declare an allow field
 #   registry_passes_install_check FILE
 #                                 — returns 0 if registry should be rendered
 #   iter_registry_env FILE CALLBACK
@@ -155,5 +159,56 @@ iter_registry_auth() {
     prefix=$(yq ".tools[$i].auth.prefix // \"\"" "$file")
 
     "$cb" "$name" "$env_var" "$setup_url" "$prefix"
+  done
+}
+
+# collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
+# Populates the caller's array (via nameref) with Claude Code Bash permission
+# patterns derived from tools that declare an allow field in their registry.
+#
+# allow field semantics:
+#   true           → Bash(name:*)
+#   "cmd"          → Bash(cmd:*)   (CLI name differs from registry name)
+#   ["Bash(…):*"]  → verbatim      (granular subcommand patterns)
+#   false / absent → skipped
+collect_registry_permissions() {
+  local -n __perms_out=$1
+  local scan_dir="$2"
+  local brew_dir="${3:-$scan_dir/brew}"
+
+  __perms_out=()
+  local -a registries=()
+  collect_registries registries "$scan_dir" "$brew_dir"
+
+  local file count i allow_tag allow_val name
+  for file in "${registries[@]}"; do
+    [[ -f "$file" ]] || continue
+    count=$(yq '.tools | length' "$file" 2>/dev/null) || continue
+    [[ "$count" -gt 0 ]] || continue
+
+    for (( i=0; i<count; i++ )); do
+      allow_tag=$(yq ".tools[$i].allow | tag" "$file")
+
+      case "$allow_tag" in
+        '!!bool')
+          allow_val=$(yq ".tools[$i].allow" "$file")
+          [[ "$allow_val" == "true" ]] || continue
+          name=$(yq ".tools[$i].name" "$file")
+          __perms_out+=("Bash($name:*)")
+          ;;
+        '!!str')
+          allow_val=$(yq ".tools[$i].allow" "$file")
+          __perms_out+=("Bash($allow_val:*)")
+          ;;
+        '!!seq')
+          local j arr_len entry
+          arr_len=$(yq ".tools[$i].allow | length" "$file")
+          for (( j=0; j<arr_len; j++ )); do
+            entry=$(yq ".tools[$i].allow[$j]" "$file")
+            __perms_out+=("$entry")
+          done
+          ;;
+      esac
+    done
   done
 }

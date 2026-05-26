@@ -85,8 +85,42 @@ _check_no_duplicates() {
   fi
 }
 
+# _check_allow_field FILE INDEX
+_check_allow_field() {
+  local file="$1" i="$2"
+  local has_allow
+  has_allow=$(yq ".tools[$i] | has(\"allow\")" "$file")
+  [[ "$has_allow" == "true" ]] || return 0
+
+  local name allow_tag
+  name=$(yq ".tools[$i].name" "$file")
+  allow_tag=$(yq ".tools[$i].allow | tag" "$file")
+
+  case "$allow_tag" in
+    '!!bool') ;;
+    '!!str')
+      local allow_str
+      allow_str=$(yq ".tools[$i].allow" "$file")
+      [[ -n "$allow_str" ]] || _fail "$(basename "$file") entry '$name': allow string must be non-empty"
+      ;;
+    '!!seq')
+      local j arr_len entry
+      arr_len=$(yq ".tools[$i].allow | length" "$file")
+      for (( j=0; j<arr_len; j++ )); do
+        entry=$(yq ".tools[$i].allow[$j]" "$file")
+        if [[ ! "$entry" =~ ^Bash\(.+\)$ ]]; then
+          _fail "$(basename "$file") entry '$name': allow array entry '$entry' must match Bash(...) pattern"
+        fi
+      done
+      ;;
+    *)
+      _fail "$(basename "$file") entry '$name': allow must be boolean, string, or array of strings (got $allow_tag)"
+      ;;
+  esac
+}
+
 # _validate_schema FILE
-# Runs required-field and duplicate checks for every entry in FILE.
+# Runs required-field, allow-field, and duplicate checks for every entry in FILE.
 _validate_schema() {
   local file="$1"
   [[ -f "$file" ]] || { warn "$(basename "$file") not found — skipping"; return; }
@@ -94,6 +128,7 @@ _validate_schema() {
   count=$(yq '.tools | length' "$file")
   while [[ "$i" -lt "$count" ]]; do
     _check_required_fields "$file" "$i"
+    _check_allow_field "$file" "$i"
     i=$(( i + 1 ))
   done
   _check_no_duplicates "$file"

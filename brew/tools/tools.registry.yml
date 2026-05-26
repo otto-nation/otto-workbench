@@ -17,6 +17,7 @@ tools:
     docs: "https://github.com/ankitpokhrel/jira-cli"
 
   - name: linear
+    allow: true
     brew_name: "schpet/tap/linear"
     description: "Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal"
     when_to_use: "Listing, creating, or starting Linear issues; git-aware issue tracking"

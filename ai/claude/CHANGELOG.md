@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.1.0...claude-review-v1.2.0) (2026-05-26)
+
+
+### Features
+
+* **claude-review:** add --json-summary flag for structured output ([#132](https://github.com/otto-nation/otto-workbench/issues/132)) ([5008079](https://github.com/otto-nation/otto-workbench/commit/5008079e20c7e38f695727bd7d8705d8add5a985))
+* **registries:** derive Claude permissions from registry allow field ([#129](https://github.com/otto-nation/otto-workbench/issues/129)) ([e35c059](https://github.com/otto-nation/otto-workbench/commit/e35c05965b7c552c49413a087b82e5b80d387034))
+
+
+### Bug Fixes
+
+* **review-post:** validate end_line against diff hunks for multi-line comments ([#131](https://github.com/otto-nation/otto-workbench/issues/131)) ([96c3862](https://github.com/otto-nation/otto-workbench/commit/96c38625cfa0f07d3d89ee83aaef1bfe22ec025f))
+
 ## [1.1.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.0.0...claude-review-v1.1.0) (2026-05-26)
 
 

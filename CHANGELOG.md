@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/otto-nation/otto-workbench/compare/v1.5.0...v1.6.0) (2026-05-26)
+
+
+### Features
+
+* **claude-review:** add --json-summary flag for structured output ([#132](https://github.com/otto-nation/otto-workbench/issues/132)) ([5008079](https://github.com/otto-nation/otto-workbench/commit/5008079e20c7e38f695727bd7d8705d8add5a985))
+* **registries:** derive Claude permissions from registry allow field ([#129](https://github.com/otto-nation/otto-workbench/issues/129)) ([e35c059](https://github.com/otto-nation/otto-workbench/commit/e35c05965b7c552c49413a087b82e5b80d387034))
+
+
+### Bug Fixes
+
+* **pre-push:** check all generated files; add ignore folder to .gitignore ([#128](https://github.com/otto-nation/otto-workbench/issues/128)) ([a4a3101](https://github.com/otto-nation/otto-workbench/commit/a4a3101ecdc21fc1a6c6da8c5803e93149c8cd6f))
+* **review-post:** validate end_line against diff hunks for multi-line comments ([#131](https://github.com/otto-nation/otto-workbench/issues/131)) ([96c3862](https://github.com/otto-nation/otto-workbench/commit/96c38625cfa0f07d3d89ee83aaef1bfe22ec025f))
+
 ## [1.5.0](https://github.com/otto-nation/otto-workbench/compare/v1.4.0...v1.5.0) (2026-05-26)
 
 

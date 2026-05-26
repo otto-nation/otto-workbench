@@ -7,6 +7,12 @@
 - Read-only operations (searching, reading files, exploring code) do not require a worktree
 - Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never use the built-in `EnterWorktree` tool or the `superpowers:using-git-worktrees` skill
 
+## Worktree Naming
+
+- Bare repos use `{{ repo_path }}/../{{ branch | sanitize }}` — worktrees live as peers of `main/` inside the repo container (e.g., `homelab/main/`, `homelab/isaac-feat-auth/`). The `../` is needed because `repo_path` points to the `.git` bare directory, not the parent
+- Per-project overrides in `~/.config/worktrunk/config.toml` take precedence — don't change them
+- The global default is managed by `otto-workbench sync git` — don't edit `~/.config/worktrunk/config.toml` directly
+
 ## Protected Branches
 
 - Never remove the `main` (or default branch) worktree — use `wt remove` only on feature branches

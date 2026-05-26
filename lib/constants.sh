@@ -95,6 +95,9 @@ GHOSTTY_CONFIG_TEMPLATE="$WORKBENCH_DIR/terminals/ghostty/config.template"
 GHOSTTY_CONFIG_DIR="$HOME/.config/ghostty"
 GHOSTTY_CONFIG_FILE="$HOME/.config/ghostty/config"
 
+# ─── Worktrunk ───────────────────────────────────────────────────────────────
+WORKTRUNK_CONFIG_FILE="$HOME/.config/worktrunk/config.toml"
+
 # ─── Workbench source — git ───────────────────────────────────────────────────
 GIT_SRC_DIR="$WORKBENCH_DIR/git"
 GIT_SHARED_CONFIG="$WORKBENCH_DIR/git/gitconfig.shared"

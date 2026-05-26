@@ -4,7 +4,19 @@ Personal developer environment manager. Manages shell config, git settings, brew
 
 Run `install.sh` once on a new machine and your entire dev environment is configured. Pull updates and run `otto-workbench sync` to stay current.
 
-## Quick Start
+## Install
+
+### Homebrew (recommended)
+
+```bash
+brew install otto-nation/tap/otto-workbench
+otto-workbench install
+exec zsh
+```
+
+See the [Homebrew tap](https://github.com/otto-nation/homebrew-tap) for available formulas.
+
+### From source
 
 ```bash
 git clone https://github.com/otto-nation/otto-workbench ~/otto-workbench

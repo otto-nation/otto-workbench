@@ -81,6 +81,11 @@ WORKTREE_FALLBACK_DIR=".worktrees"
 
 ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
 
+# Severity definitions: parallel arrays map prefix → JSON key.
+# Order determines JSON field order in --json-summary output.
+SEVERITY_PREFIXES=(M S N I)
+SEVERITY_JSON_KEYS=(must_fix should_fix nit idiom)
+
 ORCHESTRATE_BIN="review-orchestrate"
 
 mkdir -p "$REVIEWS_DIR"
@@ -228,39 +233,39 @@ _json_summary() {
   local pr_number="$2"
   local review_file="$3"
 
-  local must_fix should_fix nit idiom
-  _count_severity must_fix "$review_file" "M"
-  _count_severity should_fix "$review_file" "S"
-  _count_severity nit "$review_file" "N"
-  _count_severity idiom "$review_file" "I"
-  local total=$(( must_fix + should_fix + nit + idiom ))
+  local total=0 must_count=0
+  local jq_args=(
+    --arg repo "$repo"
+    --arg pr "${pr_number:-}"
+    --arg review_file "${review_file:-}"
+  )
+  local keys_expr=""
+
+  local i
+  for i in "${!SEVERITY_PREFIXES[@]}"; do
+    local prefix="${SEVERITY_PREFIXES[$i]}"
+    local key="${SEVERITY_JSON_KEYS[$i]}"
+    local count
+    _count_severity count "$review_file" "$prefix"
+    total=$(( total + count ))
+    jq_args+=(--argjson "$key" "$count")
+    keys_expr+="${key}: \$${key}, "
+    if [[ "$prefix" == "M" ]]; then must_count=$count; fi
+  done
 
   local verdict="approve"
-  (( must_fix > 0 )) && verdict="changes_requested"
+  if (( must_count > 0 )); then verdict="changes_requested"; fi
 
-  jq -n \
-    --arg repo "$repo" \
-    --arg pr "${pr_number:-}" \
-    --arg review_file "${review_file:-}" \
-    --argjson must_fix "$must_fix" \
-    --argjson should_fix "$should_fix" \
-    --argjson nit "$nit" \
-    --argjson idiom "$idiom" \
-    --argjson total "$total" \
-    --arg verdict "$verdict" \
-    '{
-      repo: $repo,
-      pr_number: (if $pr == "" then null else ($pr | tonumber) end),
-      review_file: $review_file,
-      findings: {
-        must_fix: $must_fix,
-        should_fix: $should_fix,
-        nit: $nit,
-        idiom: $idiom,
-        total: $total
-      },
-      verdict: $verdict
-    }'
+  jq_args+=(--argjson total "$total" --arg verdict "$verdict")
+
+  jq -n "${jq_args[@]}" \
+    "{
+      repo: \$repo,
+      pr_number: (if \$pr == \"\" then null else (\$pr | tonumber) end),
+      review_file: \$review_file,
+      findings: { ${keys_expr}total: \$total },
+      verdict: \$verdict
+    }"
   return 0
 }
 

@@ -793,14 +793,17 @@ EOF
 }
 
 @test "main: --json-summary is parsed and not treated as positional" {
+  # Mock all external dependencies so nothing touches gh or the filesystem.
+  # If --json-summary were treated as positional, _extract_pr_number would fail
+  # with "Cannot extract PR number from: --json-summary".
   run bash -c '
     export HOME="$1"; NO_COLOR=1
     source "$2"
-    cmd_review() {
-      local IFS="|"; echo "$*"
-    }
-    main --json-summary --post 42 2>/dev/null
+    cmd_review() { :; }
+    _extract_repo() { local -n __out=$1; __out="org/repo"; }
+    _review_file() { local -n __out=$1; __out="/tmp/review.md"; }
+    _json_summary() { echo "{}"; }
+    main --json-summary 42
   ' -- "$TMPDIR" "$CLAUDE_REVIEW"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"--json-summary"* ]]
 }

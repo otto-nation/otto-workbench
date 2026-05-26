@@ -215,6 +215,15 @@ jobs:
           fi
           echo "Tap formula verified at version $EXPECTED_VERSION"
 
+      - name: Notify homelab of new release
+        if: steps.release-config.outputs.homebrew-enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMELAB_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/isaacgarza/homelab/dispatches \
+            -f event_type=claude-review-release \
+            -f "client_payload[version]=${{ needs.release.outputs.cr_version }}"
+
   # ---------------------------------------------------------------------------
   # Post-release summary
   # ---------------------------------------------------------------------------

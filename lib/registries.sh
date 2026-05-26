@@ -171,7 +171,37 @@ iter_registry_auth() {
 #   "cmd"          → Bash(cmd:*)   (CLI name differs from registry name)
 #   ["Bash(…):*"]  → verbatim      (granular subcommand patterns)
 #   false / absent → skipped
+_collect_tool_allow() {
+  local -n __tool_perms=$1
+  local file="$2" i="$3"
+  local allow_tag allow_val name
+
+  allow_tag=$(yq ".tools[$i].allow | tag" "$file")
+
+  case "$allow_tag" in
+    '!!bool')
+      allow_val=$(yq ".tools[$i].allow" "$file")
+      [[ "$allow_val" == "true" ]] || return 0
+      name=$(yq ".tools[$i].name" "$file")
+      __tool_perms+=("Bash($name:*)")
+      ;;
+    '!!str')
+      allow_val=$(yq ".tools[$i].allow" "$file")
+      __tool_perms+=("Bash($allow_val:*)")
+      ;;
+    '!!seq')
+      local j arr_len entry
+      arr_len=$(yq ".tools[$i].allow | length" "$file")
+      for (( j=0; j<arr_len; j++ )); do
+        entry=$(yq ".tools[$i].allow[$j]" "$file")
+        __tool_perms+=("$entry")
+      done
+      ;;
+  esac
+}
+
 collect_registry_permissions() {
+  local _perms_var=$1
   local -n __perms_out=$1
   local scan_dir="$2"
   local brew_dir="${3:-$scan_dir/brew}"
@@ -180,35 +210,14 @@ collect_registry_permissions() {
   local -a registries=()
   collect_registries registries "$scan_dir" "$brew_dir"
 
-  local file count i allow_tag allow_val name
+  local file count i
   for file in "${registries[@]}"; do
     [[ -f "$file" ]] || continue
     count=$(yq '.tools | length' "$file" 2>/dev/null) || continue
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
-      allow_tag=$(yq ".tools[$i].allow | tag" "$file")
-
-      case "$allow_tag" in
-        '!!bool')
-          allow_val=$(yq ".tools[$i].allow" "$file")
-          [[ "$allow_val" == "true" ]] || continue
-          name=$(yq ".tools[$i].name" "$file")
-          __perms_out+=("Bash($name:*)")
-          ;;
-        '!!str')
-          allow_val=$(yq ".tools[$i].allow" "$file")
-          __perms_out+=("Bash($allow_val:*)")
-          ;;
-        '!!seq')
-          local j arr_len entry
-          arr_len=$(yq ".tools[$i].allow | length" "$file")
-          for (( j=0; j<arr_len; j++ )); do
-            entry=$(yq ".tools[$i].allow[$j]" "$file")
-            __perms_out+=("$entry")
-          done
-          ;;
-      esac
+      _collect_tool_allow "$_perms_var" "$file" "$i"
     done
   done
 }

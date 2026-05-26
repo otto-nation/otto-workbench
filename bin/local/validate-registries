@@ -85,6 +85,17 @@ _check_no_duplicates() {
   fi
 }
 
+# _check_allow_seq FILE INDEX NAME
+_check_allow_seq() {
+  local file="$1" i="$2" name="$3"
+  local j arr_len entry
+  arr_len=$(yq ".tools[$i].allow | length" "$file")
+  for (( j=0; j<arr_len; j++ )); do
+    entry=$(yq ".tools[$i].allow[$j]" "$file")
+    [[ "$entry" =~ ^Bash\(.+\)$ ]] || _fail "$(basename "$file") entry '$name': allow array entry '$entry' must match Bash(...) pattern"
+  done
+}
+
 # _check_allow_field FILE INDEX
 _check_allow_field() {
   local file="$1" i="$2"
@@ -104,14 +115,7 @@ _check_allow_field() {
       [[ -n "$allow_str" ]] || _fail "$(basename "$file") entry '$name': allow string must be non-empty"
       ;;
     '!!seq')
-      local j arr_len entry
-      arr_len=$(yq ".tools[$i].allow | length" "$file")
-      for (( j=0; j<arr_len; j++ )); do
-        entry=$(yq ".tools[$i].allow[$j]" "$file")
-        if [[ ! "$entry" =~ ^Bash\(.+\)$ ]]; then
-          _fail "$(basename "$file") entry '$name': allow array entry '$entry' must match Bash(...) pattern"
-        fi
-      done
+      _check_allow_seq "$file" "$i" "$name"
       ;;
     *)
       _fail "$(basename "$file") entry '$name': allow must be boolean, string, or array of strings (got $allow_tag)"

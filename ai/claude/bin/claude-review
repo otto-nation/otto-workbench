@@ -715,9 +715,12 @@ _find_repo_root() {
   local repo_name="${repo##*/}"
 
   # Explicit path from --repo-dir
-  if [[ -n "$explicit_dir" && -d "$explicit_dir" ]]; then
-    __out="$explicit_dir"
-    return 0
+  if [[ -n "$explicit_dir" ]]; then
+    if [[ -d "$explicit_dir" ]]; then
+      __out="$explicit_dir"
+      return 0
+    fi
+    return 1
   fi
 
   local git_toplevel
@@ -963,6 +966,11 @@ main() {
   if [[ "$json_summary" == "true" ]]; then
     exec {_json_stdout}>&1
     exec 1>&2
+  fi
+
+  if [[ "$self_review" == "true" && -n "$repo_dir" ]]; then
+    err "--repo-dir is not supported with --self"
+    exit 1
   fi
 
   if [[ "$self_review" == "true" ]]; then

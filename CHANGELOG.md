@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/otto-nation/otto-workbench/compare/v1.6.0...v1.7.0) (2026-05-27)
+
+
+### Features
+
+* **rules:** add rule to avoid compound cd commands ([#136](https://github.com/otto-nation/otto-workbench/issues/136)) ([565d2e1](https://github.com/otto-nation/otto-workbench/commit/565d2e10ea5fdeccbe4528ebea90ac8ae64f260a))
+
+
+### Bug Fixes
+
+* **release:** replace git clone with GitHub API for homebrew deploys ([#134](https://github.com/otto-nation/otto-workbench/issues/134)) ([5a22fce](https://github.com/otto-nation/otto-workbench/commit/5a22fce9403459fda8661261dbaf671f9a3a559c))
+
 ## [1.6.0](https://github.com/otto-nation/otto-workbench/compare/v1.5.0...v1.6.0) (2026-05-26)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.2.0...claude-review-v1.3.0) (2026-05-27)
+
+
+### Features
+
+* **claude-review:** add --repo-dir flag for explicit repo path ([#137](https://github.com/otto-nation/otto-workbench/issues/137)) ([089cf46](https://github.com/otto-nation/otto-workbench/commit/089cf46db4575ae0c610fe7d858cff5e46eb2220))
+
 ## [1.2.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.1.0...claude-review-v1.2.0) (2026-05-26)
 
 

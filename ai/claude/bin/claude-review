@@ -415,9 +415,10 @@ _setup_review_worktree() {
   local repo="$2"
   local pr_number="$3"
   local pr_head="$4"
+  local repo_dir="${5:-}"
 
   local repo_root=""
-  _find_repo_root repo_root "$repo"
+  _find_repo_root repo_root "$repo" "$repo_dir"
   if [[ -z "$repo_root" ]]; then
     err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
     exit 1
@@ -473,6 +474,7 @@ usage() {
   echo "  --skip-user-verification   Skip ownership check in --self mode"
   echo "  --force                    Skip pending review and stale review warnings"
   echo "  --resume                   Resume from existing intermediate files"
+  echo "  --repo-dir <path>          Path to local repo clone (skips auto-detection)"
   echo "  --json-summary             Suppress human output; emit JSON summary to stdout"
 }
 
@@ -582,6 +584,7 @@ cmd_review() {
   local model="${9:-}"
   local resume="${10:-false}"
   local auto_submit="${11:-false}"
+  local repo_dir="${12:-}"
 
   _prune_merged_reviews
 
@@ -630,7 +633,7 @@ cmd_review() {
 
   # ── Worktree setup ──
   local wt_path
-  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head"
+  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head" "$repo_dir"
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
@@ -708,14 +711,32 @@ _verify_pr_ownership() {
 _find_repo_root() {
   local -n __out=$1
   local repo="$2"
-  local git_toplevel repo_name
-  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
-  repo_name="${repo##*/}"
-  if [[ -n "$git_toplevel" ]] && [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
-    __out="$git_toplevel"
-  else
-    __out=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
+  local explicit_dir="${3:-}"
+  local repo_name="${repo##*/}"
+
+  # Explicit path from --repo-dir
+  if [[ -n "$explicit_dir" && -d "$explicit_dir" ]]; then
+    __out="$explicit_dir"
+    return 0
   fi
+
+  local git_toplevel
+  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
+  if [[ -n "$git_toplevel" ]]; then
+    if [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
+      __out="$git_toplevel"
+      return 0
+    fi
+    # Bare-repo worktree layout: toplevel is <repo>/<branch>, check parent
+    local parent_dir
+    parent_dir="$(dirname "$git_toplevel")"
+    if [[ "$(basename "$parent_dir")" == "$repo_name" ]]; then
+      __out="$parent_dir"
+      return 0
+    fi
+  fi
+
+  __out=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
 }
 
 _switch_to_pr_branch() {
@@ -911,6 +932,7 @@ main() {
   local max_cost=""
   local model=""
   local json_summary="false"
+  local repo_dir=""
   local positional=()
 
   while [[ $# -gt 0 ]]; do
@@ -928,6 +950,7 @@ main() {
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
+      --repo-dir)     repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "--repo-dir requires a value"; exit 1; }; shift 2 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac
@@ -984,7 +1007,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit" "$repo_dir"
       if [[ "$json_summary" == "true" ]]; then
         local rev_pr_number rev_repo rev_review_file
         _extract_pr_number rev_pr_number "$command"

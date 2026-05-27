@@ -39,6 +39,13 @@
 - When creating a new branch, always branch from `origin/main` (already covered in git.generated.md) — never from a local `main` that may be behind
 - If a rebase has conflicts, resolve them before writing new code — don't add commits on top of a stale base
 
+## Avoid Compound `cd` Commands
+
+- Never use `cd <path> && <command>` — compound commands starting with `cd` trigger an unsuppressible security prompt in Claude Code. Use these alternatives instead:
+  - `git -C <path> ...` for git commands
+  - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
+  - Run the command directly with absolute paths when possible
+
 ## Rebase, Cherry-Pick, Merge Conflicts
 
 - During interactive git operations (rebase, cherry-pick, merge conflict resolution), use only Bash commands — the Edit tool can corrupt git's index state and abort the operation

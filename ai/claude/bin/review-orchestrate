@@ -269,9 +269,10 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     diff = _run(["git", "diff", git_range], cwd=job.wt_path)
     commit_log = _run(["git", "log", "--stat", "--reverse", git_range_log], cwd=job.wt_path)
 
-    if len(commit_log.encode()) > MAX_COMMIT_LOG_BYTES:
-        _warn(f"Commit log too large ({len(commit_log.encode()) // 1024}KB), truncating to {MAX_COMMIT_LOG_BYTES // 1024}KB")
-        commit_log = commit_log.encode()[:MAX_COMMIT_LOG_BYTES].decode(errors="ignore").rsplit("\n", 1)[0]
+    commit_log_bytes = commit_log.encode()
+    if len(commit_log_bytes) > MAX_COMMIT_LOG_BYTES:
+        _warn(f"Commit log too large ({len(commit_log_bytes) // 1024}KB), truncating to {MAX_COMMIT_LOG_BYTES // 1024}KB")
+        commit_log = commit_log_bytes[:MAX_COMMIT_LOG_BYTES].decode(errors="ignore").rsplit("\n", 1)[0]
         commit_log += "\n\n... (truncated — full log exceeded size limit)"
 
     # Fall back to uncommitted diff when no commits exist on the branch

@@ -46,6 +46,13 @@
   - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
   - Run the command directly with absolute paths when possible
 
+## Avoid `find -exec`
+
+- Never use `find ... -exec` — Claude Code blocks `-exec` even with `Bash(find:*)` allowed because `-exec` can run arbitrary commands. Use piped alternatives instead:
+  - `find ... -print0 | xargs -0 grep ...` instead of `find ... -exec grep ... {} \;`
+  - `find ... -print0 | xargs -0 <command>` for other commands
+  - Both `find` and `xargs` are already auto-allowed
+
 ## Rebase, Cherry-Pick, Merge Conflicts
 
 - During interactive git operations (rebase, cherry-pick, merge conflict resolution), use only Bash commands — the Edit tool can corrupt git's index state and abort the operation

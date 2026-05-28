@@ -256,16 +256,58 @@ _json_summary() {
   local verdict="approve"
   if (( must_count > 0 )); then verdict="changes_requested"; fi
 
-  jq_args+=(--argjson total "$total" --arg verdict "$verdict")
+  # Extract cost/token/duration from session logs
+  local cost_usd=0 input_tokens=0 output_tokens=0
+  local cache_read_tokens=0 cache_write_tokens=0 duration_ms=0
+  local base="${review_file%"${REVIEW_EXT}"}"
+  local session_log="${base}${SUFFIX_SESSION}"
+  local post_session_log="${base}${SUFFIX_POST_SESSION}"
+  local logs=()
+  [[ -f "$session_log" ]] && logs+=("$session_log")
+  [[ -f "$post_session_log" ]] && logs+=("$post_session_log")
+  if [[ ${#logs[@]} -gt 0 ]]; then
+    local raw
+    raw=$(grep -h '"type":"result"' "${logs[@]}" 2>/dev/null) || true
+    if [[ -n "$raw" ]]; then
+      read -r cost_usd input_tokens output_tokens cache_read_tokens cache_write_tokens duration_ms <<< "$(echo "$raw" | jq -rs '
+        {
+          cost: (map(.total_cost_usd // 0) | add),
+          input: (map(.usage.input_tokens // 0) | add),
+          output: (map(.usage.output_tokens // 0) | add),
+          cache_read: (map(.usage.cache_read_input_tokens // 0) | add),
+          cache_write: (map(.usage.cache_creation_input_tokens // 0) | add),
+          duration: (map(.duration_ms // 0) | add)
+        } | [.cost, .input, .output, .cache_read, .cache_write, .duration] | @tsv
+      ' 2>/dev/null)" || true
+    fi
+  fi
 
-  jq -n "${jq_args[@]}" \
+  jq_args+=(
+    --argjson total "$total" --arg verdict "$verdict"
+    --argjson cost_usd "${cost_usd:-0}"
+    --argjson input_tokens "${input_tokens:-0}"
+    --argjson output_tokens "${output_tokens:-0}"
+    --argjson cache_read_tokens "${cache_read_tokens:-0}"
+    --argjson cache_write_tokens "${cache_write_tokens:-0}"
+    --argjson duration_ms "${duration_ms:-0}"
+  )
+
+  local json
+  json=$(jq -cn "${jq_args[@]}" \
     "{
       repo: \$repo,
       pr_number: (if \$pr == \"\" then null else (\$pr | tonumber) end),
       review_file: \$review_file,
       findings: { ${keys_expr}total: \$total },
-      verdict: \$verdict
-    }"
+      verdict: \$verdict,
+      cost_usd: \$cost_usd,
+      input_tokens: \$input_tokens,
+      output_tokens: \$output_tokens,
+      cache_read_tokens: \$cache_read_tokens,
+      cache_write_tokens: \$cache_write_tokens,
+      duration_ms: \$duration_ms
+    }")
+  echo "REVIEW_SUMMARY:${json}"
   return 0
 }
 

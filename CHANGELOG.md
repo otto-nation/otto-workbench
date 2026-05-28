@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/otto-nation/otto-workbench/compare/v1.7.0...v1.8.0) (2026-05-28)
+
+
+### Features
+
+* **rules:** save plan documents to ignore/plans/ ([#138](https://github.com/otto-nation/otto-workbench/issues/138)) ([4db5842](https://github.com/otto-nation/otto-workbench/commit/4db58424cb806cf1570e09321fcf84f6639b73c0))
+
 ## [1.7.0](https://github.com/otto-nation/otto-workbench/compare/v1.6.0...v1.7.0) (2026-05-27)
 
 

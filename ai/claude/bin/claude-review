@@ -424,6 +424,12 @@ _setup_review_worktree() {
     exit 1
   fi
 
+  # Shallow clones break merge-base resolution — unshallow before worktree setup
+  if [[ "$(git -C "$repo_root" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+    info "Unshallowing repository..."
+    git -C "$repo_root" fetch --unshallow 2>/dev/null || true
+  fi
+
   info "Setting up worktree for PR #${pr_number}..."
   local wt_json wt_fallback="false"
   wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true

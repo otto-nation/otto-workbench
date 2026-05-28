@@ -1211,6 +1211,7 @@ def _build_agent_cmd(
     cmd = [
         "claude", "-p", "--verbose", "--output-format", "stream-json",
         "--permission-mode", "acceptEdits",
+        "--disable-slash-commands",
         *add_dir_args,
         "--agent", "reviewer",
     ]

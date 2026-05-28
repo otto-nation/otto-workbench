@@ -511,11 +511,11 @@ def _check_existing_pending(repo: str, pr: str) -> int | None:
         return None
     try:
         reviews = json.loads(out)
-        for r in reviews:
-            if r.get("state") == REVIEW_STATE_PENDING:
-                return int(r["id"])
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        pass
+    except (json.JSONDecodeError, TypeError):
+        return None
+    for r in reviews:
+        if r.get("state") == REVIEW_STATE_PENDING:
+            return int(r.get("id", 0)) or None
     return None
 
 

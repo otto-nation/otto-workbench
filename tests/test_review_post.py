@@ -1,5 +1,4 @@
 import json
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -670,6 +669,15 @@ class TestGhApi:
             assert rc == 1
             assert stdout == "error msg"
 
+    def test_headers(self, rp):
+        mock_result = MagicMock(returncode=0, stdout="diff text")
+        with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
+            rp._gh_api("endpoint", headers={"Accept": "application/vnd.github.v3.diff"})
+            cmd = mock_run.call_args[0][0]
+            assert "--header" in cmd
+            idx = cmd.index("--header")
+            assert cmd[idx + 1] == "Accept: application/vnd.github.v3.diff"
+
 
 class TestHandleApiAttempt:
     def test_success_returns_parsed_json(self, rp):
@@ -722,22 +730,21 @@ class TestHandleApiAttempt:
 
 class TestCheckExistingPending:
     def test_returns_review_id(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="12345\n")
-        with patch.object(rp.subprocess, "run", return_value=mock_result):
+        reviews = json.dumps([{"id": 12345, "state": "PENDING"}])
+        with patch.object(rp, "_gh_api", return_value=(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") == 12345
 
-    def test_returns_none_for_null(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="null\n")
-        with patch.object(rp.subprocess, "run", return_value=mock_result):
+    def test_returns_none_when_no_pending(self, rp):
+        reviews = json.dumps([{"id": 1, "state": "APPROVED"}])
+        with patch.object(rp, "_gh_api", return_value=(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") is None
 
-    def test_returns_none_for_empty(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="\n")
-        with patch.object(rp.subprocess, "run", return_value=mock_result):
+    def test_returns_none_for_empty_list(self, rp):
+        with patch.object(rp, "_gh_api", return_value=(0, "[]")):
             assert rp._check_existing_pending("org/repo", "1") is None
 
-    def test_returns_none_on_timeout(self, rp):
-        with patch.object(rp.subprocess, "run", side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=15)):
+    def test_returns_none_on_api_failure(self, rp):
+        with patch.object(rp, "_gh_api", return_value=(1, "")):
             assert rp._check_existing_pending("org/repo", "1") is None
 
 
@@ -783,29 +790,25 @@ class TestPostReview:
     PAYLOAD = {"body": "test", "commit_id": "abc123"}
 
     def test_no_existing_pending(self, rp):
-        pending_result = MagicMock(returncode=0, stdout="null\n")
-        post_result = MagicMock(returncode=0, stdout='{"id": 42}')
-
-        with patch.object(rp.subprocess, "run", side_effect=[pending_result, post_result]):
+        with (
+            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch.object(rp, "_gh_api", return_value=(0, '{"id": 42}')),
+        ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
 
     def test_deletes_existing_pending(self, rp):
-        pending_result = MagicMock(returncode=0, stdout="999\n")
-        delete_result = MagicMock(returncode=0, stdout="")
-        post_result = MagicMock(returncode=0, stdout='{"id": 42}')
-
-        with patch.object(rp.subprocess, "run", side_effect=[pending_result, delete_result, post_result]) as mock_run:
+        with (
+            patch.object(rp, "_check_existing_pending", return_value=999),
+            patch.object(rp, "_gh_api", return_value=(0, '{"id": 42}')) as mock_api,
+        ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
-            delete_call = mock_run.call_args_list[1]
-            delete_cmd = delete_call[0][0]
-            assert "--method" in delete_cmd
-            assert "DELETE" in delete_cmd
+            delete_calls = [c for c in mock_api.call_args_list if c.kwargs.get("method") == "DELETE"
+                            or (len(c.args) > 1 and c.args[1] == "DELETE")]
+            assert len(delete_calls) == 1
 
     def test_with_submit(self, rp):
-        pending_result = MagicMock(returncode=0, stdout="null\n")
-        post_result = MagicMock(returncode=0, stdout='{"id": 42}')
         dumped_payloads = []
         orig_dump = rp.json.dump
 
@@ -814,7 +817,8 @@ class TestPostReview:
             return orig_dump(obj, fp, **kw)
 
         with (
-            patch.object(rp.subprocess, "run", side_effect=[pending_result, post_result]),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch.object(rp, "_gh_api", return_value=(0, '{"id": 42}')),
             patch.object(rp.json, "dump", side_effect=capture_dump),
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD, submit=True)
@@ -841,31 +845,34 @@ class TestSubmitReview:
         assert "Failed to submit" in captured.err
 
 
-class TestGetHeadSha:
+class TestFetchPrMetadata:
     def test_success(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="abc123\n")
-        with patch.object(rp.subprocess, "run", return_value=mock_result):
-            assert rp._get_head_sha("org/repo", "1") == "abc123"
+        pr_json = json.dumps({
+            "head": {"sha": "abc123", "ref": "feat/branch"},
+            "base": {"ref": "main"},
+        })
+        with patch.object(rp, "_gh_api", return_value=(0, pr_json)):
+            meta = rp._fetch_pr_metadata("org/repo", "1")
+            assert meta["head_sha"] == "abc123"
+            assert meta["head_ref"] == "feat/branch"
+            assert meta["base_ref"] == "main"
 
     def test_failure_exits(self, rp):
-        mock_result = MagicMock(returncode=1, stderr="not found")
         with (
-            patch.object(rp.subprocess, "run", return_value=mock_result),
+            patch.object(rp, "_gh_api", return_value=(1, "")),
             pytest.raises(SystemExit),
         ):
-            rp._get_head_sha("org/repo", "1")
+            rp._fetch_pr_metadata("org/repo", "1")
 
 
 class TestGetDiff:
     def test_success(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="diff --git a/f b/f\n")
-        with patch.object(rp.subprocess, "run", return_value=mock_result):
+        with patch.object(rp, "_gh_api", return_value=(0, "diff --git a/f b/f\n")):
             assert rp._get_diff("org/repo", "1") == "diff --git a/f b/f\n"
 
     def test_failure_exits(self, rp):
-        mock_result = MagicMock(returncode=1, stderr="error")
         with (
-            patch.object(rp.subprocess, "run", return_value=mock_result),
+            patch.object(rp, "_gh_api", return_value=(1, "")),
             pytest.raises(SystemExit),
         ):
             rp._get_diff("org/repo", "1")

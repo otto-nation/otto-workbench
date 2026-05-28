@@ -187,7 +187,7 @@ For each such finding:
 2. Include the file path and line number in the finding (e.g., `see pkg/filename.go:13-22`)
 3. If a working example of the correct pattern exists elsewhere, reference it (e.g., `see example/service/examplefile.go:16-44 for a working helper`)
 
-This allows `/pr-review` to convert references into GitHub permalink URLs when posting.
+This allows `/pr-review` to convert references into GitHub permalink URLs when posting. Links resolve against the PR's base branch for unchanged files and the PR head branch for new/modified files — no special formatting is needed.
 
 ### 10. Verdict
 

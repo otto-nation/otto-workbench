@@ -415,9 +415,10 @@ _setup_review_worktree() {
   local repo="$2"
   local pr_number="$3"
   local pr_head="$4"
+  local repo_dir_override="${5:-}"
 
   local repo_root=""
-  _find_repo_root repo_root "$repo"
+  _find_repo_root repo_root "$repo" "$repo_dir_override"
   if [[ -z "$repo_root" ]]; then
     err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
     exit 1
@@ -435,6 +436,7 @@ _setup_review_worktree() {
       exit 1
     }
     __wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
+    git -C "$repo_root" worktree remove --force "$__wt_path" 2>/dev/null || true
     git -C "$repo_root" worktree add --detach "$__wt_path" FETCH_HEAD 2>/dev/null || {
       err "Failed to create worktree for PR #${pr_number}"
       exit 1
@@ -474,6 +476,7 @@ usage() {
   echo "  --force                    Skip pending review and stale review warnings"
   echo "  --resume                   Resume from existing intermediate files"
   echo "  --json-summary             Suppress human output; emit JSON summary to stdout"
+  echo "  --repo-dir <path>          Override repo root detection (use when CWD differs from repo)"
 }
 
 _check_pending_review() {
@@ -582,6 +585,7 @@ cmd_review() {
   local model="${9:-}"
   local resume="${10:-false}"
   local auto_submit="${11:-false}"
+  local repo_dir_override="${12:-}"
 
   _prune_merged_reviews
 
@@ -630,7 +634,7 @@ cmd_review() {
 
   # ── Worktree setup ──
   local wt_path
-  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head"
+  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head" "$repo_dir_override"
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
@@ -708,6 +712,11 @@ _verify_pr_ownership() {
 _find_repo_root() {
   local -n __out=$1
   local repo="$2"
+  local override="${3:-}"
+  if [[ -n "$override" ]]; then
+    __out=$(git -C "$override" rev-parse --show-toplevel 2>/dev/null) || true
+    return
+  fi
   local git_toplevel repo_name
   git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
   repo_name="${repo##*/}"
@@ -911,6 +920,7 @@ main() {
   local max_cost=""
   local model=""
   local json_summary="false"
+  local repo_dir=""
   local positional=()
 
   while [[ $# -gt 0 ]]; do
@@ -928,6 +938,7 @@ main() {
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
+      --repo-dir)     repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "--repo-dir requires a value"; exit 1; }; shift 2 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac
@@ -984,7 +995,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit" "$repo_dir"
       if [[ "$json_summary" == "true" ]]; then
         local rev_pr_number rev_repo rev_review_file
         _extract_pr_number rev_pr_number "$command"

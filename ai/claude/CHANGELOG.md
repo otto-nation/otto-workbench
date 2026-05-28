@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.3.2...claude-review-v1.4.0) (2026-05-28)
+
+
+### Features
+
+* **claude-review:** dual-ref permalink resolution; consolidate GitHub API calls ([#147](https://github.com/otto-nation/otto-workbench/issues/147)) ([62e90dd](https://github.com/otto-nation/otto-workbench/commit/62e90ddea09581f5b714b8cedd6ff1850e7ec534))
+
+
+### Bug Fixes
+
+* **claude-review:** handle shallow clones in review pipeline ([#144](https://github.com/otto-nation/otto-workbench/issues/144)) ([2717fdd](https://github.com/otto-nation/otto-workbench/commit/2717fdd65d7304b8be092ebdd3b90d16b9b26c5d))
+* **claude-review:** handle shallow clones; add metrics to JSON summary ([#146](https://github.com/otto-nation/otto-workbench/issues/146)) ([8585249](https://github.com/otto-nation/otto-workbench/commit/85852497a10e2843d875a9eb6faa3176df7462b6))
+
 ## [1.3.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.3.1...claude-review-v1.3.2) (2026-05-28)
 
 

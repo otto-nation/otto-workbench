@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.0](https://github.com/otto-nation/otto-workbench/compare/v1.8.0...v1.9.0) (2026-05-28)
+
+
+### Features
+
+* **claude-review:** dual-ref permalink resolution; consolidate GitHub API calls ([#147](https://github.com/otto-nation/otto-workbench/issues/147)) ([62e90dd](https://github.com/otto-nation/otto-workbench/commit/62e90ddea09581f5b714b8cedd6ff1850e7ec534))
+
+
+### Bug Fixes
+
+* **claude-review:** handle shallow clones; add metrics to JSON summary ([#146](https://github.com/otto-nation/otto-workbench/issues/146)) ([8585249](https://github.com/otto-nation/otto-workbench/commit/85852497a10e2843d875a9eb6faa3176df7462b6))
+
 ## [1.8.0](https://github.com/otto-nation/otto-workbench/compare/v1.7.0...v1.8.0) (2026-05-28)
 
 

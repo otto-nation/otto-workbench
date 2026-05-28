@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import functools
 import json
 import re
 import subprocess
@@ -60,6 +59,7 @@ RATE_LIMIT_MAX_WAIT = 300
 NON_RATE_LIMIT_DELAY = 5
 DEFAULT_CHUNK_SIZE = 30
 INTER_CHUNK_DELAY = 30
+GH_API_TIMEOUT = 30
 
 HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 
@@ -419,30 +419,36 @@ _PERMALINK_REF_RE = re.compile(
 )
 
 
-def _build_permalink(repo: str, sha: str, m: re.Match) -> str:
+def _build_permalink(repo: str, ref: str, m: re.Match) -> str:
     """Build a GitHub permalink from a source reference match."""
     path, start, end = m.group(1), m.group(2), m.group(3)
-    url = f"https://github.com/{repo}/blob/{sha}/{path}#L{start}"
+    url = f"https://github.com/{repo}/blob/{ref}/{path}#L{start}"
     if end:
         url += f"-L{end}"
     display = f"`{path}:{start}{f'-{end}' if end else ''}`"
     return f"[{display}]({url})"
 
 
-def resolve_permalinks(findings: list[Finding], repo: str) -> list[Finding]:
-    """Convert source references to GitHub permalink URLs."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "origin/main"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode != 0:
-            return findings
-        main_sha = result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+def resolve_permalinks(
+    findings: list[Finding], repo: str, diff_text: str,
+    head_ref: str, base_ref: str,
+) -> list[Finding]:
+    """Convert source references to GitHub permalink URLs.
+
+    Uses base_ref for files unchanged by the PR and head_ref for
+    files that are new or modified in the PR diff.
+    """
+    if not head_ref or not base_ref:
         return findings
 
-    replacer = functools.partial(_build_permalink, repo, main_sha)
+    hunks = parse_diff_hunks(diff_text)
+
+    def replacer(m: re.Match) -> str:
+        path = m.group(1)
+        resolved = _resolve_path(path, hunks)
+        ref = head_ref if resolved else base_ref
+        return _build_permalink(repo, ref, m)
+
     for f in findings:
         f.body = _PERMALINK_REF_RE.sub(replacer, f.body)
 
@@ -451,54 +457,64 @@ def resolve_permalinks(findings: list[Finding], repo: str) -> list[Finding]:
 
 # ── GitHub API ───────────────────────────────────────────────────────────────
 
-def _gh_api(endpoint: str, method: str = "GET", input_file: str | None = None) -> tuple[int, str]:
+def _gh_api(
+    endpoint: str, method: str = "GET", input_file: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, str]:
     """Call gh api and return (exit_code, stdout)."""
     cmd = ["gh", "api", endpoint]
     if method != "GET":
         cmd.extend(["--method", method])
     if input_file:
         cmd.extend(["--input", input_file])
+    for key, val in (headers or {}).items():
+        cmd.extend(["--header", f"{key}: {val}"])
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_API_TIMEOUT)
     return result.returncode, result.stdout
 
 
-def _get_head_sha(repo: str, pr: str) -> str:
-    """Get the HEAD SHA of a PR."""
-    result = subprocess.run(
-        ["gh", "pr", "view", pr, "--repo", repo, "--json", "headRefOid", "--jq", ".headRefOid"],
-        capture_output=True, text=True, timeout=15,
-    )
-    if result.returncode != 0:
-        _err(f"Failed to get PR HEAD: {result.stderr.strip()}")
+def _fetch_pr_metadata(repo: str, pr: str) -> dict:
+    """Fetch PR metadata (head SHA, head ref, base ref) in one call."""
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}")
+    if code != 0:
+        _err("Failed to fetch PR metadata")
         sys.exit(1)
-    return result.stdout.strip()
+    try:
+        data = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        _err("Failed to parse PR metadata from API response")
+        sys.exit(1)
+    return {
+        "head_sha": data.get("head", {}).get("sha", ""),
+        "head_ref": data.get("head", {}).get("ref", ""),
+        "base_ref": data.get("base", {}).get("ref", ""),
+    }
 
 
 def _get_diff(repo: str, pr: str) -> str:
     """Get the PR diff."""
-    result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/pulls/{pr}",
-         "--header", "Accept: application/vnd.github.v3.diff"],
-        capture_output=True, text=True, timeout=30,
+    code, out = _gh_api(
+        f"repos/{repo}/pulls/{pr}",
+        headers={"Accept": "application/vnd.github.v3.diff"},
     )
-    if result.returncode != 0:
-        _err(f"Failed to get diff: {result.stderr.strip()}")
+    if code != 0:
+        _err("Failed to get diff")
         sys.exit(1)
-    return result.stdout
+    return out
 
 
 def _check_existing_pending(repo: str, pr: str) -> int | None:
     """Check for existing PENDING review and return its ID."""
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
+    if code != 0:
+        return None
     try:
-        result = subprocess.run(
-            ["gh", "api", f"repos/{repo}/pulls/{pr}/reviews",
-             "--jq", f'[.[] | select(.state == "{REVIEW_STATE_PENDING}")] | first | .id'],
-            capture_output=True, text=True, timeout=15,
-        )
-        if result.returncode == 0 and result.stdout.strip() not in ("", "null"):
-            return int(result.stdout.strip())
-    except (ValueError, subprocess.TimeoutExpired):
+        reviews = json.loads(out)
+        for r in reviews:
+            if r.get("state") == REVIEW_STATE_PENDING:
+                return int(r["id"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
     return None
 
@@ -867,11 +883,17 @@ def main():
         _warn("No findings to post")
         sys.exit(0)
 
-    # 3. Get PR state
-    if not args.dry_run:
-        head_sha = sidecar.get("head_sha") or _get_head_sha(args.repo, args.pr)
-    else:
-        head_sha = review_sha or "dry-run"
+    # 3. Get PR state (head SHA, head ref, base ref — single API call if sidecar is incomplete)
+    head_sha = sidecar.get("head_sha", "")
+    head_ref = sidecar.get("head_ref", "")
+    base_ref = sidecar.get("base_ref", "")
+    if not args.dry_run and (not head_sha or not head_ref or not base_ref):
+        pr_meta = _fetch_pr_metadata(args.repo, args.pr)
+        head_sha = head_sha or pr_meta["head_sha"]
+        head_ref = head_ref or pr_meta["head_ref"]
+        base_ref = base_ref or pr_meta["base_ref"]
+    if args.dry_run:
+        head_sha = head_sha or review_sha or "dry-run"
     if review_sha and not args.dry_run and review_sha != head_sha:
         _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
 
@@ -885,9 +907,9 @@ def main():
     # 5. Combine body findings (file-level + skipped)
     body_findings = file_level + skipped
 
-    # 6. Resolve permalinks
+    # 6. Resolve permalinks (base_ref for unchanged files, head_ref for changed)
     findings_for_links = inline + body_findings
-    resolve_permalinks(findings_for_links, args.repo)
+    resolve_permalinks(findings_for_links, args.repo, diff_text, head_ref, base_ref)
 
     # 7. Renumber by posted location
     inline, body_findings = renumber_for_posting(inline, body_findings)

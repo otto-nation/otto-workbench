@@ -1343,6 +1343,8 @@ def _write_review_sidecar(job: ReviewJob):
         "repo": job.repo,
         "pr_number": job.pr_number,
         "head_sha": job.pr.head_sha,
+        "head_ref": job.pr.head,
+        "base_ref": job.pr.base,
     }
     if job.preflight and job.preflight.diff:
         meta["diff"] = job.preflight.diff

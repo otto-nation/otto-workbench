@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.3.0...claude-review-v1.3.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **claude-review:** disable skills during review to prevent context overflow ([#140](https://github.com/otto-nation/otto-workbench/issues/140)) ([0cabf46](https://github.com/otto-nation/otto-workbench/commit/0cabf46fc91057a830f9030fe9e454e571033984))
+
 ## [1.3.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.2.0...claude-review-v1.3.0) (2026-05-27)
 
 

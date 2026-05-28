@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.3.1...claude-review-v1.3.2) (2026-05-28)
+
+
+### Bug Fixes
+
+* **claude-review:** clean stale fallback worktrees before creating new ones ([#142](https://github.com/otto-nation/otto-workbench/issues/142)) ([ecbc687](https://github.com/otto-nation/otto-workbench/commit/ecbc6873680aa2ede5a04e6f8353dd5774b00437))
+
 ## [1.3.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.3.0...claude-review-v1.3.1) (2026-05-28)
 
 

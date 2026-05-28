@@ -436,6 +436,7 @@ _setup_review_worktree() {
       exit 1
     }
     __wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
+    git -C "$repo_root" worktree remove --force "$__wt_path" 2>/dev/null || true
     git -C "$repo_root" worktree add --detach "$__wt_path" FETCH_HEAD 2>/dev/null || {
       err "Failed to create worktree for PR #${pr_number}"
       exit 1

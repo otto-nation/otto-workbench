@@ -741,7 +741,7 @@ EOF
 EOF
   run _json_summary "org/repo" "42" "$TMPDIR/review.md"
   [ "$status" -eq 0 ]
-  local json="$output"
+  local json="${output#REVIEW_SUMMARY:}"
   [ "$(echo "$json" | jq -r '.repo')" = "org/repo" ]
   [ "$(echo "$json" | jq '.pr_number')" = "42" ]
   [ "$(echo "$json" | jq '.findings.must_fix')" = "1" ]
@@ -750,6 +750,8 @@ EOF
   [ "$(echo "$json" | jq '.findings.idiom')" = "2" ]
   [ "$(echo "$json" | jq '.findings.total')" = "6" ]
   [ "$(echo "$json" | jq -r '.verdict')" = "changes_requested" ]
+  [ "$(echo "$json" | jq '.cost_usd')" = "0" ]
+  [ "$(echo "$json" | jq '.duration_ms')" = "0" ]
 }
 
 @test "_json_summary: approve when no must-fix" {
@@ -761,14 +763,15 @@ EOF
 EOF
   run _json_summary "org/repo" "10" "$TMPDIR/review.md"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.verdict')" = "approve" ]
-  [ "$(echo "$output" | jq '.findings.total')" = "2" ]
+  local json="${output#REVIEW_SUMMARY:}"
+  [ "$(echo "$json" | jq -r '.verdict')" = "approve" ]
+  [ "$(echo "$json" | jq '.findings.total')" = "2" ]
 }
 
 @test "_json_summary: missing review file" {
   run _json_summary "org/repo" "42" "$TMPDIR/nonexistent.md"
   [ "$status" -eq 0 ]
-  local json="$output"
+  local json="${output#REVIEW_SUMMARY:}"
   [ "$(echo "$json" | jq '.findings.total')" = "0" ]
   [ "$(echo "$json" | jq -r '.verdict')" = "approve" ]
 }
@@ -780,7 +783,7 @@ EOF
 EOF
   run _json_summary "org/repo" "" "$TMPDIR/self-review.md"
   [ "$status" -eq 0 ]
-  local json="$output"
+  local json="${output#REVIEW_SUMMARY:}"
   [ "$(echo "$json" | jq '.pr_number')" = "null" ]
   [ "$(echo "$json" | jq -r '.verdict')" = "changes_requested" ]
 }

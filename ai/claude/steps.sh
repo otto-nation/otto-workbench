@@ -375,7 +375,8 @@ _profile_excludes_skill() {
 
 # _export_claude_config DIR PROFILE — copies Claude configs into DIR, filtered by profile.
 # Produces a self-contained directory suitable for deployment to servers/containers.
-# Skips interactive/local-only components (MCPs, machine profile, memory, plugins, scripts).
+# Only copies settings, CLAUDE.md, rules, agents, and skills (filtered by profile).
+# MCPs, machine profile, memory, plugins, and scripts are intentionally excluded.
 _export_claude_config() {
   local dest="$1" profile="${2:-server}"
 

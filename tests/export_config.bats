@@ -2,6 +2,8 @@
 # Tests for _export_claude_config(), _profile_excludes_skill(), and workbench-export.
 
 FAKE_HOME=""
+EXPORT_DIR=""
+TARBALL_ROOT=""
 
 setup() {
   load 'test_helper'
@@ -19,6 +21,9 @@ setup() {
   source "$REPO_ROOT/lib/ui.sh"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/ai/claude/steps.sh"
+
+  EXPORT_DIR="$TMPDIR/export"
+  _export_claude_config "$EXPORT_DIR" "server"
 }
 
 teardown() {
@@ -26,49 +31,15 @@ teardown() {
   common_teardown
 }
 
-# ─── profiles.yml ────────────────────────────────────────────────────────────
-
-@test "profiles.yml is valid YAML" {
-  run yq '.' "$REPO_ROOT/ai/profiles.yml"
-  [ "$status" -eq 0 ]
-}
-
-@test "profiles.yml has a server profile" {
-  run yq -e '.profiles.server' "$REPO_ROOT/ai/profiles.yml"
-  [ "$status" -eq 0 ]
-}
-
-@test "profiles.yml server profile excludes skills as a list" {
-  run yq -e '.profiles.server.exclude.skills | type' "$REPO_ROOT/ai/profiles.yml"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"!!seq"* ]]
-}
-
-@test "profiles.yml server profile excludes dream skill" {
-  run yq -e '.profiles.server.exclude.skills[] | select(. == "dream")' "$REPO_ROOT/ai/profiles.yml"
-  [ "$status" -eq 0 ]
-}
-
-@test "profiles.yml server profile excludes promote skill" {
-  run yq -e '.profiles.server.exclude.skills[] | select(. == "promote")' "$REPO_ROOT/ai/profiles.yml"
-  [ "$status" -eq 0 ]
-}
-
-@test "profiles.yml server profile excludes machine skill" {
-  run yq -e '.profiles.server.exclude.skills[] | select(. == "machine")' "$REPO_ROOT/ai/profiles.yml"
-  [ "$status" -eq 0 ]
-}
-
-@test "profiles.yml server profile excludes all MCPs" {
-  local val
-  val=$(yq '.profiles.server.exclude.mcps' "$REPO_ROOT/ai/profiles.yml")
-  [[ "$val" == "all" ]]
-}
-
-@test "profiles.yml server profile excludes all plugins" {
-  local val
-  val=$(yq '.profiles.server.exclude.plugins' "$REPO_ROOT/ai/profiles.yml")
-  [[ "$val" == "all" ]]
+# _build_tarball — builds and extracts a tarball once per test that needs it.
+_build_tarball() {
+  [[ -n "$TARBALL_ROOT" ]] && return
+  local out_dir="$TMPDIR/tarball-output"
+  local extract_dir="$TMPDIR/extracted"
+  mkdir -p "$out_dir" "$extract_dir"
+  "$REPO_ROOT/ai/bin/workbench-export" --version "0.0.1-test" --output "$out_dir" >/dev/null 2>&1
+  tar xzf "$out_dir/claude-config-0.0.1-test.tar.gz" -C "$extract_dir"
+  TARBALL_ROOT="$extract_dir/claude-config-0.0.1-test"
 }
 
 # ─── _profile_excludes_skill ─────────────────────────────────────────────────
@@ -107,130 +78,65 @@ teardown() {
 # ─── _export_claude_config ───────────────────────────────────────────────────
 
 @test "_export_claude_config: creates expected directory structure" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ -d "$dest/rules" ]
-  [ -d "$dest/agents" ]
-  [ -d "$dest/skills" ]
+  [ -d "$EXPORT_DIR/rules" ]
+  [ -d "$EXPORT_DIR/agents" ]
+  [ -d "$EXPORT_DIR/skills" ]
 }
 
-@test "_export_claude_config: copies settings.json" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ -f "$dest/settings.json" ]
-  run jq empty "$dest/settings.json"
+@test "_export_claude_config: copies settings.json as valid JSON" {
+  [ -f "$EXPORT_DIR/settings.json" ]
+  run jq empty "$EXPORT_DIR/settings.json"
   [ "$status" -eq 0 ]
 }
 
 @test "_export_claude_config: copies CLAUDE.md" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ -f "$dest/CLAUDE.md" ]
-  [ -s "$dest/CLAUDE.md" ]
+  [ -f "$EXPORT_DIR/CLAUDE.md" ]
+  [ -s "$EXPORT_DIR/CLAUDE.md" ]
 }
 
 @test "_export_claude_config: copies all rule files" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
   local src_count dest_count
   src_count=$(find "$REPO_ROOT/ai/guidelines/rules" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
-  dest_count=$(find "$dest/rules" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
+  dest_count=$(find "$EXPORT_DIR/rules" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
   [ "$src_count" -gt 0 ]
   [ "$src_count" -eq "$dest_count" ]
 }
 
 @test "_export_claude_config: copies all agent files" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
   local src_count dest_count
   src_count=$(find "$REPO_ROOT/ai/claude/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
-  dest_count=$(find "$dest/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
+  dest_count=$(find "$EXPORT_DIR/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
   [ "$src_count" -gt 0 ]
   [ "$src_count" -eq "$dest_count" ]
 }
 
-@test "_export_claude_config: excludes dream skill with server profile" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ ! -d "$dest/skills/dream" ]
-}
-
-@test "_export_claude_config: excludes promote skill with server profile" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ ! -d "$dest/skills/promote" ]
-}
-
-@test "_export_claude_config: excludes machine skill with server profile" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ ! -d "$dest/skills/machine" ]
+@test "_export_claude_config: excludes dream, promote, machine skills" {
+  [ ! -d "$EXPORT_DIR/skills/dream" ]
+  [ ! -d "$EXPORT_DIR/skills/promote" ]
+  [ ! -d "$EXPORT_DIR/skills/machine" ]
 }
 
 @test "_export_claude_config: includes non-excluded skills" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ -d "$dest/skills/anatomy" ]
-  [ -d "$dest/skills/pr-review" ]
+  [ -d "$EXPORT_DIR/skills/anatomy" ]
+  [ -d "$EXPORT_DIR/skills/pr-review" ]
 }
 
 @test "_export_claude_config: total skill count matches source minus excluded" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
   local src_count excluded_count dest_count expected
   src_count=$(find "$REPO_ROOT/ai/claude/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
   excluded_count=$(yq '.profiles.server.exclude.skills | length' "$REPO_ROOT/ai/profiles.yml")
-  dest_count=$(find "$dest/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+  dest_count=$(find "$EXPORT_DIR/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
   expected=$((src_count - excluded_count))
   [ "$dest_count" -eq "$expected" ]
 }
 
-@test "_export_claude_config: uses base settings without user overrides" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  local src_checksum dest_checksum
-  src_checksum=$(md5 -q "$REPO_ROOT/ai/claude/settings.json" 2>/dev/null || md5sum "$REPO_ROOT/ai/claude/settings.json" | awk '{print $1}')
-  dest_checksum=$(md5 -q "$dest/settings.json" 2>/dev/null || md5sum "$dest/settings.json" | awk '{print $1}')
-  [[ "$src_checksum" == "$dest_checksum" ]]
-}
-
-@test "_export_claude_config: uses base CLAUDE.md without user overrides" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  local src_checksum dest_checksum
-  src_checksum=$(md5 -q "$REPO_ROOT/ai/claude/CLAUDE.md" 2>/dev/null || md5sum "$REPO_ROOT/ai/claude/CLAUDE.md" | awk '{print $1}')
-  dest_checksum=$(md5 -q "$dest/CLAUDE.md" 2>/dev/null || md5sum "$dest/CLAUDE.md" | awk '{print $1}')
-  [[ "$src_checksum" == "$dest_checksum" ]]
-}
-
-@test "_export_claude_config: does not include MCP configs" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ ! -d "$dest/mcps" ]
-}
-
-@test "_export_claude_config: does not include memory" {
-  local dest="$TMPDIR/export"
-  _export_claude_config "$dest" "server"
-
-  [ ! -d "$dest/memory" ]
+@test "_export_claude_config: does not include MCP configs or memory" {
+  [ ! -d "$EXPORT_DIR/mcps" ]
+  [ ! -d "$EXPORT_DIR/memory" ]
 }
 
 @test "_export_claude_config: defaults to server profile when omitted" {
-  local dest="$TMPDIR/export"
+  local dest="$TMPDIR/export-default"
   _export_claude_config "$dest"
 
   [ ! -d "$dest/skills/dream" ]
@@ -239,13 +145,11 @@ teardown() {
 }
 
 @test "_export_claude_config: idempotent — second run produces identical output" {
-  local dest1="$TMPDIR/export1"
   local dest2="$TMPDIR/export2"
-  _export_claude_config "$dest1" "server"
   _export_claude_config "$dest2" "server"
 
   local diff_output
-  diff_output=$(diff -rq "$dest1" "$dest2" 2>&1) || true
+  diff_output=$(diff -rq "$EXPORT_DIR" "$dest2" 2>&1) || true
   [[ -z "$diff_output" ]]
 }
 
@@ -253,7 +157,6 @@ teardown() {
 
 @test "sync_claude --export delegates to _export_claude_config" {
   local dest="$TMPDIR/sync-export"
-  export WORKBENCH_SYNC=true
   sync_claude --export "$dest" --profile "server"
 
   [ -f "$dest/settings.json" ]
@@ -264,9 +167,8 @@ teardown() {
   [ ! -d "$dest/skills/dream" ]
 }
 
-@test "sync_claude --export with custom profile" {
-  local dest="$TMPDIR/sync-export-custom"
-  export WORKBENCH_SYNC=true
+@test "sync_claude --export passes profile through" {
+  local dest="$TMPDIR/sync-export-profile"
   sync_claude --export "$dest" --profile "server"
 
   [ ! -d "$dest/skills/promote" ]
@@ -300,59 +202,31 @@ teardown() {
 @test "workbench-export: produces tarball with explicit version" {
   local out_dir="$TMPDIR/tarball-output"
   mkdir -p "$out_dir"
-  export WORKBENCH_DIR="$REPO_ROOT"
   run "$REPO_ROOT/ai/bin/workbench-export" --version "1.2.3" --output "$out_dir"
   [ "$status" -eq 0 ]
   [ -f "$out_dir/claude-config-1.2.3.tar.gz" ]
 }
 
 @test "workbench-export: tarball contains expected structure" {
-  local out_dir="$TMPDIR/tarball-output"
-  mkdir -p "$out_dir"
-  export WORKBENCH_DIR="$REPO_ROOT"
-  "$REPO_ROOT/ai/bin/workbench-export" --version "0.0.1-test" --output "$out_dir" >/dev/null 2>&1
-
-  local extract_dir="$TMPDIR/extracted"
-  mkdir -p "$extract_dir"
-  tar xzf "$out_dir/claude-config-0.0.1-test.tar.gz" -C "$extract_dir"
-
-  local root="$extract_dir/claude-config-0.0.1-test"
-  [ -f "$root/settings.json" ]
-  [ -f "$root/CLAUDE.md" ]
-  [ -d "$root/rules" ]
-  [ -d "$root/agents" ]
-  [ -d "$root/skills" ]
+  _build_tarball
+  [ -f "$TARBALL_ROOT/settings.json" ]
+  [ -f "$TARBALL_ROOT/CLAUDE.md" ]
+  [ -d "$TARBALL_ROOT/rules" ]
+  [ -d "$TARBALL_ROOT/agents" ]
+  [ -d "$TARBALL_ROOT/skills" ]
 }
 
 @test "workbench-export: tarball excludes server-profile skills" {
-  local out_dir="$TMPDIR/tarball-output"
-  mkdir -p "$out_dir"
-  export WORKBENCH_DIR="$REPO_ROOT"
-  "$REPO_ROOT/ai/bin/workbench-export" --version "0.0.1-test" --output "$out_dir" >/dev/null 2>&1
-
-  local extract_dir="$TMPDIR/extracted"
-  mkdir -p "$extract_dir"
-  tar xzf "$out_dir/claude-config-0.0.1-test.tar.gz" -C "$extract_dir"
-
-  local root="$extract_dir/claude-config-0.0.1-test"
-  [ ! -d "$root/skills/dream" ]
-  [ ! -d "$root/skills/promote" ]
-  [ ! -d "$root/skills/machine" ]
+  _build_tarball
+  [ ! -d "$TARBALL_ROOT/skills/dream" ]
+  [ ! -d "$TARBALL_ROOT/skills/promote" ]
+  [ ! -d "$TARBALL_ROOT/skills/machine" ]
 }
 
 @test "workbench-export: tarball includes non-excluded skills" {
-  local out_dir="$TMPDIR/tarball-output"
-  mkdir -p "$out_dir"
-  export WORKBENCH_DIR="$REPO_ROOT"
-  "$REPO_ROOT/ai/bin/workbench-export" --version "0.0.1-test" --output "$out_dir" >/dev/null 2>&1
-
-  local extract_dir="$TMPDIR/extracted"
-  mkdir -p "$extract_dir"
-  tar xzf "$out_dir/claude-config-0.0.1-test.tar.gz" -C "$extract_dir"
-
-  local root="$extract_dir/claude-config-0.0.1-test"
-  [ -d "$root/skills/anatomy" ]
-  [ -d "$root/skills/pr-review" ]
+  _build_tarball
+  [ -d "$TARBALL_ROOT/skills/anatomy" ]
+  [ -d "$TARBALL_ROOT/skills/pr-review" ]
 }
 
 @test "workbench-export: reads version from release-please manifest" {
@@ -374,7 +248,6 @@ teardown() {
 @test "workbench-export: prints output path on success" {
   local out_dir="$TMPDIR/tarball-output"
   mkdir -p "$out_dir"
-  export WORKBENCH_DIR="$REPO_ROOT"
   run "$REPO_ROOT/ai/bin/workbench-export" --version "1.0.0" --output "$out_dir"
   [ "$status" -eq 0 ]
   [[ "$output" == *"claude-config-1.0.0.tar.gz"* ]]

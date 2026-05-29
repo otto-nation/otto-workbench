@@ -9,7 +9,3 @@ profiles:
         - dream
         - promote
         - machine
-      mcps: all
-      plugins: all
-      memory: true
-      extra_permissions: true

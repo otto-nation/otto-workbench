@@ -36,6 +36,7 @@
 ## Branch Freshness
 
 - Before starting work on an existing worktree branch, rebase it onto `origin/main` — stale branches cause merge conflicts that grow with every commit to main
+- Before creating a PR, rebase onto `origin/main` and verify the diff (`git diff origin/main..HEAD`) contains only your changes — reversions of changelogs, manifests, or other files indicate a stale base
 - When creating a new branch, always branch from `origin/main` (already covered in git.generated.md) — never from a local `main` that may be behind
 - If a rebase has conflicts, resolve them before writing new code — don't add commits on top of a stale base
 
@@ -45,6 +46,13 @@
   - `git -C <path> ...` for git commands
   - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
   - Run the command directly with absolute paths when possible
+
+## Avoid `find -exec`
+
+- Never use `find ... -exec` — Claude Code blocks `-exec` even with `Bash(find:*)` allowed because `-exec` can run arbitrary commands. Use piped alternatives instead:
+  - `find ... -print0 | xargs -0 grep ...` instead of `find ... -exec grep ... {} \;`
+  - `find ... -print0 | xargs -0 <command>` for other commands
+  - Both `find` and `xargs` are already auto-allowed
 
 ## Rebase, Cherry-Pick, Merge Conflicts
 

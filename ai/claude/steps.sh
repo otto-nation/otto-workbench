@@ -365,10 +365,80 @@ register_claude_steps() {
   register_step "Worktrunk Claude plugin" step_claude_worktrunk_plugin
 }
 
+# _profile_excludes_skill PROFILE SKILL — returns 0 if the profile excludes the skill.
+_profile_excludes_skill() {
+  local profile="$1" skill="$2"
+  local profiles_file="$AI_SRC_DIR/profiles.yml"
+  [[ -f "$profiles_file" ]] || return 1
+  yq -e ".profiles.${profile}.exclude.skills[] | select(. == \"${skill}\")" "$profiles_file" >/dev/null 2>&1
+}
+
+# _export_claude_config DIR PROFILE — copies Claude configs into DIR, filtered by profile.
+# Produces a self-contained directory suitable for deployment to servers/containers.
+# Skips interactive/local-only components (MCPs, machine profile, memory, plugins, scripts).
+_export_claude_config() {
+  local dest="$1" profile="${2:-server}"
+
+  mkdir -p "$dest/rules" "$dest/agents" "$dest/skills"
+
+  # Settings: copy base template without user overrides or registry permissions
+  if [[ -f "$CLAUDE_SETTINGS_SRC" ]]; then
+    cp "$CLAUDE_SETTINGS_SRC" "$dest/settings.json"
+  fi
+
+  # CLAUDE.md: copy base without user overrides
+  if [[ -f "$CLAUDE_GUIDELINES_SRC" ]]; then
+    cp "$CLAUDE_GUIDELINES_SRC" "$dest/CLAUDE.md"
+  fi
+
+  # Rules: copy all .md files from guidelines/rules
+  local rule
+  for rule in "$GUIDELINES_RULES_SRC_DIR"/*.md; do
+    [[ -f "$rule" ]] || continue
+    cp "$rule" "$dest/rules/"
+  done
+
+  # Agents: copy all .md files
+  local agent
+  for agent in "$CLAUDE_AGENTS_SRC_DIR"/*.md; do
+    [[ -f "$agent" ]] || continue
+    cp "$agent" "$dest/agents/"
+  done
+
+  # Skills: copy directories, filtered by profile
+  local skill skill_name
+  for skill in "$CLAUDE_SKILLS_SRC_DIR"/*/; do
+    [[ -d "$skill" ]] || continue
+    skill_name=$(basename "$skill")
+    if _profile_excludes_skill "$profile" "$skill_name"; then
+      continue
+    fi
+    cp -R "$skill" "$dest/skills/$skill_name"
+  done
+}
+
 # sync_claude — runs all Claude sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 # Skips silently if claude is not installed on this machine.
+#
+# Flags (used by workbench-export, not by otto-workbench sync):
+#   --export DIR    Write configs to DIR instead of ~/.claude/
+#   --profile NAME  Filter components by profile (default: server)
 sync_claude() {
+  local export_dir="" profile=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --export)  export_dir="$2"; shift 2 ;;
+      --profile) profile="$2"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
+
+  if [[ -n "$export_dir" ]]; then
+    _export_claude_config "$export_dir" "${profile:-server}"
+    return
+  fi
+
   command -v claude >/dev/null 2>&1 || { warn "claude not found in PATH — skipping"; return; }
 
   sync_header "claude scripts → $LOCAL_BIN_DIR/"

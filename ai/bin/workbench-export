@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Export workbench Claude configs as a self-contained tarball for server/container use.
+# Reusable across AI tools — lives in ai/bin/ rather than ai/claude/bin/.
+#
+# Usage:
+#   workbench-export [--version VERSION] [--profile PROFILE] [--output DIR]
+#
+# Output: claude-config-VERSION.tar.gz in the current directory (or --output dir).
+
+set -euo pipefail
+
+# Resolve workbench root from this script's location (ai/bin/ → workbench root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export WORKBENCH_DIR="${WORKBENCH_DIR:-"$(cd "$SCRIPT_DIR/../.." && pwd)"}"
+
+# Source workbench libraries
+# shellcheck source=../../lib/ui.sh
+source "$WORKBENCH_DIR/lib/ui.sh"
+# shellcheck source=../claude/steps.sh
+source "$WORKBENCH_DIR/ai/claude/steps.sh"
+
+version=""
+profile="server"
+output_dir="."
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version|-v) version="$2"; shift 2 ;;
+    --profile|-p) profile="$2"; shift 2 ;;
+    --output|-o)  output_dir="$2"; shift 2 ;;
+    -h|--help)
+      echo "Usage: workbench-export [--version VERSION] [--profile PROFILE] [--output DIR]"
+      echo "  --version, -v   Version string (default: from release-please manifest)"
+      echo "  --profile, -p   Profile name (default: server)"
+      echo "  --output, -o    Output directory for tarball (default: .)"
+      exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [[ -z "$version" ]]; then
+  manifest="$WORKBENCH_DIR/.github/.release-please-manifest.json"
+  if [[ -f "$manifest" ]]; then
+    version=$(jq -r '.[""]' "$manifest")
+  fi
+  if [[ -z "$version" || "$version" == "null" ]]; then
+    echo "Could not determine version. Pass --version or ensure .release-please-manifest.json exists." >&2
+    exit 1
+  fi
+fi
+
+export_name="claude-config-${version}"
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+export_dir="$tmp_dir/$export_name"
+mkdir -p "$export_dir"
+
+sync_claude --export "$export_dir" --profile "$profile"
+
+mkdir -p "$output_dir"
+tar czf "$output_dir/${export_name}.tar.gz" -C "$tmp_dir" "$export_name"
+
+echo "Created $output_dir/${export_name}.tar.gz (profile: $profile)"

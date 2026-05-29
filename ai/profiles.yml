@@ -1,0 +1,11 @@
+# Profile definitions for workbench config exports.
+# Components not listed under exclude are included by default.
+# The dev profile (local workstations) includes everything — it's implicit.
+
+profiles:
+  server:
+    exclude:
+      skills:
+        - dream
+        - promote
+        - machine

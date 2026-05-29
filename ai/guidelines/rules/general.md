@@ -22,6 +22,7 @@
   referenced before writing implementation code. Plans are written before the
   codebase is read — their specifics will often be wrong.
 - Save all plan documents (including superpowers plans) to `ignore/plans/`
+- Save all spec/design documents (including superpowers specs) to `ignore/specs/`
 
 ## Code Quality
 

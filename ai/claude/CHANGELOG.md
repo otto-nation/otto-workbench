@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.4.0...claude-review-v1.5.0) (2026-05-31)
+
+
+### Features
+
+* **ai:** add config export with profile-based filtering ([#151](https://github.com/otto-nation/otto-workbench/issues/151)) ([f827a16](https://github.com/otto-nation/otto-workbench/commit/f827a16a4ea06c70f666b075247de4259308d1a1))
+
+
+### Bug Fixes
+
+* **claude-review:** add verification patterns to reduce false positives ([#154](https://github.com/otto-nation/otto-workbench/issues/154)) ([fc52f5b](https://github.com/otto-nation/otto-workbench/commit/fc52f5b5605ee52372d2cbecc082cb8d96f17ce7))
+
 ## [1.4.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.3.2...claude-review-v1.4.0) (2026-05-28)
 
 

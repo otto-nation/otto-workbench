@@ -18,10 +18,11 @@ ${reviews_section}
 2. Include the File Triage section from the merged findings above
 3. Write ## Summary — what the change does, overall quality, incorporating the holistic assessment
 4. Include all Must fix / Should fix / Nit / Idioms findings from the merged content (use any IDs — they will be mechanically renumbered after you write the file)
-5. Check for cross-file concerns — do findings in one group imply issues in files from another group?
-6. Add any cross-cutting findings
-7. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
-8. Write the COMPLETE review file to: ${review_file}
+5. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
+6. Check for cross-file concerns — do findings in one group imply issues in files from another group?
+7. Add any cross-cutting findings
+8. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
+9. Write the COMPLETE review file to: ${review_file}
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

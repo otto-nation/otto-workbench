@@ -96,6 +96,9 @@ Write the triage as a `## File Triage` section in the review output, listing eve
   - Errors caught at the wrong level — catching too broadly hides bugs in unrelated code
 - **Resource cleanup** — unclosed files, connections, or handles; missing context managers (`with`), `defer`, or `try/finally`; threads or goroutines started without a join or shutdown path
 - Before reporting a finding, verify your claim: search for the function, constant, or pattern you reference. If you cannot find evidence, do not report it — false positives erode trust
+- **Lint/config rule scope:** Before claiming a lint rule, CI check, or config will break a file or repo, verify the rule's full scope — check `exclude_repos`, `exclude_paths`, `global_excludes`, path filters, and file-level ignore directives. If the target is excluded, the finding is a false positive
+- **API contract tracing:** When claiming a function is missing a required field or argument, trace the consumer chain — read the downstream function that uses the output to confirm it actually reads the field. Surface-level comparison between two call sites is insufficient; the receiving function's signature and field access determines what's required
+- **Stale-base artifacts:** When claiming code was "deleted" or "removed" by the PR, verify with `git log origin/main -- <file>` whether the content was added on main after the branch diverged. If the content exists on main but not on the branch, it's a rebase gap — not a deletion by this PR
 - If dependency files are modified: check for major version bumps, removed dependencies, or API changes that affect callers
 - If public API signatures changed: check all callers in the codebase to confirm they still work
 

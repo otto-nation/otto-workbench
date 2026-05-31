@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.0](https://github.com/otto-nation/otto-workbench/compare/v1.9.0...v1.10.0) (2026-05-31)
+
+
+### Features
+
+* **ai:** add config export with profile-based filtering ([#151](https://github.com/otto-nation/otto-workbench/issues/151)) ([f827a16](https://github.com/otto-nation/otto-workbench/commit/f827a16a4ea06c70f666b075247de4259308d1a1))
+* **rules:** add branch freshness, plan location; prefer xargs over find -exec ([#149](https://github.com/otto-nation/otto-workbench/issues/149)) ([a6d16c8](https://github.com/otto-nation/otto-workbench/commit/a6d16c8074ec911a1d6a91859d45958f38d294ff))
+
 ## [1.9.0](https://github.com/otto-nation/otto-workbench/compare/v1.8.0...v1.9.0) (2026-05-28)
 
 

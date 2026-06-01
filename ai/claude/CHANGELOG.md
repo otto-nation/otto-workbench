@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.0...claude-review-v1.5.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **claude-review:** add factual verification step to synthesis templates ([#155](https://github.com/otto-nation/otto-workbench/issues/155)) ([5290763](https://github.com/otto-nation/otto-workbench/commit/5290763a5cef6335935e8abedda8c70444ddbbfa))
+
 ## [1.5.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.4.0...claude-review-v1.5.0) (2026-05-31)
 
 

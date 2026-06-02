@@ -129,6 +129,7 @@ def _extract_path(after_id: str) -> tuple[str, int | None, int | None]:
         return "", None, None
 
     section_text = section_match.group(1) or section_match.group(2) or section_match.group(3) or ""
+    section_text = section_text.replace("\\_", "_")
     file_match = FIRST_FILE_RE.match(section_text)
     if not file_match:
         return "", None, None
@@ -226,7 +227,7 @@ def parse_findings(text: str) -> list[Finding]:
             continue
 
         if findings and stripped:
-            body_lines.append(stripped)
+            body_lines.append(raw_line.rstrip())
 
     _close_previous(findings, body_lines)
 
@@ -293,6 +294,13 @@ def classify_findings(
     inline, file_level, skipped = [], [], []
 
     for f in findings:
+        if not f.path:
+            print(f"  ⚠ [{f.id}] empty path — could not extract file from finding text", file=sys.stderr)
+            f.classification = CLASS_SKIPPED
+            f.skip_reason = "empty path"
+            skipped.append(f)
+            continue
+
         resolved = _resolve_path(f.path, hunks)
 
         if resolved is None:

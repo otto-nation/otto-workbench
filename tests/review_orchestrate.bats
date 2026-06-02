@@ -302,6 +302,88 @@ print(result)
   [[ "$result" == *"a.go"* ]]
 }
 
+@test "merge_reviews: deduplicates identical findings across groups" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## File Triage
+- `handler.go` — Tier 2
+
+## Should fix
+- **[S1]** **`handler.go:10`** — Missing error check on return value
+EOF
+
+  cat > "$TMPDIR/group2.md" <<'EOF'
+## File Triage
+- `handler.go` — Tier 2
+
+## Should fix
+- **[S1]** **`handler.go:10`** — Missing error check on return value
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md', '$TMPDIR/group2.md'])
+count = result.count('Missing error check')
+print(count)
+")
+  [ "$result" = "1" ]
+}
+
+@test "merge_reviews: keeps distinct findings for same file" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## File Triage
+- `handler.go` — Tier 2
+
+## Nit
+- **[N1]** **`handler.go:10`** — Use consistent naming style
+EOF
+
+  cat > "$TMPDIR/group2.md" <<'EOF'
+## File Triage
+- `handler.go` — Tier 2
+
+## Nit
+- **[N1]** **`handler.go:20`** — Add context to error wrapping
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md', '$TMPDIR/group2.md'])
+has_naming = 'consistent naming' in result
+has_error = 'error wrapping' in result
+print(f'naming={has_naming},error={has_error}')
+")
+  [ "$result" = "naming=True,error=True" ]
+}
+
+@test "merge_reviews: renumbers after dedup" {
+  cat > "$TMPDIR/group1.md" <<'EOF'
+## File Triage
+- `a.go` — Tier 2
+
+## Must fix
+- **[M1]** **`a.go:10`** — First unique finding
+- **[M2]** **`a.go:20`** — Duplicate finding across groups
+EOF
+
+  cat > "$TMPDIR/group2.md" <<'EOF'
+## File Triage
+- `b.go` — Tier 2
+
+## Must fix
+- **[M1]** **`a.go:20`** — Duplicate finding across groups
+- **[M2]** **`b.go:5`** — Second unique finding
+EOF
+
+  result=$(_py "
+result = mod.merge_reviews(['$TMPDIR/group1.md', '$TMPDIR/group2.md'])
+has_m1 = '[M1]' in result
+has_m2 = '[M2]' in result
+has_m3 = '[M3]' in result
+has_m4 = '[M4]' in result
+dup_count = result.count('Duplicate finding')
+print(f'm1={has_m1},m2={has_m2},m3={has_m3},m4={has_m4},dup={dup_count}')
+")
+  [ "$result" = "m1=True,m2=True,m3=True,m4=False,dup=1" ]
+}
+
 # ── _extract_section ─────────────────────────────────────────────────────────
 
 @test "_extract_section: case-insensitive header matching" {

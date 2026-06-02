@@ -717,6 +717,40 @@ def _dedup_triage(triage: str) -> str:
     return "\n".join(lines)
 
 
+_FINDING_PATH_RE = re.compile(
+    r"^- \*\*\[\w+\d+\]\*\*\s+\*\*"
+    r"(?:`([^`]+)`|([^*]+))"
+    r"\*\*"
+)
+_FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
+
+
+def _dedup_findings(text: str, prefix: str) -> str:
+    lines = text.split("\n")
+    seen: set[tuple[str, str]] = set()
+    kept: list[str] = []
+    skipping = False
+    for line in lines:
+        m = _FINDING_PATH_RE.match(line)
+        if m:
+            path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
+            dm = _FINDING_DESC_RE.search(line)
+            desc = dm.group(1).strip().lower() if dm else ""
+            key = (path, desc)
+            if key in seen:
+                skipping = True
+                continue
+            seen.add(key)
+            skipping = False
+            kept.append(line)
+        elif skipping:
+            continue
+        else:
+            kept.append(line)
+
+    return _renumber_prefix("\n".join(kept), prefix)
+
+
 def merge_reviews(group_files: list[str]) -> str:
     merged_triage = ""
     merged: dict[str, str] = {section: "" for section, _ in FINDING_SECTIONS}
@@ -729,6 +763,10 @@ def merge_reviews(group_files: list[str]) -> str:
         merged_triage = _merge_one_review(p.read_text(), merged_triage, merged, offsets)
 
     merged_triage = _dedup_triage(merged_triage)
+
+    for section, prefix in FINDING_SECTIONS:
+        if merged[section]:
+            merged[section] = _dedup_findings(merged[section], prefix)
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
     for section, _ in FINDING_SECTIONS:

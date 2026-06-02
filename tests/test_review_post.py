@@ -876,3 +876,81 @@ class TestGetDiff:
             pytest.raises(SystemExit),
         ):
             rp._get_diff("org/repo", "1")
+
+
+class TestExtractPathEscapedUnderscores:
+    def test_escaped_underscores_in_dunder(self, rp):
+        path, line, end = rp._extract_path(r"**`scripts/\_\_main\_\_.py:10`**")
+        assert path == "scripts/__main__.py"
+        assert line == 10
+
+    def test_escaped_underscores_in_bold(self, rp):
+        path, line, end = rp._extract_path(r"**scripts/\_\_main\_\_.py:10**")
+        assert path == "scripts/__main__.py"
+        assert line == 10
+
+    def test_no_escapes_unchanged(self, rp):
+        path, line, end = rp._extract_path("**`scripts/__main__.py:10`**")
+        assert path == "scripts/__main__.py"
+        assert line == 10
+
+    def test_escaped_underscore_in_middle(self, rp):
+        path, line, end = rp._extract_path(r"**`some\_file.py:5`**")
+        assert path == "some_file.py"
+        assert line == 5
+
+
+class TestParseFindingsCodeBlockIndentation:
+    def test_code_block_indentation_preserved(self, rp):
+        text = (
+            "## Must fix\n\n"
+            "- **[M1]** **`file.py:10`** — Add this code:\n"
+            "  ```python\n"
+            "  def foo():\n"
+            "      return bar\n"
+            "  ```\n"
+        )
+        findings = rp.parse_findings(text)
+        body = findings[0].body
+        assert "    return bar" in body or "      return bar" in body
+
+    def test_nested_indentation_preserved(self, rp):
+        text = (
+            "## Should fix\n\n"
+            "- **[S1]** **`config.yml:5`** — Use this structure:\n"
+            "  ```yaml\n"
+            "  jobs:\n"
+            "    build:\n"
+            "      runs-on: ubuntu\n"
+            "  ```\n"
+        )
+        findings = rp.parse_findings(text)
+        body = findings[0].body
+        lines = body.split("\n")
+        yaml_lines = [l for l in lines if "runs-on" in l]
+        assert yaml_lines
+        assert yaml_lines[0] != yaml_lines[0].lstrip()
+
+
+class TestClassifyFindingsEmptyPath:
+    DIFF = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    def test_empty_path_skipped_with_warning(self, rp, capsys):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="", line=10, end_line=None, body="x")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF)
+        assert (len(inline), len(fl), len(skipped)) == (0, 0, 1)
+        assert skipped[0].skip_reason == "empty path"
+        captured = capsys.readouterr()
+        assert "[M1] empty path" in captured.err
+
+    def test_non_empty_path_not_warned(self, rp, capsys):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=5, end_line=None, body="x")
+        rp.classify_findings([f], self.DIFF)
+        captured = capsys.readouterr()
+        assert "empty path" not in captured.err

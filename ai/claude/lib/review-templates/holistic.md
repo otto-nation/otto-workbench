@@ -8,7 +8,7 @@ ${preflight_data}
 
 ## Task
 Review all files listed above (scan-level — understand purpose and structure, not line-by-line deep review).
-Use the pre-collected diff and any file contents above. For files listed under "Files not pre-collected", read them directly. Only use Read/Bash for files not in the PR for cross-references.
+Use the pre-collected diff and any file contents above. For files listed under "Files not pre-collected" or "Diffs not pre-collected", read them directly using Read or `git diff`. Only use Read/Bash for files not in the PR for cross-references.
 Then assess:
 1. Does the PR accomplish what the description and commits claim?
 2. Is the scope focused or does it mix unrelated concerns?

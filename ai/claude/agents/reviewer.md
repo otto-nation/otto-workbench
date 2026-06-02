@@ -210,16 +210,16 @@ Use the Write tool to save the review to the output path specified in the prompt
 One sentence on what the change does and overall quality.
 
 ## Must fix
-- **[M1]** **<file>:<line>** — <finding>
+- **[M1]** **`<file>:<line>`** — <finding>
 
 ## Should fix
-- **[S1]** **<file>:<line>** — <finding>
+- **[S1]** **`<file>:<line>`** — <finding>
 
 ## Nit
-- **[N1]** **<file>:<line>** — <finding>
+- **[N1]** **`<file>:<line>`** — <finding>
 
 ## Idioms
-- **[I1]** **<file>:<line>** — <finding>
+- **[I1]** **`<file>:<line>`** — <finding>
 
 ## Verdict
 Approve / Request changes / Needs discussion

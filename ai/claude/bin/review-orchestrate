@@ -228,6 +228,9 @@ MAX_FILE_BYTES = 100_000
 MAX_TRUNCATED_LINES = 500
 MAX_COMMIT_LOG_BYTES = 50_000
 
+NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
+MIN_DIFF_BYTES = 50_000
+
 
 # ── Pre-flight data collection ───────────────────────────────────────────────
 
@@ -362,6 +365,62 @@ def _scope_diff(full_diff: str, file_filter: list[str]) -> str:
     return "".join(sections).strip()
 
 
+def _truncate_diff(full_diff: str, max_bytes: int) -> tuple[str, list[str]]:
+    if len(full_diff.encode()) <= max_bytes:
+        return full_diff, []
+
+    matches = list(_DIFF_HEADER_RE.finditer(full_diff))
+    if not matches:
+        truncated = full_diff.encode()[:max_bytes].decode(errors="ignore")
+        last_nl = truncated.rfind("\n")
+        if last_nl > 0:
+            truncated = truncated[:last_nl + 1]
+        return truncated + "\n... (diff truncated)\n", []
+
+    sections: list[tuple[int, str, str, int]] = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(full_diff)
+        path = m.group(1)
+        text = full_diff[m.start():end]
+        sections.append((i, path, text, len(text.encode())))
+
+    prioritized = sorted(sections, key=lambda s: (classify_tier(s[1]), s[3]))
+
+    included_indices: set[int] = set()
+    remaining = max_bytes
+    omitted_paths: list[str] = []
+    for idx, path, text, size in prioritized:
+        if size <= remaining:
+            included_indices.add(idx)
+            remaining -= size
+        else:
+            omitted_paths.append(path)
+
+    if not included_indices and sections:
+        idx, path, text, size = prioritized[0]
+        truncated = text.encode()[:max(0, max_bytes - 200)].decode(errors="ignore")
+        last_nl = truncated.rfind("\n")
+        if last_nl > 0:
+            truncated = truncated[:last_nl + 1]
+        shown_kb = len(truncated.encode()) // 1024
+        truncated += f"\n... (truncated — showing first {shown_kb}KB of {size // 1024}KB)\n"
+        omitted_paths = [p for _, p, _, _ in prioritized]
+        result = truncated
+        included_count = 0
+    else:
+        parts = [sections[i][2] for i in sorted(included_indices)]
+        result = "".join(parts)
+        included_count = len(included_indices)
+
+    if omitted_paths:
+        _warn(
+            f"Diff truncated: {included_count}/{len(sections)} file diffs included, "
+            f"{len(omitted_paths)} omitted — agent can read via tools"
+        )
+
+    return result, omitted_paths
+
+
 def _format_file_contents(
     data: PreflightData, file_filter: list[str] | None,
 ) -> list[str]:
@@ -392,6 +451,7 @@ def format_preflight_data(
     data: PreflightData,
     file_filter: list[str] | None = None,
     skip_file_contents: bool = False,
+    max_diff_bytes: int | None = None,
 ) -> str:
     parts = [
         "## Pre-collected data",
@@ -402,6 +462,9 @@ def format_preflight_data(
     ]
 
     diff_text = _scope_diff(data.diff, file_filter) if file_filter else data.diff
+    diff_omitted: list[str] = []
+    if max_diff_bytes is not None:
+        diff_text, diff_omitted = _truncate_diff(diff_text, max_diff_bytes)
     parts += ["", "### Full diff", "", "```diff", diff_text, "```"]
 
     if data.commit_log:
@@ -409,6 +472,11 @@ def format_preflight_data(
 
     if not skip_file_contents:
         parts += _format_file_contents(data, file_filter)
+
+    if diff_omitted:
+        parts += ["", "### Diffs not pre-collected (use `git diff -- <path>` or Read tool)"]
+        for path in diff_omitted:
+            parts.append(f"- {path}")
 
     if data.claude_md:
         parts += ["", "### Project context", "", "#### CLAUDE.md", "", data.claude_md]
@@ -649,6 +717,43 @@ def _dedup_triage(triage: str) -> str:
     return "\n".join(lines)
 
 
+_FINDING_PATH_RE = re.compile(
+    r"^- \*\*\[\w+\d+\]\*\*\s+\*\*"
+    r"(?:`([^`]+)`|([^*]+))"
+    r"\*\*"
+)
+_FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
+
+
+def _finding_dedup_key(line: str) -> tuple[str, str] | None:
+    m = _FINDING_PATH_RE.match(line)
+    if not m:
+        return None
+    path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
+    dm = _FINDING_DESC_RE.search(line)
+    desc = dm.group(1).strip().lower() if dm else ""
+    return (path, desc)
+
+
+def _dedup_findings(text: str, prefix: str) -> str:
+    seen: set[tuple[str, str]] = set()
+    kept: list[str] = []
+    skipping = False
+    for line in text.split("\n"):
+        key = _finding_dedup_key(line)
+        if key is not None and key in seen:
+            skipping = True
+            continue
+        if key is not None:
+            seen.add(key)
+            skipping = False
+        if skipping:
+            continue
+        kept.append(line)
+
+    return _renumber_prefix("\n".join(kept), prefix)
+
+
 def merge_reviews(group_files: list[str]) -> str:
     merged_triage = ""
     merged: dict[str, str] = {section: "" for section, _ in FINDING_SECTIONS}
@@ -661,6 +766,10 @@ def merge_reviews(group_files: list[str]) -> str:
         merged_triage = _merge_one_review(p.read_text(), merged_triage, merged, offsets)
 
     merged_triage = _dedup_triage(merged_triage)
+
+    for section, prefix in FINDING_SECTIONS:
+        if merged[section]:
+            merged[section] = _dedup_findings(merged[section], prefix)
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
     for section, _ in FINDING_SECTIONS:
@@ -938,13 +1047,40 @@ def render_template(name: str, **kwargs) -> str:
 def _build_preflight_section(
     job: "ReviewJob", file_filter: list[str] | None = None,
     skip_file_contents: bool = False,
+    max_diff_bytes: int | None = None,
 ) -> str:
     if not job.preflight:
         return ""
     return format_preflight_data(
         job.preflight, file_filter=file_filter,
         skip_file_contents=skip_file_contents,
+        max_diff_bytes=max_diff_bytes,
     )
+
+
+def _compute_diff_budget(
+    job: "ReviewJob",
+    known_sections: dict[str, str],
+    skip_file_contents: bool = False,
+) -> int:
+    known_bytes = sum(len(v.encode()) for v in known_sections.values())
+
+    pf = job.preflight
+    non_diff_preflight = 0
+    if pf:
+        non_diff_preflight = (
+            len(pf.commit_log.encode())
+            + len(pf.claude_md.encode())
+            + len(pf.context_md.encode())
+            + sum(len(v.encode()) for v in pf.review_checklists.values())
+        )
+        if not skip_file_contents:
+            non_diff_preflight += sum(
+                len(v.encode()) for v in pf.file_contents.values()
+            )
+
+    non_diff_total = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + non_diff_preflight
+    return max(MIN_DIFF_BYTES, MAX_PROMPT_BYTES - non_diff_total)
 
 
 def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
@@ -978,20 +1114,30 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         )
 
     if template_name == TEMPLATE_SELF_SYNTHESIS:
+        holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
+        merged_content = extra["merged_content"]
         prior_section = _build_prior_section(
             job.prior_review,
             "Omit prior findings that have been fixed. Carry forward open ones.",
         )
+        diff_budget = _compute_diff_budget(job, {
+            "pr_header": pr_header,
+            "holistic_content": holistic_content,
+            "merged_content": merged_content,
+            "prior_section": prior_section,
+        }, skip_file_contents=True)
         return render_template(
             TEMPLATE_SELF_SYNTHESIS,
             branch_name=extra.get("branch_name", job.pr.head),
             repo=job.repo,
             pr_header=pr_header,
             pr_head_sha=job.pr.head_sha,
-            holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
+            holistic_content=holistic_content,
             group_count=extra["group_count"],
-            merged_content=extra["merged_content"],
-            preflight_data=_build_preflight_section(job, skip_file_contents=True),
+            merged_content=merged_content,
+            preflight_data=_build_preflight_section(
+                job, skip_file_contents=True, max_diff_bytes=diff_budget,
+            ),
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
@@ -1023,13 +1169,20 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         )
 
     if template_name == TEMPLATE_HOLISTIC:
+        diff_budget = _compute_diff_budget(job, {
+            "pr_header": pr_header,
+            "all_files_formatted": job.pr.all_files_formatted,
+            "reviews_section": reviews_section,
+            "issue_section": issue_section,
+            "env_section": env_section,
+        })
         return render_template(
             TEMPLATE_HOLISTIC,
             pr_number=job.pr_number,
             repo=job.repo,
             pr_header=pr_header,
             all_files_formatted=job.pr.all_files_formatted,
-            preflight_data=_build_preflight_section(job),
+            preflight_data=_build_preflight_section(job, max_diff_bytes=diff_budget),
             reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
@@ -1067,10 +1220,19 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         )
 
     if template_name == TEMPLATE_SYNTHESIS:
+        holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
+        merged_content = extra["merged_content"]
         prior_section = _build_prior_section(
             job.prior_review,
             "Include a ## Resolved section noting which prior findings were fixed.",
         )
+        diff_budget = _compute_diff_budget(job, {
+            "pr_header": pr_header,
+            "holistic_content": holistic_content,
+            "merged_content": merged_content,
+            "reviews_section": reviews_section,
+            "prior_section": prior_section,
+        }, skip_file_contents=True)
         return render_template(
             TEMPLATE_SYNTHESIS,
             pr_number=job.pr_number,
@@ -1078,10 +1240,12 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             pr_header=pr_header,
             pr_title=job.pr.title,
             pr_head_sha=job.pr.head_sha,
-            holistic_content=extra.get("holistic_content") or "_No holistic assessment available._",
+            holistic_content=holistic_content,
             group_count=extra["group_count"],
-            merged_content=extra["merged_content"],
-            preflight_data=_build_preflight_section(job, skip_file_contents=True),
+            merged_content=merged_content,
+            preflight_data=_build_preflight_section(
+                job, skip_file_contents=True, max_diff_bytes=diff_budget,
+            ),
             reviews_section=reviews_section,
             review_file=job.review_file,
             wt_path=job.wt_path,

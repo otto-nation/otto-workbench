@@ -20,4 +20,7 @@ Do NOT write a Summary or Verdict — those will be added in a synthesis step.
 Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered during merge.
 Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.
 Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
+
+## Turn budget
+You have a limited number of tool calls. Write your findings file FIRST based on the pre-collected diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.
 ${prior_section}

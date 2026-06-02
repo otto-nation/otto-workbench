@@ -725,28 +725,31 @@ _FINDING_PATH_RE = re.compile(
 _FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
 
 
+def _finding_dedup_key(line: str) -> tuple[str, str] | None:
+    m = _FINDING_PATH_RE.match(line)
+    if not m:
+        return None
+    path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
+    dm = _FINDING_DESC_RE.search(line)
+    desc = dm.group(1).strip().lower() if dm else ""
+    return (path, desc)
+
+
 def _dedup_findings(text: str, prefix: str) -> str:
-    lines = text.split("\n")
     seen: set[tuple[str, str]] = set()
     kept: list[str] = []
     skipping = False
-    for line in lines:
-        m = _FINDING_PATH_RE.match(line)
-        if m:
-            path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
-            dm = _FINDING_DESC_RE.search(line)
-            desc = dm.group(1).strip().lower() if dm else ""
-            key = (path, desc)
-            if key in seen:
-                skipping = True
-                continue
+    for line in text.split("\n"):
+        key = _finding_dedup_key(line)
+        if key is not None and key in seen:
+            skipping = True
+            continue
+        if key is not None:
             seen.add(key)
             skipping = False
-            kept.append(line)
-        elif skipping:
+        if skipping:
             continue
-        else:
-            kept.append(line)
+        kept.append(line)
 
     return _renumber_prefix("\n".join(kept), prefix)
 

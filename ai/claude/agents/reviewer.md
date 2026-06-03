@@ -192,6 +192,16 @@ For each such finding:
 
 This allows `/pr-review` to convert references into GitHub permalink URLs when posting. Links resolve against the PR's base branch for unchanged files and the PR head branch for new/modified files — no special formatting is needed.
 
+### 9b. Fix suggestions must address root causes
+
+When a finding includes a suggested fix, the fix itself must pass the same review standards (Phases 3–8) as the original code. A fix that would itself be flagged for hardcoded values, fragility, or SSOT violations needs revision before inclusion.
+
+- **No new hardcoded values** — if the fix replaces a hardcoded `100` with a hardcoded `"$"` or `.2f`, it has the same class of problem. Use variables, parameters, or config values already available in scope (e.g., `summary.precision`, `summary.currency`). Before suggesting a literal, check whether a dynamic alternative exists in the function's arguments, the object's fields, or the surrounding scope
+- **Fix the root cause** — prefer fixing a shared helper (e.g., making `format_money()` accept a precision parameter) over inlining a one-off calculation at the call site. If a function has a wrong assumption baked in, fix the function — don't bypass it
+- **Favor extensibility** — the suggested fix should work for the general case, not just today's data. If a currency could be EUR or GBP, don't hardcode `$`. If precision could be 4, don't hardcode `.2f`
+- **Use SSOT** — if the correct value already exists as a field, parameter, or constant, reference it. Don't recompute or re-derive what's already available
+- **Verify the fix is valid** — a suggested fix that references a non-existent method, field, or variable is worse than no suggestion. Check that the API you're suggesting actually exists in the codebase
+
 ### 10. Verdict
 
 Use the Write tool to save the review to the output path specified in the prompt. Do NOT print the review to stdout — it must be written as a file.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.2...claude-review-v1.5.3) (2026-06-03)
+
+
+### Bug Fixes
+
+* **claude-review:** add fix quality guidelines to reviewer agent ([#160](https://github.com/otto-nation/otto-workbench/issues/160)) ([cb3a9c4](https://github.com/otto-nation/otto-workbench/commit/cb3a9c4620874441f0921a13619065f29cb3aa3b))
+
 ## [1.5.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.1...claude-review-v1.5.2) (2026-06-03)
 
 

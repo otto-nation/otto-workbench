@@ -565,45 +565,14 @@ GHEOF
   [ "${args[4]}" = "true" ]
 }
 
-# ── --resume flag ────────────────────────────────────────────────────────────
+# ── Auto-resume (pipeline state detection) ──────────────────────────────────
 
-@test "usage: --resume appears in help text" {
+@test "usage: --resume removed from help text" {
   run usage
-  [[ "$output" == *"--resume"* ]]
+  [[ "$output" != *"--resume"* ]]
 }
 
-@test "main: --resume is forwarded to cmd_review" {
-  run bash -c '
-    export HOME="$1"; NO_COLOR=1
-    source "$2"
-    cmd_review() {
-      local IFS="|"; echo "$*"
-    }
-    main --resume 42 2>/dev/null
-  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
-  [ "$status" -eq 0 ]
-  # Args: pr_input|no_post|issue_link|auto_post|max_parallel|force|no_holistic|max_cost|model|resume
-  IFS='|' read -ra args <<< "$output"
-  [ "${args[9]}" = "true" ]
-}
-
-@test "main: --resume is forwarded to cmd_self_review" {
-  run bash -c '
-    export HOME="$1"; NO_COLOR=1
-    source "$2"
-    cmd_self_review() {
-      local IFS="|"; echo "$*"
-    }
-    main --self --resume 2>/dev/null
-  ' -- "$TMPDIR" "$CLAUDE_REVIEW"
-  [ "$status" -eq 0 ]
-  # Args: pr_input|issue_link|max_parallel|skip_user_verification|force|no_holistic|max_cost|model|resume
-  IFS='|' read -ra args <<< "$output"
-  [ "${args[8]}" = "true" ]
-}
-
-@test "cmd_review: --resume skips _archive_review" {
-  # Track whether _archive_review is called when resume=true
+@test "cmd_review: pipeline state skips _archive_review" {
   archive_called="false"
   _archive_review() { archive_called="true"; local -n __out=$1; __out=""; }
   _extract_pr_number() { local -n __out=$1; __out="42"; }
@@ -618,16 +587,17 @@ GHEOF
   _print_summary() { :; }
   gh() { echo "{}"; }
 
-  # resume=true is position 10
-  cmd_review "42" "true" "" "false" "4" "false" "false" "" "" "true" 2>/dev/null || true
+  # Create pipeline state to trigger auto-resume
+  echo '{}' > "$TMPDIR/test-review.pipeline.json"
+  cmd_review "42" "true" "" "false" "4" "false" "false" "" "" 2>/dev/null || true
   [ "$archive_called" = "false" ]
+  rm -f "$TMPDIR/test-review.pipeline.json"
 }
 
-@test "cmd_review: resume=true adds --resume to orchestrate_args" {
-  # Verify cmd_review source includes the resume flag forwarding
+@test "cmd_review: no --resume in orchestrate_args" {
   local fn_body
   fn_body=$(declare -f cmd_review)
-  [[ "$fn_body" == *'orchestrate_args+=(--resume)'* ]]
+  [[ "$fn_body" != *'orchestrate_args+=(--resume)'* ]]
 }
 
 @test "_resolve_prior_review: resume with no prior file returns 0 under set -e" {
@@ -649,29 +619,21 @@ GHEOF
 @test "_append_orchestrate_flags: empty model does not exit under set -e" {
   local args=()
   _append_orchestrate_flags args "false" "" ""
-  # If we reach here, the function didn't cause set -e to exit
   [[ ${#args[@]} -ge 1 ]]
 }
 
-@test "auto-resume: .pipeline.json triggers automatic resume" {
-  local review_file="$TMPDIR/reviews/test-repo-42.md"
-  mkdir -p "$TMPDIR/reviews"
-  echo '{}' > "${review_file%.md}${SUFFIX_PIPELINE_STATE}"
-
-  # Verify cmd_review body contains the auto-detect logic
+@test "auto-resume: pipeline state detection in cmd_review" {
   local fn_body
   fn_body=$(declare -f cmd_review)
   [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
-  [[ "$fn_body" == *'resuming automatically'* ]]
-
-  rm -f "${review_file%.md}${SUFFIX_PIPELINE_STATE}"
+  [[ "$fn_body" == *'has_pipeline_state'* ]]
 }
 
-@test "auto-resume: cmd_self_review detects .pipeline.json" {
+@test "auto-resume: pipeline state detection in cmd_self_review" {
   local fn_body
   fn_body=$(declare -f cmd_self_review)
   [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
-  [[ "$fn_body" == *'resuming automatically'* ]]
+  [[ "$fn_body" == *'has_pipeline_state'* ]]
 }
 
 # ── _count_severity ────────────────────────────────────────────────────────

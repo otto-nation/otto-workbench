@@ -522,7 +522,6 @@ usage() {
   echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
   echo "  --force                    Skip pending review and stale review warnings"
-  echo "  --resume                   Resume from existing intermediate files"
   echo "  --repo-dir <path>          Path to local repo clone (skips auto-detection)"
   echo "  --json-summary             Suppress human output; emit JSON summary to stdout"
 }
@@ -631,9 +630,8 @@ cmd_review() {
   local no_holistic="${7:-false}"
   local max_cost="${8:-}"
   local model="${9:-}"
-  local resume="${10:-false}"
-  local auto_submit="${11:-false}"
-  local repo_dir="${12:-}"
+  local auto_submit="${10:-false}"
+  local repo_dir="${11:-}"
 
   _prune_merged_reviews
 
@@ -670,14 +668,14 @@ cmd_review() {
 
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
-  # ── Auto-detect incomplete pipeline ──
-  if [[ "$resume" != "true" && -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
-    info "Detected incomplete pipeline state — resuming automatically"
-    resume="true"
+  # ── Auto-detect incomplete pipeline (skip stale check if resuming) ──
+  local has_pipeline_state="false"
+  if [[ -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
+    has_pipeline_state="true"
   fi
 
   # ── Pre-flight checks ──
-  [[ "$resume" != "true" ]] && _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
+  [[ "$has_pipeline_state" != "true" ]] && _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
   _check_pending_review "$repo" "$pr_number" "$force"
 
   # ── Worktree setup ──
@@ -687,7 +685,7 @@ cmd_review() {
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
   local prior_review_path=""
-  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$resume"
+  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$has_pipeline_state"
 
   # ── Run orchestrator ──
   local orchestrate_args=(
@@ -703,7 +701,6 @@ cmd_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
-  [[ "$resume" == "true" ]] && orchestrate_args+=(--resume)
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
@@ -828,7 +825,6 @@ cmd_self_review() {
   local no_holistic="${6:-false}"
   local max_cost="${7:-}"
   local model="${8:-}"
-  local resume="${9:-false}"
 
   _prune_merged_reviews
 
@@ -856,14 +852,14 @@ cmd_self_review() {
 
   local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
 
-  # ── Auto-detect incomplete pipeline ──
-  if [[ "$resume" != "true" && -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
-    info "Detected incomplete pipeline state — resuming automatically"
-    resume="true"
+  # ── Auto-detect incomplete pipeline (skip archive if resuming) ──
+  local has_pipeline_state="false"
+  if [[ -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
+    has_pipeline_state="true"
   fi
 
   local prior_review_path=""
-  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$resume"
+  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$has_pipeline_state"
 
   local branch_name
   branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
@@ -895,7 +891,6 @@ cmd_self_review() {
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
-  [[ "$resume" == "true" ]] && orchestrate_args+=(--resume)
 
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
 
@@ -978,7 +973,6 @@ main() {
   local skip_user_verification="false"
   local force="false"
   local no_holistic="false"
-  local resume="false"
   local issue_link=""
   local max_parallel="$DEFAULT_MAX_PARALLEL"
   local max_cost=""
@@ -996,7 +990,6 @@ main() {
       --skip-user-verification) skip_user_verification="true"; shift ;;
       --force)         force="true"; shift ;;
       --no-holistic)   no_holistic="true"; shift ;;
-      --resume)        resume="true"; shift ;;
       --json-summary)  json_summary="true"; shift ;;
       --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
@@ -1023,7 +1016,7 @@ main() {
   fi
 
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$resume"
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model"
     if [[ "$json_summary" == "true" ]]; then
       local sr_repo="" sr_pr_number="" sr_review_file=""
       _extract_repo sr_repo "${positional[0]:-local}"
@@ -1064,7 +1057,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$resume" "$auto_submit" "$repo_dir"
+      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$auto_submit" "$repo_dir"
       if [[ "$json_summary" == "true" ]]; then
         local rev_pr_number rev_repo rev_review_file
         _extract_pr_number rev_pr_number "$command"

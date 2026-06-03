@@ -676,6 +676,116 @@ print(f'{total:.2f} {exceeded}')
   [ "$result" = "2.00 False" ]
 }
 
+# ── Diagnostics ─────────────────────────────────────────────────────────────
+
+@test "_diagnose_result_type: handles error_max_turns subtype" {
+  result=$(_py '
+r = {"type": "result", "subtype": "error_max_turns", "is_error": True,
+     "num_turns": 10, "errors": ["Reached maximum number of turns (10)"]}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent hit max turns (10)" ]
+}
+
+@test "_diagnose_result_type: handles plain max_turns subtype" {
+  result=$(_py '
+r = {"type": "result", "subtype": "max_turns", "num_turns": 5}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent hit max turns (5)" ]
+}
+
+@test "_diagnose_result_type: extracts error from errors list" {
+  result=$(_py '
+r = {"type": "result", "subtype": "error", "is_error": True,
+     "errors": ["Connection refused"]}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent error: Connection refused" ]
+}
+
+@test "_diagnose_result_type: falls back to error key" {
+  result=$(_py '
+r = {"type": "result", "subtype": "error", "is_error": True,
+     "error": "timeout"}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent error: timeout" ]
+}
+
+@test "_diagnose_result_type: unknown error when no error info" {
+  result=$(_py '
+r = {"type": "result", "subtype": "error", "is_error": True}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent error: unknown" ]
+}
+
+# ── Pipeline resume ─────────────────────────────────────────────────────────
+
+@test "_resolve_resume: returns fresh state when no pipeline file exists" {
+  result=$(_py_here <<'PYEOF'
+import json
+from dataclasses import dataclass, field
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=mod.PRMetadata(
+        title="t", body="", head="b", base="main", head_sha="abc",
+        additions=10, deletions=5, changed_files=2, files=[]),
+    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/nonexistent.md",
+    session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+)
+groups = [mod.Group("g1", ["a.go"], 10)]
+cost, skip_groups, skip_hol, state = mod._resolve_resume(job, groups)
+print(cost, skip_groups, skip_hol, state)
+PYEOF
+)
+  [ "$result" = "0.0 None False None" ]
+}
+
+@test "_resolve_resume: auto-resumes when valid pipeline state exists" {
+  cat > "$TMPDIR/test.pipeline.json" <<'EOF'
+{"head_sha": "abc123", "group_names": ["g1", "g2"], "holistic_done": true, "groups_done": [1]}
+EOF
+  result=$(_py_here <<PYEOF
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=mod.PRMetadata(
+        title="t", body="", head="b", base="main", head_sha="abc123",
+        additions=10, deletions=5, changed_files=2, files=[]),
+    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/test.md",
+    session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+)
+groups = [mod.Group("g1", ["a.go"], 10), mod.Group("g2", ["b.go"], 20)]
+cost, skip_groups, skip_hol, state = mod._resolve_resume(job, groups)
+print(skip_groups, skip_hol, state is not None)
+PYEOF
+)
+  # _info prints a status line to stdout; check last line for the actual result
+  last_line=$(echo "$result" | tail -1)
+  [ "$last_line" = "{1} True True" ]
+}
+
+@test "_resolve_resume: starts fresh when SHA differs" {
+  cat > "$TMPDIR/stale.pipeline.json" <<'EOF'
+{"head_sha": "old_sha", "group_names": ["g1"], "holistic_done": true, "groups_done": [1]}
+EOF
+  result=$(_py_here <<PYEOF
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="1", pr=mod.PRMetadata(
+        title="t", body="", head="b", base="main", head_sha="new_sha",
+        additions=10, deletions=5, changed_files=2, files=[]),
+    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/stale.md",
+    session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+)
+groups = [mod.Group("g1", ["a.go"], 10)]
+cost, skip_groups, skip_hol, state = mod._resolve_resume(job, groups)
+print(state)
+PYEOF
+)
+  last_line=$(echo "$result" | tail -1)
+  [ "$last_line" = "None" ]
+}
+
 # ── Prompt building ──────────────────────────────────────────────────────────
 
 # ── Model selection ───────────────────────────────────────────────────────────
@@ -1803,9 +1913,9 @@ print(f'{cost:.2f}')
   [ "$result" = ".pipeline.json" ]
 }
 
-@test "--resume flag accepted in CLI" {
+@test "--resume flag removed from CLI (auto-resume is default)" {
   run "$ORCHESTRATE" --help
-  [[ "$output" == *"--resume"* ]]
+  [[ "$output" != *"--resume"* ]]
 }
 
 @test "_consolidate_logs: merges log files without deleting intermediates" {

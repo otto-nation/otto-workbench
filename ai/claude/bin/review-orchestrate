@@ -1334,11 +1334,13 @@ def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
 
 def _diagnose_result_type(result: dict) -> str:
     subtype = result.get("subtype", "")
-    if subtype == "max_turns":
+    if "max_turns" in subtype:
         num_turns = result.get("num_turns", "?")
         return f"agent hit max turns ({num_turns})"
     if result.get("is_error"):
-        return f"agent error: {result.get('error', 'unknown')}"
+        errors = result.get("errors", [])
+        detail = errors[0] if errors else result.get("error", "unknown")
+        return f"agent error: {detail}"
     return f"agent completed (subtype={subtype}) but did not write output"
 
 
@@ -1878,13 +1880,10 @@ def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
 
 
 def _resolve_resume(
-    resume: bool, job: ReviewJob, groups: list[Group],
+    job: ReviewJob, groups: list[Group],
 ) -> tuple[float, "set[int] | None", bool, "PipelineState | None"]:
-    if not resume:
-        return 0.0, None, False, None
     state = _read_pipeline_state(job)
     if not state:
-        _info("No pipeline state found — starting fresh")
         return 0.0, None, False, None
     if not _validate_resume_state(state, job.pr.head_sha, groups):
         _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
@@ -1899,7 +1898,6 @@ def _resolve_resume(
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
-    resume: bool = False,
 ):
     groups = group_files(job.pr)
     groups = _merge_smallest_groups(groups, DEFAULT_MAX_GROUPS)
@@ -1908,7 +1906,7 @@ def run_multi_phase(
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
     cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_resume(
-        resume, job, groups,
+        job, groups,
     )
 
     if state is None:
@@ -2012,8 +2010,6 @@ def main():
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
                         help="Override model for all agents (e.g. sonnet, opus)")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume from existing intermediate files")
     args = parser.parse_args()
 
     if args.mode == MODE_PR and not args.pr:
@@ -2051,11 +2047,8 @@ def main():
         run_multi_phase(
             job, max_parallel=args.max_parallel,
             skip_holistic=args.no_holistic, max_cost=args.max_cost,
-            resume=args.resume,
         )
     else:
-        if args.resume:
-            _warn("--resume ignored for single-agent reviews")
         run_single_agent(job)
 
     result = {

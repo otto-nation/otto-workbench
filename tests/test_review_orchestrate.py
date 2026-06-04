@@ -99,3 +99,70 @@ class TestStripEvidenceBlocks:
         review.write_text(content)
         ro.strip_evidence_blocks(str(review))
         assert review.read_text() == content
+
+
+class TestComputeStableId:
+    def test_deterministic(self, ro):
+        a = ro.compute_stable_id("pkg/handler.go", "missing error check on db.Query()")
+        b = ro.compute_stable_id("pkg/handler.go", "missing error check on db.Query()")
+        assert a == b
+
+    def test_eight_hex_chars(self, ro):
+        sid = ro.compute_stable_id("file.go", "desc")
+        assert len(sid) == 8
+        assert all(c in "0123456789abcdef" for c in sid)
+
+    def test_case_insensitive_path(self, ro):
+        a = ro.compute_stable_id("Pkg/Handler.go", "desc")
+        b = ro.compute_stable_id("pkg/handler.go", "desc")
+        assert a == b
+
+    def test_different_descriptions_differ(self, ro):
+        a = ro.compute_stable_id("file.go", "missing error check")
+        b = ro.compute_stable_id("file.go", "unused import")
+        assert a != b
+
+    def test_truncates_description_at_80(self, ro):
+        desc_80 = "x" * 80
+        desc_100 = desc_80 + "y" * 20
+        assert ro.compute_stable_id("f.go", desc_80) == ro.compute_stable_id("f.go", desc_100)
+
+
+class TestAnnotatePriorWithStableIds:
+    def test_inserts_sid_comment(self, ro):
+        text = '- **[M1]** **`handler.go:42`** — missing error check\n'
+        result = ro.annotate_prior_with_stable_ids(text)
+        assert "<!-- sid:" in result
+        assert "**[M1]**" in result
+        assert "handler.go:42" in result
+
+    def test_checkbox_format(self, ro):
+        text = '- [ ] **[S1]** `handler.go:42` — missing check\n'
+        result = ro.annotate_prior_with_stable_ids(text)
+        assert "<!-- sid:" in result
+
+    def test_non_finding_lines_unchanged(self, ro):
+        text = "## Summary\nThis is a summary.\n"
+        result = ro.annotate_prior_with_stable_ids(text)
+        assert result == text
+
+    def test_deterministic_ids(self, ro):
+        text = '- **[M1]** **`handler.go:42`** — missing error check\n'
+        a = ro.annotate_prior_with_stable_ids(text)
+        b = ro.annotate_prior_with_stable_ids(text)
+        assert a == b
+
+
+class TestCheckOrphanedPriorIds:
+    def test_no_orphans(self, ro):
+        prior = "<!-- sid:aabb1122 --> finding 1"
+        review = "<!-- sid:aabb1122 --> carried forward"
+        assert ro._check_orphaned_prior_ids(prior, review) == []
+
+    def test_detects_orphans(self, ro):
+        prior = "<!-- sid:aabb1122 --> finding 1\n<!-- sid:ccdd3344 --> finding 2"
+        review = "<!-- sid:aabb1122 --> carried forward"
+        assert ro._check_orphaned_prior_ids(prior, review) == ["ccdd3344"]
+
+    def test_empty_prior(self, ro):
+        assert ro._check_orphaned_prior_ids("", "<!-- sid:abc -->") == []

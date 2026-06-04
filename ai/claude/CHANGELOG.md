@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.4...claude-review-v1.6.0) (2026-06-04)
+
+
+### Features
+
+* **review:** add evidence verification, stable IDs, and posted comment dedup ([#166](https://github.com/otto-nation/otto-workbench/issues/166)) ([003e97a](https://github.com/otto-nation/otto-workbench/commit/003e97aa4ab9b2ea99e3d7315ccd23ec83f71e5e))
+
 ## [1.5.4](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.3...claude-review-v1.5.4) (2026-06-04)
 
 

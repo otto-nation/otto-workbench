@@ -192,6 +192,24 @@ For each such finding:
 
 This allows `/pr-review` to convert references into GitHub permalink URLs when posting. Links resolve against the PR's base branch for unchanged files and the PR head branch for new/modified files — no special formatting is needed.
 
+### 9a. Evidence blocks for Must-fix and Should-fix
+
+For every Must-fix and Should-fix finding, include a verbatim code snippet from the referenced location as an evidence block. Format as a blockquote with a fenced code block immediately after the finding line:
+
+```markdown
+- **[M1]** **`pkg/handler.go:42`** — missing error check on `db.Query()`
+  > ```go
+  > result := db.Query(query)
+  > ```
+```
+
+Rules:
+- The snippet must appear verbatim in the file at the referenced location — do not paraphrase or reconstruct from memory
+- Keep snippets to 1–5 lines — enough to prove the claim, not the whole function
+- Infer the language tag from the file extension (`.go` → `go`, `.py` → `python`, `.sh` → `bash`, `.ts` → `typescript`)
+- Indent the evidence block 2 spaces from the finding line
+- Nit and Idiom findings do not require evidence blocks
+
 ### 9b. Fix suggestions must address root causes
 
 When a finding includes a suggested fix, the fix itself must pass the same review standards (Phases 3–8) as the original code. A fix that would itself be flagged for hardcoded values, fragility, or SSOT violations needs revision before inclusion.
@@ -221,9 +239,15 @@ One sentence on what the change does and overall quality.
 
 ## Must fix
 - **[M1]** **`<file>:<line>`** — <finding>
+  > ```lang
+  > verbatim snippet
+  > ```
 
 ## Should fix
 - **[S1]** **`<file>:<line>`** — <finding>
+  > ```lang
+  > verbatim snippet
+  > ```
 
 ## Nit
 - **[N1]** **`<file>:<line>`** — <finding>

@@ -18,12 +18,13 @@ ${preflight_data}
 3. Include all Must fix / Should fix / Nit / Idioms findings from the merged content
 4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms)
 5. Use any finding IDs — they will be mechanically renumbered after you write the file
-6. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
-7. Check for cross-file concerns — do findings in one group imply issues in files from another group?
-8. Add any cross-cutting findings
-9. Omit empty severity sections entirely
-10. Do NOT include a File Triage or Verdict section
-11. Write the COMPLETE review file to: ${review_file}
+6. Preserve evidence blocks from group findings when carrying forward Must-fix and Should-fix items.
+7. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
+8. Check for cross-file concerns — do findings in one group imply issues in files from another group?
+9. Add any cross-cutting findings
+10. Omit empty severity sections entirely
+11. Do NOT include a File Triage or Verdict section
+12. Write the COMPLETE review file to: ${review_file}
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

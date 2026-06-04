@@ -41,7 +41,7 @@ done
 if [[ -z "$version" ]]; then
   manifest="$WORKBENCH_DIR/.github/.release-please-manifest.json"
   if [[ -f "$manifest" ]]; then
-    version=$(jq -r '.[""]' "$manifest")
+    version=$(jq -r '.["."]' "$manifest")
   fi
   if [[ -z "$version" || "$version" == "null" ]]; then
     echo "Could not determine version. Pass --version or ensure .release-please-manifest.json exists." >&2

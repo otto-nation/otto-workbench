@@ -232,7 +232,7 @@ tasks:
         echo "$PR_DESCRIPTION"
 
   pr:create:
-    desc: "Create AI-powered pull request (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
+    desc: "Create AI-powered pull request (-- --no-issue, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
@@ -264,7 +264,7 @@ tasks:
         fi
 
   pr:update:
-    desc: "Update current PR description with AI-generated content (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
+    desc: "Update current PR description (-- --no-issue, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:

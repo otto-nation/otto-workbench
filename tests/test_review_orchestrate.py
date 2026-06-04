@@ -73,6 +73,23 @@ class TestVerifyFinding:
         assert ro._verify_finding("handler.go", "result := db.Query(q)", str(tmp_path)) is True
 
 
+class TestParseVerificationStripsLine:
+    def test_path_excludes_line_number(self, ro):
+        text = '- **[M1]** **`pkg/handler.go:42`** — missing error check\n'
+        findings = ro._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "pkg/handler.go"
+
+    def test_path_excludes_line_range(self, ro):
+        text = '- **[S1]** **`pkg/handler.go:10-20`** — issue\n'
+        findings = ro._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "pkg/handler.go"
+
+    def test_checkbox_path_excludes_line(self, ro):
+        text = '- [ ] **[M1]** `handler.go:42` — desc\n'
+        findings = ro._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "handler.go"
+
+
 class TestStripEvidenceBlocks:
     def test_strips_evidence_preserves_finding(self, ro, tmp_path):
         review = tmp_path / "review.md"
@@ -99,6 +116,53 @@ class TestStripEvidenceBlocks:
         review.write_text(content)
         ro.strip_evidence_blocks(str(review))
         assert review.read_text() == content
+
+    def test_top_level_blockquote_preserved(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        content = (
+            "## Summary\n"
+            "> ```go\n"
+            "> example code\n"
+            "> ```\n"
+            "## Must fix\n"
+            "- **[M1]** **`file.go:42`** — finding\n"
+        )
+        review.write_text(content)
+        ro.strip_evidence_blocks(str(review))
+        assert "> ```go" in review.read_text()
+
+
+class TestStripStableIds:
+    def test_removes_sid_comments(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            '- **[M1]** <!-- sid:abc12345 --> **`file.go:42`** — desc\n'
+        )
+        ro.strip_stable_ids(str(review))
+        result = review.read_text()
+        assert "<!-- sid:" not in result
+        assert "**[M1]** **`file.go:42`**" in result
+
+    def test_no_sids_unchanged(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        content = "- **[M1]** **`file.go:42`** — desc\n"
+        review.write_text(content)
+        ro.strip_stable_ids(str(review))
+        assert review.read_text() == content
+
+
+class TestFindingPathReCheckbox:
+    def test_matches_checkbox_format(self, ro):
+        line = '- [ ] **[M1]** **`handler.go:42`** — desc'
+        m = ro._FINDING_PATH_RE.match(line)
+        assert m is not None
+        path = (m.group(1) or m.group(2) or "")
+        assert "handler.go" in path
+
+    def test_matches_with_stable_id(self, ro):
+        line = '- **[M1]** <!-- sid:abc --> **`handler.go:42`** — desc'
+        m = ro._FINDING_PATH_RE.match(line)
+        assert m is not None
 
 
 class TestComputeStableId:

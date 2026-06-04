@@ -103,6 +103,7 @@ FINDING_ID_RE = re.compile(
     r"(?:~~)?"                   # optional strikethrough start
     r"\*\*\[([MSNI])(\d+)\]\*\*" # [S1] or [I1] in bold
     r"\s+"
+    r"(?:<!-- sid:\w+ -->\s+)?"  # optional stable ID (defense-in-depth)
 )
 
 # Extracts path section from after the finding ID.
@@ -545,6 +546,24 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union)
 
 
+_BODY_FINDING_RE = re.compile(
+    r"^- \*\*\[[MSNI]\d+\]\*\*\s+"
+    r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
+    r"(?::\d+(?:[-–]\d+)?)?"
+    r"\s*—\s*(.*)",
+    re.MULTILINE,
+)
+
+
+def _extract_body_findings(body: str) -> list[dict]:
+    results = []
+    for m in _BODY_FINDING_RE.finditer(body):
+        raw_path = (m.group(1) or m.group(2) or "")
+        path = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
+        results.append({"path": path, "body": m.group(3)})
+    return results
+
+
 def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
     code, user_out = _gh_api("user")
     if code != 0:
@@ -556,19 +575,34 @@ def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
     if not bot_user:
         return []
 
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/comments")
-    if code != 0:
-        return []
-    try:
-        all_comments = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    entries: list[dict] = []
 
-    return [
-        {"path": c.get("path", ""), "body": c.get("body", "")}
-        for c in all_comments
-        if c.get("user", {}).get("login") == bot_user
-    ]
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/comments")
+    if code == 0:
+        try:
+            all_comments = json.loads(out)
+        except (json.JSONDecodeError, TypeError):
+            all_comments = []
+        entries.extend(
+            {"path": c.get("path", ""), "body": c.get("body", "")}
+            for c in all_comments
+            if c.get("user", {}).get("login") == bot_user
+        )
+
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
+    if code == 0:
+        try:
+            all_reviews = json.loads(out)
+        except (json.JSONDecodeError, TypeError):
+            all_reviews = []
+        for r in all_reviews:
+            if r.get("user", {}).get("login") != bot_user:
+                continue
+            body = r.get("body", "")
+            if body:
+                entries.extend(_extract_body_findings(body))
+
+    return entries
 
 
 def dedup_against_posted(
@@ -588,7 +622,7 @@ def dedup_against_posted(
         f_words = _word_set(f.body)
         is_dup = any(
             f.path and posted_path and
-            Path(f.path).name == Path(posted_path).name and
+            f.path == posted_path and
             _jaccard(f_words, posted_words) >= DEDUP_THRESHOLD
             for posted_path, posted_words in posted_entries
         )

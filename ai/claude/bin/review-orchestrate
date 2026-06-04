@@ -719,9 +719,9 @@ def _dedup_triage(triage: str) -> str:
 
 
 _FINDING_PATH_RE = re.compile(
-    r"^- \*\*\[\w+\d+\]\*\*\s+\*\*"
-    r"(?:`([^`]+)`|([^*]+))"
-    r"\*\*"
+    r"^- (?:\[ \] )?\*\*\[\w+\d+\]\*\*"
+    r"\s+(?:<!-- sid:\w+ -->\s+)?"
+    r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
 )
 _FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
 
@@ -850,7 +850,8 @@ def _parse_findings_for_verification(text: str) -> list[dict]:
         m = _VERIFY_FINDING_RE.match(stripped)
         if m:
             _flush_finding(findings, current, body_lines)
-            path_str = (m.group(3) or m.group(4) or "").replace("\\_", "_")
+            raw_path = (m.group(3) or m.group(4) or "").replace("\\_", "_")
+            path_str = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
             current = {
                 "id": f"{m.group(1)}{m.group(2)}",
                 "severity": m.group(1),
@@ -917,8 +918,7 @@ def verify_findings(review_file: str, wt_path: str) -> list[str]:
     return dropped
 
 
-_EVIDENCE_BLOCK_START_RE = re.compile(r"^\s*>\s*```")
-_EVIDENCE_BLOCK_LINE_RE = re.compile(r"^\s*>\s*")
+_EVIDENCE_BLOCK_START_RE = re.compile(r"^ {2,}>\s*```")
 
 
 def strip_evidence_blocks(review_file: str) -> None:
@@ -992,6 +992,16 @@ def _check_orphaned_prior_ids(prior_text: str, review_text: str) -> list[str]:
     prior_ids = set(re.findall(r"<!-- sid:(\w+) -->", prior_text))
     review_ids = set(re.findall(r"<!-- sid:(\w+) -->", review_text))
     return sorted(prior_ids - review_ids)
+
+
+def strip_stable_ids(review_file: str) -> None:
+    path = Path(review_file)
+    if not path.exists():
+        return
+    text = path.read_text()
+    cleaned = re.sub(r" <!-- sid:\w+ -->", "", text)
+    if cleaned != text:
+        path.write_text(cleaned)
 
 
 # ── PR data fetching ──────────────────────────────────────────────────────────
@@ -1778,6 +1788,7 @@ def run_single_agent(job: ReviewJob):
     if dropped:
         _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     strip_evidence_blocks(job.review_file)
+    strip_stable_ids(job.review_file)
     renumber_findings(job.review_file)
     _write_review_sidecar(job)
 
@@ -2037,6 +2048,7 @@ def _phase_synthesis(
     if dropped:
         _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     strip_evidence_blocks(job.review_file)
+    strip_stable_ids(job.review_file)
     renumber_findings(job.review_file)
     _write_review_sidecar(job)
 

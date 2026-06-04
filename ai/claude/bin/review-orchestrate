@@ -885,15 +885,11 @@ def _remove_dropped_findings(text: str, dropped: list[str]) -> str:
         stripped = line.strip()
         m = _VERIFY_FINDING_RE.match(stripped)
         if m:
-            fid = f"{m.group(1)}{m.group(2)}"
-            skip_until_next = fid in dropped_set
-            if skip_until_next:
-                continue
-        elif skip_until_next:
-            if _is_next_finding_or_section(stripped):
-                skip_until_next = False
-            else:
-                continue
+            skip_until_next = f"{m.group(1)}{m.group(2)}" in dropped_set
+        elif skip_until_next and _is_next_finding_or_section(stripped):
+            skip_until_next = False
+        if skip_until_next:
+            continue
         kept.append(line)
     return "\n".join(kept)
 

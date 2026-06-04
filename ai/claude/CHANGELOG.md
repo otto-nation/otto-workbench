@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.4](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.3...claude-review-v1.5.4) (2026-06-04)
+
+
+### Bug Fixes
+
+* **claude-review:** support --repo-dir with --self mode ([#164](https://github.com/otto-nation/otto-workbench/issues/164)) ([8ccacde](https://github.com/otto-nation/otto-workbench/commit/8ccacde2c27e71ec004fae309a8bd8ee23be326f))
+
 ## [1.5.3](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.2...claude-review-v1.5.3) (2026-06-03)
 
 

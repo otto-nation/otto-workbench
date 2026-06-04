@@ -98,6 +98,36 @@ fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+_repo_from_remote() {
+  local -n __out=$1
+  local dir="$2"
+  local remote_url
+  remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null) || true
+  if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/[:space:]]+) ]]; then
+    __out="${BASH_REMATCH[1]}"
+    __out="${__out%.git}"
+  fi
+}
+
+_self_review_wt_path() {
+  local dir="${1:-}"
+  if [[ -n "$dir" ]]; then
+    git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true
+  else
+    git rev-parse --show-toplevel 2>/dev/null || true
+  fi
+}
+
+_self_review_repo() {
+  local -n __out=$1
+  local dir="$2" wt_path="$3" pr_input="$4"
+  if [[ -n "$dir" && -z "$pr_input" ]]; then
+    _repo_from_remote __out "${wt_path:-.}"
+  else
+    _extract_repo __out "${pr_input:-local}"
+  fi
+}
+
 _ensure_ignore_dir() {
   local wt_path="$1"
   mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
@@ -842,17 +872,10 @@ cmd_self_review() {
     }
   fi
 
-  local repo
+  local repo=""
   if [[ -n "$repo_dir" && -z "$pr_input" ]]; then
-    local remote_url
-    remote_url=$(git -C "$wt_path" remote get-url origin 2>/dev/null) || true
-    if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/[:space:]]+) ]]; then
-      repo="${BASH_REMATCH[1]}"
-      repo="${repo%.git}"
-    else
-      err "Cannot determine repository from remote URL in: $repo_dir"
-      exit 1
-    fi
+    _repo_from_remote repo "$wt_path"
+    [[ -n "$repo" ]] || { err "Cannot determine repository from remote URL in: $repo_dir"; exit 1; }
   else
     _extract_repo repo "${pr_input:-local}"
   fi
@@ -1035,21 +1058,8 @@ main() {
     if [[ "$json_summary" == "true" ]]; then
       local sr_repo="" sr_pr_number="" sr_review_file=""
       local sr_wt_path
-      if [[ -n "$repo_dir" ]]; then
-        sr_wt_path=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || true
-      else
-        sr_wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || true
-      fi
-      if [[ -n "$repo_dir" && -z "${positional[0]:-}" ]]; then
-        local sr_remote
-        sr_remote=$(git -C "${sr_wt_path:-.}" remote get-url origin 2>/dev/null) || true
-        if [[ "$sr_remote" =~ github\.com[:/]([^/]+/[^/[:space:]]+) ]]; then
-          sr_repo="${BASH_REMATCH[1]}"
-          sr_repo="${sr_repo%.git}"
-        fi
-      else
-        _extract_repo sr_repo "${positional[0]:-local}"
-      fi
+      sr_wt_path=$(_self_review_wt_path "$repo_dir")
+      _self_review_repo sr_repo "$repo_dir" "$sr_wt_path" "${positional[0]:-}"
       [[ -n "${positional[0]:-}" ]] && _extract_pr_number sr_pr_number "${positional[0]}"
       sr_review_file="${sr_wt_path:-.}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
       _json_summary "$sr_repo" "$sr_pr_number" "$sr_review_file" >&"$_json_stdout"

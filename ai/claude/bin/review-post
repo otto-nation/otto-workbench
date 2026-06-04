@@ -564,6 +564,38 @@ def _extract_body_findings(body: str) -> list[dict]:
     return results
 
 
+def _fetch_json_list(endpoint: str) -> list:
+    code, out = _gh_api(endpoint)
+    if code != 0:
+        return []
+    try:
+        return json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _collect_inline_comments(repo: str, pr: str, bot_user: str) -> list[dict]:
+    all_comments = _fetch_json_list(f"repos/{repo}/pulls/{pr}/comments")
+    return [
+        {"path": c.get("path", ""), "body": c.get("body", "")}
+        for c in all_comments
+        if c.get("user", {}).get("login") == bot_user
+    ]
+
+
+def _collect_review_findings(repo: str, pr: str, bot_user: str) -> list[dict]:
+    all_reviews = _fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+    bot_bodies = [
+        r.get("body", "") for r in all_reviews
+        if r.get("user", {}).get("login") == bot_user
+    ]
+    entries: list[dict] = []
+    for body in bot_bodies:
+        if body:
+            entries.extend(_extract_body_findings(body))
+    return entries
+
+
 def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
     code, user_out = _gh_api("user")
     if code != 0:
@@ -575,33 +607,8 @@ def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
     if not bot_user:
         return []
 
-    entries: list[dict] = []
-
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/comments")
-    if code == 0:
-        try:
-            all_comments = json.loads(out)
-        except (json.JSONDecodeError, TypeError):
-            all_comments = []
-        entries.extend(
-            {"path": c.get("path", ""), "body": c.get("body", "")}
-            for c in all_comments
-            if c.get("user", {}).get("login") == bot_user
-        )
-
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
-    if code == 0:
-        try:
-            all_reviews = json.loads(out)
-        except (json.JSONDecodeError, TypeError):
-            all_reviews = []
-        for r in all_reviews:
-            if r.get("user", {}).get("login") != bot_user:
-                continue
-            body = r.get("body", "")
-            if body:
-                entries.extend(_extract_body_findings(body))
-
+    entries = _collect_inline_comments(repo, pr, bot_user)
+    entries.extend(_collect_review_findings(repo, pr, bot_user))
     return entries
 
 

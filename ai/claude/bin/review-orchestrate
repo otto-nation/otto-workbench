@@ -1696,6 +1696,10 @@ def run_single_agent(job: ReviewJob):
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 
+    dropped = verify_findings(job.review_file, job.wt_path)
+    if dropped:
+        _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+    strip_evidence_blocks(job.review_file)
     renumber_findings(job.review_file)
     _write_review_sidecar(job)
 
@@ -1944,6 +1948,10 @@ def _phase_synthesis(
         )
         Path(job.review_file).write_text(fallback)
 
+    dropped = verify_findings(job.review_file, job.wt_path)
+    if dropped:
+        _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+    strip_evidence_blocks(job.review_file)
     renumber_findings(job.review_file)
     _write_review_sidecar(job)
 

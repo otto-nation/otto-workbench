@@ -234,7 +234,7 @@ _build_tarball() {
   local fake_wb="$TMPDIR/fake-workbench"
   mkdir -p "$out_dir" "$fake_wb/.github"
 
-  echo '{"": "4.5.6"}' > "$fake_wb/.github/.release-please-manifest.json"
+  echo '{".": "4.5.6"}' > "$fake_wb/.github/.release-please-manifest.json"
 
   cp -R "$REPO_ROOT/lib" "$fake_wb/lib"
   cp -R "$REPO_ROOT/ai" "$fake_wb/ai"

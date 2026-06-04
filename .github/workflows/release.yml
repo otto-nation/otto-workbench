@@ -169,12 +169,18 @@ jobs:
           TARBALL="claude-config-${VERSION}.tar.gz"
           echo "TARBALL=$TARBALL" >> $GITHUB_ENV
 
+      - name: Generate checksums
+        run: |
+          sha256sum "${{ env.TARBALL }}" > checksums.txt
+          cat checksums.txt
+
       - name: Upload to root release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ needs.release.outputs.wb_tag_name }}" \
             "${{ env.TARBALL }}" \
+            checksums.txt \
             --clobber
 
   # ---------------------------------------------------------------------------

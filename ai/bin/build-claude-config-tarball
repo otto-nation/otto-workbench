@@ -13,7 +13,6 @@
 #   rules/        — coding rules (.md files)
 #   agents/       — agent definitions (.md files)
 #   skills/       — skill directories (server profile)
-#   VERSION       — version string
 
 set -euo pipefail
 

@@ -100,27 +100,34 @@ load_pr_context() {
 
 # parse_pr_flags ARGS
 # Parses PR-specific flags from the CLI_ARGS string.
-# Sets SKIP_ISSUE and PR_BASE. Returns 1 on unknown flag.
+# Sets SKIP_ISSUE, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE.
+# Returns 1 on unknown flag or missing value.
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false
   PR_BASE=""
-  local arg next_is_base=false
+  PR_TITLE_OVERRIDE=""
+  PR_BODY_OVERRIDE=""
+  local arg expect_flag=""
   for arg in $args; do
-    if [[ "$next_is_base" = "true" ]]; then
-      # shellcheck disable=SC2034  # read by Taskfile callers
-      PR_BASE="$arg"
-      next_is_base=false
+    if [[ -n "$expect_flag" ]]; then
+      # shellcheck disable=SC2034  # PR_BASE read by Taskfile callers
+      case "$expect_flag" in
+        --base)  PR_BASE="$arg" ;;
+        --title) PR_TITLE_OVERRIDE="$arg" ;;
+        --body)  PR_BODY_OVERRIDE="$arg" ;;
+      esac
+      expect_flag=""
       continue
     fi
     case "$arg" in
       --no-issue) SKIP_ISSUE=true ;;
-      --base) next_is_base=true ;;
+      --base|--title|--body) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
     esac
   done
-  if [[ "$next_is_base" = "true" ]]; then
-    echo "✗ --base requires a branch name"
+  if [[ -n "$expect_flag" ]]; then
+    printf "✗ %s requires a value\n" "$expect_flag"
     return 1
   fi
 }
@@ -255,11 +262,17 @@ _pr_append_issue_link() {
 }
 
 # generate_pr_content BRANCH DEFAULT_BRANCH
-# Requires AI_COMMAND.
+# Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set).
 # Sets PR_TITLE and PR_DESCRIPTION.
 generate_pr_content() {
   local branch="$1"
   local default_branch="$2"
+
+  if [[ -n "${PR_TITLE_OVERRIDE:-}" && -n "${PR_BODY_OVERRIDE:-}" ]]; then
+    PR_TITLE="$PR_TITLE_OVERRIDE"
+    PR_DESCRIPTION="$PR_BODY_OVERRIDE"
+    return 0
+  fi
 
   _pr_resolve_issue "$branch"
   _pr_load_template
@@ -274,6 +287,9 @@ generate_pr_content() {
   else
     _pr_generate_multi_commit "$branch" "$PR_ISSUE" "$commits" "$commit_count" "$changed_files"
   fi
+
+  [[ -n "${PR_TITLE_OVERRIDE:-}" ]] && PR_TITLE="$PR_TITLE_OVERRIDE"
+  [[ -n "${PR_BODY_OVERRIDE:-}" ]] && PR_DESCRIPTION="$PR_BODY_OVERRIDE"
 
   _pr_append_issue_link "$PR_ISSUE" "$PR_HAS_TEMPLATE"
 }

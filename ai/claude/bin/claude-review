@@ -825,17 +825,37 @@ cmd_self_review() {
   local no_holistic="${6:-false}"
   local max_cost="${7:-}"
   local model="${8:-}"
+  local repo_dir="${9:-}"
 
   _prune_merged_reviews
 
-  local repo
-  _extract_repo repo "${pr_input:-local}"
-
   local wt_path
-  wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || {
-    err "Not in a git repository"
-    exit 1
-  }
+  if [[ -n "$repo_dir" ]]; then
+    wt_path=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
+      err "Not a git repository: $repo_dir"
+      exit 1
+    }
+  else
+    wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || {
+      err "Not in a git repository"
+      exit 1
+    }
+  fi
+
+  local repo
+  if [[ -n "$repo_dir" && -z "$pr_input" ]]; then
+    local remote_url
+    remote_url=$(git -C "$wt_path" remote get-url origin 2>/dev/null) || true
+    if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/[:space:]]+) ]]; then
+      repo="${BASH_REMATCH[1]}"
+      repo="${repo%.git}"
+    else
+      err "Cannot determine repository from remote URL in: $repo_dir"
+      exit 1
+    fi
+  else
+    _extract_repo repo "${pr_input:-local}"
+  fi
 
   local pr_number=""
   local wt_cleanup=""
@@ -1010,19 +1030,27 @@ main() {
     exec 1>&2
   fi
 
-  if [[ "$self_review" == "true" && -n "$repo_dir" ]]; then
-    err "--repo-dir is not supported with --self"
-    exit 1
-  fi
-
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model"
+    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir"
     if [[ "$json_summary" == "true" ]]; then
       local sr_repo="" sr_pr_number="" sr_review_file=""
-      _extract_repo sr_repo "${positional[0]:-local}"
-      [[ -n "${positional[0]:-}" ]] && _extract_pr_number sr_pr_number "${positional[0]}"
       local sr_wt_path
-      sr_wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || true
+      if [[ -n "$repo_dir" ]]; then
+        sr_wt_path=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || true
+      else
+        sr_wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || true
+      fi
+      if [[ -n "$repo_dir" && -z "${positional[0]:-}" ]]; then
+        local sr_remote
+        sr_remote=$(git -C "${sr_wt_path:-.}" remote get-url origin 2>/dev/null) || true
+        if [[ "$sr_remote" =~ github\.com[:/]([^/]+/[^/[:space:]]+) ]]; then
+          sr_repo="${BASH_REMATCH[1]}"
+          sr_repo="${sr_repo%.git}"
+        fi
+      else
+        _extract_repo sr_repo "${positional[0]:-local}"
+      fi
+      [[ -n "${positional[0]:-}" ]] && _extract_pr_number sr_pr_number "${positional[0]}"
       sr_review_file="${sr_wt_path:-.}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
       _json_summary "$sr_repo" "$sr_pr_number" "$sr_review_file" >&"$_json_stdout"
       exec {_json_stdout}>&-

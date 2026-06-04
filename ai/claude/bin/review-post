@@ -987,6 +987,16 @@ def main():
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
 
+    # 4b. Dedup against already-posted comments
+    all_postable = inline + file_level
+    if not args.dry_run and all_postable:
+        kept, deduped = dedup_against_posted(all_postable, args.repo, args.pr)
+        if deduped:
+            _info(f"Skipped {len(deduped)} findings duplicating existing comments")
+            skipped.extend(deduped)
+            inline = [f for f in kept if f.classification == CLASS_INLINE]
+            file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
+
     # 5. Combine body findings (file-level + skipped)
     body_findings = file_level + skipped
 

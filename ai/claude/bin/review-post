@@ -527,6 +527,81 @@ def _check_existing_pending(repo: str, pr: str) -> int | None:
     return None
 
 
+# ── Dedup against posted comments ────────────────────────────────────────────
+
+DEDUP_THRESHOLD = 0.6
+
+
+def _word_set(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9_]+", text.lower()))
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
+    code, user_out = _gh_api("user")
+    if code != 0:
+        return []
+    try:
+        bot_user = json.loads(user_out).get("login", "")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not bot_user:
+        return []
+
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/comments")
+    if code != 0:
+        return []
+    try:
+        all_comments = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    return [
+        {"path": c.get("path", ""), "body": c.get("body", "")}
+        for c in all_comments
+        if c.get("user", {}).get("login") == bot_user
+    ]
+
+
+def dedup_against_posted(
+    findings: list[Finding], repo: str, pr: str,
+) -> tuple[list[Finding], list[Finding]]:
+    existing = _fetch_bot_comments(repo, pr)
+    if not existing:
+        return findings, []
+
+    posted_entries = [
+        (c["path"], _word_set(c["body"]))
+        for c in existing
+    ]
+
+    kept, deduped = [], []
+    for f in findings:
+        f_words = _word_set(f.body)
+        is_dup = any(
+            f.path and posted_path and
+            Path(f.path).name == Path(posted_path).name and
+            _jaccard(f_words, posted_words) >= DEDUP_THRESHOLD
+            for posted_path, posted_words in posted_entries
+        )
+        if is_dup:
+            f.classification = CLASS_SKIPPED
+            f.skip_reason = "duplicate of existing comment"
+            deduped.append(f)
+        else:
+            kept.append(f)
+
+    return kept, deduped
+
+
 def _is_rate_limited(stdout: str) -> bool:
     """Check if the API response indicates rate limiting."""
     lower = stdout.lower()

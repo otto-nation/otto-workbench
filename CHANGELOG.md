@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/otto-nation/otto-workbench/compare/v1.10.1...v1.11.0) (2026-06-04)
+
+
+### Features
+
+* **ai:** publish claude-config tarball on releases ([#162](https://github.com/otto-nation/otto-workbench/issues/162)) ([4d39842](https://github.com/otto-nation/otto-workbench/commit/4d39842eef3f8eb15971b29612e60a0153c65b78))
+
 ## [1.10.1](https://github.com/otto-nation/otto-workbench/compare/v1.10.0...v1.10.1) (2026-06-03)
 
 

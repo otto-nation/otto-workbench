@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Package Claude Code configuration into a tarball for server/container deployment.
+#
+# Usage: build-claude-config-tarball [VERSION]
+#
+# If VERSION is omitted, reads root version from .release-please-manifest.json.
+# Uses --profile server to exclude desktop-only skills (dream, promote, machine).
+#
+# Produces: claude-config-<version>.tar.gz in the current directory.
+# The tarball contains a claude-config-<version>/ directory with:
+#   settings.json — Claude Code settings
+#   CLAUDE.md     — global guidelines
+#   rules/        — coding rules (.md files)
+#   agents/       — agent definitions (.md files)
+#   skills/       — skill directories (server profile)
+#   VERSION       — version string
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
+WORKBENCH_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "Usage: build-claude-config-tarball [VERSION]"
+  echo "Package Claude Code config into a tarball for server deployment."
+  echo "If VERSION is omitted, reads from .release-please-manifest.json."
+  exit 0
+fi
+
+VERSION="${1:-}"
+if [[ -z "$VERSION" ]]; then
+  MANIFEST="$WORKBENCH_ROOT/.github/.release-please-manifest.json"
+  if [[ ! -f "$MANIFEST" ]]; then
+    echo "ERROR: No version argument and $MANIFEST not found" >&2
+    exit 1
+  fi
+  VERSION=$(jq -r '.["."]' "$MANIFEST")
+  if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+    echo "ERROR: Could not read root version from $MANIFEST" >&2
+    exit 1
+  fi
+fi
+
+echo "Building claude-config tarball v${VERSION}"
+
+"$SCRIPT_DIR/workbench-export" --version "$VERSION" --profile server --output .
+
+echo "SHA256: $(shasum -a 256 "claude-config-${VERSION}.tar.gz" | cut -d' ' -f1)"

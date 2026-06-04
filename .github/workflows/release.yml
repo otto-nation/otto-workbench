@@ -151,6 +151,33 @@ jobs:
           echo "Tap formula verified at version $EXPECTED_VERSION"
 
   # ---------------------------------------------------------------------------
+  # Package claude-config: tarball uploaded to the root (otto-workbench) release
+  # ---------------------------------------------------------------------------
+  package-claude-config:
+    name: Package claude-config
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.wb_release_created == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build claude-config tarball
+        run: |
+          VERSION="${{ needs.release.outputs.wb_version }}"
+          ./ai/bin/build-claude-config-tarball "$VERSION"
+          TARBALL="claude-config-${VERSION}.tar.gz"
+          echo "TARBALL=$TARBALL" >> $GITHUB_ENV
+
+      - name: Upload to root release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.release.outputs.wb_tag_name }}" \
+            "${{ env.TARBALL }}" \
+            --clobber
+
+  # ---------------------------------------------------------------------------
   # Package claude-review: tarball + Homebrew formula
   # ---------------------------------------------------------------------------
   package-claude-review:
@@ -230,7 +257,7 @@ jobs:
   post-release:
     name: Post-Release
     runs-on: ubuntu-latest
-    needs: [release, package-workbench, package-claude-review]
+    needs: [release, package-workbench, package-claude-config, package-claude-review]
     if: always() && (needs.release.outputs.wb_release_created == 'true' || needs.release.outputs.cr_release_created == 'true')
     steps:
       - name: Release summary
@@ -243,6 +270,7 @@ jobs:
             echo "- **Version:** ${{ needs.release.outputs.wb_version }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Tag:** ${{ needs.release.outputs.wb_tag_name }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Package:** ${{ needs.package-workbench.result }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Claude Config:** ${{ needs.package-claude-config.result }}" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -297,7 +325,7 @@ jobs:
   notify-failure:
     name: Notify Failure
     runs-on: ubuntu-latest
-    needs: [release, package-workbench, package-claude-review, post-release]
+    needs: [release, package-workbench, package-claude-config, package-claude-review, post-release]
     if: failure() && (needs.release.outputs.wb_release_created == 'true' || needs.release.outputs.cr_release_created == 'true')
     steps:
       - name: Failure summary
@@ -308,6 +336,7 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Release | ${{ needs.release.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Package workbench | ${{ needs.package-workbench.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package claude-config | ${{ needs.package-claude-config.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Package claude-review | ${{ needs.package-claude-review.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Post-Release | ${{ needs.post-release.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

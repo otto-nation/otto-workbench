@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -932,6 +933,56 @@ def strip_evidence_blocks(review_file: str) -> None:
         kept.append(line)
 
     path.write_text("\n".join(kept))
+
+
+# ── Stable IDs for carry-forward ─────────────────────────────────────────────
+
+
+def compute_stable_id(path: str, desc: str) -> str:
+    key = f"{path.strip().lower()}:{desc[:80].strip().lower()}"
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+
+_ANNOTATE_FINDING_RE = re.compile(
+    r"^(- (?:\[ \] )?\*\*\[[A-Z]\d+\]\*\*)\s+"
+)
+
+
+def annotate_prior_with_stable_ids(review_text: str) -> str:
+    lines = review_text.split("\n")
+    result: list[str] = []
+    for line in lines:
+        m = _ANNOTATE_FINDING_RE.match(line)
+        if m and "<!-- sid:" not in line:
+            prefix = m.group(1)
+            after = line[m.end():]
+            # Try PR format: **`path:line`** or **path:line**
+            path_m = _FINDING_PATH_RE.match(line)
+            if path_m:
+                path_str = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()
+                # Strip :line suffix from path
+                if ":" in path_str:
+                    path_str = path_str.rsplit(":", 1)[0]
+            else:
+                # Try self-review format: `path:line`
+                cb_path_re = re.match(r"[`]?(\S+?)[`]?:\d+", after)
+                path_str = cb_path_re.group(1) if cb_path_re else ""
+            desc_m = _FINDING_DESC_RE.search(line)
+            desc = desc_m.group(1).strip() if desc_m else ""
+            if path_str:
+                sid = compute_stable_id(path_str, desc)
+                result.append(f"{prefix} <!-- sid:{sid} --> {after}")
+            else:
+                result.append(line)
+        else:
+            result.append(line)
+    return "\n".join(result)
+
+
+def _check_orphaned_prior_ids(prior_text: str, review_text: str) -> list[str]:
+    prior_ids = set(re.findall(r"<!-- sid:(\w+) -->", prior_text))
+    review_ids = set(re.findall(r"<!-- sid:(\w+) -->", review_text))
+    return sorted(prior_ids - review_ids)
 
 
 # ── PR data fetching ──────────────────────────────────────────────────────────

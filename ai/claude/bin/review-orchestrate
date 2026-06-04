@@ -779,6 +779,161 @@ def merge_reviews(group_files: list[str]) -> str:
     return "\n".join(parts)
 
 
+# ── Evidence verification ────────────────────────────────────────────────────
+
+_EVIDENCE_RE = re.compile(
+    r">\s*```\w*\n(.*?)\n\s*>\s*```",
+    re.DOTALL,
+)
+
+
+def _extract_evidence(body: str) -> str | None:
+    m = _EVIDENCE_RE.search(body)
+    if not m:
+        return None
+    lines = m.group(1).split("\n")
+    cleaned = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("> "):
+            stripped = stripped[2:]
+        elif stripped.startswith(">"):
+            stripped = stripped[1:]
+        cleaned.append(stripped.rstrip())
+    return "\n".join(l for l in cleaned if l)
+
+
+def _normalize_code(text: str) -> str:
+    lines = text.strip().split("\n")
+    return "\n".join(line.strip() for line in lines if line.strip())
+
+
+def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
+    resolved = Path(wt_path) / path
+    if not resolved.exists():
+        return False
+    if evidence is None:
+        return True
+    try:
+        file_content = resolved.read_text()
+    except OSError:
+        return False
+    return _normalize_code(evidence) in _normalize_code(file_content)
+
+
+_VERIFY_FINDING_RE = re.compile(
+    r"^- (?:\[ \] )?"
+    r"\*\*\[([MSNI])(\d+)\]\*\*"
+    r"\s+(?:<!-- sid:\w+ -->\s+)?"
+    r"(?:\*\*[`]?([^`*\s]+?)[`]?\*\*"
+    r"|[`]([^`\s]+?)[`])"
+    r"(?::\d+(?:[-–]\d+)?)?"
+    r"\s*—\s*(.*)"
+)
+
+
+def _parse_findings_for_verification(text: str) -> list[dict]:
+    findings = []
+    current: dict | None = None
+    body_lines: list[str] = []
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+        m = _VERIFY_FINDING_RE.match(stripped)
+        if m:
+            if current:
+                current["body"] = "\n".join(body_lines)
+                findings.append(current)
+            path_str = (m.group(3) or m.group(4) or "").replace("\\_", "_")
+            current = {
+                "id": f"{m.group(1)}{m.group(2)}",
+                "severity": m.group(1),
+                "path": path_str,
+                "body": m.group(5),
+            }
+            body_lines = [m.group(5)] if m.group(5) else []
+        elif current and stripped and not stripped.startswith("## "):
+            body_lines.append(line.rstrip())
+        elif current and stripped.startswith("## "):
+            current["body"] = "\n".join(body_lines)
+            findings.append(current)
+            current = None
+            body_lines = []
+
+    if current:
+        current["body"] = "\n".join(body_lines)
+        findings.append(current)
+
+    return findings
+
+
+def verify_findings(review_file: str, wt_path: str) -> list[str]:
+    path = Path(review_file)
+    if not path.exists():
+        return []
+
+    text = path.read_text()
+    findings = _parse_findings_for_verification(text)
+    dropped: list[str] = []
+
+    for f in findings:
+        if f["severity"] not in ("M", "S"):
+            continue
+        evidence = _extract_evidence(f["body"])
+        if not _verify_finding(f["path"], evidence, wt_path):
+            dropped.append(f["id"])
+
+    if not dropped:
+        return []
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    skip_until_next = False
+    for line in lines:
+        stripped = line.strip()
+        m = _VERIFY_FINDING_RE.match(stripped)
+        if m:
+            fid = f"{m.group(1)}{m.group(2)}"
+            if fid in dropped:
+                skip_until_next = True
+                continue
+            skip_until_next = False
+        elif skip_until_next:
+            if stripped.startswith("- **[") or stripped.startswith("- [ ] **[") or stripped.startswith("## "):
+                skip_until_next = False
+            else:
+                continue
+        kept.append(line)
+
+    path.write_text("\n".join(kept))
+    return dropped
+
+
+_EVIDENCE_BLOCK_START_RE = re.compile(r"^\s*>\s*```")
+_EVIDENCE_BLOCK_LINE_RE = re.compile(r"^\s*>\s*")
+
+
+def strip_evidence_blocks(review_file: str) -> None:
+    path = Path(review_file)
+    if not path.exists():
+        return
+    lines = path.read_text().split("\n")
+    kept: list[str] = []
+    in_evidence = False
+
+    for line in lines:
+        if not in_evidence and _EVIDENCE_BLOCK_START_RE.match(line):
+            in_evidence = True
+            continue
+        if in_evidence:
+            if _EVIDENCE_BLOCK_START_RE.match(line):
+                in_evidence = False
+            continue
+        kept.append(line)
+
+    path.write_text("\n".join(kept))
+
+
 # ── PR data fetching ──────────────────────────────────────────────────────────
 
 def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:

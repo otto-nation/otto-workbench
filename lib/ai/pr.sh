@@ -98,6 +98,17 @@ load_pr_context() {
   fi
 }
 
+# _set_pr_flag FLAG VALUE
+# Assigns VALUE to the variable corresponding to FLAG.
+# shellcheck disable=SC2034  # PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE read by callers
+_set_pr_flag() {
+  case "$1" in
+    --base)  PR_BASE="$2" ;;
+    --title) PR_TITLE_OVERRIDE="$2" ;;
+    --body)  PR_BODY_OVERRIDE="$2" ;;
+  esac
+}
+
 # parse_pr_flags ARGS
 # Parses PR-specific flags from the CLI_ARGS string.
 # Sets SKIP_ISSUE, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE.
@@ -105,18 +116,14 @@ load_pr_context() {
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false
+  # shellcheck disable=SC2034  # set via _set_pr_flag, read by Taskfile callers
   PR_BASE=""
   PR_TITLE_OVERRIDE=""
   PR_BODY_OVERRIDE=""
   local arg expect_flag=""
   for arg in $args; do
     if [[ -n "$expect_flag" ]]; then
-      # shellcheck disable=SC2034  # PR_BASE read by Taskfile callers
-      case "$expect_flag" in
-        --base)  PR_BASE="$arg" ;;
-        --title) PR_TITLE_OVERRIDE="$arg" ;;
-        --body)  PR_BODY_OVERRIDE="$arg" ;;
-      esac
+      _set_pr_flag "$expect_flag" "$arg"
       expect_flag=""
       continue
     fi

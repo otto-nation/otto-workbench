@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0](https://github.com/otto-nation/otto-workbench/compare/v1.11.0...v1.12.0) (2026-06-04)
+
+
+### Features
+
+* **pr:** add --title and --body flags to pr:create and pr:update ([#167](https://github.com/otto-nation/otto-workbench/issues/167)) ([7d8d82c](https://github.com/otto-nation/otto-workbench/commit/7d8d82c2b76b0cb2bf94c3d1f96bff17f28cfae6))
+* **review:** add evidence verification, stable IDs, and posted comment dedup ([#166](https://github.com/otto-nation/otto-workbench/issues/166)) ([003e97a](https://github.com/otto-nation/otto-workbench/commit/003e97aa4ab9b2ea99e3d7315ccd23ec83f71e5e))
+
 ## [1.11.0](https://github.com/otto-nation/otto-workbench/compare/v1.10.1...v1.11.0) (2026-06-04)
 
 

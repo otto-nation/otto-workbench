@@ -34,6 +34,7 @@ Rules:
 - Every finding MUST start with `- [ ]` (unchecked checkbox)
 - Every finding MUST include a file:line reference
 - Use M/S/N/I severity prefixes with sequential numbering per category
+- Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file
 - Do NOT include a File Triage section
 - Do NOT include a Verdict section
 - Omit empty severity sections entirely (no "None" or "N/A")

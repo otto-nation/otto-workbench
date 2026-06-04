@@ -954,3 +954,77 @@ class TestClassifyFindingsEmptyPath:
         rp.classify_findings([f], self.DIFF)
         captured = capsys.readouterr()
         assert "empty path" not in captured.err
+
+
+class TestWordSet:
+    def test_extracts_lowercase_words(self, rp):
+        assert rp._word_set("Hello World_Foo 123") == {"hello", "world_foo", "123"}
+
+    def test_empty_string(self, rp):
+        assert rp._word_set("") == set()
+
+    def test_strips_punctuation(self, rp):
+        assert rp._word_set("error — missing `check`") == {"error", "missing", "check"}
+
+
+class TestJaccard:
+    def test_identical_sets(self, rp):
+        assert rp._jaccard({"a", "b"}, {"a", "b"}) == 1.0
+
+    def test_disjoint_sets(self, rp):
+        assert rp._jaccard({"a"}, {"b"}) == 0.0
+
+    def test_partial_overlap(self, rp):
+        assert rp._jaccard({"a", "b", "c"}, {"b", "c", "d"}) == pytest.approx(0.5)
+
+    def test_both_empty(self, rp):
+        assert rp._jaccard(set(), set()) == 1.0
+
+    def test_one_empty(self, rp):
+        assert rp._jaccard({"a"}, set()) == 0.0
+
+
+class TestDedupAgainstPosted:
+    def _make_finding(self, rp, id_str, path, body):
+        return rp.Finding(
+            id=id_str, severity=id_str[0], seq=int(id_str[1:]),
+            path=path, line=42, end_line=None, body=body,
+        )
+
+    @patch("review_post._fetch_bot_comments")
+    def test_skips_duplicate(self, mock_fetch, rp):
+        mock_fetch.return_value = [
+            {"path": "handler.go", "body": "missing error check on db.Query result"},
+        ]
+        f = self._make_finding(rp, "M1", "handler.go", "missing error check on db.Query result")
+        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
+        assert len(kept) == 0
+        assert len(deduped) == 1
+        assert deduped[0].skip_reason == "duplicate of existing comment"
+
+    @patch("review_post._fetch_bot_comments")
+    def test_keeps_non_duplicate(self, mock_fetch, rp):
+        mock_fetch.return_value = [
+            {"path": "handler.go", "body": "missing error check on db.Query result"},
+        ]
+        f = self._make_finding(rp, "S1", "handler.go", "unused import os")
+        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
+        assert len(kept) == 1
+        assert len(deduped) == 0
+
+    @patch("review_post._fetch_bot_comments")
+    def test_different_file_not_duplicate(self, mock_fetch, rp):
+        mock_fetch.return_value = [
+            {"path": "handler.go", "body": "missing error check"},
+        ]
+        f = self._make_finding(rp, "M1", "other.go", "missing error check")
+        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
+        assert len(kept) == 1
+
+    @patch("review_post._fetch_bot_comments")
+    def test_no_existing_comments_keeps_all(self, mock_fetch, rp):
+        mock_fetch.return_value = []
+        f = self._make_finding(rp, "M1", "handler.go", "finding text")
+        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
+        assert len(kept) == 1
+        assert len(deduped) == 0

@@ -19,6 +19,7 @@ Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit / ## Idiom
 Do NOT write a Summary or Verdict — those will be added in a synthesis step.
 Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered during merge.
 Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.
+Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file proving the claim. Nit and idiom findings do not need evidence.
 Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
 
 ## Turn budget

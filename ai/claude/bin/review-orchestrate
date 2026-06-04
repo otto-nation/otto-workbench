@@ -1177,7 +1177,12 @@ def _build_issue_section(issue_link: str, issue_context: str) -> str:
     return ""
 
 
-_FINDING_LINE_RE = re.compile(r"- \[[ x]\] \*\*\[[A-Z]\d+\]\*\* (\S+?):\d+")
+_FINDING_LINE_RE = re.compile(
+    r"- (?:\[[ x]\] )?"                       # optional checkbox
+    r"\*\*\[[A-Z]\d+\]\*\*"                   # finding ID
+    r"\s+(?:<!-- sid:\w+ -->\s+)?"             # optional stable ID
+    r"(?:\*\*)?[`]?(\S+?)[`]?(?:\*\*)?:\d+"   # path with optional bold/backtick wrapping
+)
 
 
 def _classify_prior_line(stripped: str, filter_set: set[str], in_matched: bool) -> bool:
@@ -1229,12 +1234,18 @@ def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
 def _build_prior_section(prior_review: str, context: str = "", file_filter: list[str] | None = None) -> str:
     if not prior_review:
         return ""
-    review_text = prior_review
+    review_text = annotate_prior_with_stable_ids(prior_review)
     if file_filter:
         review_text = _scope_prior_review(review_text, file_filter)
         if not review_text:
             return ""
-    default = "This is a re-review. For each prior finding, mark fixed findings as resolved and carry forward open ones."
+    default = (
+        "This is a re-review. Each prior finding has a stable ID (<!-- sid:XXXXXXXX -->).\n"
+        "For each prior finding:\n"
+        "- If fixed: omit from new review\n"
+        "- If still open: carry forward, preserving the stable ID comment\n"
+        "- New findings get no stable ID — one will be assigned automatically"
+    )
     return f"""
 ## Prior review
 {context or default}
@@ -1747,6 +1758,13 @@ def run_single_agent(job: ReviewJob):
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 
+    if job.prior_review:
+        orphaned = _check_orphaned_prior_ids(
+            annotate_prior_with_stable_ids(job.prior_review),
+            Path(job.review_file).read_text(),
+        )
+        if orphaned:
+            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
     dropped = verify_findings(job.review_file, job.wt_path)
     if dropped:
         _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
@@ -1999,6 +2017,13 @@ def _phase_synthesis(
         )
         Path(job.review_file).write_text(fallback)
 
+    if job.prior_review:
+        orphaned = _check_orphaned_prior_ids(
+            annotate_prior_with_stable_ids(job.prior_review),
+            Path(job.review_file).read_text(),
+        )
+        if orphaned:
+            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
     dropped = verify_findings(job.review_file, job.wt_path)
     if dropped:
         _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")

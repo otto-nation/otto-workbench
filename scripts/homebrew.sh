@@ -151,19 +151,19 @@ cmd_deploy() {
     local content
     content=$(base64 < "$formula_source" | tr -d '\n')
 
+    local local_sha
+    local_sha=$(git hash-object "$formula_source")
+
     # Retry loop — concurrent deploys to the same branch cause 409 conflicts
     local max_attempts=5 attempt=1
     while [[ $attempt -le $max_attempts ]]; do
         local current_sha=""
         current_sha=$(GH_TOKEN="$token" gh api "$api_path" --jq '.sha' 2>/dev/null) || true
 
-        if [[ -n "$current_sha" ]]; then
-            local local_sha
-            local_sha=$(git hash-object "$formula_source")
-            if [[ "$current_sha" == "$local_sha" ]]; then
-                print_info "No changes to formula"
-                return 0
-            fi
+        # Remote already matches local — nothing to deploy
+        if [[ -n "$current_sha" ]] && [[ "$current_sha" == "$local_sha" ]]; then
+            print_info "No changes to formula"
+            return 0
         fi
 
         local api_args=(

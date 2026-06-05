@@ -312,6 +312,11 @@ _json_summary() {
     fi
   fi
 
+  local review_content_raw=""
+  if [[ -f "$review_file" ]]; then
+    review_content_raw=$(cat "$review_file" 2>/dev/null) || true
+  fi
+
   jq_args+=(
     --argjson total "$total" --arg verdict "$verdict"
     --argjson cost_usd "${cost_usd:-0}"
@@ -320,6 +325,7 @@ _json_summary() {
     --argjson cache_read_tokens "${cache_read_tokens:-0}"
     --argjson cache_write_tokens "${cache_write_tokens:-0}"
     --argjson duration_ms "${duration_ms:-0}"
+    --arg review_content "$review_content_raw"
   )
 
   local json
@@ -328,6 +334,7 @@ _json_summary() {
       repo: \$repo,
       pr_number: (if \$pr == \"\" then null else (\$pr | tonumber) end),
       review_file: \$review_file,
+      review_content: (if \$review_content == \"\" then null else \$review_content end),
       findings: { ${keys_expr}total: \$total },
       verdict: \$verdict,
       cost_usd: \$cost_usd,
@@ -945,6 +952,11 @@ cmd_self_review() {
   [[ -n "$pr_number" ]] && pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
   _print_summary "$review_file" "$session_log" "$pr_url" "" "$branch_name"
 
+  # Emit JSON summary before worktree cleanup so review file is still readable
+  if [[ -n "${_json_stdout:-}" ]]; then
+    _json_summary "$repo" "$pr_number" "$review_file" >&"$_json_stdout"
+  fi
+
   # Clean up worktree if we created one
   if [[ -n "$wt_cleanup" ]]; then
     local repo_root
@@ -1055,14 +1067,7 @@ main() {
 
   if [[ "$self_review" == "true" ]]; then
     cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir"
-    if [[ "$json_summary" == "true" ]]; then
-      local sr_repo="" sr_pr_number="" sr_review_file=""
-      local sr_wt_path
-      sr_wt_path=$(_self_review_wt_path "$repo_dir")
-      _self_review_repo sr_repo "$repo_dir" "$sr_wt_path" "${positional[0]:-}"
-      [[ -n "${positional[0]:-}" ]] && _extract_pr_number sr_pr_number "${positional[0]}"
-      sr_review_file="${sr_wt_path:-.}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
-      _json_summary "$sr_repo" "$sr_pr_number" "$sr_review_file" >&"$_json_stdout"
+    if [[ -n "$_json_stdout" ]]; then
       exec {_json_stdout}>&-
     fi
     return

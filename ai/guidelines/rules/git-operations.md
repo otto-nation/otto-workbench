@@ -32,7 +32,8 @@
 ## PR Creation
 
 - Always use `task --global pr:create -- --no-issue` to create a PR — `task pr:create` does not exist (no local target), and omitting `-- --no-issue` blocks on an interactive issue-number prompt
-- To supply a custom title and/or body: `task --global pr:create -- --no-issue --title "feat: title" --body "description"` — when both are provided, AI generation is skipped entirely; when only one is provided, the other is still AI-generated
+- To supply a custom title and/or body: `task --global pr:create -- --no-issue --title "feat: title" --body "description"` — when both are provided, AI generation is skipped entirely; when only one is provided, the other is still AI-generated. Use `--body-file /path/to/file` instead of `--body` for multi-line or complex content
+- When the current working directory is not the target repo (e.g., running from a different worktree), pass `REPO_DIR`: `task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue` — without this, git commands run against the CWD repo instead of the intended one
 
 ## Branch Freshness
 

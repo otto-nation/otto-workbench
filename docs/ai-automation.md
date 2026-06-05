@@ -85,6 +85,15 @@ AI_COMMAND=claude -p --agent ci-cd
 
 Override per-project with `.taskfile/taskfile.env` in a project root.
 
+### Running from a different directory
+
+All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:
+
+```bash
+task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue
+task --global REPO_DIR=/path/to/worktree commit
+```
+
 ## Guidelines & Rules
 
 The workbench installs a layered rule system into Claude Code:

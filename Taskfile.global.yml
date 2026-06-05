@@ -70,7 +70,7 @@ tasks:
   commit:
     desc: "Generate AI-powered commit message based on staged changes"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -117,7 +117,7 @@ tasks:
   commit:reword:
     desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -212,7 +212,7 @@ tasks:
   pr:content:
     desc: "Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -234,7 +234,7 @@ tasks:
   pr:create:
     desc: "Create AI-powered pull request (-- --no-issue, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -266,7 +266,7 @@ tasks:
   pr:update:
     desc: "Update current PR description (-- --no-issue, --base <branch>, --title <title>, --body <body>)"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -297,7 +297,7 @@ tasks:
   review:
     desc: "AI review of staged, unstaged, and committed branch changes"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -333,7 +333,7 @@ tasks:
   pr:review:
     desc: "AI review of the current PR"
     silent: true
-    dir: '{{.USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"

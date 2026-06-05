@@ -81,3 +81,34 @@ teardown() {
   [ "$PR_TITLE_OVERRIDE" = "" ]
   [ "$PR_BODY_OVERRIDE" = "" ]
 }
+
+@test "--title with quoted multi-word value" {
+  parse_pr_flags '--title "fix: clean empty markers and fix counts"'
+  [ "$PR_TITLE_OVERRIDE" = "fix: clean empty markers and fix counts" ]
+}
+
+@test "--body-file reads content from file" {
+  local tmpfile
+  tmpfile=$(mktemp)
+  printf "line one\nline two" > "$tmpfile"
+  parse_pr_flags "--body-file $tmpfile"
+  rm -f "$tmpfile"
+  [[ "$PR_BODY_OVERRIDE" == *"line one"* ]]
+  [[ "$PR_BODY_OVERRIDE" == *"line two"* ]]
+}
+
+@test "--body-file without value fails" {
+  run parse_pr_flags "--body-file"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--body-file requires a value"* ]]
+}
+
+@test "--title and --body-file together" {
+  local tmpfile
+  tmpfile=$(mktemp)
+  printf "body from file" > "$tmpfile"
+  parse_pr_flags "--title \"my title\" --body-file $tmpfile"
+  rm -f "$tmpfile"
+  [ "$PR_TITLE_OVERRIDE" = "my title" ]
+  [ "$PR_BODY_OVERRIDE" = "body from file" ]
+}

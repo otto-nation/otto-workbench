@@ -80,6 +80,22 @@ class TestParseFindingLine:
         )
         assert (f.id, f.body) == ("S1", "Fix this")
 
+    def test_pathless_finding_uses_full_text_as_body(self, rp):
+        f = rp._parse_finding_line(
+            '- **[I1]** The `_comment` field convention is good practice and should be retained.'
+        )
+        assert f.path == ""
+        assert "The `_comment` field convention" in f.body
+        assert "should be retained" in f.body
+
+    def test_pathless_finding_with_em_dash_keeps_full_text(self, rp):
+        f = rp._parse_finding_line(
+            '- **[I1]** Some pattern across files — this is good practice.'
+        )
+        assert f.path == ""
+        assert "Some pattern across files" in f.body
+        assert "good practice" in f.body
+
     def test_non_finding_returns_none(self, rp):
         assert rp._parse_finding_line("just a regular line") is None
 
@@ -499,6 +515,15 @@ class TestFormatBodyText:
     def test_no_body_findings_single_line(self, rp):
         text = rp.format_body_text([], has_inline=True, severity_filter={"M", "S"})
         assert len(text.strip().split("\n")) == 1
+
+    def test_pathless_finding_omits_backticks(self, rp):
+        f = rp.Finding(
+            id="I1", severity="I", seq=1, path="", line=None,
+            end_line=None, body="Good pattern across files.", posted_id="I1",
+        )
+        result = rp.format_body_text([f], has_inline=True, severity_filter={"I"})
+        assert "``" not in result
+        assert "**[I1] [idiom]** Good pattern" in result
 
 
 class TestFormatPathRef:

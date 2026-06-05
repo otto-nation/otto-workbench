@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.5](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.4...claude-review-v1.6.5) (2026-06-05)
+
+
+### Bug Fixes
+
+* **review:** clean empty markers and fix stale verdict counts ([#178](https://github.com/otto-nation/otto-workbench/issues/178)) ([0b74247](https://github.com/otto-nation/otto-workbench/commit/0b7424749d3bd258965fcfaca0e3dd4687f7ded7))
+
 ## [1.6.4](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.3...claude-review-v1.6.4) (2026-06-05)
 
 

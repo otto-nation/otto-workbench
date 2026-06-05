@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.0...claude-review-v1.6.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **review:** emit review_content in JSON summary; check agent exit codes ([#169](https://github.com/otto-nation/otto-workbench/issues/169)) ([c9bb122](https://github.com/otto-nation/otto-workbench/commit/c9bb1226fe6a3335f5660bccecfc47e87e3b70eb))
+
 ## [1.6.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.5.4...claude-review-v1.6.0) (2026-06-04)
 
 

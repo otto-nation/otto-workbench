@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.1...claude-review-v1.6.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** update build-claude-review-tarball to source lib/output.sh ([#172](https://github.com/otto-nation/otto-workbench/issues/172)) ([3a47e9f](https://github.com/otto-nation/otto-workbench/commit/3a47e9f5dbdc1b12e1b8e8217369813e4c927dfe))
+
 ## [1.6.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.0...claude-review-v1.6.1) (2026-06-05)
 
 

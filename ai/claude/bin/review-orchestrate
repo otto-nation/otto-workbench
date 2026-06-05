@@ -600,6 +600,15 @@ def _extract_section(content: str, header: str) -> str:
     return content[start:end].strip()
 
 
+_EMPTY_SECTION_LINE_RE = re.compile(r"^(?:_none\._|_\(none\)_|---)\s*$", re.IGNORECASE)
+
+
+def _clean_section_text(text: str) -> str:
+    """Remove empty-section markers and separators left by group agents."""
+    lines = [line for line in text.split("\n") if not _EMPTY_SECTION_LINE_RE.match(line.strip())]
+    return "\n".join(lines).strip()
+
+
 _VALID_SECTION_HEADERS = {s.lower() for s, _ in FINDING_SECTIONS} | {SECTION_FILE_TRIAGE.lower()}
 
 
@@ -697,7 +706,7 @@ def _merge_one_review(
             merged_triage += cleaned + "\n"
 
     for section, prefix in FINDING_SECTIONS:
-        raw = _extract_section(content, section)
+        raw = _clean_section_text(_extract_section(content, section))
         text, count = renumber_section(prefix, raw, offsets[section])
         if text:
             merged[section] += text + "\n"
@@ -1780,19 +1789,7 @@ def run_single_agent(job: ReviewJob):
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 
-    if job.prior_review:
-        orphaned = _check_orphaned_prior_ids(
-            annotate_prior_with_stable_ids(job.prior_review),
-            Path(job.review_file).read_text(),
-        )
-        if orphaned:
-            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
-    dropped = verify_findings(job.review_file, job.wt_path)
-    if dropped:
-        _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
-    strip_evidence_blocks(job.review_file)
-    strip_stable_ids(job.review_file)
-    renumber_findings(job.review_file)
+    _post_process_review(job)
     _write_review_sidecar(job)
 
 
@@ -1956,7 +1953,7 @@ def _has_findings(merged_content: str) -> bool:
 
 def _count_findings(text: str) -> dict[str, int]:
     return {
-        prefix: len(re.findall(rf"\[{prefix}\d+\]", text))
+        prefix: len(set(re.findall(rf"\[{prefix}\d+\]", text)))
         for _, prefix in FINDING_SECTIONS
     }
 
@@ -2015,6 +2012,24 @@ def _build_mechanical_fallback(
     )
 
 
+def _post_process_review(job: ReviewJob) -> list[str]:
+    """Run verification and cleanup passes on the review file."""
+    if job.prior_review:
+        orphaned = _check_orphaned_prior_ids(
+            annotate_prior_with_stable_ids(job.prior_review),
+            Path(job.review_file).read_text(),
+        )
+        if orphaned:
+            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
+    dropped = verify_findings(job.review_file, job.wt_path)
+    if dropped:
+        _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+    strip_evidence_blocks(job.review_file)
+    strip_stable_ids(job.review_file)
+    renumber_findings(job.review_file)
+    return dropped
+
+
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
@@ -2038,24 +2053,15 @@ def _phase_synthesis(
             _warn(f"Synthesis agent exited with code {rc} — falling back to mechanical merge")
         else:
             _warn("Synthesis agent failed — falling back to mechanical merge")
-        fallback = _build_mechanical_fallback(
-            job, group_count, merged_content,
-        )
+        # Post-process the merged content first, then wrap with accurate counts
+        Path(job.review_file).write_text(merged_content)
+        _post_process_review(job)
+        processed = Path(job.review_file).read_text()
+        fallback = _build_mechanical_fallback(job, group_count, processed)
         Path(job.review_file).write_text(fallback)
+    else:
+        _post_process_review(job)
 
-    if job.prior_review:
-        orphaned = _check_orphaned_prior_ids(
-            annotate_prior_with_stable_ids(job.prior_review),
-            Path(job.review_file).read_text(),
-        )
-        if orphaned:
-            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
-    dropped = verify_findings(job.review_file, job.wt_path)
-    if dropped:
-        _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
-    strip_evidence_blocks(job.review_file)
-    strip_stable_ids(job.review_file)
-    renumber_findings(job.review_file)
     _write_review_sidecar(job)
 
     return synthesis_log

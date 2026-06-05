@@ -163,8 +163,13 @@ def _parse_finding_line(stripped: str) -> Finding | None:
 
     sev = id_match.group(1)
     seq = int(id_match.group(2))
-    path, line_num, end_line = _extract_path(stripped[id_match.end():])
-    body = _extract_body_text(stripped)
+    after_id = stripped[id_match.end():]
+    path, line_num, end_line = _extract_path(after_id)
+
+    if path:
+        body = _extract_body_text(stripped)
+    else:
+        body = after_id.strip()
 
     return Finding(
         id=f"{sev}{seq}", severity=sev, seq=seq,
@@ -414,7 +419,10 @@ def format_body_text(
 
     for f in body_findings:
         label = f"**[{f.posted_id}] [{SEVERITY_LABELS[f.severity]}]**"
-        parts.append(f"- {label} {_format_path_ref(f)} — {f.body}")
+        if f.path:
+            parts.append(f"- {label} {_format_path_ref(f)} — {f.body}")
+        else:
+            parts.append(f"- {label} {f.body}")
 
     return "\n".join(parts)
 

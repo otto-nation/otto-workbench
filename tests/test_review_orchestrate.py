@@ -217,6 +217,93 @@ class TestAnnotatePriorWithStableIds:
         assert a == b
 
 
+class TestCleanSectionText:
+    def test_strips_none_markers(self, ro):
+        assert ro._clean_section_text("_None._") == ""
+        assert ro._clean_section_text("_(none)_") == ""
+
+    def test_strips_horizontal_rules(self, ro):
+        assert ro._clean_section_text("---") == ""
+
+    def test_case_insensitive(self, ro):
+        assert ro._clean_section_text("_NONE._") == ""
+        assert ro._clean_section_text("_None._") == ""
+
+    def test_preserves_findings(self, ro):
+        text = "- **[M1]** **`file.go:42`** — finding"
+        assert ro._clean_section_text(text) == text
+
+    def test_strips_markers_around_findings(self, ro):
+        text = "_None._\n---\n- **[M1]** **`file.go:42`** — finding\n---\n_None._"
+        result = ro._clean_section_text(text)
+        assert result == "- **[M1]** **`file.go:42`** — finding"
+
+    def test_empty_input(self, ro):
+        assert ro._clean_section_text("") == ""
+
+    def test_only_markers_returns_empty(self, ro):
+        assert ro._clean_section_text("_None._\n---\n_(none)_") == ""
+
+
+class TestCountFindings:
+    def test_counts_unique_ids(self, ro):
+        text = "- **[M1]** finding\nsee [M1] above\n- **[M2]** another"
+        counts = ro._count_findings(text)
+        assert counts[ro.FINDING_PREFIX_MUST] == 2
+
+    def test_no_findings(self, ro):
+        counts = ro._count_findings("no findings here")
+        assert all(v == 0 for v in counts.values())
+
+    def test_mixed_severities(self, ro):
+        text = "- **[M1]** must\n- **[S1]** should\n- **[N1]** nit\n- **[I1]** idiom"
+        counts = ro._count_findings(text)
+        assert counts[ro.FINDING_PREFIX_MUST] == 1
+        assert counts[ro.FINDING_PREFIX_SHOULD] == 1
+        assert counts[ro.FINDING_PREFIX_NIT] == 1
+        assert counts[ro.FINDING_PREFIX_IDIOMS] == 1
+
+
+class TestMergeReviewsCleanup:
+    def test_empty_markers_excluded_from_merge(self, ro, tmp_path):
+        g1 = tmp_path / "group-1.md"
+        g1.write_text(
+            "## File Triage\n"
+            "- `file.go` — reviewed\n"
+            "## Must fix\n"
+            "_None._\n"
+            "## Should fix\n"
+            "_None._\n"
+            "## Nit\n"
+            "- **[N1]** **`file.go:10`** — style issue\n"
+            "## Idioms\n"
+            "_(none)_\n"
+        )
+        result = ro.merge_reviews([str(g1)])
+        assert "_None._" not in result
+        assert "_(none)_" not in result
+        assert "## Must fix" not in result
+        assert "## Nit" in result
+        assert "[N1]" in result
+
+    def test_separators_excluded_from_merge(self, ro, tmp_path):
+        g1 = tmp_path / "group-1.md"
+        g1.write_text(
+            "## File Triage\n"
+            "- `file.go` — reviewed\n"
+            "## Must fix\n"
+            "---\n"
+            "_None._\n"
+            "---\n"
+            "## Nit\n"
+            "---\n"
+            "- **[N1]** **`file.go:10`** — finding\n"
+            "---\n"
+        )
+        result = ro.merge_reviews([str(g1)])
+        assert "---" not in result
+
+
 class TestCheckOrphanedPriorIds:
     def test_no_orphans(self, ro):
         prior = "<!-- sid:aabb1122 --> finding 1"

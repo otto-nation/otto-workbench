@@ -67,7 +67,7 @@ task --global ai:setup             # Setup AI configuration
 task --global commit               # Generate AI-powered commit message based on staged changes
 task --global commit:reword        # Reword a commit message with AI (default: HEAD; or: task reword -- SHA)
 task --global pr:content           # Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)
-task --global pr:create            # Create AI-powered pull request (-- --no-issue, --base <branch>, --title <title>, --body <body>)
+task --global pr:create            # Create AI-powered pull request (-- --no-issue, --base <branch>, --title <title>, --body <body>, --body-file <path>)
 task --global pr:update            # Update current PR description (-- --no-issue, --base <branch>, --title <title>, --body <body>)
 task --global review               # AI review of staged, unstaged, and committed branch changes
 task --global pr:review            # AI review of the current PR
@@ -84,6 +84,15 @@ AI_COMMAND=claude -p --agent ci-cd
 ```
 
 Override per-project with `.taskfile/taskfile.env` in a project root.
+
+### Running from a different directory
+
+All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:
+
+```bash
+task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue
+task --global REPO_DIR=/path/to/worktree commit
+```
 
 ## Guidelines & Rules
 

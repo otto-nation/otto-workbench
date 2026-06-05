@@ -103,14 +103,17 @@ load_pr_context() {
 # shellcheck disable=SC2034  # PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE read by callers
 _set_pr_flag() {
   case "$1" in
-    --base)  PR_BASE="$2" ;;
-    --title) PR_TITLE_OVERRIDE="$2" ;;
-    --body)  PR_BODY_OVERRIDE="$2" ;;
+    --base)      PR_BASE="$2" ;;
+    --title)     PR_TITLE_OVERRIDE="$2" ;;
+    --body)      PR_BODY_OVERRIDE="$2" ;;
+    --body-file) PR_BODY_OVERRIDE="$(cat "$2")" ;;
   esac
 }
 
 # parse_pr_flags ARGS
 # Parses PR-specific flags from the CLI_ARGS string.
+# Uses eval to re-parse so quoted multi-word values work:
+#   --title "fix: clean empty markers" --body-file /tmp/body.txt
 # Sets SKIP_ISSUE, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE.
 # Returns 1 on unknown flag or missing value.
 parse_pr_flags() {
@@ -120,8 +123,15 @@ parse_pr_flags() {
   PR_BASE=""
   PR_TITLE_OVERRIDE=""
   PR_BODY_OVERRIDE=""
+
+  [[ -z "$args" ]] && return 0
+
+  local parsed=()
+  # Re-parse with shell quoting rules so "multi word" values stay together
+  eval "parsed=($args)" 2>/dev/null || read -ra parsed <<< "$args"
+
   local arg expect_flag=""
-  for arg in $args; do
+  for arg in "${parsed[@]}"; do
     if [[ -n "$expect_flag" ]]; then
       _set_pr_flag "$expect_flag" "$arg"
       expect_flag=""
@@ -129,7 +139,7 @@ parse_pr_flags() {
     fi
     case "$arg" in
       --no-issue) SKIP_ISSUE=true ;;
-      --base|--title|--body) expect_flag="$arg" ;;
+      --base|--title|--body|--body-file) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
     esac
   done

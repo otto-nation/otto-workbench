@@ -1769,11 +1769,14 @@ def run_single_agent(job: ReviewJob):
     _info(f"Running review agent on {label}...")
     print()
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
-    invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
     print()
 
     if not Path(job.review_file).exists():
-        print(f"error: review file not found: {job.review_file}", file=sys.stderr)
+        if rc != 0:
+            print(f"error: review agent exited with code {rc} and produced no review file", file=sys.stderr)
+        else:
+            print(f"error: review file not found: {job.review_file}", file=sys.stderr)
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 
@@ -2027,11 +2030,14 @@ def _phase_synthesis(
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
     _info("Phase 4: Synthesis...")
     print()
-    invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
     print()
 
     if not Path(job.review_file).exists():
-        _warn("Synthesis agent failed — falling back to mechanical merge")
+        if rc != 0:
+            _warn(f"Synthesis agent exited with code {rc} — falling back to mechanical merge")
+        else:
+            _warn("Synthesis agent failed — falling back to mechanical merge")
         fallback = _build_mechanical_fallback(
             job, group_count, merged_content,
         )

@@ -850,6 +850,23 @@ _switch_to_pr_branch() {
   if [[ -n "$switched_path" ]]; then
     __wt_path="$switched_path"
     __wt_cleanup="$pr_head"
+    return 0
+  fi
+
+  # Fallback: git-native worktree when wt is unavailable
+  local sanitized_branch="${pr_head//\//-}"
+  local fallback_dir="${repo_root}/self-review-${sanitized_branch}"
+
+  git -C "$repo_root" fetch origin "+refs/heads/${pr_head}:refs/remotes/origin/${pr_head}" 2>/dev/null || true
+
+  if [[ -d "$fallback_dir" ]]; then
+    git -C "$repo_root" worktree remove "$fallback_dir" --force 2>/dev/null || true
+  fi
+  git -C "$repo_root" worktree add --detach "$fallback_dir" "origin/${pr_head}" 2>/dev/null || true
+
+  if [[ -d "$fallback_dir" ]]; then
+    __wt_path="$fallback_dir"
+    __wt_cleanup="$fallback_dir"
   fi
 }
 
@@ -959,9 +976,15 @@ cmd_self_review() {
 
   # Clean up worktree if we created one
   if [[ -n "$wt_cleanup" ]]; then
-    local repo_root
-    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
-    wt remove "$wt_cleanup" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true
+    if [[ -d "$wt_cleanup" ]]; then
+      # Git-native worktree — remove by path
+      git worktree remove "$wt_cleanup" --force 2>/dev/null || true
+    else
+      # wt-managed worktree — remove by branch name
+      local repo_root
+      repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+      wt remove "$wt_cleanup" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true
+    fi
   fi
 }
 

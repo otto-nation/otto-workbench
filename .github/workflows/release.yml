@@ -133,8 +133,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.release.outputs.wb_tag_name }}"
-          ./scripts/homebrew.sh update -v "$TAG" -s "${{ env.TARBALL_SHA256 }}" --app otto-workbench
-          ./scripts/homebrew.sh deploy -v "$TAG" --app otto-workbench
+          ./scripts/homebrew.sh publish -v "$TAG" -s "${{ env.TARBALL_SHA256 }}" --app otto-workbench
 
       - name: Verify Homebrew tap deployment
         if: steps.release-config.outputs.homebrew-enabled == 'true'
@@ -231,8 +230,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.release.outputs.cr_tag_name }}"
-          ./scripts/homebrew.sh update -v "$TAG" -s "${{ env.TARBALL_SHA256 }}" --app claude-review
-          ./scripts/homebrew.sh deploy -v "$TAG" --app claude-review
+          ./scripts/homebrew.sh publish -v "$TAG" -s "${{ env.TARBALL_SHA256 }}" --app claude-review
 
       - name: Verify Homebrew tap deployment
         if: steps.release-config.outputs.homebrew-enabled == 'true'
@@ -306,9 +304,7 @@ jobs:
         run: |
           TAG="${{ inputs.deploy_homebrew_tag }}"
           APP="${{ inputs.deploy_homebrew_app }}"
-          echo "Deploying ${APP} formula for $TAG..."
-          ./scripts/homebrew.sh update -v "$TAG" --app "$APP"
-          ./scripts/homebrew.sh deploy -v "$TAG" --app "$APP"
+          ./scripts/homebrew.sh publish -v "$TAG" --app "$APP"
 
       - name: Verify deployment
         run: |

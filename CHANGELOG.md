@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/otto-nation/otto-workbench/compare/v1.12.0...v1.12.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** retry homebrew deploy on 409 conflict; improve error handling ([#171](https://github.com/otto-nation/otto-workbench/issues/171)) ([37af699](https://github.com/otto-nation/otto-workbench/commit/37af699a63fbb332c56fa8cbcd51c57fc7f5b369))
+
 ## [1.12.0](https://github.com/otto-nation/otto-workbench/compare/v1.11.0...v1.12.0) (2026-06-04)
 
 

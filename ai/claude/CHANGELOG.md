@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.4](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.3...claude-review-v1.6.4) (2026-06-05)
+
+
+### Bug Fixes
+
+* **review:** add git-native worktree fallback for self-review branch switch ([#176](https://github.com/otto-nation/otto-workbench/issues/176)) ([74e197e](https://github.com/otto-nation/otto-workbench/commit/74e197eda0ca54e802cb9b3f1d7a0982e7fa18c0))
+
 ## [1.6.3](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.2...claude-review-v1.6.3) (2026-06-05)
 
 

@@ -100,20 +100,20 @@ FACADE
 
 REVIEW="$DEST/bin/claude-review"
 
-# shellcheck source=lib/portability.sh
-source "$WORKBENCH_ROOT/lib/portability.sh"
+# shellcheck source=lib/output.sh
+source "$WORKBENCH_ROOT/lib/output.sh"
 
 # Patch lib/ui.sh source path
 # shellcheck disable=SC2016  # single quotes intentional — literal string replacement
-_sed_i 's|"$(dirname "\$_SELF")/../../../lib/ui.sh"|"$(dirname "$_SELF")/../lib/ui.sh"|' "$REVIEW"
+sed_i 's|"$(dirname "\$_SELF")/../../../lib/ui.sh"|"$(dirname "$_SELF")/../lib/ui.sh"|' "$REVIEW"
 
 # Patch _WORKBENCH_ROOT
 # shellcheck disable=SC2016
-_sed_i 's|_WORKBENCH_ROOT="$(cd "$(dirname "\$_SELF")/../../.." && pwd)"|_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/.." \&\& pwd)"|' "$REVIEW"
+sed_i 's|_WORKBENCH_ROOT="$(cd "$(dirname "\$_SELF")/../../.." && pwd)"|_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/.." \&\& pwd)"|' "$REVIEW"
 
 # Patch _generator_version to read VERSION file instead of release-please manifest
 # shellcheck disable=SC2016
-_sed_i '/_generator_version()/,/^}/c\
+sed_i '/_generator_version()/,/^}/c\
 _generator_version() {\
   local version\
   version=$(cat "${_WORKBENCH_ROOT}/VERSION" 2>/dev/null || echo "unknown")\

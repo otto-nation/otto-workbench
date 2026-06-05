@@ -143,20 +143,6 @@ cmd_deploy() {
 
     local api_path="repos/${TAP_REPO}/contents/${formula_file}"
 
-    # Fetch current blob SHA for atomic compare-and-swap
-    local current_sha=""
-    current_sha=$(GH_TOKEN="$token" gh api "$api_path" --jq '.sha' 2>/dev/null) || true
-
-    # Skip if the local formula already matches the remote
-    if [[ -n "$current_sha" ]]; then
-        local local_sha
-        local_sha=$(git hash-object "$formula_source")
-        if [[ "$current_sha" == "$local_sha" ]]; then
-            print_info "No changes to formula"
-            return 0
-        fi
-    fi
-
     if [[ "$dry_run" == true ]]; then
         print_warning "Dry run — would update ${formula_file} in ${TAP_REPO}"
         return 0
@@ -165,17 +151,45 @@ cmd_deploy() {
     local content
     content=$(base64 < "$formula_source" | tr -d '\n')
 
-    local api_args=(
-        --method PUT
-        -f "message=Update ${app_name} to $version"
-        -f "content=$content"
-        -f "branch=main"
-    )
-    [[ -n "$current_sha" ]] && api_args+=(-f "sha=$current_sha")
+    # Retry loop — concurrent deploys to the same branch cause 409 conflicts
+    local max_attempts=5 attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        local current_sha=""
+        current_sha=$(GH_TOKEN="$token" gh api "$api_path" --jq '.sha' 2>/dev/null) || true
 
-    GH_TOKEN="$token" gh api "$api_path" "${api_args[@]}" --silent
+        if [[ -n "$current_sha" ]]; then
+            local local_sha
+            local_sha=$(git hash-object "$formula_source")
+            if [[ "$current_sha" == "$local_sha" ]]; then
+                print_info "No changes to formula"
+                return 0
+            fi
+        fi
 
-    print_success "Formula deployed successfully to $TAP_REPO"
+        local api_args=(
+            --method PUT
+            -f "message=Update ${app_name} to $version"
+            -f "content=$content"
+            -f "branch=main"
+        )
+        [[ -n "$current_sha" ]] && api_args+=(-f "sha=$current_sha")
+
+        if GH_TOKEN="$token" gh api "$api_path" "${api_args[@]}" --silent 2>/dev/null; then
+            print_success "Formula deployed successfully to $TAP_REPO"
+            return 0
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            local delay=$(( attempt * 2 ))
+            print_warning "Deploy conflict (attempt $attempt/$max_attempts), retrying in ${delay}s..."
+            sleep "$delay"
+        fi
+
+        (( attempt++ ))
+    done
+
+    print_error "Deploy failed after $max_attempts attempts — persistent conflict on $TAP_REPO"
+    return 1
 }
 
 case "${1:-}" in

@@ -1618,7 +1618,7 @@ def _build_agent_cmd(
         if review_dir not in (reviews_dir, wt_path):
             add_dir_args += ["--add-dir", review_dir]
     cmd = [
-        "claude", "-p", "--verbose", "--output-format", "stream-json",
+        "claude", "-p", "--bare", "--verbose", "--output-format", "stream-json",
         "--permission-mode", "acceptEdits",
         "--disable-slash-commands",
         *add_dir_args,

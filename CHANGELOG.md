@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.2](https://github.com/otto-nation/otto-workbench/compare/v1.12.1...v1.12.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **review:** clean empty markers and fix stale verdict counts ([#178](https://github.com/otto-nation/otto-workbench/issues/178)) ([0b74247](https://github.com/otto-nation/otto-workbench/commit/0b7424749d3bd258965fcfaca0e3dd4687f7ded7))
+
 ## [1.12.1](https://github.com/otto-nation/otto-workbench/compare/v1.12.0...v1.12.1) (2026-06-05)
 
 

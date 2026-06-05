@@ -629,7 +629,7 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
 def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     if not text:
         return "", 0
-    count = len(re.findall(rf"\[{prefix}\d+\]", text))
+    count = len(set(re.findall(rf"\[{prefix}\d+\]", text)))
     if offset > 0:
         for i in range(count, 0, -1):
             text = text.replace(f"[{prefix}{i}]", f"[{prefix}{i + offset}]")
@@ -2012,7 +2012,7 @@ def _build_mechanical_fallback(
     )
 
 
-def _post_process_review(job: ReviewJob) -> list[str]:
+def _post_process_review(job: ReviewJob) -> None:
     """Run verification and cleanup passes on the review file."""
     if job.prior_review:
         orphaned = _check_orphaned_prior_ids(
@@ -2027,7 +2027,6 @@ def _post_process_review(job: ReviewJob) -> list[str]:
     strip_evidence_blocks(job.review_file)
     strip_stable_ids(job.review_file)
     renumber_findings(job.review_file)
-    return dropped
 
 
 def _phase_synthesis(

@@ -155,9 +155,10 @@ cmd_deploy() {
     local_sha=$(git hash-object "$formula_source")
 
     # Retry loop — concurrent deploys to the same branch cause 409 conflicts
-    local max_attempts=5 attempt=1
+    local max_attempts=5 attempt=1 current_sha="" delay=0
+    local api_args=()
     while [[ $attempt -le $max_attempts ]]; do
-        local current_sha=""
+        current_sha=""
         current_sha=$(GH_TOKEN="$token" gh api "$api_path" --jq '.sha' 2>/dev/null) || true
 
         # Remote already matches local — nothing to deploy
@@ -166,7 +167,7 @@ cmd_deploy() {
             return 0
         fi
 
-        local api_args=(
+        api_args=(
             --method PUT
             -f "message=Update ${app_name} to $version"
             -f "content=$content"
@@ -174,13 +175,13 @@ cmd_deploy() {
         )
         [[ -n "$current_sha" ]] && api_args+=(-f "sha=$current_sha")
 
-        if GH_TOKEN="$token" gh api "$api_path" "${api_args[@]}" --silent 2>/dev/null; then
+        if GH_TOKEN="$token" gh api "$api_path" "${api_args[@]}" --silent; then
             print_success "Formula deployed successfully to $TAP_REPO"
             return 0
         fi
 
         if [[ $attempt -lt $max_attempts ]]; then
-            local delay=$(( attempt * 2 ))
+            delay=$(( attempt * 2 ))
             print_warning "Deploy conflict (attempt $attempt/$max_attempts), retrying in ${delay}s..."
             sleep "$delay"
         fi

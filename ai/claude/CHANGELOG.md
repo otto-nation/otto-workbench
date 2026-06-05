@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.3](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.2...claude-review-v1.6.3) (2026-06-05)
+
+
+### Bug Fixes
+
+* **review:** use --bare for agent invocations to skip plugins and hooks ([#174](https://github.com/otto-nation/otto-workbench/issues/174)) ([c49d495](https://github.com/otto-nation/otto-workbench/commit/c49d495bf3a421877970988519e498d52a8cebeb))
+
 ## [1.6.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.1...claude-review-v1.6.2) (2026-06-05)
 
 

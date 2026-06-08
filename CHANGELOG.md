@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.14.0](https://github.com/otto-nation/otto-workbench/compare/v1.13.1...v1.14.0) (2026-06-08)
+
+
+### Features
+
+* **claude:** manage additionalDirectories; close permission gaps ([#191](https://github.com/otto-nation/otto-workbench/issues/191)) ([88e6493](https://github.com/otto-nation/otto-workbench/commit/88e649336e820f415d0e50d64802b09dd7a81595))
+
+
+### Bug Fixes
+
+* **review:** improve review-post resilience for SHA drift and path-less findings ([#188](https://github.com/otto-nation/otto-workbench/issues/188)) ([50563d2](https://github.com/otto-nation/otto-workbench/commit/50563d262f1313dab55077c9f2ae62a033927706))
+
 ## [1.13.1](https://github.com/otto-nation/otto-workbench/compare/v1.13.0...v1.13.1) (2026-06-08)
 
 

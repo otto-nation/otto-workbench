@@ -23,10 +23,11 @@ ${reviews_section}
 7. Check for cross-file concerns — do findings in one group imply issues in files from another group? Deduplicate: if the same issue appears in multiple group reviews (same file, same concern), keep the most complete version and drop the rest
 8. Add any cross-cutting findings
 9. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
-10. Write the COMPLETE review file to: ${review_file}
+10. You MUST use the Write tool to write the COMPLETE review file to: ${review_file}
+    Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
 
 ## Turn budget
-You have a limited number of tool calls. Write the complete review file FIRST based on the merged findings and holistic assessment — do not investigate before writing. Use any remaining turns to verify Must-fix and Should-fix claims and update the file.
+You have 15 tool calls total. Your FIRST tool call must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

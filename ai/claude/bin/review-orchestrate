@@ -142,6 +142,7 @@ HOLISTIC_MIN_GROUPS = 4
 DEFAULT_MAX_COST = 20.0
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_TURNS_GROUP = 15
+DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
 DEFAULT_MAX_TURNS_NO_PREFLIGHT = 30
@@ -1697,6 +1698,7 @@ def _build_agent_cmd(
     cmd = [
         "claude", "-p", "--bare", "--verbose", "--output-format", "stream-json",
         "--permission-mode", "acceptEdits",
+        "--allowedTools", "Bash(*)",
         "--disable-slash-commands",
         *add_dir_args,
         "--agent", "reviewer",
@@ -1920,12 +1922,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
-    has_omitted = job.preflight is not None and job.preflight.omitted_files
-    max_turns = DEFAULT_MAX_TURNS_NO_PREFLIGHT if has_omitted else DEFAULT_MAX_TURNS
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=max_turns)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=DEFAULT_MAX_TURNS_HOLISTIC)
     print()
 
     holistic_content = ""
@@ -2052,6 +2052,13 @@ def _has_findings(merged_content: str) -> bool:
     return False
 
 
+def _is_complete_review(review_file: str) -> bool:
+    if not Path(review_file).exists():
+        return False
+    content = Path(review_file).read_text()
+    return "## Summary" in content or "## Verdict" in content
+
+
 def _count_findings(text: str) -> dict[str, int]:
     return {
         prefix: len(set(re.findall(
@@ -2063,28 +2070,32 @@ def _count_findings(text: str) -> dict[str, int]:
     }
 
 
+_VERDICT_LABELS = [
+    (FINDING_PREFIX_MUST, "must-fix"),
+    (FINDING_PREFIX_SHOULD, "should-fix"),
+    (FINDING_PREFIX_NIT, "nit"),
+    (FINDING_PREFIX_IDIOMS, "idiom"),
+]
+
+_MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
+
+
 def _mechanical_verdict(counts: dict[str, int]) -> str:
+    parts = [f"{counts[p]} {label}" for p, label in _VERDICT_LABELS if counts.get(p)]
     must = counts.get(FINDING_PREFIX_MUST, 0)
     should = counts.get(FINDING_PREFIX_SHOULD, 0)
-    nit = counts.get(FINDING_PREFIX_NIT, 0)
-    idiom = counts.get(FINDING_PREFIX_IDIOMS, 0)
-    parts = []
-    if must:
-        parts.append(f"{must} must-fix")
-    if should:
-        parts.append(f"{should} should-fix")
-    if nit:
-        parts.append(f"{nit} nit")
-    if idiom:
-        parts.append(f"{idiom} idiom")
 
     if must:
-        return f"Request changes — {', '.join(parts)} (mechanically merged, not synthesized).\n"
-    if should:
-        return f"Needs discussion — {', '.join(parts)} (mechanically merged, not synthesized).\n"
-    if parts:
-        return f"Approve — {', '.join(parts)} only (mechanically merged, not synthesized).\n"
-    return "Approve — no findings (mechanically merged, not synthesized).\n"
+        action = "Request changes"
+    elif should:
+        action = "Needs discussion"
+    elif parts:
+        action = "Approve"
+    else:
+        return f"Approve — no findings {_MECHANICAL_NOTE}.\n"
+
+    suffix = " only" if not must and not should else ""
+    return f"{action} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
 
 
 def _build_mechanical_fallback(
@@ -2096,25 +2107,20 @@ def _build_mechanical_fallback(
     count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
 
     if job.mode == MODE_SELF:
-        return (
-            f"# Self-Review: {job.repo} — {job.pr.head}\n"
-            f"{meta}\n"
-            f"## Summary\n"
-            f"{count_summary} across {job.pr.changed_files} files in {group_count} groups. "
-            f"{FALLBACK_SUMMARY}\n\n"
-            f"{merged_content}\n"
-        )
-    verdict = _mechanical_verdict(counts)
-    return (
-        f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
-        f"{meta}\n"
+        title = f"# Self-Review: {job.repo} — {job.pr.head}"
+    else:
+        title = f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}"
+
+    summary = (
+        f"{title}\n{meta}\n"
         f"## Summary\n"
         f"{count_summary} across {job.pr.changed_files} files in {group_count} groups. "
         f"{FALLBACK_SUMMARY}\n\n"
-        f"{merged_content}\n\n"
-        f"## Verdict\n"
-        f"{verdict}"
+        f"{merged_content}\n"
     )
+    if job.mode == MODE_SELF:
+        return summary
+    return f"{summary}\n## Verdict\n{_mechanical_verdict(counts)}"
 
 
 def _post_process_review(job: ReviewJob) -> None:
@@ -2132,6 +2138,14 @@ def _post_process_review(job: ReviewJob) -> None:
     strip_evidence_blocks(job.review_file)
     strip_stable_ids(job.review_file)
     renumber_findings(job.review_file)
+
+
+def _write_mechanical_fallback(job: ReviewJob, group_count: int, merged_content: str):
+    Path(job.review_file).write_text(merged_content)
+    _post_process_review(job)
+    processed = Path(job.review_file).read_text()
+    fallback = _build_mechanical_fallback(job, group_count, processed)
+    Path(job.review_file).write_text(fallback)
 
 
 def _phase_synthesis(
@@ -2153,21 +2167,17 @@ def _phase_synthesis(
     print()
 
     if not Path(job.review_file).exists():
-        if rc != 0:
-            _warn(f"Synthesis agent exited with code {rc} — falling back to mechanical merge")
-        else:
-            _warn("Synthesis agent failed — falling back to mechanical merge")
-        # Post-process the merged content first, then wrap with accurate counts
-        Path(job.review_file).write_text(merged_content)
+        _try_recover_output(synthesis_log, job.review_file)
+
+    if _is_complete_review(job.review_file):
         _post_process_review(job)
-        processed = Path(job.review_file).read_text()
-        fallback = _build_mechanical_fallback(job, group_count, processed)
-        Path(job.review_file).write_text(fallback)
     else:
-        _post_process_review(job)
+        reason = "no output" if not Path(job.review_file).exists() else "incomplete output"
+        detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
+        _warn(f"Synthesis agent {detail} — falling back to mechanical merge")
+        _write_mechanical_fallback(job, group_count, merged_content)
 
     _write_review_sidecar(job)
-
     return synthesis_log
 
 

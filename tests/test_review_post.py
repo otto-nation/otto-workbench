@@ -1046,19 +1046,23 @@ class TestClassifyFindingsEmptyPath:
         "+line\n"
     )
 
-    def test_empty_path_skipped_with_warning(self, rp, capsys):
-        f = rp.Finding(id="M1", severity="M", seq=1, path="", line=10, end_line=None, body="x")
+    def test_empty_path_classified_as_file_level(self, rp):
+        f = rp.Finding(id="I1", severity="I", seq=1, path="", line=None, end_line=None, body="Good pattern")
         inline, fl, skipped = rp.classify_findings([f], self.DIFF)
-        assert (len(inline), len(fl), len(skipped)) == (0, 0, 1)
-        assert skipped[0].skip_reason == "empty path"
-        captured = capsys.readouterr()
-        assert "[M1] empty path" in captured.err
+        assert (len(inline), len(fl), len(skipped)) == (0, 1, 0)
+        assert fl[0].classification == "file_level"
+        assert "general finding" in fl[0].skip_reason
 
-    def test_non_empty_path_not_warned(self, rp, capsys):
-        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=5, end_line=None, body="x")
+    def test_empty_path_no_warning(self, rp, capsys):
+        f = rp.Finding(id="I1", severity="I", seq=1, path="", line=None, end_line=None, body="Good pattern")
         rp.classify_findings([f], self.DIFF)
         captured = capsys.readouterr()
         assert "empty path" not in captured.err
+
+    def test_non_empty_path_not_affected(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=5, end_line=None, body="x")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF)
+        assert len(inline) == 1
 
 
 class TestWordSet:
@@ -1509,3 +1513,104 @@ class TestFirstFileRegexEdgeCases:
         m = rp.FIRST_FILE_RE.match("(auth)/page.tsx")
         assert m is not None
         assert m.group(1) == "(auth)/page.tsx"
+
+
+class TestReclassifyAndRetry:
+    DIFF_OLD = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+    DIFF_NEW = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -40,3 +40,10 @@\n"
+        "+line\n"
+    )
+
+    def _make_args(self, repo="org/repo", pr="1"):
+        import argparse
+        args = argparse.Namespace()
+        args.repo = repo
+        args.pr = pr
+        args.review_file = "/tmp/test-review.md"
+        args.submit = False
+        return args
+
+    def test_reclassify_recovers_inline_with_fresh_diff(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=45,
+            end_line=None, body="Fix", full_path="file.go",
+            classification="inline",
+        )
+        body_f = rp.Finding(
+            id="N1", severity="N", seq=1, path="file.go", line=None,
+            end_line=None, body="Nit", full_path="file.go",
+            classification="file_level", skip_reason="no line number",
+        )
+
+        with (
+            patch.object(rp, "_get_diff", return_value=self.DIFF_NEW),
+            patch.object(rp, "_post_chunked_review", return_value=[{"id": 42}]),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+        ):
+            inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
+                self._make_args(), [f], [body_f],
+                "abc123", 30, {"M", "N"}, False,
+            )
+            assert len(inline) == 1
+            assert inline[0].posted_id == "M1"
+            assert results == [{"id": 42}]
+
+    def test_reclassify_demotes_all_when_retry_also_fails(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=45,
+            end_line=None, body="Fix", full_path="file.go",
+            classification="inline",
+        )
+
+        call_count = [0]
+        def failing_then_succeeding(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise rp.LineResolutionError("still broken")
+            return [{"id": 99}]
+
+        with (
+            patch.object(rp, "_get_diff", return_value=self.DIFF_NEW),
+            patch.object(rp, "_post_chunked_review", side_effect=failing_then_succeeding),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+        ):
+            inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
+                self._make_args(), [f], [],
+                "abc123", 30, {"M"}, False,
+            )
+            assert len(inline_comments) == 0
+            assert len(inline) == 0
+            assert results == [{"id": 99}]
+
+    def test_reclassify_preserves_skipped_findings_in_body(self, rp):
+        inline_f = rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=5,
+            end_line=None, body="Fix", full_path="file.go",
+            classification="inline",
+        )
+        skipped_f = rp.Finding(
+            id="I1", severity="I", seq=1, path="", line=None,
+            end_line=None, body="Good pattern",
+            classification="skipped", skip_reason="general finding",
+        )
+
+        with (
+            patch.object(rp, "_get_diff", return_value=self.DIFF_NEW),
+            patch.object(rp, "_post_chunked_review", return_value=[{"id": 42}]),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+        ):
+            _, _, body, _, _ = rp._reclassify_and_retry(
+                self._make_args(), [inline_f], [skipped_f],
+                "abc123", 30, {"M", "I"}, False,
+            )
+            assert any(f.body == "Good pattern" for f in body)

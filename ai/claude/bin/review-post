@@ -306,10 +306,9 @@ def classify_findings(
 
     for f in findings:
         if not f.path:
-            print(f"  ⚠ [{f.id}] empty path — could not extract file from finding text", file=sys.stderr)
-            f.classification = CLASS_SKIPPED
-            f.skip_reason = "empty path"
-            skipped.append(f)
+            f.classification = CLASS_FILE_LEVEL
+            f.skip_reason = "general finding (no file reference)"
+            file_level.append(f)
             continue
 
         resolved = _resolve_path(f.path, hunks)
@@ -942,6 +941,53 @@ def _format_submit_command(repo: str, pr: str, review_id: int) -> str:
     return f"gh api repos/{repo}/pulls/{pr}/reviews/{review_id}/events --method POST -f event=COMMENT"
 
 
+def _reclassify_and_retry(
+    args: argparse.Namespace,
+    inline: list[Finding], body_findings: list[Finding],
+    commit_id: str, chunk_size: int, severity_filter: set[str],
+    submit: bool,
+) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
+    """Re-fetch diff and reclassify findings after a LineResolutionError.
+
+    Returns (inline_comments, inline, body_findings, body_text, results).
+    """
+    _warn("Inline comments could not be resolved — re-fetching diff and retrying")
+    fresh_diff = _get_diff(args.repo, args.pr)
+    all_findings = list(inline) + [f for f in body_findings if f.classification != CLASS_SKIPPED]
+    for f in all_findings:
+        f.classification = ""
+        f.full_path = ""
+        f.skip_reason = ""
+
+    new_inline, new_file_level, new_skipped = classify_findings(all_findings, fresh_diff)
+    skipped_body = [f for f in body_findings if f.classification == CLASS_SKIPPED]
+    new_body = new_file_level + new_skipped + skipped_body
+
+    if new_inline:
+        _info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
+        new_inline, new_body = renumber_for_posting(new_inline, new_body)
+        new_inline_comments = [format_inline_comment(f) for f in new_inline]
+        new_body_text = format_body_text(new_body, True, severity_filter)
+        try:
+            results = _post_chunked_review(
+                args.repo, args.pr, commit_id,
+                new_body_text, new_inline_comments,
+                chunk_size, submit,
+            )
+            return new_inline_comments, new_inline, new_body, new_body_text, results
+        except LineResolutionError:
+            _warn("Retry still failed — demoting all to body-level")
+
+    _, new_body = renumber_for_posting([], list(inline) + list(body_findings))
+    new_body_text = format_body_text(new_body, False, severity_filter)
+    results = _post_chunked_review(
+        args.repo, args.pr, commit_id,
+        new_body_text, [],
+        chunk_size, submit,
+    )
+    return [], [], new_body, new_body_text, results
+
+
 def _post_and_track(
     args: argparse.Namespace,
     inline_comments: list[dict], body_text: str,
@@ -959,16 +1005,9 @@ def _post_and_track(
             chunk_size, submit,
         )
     except LineResolutionError:
-        _warn("Inline comments could not be resolved — demoting all to body-level")
-        all_body = list(inline) + list(body_findings)
-        _, all_body = renumber_for_posting([], all_body)
-        body_text = format_body_text(all_body, False, severity_filter)
-        inline_comments = []
-        body_findings = all_body
-        results = _post_chunked_review(
-            args.repo, args.pr, head_sha,
-            body_text, [],
-            chunk_size, submit,
+        inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
+            args, inline, body_findings,
+            commit_id, chunk_size, severity_filter, submit,
         )
 
     if not results:
@@ -1045,24 +1084,29 @@ def main():
         _warn("No findings to post")
         sys.exit(0)
 
-    # 3. Get PR state (head SHA, head ref, base ref — single API call if sidecar is incomplete)
+    # 3. Get PR state — always fetch live metadata so we post against the real HEAD
     head_sha = sidecar.get("head_sha", "")
     head_ref = sidecar.get("head_ref", "")
     base_ref = sidecar.get("base_ref", "")
-    if not args.dry_run and (not head_sha or not head_ref or not base_ref):
+    if not args.dry_run:
         pr_meta = _fetch_pr_metadata(args.repo, args.pr)
-        head_sha = head_sha or pr_meta["head_sha"]
+        head_sha = pr_meta["head_sha"]
         head_ref = head_ref or pr_meta["head_ref"]
         base_ref = base_ref or pr_meta["base_ref"]
-    if args.dry_run:
+    else:
         head_sha = head_sha or review_sha or "dry-run"
-    if review_sha and not args.dry_run and review_sha != head_sha:
+
+    sha_drifted = review_sha and review_sha != head_sha
+    if sha_drifted and not args.dry_run:
         _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
 
-    # 4. Get diff and classify
+    # 4. Get diff and classify — fetch fresh diff when SHA has drifted
     if args.dry_run:
         _info("Fetching diff for classification...")
-    diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
+    if sha_drifted and not args.dry_run:
+        diff_text = _get_diff(args.repo, args.pr)
+    else:
+        diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
 
@@ -1091,7 +1135,7 @@ def main():
     body_text = format_body_text(body_findings, len(inline) > 0, severity_filter)
 
     # 9. Build payload (for dry-run display) or post
-    commit_id = review_sha or head_sha
+    commit_id = head_sha
     chunk_size = args.chunk_size
 
     if args.dry_run:

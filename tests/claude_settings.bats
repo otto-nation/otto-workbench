@@ -124,3 +124,89 @@ teardown() {
     --argjson e '{}'
   [ "$status" -eq 0 ]
 }
+
+# ── additionalDirectories merge ─────────────────────────────────────────────
+
+_run_sync() {
+  jq -n --argjson t "$1" --argjson e "$2" -f "$REPO_ROOT/ai/claude/sync-settings.jq"
+}
+
+@test "additionalDirectories: fresh install writes template dirs" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/home/.claude","/home/.config/wb"]},"hooks":{}}' \
+    '{}')
+  local dirs
+  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  [ "$dirs" = '["/home/.claude","/home/.config/wb"]' ]
+}
+
+@test "additionalDirectories: tracked in _workbench" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/a","/b"]},"hooks":{}}' \
+    '{}')
+  local wb_dirs
+  wb_dirs=$(jq -c '._workbench.permissions.additionalDirectories' <<< "$result")
+  [ "$wb_dirs" = '["/a","/b"]' ]
+}
+
+@test "additionalDirectories: user-added dirs are preserved" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/managed"]},"hooks":{}}' \
+    '{"permissions":{"additionalDirectories":["/managed","/user-custom"]},"_workbench":{"permissions":{"additionalDirectories":["/managed"]}}}')
+  local dirs
+  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  [ "$dirs" = '["/managed","/user-custom"]' ]
+}
+
+@test "additionalDirectories: removed managed dir is dropped" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/keep"]},"hooks":{}}' \
+    '{"permissions":{"additionalDirectories":["/keep","/old-managed"]},"_workbench":{"permissions":{"additionalDirectories":["/keep","/old-managed"]}}}')
+  local dirs
+  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  [ "$dirs" = '["/keep"]' ]
+}
+
+@test "additionalDirectories: new managed dir is added alongside user dirs" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/managed","/new-managed"]},"hooks":{}}' \
+    '{"permissions":{"additionalDirectories":["/managed","/user-custom"]},"_workbench":{"permissions":{"additionalDirectories":["/managed"]}}}')
+  local dirs
+  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  [ "$dirs" = '["/managed","/new-managed","/user-custom"]' ]
+}
+
+@test "additionalDirectories: no duplicates on first upgrade from untracked" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/a","/b"]},"hooks":{}}' \
+    '{"permissions":{"additionalDirectories":["/a"]},"_workbench":{"permissions":{}}}')
+  local count
+  count=$(jq '[.permissions.additionalDirectories[] | select(. == "/a")] | length' <<< "$result")
+  [ "$count" -eq 1 ]
+}
+
+@test "additionalDirectories: empty template produces empty array" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[]},"hooks":{}}' \
+    '{}')
+  local dirs
+  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  [ "$dirs" = '[]' ]
+}
+
+@test "additionalDirectories: _workbench does not leak user dirs" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/managed"]},"hooks":{}}' \
+    '{"permissions":{"additionalDirectories":["/managed","/secret"]},"_workbench":{"permissions":{"additionalDirectories":["/managed"]}}}')
+  local wb_dirs
+  wb_dirs=$(jq -c '._workbench.permissions.additionalDirectories' <<< "$result")
+  [ "$wb_dirs" = '["/managed"]' ]
+}

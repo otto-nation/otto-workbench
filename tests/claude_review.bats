@@ -842,6 +842,71 @@ EOF
 
 # ── --json-summary flag ────────────────────────────────────────────────────
 
+@test "cmd_gc: removes review folders with no review file older than 7 days" {
+  mkdir -p "$TMPDIR/reviews/test-repo-100"
+  echo '{}' > "$TMPDIR/reviews/test-repo-100/pipeline.json"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-100/pipeline.json"
+  echo '{}' > "$TMPDIR/reviews/test-repo-100/group-1.jsonl"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-100/group-1.jsonl"
+
+  # Has a review file — should NOT be cleaned
+  mkdir -p "$TMPDIR/reviews/test-repo-200"
+  echo '## Review' > "$TMPDIR/reviews/test-repo-200/review.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-200/pipeline.json"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-200/pipeline.json"
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ ! -d "$TMPDIR/reviews/test-repo-100" ]
+  [ -d "$TMPDIR/reviews/test-repo-200" ]
+}
+
+@test "cmd_gc: removes stale intermediates from completed reviews" {
+  mkdir -p "$TMPDIR/reviews/test-repo-300"
+  echo '## Summary' > "$TMPDIR/reviews/test-repo-300/review.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/group-1.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/group-1.jsonl"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/holistic.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/holistic.jsonl"
+  # No pipeline.json — review is complete
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/group-1.md"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/group-1.jsonl"
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/reviews/test-repo-300/review.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/group-1.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/group-1.jsonl" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/holistic.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/holistic.jsonl" ]
+}
+
+@test "cmd_gc: preserves intermediates when pipeline is active" {
+  mkdir -p "$TMPDIR/reviews/test-repo-400"
+  echo '{}' > "$TMPDIR/reviews/test-repo-400/pipeline.json"
+  echo '{}' > "$TMPDIR/reviews/test-repo-400/group-1.jsonl"
+  # Recent timestamps — active pipeline
+  touch "$TMPDIR/reviews/test-repo-400/pipeline.json"
+  touch "$TMPDIR/reviews/test-repo-400/group-1.jsonl"
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ -d "$TMPDIR/reviews/test-repo-400" ]
+  [ -f "$TMPDIR/reviews/test-repo-400/group-1.jsonl" ]
+}
+
 @test "main: --json-summary is parsed and not treated as positional" {
   # Mock all external dependencies so nothing touches gh or the filesystem.
   # If --json-summary were treated as positional, _extract_pr_number would fail

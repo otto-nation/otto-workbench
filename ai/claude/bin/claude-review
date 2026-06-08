@@ -1289,6 +1289,9 @@ main() {
   local command="${positional[0]:-}"
 
   case "$command" in
+    gc)
+      cmd_gc
+      ;;
     post)
       local post_input="${positional[1]:-}"
       [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
@@ -1319,6 +1322,73 @@ main() {
       fi
       ;;
   esac
+}
+
+GC_STALE_DAYS=7
+
+cmd_gc() {
+  local cleaned=0
+
+  for review_dir in "$REVIEWS_DIR"/*/; do
+    [[ -d "$review_dir" ]] || continue
+
+    local has_review="false"
+    [[ -f "${review_dir}review${REVIEW_EXT}" ]] && has_review="true"
+
+    local has_pipeline="false"
+    [[ -f "${review_dir}${FILENAME_PIPELINE_STATE}" ]] && has_pipeline="true"
+
+    # Case 1: No review file — check if all files are stale (orphaned or abandoned pipeline)
+    if [[ "$has_review" == "false" ]]; then
+      local any_old="false"
+      while IFS= read -r -d '' _f; do
+        any_old="true"
+        break
+      done < <(find "$review_dir" -type f -mtime +${GC_STALE_DAYS} -print0 2>/dev/null)
+
+      # Only remove if stale and either no pipeline or pipeline is also stale
+      if [[ "$any_old" == "true" && "$has_pipeline" == "false" ]]; then
+        rm -rf "$review_dir"
+        info "GC: removed orphaned $(basename "${review_dir%/}")"
+        cleaned=$((cleaned + 1))
+        continue
+      fi
+
+      # Pipeline exists but all files are stale — abandoned pipeline
+      if [[ "$any_old" == "true" && "$has_pipeline" == "true" ]]; then
+        local any_recent="false"
+        while IFS= read -r -d '' _f; do
+          any_recent="true"
+          break
+        done < <(find "$review_dir" -type f -not -mtime +${GC_STALE_DAYS} -print0 2>/dev/null)
+
+        if [[ "$any_recent" == "false" ]]; then
+          rm -rf "$review_dir"
+          info "GC: removed abandoned $(basename "${review_dir%/}")"
+          cleaned=$((cleaned + 1))
+        fi
+      fi
+      continue
+    fi
+
+    # Case 2: Has review, no pipeline (completed) — clean stale intermediates
+    if [[ "$has_review" == "true" && "$has_pipeline" == "false" ]]; then
+      local intermediate
+      for intermediate in "${review_dir}"group-*.md "${review_dir}"group-*.jsonl \
+                          "${review_dir}"holistic.md "${review_dir}"holistic.jsonl \
+                          "${review_dir}"synthesis.jsonl; do
+        [[ -f "$intermediate" ]] || continue
+        rm -f "$intermediate"
+        cleaned=$((cleaned + 1))
+      done
+    fi
+  done
+
+  if [[ "$cleaned" -gt 0 ]]; then
+    info "GC: cleaned ${cleaned} items"
+  else
+    info "GC: nothing to clean"
+  fi
 }
 
 PRUNE_MAX_FILES=10

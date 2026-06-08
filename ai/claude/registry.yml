@@ -39,3 +39,15 @@ tools:
     context: none
     description: "Package claude-review into a self-contained tarball for Homebrew distribution"
     when_to_use: "Called by release workflow to build the claude-review distributable; not invoked directly"
+
+  - name: dream-scan
+    allow: true
+    description: "Scan session transcripts and memory state for dream consolidation"
+    when_to_use: "Called by the dream skill to replace Phases 1+2 (Orient + Gather Signal); outputs a structured markdown report"
+    usage: "dream-scan --days 7  |  dream-scan --days 30 --home /path/to/home"
+
+  - name: dream-verify
+    allow: true
+    description: "Verify dream memory file integrity across all projects"
+    when_to_use: "Called by the dream skill to replace Phase 4 verification; checks line counts, broken refs, relative dates, duplicate names"
+    usage: "dream-verify"

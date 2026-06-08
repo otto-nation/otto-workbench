@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.7.0...claude-review-v1.7.1) (2026-06-08)
+
+
+### Bug Fixes
+
+* **ci:** add claude-config-release dispatch to homelab ([#186](https://github.com/otto-nation/otto-workbench/issues/186)) ([3a500e0](https://github.com/otto-nation/otto-workbench/commit/3a500e0b6748d4cd45ca9a4d2ca0d57a7a8c283e))
+
 ## [1.7.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.5...claude-review-v1.7.0) (2026-06-08)
 
 

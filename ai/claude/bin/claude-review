@@ -637,21 +637,56 @@ _run_orchestrate() {
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "$@"
 }
 
+_has_recoverable_failures() {
+  local pipeline_state_file="$1"
+  [[ -f "$pipeline_state_file" ]] || return 1
+
+  local synthesis_done groups_failed_count synthesis_failed
+  synthesis_done=$(jq -r '.synthesis_done // false' "$pipeline_state_file" 2>/dev/null) || return 1
+  [[ "$synthesis_done" == "true" ]] || return 1
+
+  groups_failed_count=$(jq '.groups_failed | length // 0' "$pipeline_state_file" 2>/dev/null) || return 1
+  synthesis_failed=$(jq -r '.synthesis_failed // ""' "$pipeline_state_file" 2>/dev/null) || return 1
+
+  [[ "$groups_failed_count" -gt 0 || -n "$synthesis_failed" ]]
+}
+
 _resolve_prior_review() {
   local -n __prior=$1
   local review_file="$2"
   local session_log="$3"
   local resume="$4"
 
+  local base="${review_file%"${REVIEW_EXT}"}"
+  local pipeline_state="${base}${SUFFIX_PIPELINE_STATE}"
+
   __prior=""
+
+  # Case 1: Explicit resume (incomplete pipeline)
   if [[ "$resume" == "true" ]]; then
-    local base="${review_file%"${REVIEW_EXT}"}"
     if [[ -f "${base}${SUFFIX_PRIOR}" ]]; then
       __prior="${base}${SUFFIX_PRIOR}"
     fi
-  else
-    _archive_review __prior "$review_file" "$session_log"
+    return
   fi
+
+  # Case 2: Completed pipeline with recoverable failures — don't archive
+  if _has_recoverable_failures "$pipeline_state"; then
+    info "Prior review has recoverable failures — patching instead of re-running"
+    if [[ -f "$review_file" ]]; then
+      __prior="${base}${SUFFIX_PRIOR}"
+      cp "$review_file" "$__prior"
+    fi
+    return
+  fi
+
+  # Case 3: Clean completed pipeline — remove stale state before archiving
+  if [[ -f "$pipeline_state" ]]; then
+    rm -f "$pipeline_state"
+  fi
+
+  # Case 4: Normal archive
+  _archive_review __prior "$review_file" "$session_log"
 }
 
 _cleanup_prior_review() {

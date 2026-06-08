@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/otto-nation/otto-workbench/compare/v1.14.0...v1.15.0) (2026-06-08)
+
+
+### Features
+
+* **claude-review:** folder storage, smart recovery, gc ([#192](https://github.com/otto-nation/otto-workbench/issues/192)) ([849f543](https://github.com/otto-nation/otto-workbench/commit/849f543bf3695fd3fcb13adc95bc76608d907b46))
+
 ## [1.14.0](https://github.com/otto-nation/otto-workbench/compare/v1.13.1...v1.14.0) (2026-06-08)
 
 

@@ -1584,7 +1584,7 @@ def _diagnose_result_type(result: dict) -> str:
         return f"agent hit max turns ({num_turns})"
     if result.get("is_error"):
         errors = result.get("errors", [])
-        detail = errors[0] if errors else result.get("error", "unknown")
+        detail = errors[0] if errors else result.get("result", result.get("error", "unknown"))
         return f"agent error: {detail}"
     return f"agent completed (subtype={subtype}) but did not write output"
 
@@ -1596,6 +1596,22 @@ def _diagnose_missing_output(log_path: str) -> str:
     if not results:
         return "no result record in session log"
     return _diagnose_result_type(results[-1])
+
+
+def _is_model_error(log_path: str) -> bool:
+    if not Path(log_path).exists():
+        return False
+    results = _parse_jsonl_records(log_path, "result")
+    if not results:
+        return False
+    result = results[-1]
+    if result.get("api_error_status") == 404:
+        return True
+    text = result.get("result", "")
+    return isinstance(text, str) and "not available" in text.lower()
+
+
+CONSECUTIVE_FAIL_THRESHOLD = 3
 
 
 # ── Model selection ───────────────────────────────────────────────────────────
@@ -1798,7 +1814,7 @@ def _review_group(
     group_count: int, holistic_content: str,
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
-) -> tuple[int, str, str | None]:
+) -> tuple[int, str, "tuple[str, str] | None"]:
     group_output = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i))
     group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
 
@@ -1807,7 +1823,7 @@ def _review_group(
             _info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
             return (i, group_output, None)
         _warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
-        return (i, group_output, grp.name)
+        return (i, group_output, (grp.name, "output missing"))
 
     group_files_formatted = "\n".join(
         FILE_STAT_FMT.format(**f)
@@ -1829,7 +1845,7 @@ def _review_group(
     if not Path(group_output).exists():
         reason = _diagnose_missing_output(group_log)
         _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
-        failed = grp.name
+        failed = (grp.name, reason)
     else:
         _validate_group_output(group_output, grp.name)
         _info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
@@ -1869,8 +1885,10 @@ def _run_serial_reviews(
     group_count: int, holistic_content: str,
     skip_groups: "set[int] | None",
     pipeline_state: "PipelineState | None",
-) -> list[str]:
-    failed_groups: list[str] = []
+) -> "list[tuple[str, str]]":
+    failed_groups: list[tuple[str, str]] = []
+    consecutive_same_reason = 0
+    last_reason = ""
     for i, grp in enumerate(groups, 1):
         skip = skip_groups is not None and i in skip_groups
         _, _, failed = _review_group(
@@ -1879,6 +1897,26 @@ def _run_serial_reviews(
         )
         if failed:
             failed_groups.append(failed)
+            _, reason = failed
+            group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
+            if _is_model_error(group_log):
+                _warn(f"Model not available — aborting remaining {group_count - i} groups")
+                for j, remaining in enumerate(groups[i:], i + 1):
+                    failed_groups.append((remaining.name, reason))
+                break
+            if reason == last_reason:
+                consecutive_same_reason += 1
+            else:
+                consecutive_same_reason = 1
+                last_reason = reason
+            if consecutive_same_reason >= CONSECUTIVE_FAIL_THRESHOLD:
+                _warn(f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({reason}) — aborting remaining {group_count - i} groups")
+                for j, remaining in enumerate(groups[i:], i + 1):
+                    failed_groups.append((remaining.name, reason))
+                break
+        else:
+            consecutive_same_reason = 0
+            last_reason = ""
     return failed_groups
 
 
@@ -1887,7 +1925,7 @@ def _run_parallel_reviews(
     group_count: int, holistic_content: str, workers: int,
     skip_groups: "set[int] | None",
     pipeline_state: "PipelineState | None",
-) -> list[str]:
+) -> "list[tuple[str, str]]":
     _info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
     print()
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -1901,7 +1939,7 @@ def _run_parallel_reviews(
         ]
     results = [f.result() for f in futures]
     print()
-    return [name for _, _, name in results if name]
+    return [failure for _, _, failure in results if failure]
 
 
 def _phase_group_reviews(
@@ -1909,7 +1947,7 @@ def _phase_group_reviews(
     group_count: int, holistic_content: str, max_parallel: int,
     skip_groups: "set[int] | None" = None,
     pipeline_state: "PipelineState | None" = None,
-) -> tuple[list[str], list[str]]:
+) -> "tuple[list[str], list[tuple[str, str]]]":
     group_outputs = [job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
 
     workers = min(max_parallel, group_count)
@@ -1925,15 +1963,15 @@ def _phase_group_reviews(
     return group_outputs, failed_groups
 
 
-def _phase_merge(group_outputs: list[str], failed_groups: list[str]) -> str:
+def _phase_merge(group_outputs: list[str], failed_groups: "list[tuple[str, str]]") -> str:
     _info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 
     if failed_groups:
         merged_content += "\n## Review gaps\n"
         merged_content += "The following file groups were not reviewed due to agent failure:\n"
-        for fg in failed_groups:
-            merged_content += f"- {fg}\n"
+        for name, reason in failed_groups:
+            merged_content += f"- {name}: {reason}\n"
 
     return merged_content
 
@@ -2207,7 +2245,7 @@ def run_multi_phase(
 
     if cost_so_far > max_cost:
         _warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
-        group_outputs, failed_groups = [], [g.name for g in groups]
+        group_outputs, failed_groups = [], [(g.name, "budget exceeded") for g in groups]
     else:
         group_outputs, failed_groups = _phase_group_reviews(
             groups, job, group_count, holistic_content, max_parallel,
@@ -2223,9 +2261,17 @@ def run_multi_phase(
 
     merged_content = _phase_merge(group_outputs, failed_groups)
 
+    all_groups_failed = len(failed_groups) == group_count
+
     if not _has_findings(merged_content) and not failed_groups:
         _info("No findings from any group — writing clean review")
         _write_clean_review(job, group_count)
+        synthesis_log = ""
+    elif all_groups_failed:
+        _warn("All group agents failed — skipping synthesis")
+        fallback = _build_mechanical_fallback(job, group_count, merged_content)
+        Path(job.review_file).write_text(fallback)
+        _write_review_sidecar(job)
         synthesis_log = ""
     elif cost_so_far > max_cost:
         _warn("Using merged group output as final review (synthesis skipped due to budget)")

@@ -384,6 +384,18 @@ print(f'm1={has_m1},m2={has_m2},m3={has_m3},m4={has_m4},dup={dup_count}')
   [ "$result" = "m1=True,m2=True,m3=True,m4=False,dup=1" ]
 }
 
+# ── _phase_merge ─────────────────────────────────────────────────────────────
+
+@test "_phase_merge: renders failure reasons in review gaps" {
+  result=$(_py_here <<'PYEOF'
+result = mod._phase_merge([], [("orc-card", "agent error: model not available"), ("svc-card", "agent hit max turns (10)")])
+print(result)
+PYEOF
+)
+  [[ "$result" == *"- orc-card: agent error: model not available"* ]]
+  [[ "$result" == *"- svc-card: agent hit max turns (10)"* ]]
+}
+
 # ── _extract_section ─────────────────────────────────────────────────────────
 
 @test "_extract_section: case-insensitive header matching" {
@@ -719,6 +731,41 @@ r = {"type": "result", "subtype": "error", "is_error": True}
 print(mod._diagnose_result_type(r))
 ')
   [ "$result" = "agent error: unknown" ]
+}
+
+@test "_diagnose_result_type: extracts error from result field when errors list empty" {
+  result=$(_py '
+r = {"type": "result", "subtype": "success", "is_error": True,
+     "api_error_status": 404, "errors": [],
+     "result": "The model claude-sonnet-4-5 is not available on your vertex deployment."}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent error: The model claude-sonnet-4-5 is not available on your vertex deployment." ]
+}
+
+# ── Model error detection ────────────────────────────────────────────────────
+
+@test "_is_model_error: detects 404 api_error_status" {
+  echo '{"type":"result","api_error_status":404,"is_error":true,"result":"model not found"}' > "$TMPDIR/model404.jsonl"
+  result=$(_py "print(mod._is_model_error('$TMPDIR/model404.jsonl'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_model_error: detects 'not available' in result text" {
+  echo '{"type":"result","is_error":true,"result":"The model claude-sonnet-4-5 is not available on your vertex deployment."}' > "$TMPDIR/notavail.jsonl"
+  result=$(_py "print(mod._is_model_error('$TMPDIR/notavail.jsonl'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_model_error: false for normal errors" {
+  echo '{"type":"result","is_error":true,"errors":["Connection refused"]}' > "$TMPDIR/normal.jsonl"
+  result=$(_py "print(mod._is_model_error('$TMPDIR/normal.jsonl'))")
+  [ "$result" = "False" ]
+}
+
+@test "_is_model_error: false for missing log" {
+  result=$(_py "print(mod._is_model_error('$TMPDIR/nonexistent.jsonl'))")
+  [ "$result" = "False" ]
 }
 
 # ── Pipeline resume ─────────────────────────────────────────────────────────
@@ -2038,7 +2085,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 print(f'idx={idx},failed={failed}')
 ")
   echo "$result"
-  [[ "$result" == *"idx=1,failed=services"* ]]
+  [[ "$result" == *"idx=1,failed=('services', 'output missing')"* ]]
 }
 
 @test "_validate_resume_state: matching state returns valid" {

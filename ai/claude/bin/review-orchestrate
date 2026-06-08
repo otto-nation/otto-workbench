@@ -1836,12 +1836,14 @@ def run_single_agent(job: ReviewJob):
     rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
     print()
 
+    reason = ""
     if not Path(job.review_file).exists():
         reason = _diagnose_missing_output(job.session_log)
         _try_recover_review(job)
 
     if not Path(job.review_file).exists():
         detail = f"exited with code {rc}" if rc != 0 else "completed"
+        reason = reason or "unknown"
         print(f"error: review agent {detail} and produced no review file ({reason})", file=sys.stderr)
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
@@ -1961,7 +1963,7 @@ def _run_serial_reviews(
         if not abort_msg:
             continue
         _warn(abort_msg)
-        failed_groups.extend((remaining.name, reason) for remaining in groups[i:])
+        failed_groups.extend((remaining.name, f"skipped: {abort_msg}") for remaining in groups[i:])
         break
     return failed_groups
 

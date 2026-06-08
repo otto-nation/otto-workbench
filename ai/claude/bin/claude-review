@@ -1088,6 +1088,11 @@ main() {
     exec 1>&2
   fi
 
+  # Fall back to REPO_DIR env var when --repo-dir not specified
+  if [[ -z "$repo_dir" && -n "${REPO_DIR:-}" ]]; then
+    repo_dir="$REPO_DIR"
+  fi
+
   if [[ "$self_review" == "true" ]]; then
     cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir"
     if [[ -n "$_json_stdout" ]]; then

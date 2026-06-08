@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Verify dream memory file integrity.
+#
+# Usage: dream-verify
+#
+# Checks across all ~/.claude/projects/*/memory/ directories:
+#   1. MEMORY.md under 200 lines
+#   2. All (filename.md) references in MEMORY.md resolve to files
+#   3. No relative dates in topic files
+#   4. No duplicate name: frontmatter across topic files
+#
+# Exit codes:
+#   0  All checks pass
+#   1  One or more checks fail
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../../../lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: dream-verify
+
+Verify dream memory file integrity across all projects.
+
+Checks:
+  - MEMORY.md under 200 lines
+  - All (filename.md) references resolve to files
+  - No relative dates in topic files
+  - No duplicate name: frontmatter across topic files
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+MAX_LINES=200
+failures=0
+
+_check_line_count() {
+  local memory_md="$1" project="$2"
+  local count
+  count=$(wc -l < "$memory_md" | tr -d ' ')
+  if [[ "$count" -gt "$MAX_LINES" ]]; then
+    err "$project: MEMORY.md has $count lines (max $MAX_LINES)"
+    failures=$((failures + 1))
+  fi
+}
+
+_check_references() {
+  local memory_md="$1" dir="$2" project="$3"
+  local refs ref
+  refs=$(grep -oE '\([a-zA-Z0-9_./-]+\.md\)' "$memory_md" 2>/dev/null | tr -d '()') || true
+  for ref in $refs; do
+    if [[ ! -f "$dir/$ref" ]]; then
+      err "$project: broken reference: $ref"
+      failures=$((failures + 1))
+    fi
+  done
+}
+
+_check_relative_dates() {
+  local dir="$1" project="$2"
+  local topic_file match
+  for topic_file in "$dir"/*.md; do
+    [[ -f "$topic_file" ]] || continue
+    [[ "$(basename "$topic_file")" == "MEMORY.md" ]] && continue
+    match=$(grep -inE '\byesterday\b|\blast week\b|\blast month\b|\btomorrow\b|\btoday\b|\blast night\b|\bnext week\b' "$topic_file" 2>/dev/null) || true
+    if [[ -n "$match" ]]; then
+      err "$project/$(basename "$topic_file"): relative date found: $match"
+      failures=$((failures + 1))
+    fi
+  done
+}
+
+_check_duplicate_names() {
+  local dir="$1" project="$2"
+  local names="" topic_file name dups
+  for topic_file in "$dir"/*.md; do
+    [[ -f "$topic_file" ]] || continue
+    [[ "$(basename "$topic_file")" == "MEMORY.md" ]] && continue
+    name=$(awk '/^---$/{if(++c==2)exit} c==1 && /^name:/{sub(/^name: */, ""); print}' "$topic_file" 2>/dev/null) || true
+    if [[ -n "$name" ]]; then
+      names+="$name"$'\n'
+    fi
+  done
+  dups=$(echo "$names" | sort | uniq -d) || true
+  if [[ -n "$dups" ]]; then
+    local dup
+    while IFS= read -r dup; do
+      [[ -n "$dup" ]] || continue
+      err "$project: duplicate name: $dup"
+      failures=$((failures + 1))
+    done <<< "$dups"
+  fi
+}
+
+found_projects=0
+
+for dir in "$HOME/.claude/projects"/*/memory; do
+  [[ -d "$dir" ]] || continue
+  [[ -f "$dir/MEMORY.md" ]] || continue
+  found_projects=$((found_projects + 1))
+
+  project=$(basename "$(dirname "$dir")")
+
+  _check_line_count "$dir/MEMORY.md" "$project"
+  _check_references "$dir/MEMORY.md" "$dir" "$project"
+  _check_relative_dates "$dir" "$project"
+  _check_duplicate_names "$dir" "$project"
+done
+
+if [[ "$found_projects" -eq 0 ]]; then
+  info "No memory directories found"
+  exit 0
+fi
+
+if [[ "$failures" -gt 0 ]]; then
+  err "$failures check(s) failed across $found_projects project(s)"
+  exit 1
+fi
+
+success "All checks passed across $found_projects project(s)"
+exit 0

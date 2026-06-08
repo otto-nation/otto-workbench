@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""Scan session transcripts and memory state for dream consolidation.
+
+Replaces Phases 1+2 of the dream skill (Orient + Gather Signal).
+Outputs a structured markdown report to stdout.
+
+Usage:
+  dream-scan [--days N] [--home DIR]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+MAX_TEXT_LENGTH = 500
+
+SIGNAL_PATTERNS: dict[str, re.Pattern] = {
+    "correction": re.compile(
+        r"\b(?:actually|wrong|incorrect|not right|stop doing|don't do"
+        r"|I said|I meant|that's not|correction)\b"
+        r"|(?:^|\W)no,",
+        re.IGNORECASE,
+    ),
+    "preference": re.compile(
+        r"\b(?:I prefer|always use|never use|I like|I don't like|I want"
+        r"|from now on|going forward|remember that|keep in mind"
+        r"|make sure to|default to)\b",
+        re.IGNORECASE,
+    ),
+    "decision": re.compile(
+        r"\b(?:let's go with|I decided|we're using|the plan is"
+        r"|switch to|move to|chosen|picked|decision|we agreed)\b",
+        re.IGNORECASE,
+    ),
+    "pattern": re.compile(
+        r"\b(?:every time|keep forgetting|as usual|same as before"
+        r"|like last time|we always|the usual)\b"
+        r"|(?:^|\W)again\b",
+        re.IGNORECASE,
+    ),
+    "review_feedback": re.compile(
+        r"\b(?:accepted|rejected|won't-fix|false positive|not applying)\b",
+        re.IGNORECASE,
+    ),
+}
+
+SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_feedback"]
+
+STALE_DAYS = 90
+
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+
+_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
+_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
+_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
+
+
+def _info(msg: str) -> None:
+    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
+
+
+def _warn(msg: str) -> None:
+    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+
+
+# ── Core functions ───────────────────────────────────────────────────────────
+
+
+def extract_user_text(record: dict) -> str | None:
+    if record.get("type") != "user":
+        return None
+    message = record.get("message", {})
+    content = message.get("content", "")
+
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        texts = [
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        text = " ".join(texts) if texts else None
+    else:
+        return None
+
+    if not text or len(text) < 10:
+        return None
+    if text.startswith("<"):
+        return None
+    return text
+
+
+def classify_signal(text: str) -> str | None:
+    for category in SIGNAL_PRIORITY:
+        if SIGNAL_PATTERNS[category].search(text):
+            return category
+    return None
+
+
+def parse_frontmatter(path: str | Path) -> dict:
+    result: dict[str, str] = {}
+    path = Path(path)
+    if not path.exists():
+        return result
+    lines = path.read_text().splitlines()
+    in_frontmatter = False
+    for line in lines:
+        if line.strip() == "---":
+            if in_frontmatter:
+                break
+            in_frontmatter = True
+            continue
+        if in_frontmatter and ":" in line and not line.startswith(" "):
+            key, _, value = line.partition(":")
+            result[key.strip()] = value.strip()
+    return result
+
+
+# ── Scanning ─────────────────────────────────────────────────────────────────
+
+
+def scan_memory_state(home: Path) -> list[dict]:
+    projects_dir = home / ".claude" / "projects"
+    if not projects_dir.exists():
+        return []
+
+    states = []
+    now = datetime.now()
+
+    for memory_dir in sorted(projects_dir.glob("*/memory")):
+        if not memory_dir.is_dir():
+            continue
+        memory_md = memory_dir / "MEMORY.md"
+        if not memory_md.exists():
+            continue
+
+        project_id = memory_dir.parent.name
+        line_count = len(memory_md.read_text().splitlines())
+
+        last_dream = None
+        last_dream_file = memory_dir / ".last-dream"
+        if last_dream_file.exists():
+            try:
+                ts = int(last_dream_file.read_text().strip())
+                last_dream = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+            except (ValueError, OSError):
+                pass
+
+        topic_files = []
+        for f in sorted(memory_dir.glob("*.md")):
+            if f.name == "MEMORY.md":
+                continue
+            fm = parse_frontmatter(f)
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            age_days = (now - mtime).days
+            topic_files.append({
+                "filename": f.name,
+                "name": fm.get("name", ""),
+                "description": fm.get("description", ""),
+                "type": fm.get("type", ""),
+                "size": f.stat().st_size,
+                "modified": mtime.strftime("%Y-%m-%d"),
+                "stale": age_days > STALE_DAYS,
+                "age_days": age_days,
+            })
+
+        states.append({
+            "project_id": project_id,
+            "line_count": line_count,
+            "last_dream": last_dream,
+            "topic_files": topic_files,
+        })
+
+    return states
+
+
+def scan_sessions(home: Path, days: int) -> list[dict]:
+    projects_dir = home / ".claude" / "projects"
+    if not projects_dir.exists():
+        return []
+
+    cutoff = datetime.now() - timedelta(days=days)
+    signals = []
+
+    for project_dir in sorted(projects_dir.iterdir()):
+        if not project_dir.is_dir():
+            continue
+        project_id = project_dir.name
+
+        for jsonl_file in sorted(project_dir.glob("*.jsonl")):
+            try:
+                mtime = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+            except OSError:
+                continue
+            if mtime < cutoff:
+                continue
+
+            session_date = mtime.strftime("%Y-%m-%d")
+
+            try:
+                with open(jsonl_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        text = extract_user_text(record)
+                        if text is None:
+                            continue
+
+                        category = classify_signal(text)
+                        if category is None:
+                            continue
+
+                        signals.append({
+                            "category": category,
+                            "text": text[:MAX_TEXT_LENGTH],
+                            "project_id": project_id,
+                            "session_date": session_date,
+                        })
+            except OSError:
+                _warn(f"Could not read {jsonl_file}")
+
+    return signals
+
+
+# ── Report ───────────────────────────────────────────────────────────────────
+
+
+def format_report(memory_states: list[dict], signals: list[dict]) -> str:
+    lines: list[str] = []
+
+    # Memory State
+    lines.append("## Memory State\n")
+    if not memory_states:
+        lines.append("No memory directories found.\n")
+    else:
+        for state in memory_states:
+            lines.append(f"### {state['project_id']}")
+            lines.append(f"MEMORY.md: {state['line_count']} lines")
+            if state["last_dream"]:
+                lines.append(f"Last dream: {state['last_dream']}")
+            lines.append("")
+
+            if state["topic_files"]:
+                lines.append("| File | Name | Description | Type | Modified | Age |")
+                lines.append("|------|------|-------------|------|----------|-----|")
+                for tf in state["topic_files"]:
+                    stale_marker = " **STALE**" if tf["stale"] else ""
+                    lines.append(
+                        f"| {tf['filename']} | {tf['name']} | {tf['description']} "
+                        f"| {tf['type']} | {tf['modified']} | {tf['age_days']}d{stale_marker} |"
+                    )
+                lines.append("")
+
+                stale_files = [tf for tf in state["topic_files"] if tf["stale"]]
+                if stale_files:
+                    lines.append(f"**Stale entries (>90 days):** {', '.join(tf['filename'] for tf in stale_files)}")
+                    lines.append("")
+
+    # Session Signals
+    lines.append("## Session Signals\n")
+    if not signals:
+        lines.append("No signals found in recent sessions.\n")
+    else:
+        for category in SIGNAL_PRIORITY:
+            cat_signals = [s for s in signals if s["category"] == category]
+            if not cat_signals:
+                continue
+            lines.append(f"### {category} ({len(cat_signals)})\n")
+            for sig in cat_signals:
+                lines.append(f"- **[{sig['session_date']}]** `{sig['project_id']}`")
+                text_preview = sig["text"].replace("\n", " ")[:200]
+                lines.append(f"  > {text_preview}")
+                lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Scan session transcripts and memory state for dream consolidation.",
+        usage="dream-scan [--days N] [--home DIR]",
+    )
+    parser.add_argument("--days", type=int, default=7, help="scan sessions from last N days (default: 7)")
+    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
+    args = parser.parse_args()
+
+    home = Path(args.home)
+
+    _info(f"Scanning sessions from last {args.days} days")
+    _info(f"Home: {home}")
+
+    memory_states = scan_memory_state(home)
+    _info(f"Found {len(memory_states)} project(s) with memory")
+
+    signals = scan_sessions(home, args.days)
+    _info(f"Found {len(signals)} signal(s)")
+
+    report = format_report(memory_states, signals)
+    print(report)
+
+
+if __name__ == "__main__":
+    main()

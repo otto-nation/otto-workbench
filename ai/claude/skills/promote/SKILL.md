@@ -29,48 +29,17 @@ ORIENT --> EVALUATE --> PROPOSE --> RECORD
 
 **Goal:** Understand all accumulated memories and the current workbench state.
 
-### Read memories
-
-1. Find all memory directories:
+Run `promote-scan` to produce a structured report:
 ```bash
-ls -d ~/.claude/projects/*/memory/ 2>/dev/null
+promote-scan
 ```
 
-2. Read `MEMORY.md` in each project, then read every topic file it references.
+The report contains three sections:
+- **Memory State** — per-project summary: MEMORY.md line count, topic files with names/descriptions/types/ages, full body content (up to 500 chars), stale entries (>90 days), last promote timestamp
+- **Backed-Up Memories** — archived memory files from the workbench `ai/memory/` directory with the same detail
+- **Workbench Artifacts** — current inventory of rules (filename + heading), scripts, hooks (event + matcher + command), and agents (filename + heading)
 
-3. Also read the backed-up memories if they exist:
-```bash
-ls ~/git/personal/otto-nation/otto-workbench/ai/memory/ 2>/dev/null
-```
-
-### Read existing workbench artifacts
-
-Understand what already exists so you never propose duplicates:
-
-1. **Rules** — read every file in:
-```bash
-ls ~/git/personal/otto-nation/otto-workbench/ai/guidelines/rules/*.md
-```
-
-2. **Scripts** — read the bin directory listing:
-```bash
-ls ~/git/personal/otto-nation/otto-workbench/bin/
-```
-
-3. **Hooks** — read the current settings.json:
-```bash
-cat ~/git/personal/otto-nation/otto-workbench/ai/claude/settings.json
-```
-
-4. **Agents** — list current agents:
-```bash
-ls ~/git/personal/otto-nation/otto-workbench/ai/claude/agents/
-```
-
-### Output
-
-A mental map of: all memories across projects, their themes, and the current
-workbench artifact inventory. Note any memories that look like they're describing
+Use this report as input for Phase 2. Note any memories that look like they're describing
 the same pattern across different projects.
 
 ---

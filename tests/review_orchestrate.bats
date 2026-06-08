@@ -1798,7 +1798,13 @@ print(f'count={count},total={total}')
 
 @test "_count_findings: counts by prefix" {
   result=$(_py "
-text = '[M1] a [M2] b [S1] c [N1] d [N2] e [N3] f [I1] g'
+text = '''- **[M1]** finding a
+- **[M2]** finding b
+- **[S1]** finding c
+- **[N1]** finding d
+- **[N2]** finding e
+- **[N3]** finding f
+- **[I1]** finding g'''
 counts = mod._count_findings(text)
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")

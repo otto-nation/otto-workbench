@@ -582,6 +582,7 @@ GHEOF
   _check_pending_review() { :; }
   _setup_review_worktree() { local -n __out=$1; __out="/tmp/wt"; }
   _append_orchestrate_flags() { :; }
+  _run_orchestrate() { touch "$TMPDIR/test-review.md"; return 0; }
   _prune_merged_reviews() { :; }
   _display_review() { :; }
   _print_summary() { :; }

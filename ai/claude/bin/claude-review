@@ -628,6 +628,10 @@ _append_orchestrate_flags() {
   return 0
 }
 
+_run_orchestrate() {
+  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "$@"
+}
+
 _resolve_prior_review() {
   local -n __prior=$1
   local review_file="$2"
@@ -744,7 +748,7 @@ cmd_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
-  if ! "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"; then
+  if ! _run_orchestrate "${orchestrate_args[@]}"; then
     err "Review orchestration failed"
     [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
     exit 1
@@ -974,7 +978,7 @@ cmd_self_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
-  if ! "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"; then
+  if ! _run_orchestrate "${orchestrate_args[@]}"; then
     err "Review orchestration failed"
     [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
     exit 1
@@ -1162,7 +1166,6 @@ main() {
 }
 
 PRUNE_MAX_FILES=10
-PRUNE_TIMEOUT=5
 
 _prune_merged_reviews() {
   local pruned=0 checked=0
@@ -1181,7 +1184,7 @@ _prune_merged_reviews() {
     checked=$((checked + 1))
 
     local state
-    state=$(timeout "${PRUNE_TIMEOUT}s" gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
+    state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
 
     if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
       rm -f "${meta_file%.meta.json}"*

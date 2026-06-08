@@ -10,6 +10,10 @@
           {
             "type": "command",
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *\"gh pr create\"* ]]; then echo 'BLOCKED: Use task pr:create instead of gh pr create — it auto-loads the repo PR template.' >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^[A-Z_]+= ]]; then echo 'BLOCKED: VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See git-operations.md.' >&2; exit 2; fi"
           }
         ]
       },
@@ -116,6 +120,15 @@
       "Bash(printf:*)",
       "Bash(read:*)",
       "Bash(export:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(curl:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(shasum:*)",
+      "Bash(bash:*)",
+      "Bash(pip3:*)",
+      "Bash(gofmt:*)",
       "Bash(* --help)",
       "Bash(* --help *)",
       "WebFetch(domain:docs.anthropic.com)",
@@ -129,7 +142,8 @@
       "Edit(//tmp/**)",
       "Read(//private/tmp/**)",
       "Write(//private/tmp/**)",
-      "Edit(//private/tmp/**)"
+      "Edit(//private/tmp/**)",
+      "Read(//opt/homebrew/**)"
     ],
     "deny": [
       "Bash(git reset:*)",

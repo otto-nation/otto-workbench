@@ -10,6 +10,17 @@ meta:
 
 tools:
   - name: docker
+    allow:
+      - "Bash(docker build:*)"
+      - "Bash(docker compose:*)"
+      - "Bash(docker exec:*)"
+      - "Bash(docker images:*)"
+      - "Bash(docker inspect:*)"
+      - "Bash(docker logs:*)"
+      - "Bash(docker ps:*)"
+      - "Bash(docker pull:*)"
+      - "Bash(docker run:*)"
+      - "Bash(docker version:*)"
     description: "Docker CLI — build, run, and manage containers against any backend runtime"
     when_to_use: "Running container commands; works with Colima, OrbStack, or any Docker-compatible runtime"
     usage: "docker run  |  docker build  |  docker compose up  |  docker ps"
@@ -96,6 +107,7 @@ tools:
     docs: "https://dandavison.github.io/delta/"
 
   - name: pipx
+    allow: true
     context: none
     description: "Install and run Python CLI tools in isolated environments"
     when_to_use: "Installing Python-based CLI tools globally (e.g. Serena, pre-commit)"

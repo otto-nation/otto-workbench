@@ -2288,6 +2288,7 @@ def _resolve_recovery(
         return 0.0, None, False, None
     if not _validate_resume_state(state, job.pr.head_sha, groups):
         _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+        Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return 0.0, None, False, None
 
     has_failed_groups = bool(state.groups_failed)

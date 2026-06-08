@@ -772,72 +772,32 @@ EOF
   [[ "$output" == *"--json-summary"* ]]
 }
 
-# ── _has_recoverable_failures ──────────────────────────────────────────────
+# ── _resolve_prior_review: pipeline state delegation ─────────────────────
 
-@test "_has_recoverable_failures: completed pipeline with group failures returns true" {
-  local pipeline_state="$TMPDIR/test.pipeline.json"
-  echo '{"head_sha":"abc","group_names":["g1"],"holistic_done":true,"groups_done":[],"groups_failed":{"1":"error"},"synthesis_done":true,"synthesis_failed":""}' > "$pipeline_state"
-  _has_recoverable_failures "$pipeline_state"
-}
-
-@test "_has_recoverable_failures: completed pipeline with synthesis failure returns true" {
-  local pipeline_state="$TMPDIR/test.pipeline.json"
-  echo '{"head_sha":"abc","group_names":["g1"],"holistic_done":true,"groups_done":[1],"groups_failed":{},"synthesis_done":true,"synthesis_failed":"timeout"}' > "$pipeline_state"
-  _has_recoverable_failures "$pipeline_state"
-}
-
-@test "_has_recoverable_failures: completed pipeline without failures returns false" {
-  local pipeline_state="$TMPDIR/test.pipeline.json"
-  echo '{"head_sha":"abc","group_names":["g1"],"holistic_done":true,"groups_done":[1],"groups_failed":{},"synthesis_done":true,"synthesis_failed":""}' > "$pipeline_state"
-  ! _has_recoverable_failures "$pipeline_state"
-}
-
-@test "_has_recoverable_failures: incomplete pipeline returns false" {
-  local pipeline_state="$TMPDIR/test.pipeline.json"
-  echo '{"head_sha":"abc","group_names":["g1"],"holistic_done":false,"groups_done":[],"groups_failed":{},"synthesis_done":false,"synthesis_failed":""}' > "$pipeline_state"
-  ! _has_recoverable_failures "$pipeline_state"
-}
-
-@test "_has_recoverable_failures: missing file returns false" {
-  ! _has_recoverable_failures "$TMPDIR/nonexistent.pipeline.json"
-}
-
-# ── _resolve_prior_review: recovery-aware ──────────────────────────────────
-
-@test "_resolve_prior_review: completed pipeline with failures skips archive" {
+@test "_resolve_prior_review: resume=true returns prior file when it exists" {
   mkdir -p "$TMPDIR/reviews/test-repo-42"
   local review_file="$TMPDIR/reviews/test-repo-42/review${REVIEW_EXT}"
-  local session_log="$TMPDIR/reviews/test-repo-42/${FILENAME_SESSION}"
-  local pipeline_state="$TMPDIR/reviews/test-repo-42/${FILENAME_PIPELINE_STATE}"
+  local prior_file="$TMPDIR/reviews/test-repo-42/${FILENAME_PRIOR}"
   echo '## Review' > "$review_file"
-  echo '{}' > "$session_log"
-  echo '{"head_sha":"abc","group_names":["g1"],"holistic_done":true,"groups_done":[],"groups_failed":{"1":"error"},"synthesis_done":true,"synthesis_failed":""}' > "$pipeline_state"
+  echo '## Prior' > "$prior_file"
 
   local prior
-  _resolve_prior_review prior "$review_file" "$session_log" "false"
-
-  # Should NOT archive — recovery mode
-  [ -f "$review_file" ]
-  # Prior should be set for the orchestrator
-  [ -n "$prior" ]
+  _resolve_prior_review prior "$review_file" "" "true"
+  [ "$prior" = "$prior_file" ]
 }
 
-@test "_resolve_prior_review: completed pipeline without failures archives normally" {
+@test "_resolve_prior_review: resume=false archives normally regardless of pipeline state" {
   mkdir -p "$TMPDIR/reviews/test-repo-43"
   local review_file="$TMPDIR/reviews/test-repo-43/review${REVIEW_EXT}"
   local session_log="$TMPDIR/reviews/test-repo-43/${FILENAME_SESSION}"
-  local pipeline_state="$TMPDIR/reviews/test-repo-43/${FILENAME_PIPELINE_STATE}"
   echo '## Review' > "$review_file"
   echo '{}' > "$session_log"
-  echo '{"head_sha":"abc","group_names":["g1"],"holistic_done":true,"groups_done":[1],"groups_failed":{},"synthesis_done":true,"synthesis_failed":""}' > "$pipeline_state"
 
   local prior
   _resolve_prior_review prior "$review_file" "$session_log" "false"
 
-  # Successful completed review — should archive
   [ ! -f "$review_file" ]
-  # Pipeline state should be cleaned up
-  [ ! -f "$pipeline_state" ]
+  [ -n "$prior" ]
 }
 
 # ── --json-summary flag ────────────────────────────────────────────────────

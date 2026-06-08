@@ -893,6 +893,8 @@ PYEOF
 )
   last_line=$(echo "$result" | tail -1)
   [ "$last_line" = "None" ]
+  # Stale pipeline state should be deleted so it doesn't block fresh runs
+  [ ! -f "$TMPDIR/stale/pipeline.json" ]
 }
 
 @test "_resolve_recovery: completed run with failed groups returns retry set" {

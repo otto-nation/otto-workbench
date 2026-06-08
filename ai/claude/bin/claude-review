@@ -66,6 +66,7 @@ FILENAME_POST_SESSION="post.jsonl"
 FILENAME_PIPELINE_STATE="pipeline.json"
 
 ARCHIVE_KEEP_COUNT=3
+GC_STALE_DAYS=7
 DEFAULT_MAX_PARALLEL=4
 
 ISSUE_PATTERN_JIRA_LINEAR='[A-Z]+-[0-9]+'
@@ -223,9 +224,7 @@ _review_file() {
   local -n __out=$1
   local repo_name="${2##*/}"
   local pr_number="$3"
-  local review_dir="${REVIEWS_DIR}/${repo_name}-${pr_number}"
-  mkdir -p "$review_dir"
-  __out="${review_dir}/review${REVIEW_EXT}"
+  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}/review${REVIEW_EXT}"
 }
 
 _display_review() {
@@ -502,33 +501,29 @@ _archive_review() {
   local session_log="$3"
   local review_dir
   review_dir="$(dirname "$review_file")"
+  local archive_dir="${review_dir}/archives"
+  local ts
 
   __prior_path=""
   if [[ -f "$review_file" ]]; then
     __prior_path="${review_dir}/${FILENAME_PRIOR}"
     cp "$review_file" "$__prior_path"
 
-    local archive_dir="${review_dir}/archives"
     mkdir -p "$archive_dir"
-    local ts
     ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
     mv "$review_file" "${archive_dir}/${ts}${REVIEW_EXT}"
     info "Archived prior review to archives/${ts}${REVIEW_EXT}"
   fi
 
   if [[ -f "$session_log" ]]; then
-    local archive_dir="${review_dir}/archives"
     mkdir -p "$archive_dir"
-    local ts
     ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
     mv "$session_log" "${archive_dir}/${ts}.session.jsonl"
   fi
 
   local post_log="${review_dir}/${FILENAME_POST_SESSION}"
   if [[ -f "$post_log" ]]; then
-    local archive_dir="${review_dir}/archives"
     mkdir -p "$archive_dir"
-    local ts
     ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
     mv "$post_log" "${archive_dir}/${ts}.post.jsonl"
   fi
@@ -692,20 +687,6 @@ _run_orchestrate() {
   "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "$@"
 }
 
-_has_recoverable_failures() {
-  local pipeline_state_file="$1"
-  [[ -f "$pipeline_state_file" ]] || return 1
-
-  local synthesis_done groups_failed_count synthesis_failed
-  synthesis_done=$(jq -r '.synthesis_done // false' "$pipeline_state_file" 2>/dev/null) || return 1
-  [[ "$synthesis_done" == "true" ]] || return 1
-
-  groups_failed_count=$(jq '.groups_failed | length // 0' "$pipeline_state_file" 2>/dev/null) || return 1
-  synthesis_failed=$(jq -r '.synthesis_failed // ""' "$pipeline_state_file" 2>/dev/null) || return 1
-
-  [[ "$groups_failed_count" -gt 0 || -n "$synthesis_failed" ]]
-}
-
 _resolve_prior_review() {
   local -n __prior=$1
   local review_file="$2"
@@ -714,11 +695,10 @@ _resolve_prior_review() {
 
   local review_dir
   review_dir="$(dirname "$review_file")"
-  local pipeline_state="${review_dir}/${FILENAME_PIPELINE_STATE}"
 
   __prior=""
 
-  # Case 1: Explicit resume (incomplete pipeline)
+  # Pipeline state exists — orchestrator handles resume/recovery internally
   if [[ "$resume" == "true" ]]; then
     if [[ -f "${review_dir}/${FILENAME_PRIOR}" ]]; then
       __prior="${review_dir}/${FILENAME_PRIOR}"
@@ -726,22 +706,6 @@ _resolve_prior_review() {
     return
   fi
 
-  # Case 2: Completed pipeline with recoverable failures — don't archive
-  if _has_recoverable_failures "$pipeline_state"; then
-    info "Prior review has recoverable failures — patching instead of re-running"
-    if [[ -f "$review_file" ]]; then
-      __prior="${review_dir}/${FILENAME_PRIOR}"
-      cp "$review_file" "$__prior"
-    fi
-    return
-  fi
-
-  # Case 3: Clean completed pipeline — remove stale state before archiving
-  if [[ -f "$pipeline_state" ]]; then
-    rm -f "$pipeline_state"
-  fi
-
-  # Case 4: Normal archive
   _archive_review __prior "$review_file" "$session_log"
 }
 
@@ -787,6 +751,9 @@ cmd_review() {
 
   local review_file
   _review_file review_file "$repo" "$pr_number"
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+  mkdir -p "$review_dir"
 
   # ── Issue detection: auto-detect from branch/PR body before prompting ──
   local pr_meta
@@ -1323,8 +1290,6 @@ main() {
       ;;
   esac
 }
-
-GC_STALE_DAYS=7
 
 cmd_gc() {
   local cleaned=0

@@ -2226,6 +2226,99 @@ print(f'groups={loaded.groups_done}')
   [ "$result" = "groups=[1, 2, 3]" ]
 }
 
+@test "PipelineState: round-trips groups_failed through JSON" {
+  _py_here <<'PY'
+import json, tempfile
+from pathlib import Path
+
+state = mod.PipelineState(
+    head_sha="abc123",
+    group_names=["tier1-critical", "orc-card"],
+    holistic_done=True,
+    groups_done=[1],
+    groups_failed={2: "agent error: model not available"},
+    synthesis_done=False,
+    synthesis_failed="agent exited with code 1 (no output)",
+)
+
+d = tempfile.mkdtemp()
+review_file = f"{d}/review.md"
+Path(review_file).write_text("")
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="42",
+    pr=mod.PRMetadata("t","b","h","base","abc123",10,5,2,[]),
+    ctx=mod.PRContext(), wt_path=d, review_file=review_file,
+    session_log=f"{d}/session.jsonl", reviews_dir=d,
+)
+
+mod._write_pipeline_state(job, state)
+loaded = mod._read_pipeline_state(job)
+assert loaded.groups_failed == {2: "agent error: model not available"}, f"got {loaded.groups_failed}"
+assert loaded.synthesis_done is False
+assert loaded.synthesis_failed == "agent exited with code 1 (no output)"
+PY
+}
+
+@test "PipelineState: missing new fields default gracefully" {
+  _py_here <<'PY'
+import json, tempfile
+from pathlib import Path
+
+d = tempfile.mkdtemp()
+review_file = f"{d}/review.md"
+Path(review_file).write_text("")
+
+# Write a legacy pipeline state without the new fields
+state_file = f"{d}/review.pipeline.json"
+Path(state_file).write_text(json.dumps({
+    "head_sha": "abc123",
+    "group_names": ["tier1-critical"],
+    "holistic_done": True,
+    "groups_done": [1],
+}))
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="42",
+    pr=mod.PRMetadata("t","b","h","base","abc123",10,5,2,[]),
+    ctx=mod.PRContext(), wt_path=d, review_file=review_file,
+    session_log=f"{d}/session.jsonl", reviews_dir=d,
+)
+
+loaded = mod._read_pipeline_state(job)
+assert loaded.groups_failed == {}, f"got {loaded.groups_failed}"
+assert loaded.synthesis_done is False, f"got {loaded.synthesis_done}"
+assert loaded.synthesis_failed == "", f"got {loaded.synthesis_failed}"
+PY
+}
+
+@test "_update_group_failed: records failure reason in pipeline state" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    state = mod.PipelineState(
+        head_sha='abc',
+        group_names=['a', 'b', 'c'],
+        groups_done=[1],
+    )
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    )
+    mod._update_group_failed(job, 2, 'agent hit max turns (10)', state)
+    mod._update_group_failed(job, 3, 'agent error: model not available', state)
+    loaded = mod._read_pipeline_state(job)
+print(f'failed={loaded.groups_failed}')
+print(f'done={loaded.groups_done}')
+")
+  [[ "$result" == *"failed={2: 'agent hit max turns (10)', 3: 'agent error: model not available'}"* ]]
+  [[ "$result" == *"done=[1]"* ]]
+}
+
 @test "invoke_agent: returns subprocess exit code" {
   result=$(_py "
 import subprocess

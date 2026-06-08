@@ -122,6 +122,9 @@ class PipelineState:
     group_names: list[str]
     holistic_done: bool = False
     groups_done: list[int] = field(default_factory=list)
+    groups_failed: dict[int, str] = field(default_factory=dict)
+    synthesis_done: bool = False
+    synthesis_failed: str = ""
 
     @property
     def group_count(self):
@@ -1770,11 +1773,17 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
         return None
     try:
         data = json.loads(path.read_text())
+        # JSON serializes dict keys as strings — convert back to int
+        groups_failed_raw = data.get("groups_failed", {})
+        groups_failed = {int(k): v for k, v in groups_failed_raw.items()}
         return PipelineState(
             head_sha=data["head_sha"],
             group_names=data["group_names"],
             holistic_done=data.get("holistic_done", False),
             groups_done=data.get("groups_done", []),
+            groups_failed=groups_failed,
+            synthesis_done=data.get("synthesis_done", False),
+            synthesis_failed=data.get("synthesis_failed", ""),
         )
     except (json.JSONDecodeError, KeyError):
         return None
@@ -1807,6 +1816,12 @@ def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
         if group_idx not in state.groups_done:
             state.groups_done.append(group_idx)
             state.groups_done.sort()
+        _write_pipeline_state(job, state)
+
+
+def _update_group_failed(job: ReviewJob, group_idx: int, reason: str, state: PipelineState):
+    with _state_lock:
+        state.groups_failed[group_idx] = reason
         _write_pipeline_state(job, state)
 
 
@@ -1906,6 +1921,8 @@ def _review_group(
         reason = _diagnose_missing_output(group_log)
         _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = (grp.name, reason)
+        if pipeline_state is not None:
+            _update_group_failed(job, i, reason, pipeline_state)
     else:
         _validate_group_output(group_output, grp.name)
         _info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
@@ -2344,19 +2361,33 @@ def run_multi_phase(
         _info("No findings from any group — writing clean review")
         _write_clean_review(job, group_count)
         synthesis_log = ""
+        state.synthesis_done = True
+        _write_pipeline_state(job, state)
     elif all_groups_failed:
         _warn("All group agents failed — skipping synthesis")
         fallback = _build_mechanical_fallback(job, group_count, merged_content)
         Path(job.review_file).write_text(fallback)
         _write_review_sidecar(job)
         synthesis_log = ""
+        state.synthesis_done = True
+        state.synthesis_failed = "all groups failed"
+        _write_pipeline_state(job, state)
     elif cost_so_far > max_cost:
         _warn("Using merged group output as final review (synthesis skipped due to budget)")
         Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)
         synthesis_log = ""
+        state.synthesis_done = True
+        state.synthesis_failed = "budget exceeded"
+        _write_pipeline_state(job, state)
     else:
         synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
+        state.synthesis_done = True
+        # Detect mechanical fallback vs successful synthesis
+        review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
+        if _MECHANICAL_NOTE in review_content:
+            state.synthesis_failed = "mechanical fallback"
+        _write_pipeline_state(job, state)
 
     _consolidate_logs(job, holistic_log, group_count, synthesis_log)
 

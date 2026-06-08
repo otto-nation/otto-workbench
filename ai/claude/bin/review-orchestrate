@@ -122,6 +122,9 @@ class PipelineState:
     group_names: list[str]
     holistic_done: bool = False
     groups_done: list[int] = field(default_factory=list)
+    groups_failed: dict[int, str] = field(default_factory=dict)
+    synthesis_done: bool = False
+    synthesis_failed: str = ""
 
     @property
     def group_count(self):
@@ -129,8 +132,6 @@ class PipelineState:
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-
-REVIEW_EXT = ".md"
 
 MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
@@ -184,19 +185,19 @@ TEMPLATE_SYNTHESIS = "synthesis.md"
 TEMPLATE_SELF_REVIEW = "self-review.md"
 TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
 
-SUFFIX_PRIOR = ".prior.md"
-SUFFIX_SESSION = ".session.jsonl"
-SUFFIX_HOLISTIC = ".holistic.md"
-SUFFIX_HOLISTIC_LOG = ".holistic.jsonl"
-SUFFIX_SYNTHESIS_LOG = ".synthesis.jsonl"
-SUFFIX_GROUP = ".group-{}.md"
-SUFFIX_GROUP_LOG = ".group-{}.jsonl"
-SUFFIX_META = ".meta.json"
-SUFFIX_PIPELINE_STATE = ".pipeline.json"
+FILENAME_PRIOR = "prior.md"
+FILENAME_SESSION = "session.jsonl"
+FILENAME_HOLISTIC = "holistic.md"
+FILENAME_HOLISTIC_LOG = "holistic.jsonl"
+FILENAME_SYNTHESIS_LOG = "synthesis.jsonl"
+FILENAME_GROUP = "group-{}.md"
+FILENAME_GROUP_LOG = "group-{}.jsonl"
+FILENAME_META = "meta.json"
+FILENAME_PIPELINE_STATE = "pipeline.json"
 
 
-def _replace_ext(path: str, suffix: str) -> str:
-    return path.removesuffix(REVIEW_EXT) + suffix
+def _derive_path(review_file: str, filename: str) -> str:
+    return str(Path(review_file).parent / filename)
 
 
 PIPELINE_MULTI = "multi"
@@ -1753,7 +1754,7 @@ _state_lock = threading.Lock()
 
 
 def _pipeline_state_path(job: ReviewJob) -> str:
-    return _replace_ext(job.review_file, SUFFIX_PIPELINE_STATE)
+    return _derive_path(job.review_file, FILENAME_PIPELINE_STATE)
 
 
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):
@@ -1770,11 +1771,17 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
         return None
     try:
         data = json.loads(path.read_text())
+        # JSON serializes dict keys as strings — convert back to int
+        groups_failed_raw = data.get("groups_failed", {})
+        groups_failed = {int(k): v for k, v in groups_failed_raw.items()}
         return PipelineState(
             head_sha=data["head_sha"],
             group_names=data["group_names"],
             holistic_done=data.get("holistic_done", False),
             groups_done=data.get("groups_done", []),
+            groups_failed=groups_failed,
+            synthesis_done=data.get("synthesis_done", False),
+            synthesis_failed=data.get("synthesis_failed", ""),
         )
     except (json.JSONDecodeError, KeyError):
         return None
@@ -1783,10 +1790,10 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     total = 0.0
     if state.holistic_done:
-        log = _replace_ext(job.review_file, SUFFIX_HOLISTIC_LOG)
+        log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
         total += _parse_session_cost(log)
     for idx in state.groups_done:
-        log = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(idx))
+        log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(idx))
         total += _parse_session_cost(log)
     return total
 
@@ -1810,6 +1817,12 @@ def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
         _write_pipeline_state(job, state)
 
 
+def _update_group_failed(job: ReviewJob, group_idx: int, reason: str, state: PipelineState):
+    with _state_lock:
+        state.groups_failed[group_idx] = reason
+        _write_pipeline_state(job, state)
+
+
 # ── Review pipelines ──────────────────────────────────────────────────────────
 
 _print_lock = threading.Lock()
@@ -1826,7 +1839,7 @@ def _warn(msg: str):
 
 
 def _write_review_sidecar(job: ReviewJob):
-    sidecar_path = _replace_ext(job.review_file, SUFFIX_META)
+    sidecar_path = _derive_path(job.review_file, FILENAME_META)
     meta: dict = {
         "repo": job.repo,
         "pr_number": job.pr_number,
@@ -1873,8 +1886,8 @@ def _review_group(
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
 ) -> tuple[int, str, "tuple[str, str] | None"]:
-    group_output = _replace_ext(job.review_file, SUFFIX_GROUP.format(i))
-    group_log = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+    group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
+    group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
     if skip:
         if Path(group_output).exists():
@@ -1906,6 +1919,8 @@ def _review_group(
         reason = _diagnose_missing_output(group_log)
         _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = (grp.name, reason)
+        if pipeline_state is not None:
+            _update_group_failed(job, i, reason, pipeline_state)
     else:
         _validate_group_output(group_output, grp.name)
         _info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
@@ -1916,8 +1931,8 @@ def _review_group(
 
 
 def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
-    holistic_output = _replace_ext(job.review_file, SUFFIX_HOLISTIC)
-    holistic_log = _replace_ext(job.review_file, SUFFIX_HOLISTIC_LOG)
+    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
@@ -1971,7 +1986,7 @@ def _run_serial_reviews(
             continue
         failed_groups.append(failed)
         _, reason = failed
-        group_log = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+        group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
         abort_msg, consecutive_same_reason, last_reason = _check_serial_abort(
             i, group_count, reason, group_log, consecutive_same_reason, last_reason,
         )
@@ -2011,7 +2026,7 @@ def _phase_group_reviews(
     skip_groups: "set[int] | None" = None,
     pipeline_state: "PipelineState | None" = None,
 ) -> "tuple[list[str], list[tuple[str, str]]]":
-    group_outputs = [_replace_ext(job.review_file, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
+    group_outputs = [_derive_path(job.review_file, FILENAME_GROUP.format(i)) for i in range(1, group_count + 1)]
 
     workers = min(max_parallel, group_count)
     if workers <= 1:
@@ -2152,7 +2167,7 @@ def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
 ) -> str:
-    synthesis_log = _replace_ext(job.review_file, SUFFIX_SYNTHESIS_LOG)
+    synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
     prompt = build_prompt(
@@ -2182,7 +2197,7 @@ def _phase_synthesis(
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
-    return [_replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
+    return [_derive_path(job.review_file, FILENAME_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
 
 
 def _read_existing_logs(log_paths: list[str]) -> str:
@@ -2260,12 +2275,12 @@ def _write_clean_review(job: ReviewJob, group_count: int):
 def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
     total = 0.0
     for i in range(1, group_count + 1):
-        gl = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+        gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
         total += _parse_session_cost(gl)
     return total
 
 
-def _resolve_resume(
+def _resolve_recovery(
     job: ReviewJob, groups: list[Group],
 ) -> tuple[float, "set[int] | None", bool, "PipelineState | None"]:
     state = _read_pipeline_state(job)
@@ -2273,9 +2288,34 @@ def _resolve_resume(
         return 0.0, None, False, None
     if not _validate_resume_state(state, job.pr.head_sha, groups):
         _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+        Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return 0.0, None, False, None
-    _info("Resuming from pipeline state")
+
+    has_failed_groups = bool(state.groups_failed)
+    has_failed_synthesis = bool(state.synthesis_failed)
+    is_complete = state.synthesis_done
+
+    if is_complete and not has_failed_groups and not has_failed_synthesis:
+        _info("Prior review completed successfully — nothing to recover")
+        return 0.0, None, False, None
+
     cost_so_far = _sum_existing_costs(job, state)
+
+    if is_complete and (has_failed_groups or has_failed_synthesis):
+        _info("Prior review had failures — recovering")
+        skip_groups = set(state.groups_done)
+        if has_failed_groups:
+            failed_count = len(state.groups_failed)
+            state.groups_failed.clear()
+            _info(f"  Re-running {failed_count} failed groups")
+        if has_failed_synthesis:
+            state.synthesis_done = False
+            state.synthesis_failed = ""
+            _info("  Re-running synthesis")
+        return cost_so_far, skip_groups, state.holistic_done, state
+
+    # Incomplete pipeline — resume from where it left off
+    _info("Resuming incomplete pipeline")
     skip_holistic = state.holistic_done
     skip_groups = set(state.groups_done) if state.groups_done else None
     return cost_so_far, skip_groups, skip_holistic, state
@@ -2291,9 +2331,13 @@ def run_multi_phase(
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
-    cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_resume(
+    cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_recovery(
         job, groups,
     )
+
+    if state is None and _read_pipeline_state(job) is not None:
+        _info("Review already complete — use --force to re-run from scratch")
+        return
 
     if state is None:
         state = PipelineState(
@@ -2303,8 +2347,8 @@ def run_multi_phase(
         _write_pipeline_state(job, state)
 
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
-    holistic_output = _replace_ext(job.review_file, SUFFIX_HOLISTIC)
-    holistic_log = _replace_ext(job.review_file, SUFFIX_HOLISTIC_LOG)
+    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     if run_holistic and skip_holistic_phase and Path(holistic_output).exists():
         _info("Phase 1: Holistic scan skipped (exists)")
@@ -2333,7 +2377,7 @@ def run_multi_phase(
             if skip_groups is None or i not in skip_groups
         ]
         for i in new_group_indices:
-            gl = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+            gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
             cost_so_far += _parse_session_cost(gl)
 
     merged_content = _phase_merge(group_outputs, failed_groups)
@@ -2344,19 +2388,33 @@ def run_multi_phase(
         _info("No findings from any group — writing clean review")
         _write_clean_review(job, group_count)
         synthesis_log = ""
+        state.synthesis_done = True
+        _write_pipeline_state(job, state)
     elif all_groups_failed:
         _warn("All group agents failed — skipping synthesis")
         fallback = _build_mechanical_fallback(job, group_count, merged_content)
         Path(job.review_file).write_text(fallback)
         _write_review_sidecar(job)
         synthesis_log = ""
+        state.synthesis_done = True
+        state.synthesis_failed = "all groups failed"
+        _write_pipeline_state(job, state)
     elif cost_so_far > max_cost:
         _warn("Using merged group output as final review (synthesis skipped due to budget)")
         Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)
         synthesis_log = ""
+        state.synthesis_done = True
+        state.synthesis_failed = "budget exceeded"
+        _write_pipeline_state(job, state)
     else:
         synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
+        state.synthesis_done = True
+        # Detect mechanical fallback vs successful synthesis
+        review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
+        if _MECHANICAL_NOTE in review_content:
+            state.synthesis_failed = "mechanical fallback"
+        _write_pipeline_state(job, state)
 
     _consolidate_logs(job, holistic_log, group_count, synthesis_log)
 
@@ -2410,7 +2468,7 @@ def main():
         print("error: --pr is required in pr mode", file=sys.stderr)
         sys.exit(1)
 
-    session_log = args.session_log or _replace_ext(args.review_file, SUFFIX_SESSION)
+    session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 
     pr, ctx = _fetch_metadata(args.repo, args.pr, args.mode, args.wt_path)
 

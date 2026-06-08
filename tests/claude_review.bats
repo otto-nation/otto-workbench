@@ -93,22 +93,22 @@ EOF
 
 # ── _review_file ─────────────────────────────────────────────────────────────
 
-@test "_review_file: constructs path from org/repo and PR number" {
+@test "_review_file: constructs folder-based path from org/repo and PR number" {
   local result
   _review_file result "org/my-repo" "42"
-  [ "$result" = "$REVIEWS_DIR/my-repo-42.md" ]
+  [ "$result" = "$REVIEWS_DIR/my-repo-42/review.md" ]
 }
 
 @test "_review_file: repo name with hyphens preserved" {
   local result
   _review_file result "org/my-cool-repo" "1"
-  [ "$result" = "$REVIEWS_DIR/my-cool-repo-1.md" ]
+  [ "$result" = "$REVIEWS_DIR/my-cool-repo-1/review.md" ]
 }
 
 @test "_review_file: strips only last path component" {
   local result
   _review_file result "deep/nested/repo" "7"
-  [ "$result" = "$REVIEWS_DIR/repo-7.md" ]
+  [ "$result" = "$REVIEWS_DIR/repo-7/review.md" ]
 }
 
 # ── _extract_issue_id ────────────────────────────────────────────────────────
@@ -274,9 +274,9 @@ EOF
 # ── _archive_review ──────────────────────────────────────────────────────────
 
 @test "_archive_review: existing review creates prior and timestamped archive" {
-  local review_file="$TMPDIR/reviews/test-repo-42.md"
-  local session_log="$TMPDIR/reviews/test-repo-42.session.jsonl"
-  mkdir -p "$TMPDIR/reviews"
+  mkdir -p "$TMPDIR/reviews/test-repo-42"
+  local review_file="$TMPDIR/reviews/test-repo-42/review.md"
+  local session_log="$TMPDIR/reviews/test-repo-42/session.jsonl"
   echo "old review" > "$review_file"
   echo "old session" > "$session_log"
 
@@ -284,21 +284,21 @@ EOF
   _archive_review prior_path "$review_file" "$session_log"
 
   [ -f "$prior_path" ]
-  [[ "$prior_path" == *".prior.md" ]]
+  [[ "$prior_path" == *"/prior.md" ]]
   [ "$(cat "$prior_path")" = "old review" ]
   # Original files should be moved (not exist at original path)
   [ ! -f "$review_file" ]
   [ ! -f "$session_log" ]
-  # Timestamped archives should exist
+  # Timestamped archives should exist in archives/ subdirectory
   local md_archives
-  md_archives=$(ls "$TMPDIR/reviews/test-repo-42".2*.md 2>/dev/null | wc -l | tr -d ' ')
+  md_archives=$(ls "$TMPDIR/reviews/test-repo-42/archives/"2*.md 2>/dev/null | wc -l | tr -d ' ')
   [ "$md_archives" -eq 1 ]
 }
 
 @test "_archive_review: no existing review sets empty prior_path" {
-  local review_file="$TMPDIR/reviews/test-repo-99.md"
-  local session_log="$TMPDIR/reviews/test-repo-99.session.jsonl"
-  mkdir -p "$TMPDIR/reviews"
+  mkdir -p "$TMPDIR/reviews/test-repo-99"
+  local review_file="$TMPDIR/reviews/test-repo-99/review.md"
+  local session_log="$TMPDIR/reviews/test-repo-99/session.jsonl"
 
   local prior_path
   _archive_review prior_path "$review_file" "$session_log"
@@ -307,14 +307,14 @@ EOF
 }
 
 @test "_archive_review: prunes old archives beyond ARCHIVE_KEEP_COUNT" {
-  local review_file="$TMPDIR/reviews/test-repo-1.md"
-  local session_log="$TMPDIR/reviews/test-repo-1.session.jsonl"
-  mkdir -p "$TMPDIR/reviews"
+  mkdir -p "$TMPDIR/reviews/test-repo-1/archives"
+  local review_file="$TMPDIR/reviews/test-repo-1/review.md"
+  local session_log="$TMPDIR/reviews/test-repo-1/session.jsonl"
 
   # Create 5 existing timestamped archives (older than any new archive)
   for i in 1 2 3 4 5; do
-    echo "archive $i" > "$TMPDIR/reviews/test-repo-1.2025010${i}-120000.md"
-    echo "session $i" > "$TMPDIR/reviews/test-repo-1.session.2025010${i}-120000.jsonl"
+    echo "archive $i" > "$TMPDIR/reviews/test-repo-1/archives/2025010${i}-120000.md"
+    echo "session $i" > "$TMPDIR/reviews/test-repo-1/archives/2025010${i}-120000.session.jsonl"
   done
 
   # Create the current review to be archived
@@ -326,65 +326,57 @@ EOF
 
   # Should keep only ARCHIVE_KEEP_COUNT (3) md archives
   local md_count
-  md_count=$(ls "$TMPDIR/reviews/test-repo-1".2*.md 2>/dev/null | wc -l | tr -d ' ')
+  md_count=$(ls "$TMPDIR/reviews/test-repo-1/archives/"2*.md 2>/dev/null | wc -l | tr -d ' ')
   [ "$md_count" -le "$ARCHIVE_KEEP_COUNT" ]
 }
 
-@test "_archive_review: cleans orphaned intermediate files" {
-  local review_file="$TMPDIR/reviews/test-repo-50.md"
-  local session_log="$TMPDIR/reviews/test-repo-50.session.jsonl"
-  mkdir -p "$TMPDIR/reviews"
+@test "_archive_review: intermediates inside folder are untouched" {
+  mkdir -p "$TMPDIR/reviews/test-repo-50"
+  local review_file="$TMPDIR/reviews/test-repo-50/review.md"
+  local session_log="$TMPDIR/reviews/test-repo-50/session.jsonl"
 
-  # Create orphaned intermediates from a prior failed multi-phase run (no current review)
-  echo "group1" > "$TMPDIR/reviews/test-repo-50.group-1.jsonl"
-  echo "group2" > "$TMPDIR/reviews/test-repo-50.group-2.jsonl"
-  echo "group1md" > "$TMPDIR/reviews/test-repo-50.group-1.md"
-  echo "holistic" > "$TMPDIR/reviews/test-repo-50.holistic.jsonl"
-  echo "holisticmd" > "$TMPDIR/reviews/test-repo-50.holistic.md"
-  echo "synthesis" > "$TMPDIR/reviews/test-repo-50.synthesis.jsonl"
-  echo "prior" > "$TMPDIR/reviews/test-repo-50.prior.md"
-  echo "meta" > "$TMPDIR/reviews/test-repo-50.meta.json"
+  # Create intermediates inside the review folder (from a prior multi-phase run)
+  echo "group1" > "$TMPDIR/reviews/test-repo-50/group-1.jsonl"
+  echo "group1md" > "$TMPDIR/reviews/test-repo-50/group-1.md"
+  echo "meta" > "$TMPDIR/reviews/test-repo-50/meta.json"
 
+  # No current review file — archive should be a no-op
   local prior_path
   _archive_review prior_path "$review_file" "$session_log"
 
-  # All intermediates should be cleaned up
-  [ ! -f "$TMPDIR/reviews/test-repo-50.group-1.jsonl" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.group-2.jsonl" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.group-1.md" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.holistic.jsonl" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.holistic.md" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.synthesis.jsonl" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.prior.md" ]
-  [ ! -f "$TMPDIR/reviews/test-repo-50.meta.json" ]
+  [ -z "$prior_path" ]
+  # Intermediates should still be present (archive only touches review/session/post)
+  [ -f "$TMPDIR/reviews/test-repo-50/group-1.jsonl" ]
+  [ -f "$TMPDIR/reviews/test-repo-50/group-1.md" ]
+  [ -f "$TMPDIR/reviews/test-repo-50/meta.json" ]
 }
 
 @test "_archive_review: archives post.jsonl with timestamp" {
-  local review_file="$TMPDIR/reviews/test-repo-60.md"
-  local session_log="$TMPDIR/reviews/test-repo-60.session.jsonl"
-  mkdir -p "$TMPDIR/reviews"
+  mkdir -p "$TMPDIR/reviews/test-repo-60"
+  local review_file="$TMPDIR/reviews/test-repo-60/review.md"
+  local session_log="$TMPDIR/reviews/test-repo-60/session.jsonl"
   echo "review" > "$review_file"
-  echo "post data" > "$TMPDIR/reviews/test-repo-60.post.jsonl"
+  echo "post data" > "$TMPDIR/reviews/test-repo-60/post.jsonl"
 
   local prior_path
   _archive_review prior_path "$review_file" "$session_log"
 
-  # post.jsonl should be archived (moved to timestamped version)
-  [ ! -f "$TMPDIR/reviews/test-repo-60.post.jsonl" ]
+  # post.jsonl should be archived (moved to timestamped version in archives/)
+  [ ! -f "$TMPDIR/reviews/test-repo-60/post.jsonl" ]
   local post_archives
-  post_archives=$(ls "$TMPDIR/reviews/test-repo-60".post.2*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+  post_archives=$(ls "$TMPDIR/reviews/test-repo-60/archives/"2*.post.jsonl 2>/dev/null | wc -l | tr -d ' ')
   [ "$post_archives" -eq 1 ]
 }
 
 # ── _prune_merged_reviews ────────────────────────────────────────────────────
 
-@test "_prune_merged_reviews: removes files for merged PR" {
+@test "_prune_merged_reviews: removes folder for merged PR" {
   local reviews_dir="$TMPDIR/reviews"
-  mkdir -p "$reviews_dir"
+  mkdir -p "$reviews_dir/my-repo-42"
 
-  echo "review content" > "$reviews_dir/my-repo-42.md"
-  echo "session data" > "$reviews_dir/my-repo-42.session.jsonl"
-  echo '{"repo":"org/my-repo","pr_number":"42","head_sha":"abc"}' > "$reviews_dir/my-repo-42.meta.json"
+  echo "review content" > "$reviews_dir/my-repo-42/review.md"
+  echo "session data" > "$reviews_dir/my-repo-42/session.jsonl"
+  echo '{"repo":"org/my-repo","pr_number":"42","head_sha":"abc"}' > "$reviews_dir/my-repo-42/meta.json"
 
   local fake_bin="$TMPDIR/bin"
   mkdir -p "$fake_bin"
@@ -399,17 +391,15 @@ GHEOF
     -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
   [ "$status" -eq 0 ]
 
-  [ ! -f "$reviews_dir/my-repo-42.md" ]
-  [ ! -f "$reviews_dir/my-repo-42.session.jsonl" ]
-  [ ! -f "$reviews_dir/my-repo-42.meta.json" ]
+  [ ! -d "$reviews_dir/my-repo-42" ]
 }
 
-@test "_prune_merged_reviews: keeps files for open PR" {
+@test "_prune_merged_reviews: keeps folder for open PR" {
   local reviews_dir="$TMPDIR/reviews"
-  mkdir -p "$reviews_dir"
+  mkdir -p "$reviews_dir/my-repo-99"
 
-  echo "review content" > "$reviews_dir/my-repo-99.md"
-  echo '{"repo":"org/my-repo","pr_number":"99","head_sha":"def"}' > "$reviews_dir/my-repo-99.meta.json"
+  echo "review content" > "$reviews_dir/my-repo-99/review.md"
+  echo '{"repo":"org/my-repo","pr_number":"99","head_sha":"def"}' > "$reviews_dir/my-repo-99/meta.json"
 
   local fake_bin="$TMPDIR/bin"
   mkdir -p "$fake_bin"
@@ -424,8 +414,9 @@ GHEOF
     -- "$TMPDIR" "$CLAUDE_REVIEW" "$reviews_dir"
   [ "$status" -eq 0 ]
 
-  [ -f "$reviews_dir/my-repo-99.md" ]
-  [ -f "$reviews_dir/my-repo-99.meta.json" ]
+  [ -d "$reviews_dir/my-repo-99" ]
+  [ -f "$reviews_dir/my-repo-99/review.md" ]
+  [ -f "$reviews_dir/my-repo-99/meta.json" ]
 }
 
 # ── _extract_repo ────────────────────────────────────────────────────────────
@@ -444,10 +435,10 @@ GHEOF
 
 # ── _archive_review: self-review paths ──────────────────────────────────────
 
-@test "_archive_review: works with .claude/ self-review paths" {
-  local review_file="$TMPDIR/project/.claude/self-review.md"
-  local session_log="$TMPDIR/project/.claude/self-review.session.jsonl"
-  mkdir -p "$TMPDIR/project/.claude"
+@test "_archive_review: works with self-review paths in ignore/reviews/" {
+  mkdir -p "$TMPDIR/project/ignore/reviews"
+  local review_file="$TMPDIR/project/ignore/reviews/self-review.md"
+  local session_log="$TMPDIR/project/ignore/reviews/session.jsonl"
   echo "self-review content" > "$review_file"
   echo "session data" > "$session_log"
 
@@ -455,26 +446,26 @@ GHEOF
   _archive_review prior_path "$review_file" "$session_log"
 
   [ -f "$prior_path" ]
-  [[ "$prior_path" == *".claude/self-review.prior.md" ]]
+  [[ "$prior_path" == *"ignore/reviews/prior.md" ]]
   [ "$(cat "$prior_path")" = "self-review content" ]
   [ ! -f "$review_file" ]
   [ ! -f "$session_log" ]
   local md_archives
-  md_archives=$(ls "$TMPDIR/project/.claude/self-review".2*.md 2>/dev/null | wc -l | tr -d ' ')
+  md_archives=$(ls "$TMPDIR/project/ignore/reviews/archives/"2*.md 2>/dev/null | wc -l | tr -d ' ')
   [ "$md_archives" -eq 1 ]
   local session_archives
-  session_archives=$(ls "$TMPDIR/project/.claude/self-review".session.2*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+  session_archives=$(ls "$TMPDIR/project/ignore/reviews/archives/"2*.session.jsonl 2>/dev/null | wc -l | tr -d ' ')
   [ "$session_archives" -eq 1 ]
 }
 
-@test "_archive_review: self-review prunes old archives in .claude/" {
-  local review_file="$TMPDIR/project/.claude/self-review.md"
-  local session_log="$TMPDIR/project/.claude/self-review.session.jsonl"
-  mkdir -p "$TMPDIR/project/.claude"
+@test "_archive_review: self-review prunes old archives" {
+  mkdir -p "$TMPDIR/project/ignore/reviews/archives"
+  local review_file="$TMPDIR/project/ignore/reviews/self-review.md"
+  local session_log="$TMPDIR/project/ignore/reviews/session.jsonl"
 
   for i in 1 2 3 4 5; do
-    echo "archive $i" > "$TMPDIR/project/.claude/self-review.2025010${i}-120000.md"
-    echo "session $i" > "$TMPDIR/project/.claude/self-review.session.2025010${i}-120000.jsonl"
+    echo "archive $i" > "$TMPDIR/project/ignore/reviews/archives/2025010${i}-120000.md"
+    echo "session $i" > "$TMPDIR/project/ignore/reviews/archives/2025010${i}-120000.session.jsonl"
   done
 
   echo "current" > "$review_file"
@@ -484,7 +475,7 @@ GHEOF
   _archive_review prior_path "$review_file" "$session_log"
 
   local md_count
-  md_count=$(ls "$TMPDIR/project/.claude/self-review".2*.md 2>/dev/null | wc -l | tr -d ' ')
+  md_count=$(ls "$TMPDIR/project/ignore/reviews/archives/"2*.md 2>/dev/null | wc -l | tr -d ' ')
   [ "$md_count" -le "$ARCHIVE_KEEP_COUNT" ]
 }
 
@@ -599,22 +590,23 @@ GHEOF
   _archive_review() { archive_called="true"; local -n __out=$1; __out=""; }
   _extract_pr_number() { local -n __out=$1; __out="42"; }
   _extract_repo() { local -n __out=$1; __out="org/repo"; }
-  _review_file() { local -n __out=$1; __out="$TMPDIR/test-review.md"; }
+  mkdir -p "$TMPDIR/reviews/repo-42"
+  _review_file() { local -n __out=$1; __out="$TMPDIR/reviews/repo-42/review.md"; }
   _check_stale_review() { :; }
   _check_pending_review() { :; }
   _setup_review_worktree() { local -n __out=$1; __out="/tmp/wt"; }
   _append_orchestrate_flags() { :; }
-  _run_orchestrate() { touch "$TMPDIR/test-review.md"; return 0; }
+  _run_orchestrate() { touch "$TMPDIR/reviews/repo-42/review.md"; return 0; }
   _prune_merged_reviews() { :; }
   _display_review() { :; }
   _print_summary() { :; }
   gh() { echo "{}"; }
 
   # Create pipeline state to trigger auto-resume
-  echo '{}' > "$TMPDIR/test-review.pipeline.json"
+  echo '{}' > "$TMPDIR/reviews/repo-42/pipeline.json"
   cmd_review "42" "true" "" "false" "4" "false" "false" "" "" 2>/dev/null || true
   [ "$archive_called" = "false" ]
-  rm -f "$TMPDIR/test-review.pipeline.json"
+  rm -f "$TMPDIR/reviews/repo-42/pipeline.json"
 }
 
 @test "cmd_review: no --resume in orchestrate_args" {
@@ -648,14 +640,14 @@ GHEOF
 @test "auto-resume: pipeline state detection in cmd_review" {
   local fn_body
   fn_body=$(declare -f cmd_review)
-  [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
+  [[ "$fn_body" == *'FILENAME_PIPELINE_STATE'* ]]
   [[ "$fn_body" == *'has_pipeline_state'* ]]
 }
 
 @test "auto-resume: pipeline state detection in cmd_self_review" {
   local fn_body
   fn_body=$(declare -f cmd_self_review)
-  [[ "$fn_body" == *'SUFFIX_PIPELINE_STATE'* ]]
+  [[ "$fn_body" == *'FILENAME_PIPELINE_STATE'* ]]
   [[ "$fn_body" == *'has_pipeline_state'* ]]
 }
 
@@ -778,6 +770,101 @@ EOF
 @test "usage: --json-summary appears in help text" {
   run usage
   [[ "$output" == *"--json-summary"* ]]
+}
+
+# ── _resolve_prior_review: pipeline state delegation ─────────────────────
+
+@test "_resolve_prior_review: resume=true returns prior file when it exists" {
+  mkdir -p "$TMPDIR/reviews/test-repo-42"
+  local review_file="$TMPDIR/reviews/test-repo-42/review${REVIEW_EXT}"
+  local prior_file="$TMPDIR/reviews/test-repo-42/${FILENAME_PRIOR}"
+  echo '## Review' > "$review_file"
+  echo '## Prior' > "$prior_file"
+
+  local prior
+  _resolve_prior_review prior "$review_file" "" "true"
+  [ "$prior" = "$prior_file" ]
+}
+
+@test "_resolve_prior_review: resume=false archives normally regardless of pipeline state" {
+  mkdir -p "$TMPDIR/reviews/test-repo-43"
+  local review_file="$TMPDIR/reviews/test-repo-43/review${REVIEW_EXT}"
+  local session_log="$TMPDIR/reviews/test-repo-43/${FILENAME_SESSION}"
+  echo '## Review' > "$review_file"
+  echo '{}' > "$session_log"
+
+  local prior
+  _resolve_prior_review prior "$review_file" "$session_log" "false"
+
+  [ ! -f "$review_file" ]
+  [ -n "$prior" ]
+}
+
+# ── --json-summary flag ────────────────────────────────────────────────────
+
+@test "cmd_gc: removes review folders with no review file older than 7 days" {
+  mkdir -p "$TMPDIR/reviews/test-repo-100"
+  echo '{}' > "$TMPDIR/reviews/test-repo-100/pipeline.json"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-100/pipeline.json"
+  echo '{}' > "$TMPDIR/reviews/test-repo-100/group-1.jsonl"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-100/group-1.jsonl"
+
+  # Has a review file — should NOT be cleaned
+  mkdir -p "$TMPDIR/reviews/test-repo-200"
+  echo '## Review' > "$TMPDIR/reviews/test-repo-200/review.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-200/pipeline.json"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-200/pipeline.json"
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ ! -d "$TMPDIR/reviews/test-repo-100" ]
+  [ -d "$TMPDIR/reviews/test-repo-200" ]
+}
+
+@test "cmd_gc: removes stale intermediates from completed reviews" {
+  mkdir -p "$TMPDIR/reviews/test-repo-300"
+  echo '## Summary' > "$TMPDIR/reviews/test-repo-300/review.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/group-1.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/group-1.jsonl"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/holistic.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-300/holistic.jsonl"
+  # No pipeline.json — review is complete
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/group-1.md"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/group-1.jsonl"
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/reviews/test-repo-300/review.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/group-1.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/group-1.jsonl" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/holistic.md" ]
+  [ ! -f "$TMPDIR/reviews/test-repo-300/holistic.jsonl" ]
+}
+
+@test "cmd_gc: preserves intermediates when pipeline is active" {
+  mkdir -p "$TMPDIR/reviews/test-repo-400"
+  echo '{}' > "$TMPDIR/reviews/test-repo-400/pipeline.json"
+  echo '{}' > "$TMPDIR/reviews/test-repo-400/group-1.jsonl"
+  # Recent timestamps — active pipeline
+  touch "$TMPDIR/reviews/test-repo-400/pipeline.json"
+  touch "$TMPDIR/reviews/test-repo-400/group-1.jsonl"
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ -d "$TMPDIR/reviews/test-repo-400" ]
+  [ -f "$TMPDIR/reviews/test-repo-400/group-1.jsonl" ]
 }
 
 @test "main: --json-summary is parsed and not treated as positional" {

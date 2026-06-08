@@ -60,12 +60,13 @@ SELF_REVIEW_FILE="self-review.md"
 
 REVIEW_EXT=".md"
 
-SUFFIX_PRIOR=".prior.md"
-SUFFIX_SESSION=".session.jsonl"
-SUFFIX_POST_SESSION=".post.jsonl"
-SUFFIX_PIPELINE_STATE=".pipeline.json"
+FILENAME_PRIOR="prior${REVIEW_EXT}"
+FILENAME_SESSION="session.jsonl"
+FILENAME_POST_SESSION="post.jsonl"
+FILENAME_PIPELINE_STATE="pipeline.json"
 
 ARCHIVE_KEEP_COUNT=3
+GC_STALE_DAYS=7
 DEFAULT_MAX_PARALLEL=4
 
 ISSUE_PATTERN_JIRA_LINEAR='[A-Z]+-[0-9]+'
@@ -95,6 +96,57 @@ if [[ -d "$LEGACY_REVIEWS_DIR" ]]; then
   mv "$LEGACY_REVIEWS_DIR"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
   mv "$LEGACY_REVIEWS_DIR"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
 fi
+
+# Migrate flat review files to per-review folder layout
+_migrate_flat_reviews() {
+  local migrated=0
+  for flat_review in "$REVIEWS_DIR"/*"${REVIEW_EXT}"; do
+    [[ -f "$flat_review" ]] || continue
+    local base="${flat_review%"${REVIEW_EXT}"}"
+    local dir_name
+    dir_name="$(basename "$base")"
+    local review_dir="${REVIEWS_DIR}/${dir_name}"
+
+    [[ -d "$review_dir" ]] && continue
+
+    mkdir -p "$review_dir"
+    mv "$flat_review" "${review_dir}/review${REVIEW_EXT}"
+
+    # Move associated flat files into the folder
+    for suffix in .session.jsonl .meta.json .post.jsonl .pipeline.json .prior.md; do
+      local flat_file="${base}${suffix}"
+      [[ -f "$flat_file" ]] || continue
+      local new_name="${suffix#.}"
+      mv "$flat_file" "${review_dir}/${new_name}"
+    done
+
+    # Move group/holistic intermediates
+    for intermediate in "${base}".group-*.md "${base}".group-*.jsonl "${base}".holistic.md "${base}".holistic.jsonl "${base}".synthesis.jsonl; do
+      [[ -f "$intermediate" ]] || continue
+      local fname
+      fname="$(basename "$intermediate")"
+      fname="${fname#"${dir_name}."}"
+      mv "$intermediate" "${review_dir}/${fname}"
+    done
+
+    # Move timestamped archives
+    for archive in "${base}".2*.md "${base}".session.2*.jsonl "${base}".post.2*.jsonl; do
+      [[ -f "$archive" ]] || continue
+      mkdir -p "${review_dir}/archives"
+      local fname
+      fname="$(basename "$archive")"
+      fname="${fname#"${dir_name}."}"
+      mv "$archive" "${review_dir}/archives/${fname}"
+    done
+
+    migrated=$((migrated + 1))
+  done
+  if [[ "$migrated" -gt 0 ]]; then
+    info "Migrated ${migrated} reviews to folder layout"
+  fi
+}
+
+_migrate_flat_reviews
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -172,7 +224,7 @@ _review_file() {
   local -n __out=$1
   local repo_name="${2##*/}"
   local pr_number="$3"
-  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}${REVIEW_EXT}"
+  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}/review${REVIEW_EXT}"
 }
 
 _display_review() {
@@ -294,9 +346,10 @@ _json_summary() {
   # Extract cost/token/duration from session logs
   local cost_usd=0 input_tokens=0 output_tokens=0
   local cache_read_tokens=0 cache_write_tokens=0 duration_ms=0
-  local base="${review_file%"${REVIEW_EXT}"}"
-  local session_log="${base}${SUFFIX_SESSION}"
-  local post_session_log="${base}${SUFFIX_POST_SESSION}"
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+  local session_log="${review_dir}/${FILENAME_SESSION}"
+  local post_session_log="${review_dir}/${FILENAME_POST_SESSION}"
   local logs=()
   [[ -f "$session_log" ]] && logs+=("$session_log")
   [[ -f "$post_session_log" ]] && logs+=("$post_session_log")
@@ -446,50 +499,47 @@ _archive_review() {
   local -n __prior_path=$1
   local review_file="$2"
   local session_log="$3"
-  local base="${review_file%"${REVIEW_EXT}"}"
-
-  # Remove orphaned intermediates from prior runs — keep only files about to be archived
-  local _f
-  for _f in "${base}".*; do
-    [[ -f "$_f" ]] || continue
-    case "$_f" in
-      "${base}${REVIEW_EXT}"|"${base}${SUFFIX_SESSION}"|"${base}${SUFFIX_POST_SESSION}") continue ;;
-    esac
-    [[ "$_f" =~ [0-9]{8}-[0-9]{6} ]] && continue
-    rm -f "$_f"
-  done
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+  local archive_dir="${review_dir}/archives"
+  local ts
 
   __prior_path=""
   if [[ -f "$review_file" ]]; then
-    __prior_path="${base}${SUFFIX_PRIOR}"
+    __prior_path="${review_dir}/${FILENAME_PRIOR}"
     cp "$review_file" "$__prior_path"
-    local archive
-    archive="${base}.$(date +"$ARCHIVE_TIMESTAMP_FMT").md"
-    mv "$review_file" "$archive"
-    info "Archived prior review to $(basename "$archive")"
+
+    mkdir -p "$archive_dir"
+    ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
+    mv "$review_file" "${archive_dir}/${ts}${REVIEW_EXT}"
+    info "Archived prior review to archives/${ts}${REVIEW_EXT}"
   fi
 
   if [[ -f "$session_log" ]]; then
-    mv "$session_log" "${session_log%.jsonl}.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
+    mkdir -p "$archive_dir"
+    ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
+    mv "$session_log" "${archive_dir}/${ts}.session.jsonl"
   fi
 
-  # Archive post.jsonl alongside session log
-  local post_log="${base}${SUFFIX_POST_SESSION}"
+  local post_log="${review_dir}/${FILENAME_POST_SESSION}"
   if [[ -f "$post_log" ]]; then
-    mv "$post_log" "${base}.post.$(date +"$ARCHIVE_TIMESTAMP_FMT").jsonl"
+    mkdir -p "$archive_dir"
+    ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
+    mv "$post_log" "${archive_dir}/${ts}.post.jsonl"
   fi
 
+  # Prune old archives
   local _old_archive
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${base}".2*.md 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
+  for _old_archive in $(ls -1t "${review_dir}/archives/"2*"${REVIEW_EXT}" 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${base}".session.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
+  for _old_archive in $(ls -1t "${review_dir}/archives/"2*.session.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
     rm -f "$_old_archive"
   done
   # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${base}".post.2*.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
+  for _old_archive in $(ls -1t "${review_dir}/archives/"2*.post.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
     rm -f "$_old_archive"
   done
 }
@@ -643,22 +693,29 @@ _resolve_prior_review() {
   local session_log="$3"
   local resume="$4"
 
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+
   __prior=""
+
+  # Pipeline state exists — orchestrator handles resume/recovery internally
   if [[ "$resume" == "true" ]]; then
-    local base="${review_file%"${REVIEW_EXT}"}"
-    if [[ -f "${base}${SUFFIX_PRIOR}" ]]; then
-      __prior="${base}${SUFFIX_PRIOR}"
+    if [[ -f "${review_dir}/${FILENAME_PRIOR}" ]]; then
+      __prior="${review_dir}/${FILENAME_PRIOR}"
     fi
-  else
-    _archive_review __prior "$review_file" "$session_log"
+    return
   fi
+
+  _archive_review __prior "$review_file" "$session_log"
 }
 
 _cleanup_prior_review() {
   local review_file="$1"
   local prior_review_path="$2"
 
-  local pipeline_state="${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}"
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+  local pipeline_state="${review_dir}/${FILENAME_PIPELINE_STATE}"
   if [[ ! -f "$pipeline_state" ]]; then
     rm -f "$prior_review_path" 2>/dev/null
   fi
@@ -694,6 +751,9 @@ cmd_review() {
 
   local review_file
   _review_file review_file "$repo" "$pr_number"
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+  mkdir -p "$review_dir"
 
   # ── Issue detection: auto-detect from branch/PR body before prompting ──
   local pr_meta
@@ -720,8 +780,10 @@ cmd_review() {
   local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
 
   # ── Auto-detect incomplete pipeline (skip stale check if resuming) ──
+  local review_dir
+  review_dir="$(dirname "$review_file")"
   local has_pipeline_state="false"
-  if [[ -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
+  if [[ -f "${review_dir}/${FILENAME_PIPELINE_STATE}" ]]; then
     has_pipeline_state="true"
   fi
 
@@ -733,7 +795,7 @@ cmd_review() {
   local wt_path
   _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head" "$repo_dir"
 
-  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
+  local session_log="${review_dir}/${FILENAME_SESSION}"
 
   local prior_review_path=""
   _resolve_prior_review prior_review_path "$review_file" "$session_log" "$has_pipeline_state"
@@ -777,7 +839,7 @@ cmd_review() {
 
   if [[ "$auto_post" == "true" ]]; then
     cmd_post "$repo" "$pr_number" "$auto_submit"
-    local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
+    local post_session_log="${review_dir}/${FILENAME_POST_SESSION}"
     _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
     return
   fi
@@ -795,7 +857,7 @@ cmd_review() {
   fi
 
   cmd_post "$repo" "$pr_number" "false"
-  local post_session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_POST_SESSION}"
+  local post_session_log="${review_dir}/${FILENAME_POST_SESSION}"
 
   if confirm "Submit review now?"; then
     _submit_pending_review "$repo" "$pr_number" "$review_file"
@@ -987,13 +1049,14 @@ cmd_self_review() {
 
   # ── Review file in worktree ──
   _ensure_ignore_dir "$wt_path"
-  local review_file="${wt_path}/${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
+  local self_review_dir="${wt_path}/${SELF_REVIEW_DIR}"
+  local review_file="${self_review_dir}/${SELF_REVIEW_FILE}"
 
-  local session_log="${review_file%"${REVIEW_EXT}"}${SUFFIX_SESSION}"
+  local session_log="${self_review_dir}/${FILENAME_SESSION}"
 
   # ── Auto-detect incomplete pipeline (skip archive if resuming) ──
   local has_pipeline_state="false"
-  if [[ -f "${review_file%"${REVIEW_EXT}"}${SUFFIX_PIPELINE_STATE}" ]]; then
+  if [[ -f "${self_review_dir}/${FILENAME_PIPELINE_STATE}" ]]; then
     has_pipeline_state="true"
   fi
 
@@ -1075,7 +1138,9 @@ _submit_pending_review() {
   local pr_number="$2"
   local review_file="$3"
 
-  local post_file="${review_file%.md}.post.jsonl"
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+  local post_file="${review_dir}/${FILENAME_POST_SESSION}"
   if [[ ! -f "$post_file" ]]; then
     err "No post tracking file found: $post_file"
     return 1
@@ -1191,6 +1256,9 @@ main() {
   local command="${positional[0]:-}"
 
   case "$command" in
+    gc)
+      cmd_gc
+      ;;
     post)
       local post_input="${positional[1]:-}"
       [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
@@ -1223,12 +1291,75 @@ main() {
   esac
 }
 
+_gc_dir_is_all_stale() {
+  local dir="$1"
+  local has_stale="false" has_recent="false"
+  local _f
+  while IFS= read -r -d '' _f; do
+    has_stale="true"
+    break
+  done < <(find "$dir" -type f -mtime +${GC_STALE_DAYS} -print0 2>/dev/null)
+  [[ "$has_stale" == "true" ]] || return 1
+
+  while IFS= read -r -d '' _f; do
+    has_recent="true"
+    break
+  done < <(find "$dir" -type f -not -mtime +${GC_STALE_DAYS} -print0 2>/dev/null)
+  [[ "$has_recent" == "false" ]]
+}
+
+_gc_clean_intermediates() {
+  local -n __count=$1
+  local review_dir="$2"
+  local intermediate
+  for intermediate in "${review_dir}"group-*.md "${review_dir}"group-*.jsonl \
+                      "${review_dir}"holistic.md "${review_dir}"holistic.jsonl \
+                      "${review_dir}"synthesis.jsonl; do
+    [[ -f "$intermediate" ]] || continue
+    rm -f "$intermediate"
+    __count=$((__count + 1))
+  done
+}
+
+cmd_gc() {
+  local cleaned=0
+
+  for review_dir in "$REVIEWS_DIR"/*/; do
+    [[ -d "$review_dir" ]] || continue
+
+    local has_review="false"
+    [[ -f "${review_dir}review${REVIEW_EXT}" ]] && has_review="true"
+
+    # No review file and all files stale — remove entire directory
+    if [[ "$has_review" == "false" ]] && _gc_dir_is_all_stale "$review_dir"; then
+      rm -rf "$review_dir"
+      info "GC: removed orphaned $(basename "${review_dir%/}")"
+      cleaned=$((cleaned + 1))
+      continue
+    fi
+
+    # Completed review (no pipeline) — remove stale intermediates
+    local has_pipeline="false"
+    [[ -f "${review_dir}${FILENAME_PIPELINE_STATE}" ]] && has_pipeline="true"
+
+    if [[ "$has_review" == "true" && "$has_pipeline" == "false" ]]; then
+      _gc_clean_intermediates cleaned "$review_dir"
+    fi
+  done
+
+  if [[ "$cleaned" -gt 0 ]]; then
+    info "GC: cleaned ${cleaned} items"
+  else
+    info "GC: nothing to clean"
+  fi
+}
+
 PRUNE_MAX_FILES=10
 
 _prune_merged_reviews() {
   local pruned=0 checked=0
 
-  for meta_file in "$REVIEWS_DIR"/*.meta.json; do
+  for meta_file in "$REVIEWS_DIR"/*/meta.json; do
     [[ -f "$meta_file" ]] || continue
     (( checked >= PRUNE_MAX_FILES )) && break
 
@@ -1245,7 +1376,9 @@ _prune_merged_reviews() {
     state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
 
     if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
-      rm -f "${meta_file%.meta.json}"*
+      local review_dir
+      review_dir="$(dirname "$meta_file")"
+      rm -rf "$review_dir"
       info "Pruned ${repo}#${pr_number} (${state})"
       pruned=$((pruned + 1))
     fi

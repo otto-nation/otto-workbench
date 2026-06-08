@@ -141,6 +141,9 @@ HOLISTIC_MIN_GROUPS = 4
 
 DEFAULT_MAX_COST = 20.0
 DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_TURNS_GROUP = 15
+DEFAULT_MAX_TURNS_SYNTHESIS = 15
+DEFAULT_MAX_TURNS_SINGLE = 15
 DEFAULT_MAX_TURNS_NO_PREFLIGHT = 30
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 
@@ -600,7 +603,7 @@ def _extract_section(content: str, header: str) -> str:
     return content[start:end].strip()
 
 
-_EMPTY_SECTION_LINE_RE = re.compile(r"^(?:_none\._|_\(none\)_|---)\s*$", re.IGNORECASE)
+_EMPTY_SECTION_LINE_RE = re.compile(r"^(?:_none\._|_\(none\)_|_none in this file group\._|---)\s*$", re.IGNORECASE)
 
 
 def _clean_section_text(text: str) -> str:
@@ -1642,15 +1645,20 @@ def _collect_denied_contents(log_path: str) -> list[str]:
     return [_extract_denied_content(d) for d in denials]
 
 
-def _try_recover_review(job: "ReviewJob"):
-    if not Path(job.session_log).exists():
-        return
-    for content in _collect_denied_contents(job.session_log):
+def _try_recover_output(log_path: str, output_path: str) -> bool:
+    if not Path(log_path).exists():
+        return False
+    for content in _collect_denied_contents(log_path):
         if "## " not in content:
             continue
-        Path(job.review_file).write_text(content + "\n")
-        _warn(f"Recovered review from denied write — saved to {job.review_file}")
-        return
+        Path(output_path).write_text(content + "\n")
+        _warn(f"Recovered review from denied write — saved to {output_path}")
+        return True
+    return False
+
+
+def _try_recover_review(job: "ReviewJob"):
+    _try_recover_output(job.session_log, job.review_file)
 
 
 # ── Model selection ───────────────────────────────────────────────────────────
@@ -1833,7 +1841,7 @@ def run_single_agent(job: ReviewJob):
     _info(f"Running review agent on {label}...")
     print()
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_SINGLE)
     print()
 
     reason = ""
@@ -1882,9 +1890,11 @@ def _review_group(
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, max_turns=DEFAULT_MAX_TURNS_GROUP)
 
     failed = None
+    if not Path(group_output).exists():
+        _try_recover_output(group_log, group_output)
     if not Path(group_output).exists():
         reason = _diagnose_missing_output(group_log)
         _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
@@ -2039,7 +2049,11 @@ def _has_findings(merged_content: str) -> bool:
 
 def _count_findings(text: str) -> dict[str, int]:
     return {
-        prefix: len(set(re.findall(rf"\[{prefix}\d+\]", text)))
+        prefix: len(set(re.findall(
+            rf"^- (?:\[ \] )?\*\*\[{prefix}(\d+)\]\*\*",
+            text,
+            re.MULTILINE,
+        )))
         for _, prefix in FINDING_SECTIONS
     }
 
@@ -2130,7 +2144,7 @@ def _phase_synthesis(
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
     _info("Phase 4: Synthesis...")
     print()
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model)
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_SYNTHESIS)
     print()
 
     if not Path(job.review_file).exists():

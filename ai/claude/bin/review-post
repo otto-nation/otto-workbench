@@ -203,6 +203,7 @@ def parse_findings(text: str) -> list[Finding]:
     findings: list[Finding] = []
     current_severity: str | None = None
     body_lines: list[str] = []
+    accumulating = False
 
     for raw_line in text.split("\n"):
         stripped = raw_line.strip()
@@ -211,11 +212,13 @@ def parse_findings(text: str) -> list[Finding]:
         if stripped_lower in SECTION_HEADERS:
             _close_previous(findings, body_lines)
             current_severity = SECTION_HEADERS[stripped_lower]
+            accumulating = False
             continue
 
         if stripped.startswith("## "):
             _close_previous(findings, body_lines)
             current_severity = None
+            accumulating = False
             continue
 
         if current_severity is None:
@@ -223,6 +226,7 @@ def parse_findings(text: str) -> list[Finding]:
 
         if _is_section_boundary(stripped):
             _close_previous(findings, body_lines)
+            accumulating = False
             continue
 
         finding = _parse_finding_line(stripped)
@@ -230,9 +234,10 @@ def parse_findings(text: str) -> list[Finding]:
             _close_previous(findings, body_lines)
             body_lines = [finding.body] if finding.body else []
             findings.append(finding)
+            accumulating = True
             continue
 
-        if findings and stripped:
+        if accumulating and stripped:
             body_lines.append(raw_line.rstrip())
 
     _close_previous(findings, body_lines)

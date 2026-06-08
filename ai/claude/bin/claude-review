@@ -670,6 +670,11 @@ cmd_review() {
   local auto_submit="${10:-false}"
   local repo_dir="${11:-}"
 
+  # Headless modes skip interactive prompts
+  if [[ "$no_post" == "true" || "$auto_post" == "true" ]]; then
+    force="true"
+  fi
+
   _prune_merged_reviews
 
   local pr_number
@@ -739,7 +744,17 @@ cmd_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
-  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
+  if ! "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"; then
+    err "Review orchestration failed"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$review_file" ]]; then
+    err "Review orchestration completed but produced no review file"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
 
   _cleanup_prior_review "$review_file" "$prior_review_path"
 
@@ -959,7 +974,17 @@ cmd_self_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
-  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
+  if ! "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"; then
+    err "Review orchestration failed"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$review_file" ]]; then
+    err "Review orchestration completed but produced no review file"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
 
   _cleanup_prior_review "$review_file" "$prior_review_path"
 
@@ -1136,11 +1161,15 @@ main() {
   esac
 }
 
+PRUNE_MAX_FILES=10
+PRUNE_TIMEOUT=5
+
 _prune_merged_reviews() {
-  local pruned=0
+  local pruned=0 checked=0
 
   for meta_file in "$REVIEWS_DIR"/*.meta.json; do
     [[ -f "$meta_file" ]] || continue
+    (( checked >= PRUNE_MAX_FILES )) && break
 
     local repo pr_number
     read -r repo pr_number <<< "$(jq -r '[.repo // "", .pr_number // ""] | @tsv' "$meta_file" 2>/dev/null)" || continue
@@ -1149,8 +1178,10 @@ _prune_merged_reviews() {
       continue
     fi
 
+    checked=$((checked + 1))
+
     local state
-    state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
+    state=$(timeout "${PRUNE_TIMEOUT}s" gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
 
     if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
       rm -f "${meta_file%.meta.json}"*

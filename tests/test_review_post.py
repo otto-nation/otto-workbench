@@ -1,4 +1,5 @@
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -276,6 +277,43 @@ class TestParseFindings:
             ("S", "Cleanup needed"),
             ("N", "Style issue"),
         ]
+
+    def test_stray_text_between_sections_does_not_corrupt_previous_finding(self, rp):
+        text = (
+            "## Should fix\n"
+            "- **[S1]** **`a.go:10`** — Real should-fix body\n\n"
+            "## Nit\n"
+            "_None in this file group._\n"
+            "- **[N1]** **`b.go:20`** — Real nit body\n"
+        )
+        findings = rp.parse_findings(text)
+        assert len(findings) == 2
+        s1 = next(f for f in findings if f.id == "S1")
+        n1 = next(f for f in findings if f.id == "N1")
+        assert s1.body == "Real should-fix body"
+        assert n1.body == "Real nit body"
+
+    def test_empty_section_markers_do_not_corrupt_adjacent_findings(self, rp):
+        text = (
+            "## Must fix\n"
+            "_None in this file group._\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — Should body\n"
+            "- **[S2]** **`b.go:2`** — Last should body\n\n"
+            "## Nit\n"
+            "_None in this file group._\n"
+            "- **[N1]** **`c.go:3`** — First nit\n\n"
+            "## Idioms\n"
+            "_None in this file group._\n"
+            "- **[I1]** **`d.go:4`** — First idiom\n"
+        )
+        findings = rp.parse_findings(text)
+        assert len(findings) == 4
+        by_id = {f.id: f for f in findings}
+        assert by_id["S1"].body == "Should body"
+        assert by_id["S2"].body == "Last should body"
+        assert by_id["N1"].body == "First nit"
+        assert by_id["I1"].body == "First idiom"
 
 
 class TestParseDiffHunks:
@@ -1095,3 +1133,379 @@ class TestDedupAgainstPosted:
         kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
+
+
+class TestIsSectionBoundary:
+    def test_sub_header_is_boundary(self, rp):
+        assert rp._is_section_boundary("### Group A") is True
+
+    def test_strikethrough_finding_is_boundary(self, rp):
+        assert rp._is_section_boundary("- ~~**[M1]** **`file.go:10`** — Resolved~~") is True
+
+    def test_non_strikethrough_finding_is_not_boundary(self, rp):
+        assert rp._is_section_boundary("- **[M1]** **`file.go:10`** — Open") is False
+
+    def test_regular_text_is_not_boundary(self, rp):
+        assert rp._is_section_boundary("Some regular text here") is False
+
+    def test_h2_header_is_not_boundary(self, rp):
+        assert rp._is_section_boundary("## Must fix") is False
+
+
+class TestFinalizeFinding:
+    def test_non_empty_body_lines(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=None, body="original")
+        rp._finalize_finding(f, ["first line", "second line"])
+        assert "first line" in f.body
+        assert "second line" in f.body
+
+    def test_empty_body_lines_leaves_body_unchanged(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=None, body="original")
+        rp._finalize_finding(f, [])
+        assert f.body == "original"
+
+    def test_trailing_sub_header_stripped(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=None, body="original")
+        rp._finalize_finding(f, ["actual content", "### Group B"])
+        assert "### Group B" not in f.body
+        assert "actual content" in f.body
+
+
+class TestIsLineResolutionError:
+    def test_matching_text(self, rp):
+        assert rp._is_line_resolution_error("Line could not be resolved to a position") is True
+
+    def test_non_matching_text(self, rp):
+        assert rp._is_line_resolution_error("Something else went wrong") is False
+
+    def test_case_insensitive(self, rp):
+        assert rp._is_line_resolution_error("LINE COULD NOT BE RESOLVED") is True
+
+
+class TestHunkEnd:
+    def test_line_inside_hunk(self, rp):
+        hunks = [(10, 20), (30, 40)]
+        assert rp._hunk_end(15, hunks) == 20
+
+    def test_line_outside_all_hunks(self, rp):
+        hunks = [(10, 20), (30, 40)]
+        assert rp._hunk_end(25, hunks) is None
+
+    def test_line_at_hunk_start(self, rp):
+        hunks = [(10, 20)]
+        assert rp._hunk_end(10, hunks) == 20
+
+    def test_line_at_hunk_end(self, rp):
+        hunks = [(10, 20)]
+        assert rp._hunk_end(20, hunks) == 20
+
+    def test_multiple_hunks_returns_correct_end(self, rp):
+        hunks = [(1, 5), (10, 15), (20, 25)]
+        assert rp._hunk_end(12, hunks) == 15
+        assert rp._hunk_end(3, hunks) == 5
+        assert rp._hunk_end(22, hunks) == 25
+
+
+class TestExtractBodyFindings:
+    def test_standard_finding_in_body(self, rp):
+        body = "- **[M1]** **`handler.go:42`** — Fix the bug"
+        results = rp._extract_body_findings(body)
+        assert len(results) == 1
+        assert results[0]["path"] == "handler.go"
+        assert results[0]["body"] == "Fix the bug"
+
+    def test_multiple_findings(self, rp):
+        body = (
+            "- **[M1]** **`a.go:10`** — First issue\n"
+            "- **[S1]** **`b.go:20`** — Second issue\n"
+        )
+        results = rp._extract_body_findings(body)
+        assert len(results) == 2
+        assert results[0]["path"] == "a.go"
+        assert results[1]["path"] == "b.go"
+
+    def test_no_findings(self, rp):
+        body = "Just some regular text with no findings."
+        results = rp._extract_body_findings(body)
+        assert len(results) == 0
+
+    def test_path_extraction_with_line_number_suffix(self, rp):
+        body = "- **[M1]** **`handler.go:42`** — Fix bug"
+        results = rp._extract_body_findings(body)
+        assert results[0]["path"] == "handler.go"
+
+
+class TestFormatFindingLine:
+    def test_with_path_and_line(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=42,
+            end_line=None, body="Fix bug", posted_id="M1",
+        )
+        result = rp._format_finding_line(f)
+        assert "**[M1] [must-fix]**" in result
+        assert "`file.go:42`" in result
+        assert "Fix bug" in result
+        assert result.startswith("- ")
+
+    def test_with_path_only_no_line(self, rp):
+        f = rp.Finding(
+            id="S1", severity="S", seq=1, path="file.go", line=None,
+            end_line=None, body="Refactor", posted_id="S1",
+        )
+        result = rp._format_finding_line(f)
+        assert "`file.go`" in result
+        assert "Refactor" in result
+
+    def test_pathless_finding(self, rp):
+        f = rp.Finding(
+            id="I1", severity="I", seq=1, path="", line=None,
+            end_line=None, body="Good pattern across files.", posted_id="I1",
+        )
+        result = rp._format_finding_line(f)
+        assert "**[I1] [idiom]**" in result
+        assert "Good pattern across files." in result
+        assert "`" not in result.split("**")[-1]
+
+
+class TestBuildPermalink:
+    def test_with_line_number_only(self, rp):
+        m = rp._PERMALINK_REF_RE.search("see file.go:42")
+        result = rp._build_permalink("owner/repo", "abc123", m)
+        assert "https://github.com/owner/repo/blob/abc123/file.go#L42" in result
+        assert "`file.go:42`" in result
+
+    def test_with_line_range(self, rp):
+        m = rp._PERMALINK_REF_RE.search("see file.go:10-20")
+        result = rp._build_permalink("owner/repo", "def456", m)
+        assert "https://github.com/owner/repo/blob/def456/file.go#L10-L20" in result
+        assert "`file.go:10-20`" in result
+
+    def test_url_format_correctness(self, rp):
+        m = rp._PERMALINK_REF_RE.search("at pkg/handler.go:5")
+        result = rp._build_permalink("org/repo", "sha123", m)
+        assert result.startswith("[")
+        assert "](https://github.com/org/repo/blob/sha123/pkg/handler.go#L5)" in result
+
+
+class TestResolvePermalinks:
+    DIFF = (
+        "diff --git a/pkg/handler.go b/pkg/handler.go\n"
+        "--- a/pkg/handler.go\n"
+        "+++ b/pkg/handler.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    def test_reference_to_file_in_diff_uses_head_ref(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=5,
+            end_line=None, body="see pkg/handler.go:42",
+        )
+        rp.resolve_permalinks([f], "org/repo", self.DIFF, "head-sha", "base-sha")
+        assert "head-sha" in f.body
+        assert "base-sha" not in f.body
+
+    def test_reference_to_file_not_in_diff_uses_base_ref(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=5,
+            end_line=None, body="see other.go:10",
+        )
+        rp.resolve_permalinks([f], "org/repo", self.DIFF, "head-sha", "base-sha")
+        assert "base-sha" in f.body
+        assert "head-sha" not in f.body
+
+    def test_empty_refs_no_transformation(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=5,
+            end_line=None, body="see other.go:10",
+        )
+        rp.resolve_permalinks([f], "org/repo", self.DIFF, "", "")
+        assert f.body == "see other.go:10"
+
+    def test_no_matching_references(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="handler.go", line=5,
+            end_line=None, body="just plain text with no refs",
+        )
+        rp.resolve_permalinks([f], "org/repo", self.DIFF, "head-sha", "base-sha")
+        assert f.body == "just plain text with no refs"
+
+
+class TestClosePrevious:
+    def test_with_findings_and_body_lines(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=None, body="original")
+        body_lines = ["updated body content", "more content"]
+        rp._close_previous([f], body_lines)
+        assert "updated body content" in f.body
+        assert len(body_lines) == 0
+
+    def test_empty_findings_is_noop(self, rp):
+        body_lines = ["some text"]
+        rp._close_previous([], body_lines)
+        assert len(body_lines) == 0
+
+    def test_body_lines_cleared_after_call(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=None, body="x")
+        body_lines = ["line1", "line2"]
+        rp._close_previous([f], body_lines)
+        assert body_lines == []
+
+
+class TestParseFindingsEdgeCases:
+    def test_finding_with_stable_id_comment(self, rp):
+        text = (
+            "## Must fix\n\n"
+            "- **[M1]** <!-- sid:abc12345 --> **`file.go:10`** — body text\n"
+        )
+        findings = rp.parse_findings(text)
+        assert len(findings) == 1
+        assert findings[0].id == "M1"
+        assert findings[0].path == "file.go"
+        assert findings[0].line == 10
+
+    def test_idioms_section(self, rp):
+        text = (
+            "## Idioms\n\n"
+            "- **[I1]** **`config.go:5`** — Good pattern\n"
+        )
+        findings = rp.parse_findings(text)
+        assert len(findings) == 1
+        assert findings[0].severity == "I"
+        assert findings[0].body == "Good pattern"
+
+
+class TestClassifyFindingsEdgeCases:
+    DIFF = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    def test_end_line_equals_line_single_line(self, rp):
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=5, end_line=5, body="x")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF)
+        assert len(inline) == 1
+        comment = rp.format_inline_comment(
+            rp.Finding(
+                id="M1", severity="M", seq=1, path="file.go", line=5,
+                end_line=5, body="x", full_path="file.go", posted_id="M1",
+            )
+        )
+        assert "start_line" not in comment
+        assert comment["line"] == 5
+
+
+class TestRenumberForPostingEdgeCases:
+    def test_empty_inline_and_empty_body(self, rp):
+        inline, body = rp.renumber_for_posting([], [])
+        assert inline == []
+        assert body == []
+
+    def test_only_body_findings(self, rp):
+        fb1 = rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=None, end_line=None, body="x", full_path="a.go")
+        fb2 = rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=None, end_line=None, body="y", full_path="b.go")
+        inline, body = rp.renumber_for_posting([], [fb1, fb2])
+        assert len(inline) == 0
+        assert len(body) == 2
+        assert body[0].posted_id == "S1"
+        assert body[1].posted_id == "N1"
+
+
+class TestDedupAgainstPostedEdgeCases:
+    def _make_finding(self, rp, id_str, path, body):
+        return rp.Finding(
+            id=id_str, severity=id_str[0], seq=int(id_str[1:]),
+            path=path, line=42, end_line=None, body=body,
+        )
+
+    @patch("review_post._fetch_bot_comments")
+    def test_jaccard_at_threshold_boundary(self, mock_fetch, rp):
+        # Build words so Jaccard is exactly 0.6: 3 shared out of 5 total
+        # a = {"a", "b", "c"}, b = {"a", "b", "c", "d", "e"} => 3/5 = 0.6
+        mock_fetch.return_value = [
+            {"path": "file.go", "body": "a b c d e"},
+        ]
+        f = self._make_finding(rp, "M1", "file.go", "a b c")
+        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
+        assert len(deduped) == 1
+        assert deduped[0].skip_reason == "duplicate of existing comment"
+
+    @patch("review_post._fetch_bot_comments")
+    def test_empty_path_on_both_sides_not_matched(self, mock_fetch, rp):
+        mock_fetch.return_value = [
+            {"path": "", "body": "missing error check"},
+        ]
+        f = self._make_finding(rp, "M1", "", "missing error check")
+        # Override to set path="" since _make_finding sets path to the arg
+        f.path = ""
+        kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
+        assert len(kept) == 1
+        assert len(deduped) == 0
+
+
+class TestHeadShaRegex:
+    def test_standard_sha(self, rp):
+        text = "<!-- head_sha: abc123def456 -->"
+        m = rp.HEAD_SHA_RE.search(text)
+        assert m is not None
+        assert m.group(1) == "abc123def456"
+
+    def test_uppercase_hex_does_not_match(self, rp):
+        text = "<!-- head_sha: ABC123DEF456 -->"
+        m = rp.HEAD_SHA_RE.search(text)
+        assert m is None
+
+    def test_short_sha_matches(self, rp):
+        text = "<!-- head_sha: abc1234 -->"
+        m = rp.HEAD_SHA_RE.search(text)
+        assert m is not None
+        assert m.group(1) == "abc1234"
+
+
+class TestFindingIdRegexEdgeCases:
+    def test_with_stable_id_comment(self, rp):
+        line = "- **[M1]** <!-- sid:abc12345 --> **`file.go:10`** — body"
+        m = rp.FINDING_ID_RE.match(line)
+        assert m is not None
+        assert m.group(1) == "M"
+        assert m.group(2) == "1"
+
+    def test_checkbox_and_strikethrough_combined(self, rp):
+        # The regex has optional checkbox then optional strikethrough
+        line = "- [ ] ~~**[S1]** **`file.go:5`** — Fix~~"
+        m = rp.FINDING_ID_RE.match(line)
+        assert m is not None
+        assert m.group(1) == "S"
+        assert m.group(2) == "1"
+
+    def test_double_digit_seq(self, rp):
+        line = "- **[M12]** **`file.go:10`** — body"
+        m = rp.FINDING_ID_RE.match(line)
+        assert m is not None
+        assert m.group(1) == "M"
+        assert m.group(2) == "12"
+
+
+class TestFirstFileRegexEdgeCases:
+    def test_hidden_file_not_matched_at_start(self, rp):
+        # Leading dot is not in the regex character class — hidden files
+        # are only matched when preceded by a directory component
+        m = rp.FIRST_FILE_RE.match(".gitignore")
+        assert m is None
+
+    def test_hidden_file_in_directory(self, rp):
+        m = rp.FIRST_FILE_RE.match("config/.gitignore")
+        assert m is not None
+        assert m.group(1) == "config/.gitignore"
+
+    def test_file_with_dots_in_path(self, rp):
+        m = rp.FIRST_FILE_RE.match("v1.2.3/file.go")
+        assert m is not None
+        assert m.group(1) == "v1.2.3/file.go"
+
+    def test_path_with_parentheses(self, rp):
+        m = rp.FIRST_FILE_RE.match("(auth)/page.tsx")
+        assert m is not None
+        assert m.group(1) == "(auth)/page.tsx"

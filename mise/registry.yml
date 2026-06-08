@@ -9,6 +9,7 @@ meta:
 
 tools:
   - name: mise
+    allow: true
     context: none
     description: "Polyglot dev tool version manager — replaces nvm, jenv, pyenv, asdf with one tool"
     when_to_use: "Installing/switching language runtime versions (Node, Python, Java, Go, etc.) per project"

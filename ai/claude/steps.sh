@@ -177,6 +177,13 @@ step_claude_settings() {
       '.permissions.allow = (.permissions.allow + $rp | unique)' <<< "$template")
   fi
 
+  # Inject additionalDirectories — workbench-managed paths Claude needs access to
+  local dirs_json
+  dirs_json=$(jq -n --arg claude "$CLAUDE_DIR" --arg state "$WORKBENCH_STATE_DIR" \
+    '[$claude, $state]')
+  template=$(jq --argjson dirs "$dirs_json" \
+    '.permissions.additionalDirectories = $dirs' <<< "$template")
+
   local result
   result=$(jq -n --argjson t "$template" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }

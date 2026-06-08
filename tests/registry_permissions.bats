@@ -208,12 +208,12 @@ tools:
   [[ "$found_gh_pr" -eq 1 ]]
 }
 
-@test "real registries do not include tools without allow" {
+@test "dangerous tools do not have broad Bash wildcard" {
   local -a perms=()
   collect_registry_permissions perms "$REPO_ROOT"
 
   for p in "${perms[@]}"; do
-    [[ "$p" != "Bash(docker:*)" ]] || { echo "docker should not be allowed"; return 1; }
+    [[ "$p" != "Bash(docker:*)" ]] || { echo "docker should use scoped subcommands, not broad wildcard"; return 1; }
     [[ "$p" != "Bash(get-secret:*)" ]] || { echo "get-secret should not be allowed"; return 1; }
   done
 }

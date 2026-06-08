@@ -18,10 +18,13 @@
 # ── Permissions ──────────────────────────────────────────────────────────────
 ($e._workbench.permissions.allow // []) as $prev_allow |
 ($e._workbench.permissions.deny  // []) as $prev_deny  |
+($e._workbench.permissions.additionalDirectories // []) as $prev_dirs |
 [($e.permissions.allow // [])[] | select(. as $x | $prev_allow | index($x) == null)] as $user_allow |
 [($e.permissions.deny  // [])[] | select(. as $x | $prev_deny  | index($x) == null)] as $user_deny  |
+[($e.permissions.additionalDirectories // [])[] | select(. as $x | $prev_dirs | index($x) == null)] as $user_dirs |
 ($t.permissions.allow // []) as $new_allow |
 ($t.permissions.deny  // []) as $new_deny  |
+($t.permissions.additionalDirectories // []) as $new_dirs |
 
 # ── Hooks ────────────────────────────────────────────────────────────────────
 # Hooks use matcher+hooks structure: [{matcher: "", hooks: [{type, command}]}]
@@ -48,6 +51,7 @@
 $e
 | .permissions.allow = ($new_allow + $user_allow)
 | .permissions.deny  = ($new_deny  + $user_deny)
+| .permissions.additionalDirectories = ($new_dirs + $user_dirs | unique)
 | .hooks = $merged_hooks
-| ._workbench = {permissions: {allow: $new_allow, deny: $new_deny}, hooks: $wb_hooks}
+| ._workbench = {permissions: {allow: $new_allow, deny: $new_deny, additionalDirectories: $new_dirs}, hooks: $wb_hooks}
 | . + ($t | with_entries(select(.key != "permissions" and .key != "hooks" and (.key | in($e) | not))))

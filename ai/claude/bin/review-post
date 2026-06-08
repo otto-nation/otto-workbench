@@ -892,8 +892,7 @@ def write_post_tracking(
     chunk_count: int = 1,
 ):
     """Write a post tracking entry alongside the review file."""
-    base = review_file.removesuffix(".md") if review_file.endswith(".md") else review_file
-    post_file = base + ".post.jsonl"
+    post_file = str(Path(review_file).parent / "post.jsonl")
 
     ids = [review_ids] if isinstance(review_ids, int) else review_ids
 
@@ -1056,7 +1055,7 @@ def main():
 
     # Read sidecar metadata (written by review-orchestrate)
     sidecar: dict = {}
-    sidecar_path = review_path.with_suffix(".meta.json")
+    sidecar_path = review_path.parent / "meta.json"
     if sidecar_path.exists():
         try:
             sidecar = json.loads(sidecar_path.read_text())

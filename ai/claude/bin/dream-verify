@@ -36,6 +36,10 @@ EOF
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
 MAX_LINES=200
+MEMORY_INDEX="MEMORY.md"
+RELATIVE_DATE_PATTERN='\byesterday\b|\blast week\b|\blast month\b|\btomorrow\b|\btoday\b|\blast night\b|\bnext week\b'
+MD_REFERENCE_PATTERN='\([a-zA-Z0-9_./-]+\.md\)'
+
 failures=0
 
 _check_line_count() {
@@ -51,7 +55,7 @@ _check_line_count() {
 _check_references() {
   local memory_md="$1" dir="$2" project="$3"
   local refs ref
-  refs=$(grep -oE '\([a-zA-Z0-9_./-]+\.md\)' "$memory_md" 2>/dev/null | tr -d '()') || true
+  refs=$(grep -oE "$MD_REFERENCE_PATTERN" "$memory_md" 2>/dev/null | tr -d '()') || true
   for ref in $refs; do
     if [[ ! -f "$dir/$ref" ]]; then
       err "$project: broken reference: $ref"
@@ -65,8 +69,8 @@ _check_relative_dates() {
   local topic_file match
   for topic_file in "$dir"/*.md; do
     [[ -f "$topic_file" ]] || continue
-    [[ "$(basename "$topic_file")" == "MEMORY.md" ]] && continue
-    match=$(grep -inE '\byesterday\b|\blast week\b|\blast month\b|\btomorrow\b|\btoday\b|\blast night\b|\bnext week\b' "$topic_file" 2>/dev/null) || true
+    [[ "$(basename "$topic_file")" == "$MEMORY_INDEX" ]] && continue
+    match=$(grep -inE "$RELATIVE_DATE_PATTERN" "$topic_file" 2>/dev/null) || true
     if [[ -n "$match" ]]; then
       err "$project/$(basename "$topic_file"): relative date found: $match"
       failures=$((failures + 1))
@@ -79,7 +83,7 @@ _check_duplicate_names() {
   local names="" topic_file name dups
   for topic_file in "$dir"/*.md; do
     [[ -f "$topic_file" ]] || continue
-    [[ "$(basename "$topic_file")" == "MEMORY.md" ]] && continue
+    [[ "$(basename "$topic_file")" == "$MEMORY_INDEX" ]] && continue
     name=$(awk '/^---$/{if(++c==2)exit} c==1 && /^name:/{sub(/^name: */, ""); print}' "$topic_file" 2>/dev/null) || true
     if [[ -n "$name" ]]; then
       names+="$name"$'\n'

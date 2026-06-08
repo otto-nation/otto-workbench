@@ -22,6 +22,22 @@ from pathlib import Path
 # ── Constants ────────────────────────────────────────────────────────────────
 
 MAX_TEXT_LENGTH = 500
+TEXT_PREVIEW_LENGTH = 200
+MIN_TEXT_LENGTH = 10
+DEFAULT_DAYS = 7
+
+RECORD_TYPE_USER = "user"
+CONTENT_TYPE_TEXT = "text"
+FRONTMATTER_DELIMITER = "---"
+MEMORY_INDEX = "MEMORY.md"
+LAST_DREAM_FILE = ".last-dream"
+JSONL_GLOB = "*.jsonl"
+TOPIC_GLOB = "*.md"
+
+PROJECTS_PATH = Path(".claude") / "projects"
+
+DATE_FMT = "%Y-%m-%d"
+DATETIME_FMT = "%Y-%m-%d %H:%M"
 
 SIGNAL_PATTERNS: dict[str, re.Pattern] = {
     "correction": re.compile(
@@ -77,12 +93,12 @@ def _warn(msg: str) -> None:
 
 
 def extract_user_text(record: dict) -> str | None:
-    if record.get("type") != "user":
+    if record.get("type") != RECORD_TYPE_USER:
         return None
     content = record.get("message", {}).get("content", "")
 
     text = _extract_text_from_content(content)
-    if not text or len(text) < 10 or text.startswith("<"):
+    if not text or len(text) < MIN_TEXT_LENGTH or text.startswith("<"):
         return None
     return text
 
@@ -91,7 +107,7 @@ def _extract_text_from_content(content: str | list | None) -> str | None:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == CONTENT_TYPE_TEXT]
         return " ".join(texts) if texts else None
     return None
 
@@ -113,8 +129,8 @@ def parse_frontmatter(path: str | Path) -> dict:
 
 def _parse_frontmatter_lines(lines: list[str]) -> dict:
     try:
-        start = lines.index("---") + 1
-        end = lines.index("---", start)
+        start = lines.index(FRONTMATTER_DELIMITER) + 1
+        end = lines.index(FRONTMATTER_DELIMITER, start)
     except ValueError:
         return {}
     result: dict[str, str] = {}
@@ -130,12 +146,12 @@ def _parse_frontmatter_lines(lines: list[str]) -> dict:
 
 
 def _read_last_dream(memory_dir: Path) -> str | None:
-    last_dream_file = memory_dir / ".last-dream"
-    if not last_dream_file.exists():
+    stamp = memory_dir / LAST_DREAM_FILE
+    if not stamp.exists():
         return None
     try:
-        ts = int(last_dream_file.read_text().strip())
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        ts = int(stamp.read_text().strip())
+        return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
     except (ValueError, OSError):
         return None
 
@@ -150,14 +166,14 @@ def _scan_topic_file(f: Path, now: datetime) -> dict:
         "description": fm.get("description", ""),
         "type": fm.get("type", ""),
         "size": f.stat().st_size,
-        "modified": mtime.strftime("%Y-%m-%d"),
+        "modified": mtime.strftime(DATE_FMT),
         "stale": age_days > STALE_DAYS,
         "age_days": age_days,
     }
 
 
 def scan_memory_state(home: Path) -> list[dict]:
-    projects_dir = home / ".claude" / "projects"
+    projects_dir = home / PROJECTS_PATH
     if not projects_dir.exists():
         return []
 
@@ -166,13 +182,13 @@ def scan_memory_state(home: Path) -> list[dict]:
     for memory_dir in sorted(projects_dir.glob("*/memory")):
         if not memory_dir.is_dir():
             continue
-        memory_md = memory_dir / "MEMORY.md"
+        memory_md = memory_dir / MEMORY_INDEX
         if not memory_md.exists():
             continue
         topic_files = [
             _scan_topic_file(f, now)
-            for f in sorted(memory_dir.glob("*.md"))
-            if f.name != "MEMORY.md"
+            for f in sorted(memory_dir.glob(TOPIC_GLOB))
+            if f.name != MEMORY_INDEX
         ]
         states.append({
             "project_id": memory_dir.parent.name,
@@ -184,7 +200,7 @@ def scan_memory_state(home: Path) -> list[dict]:
 
 
 def _extract_signals_from_file(jsonl_file: Path, project_id: str) -> list[dict]:
-    session_date = datetime.fromtimestamp(jsonl_file.stat().st_mtime).strftime("%Y-%m-%d")
+    session_date = datetime.fromtimestamp(jsonl_file.stat().st_mtime).strftime(DATE_FMT)
     try:
         raw_lines = jsonl_file.read_text().splitlines()
     except OSError:
@@ -217,7 +233,7 @@ def _classify_line(raw_line: str, project_id: str, session_date: str) -> dict | 
 
 
 def scan_sessions(home: Path, days: int) -> list[dict]:
-    projects_dir = home / ".claude" / "projects"
+    projects_dir = home / PROJECTS_PATH
     if not projects_dir.exists():
         return []
 
@@ -233,7 +249,7 @@ def scan_sessions(home: Path, days: int) -> list[dict]:
 def _scan_project_sessions(project_dir: Path, cutoff: datetime) -> list[dict]:
     project_id = project_dir.name
     signals = []
-    for jsonl_file in sorted(project_dir.glob("*.jsonl")):
+    for jsonl_file in sorted(project_dir.glob(JSONL_GLOB)):
         try:
             mtime = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
         except OSError:
@@ -278,7 +294,7 @@ def _format_signal_category(category: str, cat_signals: list[dict]) -> list[str]
     lines = [f"### {category} ({len(cat_signals)})\n"]
     for sig in cat_signals:
         lines.append(f"- **[{sig['session_date']}]** `{sig['project_id']}`")
-        text_preview = sig["text"].replace("\n", " ")[:200]
+        text_preview = sig["text"].replace("\n", " ")[:TEXT_PREVIEW_LENGTH]
         lines.append(f"  > {text_preview}")
         lines.append("")
     return lines
@@ -321,7 +337,7 @@ def main() -> None:
         description="Scan session transcripts and memory state for dream consolidation.",
         usage="dream-scan [--days N] [--home DIR]",
     )
-    parser.add_argument("--days", type=int, default=7, help="scan sessions from last N days (default: 7)")
+    parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"scan sessions from last N days (default: {DEFAULT_DAYS})")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
     args = parser.parse_args()
 

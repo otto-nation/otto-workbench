@@ -179,8 +179,11 @@ step_claude_settings() {
 
   # Inject additionalDirectories — workbench-managed paths Claude needs access to
   local dirs_json
-  dirs_json=$(jq -n --arg claude "$CLAUDE_DIR" --arg state "$WORKBENCH_STATE_DIR" \
-    '[$claude, $state]')
+  dirs_json=$(jq -n \
+    --arg claude "$CLAUDE_DIR" \
+    --arg state "$WORKBENCH_STATE_DIR" \
+    --arg local "$HOME/.local" \
+    '[$claude, $local, $state]')
   template=$(jq --argjson dirs "$dirs_json" \
     '.permissions.additionalDirectories = $dirs' <<< "$template")
 

@@ -126,7 +126,10 @@
       "Write",
       "Read(//tmp/**)",
       "Write(//tmp/**)",
-      "Edit(//tmp/**)"
+      "Edit(//tmp/**)",
+      "Read(//private/tmp/**)",
+      "Write(//private/tmp/**)",
+      "Edit(//private/tmp/**)"
     ],
     "deny": [
       "Bash(git reset:*)",

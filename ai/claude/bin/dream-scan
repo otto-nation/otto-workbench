@@ -112,15 +112,14 @@ def parse_frontmatter(path: str | Path) -> dict:
 
 
 def _parse_frontmatter_lines(lines: list[str]) -> dict:
+    try:
+        start = lines.index("---") + 1
+        end = lines.index("---", start)
+    except ValueError:
+        return {}
     result: dict[str, str] = {}
-    in_fm = False
-    for line in lines:
-        if line.strip() == "---":
-            if in_fm:
-                return result
-            in_fm = True
-            continue
-        if not in_fm or line.startswith(" ") or ":" not in line:
+    for line in lines[start:end]:
+        if line.startswith(" ") or ":" not in line:
             continue
         key, _, value = line.partition(":")
         result[key.strip()] = value.strip()
@@ -186,16 +185,13 @@ def scan_memory_state(home: Path) -> list[dict]:
 
 def _extract_signals_from_file(jsonl_file: Path, project_id: str) -> list[dict]:
     session_date = datetime.fromtimestamp(jsonl_file.stat().st_mtime).strftime("%Y-%m-%d")
-    signals = []
     try:
-        with open(jsonl_file) as f:
-            for raw_line in f:
-                sig = _classify_line(raw_line, project_id, session_date)
-                if sig:
-                    signals.append(sig)
+        raw_lines = jsonl_file.read_text().splitlines()
     except OSError:
         _warn(f"Could not read {jsonl_file}")
-    return signals
+        return []
+    results = [_classify_line(line, project_id, session_date) for line in raw_lines]
+    return [sig for sig in results if sig is not None]
 
 
 def _classify_line(raw_line: str, project_id: str, session_date: str) -> dict | None:
@@ -290,23 +286,31 @@ def _format_signal_category(category: str, cat_signals: list[dict]) -> list[str]
 
 def format_report(memory_states: list[dict], signals: list[dict]) -> str:
     lines: list[str] = ["## Memory State\n"]
-
-    if not memory_states:
-        lines.append("No memory directories found.\n")
-    else:
-        for state in memory_states:
-            lines.extend(_format_memory_state(state))
-
+    lines.extend(_format_memory_section(memory_states))
     lines.append("## Session Signals\n")
-    if not signals:
-        lines.append("No signals found in recent sessions.\n")
-    else:
-        for category in SIGNAL_PRIORITY:
-            cat_signals = [s for s in signals if s["category"] == category]
-            if cat_signals:
-                lines.extend(_format_signal_category(category, cat_signals))
-
+    lines.extend(_format_signals_section(signals))
     return "\n".join(lines)
+
+
+def _format_memory_section(states: list[dict]) -> list[str]:
+    if not states:
+        return ["No memory directories found.\n"]
+    lines: list[str] = []
+    for state in states:
+        lines.extend(_format_memory_state(state))
+    return lines
+
+
+def _format_signals_section(signals: list[dict]) -> list[str]:
+    if not signals:
+        return ["No signals found in recent sessions.\n"]
+    lines: list[str] = []
+    for category in SIGNAL_PRIORITY:
+        cat_signals = [s for s in signals if s["category"] == category]
+        if not cat_signals:
+            continue
+        lines.extend(_format_signal_category(category, cat_signals))
+    return lines
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

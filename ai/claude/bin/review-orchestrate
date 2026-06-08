@@ -1880,6 +1880,18 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     return holistic_content, holistic_output, holistic_log
 
 
+def _check_serial_abort(
+    i: int, group_count: int, reason: str, log_path: str,
+    consecutive: int, last_reason: str,
+) -> tuple[str, int, str]:
+    if _is_model_error(log_path):
+        return f"Model not available — aborting remaining {group_count - i} groups", 0, ""
+    consecutive = consecutive + 1 if reason == last_reason else 1
+    if consecutive >= CONSECUTIVE_FAIL_THRESHOLD:
+        return f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({reason}) — aborting remaining {group_count - i} groups", 0, ""
+    return "", consecutive, reason
+
+
 def _run_serial_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
@@ -1895,28 +1907,21 @@ def _run_serial_reviews(
             i, grp, job, group_count, holistic_content,
             skip=skip, pipeline_state=pipeline_state,
         )
-        if failed:
-            failed_groups.append(failed)
-            _, reason = failed
-            group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
-            if _is_model_error(group_log):
-                _warn(f"Model not available — aborting remaining {group_count - i} groups")
-                for j, remaining in enumerate(groups[i:], i + 1):
-                    failed_groups.append((remaining.name, reason))
-                break
-            if reason == last_reason:
-                consecutive_same_reason += 1
-            else:
-                consecutive_same_reason = 1
-                last_reason = reason
-            if consecutive_same_reason >= CONSECUTIVE_FAIL_THRESHOLD:
-                _warn(f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({reason}) — aborting remaining {group_count - i} groups")
-                for j, remaining in enumerate(groups[i:], i + 1):
-                    failed_groups.append((remaining.name, reason))
-                break
-        else:
+        if not failed:
             consecutive_same_reason = 0
             last_reason = ""
+            continue
+        failed_groups.append(failed)
+        _, reason = failed
+        group_log = job.review_file.replace(REVIEW_EXT, SUFFIX_GROUP_LOG.format(i))
+        abort_msg, consecutive_same_reason, last_reason = _check_serial_abort(
+            i, group_count, reason, group_log, consecutive_same_reason, last_reason,
+        )
+        if not abort_msg:
+            continue
+        _warn(abort_msg)
+        failed_groups.extend((remaining.name, reason) for remaining in groups[i:])
+        break
     return failed_groups
 
 

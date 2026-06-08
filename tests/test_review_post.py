@@ -666,30 +666,40 @@ class TestEndToEnd:
 
 
 class TestWritePostTracking:
+    def _review_dir(self, tmp_path):
+        """Create and return the folder-layout review directory."""
+        d = tmp_path / "test-review"
+        d.mkdir()
+        return d
+
     def test_submitted_true(self, rp, tmp_path):
-        review = str(tmp_path / "test-review.md")
+        d = self._review_dir(tmp_path)
+        review = str(d / "review.md")
         rp.write_post_tracking(review, 123, "abc", 5, 2, 1, submitted=True)
-        data = json.loads((tmp_path / "test-review.post.jsonl").read_text())
+        data = json.loads((d / "post.jsonl").read_text())
         assert data["submitted"] is True
 
     def test_submitted_defaults_false(self, rp, tmp_path):
-        review = str(tmp_path / "test-review.md")
+        d = self._review_dir(tmp_path)
+        review = str(d / "review.md")
         rp.write_post_tracking(review, 123, "abc", 5, 2, 1)
-        data = json.loads((tmp_path / "test-review.post.jsonl").read_text())
+        data = json.loads((d / "post.jsonl").read_text())
         assert data["submitted"] is False
 
     def test_single_int_backward_compat(self, rp, tmp_path):
-        review = str(tmp_path / "test-review.md")
+        d = self._review_dir(tmp_path)
+        review = str(d / "review.md")
         rp.write_post_tracking(review, 456, "abc", 3, 1, 0)
-        data = json.loads((tmp_path / "test-review.post.jsonl").read_text())
+        data = json.loads((d / "post.jsonl").read_text())
         assert data["review_id"] == 456
         assert data["review_ids"] == [456]
         assert data["chunk_count"] == 1
 
     def test_list_of_review_ids_with_chunk_count(self, rp, tmp_path):
-        review = str(tmp_path / "test-review.md")
+        d = self._review_dir(tmp_path)
+        review = str(d / "review.md")
         rp.write_post_tracking(review, [100, 200, 300], "abc", 90, 5, 2, submitted=True, chunk_count=3)
-        data = json.loads((tmp_path / "test-review.post.jsonl").read_text())
+        data = json.loads((d / "post.jsonl").read_text())
         assert data["review_id"] == 100
         assert data["review_ids"] == [100, 200, 300]
         assert data["chunk_count"] == 3

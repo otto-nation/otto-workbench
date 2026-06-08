@@ -20,6 +20,10 @@ ${issue_section}
 ${env_section}
 
 ## Output
-Write to: ${holistic_output}
+You MUST use the Write tool to write to: ${holistic_output}
+Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
 Sections: ## Holistic Assessment, ## Flags for Detailed Review, ## Cross-module Concerns
 Do NOT write per-file findings — those come from the detailed review phase.
+
+## Turn budget
+You have a limited number of tool calls. Write your assessment file within the first few turns. For files listed under "Files not pre-collected," read only those critical to the holistic assessment.

@@ -142,6 +142,7 @@ HOLISTIC_MIN_GROUPS = 4
 DEFAULT_MAX_COST = 20.0
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_TURNS_GROUP = 15
+DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
 DEFAULT_MAX_TURNS_NO_PREFLIGHT = 30
@@ -1697,6 +1698,7 @@ def _build_agent_cmd(
     cmd = [
         "claude", "-p", "--bare", "--verbose", "--output-format", "stream-json",
         "--permission-mode", "acceptEdits",
+        "--allowedTools", "Bash(*)",
         "--disable-slash-commands",
         *add_dir_args,
         "--agent", "reviewer",
@@ -1920,12 +1922,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
     )
-    has_omitted = job.preflight is not None and job.preflight.omitted_files
-    max_turns = DEFAULT_MAX_TURNS_NO_PREFLIGHT if has_omitted else DEFAULT_MAX_TURNS
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=max_turns)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=DEFAULT_MAX_TURNS_HOLISTIC)
     print()
 
     holistic_content = ""
@@ -2052,6 +2052,13 @@ def _has_findings(merged_content: str) -> bool:
     return False
 
 
+def _is_complete_review(review_file: str) -> bool:
+    if not Path(review_file).exists():
+        return False
+    content = Path(review_file).read_text()
+    return "## Summary" in content or "## Verdict" in content
+
+
 def _count_findings(text: str) -> dict[str, int]:
     return {
         prefix: len(set(re.findall(
@@ -2153,11 +2160,14 @@ def _phase_synthesis(
     print()
 
     if not Path(job.review_file).exists():
+        _try_recover_output(synthesis_log, job.review_file)
+
+    if not _is_complete_review(job.review_file):
+        reason = "no output" if not Path(job.review_file).exists() else "incomplete output"
         if rc != 0:
-            _warn(f"Synthesis agent exited with code {rc} — falling back to mechanical merge")
+            _warn(f"Synthesis agent exited with code {rc} ({reason}) — falling back to mechanical merge")
         else:
-            _warn("Synthesis agent failed — falling back to mechanical merge")
-        # Post-process the merged content first, then wrap with accurate counts
+            _warn(f"Synthesis agent {reason} — falling back to mechanical merge")
         Path(job.review_file).write_text(merged_content)
         _post_process_review(job)
         processed = Path(job.review_file).read_text()

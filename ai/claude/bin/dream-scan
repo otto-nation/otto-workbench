@@ -79,26 +79,21 @@ def _warn(msg: str) -> None:
 def extract_user_text(record: dict) -> str | None:
     if record.get("type") != "user":
         return None
-    message = record.get("message", {})
-    content = message.get("content", "")
+    content = record.get("message", {}).get("content", "")
 
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        texts = [
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        ]
-        text = " ".join(texts) if texts else None
-    else:
-        return None
-
-    if not text or len(text) < 10:
-        return None
-    if text.startswith("<"):
+    text = _extract_text_from_content(content)
+    if not text or len(text) < 10 or text.startswith("<"):
         return None
     return text
+
+
+def _extract_text_from_content(content: str | list | None) -> str | None:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        return " ".join(texts) if texts else None
+    return None
 
 
 def classify_signal(text: str) -> str | None:
@@ -109,25 +104,57 @@ def classify_signal(text: str) -> str | None:
 
 
 def parse_frontmatter(path: str | Path) -> dict:
-    result: dict[str, str] = {}
     path = Path(path)
     if not path.exists():
-        return result
+        return {}
     lines = path.read_text().splitlines()
-    in_frontmatter = False
+    return _parse_frontmatter_lines(lines)
+
+
+def _parse_frontmatter_lines(lines: list[str]) -> dict:
+    result: dict[str, str] = {}
+    in_fm = False
     for line in lines:
         if line.strip() == "---":
-            if in_frontmatter:
-                break
-            in_frontmatter = True
+            if in_fm:
+                return result
+            in_fm = True
             continue
-        if in_frontmatter and ":" in line and not line.startswith(" "):
-            key, _, value = line.partition(":")
-            result[key.strip()] = value.strip()
+        if not in_fm or line.startswith(" ") or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        result[key.strip()] = value.strip()
     return result
 
 
 # ── Scanning ─────────────────────────────────────────────────────────────────
+
+
+def _read_last_dream(memory_dir: Path) -> str | None:
+    last_dream_file = memory_dir / ".last-dream"
+    if not last_dream_file.exists():
+        return None
+    try:
+        ts = int(last_dream_file.read_text().strip())
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, OSError):
+        return None
+
+
+def _scan_topic_file(f: Path, now: datetime) -> dict:
+    fm = parse_frontmatter(f)
+    mtime = datetime.fromtimestamp(f.stat().st_mtime)
+    age_days = (now - mtime).days
+    return {
+        "filename": f.name,
+        "name": fm.get("name", ""),
+        "description": fm.get("description", ""),
+        "type": fm.get("type", ""),
+        "size": f.stat().st_size,
+        "modified": mtime.strftime("%Y-%m-%d"),
+        "stale": age_days > STALE_DAYS,
+        "age_days": age_days,
+    }
 
 
 def scan_memory_state(home: Path) -> list[dict]:
@@ -135,54 +162,62 @@ def scan_memory_state(home: Path) -> list[dict]:
     if not projects_dir.exists():
         return []
 
-    states = []
     now = datetime.now()
-
+    states = []
     for memory_dir in sorted(projects_dir.glob("*/memory")):
         if not memory_dir.is_dir():
             continue
         memory_md = memory_dir / "MEMORY.md"
         if not memory_md.exists():
             continue
-
-        project_id = memory_dir.parent.name
-        line_count = len(memory_md.read_text().splitlines())
-
-        last_dream = None
-        last_dream_file = memory_dir / ".last-dream"
-        if last_dream_file.exists():
-            try:
-                ts = int(last_dream_file.read_text().strip())
-                last_dream = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-            except (ValueError, OSError):
-                pass
-
-        topic_files = []
-        for f in sorted(memory_dir.glob("*.md")):
-            if f.name == "MEMORY.md":
-                continue
-            fm = parse_frontmatter(f)
-            mtime = datetime.fromtimestamp(f.stat().st_mtime)
-            age_days = (now - mtime).days
-            topic_files.append({
-                "filename": f.name,
-                "name": fm.get("name", ""),
-                "description": fm.get("description", ""),
-                "type": fm.get("type", ""),
-                "size": f.stat().st_size,
-                "modified": mtime.strftime("%Y-%m-%d"),
-                "stale": age_days > STALE_DAYS,
-                "age_days": age_days,
-            })
-
+        topic_files = [
+            _scan_topic_file(f, now)
+            for f in sorted(memory_dir.glob("*.md"))
+            if f.name != "MEMORY.md"
+        ]
         states.append({
-            "project_id": project_id,
-            "line_count": line_count,
-            "last_dream": last_dream,
+            "project_id": memory_dir.parent.name,
+            "line_count": len(memory_md.read_text().splitlines()),
+            "last_dream": _read_last_dream(memory_dir),
             "topic_files": topic_files,
         })
-
     return states
+
+
+def _extract_signals_from_file(jsonl_file: Path, project_id: str) -> list[dict]:
+    session_date = datetime.fromtimestamp(jsonl_file.stat().st_mtime).strftime("%Y-%m-%d")
+    signals = []
+    try:
+        with open(jsonl_file) as f:
+            for raw_line in f:
+                sig = _classify_line(raw_line, project_id, session_date)
+                if sig:
+                    signals.append(sig)
+    except OSError:
+        _warn(f"Could not read {jsonl_file}")
+    return signals
+
+
+def _classify_line(raw_line: str, project_id: str, session_date: str) -> dict | None:
+    raw_line = raw_line.strip()
+    if not raw_line:
+        return None
+    try:
+        record = json.loads(raw_line)
+    except json.JSONDecodeError:
+        return None
+    text = extract_user_text(record)
+    if text is None:
+        return None
+    category = classify_signal(text)
+    if category is None:
+        return None
+    return {
+        "category": category,
+        "text": text[:MAX_TEXT_LENGTH],
+        "project_id": project_id,
+        "session_date": session_date,
+    }
 
 
 def scan_sessions(home: Path, days: int) -> list[dict]:
@@ -192,102 +227,84 @@ def scan_sessions(home: Path, days: int) -> list[dict]:
 
     cutoff = datetime.now() - timedelta(days=days)
     signals = []
-
     for project_dir in sorted(projects_dir.iterdir()):
         if not project_dir.is_dir():
             continue
-        project_id = project_dir.name
+        signals.extend(_scan_project_sessions(project_dir, cutoff))
+    return signals
 
-        for jsonl_file in sorted(project_dir.glob("*.jsonl")):
-            try:
-                mtime = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
-            except OSError:
-                continue
-            if mtime < cutoff:
-                continue
 
-            session_date = mtime.strftime("%Y-%m-%d")
-
-            try:
-                with open(jsonl_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            record = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-
-                        text = extract_user_text(record)
-                        if text is None:
-                            continue
-
-                        category = classify_signal(text)
-                        if category is None:
-                            continue
-
-                        signals.append({
-                            "category": category,
-                            "text": text[:MAX_TEXT_LENGTH],
-                            "project_id": project_id,
-                            "session_date": session_date,
-                        })
-            except OSError:
-                _warn(f"Could not read {jsonl_file}")
-
+def _scan_project_sessions(project_dir: Path, cutoff: datetime) -> list[dict]:
+    project_id = project_dir.name
+    signals = []
+    for jsonl_file in sorted(project_dir.glob("*.jsonl")):
+        try:
+            mtime = datetime.fromtimestamp(jsonl_file.stat().st_mtime)
+        except OSError:
+            continue
+        if mtime < cutoff:
+            continue
+        signals.extend(_extract_signals_from_file(jsonl_file, project_id))
     return signals
 
 
 # ── Report ───────────────────────────────────────────────────────────────────
 
 
-def format_report(memory_states: list[dict], signals: list[dict]) -> str:
-    lines: list[str] = []
+def _format_memory_state(state: dict) -> list[str]:
+    lines = [f"### {state['project_id']}"]
+    lines.append(f"MEMORY.md: {state['line_count']} lines")
+    if state["last_dream"]:
+        lines.append(f"Last dream: {state['last_dream']}")
+    lines.append("")
 
-    # Memory State
-    lines.append("## Memory State\n")
+    if not state["topic_files"]:
+        return lines
+
+    lines.append("| File | Name | Description | Type | Modified | Age |")
+    lines.append("|------|------|-------------|------|----------|-----|")
+    for tf in state["topic_files"]:
+        stale_marker = " **STALE**" if tf["stale"] else ""
+        lines.append(
+            f"| {tf['filename']} | {tf['name']} | {tf['description']} "
+            f"| {tf['type']} | {tf['modified']} | {tf['age_days']}d{stale_marker} |"
+        )
+    lines.append("")
+
+    stale_files = [tf for tf in state["topic_files"] if tf["stale"]]
+    if stale_files:
+        lines.append(f"**Stale entries (>90 days):** {', '.join(tf['filename'] for tf in stale_files)}")
+        lines.append("")
+    return lines
+
+
+def _format_signal_category(category: str, cat_signals: list[dict]) -> list[str]:
+    lines = [f"### {category} ({len(cat_signals)})\n"]
+    for sig in cat_signals:
+        lines.append(f"- **[{sig['session_date']}]** `{sig['project_id']}`")
+        text_preview = sig["text"].replace("\n", " ")[:200]
+        lines.append(f"  > {text_preview}")
+        lines.append("")
+    return lines
+
+
+def format_report(memory_states: list[dict], signals: list[dict]) -> str:
+    lines: list[str] = ["## Memory State\n"]
+
     if not memory_states:
         lines.append("No memory directories found.\n")
     else:
         for state in memory_states:
-            lines.append(f"### {state['project_id']}")
-            lines.append(f"MEMORY.md: {state['line_count']} lines")
-            if state["last_dream"]:
-                lines.append(f"Last dream: {state['last_dream']}")
-            lines.append("")
+            lines.extend(_format_memory_state(state))
 
-            if state["topic_files"]:
-                lines.append("| File | Name | Description | Type | Modified | Age |")
-                lines.append("|------|------|-------------|------|----------|-----|")
-                for tf in state["topic_files"]:
-                    stale_marker = " **STALE**" if tf["stale"] else ""
-                    lines.append(
-                        f"| {tf['filename']} | {tf['name']} | {tf['description']} "
-                        f"| {tf['type']} | {tf['modified']} | {tf['age_days']}d{stale_marker} |"
-                    )
-                lines.append("")
-
-                stale_files = [tf for tf in state["topic_files"] if tf["stale"]]
-                if stale_files:
-                    lines.append(f"**Stale entries (>90 days):** {', '.join(tf['filename'] for tf in stale_files)}")
-                    lines.append("")
-
-    # Session Signals
     lines.append("## Session Signals\n")
     if not signals:
         lines.append("No signals found in recent sessions.\n")
     else:
         for category in SIGNAL_PRIORITY:
             cat_signals = [s for s in signals if s["category"] == category]
-            if not cat_signals:
-                continue
-            lines.append(f"### {category} ({len(cat_signals)})\n")
-            for sig in cat_signals:
-                lines.append(f"- **[{sig['session_date']}]** `{sig['project_id']}`")
-                text_preview = sig["text"].replace("\n", " ")[:200]
-                lines.append(f"  > {text_preview}")
-                lines.append("")
+            if cat_signals:
+                lines.extend(_format_signal_category(category, cat_signals))
 
     return "\n".join(lines)
 

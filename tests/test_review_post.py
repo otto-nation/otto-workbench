@@ -33,6 +33,18 @@ class TestExtractPath:
         path, line, end = rp._extract_path("**`file.go:10–15`**")
         assert (path, line, end) == ("file.go", 10, 15)
 
+    def test_parenthesized_route_group(self, rp):
+        path, line, end = rp._extract_path(
+            "**`ui-consumer/src/app/(authenticated)/rewards/page.tsx:186`**"
+        )
+        assert (path, line) == ("ui-consumer/src/app/(authenticated)/rewards/page.tsx", 186)
+
+    def test_nested_parenthesized_groups(self, rp):
+        path, line, end = rp._extract_path(
+            "**`app/(auth)/(dashboard)/page.tsx`**"
+        )
+        assert path == "app/(auth)/(dashboard)/page.tsx"
+
 
 class TestExtractBodyText:
     def test_em_dash_separator(self, rp):
@@ -524,6 +536,36 @@ class TestFormatBodyText:
         result = rp.format_body_text([f], has_inline=True, severity_filter={"I"})
         assert "``" not in result
         assert "**[I1] [idiom]** Good pattern" in result
+
+    def test_mixed_severities_grouped_with_headers(self, rp):
+        findings = [
+            rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
+                       end_line=None, body="Should fix", posted_id="S1"),
+            rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
+                       end_line=None, body="Nit issue", posted_id="N1"),
+            rp.Finding(id="S2", severity="S", seq=2, path="c.go", line=30,
+                       end_line=None, body="Another should", posted_id="S2"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
+        assert "### Should fix" in result
+        assert "### Nit" in result
+        s_idx = result.index("### Should fix")
+        n_idx = result.index("### Nit")
+        assert s_idx < n_idx
+        assert result.index("S1") < result.index("N1")
+        assert result.index("S2") < result.index("N1")
+
+    def test_single_severity_no_headers(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
+                       end_line=None, body="Nit one", posted_id="N1"),
+            rp.Finding(id="N2", severity="N", seq=2, path="b.go", line=20,
+                       end_line=None, body="Nit two", posted_id="N2"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        assert "### " not in result
+        assert "N1" in result
+        assert "N2" in result
 
 
 class TestFormatPathRef:

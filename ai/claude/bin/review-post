@@ -116,7 +116,7 @@ PATH_SECTION_RE = re.compile(
     r"`(.+?)`"           # `path` (backtick only)
 )
 FIRST_FILE_RE = re.compile(
-    r"([a-zA-Z0-9_/.:-]+\.\w+)"   # filename with extension
+    r"([a-zA-Z0-9_/().:-]+\.\w+)"  # filename with extension (parens for Next.js route groups)
     r"(?::(\d+)(?:[-–](\d+))?)?"   # optional :line or :start-end
 )
 
@@ -396,6 +396,23 @@ def _format_path_ref(f: Finding) -> str:
     return f"`{ref}`"
 
 
+def _format_finding_line(f: Finding) -> str:
+    """Format a single body finding as a markdown list item."""
+    label = f"**[{f.posted_id}] [{SEVERITY_LABELS[f.severity]}]**"
+    if f.path:
+        return f"- {label} {_format_path_ref(f)} — {f.body}"
+    return f"- {label} {f.body}"
+
+
+_BODY_SECTION_ORDER = [SEVERITY_MUST, SEVERITY_SHOULD, SEVERITY_NIT, SEVERITY_IDIOMS]
+_BODY_SECTION_TITLES = {
+    SEVERITY_MUST: "Must fix",
+    SEVERITY_SHOULD: "Should fix",
+    SEVERITY_NIT: "Nit",
+    SEVERITY_IDIOMS: "Idioms",
+}
+
+
 def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
@@ -415,23 +432,31 @@ def format_body_text(
     parts.append("")
     if has_inline:
         parts.append("**Findings not in the diff (file-level):**")
-    parts.append("")
+        parts.append("")
 
+    by_sev: dict[str, list[Finding]] = {}
     for f in body_findings:
-        label = f"**[{f.posted_id}] [{SEVERITY_LABELS[f.severity]}]**"
-        if f.path:
-            parts.append(f"- {label} {_format_path_ref(f)} — {f.body}")
-        else:
-            parts.append(f"- {label} {f.body}")
+        by_sev.setdefault(f.severity, []).append(f)
 
-    return "\n".join(parts)
+    active_sevs = [s for s in _BODY_SECTION_ORDER if s in by_sev]
+    needs_headers = len(active_sevs) > 1
+
+    for sev in active_sevs:
+        if needs_headers:
+            parts.append(f"### {_BODY_SECTION_TITLES[sev]}")
+            parts.append("")
+        for f in by_sev[sev]:
+            parts.append(_format_finding_line(f))
+        parts.append("")
+
+    return "\n".join(parts).rstrip("\n")
 
 
 # ── Permalink resolution ─────────────────────────────────────────────────────
 
 _PERMALINK_REF_RE = re.compile(
     r"(?:see |at )"
-    r"`?([a-zA-Z0-9_/.:-]+\.(?:go|ts|py|sql|yaml|yml|json|md))"
+    r"`?([a-zA-Z0-9_/().:-]+\.(?:go|ts|tsx|py|sql|yaml|yml|json|md))"
     r":(\d+)(?:[-–](\d+))?`?"
 )
 

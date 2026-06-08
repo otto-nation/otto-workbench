@@ -69,6 +69,28 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# ── _is_pr_ref ───────────────────────────────────────────────────────────────
+
+@test "_is_pr_ref: bare PR number returns true" {
+  _is_pr_ref "42"
+}
+
+@test "_is_pr_ref: GitHub URL returns true" {
+  _is_pr_ref "https://github.com/org/repo/pull/123"
+}
+
+@test "_is_pr_ref: branch name returns false" {
+  ! _is_pr_ref "isaac/feat/dream_scripts"
+}
+
+@test "_is_pr_ref: branch with numbers returns false" {
+  ! _is_pr_ref "isaac/fix/PR-123-review"
+}
+
+@test "_is_pr_ref: empty string returns false" {
+  ! _is_pr_ref ""
+}
+
 # ── _review_file ─────────────────────────────────────────────────────────────
 
 @test "_review_file: constructs path from org/repo and PR number" {

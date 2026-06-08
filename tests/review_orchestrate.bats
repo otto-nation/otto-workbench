@@ -828,9 +828,9 @@ PYEOF
   [ ! -f "$TMPDIR/should_not_exist.md" ]
 }
 
-# ── Pipeline resume ─────────────────────────────────────────────────────────
+# ── Pipeline resume / recovery ───────────────────────────────────────────────
 
-@test "_resolve_resume: returns fresh state when no pipeline file exists" {
+@test "_resolve_recovery: returns fresh state when no pipeline file exists" {
   result=$(_py_here <<'PYEOF'
 import json
 from dataclasses import dataclass, field
@@ -843,14 +843,14 @@ job = mod.ReviewJob(
     session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
-cost, skip_groups, skip_hol, state = mod._resolve_resume(job, groups)
+cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
 print(cost, skip_groups, skip_hol, state)
 PYEOF
 )
   [ "$result" = "0.0 None False None" ]
 }
 
-@test "_resolve_resume: auto-resumes when valid pipeline state exists" {
+@test "_resolve_recovery: auto-resumes when valid incomplete pipeline state exists" {
   cat > "$TMPDIR/test.pipeline.json" <<'EOF'
 {"head_sha": "abc123", "group_names": ["g1", "g2"], "holistic_done": true, "groups_done": [1]}
 EOF
@@ -863,7 +863,7 @@ job = mod.ReviewJob(
     session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
 )
 groups = [mod.Group("g1", ["a.go"], 10), mod.Group("g2", ["b.go"], 20)]
-cost, skip_groups, skip_hol, state = mod._resolve_resume(job, groups)
+cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
 print(skip_groups, skip_hol, state is not None)
 PYEOF
 )
@@ -872,7 +872,7 @@ PYEOF
   [ "$last_line" = "{1} True True" ]
 }
 
-@test "_resolve_resume: starts fresh when SHA differs" {
+@test "_resolve_recovery: starts fresh when SHA differs" {
   cat > "$TMPDIR/stale.pipeline.json" <<'EOF'
 {"head_sha": "old_sha", "group_names": ["g1"], "holistic_done": true, "groups_done": [1]}
 EOF
@@ -885,12 +885,166 @@ job = mod.ReviewJob(
     session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
-cost, skip_groups, skip_hol, state = mod._resolve_resume(job, groups)
+cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
 print(state)
 PYEOF
 )
   last_line=$(echo "$result" | tail -1)
   [ "$last_line" = "None" ]
+}
+
+@test "_resolve_recovery: completed run with failed groups returns retry set" {
+  _py_here <<'PY'
+import json, tempfile
+from pathlib import Path
+
+d = tempfile.mkdtemp()
+review_file = f"{d}/review.md"
+Path(review_file).write_text("## Summary\nMechanical fallback\n## Verdict\nApprove")
+
+state_data = {
+    "head_sha": "abc123",
+    "group_names": ["tier1-critical", "orc-card", "svc-card"],
+    "holistic_done": True,
+    "groups_done": [1, 3],
+    "groups_failed": {"2": "agent error: model not available"},
+    "synthesis_done": True,
+    "synthesis_failed": "mechanical fallback (no output)",
+}
+Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+
+groups = [
+    mod.Group("tier1-critical", ["a.go"], 100),
+    mod.Group("orc-card", ["b.go"], 200),
+    mod.Group("svc-card", ["c.go"], 150),
+]
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="42",
+    pr=mod.PRMetadata("t","b","h","base","abc123",10,5,3,[]),
+    ctx=mod.PRContext(), wt_path=d, review_file=review_file,
+    session_log=f"{d}/session.jsonl", reviews_dir=d,
+)
+
+cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+assert skip_groups == {1, 3}, f"expected skip {{1, 3}}, got {skip_groups}"
+assert skip_holistic is True
+assert state is not None
+assert state.synthesis_done is False, "synthesis must be re-run after patching"
+PY
+}
+
+@test "_resolve_recovery: completed run with no failures returns done signal" {
+  _py_here <<'PY'
+import json, tempfile
+from pathlib import Path
+
+d = tempfile.mkdtemp()
+review_file = f"{d}/review.md"
+Path(review_file).write_text("## Summary\nGood review\n## Verdict\nApprove")
+
+state_data = {
+    "head_sha": "abc123",
+    "group_names": ["tier1-critical"],
+    "holistic_done": True,
+    "groups_done": [1],
+    "groups_failed": {},
+    "synthesis_done": True,
+    "synthesis_failed": "",
+}
+Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+
+groups = [mod.Group("tier1-critical", ["a.go"], 100)]
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="42",
+    pr=mod.PRMetadata("t","b","h","base","abc123",10,5,1,[]),
+    ctx=mod.PRContext(), wt_path=d, review_file=review_file,
+    session_log=f"{d}/session.jsonl", reviews_dir=d,
+)
+
+cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+assert state is None, "state should be None when review is complete with no failures"
+PY
+}
+
+@test "_resolve_recovery: synthesis-only failure retries synthesis" {
+  _py_here <<'PY'
+import json, tempfile
+from pathlib import Path
+
+d = tempfile.mkdtemp()
+review_file = f"{d}/review.md"
+Path(review_file).write_text("## Summary\nmechanically merged\n## Verdict\nApprove (mechanically merged)")
+
+state_data = {
+    "head_sha": "abc123",
+    "group_names": ["tier1-critical", "orc-card"],
+    "holistic_done": True,
+    "groups_done": [1, 2],
+    "groups_failed": {},
+    "synthesis_done": True,
+    "synthesis_failed": "mechanical fallback (no output)",
+}
+Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+
+groups = [
+    mod.Group("tier1-critical", ["a.go"], 100),
+    mod.Group("orc-card", ["b.go"], 200),
+]
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="42",
+    pr=mod.PRMetadata("t","b","h","base","abc123",10,5,2,[]),
+    ctx=mod.PRContext(), wt_path=d, review_file=review_file,
+    session_log=f"{d}/session.jsonl", reviews_dir=d,
+)
+
+cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+assert skip_groups == {1, 2}, f"expected skip {{1, 2}}, got {skip_groups}"
+assert skip_holistic is True
+assert state is not None
+assert state.synthesis_done is False, "synthesis must be re-run"
+PY
+}
+
+@test "_resolve_recovery: incomplete pipeline resumes from where it left off" {
+  _py_here <<'PY'
+import json, tempfile
+from pathlib import Path
+
+d = tempfile.mkdtemp()
+review_file = f"{d}/review.md"
+
+state_data = {
+    "head_sha": "abc123",
+    "group_names": ["tier1-critical", "orc-card", "svc-card"],
+    "holistic_done": True,
+    "groups_done": [1],
+    "groups_failed": {},
+    "synthesis_done": False,
+    "synthesis_failed": "",
+}
+Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+
+groups = [
+    mod.Group("tier1-critical", ["a.go"], 100),
+    mod.Group("orc-card", ["b.go"], 200),
+    mod.Group("svc-card", ["c.go"], 150),
+]
+
+job = mod.ReviewJob(
+    repo="org/repo", pr_number="42",
+    pr=mod.PRMetadata("t","b","h","base","abc123",10,5,3,[]),
+    ctx=mod.PRContext(), wt_path=d, review_file=review_file,
+    session_log=f"{d}/session.jsonl", reviews_dir=d,
+)
+
+cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+assert skip_groups == {1}, f"expected skip {{1}}, got {skip_groups}"
+assert skip_holistic is True
+assert state is not None
+PY
 }
 
 # ── Prompt building ──────────────────────────────────────────────────────────

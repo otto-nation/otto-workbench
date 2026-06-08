@@ -2282,7 +2282,7 @@ def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
     return total
 
 
-def _resolve_resume(
+def _resolve_recovery(
     job: ReviewJob, groups: list[Group],
 ) -> tuple[float, "set[int] | None", bool, "PipelineState | None"]:
     state = _read_pipeline_state(job)
@@ -2291,8 +2291,32 @@ def _resolve_resume(
     if not _validate_resume_state(state, job.pr.head_sha, groups):
         _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
         return 0.0, None, False, None
-    _info("Resuming from pipeline state")
+
+    has_failed_groups = bool(state.groups_failed)
+    has_failed_synthesis = bool(state.synthesis_failed)
+    is_complete = state.synthesis_done
+
+    if is_complete and not has_failed_groups and not has_failed_synthesis:
+        _info("Prior review completed successfully — nothing to recover")
+        return 0.0, None, False, None
+
     cost_so_far = _sum_existing_costs(job, state)
+
+    if is_complete and (has_failed_groups or has_failed_synthesis):
+        _info("Prior review had failures — recovering")
+        skip_groups = set(state.groups_done)
+        if has_failed_groups:
+            failed_count = len(state.groups_failed)
+            state.groups_failed.clear()
+            _info(f"  Re-running {failed_count} failed groups")
+        if has_failed_synthesis:
+            state.synthesis_done = False
+            state.synthesis_failed = ""
+            _info("  Re-running synthesis")
+        return cost_so_far, skip_groups, state.holistic_done, state
+
+    # Incomplete pipeline — resume from where it left off
+    _info("Resuming incomplete pipeline")
     skip_holistic = state.holistic_done
     skip_groups = set(state.groups_done) if state.groups_done else None
     return cost_so_far, skip_groups, skip_holistic, state
@@ -2308,9 +2332,13 @@ def run_multi_phase(
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
-    cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_resume(
+    cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_recovery(
         job, groups,
     )
+
+    if state is None and _read_pipeline_state(job) is not None:
+        _info("Review already complete — use --force to re-run from scratch")
+        return
 
     if state is None:
         state = PipelineState(

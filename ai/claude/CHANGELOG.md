@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.7.1...claude-review-v1.8.0) (2026-06-08)
+
+
+### Features
+
+* **claude:** manage additionalDirectories; close permission gaps ([#191](https://github.com/otto-nation/otto-workbench/issues/191)) ([88e6493](https://github.com/otto-nation/otto-workbench/commit/88e649336e820f415d0e50d64802b09dd7a81595))
+
+
+### Bug Fixes
+
+* **review:** improve review-post resilience for SHA drift and path-less findings ([#188](https://github.com/otto-nation/otto-workbench/issues/188)) ([50563d2](https://github.com/otto-nation/otto-workbench/commit/50563d262f1313dab55077c9f2ae62a033927706))
+* **review:** improve synthesis resilience; eliminate permission denials ([#189](https://github.com/otto-nation/otto-workbench/issues/189)) ([151df4f](https://github.com/otto-nation/otto-workbench/commit/151df4fd15cae380e013d29776be42985ab18717))
+
 ## [1.7.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.7.0...claude-review-v1.7.1) (2026-06-08)
 
 

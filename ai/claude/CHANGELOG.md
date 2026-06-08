@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.5...claude-review-v1.7.0) (2026-06-08)
+
+
+### Features
+
+* **dream:** add dream-scan and dream-verify scripts ([#184](https://github.com/otto-nation/otto-workbench/issues/184)) ([13cf944](https://github.com/otto-nation/otto-workbench/commit/13cf944c5ae0c2fb5d582e9836706c89693e07bb))
+* **promote:** add promote-scan script ([#185](https://github.com/otto-nation/otto-workbench/issues/185)) ([4d7659a](https://github.com/otto-nation/otto-workbench/commit/4d7659a501babbee251339da5fa5e18bd17b595c))
+
+
+### Bug Fixes
+
+* **review:** improve orchestrate resilience for model errors and denied writes ([#183](https://github.com/otto-nation/otto-workbench/issues/183)) ([e4ae310](https://github.com/otto-nation/otto-workbench/commit/e4ae3105631969fdcd2196e1c4fc579980057b33))
+* **review:** support REPO_DIR env var for cross-repo usage ([#180](https://github.com/otto-nation/otto-workbench/issues/180)) ([1a3bcdb](https://github.com/otto-nation/otto-workbench/commit/1a3bcdb5e6473af6d603ad285a151ac02a9f6b97))
+
 ## [1.6.5](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.6.4...claude-review-v1.6.5) (2026-06-05)
 
 

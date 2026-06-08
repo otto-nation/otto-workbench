@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/otto-nation/otto-workbench/compare/v1.12.2...v1.13.0) (2026-06-08)
+
+
+### Features
+
+* **dream:** add dream-scan and dream-verify scripts ([#184](https://github.com/otto-nation/otto-workbench/issues/184)) ([13cf944](https://github.com/otto-nation/otto-workbench/commit/13cf944c5ae0c2fb5d582e9836706c89693e07bb))
+* **promote:** add promote-scan script ([#185](https://github.com/otto-nation/otto-workbench/issues/185)) ([4d7659a](https://github.com/otto-nation/otto-workbench/commit/4d7659a501babbee251339da5fa5e18bd17b595c))
+
+
+### Bug Fixes
+
+* **review:** improve orchestrate resilience for model errors and denied writes ([#183](https://github.com/otto-nation/otto-workbench/issues/183)) ([e4ae310](https://github.com/otto-nation/otto-workbench/commit/e4ae3105631969fdcd2196e1c4fc579980057b33))
+
 ## [1.12.2](https://github.com/otto-nation/otto-workbench/compare/v1.12.1...v1.12.2) (2026-06-05)
 
 

@@ -768,6 +768,66 @@ print(mod._diagnose_result_type(r))
   [ "$result" = "False" ]
 }
 
+# ── Review recovery ──────────────────────────────────────────────────────────
+
+@test "_try_recover_review: recovers review from denied Bash heredoc write" {
+  cat > "$TMPDIR/session.jsonl" <<'EOF'
+{"type":"result","is_error":true,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/review.md << 'REVIEW_EOF'\n## Summary\nNo issues found.\n\n## Verdict\nApprove\nREVIEW_EOF"}}]}
+EOF
+  _py_here <<PYEOF
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt',
+    review_file='$TMPDIR/recovered.md',
+    session_log='$TMPDIR/session.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._try_recover_review(job)
+PYEOF
+  [ -f "$TMPDIR/recovered.md" ]
+  grep -q "## Summary" "$TMPDIR/recovered.md"
+  grep -q "## Verdict" "$TMPDIR/recovered.md"
+}
+
+@test "_try_recover_review: recovers review from denied Write tool" {
+  python3 -c "
+import json
+record = {'type': 'result', 'is_error': True, 'permission_denials': [
+    {'tool_name': 'Write', 'tool_input': {'file_path': '/tmp/review.md', 'content': '## Summary\nClean review.\n\n## Verdict\nApprove\n'}}
+]}
+print(json.dumps(record))
+" > "$TMPDIR/session2.jsonl"
+  _py_here <<PYEOF
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt',
+    review_file='$TMPDIR/recovered2.md',
+    session_log='$TMPDIR/session2.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._try_recover_review(job)
+PYEOF
+  [ -f "$TMPDIR/recovered2.md" ]
+  grep -q "## Summary" "$TMPDIR/recovered2.md"
+}
+
+@test "_try_recover_review: no-op when session log missing" {
+  _py_here <<PYEOF
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt',
+    review_file='$TMPDIR/should_not_exist.md',
+    session_log='$TMPDIR/nonexistent.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._try_recover_review(job)
+PYEOF
+  [ ! -f "$TMPDIR/should_not_exist.md" ]
+}
+
 # ── Pipeline resume ─────────────────────────────────────────────────────────
 
 @test "_resolve_resume: returns fresh state when no pipeline file exists" {

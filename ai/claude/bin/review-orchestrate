@@ -1614,6 +1614,45 @@ def _is_model_error(log_path: str) -> bool:
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
 
+def _extract_heredoc(cmd: str) -> str:
+    lines = cmd.split("\n")
+    start = next((i for i, l in enumerate(lines) if "<<" in l), -1)
+    if start < 0:
+        return ""
+    end = next((i for i in range(len(lines) - 1, start, -1) if lines[i].strip() in ("REVIEW_EOF", "EOF")), -1)
+    if end < 0:
+        return ""
+    return "\n".join(lines[start + 1:end])
+
+
+def _extract_denied_content(denial: dict) -> str:
+    tool_input = denial.get("tool_input", {})
+    content = tool_input.get("content", "")
+    if content:
+        return content
+    cmd = tool_input.get("command", "")
+    if "REVIEW_EOF" not in cmd and "EOF" not in cmd:
+        return ""
+    return _extract_heredoc(cmd)
+
+
+def _collect_denied_contents(log_path: str) -> list[str]:
+    results = _parse_jsonl_records(log_path, "result")
+    denials = [d for r in results for d in r.get("permission_denials", [])]
+    return [_extract_denied_content(d) for d in denials]
+
+
+def _try_recover_review(job: "ReviewJob"):
+    if not Path(job.session_log).exists():
+        return
+    for content in _collect_denied_contents(job.session_log):
+        if "## " not in content:
+            continue
+        Path(job.review_file).write_text(content + "\n")
+        _warn(f"Recovered review from denied write — saved to {job.review_file}")
+        return
+
+
 # ── Model selection ───────────────────────────────────────────────────────────
 
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
@@ -1798,10 +1837,12 @@ def run_single_agent(job: ReviewJob):
     print()
 
     if not Path(job.review_file).exists():
-        if rc != 0:
-            print(f"error: review agent exited with code {rc} and produced no review file", file=sys.stderr)
-        else:
-            print(f"error: review file not found: {job.review_file}", file=sys.stderr)
+        reason = _diagnose_missing_output(job.session_log)
+        _try_recover_review(job)
+
+    if not Path(job.review_file).exists():
+        detail = f"exited with code {rc}" if rc != 0 else "completed"
+        print(f"error: review agent {detail} and produced no review file ({reason})", file=sys.stderr)
         print(f"  Session log: {job.session_log}", file=sys.stderr)
         sys.exit(1)
 

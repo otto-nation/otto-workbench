@@ -49,6 +49,13 @@
   - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
   - Run the command directly with absolute paths when possible
 
+## Avoid Env-Var Prefix Syntax
+
+- Never prefix a command with `VAR=value command` — Claude Code's permission matcher sees `VAR=value` as the command name, triggering a prompt every time. Use tool-native alternatives:
+  - `task --global REPO_DIR=/path ...` (go-task variable syntax, not `REPO_DIR=/path task ...`)
+  - `mise -C /path run ...` (not `REPO_DIR=/path mise run ...`)
+  - `otto-workbench --workbench-dir /path ...` (not `WORKBENCH_DIR=/path otto-workbench ...`)
+
 ## Avoid `find -exec`
 
 - Never use `find ... -exec` — Claude Code blocks `-exec` even with `Bash(find:*)` allowed because `-exec` can run arbitrary commands. Use piped alternatives instead:

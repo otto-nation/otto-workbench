@@ -133,8 +133,6 @@ class PipelineState:
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-REVIEW_EXT = ".md"
-
 MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
@@ -187,19 +185,19 @@ TEMPLATE_SYNTHESIS = "synthesis.md"
 TEMPLATE_SELF_REVIEW = "self-review.md"
 TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
 
-SUFFIX_PRIOR = ".prior.md"
-SUFFIX_SESSION = ".session.jsonl"
-SUFFIX_HOLISTIC = ".holistic.md"
-SUFFIX_HOLISTIC_LOG = ".holistic.jsonl"
-SUFFIX_SYNTHESIS_LOG = ".synthesis.jsonl"
-SUFFIX_GROUP = ".group-{}.md"
-SUFFIX_GROUP_LOG = ".group-{}.jsonl"
-SUFFIX_META = ".meta.json"
-SUFFIX_PIPELINE_STATE = ".pipeline.json"
+FILENAME_PRIOR = "prior.md"
+FILENAME_SESSION = "session.jsonl"
+FILENAME_HOLISTIC = "holistic.md"
+FILENAME_HOLISTIC_LOG = "holistic.jsonl"
+FILENAME_SYNTHESIS_LOG = "synthesis.jsonl"
+FILENAME_GROUP = "group-{}.md"
+FILENAME_GROUP_LOG = "group-{}.jsonl"
+FILENAME_META = "meta.json"
+FILENAME_PIPELINE_STATE = "pipeline.json"
 
 
-def _replace_ext(path: str, suffix: str) -> str:
-    return path.removesuffix(REVIEW_EXT) + suffix
+def _derive_path(review_file: str, filename: str) -> str:
+    return str(Path(review_file).parent / filename)
 
 
 PIPELINE_MULTI = "multi"
@@ -1756,7 +1754,7 @@ _state_lock = threading.Lock()
 
 
 def _pipeline_state_path(job: ReviewJob) -> str:
-    return _replace_ext(job.review_file, SUFFIX_PIPELINE_STATE)
+    return _derive_path(job.review_file, FILENAME_PIPELINE_STATE)
 
 
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):
@@ -1792,10 +1790,10 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     total = 0.0
     if state.holistic_done:
-        log = _replace_ext(job.review_file, SUFFIX_HOLISTIC_LOG)
+        log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
         total += _parse_session_cost(log)
     for idx in state.groups_done:
-        log = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(idx))
+        log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(idx))
         total += _parse_session_cost(log)
     return total
 
@@ -1841,7 +1839,7 @@ def _warn(msg: str):
 
 
 def _write_review_sidecar(job: ReviewJob):
-    sidecar_path = _replace_ext(job.review_file, SUFFIX_META)
+    sidecar_path = _derive_path(job.review_file, FILENAME_META)
     meta: dict = {
         "repo": job.repo,
         "pr_number": job.pr_number,
@@ -1888,8 +1886,8 @@ def _review_group(
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
 ) -> tuple[int, str, "tuple[str, str] | None"]:
-    group_output = _replace_ext(job.review_file, SUFFIX_GROUP.format(i))
-    group_log = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+    group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
+    group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
     if skip:
         if Path(group_output).exists():
@@ -1933,8 +1931,8 @@ def _review_group(
 
 
 def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
-    holistic_output = _replace_ext(job.review_file, SUFFIX_HOLISTIC)
-    holistic_log = _replace_ext(job.review_file, SUFFIX_HOLISTIC_LOG)
+    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
@@ -1988,7 +1986,7 @@ def _run_serial_reviews(
             continue
         failed_groups.append(failed)
         _, reason = failed
-        group_log = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+        group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
         abort_msg, consecutive_same_reason, last_reason = _check_serial_abort(
             i, group_count, reason, group_log, consecutive_same_reason, last_reason,
         )
@@ -2028,7 +2026,7 @@ def _phase_group_reviews(
     skip_groups: "set[int] | None" = None,
     pipeline_state: "PipelineState | None" = None,
 ) -> "tuple[list[str], list[tuple[str, str]]]":
-    group_outputs = [_replace_ext(job.review_file, SUFFIX_GROUP.format(i)) for i in range(1, group_count + 1)]
+    group_outputs = [_derive_path(job.review_file, FILENAME_GROUP.format(i)) for i in range(1, group_count + 1)]
 
     workers = min(max_parallel, group_count)
     if workers <= 1:
@@ -2169,7 +2167,7 @@ def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
 ) -> str:
-    synthesis_log = _replace_ext(job.review_file, SUFFIX_SYNTHESIS_LOG)
+    synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
     prompt = build_prompt(
@@ -2199,7 +2197,7 @@ def _phase_synthesis(
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
-    return [_replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
+    return [_derive_path(job.review_file, FILENAME_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
 
 
 def _read_existing_logs(log_paths: list[str]) -> str:
@@ -2277,7 +2275,7 @@ def _write_clean_review(job: ReviewJob, group_count: int):
 def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
     total = 0.0
     for i in range(1, group_count + 1):
-        gl = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+        gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
         total += _parse_session_cost(gl)
     return total
 
@@ -2348,8 +2346,8 @@ def run_multi_phase(
         _write_pipeline_state(job, state)
 
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
-    holistic_output = _replace_ext(job.review_file, SUFFIX_HOLISTIC)
-    holistic_log = _replace_ext(job.review_file, SUFFIX_HOLISTIC_LOG)
+    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     if run_holistic and skip_holistic_phase and Path(holistic_output).exists():
         _info("Phase 1: Holistic scan skipped (exists)")
@@ -2378,7 +2376,7 @@ def run_multi_phase(
             if skip_groups is None or i not in skip_groups
         ]
         for i in new_group_indices:
-            gl = _replace_ext(job.review_file, SUFFIX_GROUP_LOG.format(i))
+            gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
             cost_so_far += _parse_session_cost(gl)
 
     merged_content = _phase_merge(group_outputs, failed_groups)
@@ -2469,7 +2467,7 @@ def main():
         print("error: --pr is required in pr mode", file=sys.stderr)
         sys.exit(1)
 
-    session_log = args.session_log or _replace_ext(args.review_file, SUFFIX_SESSION)
+    session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 
     pr, ctx = _fetch_metadata(args.repo, args.pr, args.mode, args.wt_path)
 

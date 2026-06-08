@@ -851,7 +851,8 @@ PYEOF
 }
 
 @test "_resolve_recovery: auto-resumes when valid incomplete pipeline state exists" {
-  cat > "$TMPDIR/test.pipeline.json" <<'EOF'
+  mkdir -p "$TMPDIR/test"
+  cat > "$TMPDIR/test/pipeline.json" <<'EOF'
 {"head_sha": "abc123", "group_names": ["g1", "g2"], "holistic_done": true, "groups_done": [1]}
 EOF
   result=$(_py_here <<PYEOF
@@ -859,7 +860,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=mod.PRMetadata(
         title="t", body="", head="b", base="main", head_sha="abc123",
         additions=10, deletions=5, changed_files=2, files=[]),
-    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/test.md",
+    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/test/review.md",
     session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
 )
 groups = [mod.Group("g1", ["a.go"], 10), mod.Group("g2", ["b.go"], 20)]
@@ -873,7 +874,8 @@ PYEOF
 }
 
 @test "_resolve_recovery: starts fresh when SHA differs" {
-  cat > "$TMPDIR/stale.pipeline.json" <<'EOF'
+  mkdir -p "$TMPDIR/stale"
+  cat > "$TMPDIR/stale/pipeline.json" <<'EOF'
 {"head_sha": "old_sha", "group_names": ["g1"], "holistic_done": true, "groups_done": [1]}
 EOF
   result=$(_py_here <<PYEOF
@@ -881,7 +883,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=mod.PRMetadata(
         title="t", body="", head="b", base="main", head_sha="new_sha",
         additions=10, deletions=5, changed_files=2, files=[]),
-    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/stale.md",
+    ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/stale/review.md",
     session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
@@ -911,7 +913,7 @@ state_data = {
     "synthesis_done": True,
     "synthesis_failed": "mechanical fallback (no output)",
 }
-Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
 groups = [
     mod.Group("tier1-critical", ["a.go"], 100),
@@ -952,7 +954,7 @@ state_data = {
     "synthesis_done": True,
     "synthesis_failed": "",
 }
-Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
 groups = [mod.Group("tier1-critical", ["a.go"], 100)]
 
@@ -986,7 +988,7 @@ state_data = {
     "synthesis_done": True,
     "synthesis_failed": "mechanical fallback (no output)",
 }
-Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
 groups = [
     mod.Group("tier1-critical", ["a.go"], 100),
@@ -1025,7 +1027,7 @@ state_data = {
     "synthesis_done": False,
     "synthesis_failed": "",
 }
-Path(f"{d}/review.pipeline.json").write_text(json.dumps(state_data))
+Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
 groups = [
     mod.Group("tier1-critical", ["a.go"], 100),
@@ -2104,7 +2106,7 @@ print(result)
 }
 
 @test "_read_pipeline_state: corrupt JSON returns None" {
-  echo "not valid json" > "$TMPDIR/review.pipeline.json"
+  echo "not valid json" > "$TMPDIR/pipeline.json"
   result=$(_py "
 import io, contextlib
 with contextlib.redirect_stdout(io.StringIO()):
@@ -2124,9 +2126,9 @@ print(result)
 
 @test "_sum_existing_costs: sums costs from log files" {
   # Create fake JSONL log files with cost data
-  echo '{"type": "result", "total_cost_usd": 1.50}' > "$TMPDIR/review.holistic.jsonl"
-  echo '{"type": "result", "total_cost_usd": 0.75}' > "$TMPDIR/review.group-1.jsonl"
-  echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/review.group-2.jsonl"
+  echo '{"type": "result", "total_cost_usd": 1.50}' > "$TMPDIR/holistic.jsonl"
+  echo '{"type": "result", "total_cost_usd": 0.75}' > "$TMPDIR/group-1.jsonl"
+  echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/group-2.jsonl"
 
   result=$(_py "
 import io, contextlib
@@ -2175,9 +2177,31 @@ print(f'{cost:.2f}')
   [ "$result" = "0.00" ]
 }
 
-@test "SUFFIX_PIPELINE_STATE constant exists" {
-  result=$(_py "print(mod.SUFFIX_PIPELINE_STATE)")
-  [ "$result" = ".pipeline.json" ]
+@test "FILENAME_PIPELINE_STATE constant exists" {
+  result=$(_py "print(mod.FILENAME_PIPELINE_STATE)")
+  [ "$result" = "pipeline.json" ]
+}
+
+@test "_derive_path: produces folder-relative paths" {
+  _py_here <<'PY'
+result = mod._derive_path("/reviews/maximum-1206/review.md", "group-1.md")
+assert result == "/reviews/maximum-1206/group-1.md", f"got {result}"
+PY
+}
+
+@test "_derive_path: works for all intermediate types" {
+  _py_here <<'PY'
+base = "/reviews/maximum-1206/review.md"
+assert mod._derive_path(base, "pipeline.json") == "/reviews/maximum-1206/pipeline.json"
+assert mod._derive_path(base, "holistic.md") == "/reviews/maximum-1206/holistic.md"
+assert mod._derive_path(base, "holistic.jsonl") == "/reviews/maximum-1206/holistic.jsonl"
+assert mod._derive_path(base, "group-3.md") == "/reviews/maximum-1206/group-3.md"
+assert mod._derive_path(base, "group-3.jsonl") == "/reviews/maximum-1206/group-3.jsonl"
+assert mod._derive_path(base, "synthesis.jsonl") == "/reviews/maximum-1206/synthesis.jsonl"
+assert mod._derive_path(base, "session.jsonl") == "/reviews/maximum-1206/session.jsonl"
+assert mod._derive_path(base, "meta.json") == "/reviews/maximum-1206/meta.json"
+assert mod._derive_path(base, "prior.md") == "/reviews/maximum-1206/prior.md"
+PY
 }
 
 @test "--resume flag removed from CLI (auto-resume is default)" {
@@ -2186,11 +2210,11 @@ print(f'{cost:.2f}')
 }
 
 @test "_consolidate_logs: merges log files without deleting intermediates" {
-  echo '{"type":"result","total_cost_usd":1.0}' > "$TMPDIR/review.holistic.jsonl"
-  echo '{"type":"result","total_cost_usd":0.5}' > "$TMPDIR/review.group-1.jsonl"
-  echo '{"type":"result","total_cost_usd":0.3}' > "$TMPDIR/review.synthesis.jsonl"
-  echo "holistic content" > "$TMPDIR/review.holistic.md"
-  echo "group content" > "$TMPDIR/review.group-1.md"
+  echo '{"type":"result","total_cost_usd":1.0}' > "$TMPDIR/holistic.jsonl"
+  echo '{"type":"result","total_cost_usd":0.5}' > "$TMPDIR/group-1.jsonl"
+  echo '{"type":"result","total_cost_usd":0.3}' > "$TMPDIR/synthesis.jsonl"
+  echo "holistic content" > "$TMPDIR/holistic.md"
+  echo "group content" > "$TMPDIR/group-1.md"
 
   result=$(_py "
 import io, contextlib
@@ -2201,20 +2225,20 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/review.session.jsonl',
+        session_log='$TMPDIR/session.jsonl',
         reviews_dir='/tmp/reviews',
     )
     mod._consolidate_logs(
         job,
-        holistic_log='$TMPDIR/review.holistic.jsonl',
+        holistic_log='$TMPDIR/holistic.jsonl',
         group_count=1,
-        synthesis_log='$TMPDIR/review.synthesis.jsonl',
+        synthesis_log='$TMPDIR/synthesis.jsonl',
     )
 import os
-session_exists = os.path.exists('$TMPDIR/review.session.jsonl')
-holistic_exists = os.path.exists('$TMPDIR/review.holistic.md')
-group_exists = os.path.exists('$TMPDIR/review.group-1.md')
-holistic_log_exists = os.path.exists('$TMPDIR/review.holistic.jsonl')
+session_exists = os.path.exists('$TMPDIR/session.jsonl')
+holistic_exists = os.path.exists('$TMPDIR/holistic.md')
+group_exists = os.path.exists('$TMPDIR/group-1.md')
+holistic_log_exists = os.path.exists('$TMPDIR/holistic.jsonl')
 print(f'session={session_exists},holistic={holistic_exists},group={group_exists},hlog={holistic_log_exists}')
 ")
   echo "$result"
@@ -2222,13 +2246,13 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
 }
 
 @test "_cleanup_intermediates: removes intermediate files and pipeline state" {
-  echo "holistic" > "$TMPDIR/review.holistic.md"
-  echo "log" > "$TMPDIR/review.holistic.jsonl"
-  echo "group" > "$TMPDIR/review.group-1.md"
-  echo "glog" > "$TMPDIR/review.group-1.jsonl"
-  echo "glog2" > "$TMPDIR/review.group-2.jsonl"
-  echo "synth" > "$TMPDIR/review.synthesis.jsonl"
-  echo '{}' > "$TMPDIR/review.pipeline.json"
+  echo "holistic" > "$TMPDIR/holistic.md"
+  echo "log" > "$TMPDIR/holistic.jsonl"
+  echo "group" > "$TMPDIR/group-1.md"
+  echo "glog" > "$TMPDIR/group-1.jsonl"
+  echo "glog2" > "$TMPDIR/group-2.jsonl"
+  echo "synth" > "$TMPDIR/synthesis.jsonl"
+  echo '{}' > "$TMPDIR/pipeline.json"
 
   result=$(_py "
 import io, contextlib, os
@@ -2239,20 +2263,20 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/review.session.jsonl',
+        session_log='$TMPDIR/session.jsonl',
         reviews_dir='/tmp/reviews',
     )
     mod._cleanup_intermediates(
         job,
-        holistic_output='$TMPDIR/review.holistic.md',
-        holistic_log='$TMPDIR/review.holistic.jsonl',
-        group_outputs=['$TMPDIR/review.group-1.md'],
+        holistic_output='$TMPDIR/holistic.md',
+        holistic_log='$TMPDIR/holistic.jsonl',
+        group_outputs=['$TMPDIR/group-1.md'],
         group_count=2,
-        synthesis_log='$TMPDIR/review.synthesis.jsonl',
+        synthesis_log='$TMPDIR/synthesis.jsonl',
     )
 remaining = []
-for f in ['review.holistic.md', 'review.holistic.jsonl', 'review.group-1.md',
-          'review.group-1.jsonl', 'review.synthesis.jsonl', 'review.pipeline.json']:
+for f in ['holistic.md', 'holistic.jsonl', 'group-1.md',
+          'group-1.jsonl', 'synthesis.jsonl', 'pipeline.json']:
     if os.path.exists('$TMPDIR/' + f):
         remaining.append(f)
 print(f'remaining={remaining}')
@@ -2262,7 +2286,7 @@ print(f'remaining={remaining}')
 }
 
 @test "_review_group: skip=True returns early when output exists" {
-  echo "existing group review" > "$TMPDIR/review.group-1.md"
+  echo "existing group review" > "$TMPDIR/group-1.md"
 
   result=$(_py "
 import io, contextlib
@@ -2424,7 +2448,7 @@ review_file = f"{d}/review.md"
 Path(review_file).write_text("")
 
 # Write a legacy pipeline state without the new fields
-state_file = f"{d}/review.pipeline.json"
+state_file = f"{d}/pipeline.json"
 Path(state_file).write_text(json.dumps({
     "head_sha": "abc123",
     "group_names": ["tier1-critical"],

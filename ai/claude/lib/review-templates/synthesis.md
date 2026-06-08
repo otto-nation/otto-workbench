@@ -25,5 +25,8 @@ ${reviews_section}
 9. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
 10. Write the COMPLETE review file to: ${review_file}
 
+## Turn budget
+You have a limited number of tool calls. Write the complete review file FIRST based on the merged findings and holistic assessment — do not investigate before writing. Use any remaining turns to verify Must-fix and Should-fix claims and update the file.
+
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

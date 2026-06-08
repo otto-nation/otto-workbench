@@ -2,7 +2,7 @@
 # Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
 #
 # Usage: claude-review [options] <pr_url_or_number>
-#        claude-review --self [<pr_url_or_number>]
+#        claude-review --self [<pr_url_or_number | branch_name>]
 #        claude-review post <pr_url_or_number>
 #
 # Commands:
@@ -107,6 +107,11 @@ _repo_from_remote() {
     __out="${BASH_REMATCH[1]}"
     __out="${__out%.git}"
   fi
+}
+
+_is_pr_ref() {
+  local input="$1"
+  [[ "$input" =~ $PR_URL_PATTERN || "$input" =~ $PR_NUMBER_PATTERN ]]
 }
 
 _self_review_wt_path() {
@@ -544,7 +549,7 @@ _setup_review_worktree() {
 
 usage() {
   echo "Usage: claude-review [options] <pr_url_or_number>"
-  echo "       claude-review --self [<pr_url_or_number>]"
+  echo "       claude-review --self [<pr_url_or_number | branch_name>]"
   echo "       claude-review post <pr_number>"
   echo
   echo "Options:"
@@ -556,7 +561,7 @@ usage() {
   echo "  --max-cost <USD>           Max total review cost in USD (default: 20)"
   echo "  --model <name>             Override model for all agents (e.g. sonnet, opus)"
   echo "  --no-holistic              Skip holistic phase in multi-phase reviews"
-  echo "  --self                     Self-review: review your own code, write to ${SELF_REVIEW_DIR}/${SELF_REVIEW_FILE}"
+  echo "  --self                     Self-review: review your own code (accepts PR number, branch name, or none for current branch)"
   echo "  --skip-user-verification   Skip ownership check in --self mode"
   echo "  --force                    Skip pending review and stale review warnings"
   echo "  --repo-dir <path>          Path to local repo clone (skips auto-detection)"
@@ -628,6 +633,10 @@ _append_orchestrate_flags() {
   return 0
 }
 
+_run_orchestrate() {
+  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "$@"
+}
+
 _resolve_prior_review() {
   local -n __prior=$1
   local review_file="$2"
@@ -669,6 +678,11 @@ cmd_review() {
   local model="${9:-}"
   local auto_submit="${10:-false}"
   local repo_dir="${11:-}"
+
+  # Headless modes skip interactive prompts
+  if [[ "$no_post" == "true" || "$auto_post" == "true" ]]; then
+    force="true"
+  fi
 
   _prune_merged_reviews
 
@@ -739,7 +753,17 @@ cmd_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
-  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
+  if ! _run_orchestrate "${orchestrate_args[@]}"; then
+    err "Review orchestration failed"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$review_file" ]]; then
+    err "Review orchestration completed but produced no review file"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
 
   _cleanup_prior_review "$review_file" "$prior_review_path"
 
@@ -870,6 +894,42 @@ _switch_to_pr_branch() {
   fi
 }
 
+_switch_to_branch() {
+  local -n __wt_path=$1
+  local -n __wt_cleanup=$2
+  local branch="$3"
+  local repo="$4"
+
+  local repo_root=""
+  _find_repo_root repo_root "$repo"
+  [[ -n "$repo_root" ]] || return 0
+
+  info "Switching to branch ${branch}..."
+  local wt_json switched_path
+  wt_json=$(wt switch "$branch" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
+  switched_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+  if [[ -n "$switched_path" ]]; then
+    __wt_path="$switched_path"
+    __wt_cleanup="$branch"
+    return 0
+  fi
+
+  local sanitized_branch="${branch//\//-}"
+  local fallback_dir="${repo_root}/self-review-${sanitized_branch}"
+
+  git -C "$repo_root" fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null || true
+
+  if [[ -d "$fallback_dir" ]]; then
+    git -C "$repo_root" worktree remove "$fallback_dir" --force 2>/dev/null || true
+  fi
+  git -C "$repo_root" worktree add --detach "$fallback_dir" "origin/${branch}" 2>/dev/null || true
+
+  if [[ -d "$fallback_dir" ]]; then
+    __wt_path="$fallback_dir"
+    __wt_cleanup="$fallback_dir"
+  fi
+}
+
 cmd_self_review() {
   local pr_input="${1:-}"
   local issue_link="${2:-}"
@@ -883,6 +943,16 @@ cmd_self_review() {
 
   _prune_merged_reviews
 
+  # Classify positional argument: PR ref, branch name, or empty
+  local is_pr="false" is_branch="false"
+  if [[ -n "$pr_input" ]]; then
+    if _is_pr_ref "$pr_input"; then
+      is_pr="true"
+    else
+      is_branch="true"
+    fi
+  fi
+
   local wt_path
   if [[ -n "$repo_dir" ]]; then
     wt_path=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
@@ -891,15 +961,15 @@ cmd_self_review() {
     }
   else
     wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || {
-      err "Not in a git repository"
+      err "Not in a git repository — pass --repo-dir to specify the repo"
       exit 1
     }
   fi
 
   local repo=""
-  if [[ -n "$repo_dir" && -z "$pr_input" ]]; then
+  if [[ "$is_branch" == "true" || (-n "$repo_dir" && -z "$pr_input") ]]; then
     _repo_from_remote repo "$wt_path"
-    [[ -n "$repo" ]] || { err "Cannot determine repository from remote URL in: $repo_dir"; exit 1; }
+    [[ -n "$repo" ]] || { err "Cannot determine repository from remote URL"; exit 1; }
   else
     _extract_repo repo "${pr_input:-local}"
   fi
@@ -907,10 +977,12 @@ cmd_self_review() {
   local pr_number=""
   local wt_cleanup=""
 
-  if [[ -n "$pr_input" ]]; then
+  if [[ "$is_pr" == "true" ]]; then
     _extract_pr_number pr_number "$pr_input"
     [[ "$skip_user_verification" == "true" ]] || _verify_pr_ownership "$pr_number" "$repo"
     _switch_to_pr_branch wt_path wt_cleanup "$pr_number" "$repo"
+  elif [[ "$is_branch" == "true" ]]; then
+    _switch_to_branch wt_path wt_cleanup "$pr_input" "$repo"
   fi
 
   # ── Review file in worktree ──
@@ -959,7 +1031,17 @@ cmd_self_review() {
   orchestrate_args+=(--max-parallel "$max_parallel")
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
-  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "${orchestrate_args[@]}"
+  if ! _run_orchestrate "${orchestrate_args[@]}"; then
+    err "Review orchestration failed"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$review_file" ]]; then
+    err "Review orchestration completed but produced no review file"
+    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
+    exit 1
+  fi
 
   _cleanup_prior_review "$review_file" "$prior_review_path"
 
@@ -1141,11 +1223,14 @@ main() {
   esac
 }
 
+PRUNE_MAX_FILES=10
+
 _prune_merged_reviews() {
-  local pruned=0
+  local pruned=0 checked=0
 
   for meta_file in "$REVIEWS_DIR"/*.meta.json; do
     [[ -f "$meta_file" ]] || continue
+    (( checked >= PRUNE_MAX_FILES )) && break
 
     local repo pr_number
     read -r repo pr_number <<< "$(jq -r '[.repo // "", .pr_number // ""] | @tsv' "$meta_file" 2>/dev/null)" || continue
@@ -1153,6 +1238,8 @@ _prune_merged_reviews() {
     if [[ -z "$repo" || -z "$pr_number" ]]; then
       continue
     fi
+
+    checked=$((checked + 1))
 
     local state
     state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""

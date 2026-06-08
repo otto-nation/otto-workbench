@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""Scan memories and workbench artifacts for promotion evaluation.
+
+Replaces Phase 1 of the promote skill (Orient).
+Outputs a structured markdown report to stdout.
+
+Usage:
+  promote-scan [--home DIR] [--workbench DIR]
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+FRONTMATTER_DELIMITER = "---"
+MEMORY_INDEX = "MEMORY.md"
+LAST_PROMOTE_FILE = ".last-promote"
+TOPIC_GLOB = "*.md"
+
+PROJECTS_PATH = Path(".claude") / "projects"
+
+DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
+WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
+
+RULES_REL = Path("ai") / "guidelines" / "rules"
+AGENTS_REL = Path("ai") / "claude" / "agents"
+SETTINGS_REL = Path("ai") / "claude" / "settings.json"
+BACKED_UP_MEMORY_REL = Path("ai") / "memory"
+BIN_REL = Path("bin")
+
+DATE_FMT = "%Y-%m-%d"
+DATETIME_FMT = "%Y-%m-%d %H:%M"
+
+STALE_DAYS = 90
+
+BODY_PREVIEW_LENGTH = 500
+
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+
+_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
+_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
+_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
+
+
+def _info(msg: str) -> None:
+    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
+
+
+def _warn(msg: str) -> None:
+    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+
+
+# ── Core functions ───────────────────────────────────────────────────────────
+
+
+def parse_frontmatter(path: str | Path) -> dict:
+    path = Path(path)
+    if not path.exists():
+        return {}
+    lines = path.read_text().splitlines()
+    return _parse_frontmatter_lines(lines)
+
+
+def _parse_frontmatter_lines(lines: list[str]) -> dict:
+    try:
+        start = lines.index(FRONTMATTER_DELIMITER) + 1
+        end = lines.index(FRONTMATTER_DELIMITER, start)
+    except ValueError:
+        return {}
+    result: dict[str, str] = {}
+    for line in lines[start:end]:
+        if line.startswith(" ") or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        result[key.strip()] = value.strip()
+    return result
+
+
+def read_body(path: Path) -> str:
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return ""
+    try:
+        start = lines.index(FRONTMATTER_DELIMITER) + 1
+        end = lines.index(FRONTMATTER_DELIMITER, start)
+        body_lines = lines[end + 1 :]
+    except ValueError:
+        body_lines = lines
+    return "\n".join(body_lines).strip()
+
+
+def first_heading(path: Path) -> str:
+    try:
+        for line in path.read_text().splitlines():
+            if line.startswith("#"):
+                return line.lstrip("#").strip()
+    except OSError:
+        pass
+    return ""
+
+
+# ── Memory scanning ─────────────────────────────────────────────────────────
+
+
+def _read_last_promote(memory_dir: Path) -> str | None:
+    stamp = memory_dir / LAST_PROMOTE_FILE
+    if not stamp.exists():
+        return None
+    try:
+        ts = int(stamp.read_text().strip())
+        return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
+    except (ValueError, OSError):
+        return None
+
+
+def _scan_topic_file(f: Path, now: datetime) -> dict | None:
+    try:
+        stat = f.stat()
+    except OSError:
+        return None
+    fm = parse_frontmatter(f)
+    mtime = datetime.fromtimestamp(stat.st_mtime)
+    age_days = (now - mtime).days
+    body = read_body(f)
+    return {
+        "filename": f.name,
+        "name": fm.get("name", ""),
+        "description": fm.get("description", ""),
+        "type": fm.get("type", ""),
+        "body": body[:BODY_PREVIEW_LENGTH],
+        "modified": mtime.strftime(DATE_FMT),
+        "stale": age_days > STALE_DAYS,
+        "age_days": age_days,
+    }
+
+
+def scan_memory_state(home: Path) -> list[dict]:
+    projects_dir = home / PROJECTS_PATH
+    if not projects_dir.exists():
+        return []
+
+    now = datetime.now()
+    states = []
+    for memory_dir in sorted(projects_dir.glob("*/memory")):
+        if not memory_dir.is_dir():
+            continue
+        memory_md = memory_dir / MEMORY_INDEX
+        if not memory_md.exists():
+            continue
+        topic_files = [
+            tf
+            for f in sorted(memory_dir.glob(TOPIC_GLOB))
+            if f.name != MEMORY_INDEX
+            for tf in [_scan_topic_file(f, now)]
+            if tf is not None
+        ]
+        states.append({
+            "project_id": memory_dir.parent.name,
+            "line_count": len(memory_md.read_text().splitlines()),
+            "last_promote": _read_last_promote(memory_dir),
+            "topic_files": topic_files,
+        })
+    return states
+
+
+def scan_backed_up_memories(workbench: Path) -> list[dict]:
+    memory_dir = workbench / BACKED_UP_MEMORY_REL
+    if not memory_dir.exists():
+        return []
+
+    now = datetime.now()
+    results = []
+    for f in sorted(memory_dir.glob(TOPIC_GLOB)):
+        tf = _scan_topic_file(f, now)
+        if tf is not None:
+            results.append(tf)
+    return results
+
+
+# ── Workbench artifact scanning ──────────────────────────────────────────────
+
+
+def scan_rules(workbench: Path) -> list[dict]:
+    rules_dir = workbench / RULES_REL
+    if not rules_dir.exists():
+        return []
+
+    results = []
+    for f in sorted(rules_dir.glob("*.md")):
+        heading = first_heading(f)
+        results.append({
+            "filename": f.name,
+            "heading": heading,
+        })
+    return results
+
+
+def scan_scripts(workbench: Path) -> list[str]:
+    bin_dir = workbench / BIN_REL
+    if not bin_dir.exists():
+        return []
+
+    results = []
+    for f in sorted(bin_dir.iterdir()):
+        if f.is_file():
+            results.append(f.name)
+    return results
+
+
+def scan_hooks(workbench: Path) -> list[dict]:
+    settings_file = workbench / SETTINGS_REL
+    if not settings_file.exists():
+        return []
+
+    try:
+        data = json.loads(settings_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        _warn(f"Could not parse {settings_file}")
+        return []
+
+    hooks = data.get("hooks", {})
+    results = []
+    for event, hook_list in hooks.items():
+        if not isinstance(hook_list, list):
+            continue
+        for hook in hook_list:
+            matcher = hook.get("matcher", "")
+            cmd = hook.get("command", "")
+            results.append({
+                "event": event,
+                "matcher": matcher,
+                "command": cmd[:100],
+            })
+    return results
+
+
+def scan_agents(workbench: Path) -> list[dict]:
+    agents_dir = workbench / AGENTS_REL
+    if not agents_dir.exists():
+        return []
+
+    results = []
+    for f in sorted(agents_dir.glob("*.md")):
+        heading = first_heading(f)
+        results.append({
+            "filename": f.name,
+            "heading": heading,
+        })
+    return results
+
+
+# ── Report ───────────────────────────────────────────────────────────────────
+
+
+def _format_topic_entry(tf: dict, heading_prefix: str) -> list[str]:
+    lines: list[str] = []
+    stale_marker = " **STALE**" if tf["stale"] else ""
+    lines.append(f"{heading_prefix} {tf['name'] or tf['filename']} ({tf['type']}){stale_marker}")
+    lines.append(f"*{tf['description']}* — {tf['filename']}, {tf['age_days']}d old")
+    if tf["body"]:
+        lines.append("")
+        lines.append(tf["body"])
+    lines.append("")
+    return lines
+
+
+def _format_memory_state(state: dict) -> list[str]:
+    lines = [f"### {state['project_id']}"]
+    lines.append(f"MEMORY.md: {state['line_count']} lines")
+    if state["last_promote"]:
+        lines.append(f"Last promote: {state['last_promote']}")
+    lines.append("")
+
+    if not state["topic_files"]:
+        return lines
+
+    for tf in state["topic_files"]:
+        lines.extend(_format_topic_entry(tf, "####"))
+
+    return lines
+
+
+def _format_backed_up(entries: list[dict]) -> list[str]:
+    if not entries:
+        return ["No backed-up memories found.\n"]
+
+    lines: list[str] = []
+    for tf in entries:
+        lines.extend(_format_topic_entry(tf, "###"))
+    return lines
+
+
+def _format_rules(rules: list[dict]) -> list[str]:
+    if not rules:
+        return ["No rules found.\n"]
+    lines: list[str] = []
+    for r in rules:
+        lines.append(f"- `{r['filename']}` — {r['heading']}")
+    lines.append("")
+    return lines
+
+
+def _format_scripts(scripts: list[str]) -> list[str]:
+    if not scripts:
+        return ["No scripts found.\n"]
+    lines = [f"- `{s}`" for s in scripts]
+    lines.append("")
+    return lines
+
+
+def _format_hooks(hooks: list[dict]) -> list[str]:
+    if not hooks:
+        return ["No hooks found.\n"]
+    lines: list[str] = []
+    for h in hooks:
+        matcher_info = f" (matcher: `{h['matcher']}`)" if h["matcher"] else ""
+        lines.append(f"- **{h['event']}**{matcher_info}: `{h['command']}`")
+    lines.append("")
+    return lines
+
+
+def _format_agents(agents: list[dict]) -> list[str]:
+    if not agents:
+        return ["No agents found.\n"]
+    lines: list[str] = []
+    for a in agents:
+        lines.append(f"- `{a['filename']}` — {a['heading']}")
+    lines.append("")
+    return lines
+
+
+def format_report(
+    memory_states: list[dict],
+    backed_up: list[dict],
+    rules: list[dict],
+    scripts: list[str],
+    hooks: list[dict],
+    agents: list[dict],
+) -> str:
+    lines: list[str] = []
+
+    lines.append("## Memory State\n")
+    if not memory_states:
+        lines.append("No memory directories found.\n")
+    else:
+        for state in memory_states:
+            lines.extend(_format_memory_state(state))
+
+    lines.append("## Backed-Up Memories\n")
+    lines.extend(_format_backed_up(backed_up))
+
+    lines.append("## Workbench Artifacts\n")
+
+    lines.append("### Rules\n")
+    lines.extend(_format_rules(rules))
+
+    lines.append("### Scripts\n")
+    lines.extend(_format_scripts(scripts))
+
+    lines.append("### Hooks\n")
+    lines.extend(_format_hooks(hooks))
+
+    lines.append("### Agents\n")
+    lines.extend(_format_agents(agents))
+
+    return "\n".join(lines)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def _resolve_workbench(raw: str) -> Path:
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+def main() -> None:
+    import argparse
+
+    default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
+
+    parser = argparse.ArgumentParser(
+        description="Scan memories and workbench artifacts for promotion evaluation.",
+        usage="promote-scan [--home DIR] [--workbench DIR]",
+    )
+    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
+    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    args = parser.parse_args()
+
+    home = Path(os.path.expanduser(args.home))
+    workbench = _resolve_workbench(args.workbench)
+
+    _info(f"Home: {home}")
+    _info(f"Workbench: {workbench}")
+
+    memory_states = scan_memory_state(home)
+    _info(f"Found {len(memory_states)} project(s) with memory")
+
+    backed_up = scan_backed_up_memories(workbench)
+    _info(f"Found {len(backed_up)} backed-up memory file(s)")
+
+    rules = scan_rules(workbench)
+    scripts = scan_scripts(workbench)
+    hooks = scan_hooks(workbench)
+    agents = scan_agents(workbench)
+    _info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
+
+    report = format_report(memory_states, backed_up, rules, scripts, hooks, agents)
+    print(report)
+
+
+if __name__ == "__main__":
+    main()

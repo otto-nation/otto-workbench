@@ -51,3 +51,9 @@ tools:
     description: "Verify dream memory file integrity across all projects"
     when_to_use: "Called by the dream skill to replace Phase 4 verification; checks line counts, broken refs, relative dates, duplicate names"
     usage: "dream-verify"
+
+  - name: promote-scan
+    allow: true
+    description: "Scan memories and workbench artifacts for promotion evaluation"
+    when_to_use: "Called by the promote skill to replace Phase 1 (Orient); outputs a structured markdown report of all memories and existing workbench artifacts"
+    usage: "promote-scan  |  promote-scan --workbench /path/to/workbench"

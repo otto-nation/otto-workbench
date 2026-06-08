@@ -28,7 +28,7 @@ fi
 
 # Count sessions modified since last promote.
 session_count=0
-for session_file in ~/.claude/projects/*/sessions/*.jsonl; do
+for session_file in ~/.claude/projects/*/*.jsonl; do
   [[ -f "$session_file" ]] || continue
   file_ts=$(stat -f %m "$session_file" 2>/dev/null || stat -c %Y "$session_file" 2>/dev/null || echo 0)
   if [[ "$file_ts" -gt "$last_promote" ]]; then

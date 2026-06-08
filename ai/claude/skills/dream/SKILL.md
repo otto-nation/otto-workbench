@@ -22,75 +22,20 @@ ORIENT --> GATHER SIGNAL --> CONSOLIDATE --> PRUNE & INDEX --> CONTEXT UPDATE
 
 ---
 
-## Phase 1: ORIENT
+## Phases 1+2: ORIENT & GATHER SIGNAL
 
-**Goal:** Understand the current state of memory before changing anything.
+**Goal:** Understand memory state and extract signals from recent sessions.
 
-1. Find memory directories:
+Run `dream-scan` to produce a structured report covering both phases:
 ```bash
-ls -d ~/.claude/projects/*/memory/ 2>/dev/null
+dream-scan --days 7
 ```
 
-2. Read `MEMORY.md` in each project's memory directory. Note:
-   - How many topic files exist
-   - Total line count of MEMORY.md
-   - Last modified dates
-   - Any entries that look stale (relative dates like "yesterday" with no anchor)
+The report contains two sections:
+- **Memory State** — per-project summary: MEMORY.md line count, topic files with names/descriptions/ages, stale entries (>90 days), last dream timestamp
+- **Session Signals** — user messages matching correction, preference, decision, pattern, and review feedback patterns, grouped by category with dates and project context
 
-3. Read each topic file to understand what's already stored.
-
-### Output
-A mental map of which projects have memory, what topics are covered, how large the files are, and what's potentially stale or contradictory.
-
----
-
-## Phase 2: GATHER SIGNAL
-
-**Goal:** Extract important information from recent sessions using targeted grep.
-
-### Where to find transcripts
-```bash
-find ~/.claude/projects/*/sessions/ -name "*.jsonl" -mtime -7 2>/dev/null | sort -t/ -k6 -r
-```
-
-### What to scan for
-
-**User corrections** (highest priority):
-```bash
-grep -il "actually\|no,\|wrong\|incorrect\|not right\|stop doing\|don't do\|I said\|I meant\|that's not\|correction" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
-```
-
-**Preferences and configuration:**
-```bash
-grep -il "I prefer\|always use\|never use\|I like\|I don't like\|I want\|from now on\|going forward\|remember that\|keep in mind\|make sure to\|default to" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
-```
-
-**Important decisions:**
-```bash
-grep -il "let's go with\|I decided\|we're using\|the plan is\|switch to\|move to\|chosen\|picked\|decision\|we agreed" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
-```
-
-**Recurring patterns:**
-```bash
-grep -il "again\|every time\|keep forgetting\|as usual\|same as before\|like last time\|we always\|the usual" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
-```
-
-**Review feedback signals:**
-```bash
-grep -il "accepted\|rejected\|won't-fix\|false positive\|not applying\|review feedback summary" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
-```
-
-### How to read matches
-
-For each file that matches, read ONLY the surrounding context of the match. JSONL files have one JSON object per line. Focus on lines where `type` is `"human"` (user messages) and the immediately following `"assistant"` response.
-
-### What to extract
-
-For each finding, note:
-- **The fact** — What was said or decided
-- **The date** — Derive from the session file's modification time (use absolute dates)
-- **Confidence** — Explicit instruction (high) or implied preference (medium)?
-- **Contradictions** — Does this conflict with anything currently in memory?
+Use this report as input for Phase 3. Read the topic files referenced in the Memory State section to understand what's already stored before making changes.
 
 ---
 
@@ -177,12 +122,14 @@ cp -r ~/.claude/projects/<project>/memory/ ~/.claude/projects/<project>/memory-b
 
 ## Verification
 
-After running, verify:
-1. `wc -l` on MEMORY.md — should be under 200 lines
-2. No topic file has duplicate entries
-3. No relative dates remain ("yesterday", "last week", etc.)
-4. All topic files referenced in MEMORY.md actually exist
-5. Print a summary: entries added, updated, archived, contradictions resolved, context.md updates made
+Run `dream-verify` to check memory integrity:
+```bash
+dream-verify
+```
+
+It validates: MEMORY.md under 200 lines, all references resolve, no relative dates in topic files, no duplicate `name:` frontmatter.
+
+After verification, print a summary: entries added, updated, archived, contradictions resolved, context.md updates made.
 
 ---
 
@@ -201,17 +148,17 @@ Re-use the session files already scanned in Phase 2. Look specifically for archi
 
 **Software/API identity discoveries:**
 ```bash
-grep -il "not synapse\|not synapse\|actually uses\|it's actually\|turned out\|the real\|wrong api\|wrong image\|wrong software" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+grep -il "not synapse\|not synapse\|actually uses\|it's actually\|turned out\|the real\|wrong api\|wrong image\|wrong software" ~/.claude/projects/*/*.jsonl 2>/dev/null
 ```
 
 **Container constraint discoveries:**
 ```bash
-grep -il "not installed\|not available\|doesn't have\|missing tool\|no curl\|no wget\|no bash\|no shell\|minimal image\|distroless" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+grep -il "not installed\|not available\|doesn't have\|missing tool\|no curl\|no wget\|no bash\|no shell\|minimal image\|distroless" ~/.claude/projects/*/*.jsonl 2>/dev/null
 ```
 
 **Architectural convention confirmations:**
 ```bash
-grep -il "the convention is\|the pattern is\|always goes in\|never edit directly\|single source\|canonical location" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+grep -il "the convention is\|the pattern is\|always goes in\|never edit directly\|single source\|canonical location" ~/.claude/projects/*/*.jsonl 2>/dev/null
 ```
 
 ### Confidence threshold
@@ -255,12 +202,12 @@ Re-use the session files already scanned in Phase 2. Look for machine-level sign
 
 **Runtime/tool changes:**
 ```bash
-grep -il "upgraded\|installed\|updated\|removed\|uninstalled\|now running\|switched to\|brew install" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+grep -il "upgraded\|installed\|updated\|removed\|uninstalled\|now running\|switched to\|brew install" ~/.claude/projects/*/*.jsonl 2>/dev/null
 ```
 
 **Docker/runtime state changes:**
 ```bash
-grep -il "colima\|docker.*not\|docker.*stopped\|socket.*not found\|docker desktop" ~/.claude/projects/*/sessions/*.jsonl 2>/dev/null
+grep -il "colima\|docker.*not\|docker.*stopped\|socket.*not found\|docker desktop" ~/.claude/projects/*/*.jsonl 2>/dev/null
 ```
 
 ### What to write

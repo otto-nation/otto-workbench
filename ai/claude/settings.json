@@ -13,7 +13,7 @@
           },
           {
             "type": "command",
-            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^[A-Z_]+= ]]; then echo 'BLOCKED: VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See git-operations.md.' >&2; exit 2; fi"
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^[A-Z_][A-Z0-9_]*= ]]; then echo 'BLOCKED: VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See git-operations.md.' >&2; exit 2; fi"
           }
         ]
       },

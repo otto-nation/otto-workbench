@@ -384,6 +384,18 @@ print(f'm1={has_m1},m2={has_m2},m3={has_m3},m4={has_m4},dup={dup_count}')
   [ "$result" = "m1=True,m2=True,m3=True,m4=False,dup=1" ]
 }
 
+# ── _phase_merge ─────────────────────────────────────────────────────────────
+
+@test "_phase_merge: renders failure reasons in review gaps" {
+  result=$(_py_here <<'PYEOF'
+result = mod._phase_merge([], [("orc-card", "agent error: model not available"), ("svc-card", "agent hit max turns (10)")])
+print(result)
+PYEOF
+)
+  [[ "$result" == *"- orc-card: agent error: model not available"* ]]
+  [[ "$result" == *"- svc-card: agent hit max turns (10)"* ]]
+}
+
 # ── _extract_section ─────────────────────────────────────────────────────────
 
 @test "_extract_section: case-insensitive header matching" {
@@ -719,6 +731,101 @@ r = {"type": "result", "subtype": "error", "is_error": True}
 print(mod._diagnose_result_type(r))
 ')
   [ "$result" = "agent error: unknown" ]
+}
+
+@test "_diagnose_result_type: extracts error from result field when errors list empty" {
+  result=$(_py '
+r = {"type": "result", "subtype": "success", "is_error": True,
+     "api_error_status": 404, "errors": [],
+     "result": "The model claude-sonnet-4-5 is not available on your vertex deployment."}
+print(mod._diagnose_result_type(r))
+')
+  [ "$result" = "agent error: The model claude-sonnet-4-5 is not available on your vertex deployment." ]
+}
+
+# ── Model error detection ────────────────────────────────────────────────────
+
+@test "_is_model_error: detects 404 api_error_status" {
+  echo '{"type":"result","api_error_status":404,"is_error":true,"result":"model not found"}' > "$TMPDIR/model404.jsonl"
+  result=$(_py "print(mod._is_model_error('$TMPDIR/model404.jsonl'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_model_error: detects 'not available' in result text" {
+  echo '{"type":"result","is_error":true,"result":"The model claude-sonnet-4-5 is not available on your vertex deployment."}' > "$TMPDIR/notavail.jsonl"
+  result=$(_py "print(mod._is_model_error('$TMPDIR/notavail.jsonl'))")
+  [ "$result" = "True" ]
+}
+
+@test "_is_model_error: false for normal errors" {
+  echo '{"type":"result","is_error":true,"errors":["Connection refused"]}' > "$TMPDIR/normal.jsonl"
+  result=$(_py "print(mod._is_model_error('$TMPDIR/normal.jsonl'))")
+  [ "$result" = "False" ]
+}
+
+@test "_is_model_error: false for missing log" {
+  result=$(_py "print(mod._is_model_error('$TMPDIR/nonexistent.jsonl'))")
+  [ "$result" = "False" ]
+}
+
+# ── Review recovery ──────────────────────────────────────────────────────────
+
+@test "_try_recover_review: recovers review from denied Bash heredoc write" {
+  cat > "$TMPDIR/session.jsonl" <<'EOF'
+{"type":"result","is_error":true,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"cat > /tmp/review.md << 'REVIEW_EOF'\n## Summary\nNo issues found.\n\n## Verdict\nApprove\nREVIEW_EOF"}}]}
+EOF
+  _py_here <<PYEOF
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt',
+    review_file='$TMPDIR/recovered.md',
+    session_log='$TMPDIR/session.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._try_recover_review(job)
+PYEOF
+  [ -f "$TMPDIR/recovered.md" ]
+  grep -q "## Summary" "$TMPDIR/recovered.md"
+  grep -q "## Verdict" "$TMPDIR/recovered.md"
+}
+
+@test "_try_recover_review: recovers review from denied Write tool" {
+  python3 -c "
+import json
+record = {'type': 'result', 'is_error': True, 'permission_denials': [
+    {'tool_name': 'Write', 'tool_input': {'file_path': '/tmp/review.md', 'content': '## Summary\nClean review.\n\n## Verdict\nApprove\n'}}
+]}
+print(json.dumps(record))
+" > "$TMPDIR/session2.jsonl"
+  _py_here <<PYEOF
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt',
+    review_file='$TMPDIR/recovered2.md',
+    session_log='$TMPDIR/session2.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._try_recover_review(job)
+PYEOF
+  [ -f "$TMPDIR/recovered2.md" ]
+  grep -q "## Summary" "$TMPDIR/recovered2.md"
+}
+
+@test "_try_recover_review: no-op when session log missing" {
+  _py_here <<PYEOF
+job = mod.ReviewJob(
+    repo='org/repo', pr_number='1',
+    pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+        additions=1, deletions=0, changed_files=1, files=[]),
+    ctx=mod.PRContext(), wt_path='/tmp/wt',
+    review_file='$TMPDIR/should_not_exist.md',
+    session_log='$TMPDIR/nonexistent.jsonl', reviews_dir='/tmp/reviews',
+)
+mod._try_recover_review(job)
+PYEOF
+  [ ! -f "$TMPDIR/should_not_exist.md" ]
 }
 
 # ── Pipeline resume ─────────────────────────────────────────────────────────
@@ -1691,7 +1798,13 @@ print(f'count={count},total={total}')
 
 @test "_count_findings: counts by prefix" {
   result=$(_py "
-text = '[M1] a [M2] b [S1] c [N1] d [N2] e [N3] f [I1] g'
+text = '''- **[M1]** finding a
+- **[M2]** finding b
+- **[S1]** finding c
+- **[N1]** finding d
+- **[N2]** finding e
+- **[N3]** finding f
+- **[I1]** finding g'''
 counts = mod._count_findings(text)
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")
@@ -2038,7 +2151,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 print(f'idx={idx},failed={failed}')
 ")
   echo "$result"
-  [[ "$result" == *"idx=1,failed=services"* ]]
+  [[ "$result" == *"idx=1,failed=('services', 'output missing')"* ]]
 }
 
 @test "_validate_resume_state: matching state returns valid" {

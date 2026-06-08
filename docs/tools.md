@@ -22,6 +22,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `build-claude-review-tarball` | Package claude-review into a self-contained tarball for Homebrew distribution |
 | `dream-scan` | Scan session transcripts and memory state for dream consolidation |
 | `dream-verify` | Verify dream memory file integrity across all projects |
+| `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |

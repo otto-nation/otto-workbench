@@ -141,7 +141,7 @@ _extract_command_names() {
 # _extract_commands_arrays FILE
 # Lists all COMMANDS-style array names declared in a file.
 _extract_commands_arrays() {
-  grep -oE '^COMMANDS(_[A-Z_]+)?=' "$1" | sed 's/=//' | sort -u
+  grep -oE '^[[:space:]]*COMMANDS(_[A-Z_]+)?=' "$1" | sed 's/^[[:space:]]*//; s/=//' | sort -u
 }
 
 @test "all cmd_* functions have matching COMMANDS entries" {
@@ -156,7 +156,7 @@ _extract_commands_arrays() {
     local fn
     while IFS= read -r fn; do
       cmd_functions+=("$fn")
-    done < <(grep -oE '^cmd_[a-z_]+' "$f" | sed 's/^cmd_//' | sort -u)
+    done < <(grep -oE '^cmd_[a-z0-9_]+' "$f" | sed 's/^cmd_//' | sort -u)
 
     [[ ${#cmd_functions[@]} -gt 0 ]] || continue
 

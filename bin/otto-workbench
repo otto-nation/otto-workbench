@@ -80,6 +80,7 @@ for _f in "${_step_files[@]}"; do
 done
 unset _f _step_files
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
   "install [--all] [COMPONENT ...]"  "Bootstrap the workbench (first-time setup)"
   "sync"                              "Re-apply all workbench configuration to ~/"
@@ -89,12 +90,14 @@ COMMANDS=(
   "changelog"                         "Show recent changes from conventional commits"
 )
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_AI=(
   "init [--force] [--analyze]"        "Scaffold .claude/ in the current git repo"
   "sync"                              "Sync machine-level AI config (settings, rules, MCPs, skills, agents)"
   "override <type> [name] [flags]"    "Manage user overrides (agents, skills, rules)"
 )
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_AUTOUPDATE=(
   "start [SECONDS]"  "Start autoupdate (default: every 12h)"
   "stop"             "Stop autoupdate"
@@ -607,7 +610,7 @@ cmd_autoupdate() {
     -h|--help) _autoupdate_usage; exit 0 ;;
     *)
       _autoupdate_usage >&2
-      [[ -z "$subcmd" ]] && exit 1 || exit 1
+      exit 1
       ;;
   esac
 }

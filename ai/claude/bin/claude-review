@@ -81,6 +81,7 @@ GITHUB_BASE_URL="https://github.com"
 
 WORKTREE_FALLBACK_DIR=".worktrees"
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
   "gc"                      "Clean up stale review artifacts"
   "post <pr_url_or_number>" "Post an existing review file via poster agent"

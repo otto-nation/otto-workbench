@@ -15,9 +15,19 @@ _LIB_COMMANDS_SH=1
 # Print formatted command list from a COMMANDS-style array.
 # Auto-aligns description column based on the longest usage form.
 commands_usage() {
-  local -n __cmds="${1:-COMMANDS}"
-  local i max_len=0 len
+  local arr_name="${1:-COMMANDS}"
+  local -n __cmds="$arr_name"
 
+  if (( ${#__cmds[@]} == 0 )); then
+    echo "  commands_usage: array '$arr_name' is empty or undefined" >&2
+    return 1
+  fi
+  if (( ${#__cmds[@]} % 2 != 0 )); then
+    echo "  commands_usage: array '$arr_name' has odd element count (${#__cmds[@]})" >&2
+    return 1
+  fi
+
+  local i max_len=0 len
   for ((i = 0; i < ${#__cmds[@]}; i += 2)); do
     len=${#__cmds[i]}
     (( len > max_len )) && max_len=$len

@@ -5,6 +5,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
 . "$(dirname "$_SELF")/../../../lib/ui.sh"
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
   "init"    "Add Serena to .mcp.json in the current directory (creates if missing)"
   "status"  "Show whether Serena is configured in the current project"

@@ -24,6 +24,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 RULES_DIR="$CLAUDE_RULES_DIR"
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
   "sync"               "Re-symlink workbench rules and regenerate workbench.md"
   "add <domain> \"rule\"" "Append a rule to ~/.claude/rules/<domain>.local.md"
@@ -33,6 +34,7 @@ COMMANDS=(
   "project <subcmd>"   "Manage current repo's CLAUDE.md (add, show)"
 )
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_PROJECT=(
   "add \"rule\""  "Append a convention to the current repo's CLAUDE.md"
   "show"          "Display the current repo's CLAUDE.md"

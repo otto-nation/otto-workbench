@@ -30,7 +30,7 @@ commands_usage() {
   local i max_len=0 len
   for ((i = 0; i < ${#__cmds[@]}; i += 2)); do
     len=${#__cmds[i]}
-    (( len > max_len )) && max_len=$len
+    if (( len > max_len )); then max_len=$len; fi
   done
 
   local pad=$(( max_len + 2 ))

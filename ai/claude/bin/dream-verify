@@ -33,6 +33,7 @@ Checks:
 EOF
 }
 
+[[ "${1:-}" == "-V" || "${1:-}" == "--version" ]] && { print_version "dream-verify"; exit 0; }
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
 MAX_LINES=200

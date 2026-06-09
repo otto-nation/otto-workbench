@@ -47,10 +47,7 @@ trap '_on_int' INT
 _WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
 
 _generator_version() {
-  local version sha
-  version=$(jq -r '.["."]' "${_WORKBENCH_ROOT}/.github/.release-please-manifest.json" 2>/dev/null || echo "unknown")
-  sha=$(git -C "$_WORKBENCH_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  echo "otto-workbench ${version} (${sha})"
+  print_version "claude-review" | tail -1
 }
 
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
@@ -1234,6 +1231,7 @@ main() {
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
       --repo-dir)     repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "--repo-dir requires a value"; exit 1; }; shift 2 ;;
+      -V|--version)    print_version "claude-review"; exit 0 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac

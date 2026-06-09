@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.9.0...claude-review-v1.9.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **claude-review:** prompt budget logging, group diff budget, scoped file budget ([#194](https://github.com/otto-nation/otto-workbench/issues/194)) ([e6b4fd7](https://github.com/otto-nation/otto-workbench/commit/e6b4fd7e35cf61d68749f60df864cfd7935047e9))
+
 ## [1.9.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.8.0...claude-review-v1.9.0) (2026-06-08)
 
 

@@ -14,9 +14,33 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+
+# ── Version ──────────────────────────────────────────────────────────────────
+
+WORKBENCH_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+MANIFEST_PATH = WORKBENCH_ROOT / ".github" / ".release-please-manifest.json"
+
+
+def _version_string(name: str) -> str:
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        manifest = {}
+    tool_ver = manifest.get("ai/claude", "unknown")
+    wb_ver = manifest.get(".", "unknown")
+    try:
+        sha = subprocess.check_output(
+            ["git", "-C", str(WORKBENCH_ROOT), "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        sha = "unknown"
+    return f"{name} {tool_ver}\notto-workbench {wb_ver} ({sha})"
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -337,9 +361,14 @@ def main() -> None:
         description="Scan session transcripts and memory state for dream consolidation.",
         usage="dream-scan [--days N] [--home DIR]",
     )
+    parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"scan sessions from last N days (default: {DEFAULT_DAYS})")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
     args = parser.parse_args()
+
+    if args.version:
+        print(_version_string("dream-scan"))
+        raise SystemExit(0)
 
     home = Path(args.home)
 

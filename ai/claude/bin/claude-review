@@ -1234,6 +1234,7 @@ main() {
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
       --repo-dir)     repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "--repo-dir requires a value"; exit 1; }; shift 2 ;;
+      -V|--version)    print_version "claude-review"; exit 0 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
     esac

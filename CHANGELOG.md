@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/otto-nation/otto-workbench/compare/v1.15.0...v1.16.0) (2026-06-09)
+
+
+### Features
+
+* **commands:** add SSOT commands framework ([#196](https://github.com/otto-nation/otto-workbench/issues/196)) ([e397a38](https://github.com/otto-nation/otto-workbench/commit/e397a38b8bfed1285ee806a1c369f2b033cfbb96))
+
 ## [1.15.0](https://github.com/otto-nation/otto-workbench/compare/v1.14.0...v1.15.0) (2026-06-08)
 
 

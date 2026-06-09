@@ -3,10 +3,11 @@
 #
 # Usage: claude-review [options] <pr_url_or_number>
 #        claude-review --self [<pr_url_or_number | branch_name>]
-#        claude-review post <pr_url_or_number>
+#        claude-review <command> [args]
 #
 # Commands:
 #   <pr_url_or_number>   Run headless review, display results, prompt to post
+#   gc                   Clean up stale review artifacts
 #   post <pr_url_or_number>  Post an existing review file headlessly via poster agent
 #
 # Options:
@@ -79,6 +80,12 @@ GITHUB_REPO_PATTERN='github\.com/([^/]+/[^/]+)'
 GITHUB_BASE_URL="https://github.com"
 
 WORKTREE_FALLBACK_DIR=".worktrees"
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS=(
+  "gc"                      "Clean up stale review artifacts"
+  "post <pr_url_or_number>" "Post an existing review file via poster agent"
+)
 
 ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
 
@@ -598,24 +605,30 @@ _setup_review_worktree() {
 }
 
 usage() {
-  echo "Usage: claude-review [options] <pr_url_or_number>"
-  echo "       claude-review --self [<pr_url_or_number | branch_name>]"
-  echo "       claude-review post <pr_number>"
-  echo
-  echo "Options:"
-  echo "  --no-post                  Skip all interactive prompts; run review and exit"
-  echo "  --post                     Run review then post automatically (leaves review PENDING)"
-  echo "  --submit                   Submit the review (use with --post for fully headless)"
-  echo "  --issue <link>             Attach an issue link for reviewer context"
-  echo "  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})"
-  echo "  --max-cost <USD>           Max total review cost in USD (default: 20)"
-  echo "  --model <name>             Override model for all agents (e.g. sonnet, opus)"
-  echo "  --no-holistic              Skip holistic phase in multi-phase reviews"
-  echo "  --self                     Self-review: review your own code (accepts PR number, branch name, or none for current branch)"
-  echo "  --skip-user-verification   Skip ownership check in --self mode"
-  echo "  --force                    Skip pending review and stale review warnings"
-  echo "  --repo-dir <path>          Path to local repo clone (skips auto-detection)"
-  echo "  --json-summary             Suppress human output; emit JSON summary to stdout"
+  cat <<EOF
+Usage: claude-review [options] <pr_url_or_number>
+       claude-review --self [<pr_url_or_number | branch_name>]
+       claude-review <command> [args]
+
+Commands:
+  <pr_url_or_number>       Run review (default)
+$(commands_usage)
+
+Options:
+  --no-post                  Skip all interactive prompts; run review and exit
+  --post                     Run review then post automatically (leaves review PENDING)
+  --submit                   Submit the review (use with --post for fully headless)
+  --issue <link>             Attach an issue link for reviewer context
+  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})
+  --max-cost <USD>           Max total review cost in USD (default: 20)
+  --model <name>             Override model for all agents (e.g. sonnet, opus)
+  --no-holistic              Skip holistic phase in multi-phase reviews
+  --self                     Self-review: review your own code (accepts PR number, branch name, or none for current branch)
+  --skip-user-verification   Skip ownership check in --self mode
+  --force                    Skip pending review and stale review warnings
+  --repo-dir <path>          Path to local repo clone (skips auto-detection)
+  --json-summary             Suppress human output; emit JSON summary to stdout
+EOF
 }
 
 _check_pending_review() {
@@ -723,7 +736,7 @@ _cleanup_prior_review() {
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
-cmd_review() {
+_run_review() {
   local pr_input="$1"
   local no_post="${2:-false}"
   local issue_link="${3:-}"
@@ -992,7 +1005,7 @@ _switch_to_branch() {
   fi
 }
 
-cmd_self_review() {
+_run_self_review() {
   local pr_input="${1:-}"
   local issue_link="${2:-}"
   local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
@@ -1241,7 +1254,7 @@ main() {
   fi
 
   if [[ "$self_review" == "true" ]]; then
-    cmd_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir"
+    _run_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir"
     if [[ -n "$_json_stdout" ]]; then
       exec {_json_stdout}>&-
     fi
@@ -1278,7 +1291,7 @@ main() {
       exit 1
       ;;
     *)
-      cmd_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$auto_submit" "$repo_dir"
+      _run_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$auto_submit" "$repo_dir"
       if [[ "$json_summary" == "true" ]]; then
         local rev_pr_number rev_repo rev_review_file
         _extract_pr_number rev_pr_number "$command"

@@ -80,6 +80,32 @@ for _f in "${_step_files[@]}"; do
 done
 unset _f _step_files
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS=(
+  "install [--all] [COMPONENT ...]"  "Bootstrap the workbench (first-time setup)"
+  "sync"                              "Re-apply all workbench configuration to ~/"
+  "ai <subcmd>"                       "Manage AI tools — scaffold projects, sync config, manage overrides"
+  "discover [regenerate]"             "Show installed components, scripts, and launchd agents"
+  "autoupdate <subcmd>"               "Scheduled pull + sync via launchd"
+  "changelog"                         "Show recent changes from conventional commits"
+)
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS_AI=(
+  "init [--force] [--analyze]"        "Scaffold .claude/ in the current git repo"
+  "sync"                              "Sync machine-level AI config (settings, rules, MCPs, skills, agents)"
+  "override <type> [name] [flags]"    "Manage user overrides (agents, skills, rules)"
+)
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS_AUTOUPDATE=(
+  "start [SECONDS]"  "Start autoupdate (default: every 12h)"
+  "stop"             "Stop autoupdate"
+  "status"           "Show autoupdate status"
+  "run"              "Run update now"
+  "logs"             "Show recent log entries"
+)
+
 # ─── Install-needed detection ─────────────────────────────────────────────────
 
 # _check_install_needed — detects components that need a full install.sh run.
@@ -338,16 +364,14 @@ Usage: otto-workbench ai <command>
 Manage AI coding tool configuration (Claude Code, etc.).
 
 Commands:
-  init [--force] [--analyze]      Scaffold .claude/ in the current git repo
-  sync                            Sync machine-level AI config (settings, rules, MCPs, skills, agents)
-  override <type> [name] [flags]  Manage user overrides (agents, skills, rules)
+$(commands_usage COMMANDS_AI)
 
 Run 'otto-workbench ai <command> -h' for command-specific help.
 Run 'otto-workbench sync' to apply changes after editing overrides.
 EOF
 }
 
-_ai_init() {
+cmd_ai_init() {
   local force_flag="" analyze=false
 
   local arg
@@ -430,7 +454,7 @@ EOF
   success "AI init complete!"
 }
 
-_ai_sync() {
+cmd_ai_sync() {
   case "${1:-}" in
     -h|--help)
       cat <<EOF
@@ -456,16 +480,15 @@ cmd_ai() {
   shift 2>/dev/null || true
 
   case "$subcmd" in
-    init)     _ai_init "$@" ;;
-    sync)     _ai_sync "$@" ;;
-    override) _ai_override "$@" ;;
+    init)     cmd_ai_init "$@" ;;
+    sync)     cmd_ai_sync "$@" ;;
+    override) cmd_ai_override "$@" ;;
     -h|--help) _ai_usage; return 0 ;;
     *)        _ai_usage >&2; return 1 ;;
   esac
 }
 
 cmd_changelog() {
-  shift  # remove "changelog" from args
   bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
 }
 
@@ -523,64 +546,71 @@ _format_interval() {
   fi
 }
 
-cmd_autoupdate() {
-  local subcmd="${2:-}"
-  case "$subcmd" in
-    start)
-      local interval="${3:-$_AUTOUPDATE_DEFAULT_INTERVAL}"
+cmd_autoupdate_start() {
+  local interval="${1:-$_AUTOUPDATE_DEFAULT_INTERVAL}"
 
-      # Unload existing agent if running
-      if _autoupdate_is_loaded; then
-        launchctl unload "$_AUTOUPDATE_PLIST" 2>/dev/null || true
-      fi
+  if _autoupdate_is_loaded; then
+    launchctl unload "$_AUTOUPDATE_PLIST" 2>/dev/null || true
+  fi
 
-      _autoupdate_install_plist "$interval"
-      launchctl load "$_AUTOUPDATE_PLIST"
-      success "Autoupdate started (every $(_format_interval "$interval"))"
-      ;;
+  _autoupdate_install_plist "$interval"
+  launchctl load "$_AUTOUPDATE_PLIST"
+  success "Autoupdate started (every $(_format_interval "$interval"))"
+}
 
-    stop)
-      if _autoupdate_is_loaded; then
-        launchctl unload "$_AUTOUPDATE_PLIST" 2>/dev/null || true
-        rm -f "$_AUTOUPDATE_PLIST"
-        success "Autoupdate stopped"
-      else
-        info "Autoupdate is not running"
-      fi
-      ;;
+cmd_autoupdate_stop() {
+  if _autoupdate_is_loaded; then
+    launchctl unload "$_AUTOUPDATE_PLIST" 2>/dev/null || true
+    rm -f "$_AUTOUPDATE_PLIST"
+    success "Autoupdate stopped"
+  else
+    info "Autoupdate is not running"
+  fi
+}
 
-    status)
-      _autoupdate_status
-      ;;
+cmd_autoupdate_status() {
+  _autoupdate_status
+}
 
-    run)
-      info "Running update now"
-      "$WORKBENCH_DIR/autoupdate/bin/otto-workbench-autoupdate"
-      ;;
+cmd_autoupdate_run() {
+  info "Running update now"
+  "$WORKBENCH_DIR/autoupdate/bin/otto-workbench-autoupdate"
+}
 
-    logs)
-      local logfile="$_AUTOUPDATE_LOG_DIR/autoupdate.log"
-      if [[ -f "$logfile" ]]; then
-        tail -50 "$logfile"
-      else
-        info "No log file yet"
-      fi
-      ;;
+cmd_autoupdate_logs() {
+  local logfile="$_AUTOUPDATE_LOG_DIR/autoupdate.log"
+  if [[ -f "$logfile" ]]; then
+    tail -50 "$logfile"
+  else
+    info "No log file yet"
+  fi
+}
 
-    *)
-      cat <<EOF
+_autoupdate_usage() {
+  cat <<EOF
 Usage: otto-workbench autoupdate <command>
 
 Scheduled auto-updater via launchd. Pulls workbench changes and runs sync.
 
 Commands:
-  start [SECONDS]   Start autoupdate (default: every 12h)
-  stop              Stop autoupdate
-  status            Show autoupdate status
-  run               Run update now
-  logs              Show recent log entries
+$(commands_usage COMMANDS_AUTOUPDATE)
 EOF
-      [[ -z "$subcmd" ]] && exit 1 || exit 0
+}
+
+cmd_autoupdate() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    start)  cmd_autoupdate_start "$@" ;;
+    stop)   cmd_autoupdate_stop ;;
+    status) cmd_autoupdate_status ;;
+    run)    cmd_autoupdate_run ;;
+    logs)   cmd_autoupdate_logs ;;
+    -h|--help) _autoupdate_usage; exit 0 ;;
+    *)
+      _autoupdate_usage >&2
+      exit 1
       ;;
   esac
 }
@@ -818,7 +848,7 @@ _ai_override_status() {
   done
 }
 
-_ai_override() {
+cmd_ai_override() {
   local type name action
   _ai_override_parse_args type name action "$@" || return 1
 
@@ -908,7 +938,6 @@ _discover_agents() {
 }
 
 cmd_discover() {
-  shift  # remove "discover" from args
   local subcmd="${1:-}"
   case "$subcmd" in
     regenerate)
@@ -945,12 +974,7 @@ Global flags:
   --workbench-dir <path>  Override workbench root (e.g. a worktree checkout)
 
 Commands:
-  install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
-  sync                  Re-apply all workbench configuration to ~/
-  ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
-  discover [regenerate] Show installed components, scripts, and launchd agents
-  autoupdate <subcmd>   Scheduled pull + sync via launchd
-  changelog             Show recent changes from conventional commits
+$(commands_usage)
 
 Run 'otto-workbench install --help' for install options.
 Run 'otto-workbench ai' or 'otto-workbench autoupdate' for subcommands.
@@ -958,12 +982,12 @@ EOF
 }
 
 case "${1:-}" in
-  install)   shift; cmd_install "$@" ;;
-  sync)      cmd_sync ;;
-  ai)        shift; cmd_ai "$@" ;;
-  discover)  cmd_discover "$@" ;;
-  autoupdate) cmd_autoupdate "$@" ;;
-  changelog) cmd_changelog "$@" ;;
+  install)    shift; cmd_install "$@" ;;
+  sync)       cmd_sync ;;
+  ai)         shift; cmd_ai "$@" ;;
+  discover)   shift; cmd_discover "$@" ;;
+  autoupdate) shift; cmd_autoupdate "$@" ;;
+  changelog)  shift; cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;
   *)
     usage >&2

@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS=(
+  "install"    "Install launchd agent (runs every 12h)"
+  "uninstall"  "Remove launchd agent"
+  "status"     "Show agent status"
+)
+
 usage() {
   cat <<EOF
 Check GCP application-default credentials and re-login if expired.
@@ -9,9 +20,7 @@ Usage: $(basename "$0") [command]
 
 Commands:
   (none)      Check credentials, launch login if expired
-  install     Install launchd agent (runs every 12h)
-  uninstall   Remove launchd agent
-  status      Show agent status
+$(commands_usage)
 EOF
 }
 
@@ -37,7 +46,7 @@ _resolve_gcloud() {
   fi
 }
 
-cmd_check() {
+_check() {
   local gcloud
   gcloud="$(_resolve_gcloud)" || exit 1
 
@@ -112,5 +121,5 @@ case "${1:-}" in
   uninstall)  cmd_uninstall ;;
   status)     cmd_status ;;
   -h|--help)  usage ;;
-  *)          cmd_check ;;
+  *)          _check ;;
 esac

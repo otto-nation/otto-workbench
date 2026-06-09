@@ -47,10 +47,7 @@ trap '_on_int' INT
 _WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
 
 _generator_version() {
-  local version sha
-  version=$(jq -r '.["."]' "${_WORKBENCH_ROOT}/.github/.release-please-manifest.json" 2>/dev/null || echo "unknown")
-  sha=$(git -C "$_WORKBENCH_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  echo "otto-workbench ${version} (${sha})"
+  print_version "claude-review" | tail -1
 }
 
 REVIEWS_DIR="$HOME/.config/workbench/reviews"

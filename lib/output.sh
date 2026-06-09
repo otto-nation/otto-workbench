@@ -54,14 +54,17 @@ title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 # skip [label] — print a skip line with optional label
 skip() { echo -e "${DIM}⊘ ${1:-Skipped}${NC}"; }
 
-# print_version SCRIPT_NAME — print tool and workbench version, then exit.
+# print_version SCRIPT_NAME [COMPONENT_KEY] — print tool and workbench version.
 # Reads from .github/.release-please-manifest.json in WORKBENCH_DIR.
 print_version() {
   local name="$1"
+  local component_key="${2:-ai/claude}"
   local manifest="${WORKBENCH_DIR}/.github/.release-please-manifest.json"
-  local tool_version workbench_version sha
-  tool_version=$(jq -r '.["ai/claude"]' "$manifest" 2>/dev/null || echo "unknown")
-  workbench_version=$(jq -r '.["."]' "$manifest" 2>/dev/null || echo "unknown")
+  local tool_version="unknown" workbench_version="unknown" sha _versions
+  _versions=$(jq -r --arg k "$component_key" '.[$k] // "unknown", .["."] // "unknown"' "$manifest" 2>/dev/null) && {
+    tool_version="${_versions%%$'\n'*}"
+    workbench_version="${_versions#*$'\n'}"
+  }
   sha=$(git -C "$WORKBENCH_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
   echo "$name $tool_version"
   echo "otto-workbench $workbench_version ($sha)"

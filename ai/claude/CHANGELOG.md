@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.9.1...claude-review-v1.10.0) (2026-06-09)
+
+
+### Features
+
+* **commands:** add SSOT commands framework ([#196](https://github.com/otto-nation/otto-workbench/issues/196)) ([e397a38](https://github.com/otto-nation/otto-workbench/commit/e397a38b8bfed1285ee806a1c369f2b033cfbb96))
+
 ## [1.9.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.9.0...claude-review-v1.9.1) (2026-06-09)
 
 

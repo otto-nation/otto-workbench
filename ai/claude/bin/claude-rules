@@ -24,6 +24,22 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 RULES_DIR="$CLAUDE_RULES_DIR"
 
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS=(
+  "sync"               "Re-symlink workbench rules and regenerate workbench.md"
+  "add <domain> \"rule\"" "Append a rule to ~/.claude/rules/<domain>.local.md"
+  "list"               "List all local rule files with line counts"
+  "status"             "Show local rules not tracked in workbench"
+  "open [domain]"      "Open a local rule file in \$EDITOR"
+  "project <subcmd>"   "Manage current repo's CLAUDE.md (add, show)"
+)
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS_PROJECT=(
+  "add \"rule\""  "Append a convention to the current repo's CLAUDE.md"
+  "show"          "Display the current repo's CLAUDE.md"
+)
+
 # ─── Frontmatter ──────────────────────────────────────────────────────────────
 
 # _normalize_domain DOMAIN — echoes the canonical domain name for aliases.
@@ -273,53 +289,62 @@ _find_repo_root() {
   exit 1
 }
 
+cmd_project_add() {
+  local rule="${1:-}"
+  if [[ -z "$rule" ]]; then
+    err "Usage: claude-rules project add \"rule text\""
+    exit 1
+  fi
+
+  local root
+  root="$(_find_repo_root)"
+  local claude_md="$root/CLAUDE.md"
+
+  if [[ ! -f "$claude_md" ]]; then
+    err "No CLAUDE.md found at $root"
+    echo "  Create one first, then use this command to append rules." >&2
+    exit 1
+  fi
+
+  if grep -q '^## Conventions' "$claude_md"; then
+    printf -- '- %s\n' "$rule" >> "$claude_md"
+  else
+    printf '\n## Conventions\n\n- %s\n' "$rule" >> "$claude_md"
+  fi
+  success "Added to $claude_md"
+}
+
+cmd_project_show() {
+  local root
+  root="$(_find_repo_root)"
+  local claude_md="$root/CLAUDE.md"
+
+  if [[ ! -f "$claude_md" ]]; then
+    echo -e "  ${DIM}No CLAUDE.md at $root${NC}"
+    return
+  fi
+  cat "$claude_md"
+}
+
 cmd_project() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
 
   case "$subcmd" in
-    add)
-      local rule="${1:-}"
-      if [[ -z "$rule" ]]; then
-        err "Usage: claude-rules project add \"rule text\""
-        exit 1
-      fi
-
-      local root
-      root="$(_find_repo_root)"
-      local claude_md="$root/CLAUDE.md"
-
-      if [[ ! -f "$claude_md" ]]; then
-        err "No CLAUDE.md found at $root"
-        echo "  Create one first, then use this command to append rules." >&2
-        exit 1
-      fi
-
-      # Append under ## Conventions if it exists, otherwise append at end
-      if grep -q '^## Conventions' "$claude_md"; then
-        printf -- '- %s\n' "$rule" >> "$claude_md"
-      else
-        printf '\n## Conventions\n\n- %s\n' "$rule" >> "$claude_md"
-      fi
-      success "Added to $claude_md"
+    add)  cmd_project_add "$@" ;;
+    show) cmd_project_show ;;
+    -h|--help)
+      echo "Usage: claude-rules project <command>"
+      echo
+      echo "Commands:"
+      commands_usage COMMANDS_PROJECT
+      exit 0
       ;;
-
-    show)
-      local root
-      root="$(_find_repo_root)"
-      local claude_md="$root/CLAUDE.md"
-
-      if [[ ! -f "$claude_md" ]]; then
-        echo -e "  ${DIM}No CLAUDE.md at $root${NC}"
-        return
-      fi
-      cat "$claude_md"
-      ;;
-
     *)
-      err "Usage: claude-rules project <add|show>"
-      echo "  add \"rule\"   Append a convention to CLAUDE.md" >&2
-      echo "  show         Display CLAUDE.md" >&2
+      echo "Usage: claude-rules project <command>" >&2
+      echo >&2
+      echo "Commands:" >&2
+      commands_usage COMMANDS_PROJECT >&2
       exit 1
       ;;
   esac
@@ -334,13 +359,7 @@ Usage: claude-rules <command> [args]
 Manage local Claude Code rule additions.
 
 Commands:
-  sync                   Re-symlink workbench rules and regenerate workbench.md
-  add <domain> "rule"    Append a rule to ~/.claude/rules/<domain>.local.md
-  list                   List all local rule files with line counts
-  status                 Show local rules not tracked in workbench
-  open [domain]          Open a local rule file in \$EDITOR
-  project add "rule"     Append a convention to the current repo's CLAUDE.md
-  project show           Display the current repo's CLAUDE.md
+$(commands_usage)
 
 Any domain name is accepted (e.g. general, go, linear, workflow)
 EOF

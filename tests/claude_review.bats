@@ -551,23 +551,23 @@ GHEOF
   [ "$output" = "0" ]
 }
 
-# ── cmd_self_review parameter ordering ──────────────────────────────────────
+# ── _run_self_review parameter ordering ───────────────────────────────────────
 
-@test "cmd_self_review: force parameter is accepted at position 5" {
+@test "_run_self_review: force parameter is accepted at position 5" {
   run bash -c '
     export HOME="$1"; NO_COLOR=1
     source "$2"
     # Verify the function signature accepts force at position 5
-    declare -f cmd_self_review | grep -q "force=.*5"
+    declare -f _run_self_review | grep -q "force=.*5"
   ' -- "$TMPDIR" "$CLAUDE_REVIEW"
   [ "$status" -eq 0 ]
 }
 
-@test "main: --force is forwarded to cmd_self_review at position 5" {
+@test "main: --force is forwarded to _run_self_review at position 5" {
   run bash -c '
     export HOME="$1"; NO_COLOR=1
     source "$2"
-    cmd_self_review() {
+    _run_self_review() {
       local IFS="|"; echo "$*"
     }
     main --self --force 2>/dev/null
@@ -585,7 +585,7 @@ GHEOF
   [[ "$output" != *"--resume"* ]]
 }
 
-@test "cmd_review: pipeline state skips _archive_review" {
+@test "_run_review: pipeline state skips _archive_review" {
   archive_called="false"
   _archive_review() { archive_called="true"; local -n __out=$1; __out=""; }
   _extract_pr_number() { local -n __out=$1; __out="42"; }
@@ -604,14 +604,14 @@ GHEOF
 
   # Create pipeline state to trigger auto-resume
   echo '{}' > "$TMPDIR/reviews/repo-42/pipeline.json"
-  cmd_review "42" "true" "" "false" "4" "false" "false" "" "" 2>/dev/null || true
+  _run_review "42" "true" "" "false" "4" "false" "false" "" "" 2>/dev/null || true
   [ "$archive_called" = "false" ]
   rm -f "$TMPDIR/reviews/repo-42/pipeline.json"
 }
 
-@test "cmd_review: no --resume in orchestrate_args" {
+@test "_run_review: no --resume in orchestrate_args" {
   local fn_body
-  fn_body=$(declare -f cmd_review)
+  fn_body=$(declare -f _run_review)
   [[ "$fn_body" != *'orchestrate_args+=(--resume)'* ]]
 }
 
@@ -637,16 +637,16 @@ GHEOF
   [[ ${#args[@]} -ge 1 ]]
 }
 
-@test "auto-resume: pipeline state detection in cmd_review" {
+@test "auto-resume: pipeline state detection in _run_review" {
   local fn_body
-  fn_body=$(declare -f cmd_review)
+  fn_body=$(declare -f _run_review)
   [[ "$fn_body" == *'FILENAME_PIPELINE_STATE'* ]]
   [[ "$fn_body" == *'has_pipeline_state'* ]]
 }
 
-@test "auto-resume: pipeline state detection in cmd_self_review" {
+@test "auto-resume: pipeline state detection in _run_self_review" {
   local fn_body
-  fn_body=$(declare -f cmd_self_review)
+  fn_body=$(declare -f _run_self_review)
   [[ "$fn_body" == *'FILENAME_PIPELINE_STATE'* ]]
   [[ "$fn_body" == *'has_pipeline_state'* ]]
 }
@@ -874,7 +874,7 @@ EOF
   run bash -c '
     export HOME="$1"; NO_COLOR=1
     source "$2"
-    cmd_review() { :; }
+    _run_review() { :; }
     _extract_repo() { local -n __out=$1; __out="org/repo"; }
     _review_file() { local -n __out=$1; __out="/tmp/review.md"; }
     _json_summary() { echo "{}"; }

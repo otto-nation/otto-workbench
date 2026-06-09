@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/otto-nation/otto-workbench/compare/v1.17.0...v1.17.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **ci:** merge claude-config packaging into workbench job ([#201](https://github.com/otto-nation/otto-workbench/issues/201)) ([2e72717](https://github.com/otto-nation/otto-workbench/commit/2e727179f50ad25796c6a33550a00b871e6ad846))
+
 ## [1.17.0](https://github.com/otto-nation/otto-workbench/compare/v1.16.0...v1.17.0) (2026-06-09)
 
 

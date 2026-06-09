@@ -1329,6 +1329,8 @@ _gc_clean_intermediates() {
                       "${review_dir}"holistic.md "${review_dir}"holistic.jsonl \
                       "${review_dir}"synthesis.jsonl; do
     [[ -f "$intermediate" ]] || continue
+    # Keep recent intermediates for debugging
+    [[ -n "$(find "$intermediate" -mtime +${GC_STALE_DAYS} -print 2>/dev/null)" ]] || continue
     rm -f "$intermediate"
     __count=$((__count + 1))
   done
@@ -1351,7 +1353,7 @@ cmd_gc() {
       continue
     fi
 
-    # Completed review (no pipeline) — remove stale intermediates
+    # Completed review (no pipeline) — remove intermediates older than GC_STALE_DAYS
     local has_pipeline="false"
     [[ -f "${review_dir}${FILENAME_PIPELINE_STATE}" ]] && has_pipeline="true"
 

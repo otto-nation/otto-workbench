@@ -833,8 +833,11 @@ EOF
   echo '{}' > "$TMPDIR/reviews/test-repo-300/holistic.md"
   echo '{}' > "$TMPDIR/reviews/test-repo-300/holistic.jsonl"
   # No pipeline.json — review is complete
+  # All intermediates are stale
   touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/group-1.md"
   touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/group-1.jsonl"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/holistic.md"
+  touch -t 202605010000 "$TMPDIR/reviews/test-repo-300/holistic.jsonl"
 
   run bash -c '
     export HOME="'"$TMPDIR"'"
@@ -847,6 +850,25 @@ EOF
   [ ! -f "$TMPDIR/reviews/test-repo-300/group-1.jsonl" ]
   [ ! -f "$TMPDIR/reviews/test-repo-300/holistic.md" ]
   [ ! -f "$TMPDIR/reviews/test-repo-300/holistic.jsonl" ]
+}
+
+@test "cmd_gc: preserves recent intermediates from completed reviews" {
+  mkdir -p "$TMPDIR/reviews/test-repo-350"
+  echo '## Summary' > "$TMPDIR/reviews/test-repo-350/review.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-350/group-1.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-350/group-1.jsonl"
+  # No pipeline.json — review is complete
+  # Intermediates are recent (default timestamp = now)
+
+  run bash -c '
+    export HOME="'"$TMPDIR"'"
+    NO_COLOR=1 source "'"$CLAUDE_REVIEW"'"
+    REVIEWS_DIR="'"$TMPDIR/reviews"'" cmd_gc
+  '
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/reviews/test-repo-350/review.md" ]
+  [ -f "$TMPDIR/reviews/test-repo-350/group-1.md" ]
+  [ -f "$TMPDIR/reviews/test-repo-350/group-1.jsonl" ]
 }
 
 @test "cmd_gc: preserves intermediates when pipeline is active" {

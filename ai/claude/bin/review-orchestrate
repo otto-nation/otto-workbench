@@ -240,7 +240,7 @@ MAX_TRUNCATED_LINES = 500
 MAX_COMMIT_LOG_BYTES = 50_000
 
 NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
-MIN_DIFF_BYTES = 50_000
+MIN_DIFF_BYTES = 20_000
 
 
 # ── Pre-flight data collection ───────────────────────────────────────────────
@@ -1335,7 +1335,40 @@ def _compute_diff_budget(
             )
 
     non_diff_total = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + non_diff_preflight
-    return max(MIN_DIFF_BYTES, MAX_PROMPT_BYTES - non_diff_total)
+    remaining = MAX_PROMPT_BYTES - non_diff_total
+    if remaining < MIN_DIFF_BYTES:
+        _warn(
+            f"Prompt budget tight: {non_diff_total // 1024}KB non-diff vs "
+            f"{MAX_PROMPT_BYTES // 1024}KB limit — diff capped to {MIN_DIFF_BYTES // 1024}KB"
+        )
+    return max(MIN_DIFF_BYTES, remaining)
+
+
+def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: "ReviewJob") -> str:
+    prompt_bytes = len(prompt.encode())
+    prompt_kb = prompt_bytes // 1024
+    budget_kb = MAX_PROMPT_BYTES // 1024
+
+    parts = []
+    for name, value in sections.items():
+        size = len(value.encode()) if value else 0
+        if size > 1024:
+            parts.append(f"{name}={size // 1024}KB")
+    section_summary = ", ".join(parts) if parts else "all <1KB"
+
+    level = "⚠" if prompt_bytes > MAX_PROMPT_BYTES else "▸"
+    _info(f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})")
+
+    if prompt_bytes > MAX_PROMPT_BYTES:
+        _warn(f"Prompt exceeds budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB")
+
+    prompt_file = _derive_path(job.review_file, f"prompt-{template_name}")
+    try:
+        Path(prompt_file).write_text(prompt)
+    except OSError:
+        pass
+
+    return prompt
 
 
 def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
@@ -1424,25 +1457,28 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         )
 
     if template_name == TEMPLATE_HOLISTIC:
-        diff_budget = _compute_diff_budget(job, {
+        sections = {
             "pr_header": pr_header,
             "all_files_formatted": job.pr.all_files_formatted,
             "reviews_section": reviews_section,
             "issue_section": issue_section,
             "env_section": env_section,
-        })
-        return render_template(
+        }
+        diff_budget = _compute_diff_budget(job, sections)
+        preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
+        sections["preflight_data"] = preflight
+        return _log_prompt_size(template_name, render_template(
             TEMPLATE_HOLISTIC,
             pr_number=job.pr_number,
             repo=job.repo,
             pr_header=pr_header,
             all_files_formatted=job.pr.all_files_formatted,
-            preflight_data=_build_preflight_section(job, max_diff_bytes=diff_budget),
+            preflight_data=preflight,
             reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
             holistic_output=extra["holistic_output"],
-        )
+        ), sections, job)
 
     if template_name == TEMPLATE_GROUP:
         group_files = extra.get("group_file_paths", [])
@@ -1456,8 +1492,19 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
         holistic_block = _build_holistic_block(
             extra.get("holistic_content", ""), job.pr.changed_files,
         )
-        group_preflight = _build_preflight_section(job, file_filter=group_files or None)
-        return render_template(
+        sections = {
+            "pr_header": pr_header,
+            "holistic_block": holistic_block,
+            "issue_section": issue_section,
+            "env_section": env_section,
+            "prior_section": prior_section,
+        }
+        diff_budget = _compute_diff_budget(job, sections)
+        group_preflight = _build_preflight_section(
+            job, file_filter=group_files or None, max_diff_bytes=diff_budget,
+        )
+        sections["preflight_data"] = group_preflight
+        return _log_prompt_size(template_name, render_template(
             TEMPLATE_GROUP,
             pr_number=job.pr_number,
             repo=job.repo,
@@ -1472,7 +1519,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             env_section=env_section,
             group_output=extra["group_output"],
             prior_section=prior_section,
-        )
+        ), sections, job)
 
     if template_name == TEMPLATE_SYNTHESIS:
         holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
@@ -1481,14 +1528,19 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             job.prior_review,
             "Include a ## Resolved section noting which prior findings were fixed.",
         )
-        diff_budget = _compute_diff_budget(job, {
+        sections = {
             "pr_header": pr_header,
             "holistic_content": holistic_content,
             "merged_content": merged_content,
             "reviews_section": reviews_section,
             "prior_section": prior_section,
-        }, skip_file_contents=True)
-        return render_template(
+        }
+        diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
+        preflight = _build_preflight_section(
+            job, skip_file_contents=True, max_diff_bytes=diff_budget,
+        )
+        sections["preflight_data"] = preflight
+        return _log_prompt_size(template_name, render_template(
             TEMPLATE_SYNTHESIS,
             pr_number=job.pr_number,
             repo=job.repo,
@@ -1498,16 +1550,14 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_content=holistic_content,
             group_count=extra["group_count"],
             merged_content=merged_content,
-            preflight_data=_build_preflight_section(
-                job, skip_file_contents=True, max_diff_bytes=diff_budget,
-            ),
+            preflight_data=preflight,
             reviews_section=reviews_section,
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
             prior_section=prior_section,
             generator_version=generator_version,
-        )
+        ), sections, job)
 
     raise ValueError(f"Unknown template: {template_name}")
 

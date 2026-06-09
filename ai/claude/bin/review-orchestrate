@@ -1317,6 +1317,7 @@ def _compute_diff_budget(
     job: "ReviewJob",
     known_sections: dict[str, str],
     skip_file_contents: bool = False,
+    file_filter: list[str] | None = None,
 ) -> int:
     known_bytes = sum(len(v.encode()) for v in known_sections.values())
 
@@ -1330,8 +1331,10 @@ def _compute_diff_budget(
             + sum(len(v.encode()) for v in pf.review_checklists.values())
         )
         if not skip_file_contents:
+            filter_set = set(file_filter) if file_filter else None
             non_diff_preflight += sum(
-                len(v.encode()) for v in pf.file_contents.values()
+                len(v.encode()) for k, v in pf.file_contents.items()
+                if filter_set is None or k in filter_set
             )
 
     non_diff_total = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + non_diff_preflight
@@ -1344,7 +1347,7 @@ def _compute_diff_budget(
     return max(MIN_DIFF_BYTES, remaining)
 
 
-def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: "ReviewJob") -> str:
+def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: "ReviewJob", label: str = "") -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
     budget_kb = MAX_PROMPT_BYTES // 1024
@@ -1356,13 +1359,13 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
             parts.append(f"{name}={size // 1024}KB")
     section_summary = ", ".join(parts) if parts else "all <1KB"
 
-    level = "⚠" if prompt_bytes > MAX_PROMPT_BYTES else "▸"
     _info(f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})")
 
     if prompt_bytes > MAX_PROMPT_BYTES:
         _warn(f"Prompt exceeds budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB")
 
-    prompt_file = _derive_path(job.review_file, f"prompt-{template_name}")
+    suffix = f"-{label}" if label else ""
+    prompt_file = _derive_path(job.review_file, f"prompt-{template_name}{suffix}")
     try:
         Path(prompt_file).write_text(prompt)
     except OSError:
@@ -1388,18 +1391,20 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             "- Add any new findings from changes since the last review"
         )
         prior_section = _build_prior_section(job.prior_review, prior_ctx)
-        return render_template(
+        preflight = _build_preflight_section(job)
+        sections = {"pr_header": pr_header, "preflight_data": preflight, "prior_section": prior_section}
+        return _log_prompt_size(template_name, render_template(
             TEMPLATE_SELF_REVIEW,
             branch_name=extra.get("branch_name", job.pr.head),
             repo=job.repo,
             pr_header=pr_header,
-            preflight_data=_build_preflight_section(job),
+            preflight_data=preflight,
             env_section=env_section,
             issue_section=issue_section,
             prior_section=prior_section,
             review_file=job.review_file,
             generator_version=generator_version,
-        )
+        ), sections, job)
 
     if template_name == TEMPLATE_SELF_SYNTHESIS:
         holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
@@ -1408,13 +1413,16 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             job.prior_review,
             "Omit prior findings that have been fixed. Carry forward open ones.",
         )
-        diff_budget = _compute_diff_budget(job, {
+        sections = {
             "pr_header": pr_header,
             "holistic_content": holistic_content,
             "merged_content": merged_content,
             "prior_section": prior_section,
-        }, skip_file_contents=True)
-        return render_template(
+        }
+        diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
+        preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
+        sections["preflight_data"] = preflight
+        return _log_prompt_size(template_name, render_template(
             TEMPLATE_SELF_SYNTHESIS,
             branch_name=extra.get("branch_name", job.pr.head),
             repo=job.repo,
@@ -1423,15 +1431,13 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             holistic_content=holistic_content,
             group_count=extra["group_count"],
             merged_content=merged_content,
-            preflight_data=_build_preflight_section(
-                job, skip_file_contents=True, max_diff_bytes=diff_budget,
-            ),
+            preflight_data=preflight,
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
             prior_section=prior_section,
             generator_version=generator_version,
-        )
+        ), sections, job)
 
     if template_name == TEMPLATE_SINGLE:
         prior_ctx = (
@@ -1442,19 +1448,21 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             "- Add any new findings from changes since the last review"
         )
         prior_section = _build_prior_section(job.prior_review, prior_ctx)
-        return render_template(
+        preflight = _build_preflight_section(job)
+        sections = {"pr_header": pr_header, "preflight_data": preflight, "reviews_section": reviews_section, "prior_section": prior_section}
+        return _log_prompt_size(template_name, render_template(
             TEMPLATE_SINGLE,
             pr_number=job.pr_number,
             repo=job.repo,
             pr_header=pr_header,
-            preflight_data=_build_preflight_section(job),
+            preflight_data=preflight,
             reviews_section=reviews_section,
             env_section=env_section,
             issue_section=issue_section,
             prior_section=prior_section,
             review_file=job.review_file,
             generator_version=generator_version,
-        )
+        ), sections, job)
 
     if template_name == TEMPLATE_HOLISTIC:
         sections = {
@@ -1499,7 +1507,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             "env_section": env_section,
             "prior_section": prior_section,
         }
-        diff_budget = _compute_diff_budget(job, sections)
+        diff_budget = _compute_diff_budget(job, sections, file_filter=group_files or None)
         group_preflight = _build_preflight_section(
             job, file_filter=group_files or None, max_diff_bytes=diff_budget,
         )
@@ -1519,7 +1527,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             env_section=env_section,
             group_output=extra["group_output"],
             prior_section=prior_section,
-        ), sections, job)
+        ), sections, job, label=str(extra["group_idx"]))
 
     if template_name == TEMPLATE_SYNTHESIS:
         holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
@@ -2290,6 +2298,10 @@ def _cleanup_intermediates(
     if synthesis_log:
         cleanup.append(synthesis_log)
     cleanup.append(_pipeline_state_path(job))
+
+    review_dir = str(Path(job.review_file).parent)
+    for p in Path(review_dir).glob("prompt-*"):
+        cleanup.append(str(p))
 
     for path in cleanup:
         try:

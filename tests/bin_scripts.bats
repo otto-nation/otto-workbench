@@ -144,60 +144,54 @@ _extract_commands_arrays() {
   grep -oE '^[[:space:]]*COMMANDS(_[A-Z_]+)?=' "$1" | sed 's/^[[:space:]]*//; s/=//' | sort -u
 }
 
+# _check_commands_for_file FILE FAILURES_ARRAYNAME
+# Validates cmd_* ↔ COMMANDS consistency for a single script.
+_check_commands_for_file() {
+  local file="$1"
+  local -n __failures="$2"
+  local name
+  name=$(basename "$file")
+
+  local -a cmd_functions=()
+  local fn
+  while IFS= read -r fn; do
+    cmd_functions+=("$fn")
+  done < <(grep -oE '^cmd_[a-z0-9_]+' "$file" | sed 's/^cmd_//' | sort -u)
+
+  [[ ${#cmd_functions[@]} -gt 0 ]] || return 0
+
+  local -a registered=()
+  local array_name prefix cmd_name
+  while IFS= read -r array_name; do
+    [[ -n "$array_name" ]] || continue
+    prefix=""
+    if [[ "$array_name" != "COMMANDS" ]]; then
+      prefix="${array_name#COMMANDS_}"
+      prefix="${prefix,,}_"
+    fi
+    while IFS= read -r cmd_name; do
+      [[ -n "$cmd_name" ]] || continue
+      registered+=("${prefix}${cmd_name}")
+    done < <(_extract_command_names "$file" "$array_name")
+  done < <(_extract_commands_arrays "$file")
+
+  local -A cmd_set=() reg_set=()
+  for fn in "${cmd_functions[@]}"; do cmd_set["$fn"]=1; done
+  for fn in "${registered[@]}"; do reg_set["$fn"]=1; done
+
+  for fn in "${registered[@]}"; do
+    [[ -n "${cmd_set[$fn]:-}" ]] || __failures+=("$name: COMMANDS entry '$fn' has no cmd_${fn}() function")
+  done
+  for fn in "${cmd_functions[@]}"; do
+    [[ -n "${reg_set[$fn]:-}" ]] || __failures+=("$name: cmd_${fn}() not in any COMMANDS array")
+  done
+}
+
 @test "all cmd_* functions have matching COMMANDS entries" {
   local failures=()
 
   while IFS= read -r f; do
-    local name
-    name=$(basename "$f")
-
-    # Collect all cmd_* function definitions (strip cmd_ prefix)
-    local -a cmd_functions=()
-    local fn
-    while IFS= read -r fn; do
-      cmd_functions+=("$fn")
-    done < <(grep -oE '^cmd_[a-z0-9_]+' "$f" | sed 's/^cmd_//' | sort -u)
-
-    [[ ${#cmd_functions[@]} -gt 0 ]] || continue
-
-    # Collect all COMMANDS* arrays and build a set of registered commands
-    local -a registered=()
-    local array_name prefix cmd_name
-    while IFS= read -r array_name; do
-      [[ -n "$array_name" ]] || continue
-      prefix=""
-      if [[ "$array_name" != "COMMANDS" ]]; then
-        prefix="${array_name#COMMANDS_}"
-        prefix="${prefix,,}_"
-      fi
-      while IFS= read -r cmd_name; do
-        [[ -n "$cmd_name" ]] || continue
-        registered+=("${prefix}${cmd_name}")
-      done < <(_extract_command_names "$f" "$array_name")
-    done < <(_extract_commands_arrays "$f")
-
-    # Forward: every COMMANDS entry must have a cmd_* function
-    local reg
-    for reg in "${registered[@]}"; do
-      local found=false
-      for fn in "${cmd_functions[@]}"; do
-        [[ "$fn" == "$reg" ]] && { found=true; break; }
-      done
-      if [[ "$found" == false ]]; then
-        failures+=("$name: COMMANDS entry '$reg' has no cmd_${reg}() function")
-      fi
-    done
-
-    # Reverse: every cmd_* function must have a COMMANDS entry
-    for fn in "${cmd_functions[@]}"; do
-      local found=false
-      for reg in "${registered[@]}"; do
-        [[ "$fn" == "$reg" ]] && { found=true; break; }
-      done
-      if [[ "$found" == false ]]; then
-        failures+=("$name: cmd_${fn}() not in any COMMANDS array")
-      fi
-    done
+    _check_commands_for_file "$f" failures
   done < <(_discover_scripts)
 
   if (( ${#failures[@]} > 0 )); then

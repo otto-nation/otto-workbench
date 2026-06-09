@@ -115,6 +115,98 @@ _discover_scripts() {
   fi
 }
 
+# ─── Command documentation ───────────────────────────────────────────────────
+
+# _extract_command_names FILE ARRAY_NAME
+# Extracts command names from a COMMANDS-style array declaration.
+# Returns the first word of each usage form (the bare command name).
+_extract_command_names() {
+  local file="$1" array_name="$2"
+  local in_block=false line
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*${array_name}=\( ]]; then
+      in_block=true
+      continue
+    fi
+    [[ "$in_block" == true ]] || continue
+    [[ "$line" =~ ^\) ]] && break
+    if [[ "$line" =~ ^[[:space:]]*\"([^\"]+)\" ]]; then
+      local usage_form="${BASH_REMATCH[1]}"
+      echo "${usage_form%% *}"
+    fi
+  done < "$file"
+}
+
+# _extract_commands_arrays FILE
+# Lists all COMMANDS-style array names declared in a file.
+_extract_commands_arrays() {
+  grep -oE '^COMMANDS(_[A-Z_]+)?=' "$1" | sed 's/=//' | sort -u
+}
+
+@test "all cmd_* functions have matching COMMANDS entries" {
+  local failures=()
+
+  while IFS= read -r f; do
+    local name
+    name=$(basename "$f")
+
+    # Collect all cmd_* function definitions (strip cmd_ prefix)
+    local -a cmd_functions=()
+    local fn
+    while IFS= read -r fn; do
+      cmd_functions+=("$fn")
+    done < <(grep -oE '^cmd_[a-z_]+' "$f" | sed 's/^cmd_//' | sort -u)
+
+    [[ ${#cmd_functions[@]} -gt 0 ]] || continue
+
+    # Collect all COMMANDS* arrays and build a set of registered commands
+    local -a registered=()
+    local array_name prefix cmd_name
+    while IFS= read -r array_name; do
+      [[ -n "$array_name" ]] || continue
+      prefix=""
+      if [[ "$array_name" != "COMMANDS" ]]; then
+        prefix="${array_name#COMMANDS_}"
+        prefix="${prefix,,}_"
+      fi
+      while IFS= read -r cmd_name; do
+        [[ -n "$cmd_name" ]] || continue
+        registered+=("${prefix}${cmd_name}")
+      done < <(_extract_command_names "$f" "$array_name")
+    done < <(_extract_commands_arrays "$f")
+
+    # Forward: every COMMANDS entry must have a cmd_* function
+    local reg
+    for reg in "${registered[@]}"; do
+      local found=false
+      for fn in "${cmd_functions[@]}"; do
+        [[ "$fn" == "$reg" ]] && { found=true; break; }
+      done
+      if [[ "$found" == false ]]; then
+        failures+=("$name: COMMANDS entry '$reg' has no cmd_${reg}() function")
+      fi
+    done
+
+    # Reverse: every cmd_* function must have a COMMANDS entry
+    for fn in "${cmd_functions[@]}"; do
+      local found=false
+      for reg in "${registered[@]}"; do
+        [[ "$fn" == "$reg" ]] && { found=true; break; }
+      done
+      if [[ "$found" == false ]]; then
+        failures+=("$name: cmd_${fn}() not in any COMMANDS array")
+      fi
+    done
+  done < <(_discover_scripts)
+
+  if (( ${#failures[@]} > 0 )); then
+    printf 'Command documentation drift:\n'
+    printf '  %s\n' "${failures[@]}"
+    return 1
+  fi
+}
+
 @test "all bash bin scripts exit 0 on -h" {
   local failures=()
 

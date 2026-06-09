@@ -37,6 +37,8 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   . "$_ui_lib_dir/setup.sh"
   # shellcheck source=state.sh
   . "$_ui_lib_dir/state.sh"
+  # shellcheck source=commands.sh
+  . "$_ui_lib_dir/commands.sh"
 fi
 
 unset _ui_lib_dir

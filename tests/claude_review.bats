@@ -857,6 +857,9 @@ EOF
   echo '## Summary' > "$TMPDIR/reviews/test-repo-350/review.md"
   echo '{}' > "$TMPDIR/reviews/test-repo-350/group-1.md"
   echo '{}' > "$TMPDIR/reviews/test-repo-350/group-1.jsonl"
+  echo '{}' > "$TMPDIR/reviews/test-repo-350/holistic.md"
+  echo '{}' > "$TMPDIR/reviews/test-repo-350/holistic.jsonl"
+  echo '{}' > "$TMPDIR/reviews/test-repo-350/synthesis.jsonl"
   # No pipeline.json — review is complete
   # Intermediates are recent (default timestamp = now)
 
@@ -869,6 +872,9 @@ EOF
   [ -f "$TMPDIR/reviews/test-repo-350/review.md" ]
   [ -f "$TMPDIR/reviews/test-repo-350/group-1.md" ]
   [ -f "$TMPDIR/reviews/test-repo-350/group-1.jsonl" ]
+  [ -f "$TMPDIR/reviews/test-repo-350/holistic.md" ]
+  [ -f "$TMPDIR/reviews/test-repo-350/holistic.jsonl" ]
+  [ -f "$TMPDIR/reviews/test-repo-350/synthesis.jsonl" ]
 }
 
 @test "cmd_gc: preserves intermediates when pipeline is active" {

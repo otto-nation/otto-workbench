@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.10.0...claude-review-v1.11.0) (2026-06-09)
+
+
+### Features
+
+* **claude:** add --version/-V to all user-facing scripts ([#200](https://github.com/otto-nation/otto-workbench/issues/200)) ([4c14cd2](https://github.com/otto-nation/otto-workbench/commit/4c14cd24069709fd7188ec72334d8074b3b044fb))
+
+
+### Bug Fixes
+
+* **claude-review:** preserve recent intermediates during gc ([#198](https://github.com/otto-nation/otto-workbench/issues/198)) ([9eabcc2](https://github.com/otto-nation/otto-workbench/commit/9eabcc23cbeb574406f6c00b7a1ac188a5c7020e))
+
 ## [1.10.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.9.1...claude-review-v1.10.0) (2026-06-09)
 
 

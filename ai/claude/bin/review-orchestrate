@@ -1359,10 +1359,10 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
             parts.append(f"{name}={size // 1024}KB")
     section_summary = ", ".join(parts) if parts else "all <1KB"
 
-    _info(f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})")
-
+    msg = f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})"
     if prompt_bytes > MAX_PROMPT_BYTES:
-        _warn(f"Prompt exceeds budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB")
+        msg += f" — EXCEEDS budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB"
+    print(msg, file=sys.stderr, flush=True)
 
     suffix = f"-{label}" if label else ""
     prompt_file = _derive_path(job.review_file, f"prompt-{template_name}{suffix}")

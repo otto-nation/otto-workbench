@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.2](https://github.com/otto-nation/otto-workbench/compare/v1.17.1...v1.17.2) (2026-06-10)
+
+
+### Bug Fixes
+
+* **claude-review:** add turn budget and efficiency constraints to reviewer ([#205](https://github.com/otto-nation/otto-workbench/issues/205)) ([acbc469](https://github.com/otto-nation/otto-workbench/commit/acbc469115e3b054a9b6e1fd95931580f4640f75))
+* **claude-review:** tolerate h3/hyphenated severity headers; add severity calibration ([#208](https://github.com/otto-nation/otto-workbench/issues/208)) ([52b93f1](https://github.com/otto-nation/otto-workbench/commit/52b93f156906f8ea38215e075c0ccfa75daca572))
+
 ## [1.17.1](https://github.com/otto-nation/otto-workbench/compare/v1.17.0...v1.17.1) (2026-06-09)
 
 

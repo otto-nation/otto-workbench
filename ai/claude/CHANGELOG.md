@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.11.0...claude-review-v1.11.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **claude-review:** fetch origin/base before computing diff ([#203](https://github.com/otto-nation/otto-workbench/issues/203)) ([d928b89](https://github.com/otto-nation/otto-workbench/commit/d928b898a4df1b025a8f379972eb2756f9ea4de2))
+
 ## [1.11.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.10.0...claude-review-v1.11.0) (2026-06-09)
 
 

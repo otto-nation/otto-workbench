@@ -277,6 +277,7 @@ def _file_permissions(path: Path) -> str:
 def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     wt = Path(job.wt_path)
     base = job.pr.base or DEFAULT_BASE_BRANCH
+    _run(["git", "fetch", "origin", base], cwd=job.wt_path, check=False)
     git_range = f"origin/{base}...HEAD"
     git_range_log = f"origin/{base}..HEAD"
 

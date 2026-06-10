@@ -43,6 +43,6 @@ You MUST use the Write tool to write the review to: ${review_file}
 Do NOT print the review to stdout — it must be saved as a file using the Write tool.
 
 ## Turn budget
-You have ${max_turns} tool calls. Write the review file FIRST based on the pre-collected diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.
+You have ${max_turns} turns (each turn can include multiple parallel tool calls). Write the review file FIRST based on the pre-collected diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.
 ${issue_section}
 ${prior_section}

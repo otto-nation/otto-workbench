@@ -28,7 +28,7 @@ ${preflight_data}
     Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
 
 ## Turn budget
-You have ${max_turns} tool calls total. Your FIRST tool call must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
+You have ${max_turns} turns total. Your FIRST action must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

@@ -539,7 +539,7 @@ job = mod.ReviewJob(
     session_log='/tmp/session.jsonl', reviews_dir='/tmp/reviews',
     prior_review='## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n- [ ] **[M2]** src/db.go:20 — db bug',
 )
-result = mod.build_prompt(mod.TEMPLATE_GROUP, job,
+result = mod.build_prompt(mod.TEMPLATE_GROUP, job, max_turns=15,
     group_idx=1, group_count=2, group_name='auth',
     group_files_formatted='src/auth.go', group_output='/tmp/out.md',
     holistic_content='', group_file_paths=['src/auth.go'],
@@ -1127,7 +1127,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
 )
-result = mod.build_prompt("single-agent.md", job)
+result = mod.build_prompt("single-agent.md", job, max_turns=15)
 print(result)
 ')
   [[ "$result" == *"PR #99"* ]]
@@ -1147,7 +1147,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
 )
-result = mod.build_prompt("group.md", job,
+result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
     group_output="/tmp/g1.md",
@@ -1171,7 +1171,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
 )
-result = mod.build_prompt("group.md", job,
+result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
     group_output="/tmp/g1.md",
@@ -1485,7 +1485,7 @@ job = mod.ReviewJob(
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
     preflight=preflight,
 )
-result = mod.build_prompt("single-agent.md", job)
+result = mod.build_prompt("single-agent.md", job, max_turns=15)
 has_preflight = "Pre-collected data" in result
 has_file = "package main" in result
 has_diff = "--- a/a.go" in result
@@ -1507,7 +1507,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
 )
-result = mod.build_prompt("single-agent.md", job)
+result = mod.build_prompt("single-agent.md", job, max_turns=15)
 print("absent" if "Pre-collected data" not in result else "present")
 ')
   [ "$result" = "absent" ]
@@ -1527,7 +1527,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
 )
-result = mod.build_prompt("synthesis.md", job,
+result = mod.build_prompt("synthesis.md", job, max_turns=15,
     holistic_content="assessment",
     group_count=1,
     merged_content="## Must fix\n- [M1] bug",
@@ -1695,7 +1695,7 @@ job = mod.ReviewJob(
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
     preflight=preflight,
 )
-result = mod.build_prompt("group.md", job,
+result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=2, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
     group_output="/tmp/g1.md",
@@ -1731,7 +1731,7 @@ job = mod.ReviewJob(
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
     preflight=preflight,
 )
-result = mod.build_prompt("holistic.md", job, holistic_output="/tmp/h.md")
+result = mod.build_prompt("holistic.md", job, max_turns=15, holistic_output="/tmp/h.md")
 has_preflight = "Pre-collected data" in result
 has_file = "package main" in result
 print(f"preflight={has_preflight},file={has_file}")
@@ -1761,7 +1761,7 @@ job = mod.ReviewJob(
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
     preflight=preflight,
 )
-result = mod.build_prompt("self-review.md", job, branch_name="feat")
+result = mod.build_prompt("self-review.md", job, max_turns=15, branch_name="feat")
 has_preflight = "Pre-collected data" in result
 has_file = "package main" in result
 print(f"preflight={has_preflight},file={has_file}")
@@ -1789,7 +1789,7 @@ job = mod.ReviewJob(
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
     preflight=preflight,
 )
-result = mod.build_prompt("single-agent.md", job)
+result = mod.build_prompt("single-agent.md", job, max_turns=15)
 has_full = "NOT in the PR" in result
 has_partial = "Files not pre-collected" in result
 has_none = "Read source files directly" in result
@@ -1822,7 +1822,7 @@ job = mod.ReviewJob(
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
     preflight=preflight,
 )
-result = mod.build_prompt("single-agent.md", job)
+result = mod.build_prompt("single-agent.md", job, max_turns=15)
 has_full = "NOT in the PR" in result
 has_partial = "must be read directly" in result
 has_none = "Read source files directly" in result
@@ -1844,7 +1844,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
 )
-result = mod.build_prompt("single-agent.md", job)
+result = mod.build_prompt("single-agent.md", job, max_turns=15)
 has_full = "NOT in the PR" in result
 has_partial = "must be read directly" in result
 has_none = "Read source files directly" in result

@@ -146,7 +146,6 @@ DEFAULT_MAX_TURNS_GROUP = 15
 DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
-DEFAULT_MAX_TURNS_NO_PREFLIGHT = 30
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 
 DEFAULT_MODEL_GROUP = "sonnet"
@@ -1375,7 +1374,7 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
     return prompt
 
 
-def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
+def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
     today = date.today().isoformat()
     generator_version = job.generator_version
     pr_header = _build_pr_header(job.pr, job.ctx)
@@ -1405,6 +1404,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             prior_section=prior_section,
             review_file=job.review_file,
             generator_version=generator_version,
+            max_turns=max_turns,
         ), sections, job)
 
     if template_name == TEMPLATE_SELF_SYNTHESIS:
@@ -1438,6 +1438,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             today=today,
             prior_section=prior_section,
             generator_version=generator_version,
+            max_turns=max_turns,
         ), sections, job)
 
     if template_name == TEMPLATE_SINGLE:
@@ -1463,6 +1464,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             prior_section=prior_section,
             review_file=job.review_file,
             generator_version=generator_version,
+            max_turns=max_turns,
         ), sections, job)
 
     if template_name == TEMPLATE_HOLISTIC:
@@ -1487,6 +1489,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             issue_section=issue_section,
             env_section=env_section,
             holistic_output=extra["holistic_output"],
+            max_turns=max_turns,
         ), sections, job)
 
     if template_name == TEMPLATE_GROUP:
@@ -1528,6 +1531,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             env_section=env_section,
             group_output=extra["group_output"],
             prior_section=prior_section,
+            max_turns=max_turns,
         ), sections, job, label=str(extra["group_idx"]))
 
     if template_name == TEMPLATE_SYNTHESIS:
@@ -1566,6 +1570,7 @@ def build_prompt(template_name: str, job: ReviewJob, **extra) -> str:
             today=today,
             prior_section=prior_section,
             generator_version=generator_version,
+            max_turns=max_turns,
         ), sections, job)
 
     raise ValueError(f"Unknown template: {template_name}")
@@ -1914,7 +1919,7 @@ def _write_review_sidecar(job: ReviewJob):
 def run_single_agent(job: ReviewJob):
     template = TEMPLATE_SELF_REVIEW if job.mode == MODE_SELF else TEMPLATE_SINGLE
     prompt = build_prompt(
-        template, job, branch_name=job.pr.head,
+        template, job, max_turns=DEFAULT_MAX_TURNS_SINGLE, branch_name=job.pr.head,
     )
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
     _info(f"Running review agent on {label}...")
@@ -1961,7 +1966,7 @@ def _review_group(
     )
 
     group_prompt = build_prompt(
-        TEMPLATE_GROUP, job,
+        TEMPLATE_GROUP, job, max_turns=DEFAULT_MAX_TURNS_GROUP,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
         group_file_paths=grp.files,
@@ -1994,7 +1999,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     prompt = build_prompt(
-        TEMPLATE_HOLISTIC, job, holistic_output=holistic_output,
+        TEMPLATE_HOLISTIC, job, max_turns=DEFAULT_MAX_TURNS_HOLISTIC, holistic_output=holistic_output,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
@@ -2230,7 +2235,7 @@ def _phase_synthesis(
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
     prompt = build_prompt(
-        synthesis_template, job,
+        synthesis_template, job, max_turns=DEFAULT_MAX_TURNS_SYNTHESIS,
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )

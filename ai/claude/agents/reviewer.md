@@ -17,6 +17,11 @@ If the prompt contains a `## Pre-collected data` section, it includes file conte
 
 If no pre-collected data section is present, fall back to reading files and fetching data directly.
 
+## Efficiency
+- **Batch independent tool calls** — if you need to check 3 unrelated files, make all 3 calls in one turn. Never make sequential calls that have no dependency between them.
+- **Write first, verify second** — write the review output based on the pre-collected data and your analysis. Then use remaining turns to verify specific claims against source files and update via Edit.
+- **Scope exploration to the diff** — cross-reference reads are for verifying specific findings (e.g. confirming a caller exists, checking an API signature). Do not explore the codebase to build general understanding — the pre-collected data and CLAUDE.md provide that context.
+
 ## Review Protocol
 
 Follow these phases in order:

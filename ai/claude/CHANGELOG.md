@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.11.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.11.1...claude-review-v1.11.2) (2026-06-10)
+
+
+### Bug Fixes
+
+* **claude-review:** add turn budget and efficiency constraints to reviewer ([#205](https://github.com/otto-nation/otto-workbench/issues/205)) ([acbc469](https://github.com/otto-nation/otto-workbench/commit/acbc469115e3b054a9b6e1fd95931580f4640f75))
+* **claude-review:** tolerate h3/hyphenated severity headers; add severity calibration ([#208](https://github.com/otto-nation/otto-workbench/issues/208)) ([52b93f1](https://github.com/otto-nation/otto-workbench/commit/52b93f156906f8ea38215e075c0ccfa75daca572))
+* **claude-review:** use "turns" not "tool calls" in turn budget sections ([#207](https://github.com/otto-nation/otto-workbench/issues/207)) ([0bde9f8](https://github.com/otto-nation/otto-workbench/commit/0bde9f8616954adc53d7ab0caaafc1750dc17f42))
+
 ## [1.11.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.11.0...claude-review-v1.11.1) (2026-06-10)
 
 

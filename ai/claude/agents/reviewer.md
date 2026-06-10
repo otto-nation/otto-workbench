@@ -225,6 +225,13 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 - **Use SSOT** — if the correct value already exists as a field, parameter, or constant, reference it. Don't recompute or re-derive what's already available
 - **Verify the fix is valid** — a suggested fix that references a non-existent method, field, or variable is worse than no suggestion. Check that the API you're suggesting actually exists in the codebase
 
+### Severity calibration
+
+- **Must fix [M]** — will break correctness, security, or data integrity if shipped as-is
+- **Should fix [S]** — meaningfully impacts maintainability, reliability, or developer experience; not a blocker but should be addressed before or shortly after merge
+- **Nit [N]** — cosmetic, style, documentation wording, trivial inconsistency; no functional impact. Includes commit message issues, step summary formatting, and test artifacts left in diffs
+- **Idiom [I]** — language-specific best practice that doesn't affect correctness (covered in Phase 8)
+
 ### 10. Verdict
 
 Use the Write tool to save the review to the output path specified in the prompt. Do NOT print the review to stdout — it must be written as a file.
@@ -263,6 +270,8 @@ One sentence on what the change does and overall quality.
 ## Verdict
 Approve / Request changes / Needs discussion
 ```
+
+Section headers MUST be exactly `## Must fix`, `## Should fix`, `## Nit`, `## Idioms`, `## Verdict` — h2 level, no hyphens, no nesting under a parent like `## Findings`. The posting tool parses these headers mechanically.
 
 Omit severity sections with no findings. Skip files with no issues.
 

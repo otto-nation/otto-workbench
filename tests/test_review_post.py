@@ -1166,6 +1166,57 @@ class TestIsSectionBoundary:
         assert rp._is_section_boundary("## Must fix") is False
 
 
+class TestMatchSeverityHeader:
+    def test_h2_must_fix(self, rp):
+        assert rp._match_severity_header("## Must fix") == "M"
+
+    def test_h3_should_fix_hyphenated(self, rp):
+        assert rp._match_severity_header("### Should-fix") == "S"
+
+    def test_h3_nit(self, rp):
+        assert rp._match_severity_header("### Nit") == "N"
+
+    def test_h2_nits_plural(self, rp):
+        assert rp._match_severity_header("## Nits") == "N"
+
+    def test_h4_idioms(self, rp):
+        assert rp._match_severity_header("#### Idioms") == "I"
+
+    def test_case_insensitive(self, rp):
+        assert rp._match_severity_header("## SHOULD FIX") == "S"
+
+    def test_non_severity_header_returns_none(self, rp):
+        assert rp._match_severity_header("## Summary") is None
+
+    def test_non_header_returns_none(self, rp):
+        assert rp._match_severity_header("Some text") is None
+
+    def test_findings_parent_returns_none(self, rp):
+        assert rp._match_severity_header("## Findings") is None
+
+
+class TestParseFindingsH3Headers:
+    def test_h3_severity_under_findings_parent(self, rp):
+        text = (
+            "## Findings\n\n"
+            "### Should-fix\n\n"
+            "- **[S1]** **`file.go:10`** — Issue found\n\n"
+            "### Nit\n\n"
+            "- **[N1]** **`file.go:20`** — Style issue\n"
+        )
+        findings = rp.parse_findings(text)
+        assert len(findings) == 2
+        assert findings[0].severity == "S"
+        assert findings[1].severity == "N"
+
+    def test_finding_with_optional_bold_close(self, rp):
+        line = '- [ ] **[S1] `has_go` summary line dropped** — The step summary lost the output'
+        f = rp._parse_finding_line(line)
+        assert f is not None
+        assert f.severity == "S"
+        assert f.seq == 1
+
+
 class TestFinalizeFinding:
     def test_non_empty_body_lines(self, rp):
         f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=10, end_line=None, body="original")

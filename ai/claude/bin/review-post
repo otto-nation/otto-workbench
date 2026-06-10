@@ -45,6 +45,14 @@ SECTION_HEADERS = {
     "## idioms": SEVERITY_IDIOMS,
 }
 
+_SEVERITY_NAMES = {
+    "must fix": SEVERITY_MUST,
+    "should fix": SEVERITY_SHOULD,
+    "nit": SEVERITY_NIT,
+    "nits": SEVERITY_NIT,
+    "idioms": SEVERITY_IDIOMS,
+}
+
 CLASS_INLINE = "inline"
 CLASS_FILE_LEVEL = "file_level"
 CLASS_SKIPPED = "skipped"
@@ -101,7 +109,7 @@ class Finding:
 FINDING_ID_RE = re.compile(
     r"^- (?:\[ \] )?"           # list item, optional checkbox
     r"(?:~~)?"                   # optional strikethrough start
-    r"\*\*\[([MSNI])(\d+)\]\*\*" # [S1] or [I1] in bold
+    r"\*\*\[([MSNI])(\d+)\](?:\*\*)?" # [S1] in bold; closing ** optional
     r"\s+"
     r"(?:<!-- sid:\w+ -->\s+)?"  # optional stable ID (defense-in-depth)
 )
@@ -198,6 +206,14 @@ def _is_section_boundary(stripped: str) -> bool:
     return stripped.startswith("### ") or bool(STRIKETHROUGH_RE.match(stripped))
 
 
+def _match_severity_header(stripped: str) -> str | None:
+    """Match severity section headers at any heading level, tolerating hyphens."""
+    if not stripped.startswith("#"):
+        return None
+    text = stripped.lstrip("#").strip().lower().replace("-", " ")
+    return _SEVERITY_NAMES.get(text)
+
+
 def parse_findings(text: str) -> list[Finding]:
     """Extract findings from review markdown."""
     findings: list[Finding] = []
@@ -208,10 +224,10 @@ def parse_findings(text: str) -> list[Finding]:
     for raw_line in text.split("\n"):
         stripped = raw_line.strip()
 
-        stripped_lower = stripped.lower()
-        if stripped_lower in SECTION_HEADERS:
+        severity = _match_severity_header(stripped)
+        if severity is not None:
             _close_previous(findings, body_lines)
-            current_severity = SECTION_HEADERS[stripped_lower]
+            current_severity = severity
             accumulating = False
             continue
 

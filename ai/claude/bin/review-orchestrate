@@ -35,14 +35,28 @@ from review_prompt import *  # noqa: E402,F403
 from review_agent import *  # noqa: E402,F403
 from review_pipeline import *  # noqa: E402,F403
 
-# Re-export private names for test backward compatibility
-def __getattr__(name):
-    for mod in (_rc, _rf, _rp, _rpmt, _ra, _rpl):
-        try:
-            return getattr(mod, name)
-        except AttributeError:
-            continue
-    raise AttributeError(f"module 'review_orchestrate' has no attribute {name!r}")
+_SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
+
+
+class _ProxyModule(type(sys.modules[__name__])):
+    def __getattr__(self, name):
+        for mod in _SUBMODULES:
+            try:
+                return getattr(mod, name)
+            except AttributeError:
+                continue
+        raise AttributeError(f"module 'review_orchestrate' has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        for mod in _SUBMODULES:
+            if hasattr(mod, name):
+                setattr(mod, name, value)
+                super().__setattr__(name, value)
+                return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _ProxyModule
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

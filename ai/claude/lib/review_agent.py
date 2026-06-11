@@ -7,7 +7,6 @@ parsing session costs, and diagnosing failures.
 from __future__ import annotations
 
 import json
-import json
 import os
 import subprocess
 from pathlib import Path

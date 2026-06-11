@@ -6,13 +6,13 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
-  export HOME="$TMPDIR"
+  TEST_HOME="$(mktemp -d)"
+  export HOME="$TEST_HOME"
   SHOULD_PROMOTE="$REPO_ROOT/ai/claude/skills/promote/should-promote.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
+  rm -rf "$TEST_HOME"
   common_teardown
 }
 
@@ -135,6 +135,18 @@ _make_project() {
 
   run "$SHOULD_PROMOTE"
   [[ "$status" -eq 1 ]]
+}
+
+@test "should-promote: just over 168h fires" {
+  local now
+  now=$(date +%s)
+  # 168h 1m = 604860 seconds
+  local just_over=$((now - 604860))
+
+  _make_project "borderline-over" "$just_over" 15
+
+  run "$SHOULD_PROMOTE"
+  [[ "$status" -eq 0 ]]
 }
 
 @test "should-promote: exactly 10 sessions meets minimum" {

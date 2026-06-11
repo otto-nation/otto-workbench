@@ -6,13 +6,13 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
-  export HOME="$TMPDIR"
+  TEST_HOME="$(mktemp -d)"
+  export HOME="$TEST_HOME"
   SHOULD_DREAM="$REPO_ROOT/ai/claude/skills/dream/should-dream.sh"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
+  rm -rf "$TEST_HOME"
   common_teardown
 }
 
@@ -117,10 +117,8 @@ _make_project() {
   local now
   now=$(date +%s)
   local forty_eight_hours_ago=$((now - 172800))
-  local seventy_two_hours_ago=$((now - 259200))
 
   # Project overdue on time, but all 6 sessions have mtimes before last dream.
-  # We use touch -t with a date in 2020 to ensure they're before last_dream.
   _make_project "stale-project" "$forty_eight_hours_ago" 6 "202001010000"
 
   run "$SHOULD_DREAM"

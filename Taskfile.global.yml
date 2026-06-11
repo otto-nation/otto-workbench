@@ -250,7 +250,7 @@ tasks:
         echo "→ Creating PR..."
 
         GH_ARGS=(--title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me)
-        [[ "${PR_DRAFT:-}" = "true" ]] && GH_ARGS+=(--draft)
+        [[ "${PR_DRAFT}" = "true" ]] && GH_ARGS+=(--draft)
         [[ -n "${PR_BASE:-}" ]] && GH_ARGS+=(--base "$PR_BASE")
         PR_OUTPUT=$(gh pr create "${GH_ARGS[@]}" 2>&1) || true
         PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github[^[:space:]]*' || true)

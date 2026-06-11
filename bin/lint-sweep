@@ -89,17 +89,19 @@ _scan_repo() {
   fi
 
   local result count
-  result=$(golangci-lint run --disable-all \
+  result=$(cd "$repo" && golangci-lint run --disable-all --enable "$rule" \
     --out-format json ./... 2>/dev/null < /dev/null) || true
   count=$(echo "$result" | jq '[.Issues[]? | select(.FromLinter == "'"$rule"'")] | length' 2>/dev/null || echo 0)
 
   printf "%-30s %s\n" "$repo_name" "$count"
-  [[ "$count" -eq 0 ]] && return
+  if [[ "$count" -eq 0 ]]; then return; fi
 
   total_violations=$((total_violations + count))
   results+=("$repo_name|$count|$repo")
-  $json_output && json_results=$(echo "$json_results" | jq --arg name "$repo_name" --argjson count "$count" --arg path "$repo" \
-    '. + [{"repo": $name, "violations": $count, "path": $path}]')
+  if $json_output; then
+    json_results=$(echo "$json_results" | jq --arg name "$repo_name" --argjson count "$count" --arg path "$repo" \
+      '. + [{"repo": $name, "violations": $count, "path": $path}]')
+  fi
 }
 
 _create_fix_worktrees() {
@@ -110,11 +112,10 @@ _create_fix_worktrees() {
 
   info "Creating worktrees for ${#results[@]} repos with violations..."
   for entry in "${results[@]}"; do
-    # shellcheck disable=SC2034  # repo_path used when wt switch adds --dir support
     IFS='|' read -r repo_name count repo_path <<< "$entry"
     info "  $repo_name ($count violations) → branch $branch"
-    $dry_run && continue
-    wt switch -c "$branch" 2>/dev/null || warn "  Branch $branch may already exist for $repo_name"
+    if $dry_run; then continue; fi
+    (cd "$repo_path" && wt switch -c "$branch") 2>/dev/null || warn "  Branch $branch may already exist for $repo_name"
   done
 
   echo ""

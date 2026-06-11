@@ -119,8 +119,9 @@ _set_pr_flag() {
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false
+  # shellcheck disable=SC2034  # PR_DRAFT read by Taskfile callers
   PR_DRAFT=false
-  # shellcheck disable=SC2034  # PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE read by Taskfile callers
+  # shellcheck disable=SC2034  # PR_BASE read by Taskfile callers
   PR_BASE=""
   PR_TITLE_OVERRIDE=""
   PR_BODY_OVERRIDE=""

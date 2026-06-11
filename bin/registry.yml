@@ -71,6 +71,12 @@ tools:
     when_to_use: "Setting up a repo for parallel worktree development with worktrunk"
     usage: "wt-init  |  wt-init ~/code/myrepo  |  wt-init --dry-run"
 
+  - name: lint-sweep
+    allow: true
+    description: "Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches"
+    when_to_use: "Remediating a lint rule across many repos at once (e.g. no-stdlib-log, no-raw-getenv)"
+    usage: "lint-sweep --rule no-stdlib-log --repos 'svc-*'  |  lint-sweep --rule no-raw-getenv --repos ~/src/maximum/main/svc-* --fix  |  lint-sweep --rule <name> --repos . --dry-run"
+
   - name: gcloud-reauth
     context: reference
     description: "Check GCP application-default credentials and re-login if expired, with self-managed launchd agent"

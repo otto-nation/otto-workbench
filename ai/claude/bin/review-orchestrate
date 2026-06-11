@@ -252,6 +252,8 @@ TEMPLATE_OVERHEAD_BYTES = 20_000
 MAX_FILE_BYTES = 100_000
 MAX_TRUNCATED_LINES = 500
 MAX_COMMIT_LOG_BYTES = 50_000
+MAX_DELTA_DIFF_BYTES = 80_000
+MAX_DELTA_LOG_BYTES = 20_000
 
 NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
 MIN_DIFF_BYTES = 20_000
@@ -377,11 +379,19 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
             verify = _run(["git", "cat-file", "-t", prior_sha], cwd=job.wt_path, check=False)
             if verify.strip() == "commit":
                 prior_head_sha = prior_sha
-                delta_diff = _run(["git", "diff", f"{prior_sha}..HEAD"], cwd=job.wt_path)
-                delta_commit_log = _run(
+                raw_delta_diff = _run(["git", "diff", f"{prior_sha}..HEAD"], cwd=job.wt_path)
+                delta_diff, _ = _truncate_diff(raw_delta_diff, MAX_DELTA_DIFF_BYTES)
+                raw_delta_log = _run(
                     ["git", "log", "--stat", "--reverse", f"{prior_sha}..HEAD"],
                     cwd=job.wt_path,
                 )
+                delta_log_bytes = raw_delta_log.encode()
+                if len(delta_log_bytes) > MAX_DELTA_LOG_BYTES:
+                    _warn(f"Delta commit log too large ({len(delta_log_bytes) // 1024}KB), truncating to {MAX_DELTA_LOG_BYTES // 1024}KB")
+                    delta_commit_log = delta_log_bytes[:MAX_DELTA_LOG_BYTES].decode(errors="ignore").rsplit("\n", 1)[0]
+                    delta_commit_log += "\n\n... (truncated — full delta log exceeded size limit)"
+                else:
+                    delta_commit_log = raw_delta_log
                 delta_names = _run(
                     ["git", "diff", "--name-only", f"{prior_sha}..HEAD"],
                     cwd=job.wt_path,

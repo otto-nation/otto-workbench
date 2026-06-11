@@ -987,6 +987,15 @@ def _post_as_comment(
 
     if not findings:
         _warn("No findings to post after dedup")
+        write_post_tracking(
+            args.review_file, [0], head_sha,
+            inline_count=0, body_count=0, skipped_count=len(deduped),
+            submitted=True,
+            posted_as="comment",
+            review_sha=review_sha,
+            head_sha_at_post=head_sha,
+            sha_drifted=True,
+        )
         return
 
     # Resolve permalinks for source references

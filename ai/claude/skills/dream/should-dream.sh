@@ -9,36 +9,32 @@ set -e
 DREAM_INTERVAL_HOURS=24
 MIN_SESSIONS=5
 
+_has_enough_sessions() {
+  local project_dir="$1" since="$2"
+  local count=0
+  for session_file in "${project_dir}"*.jsonl; do
+    [ -f "$session_file" ] || continue
+    file_ts=$(stat -f %m "$session_file" 2>/dev/null || stat -c %Y "$session_file" 2>/dev/null || echo 0)
+    [ "$file_ts" -gt "$since" ] && count=$((count + 1))
+    [ "$count" -ge "$MIN_SESSIONS" ] && return 0
+  done
+  return 1
+}
+
 now=$(date +%s)
 threshold_secs=$((DREAM_INTERVAL_HOURS * 3600))
 
 for project_dir in ~/.claude/projects/*/; do
   [ -d "$project_dir" ] || continue
 
-  # Read this project's last-dream timestamp (default 0 = never dreamed).
   stamp_file="${project_dir}memory/.last-dream"
   last_dream=0
-  if [ -f "$stamp_file" ]; then
-    last_dream=$(cat "$stamp_file" 2>/dev/null || echo 0)
-  fi
+  [ -f "$stamp_file" ] && last_dream=$(cat "$stamp_file" 2>/dev/null || echo 0)
 
   elapsed=$((now - last_dream))
-  if [ "$elapsed" -lt "$threshold_secs" ]; then
-    continue
-  fi
+  [ "$elapsed" -lt "$threshold_secs" ] && continue
 
-  # Count sessions modified since last dream in THIS project only.
-  session_count=0
-  for session_file in "${project_dir}"*.jsonl; do
-    [ -f "$session_file" ] || continue
-    file_ts=$(stat -f %m "$session_file" 2>/dev/null || stat -c %Y "$session_file" 2>/dev/null || echo 0)
-    if [ "$file_ts" -gt "$last_dream" ]; then
-      session_count=$((session_count + 1))
-    fi
-    if [ "$session_count" -ge "$MIN_SESSIONS" ]; then
-      exit 0
-    fi
-  done
+  _has_enough_sessions "$project_dir" "$last_dream" && exit 0
 done
 
 exit 1

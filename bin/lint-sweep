@@ -61,37 +61,65 @@ done
 git_user=$(git config user.name 2>/dev/null | tr '[:upper:]' '[:lower:]' | cut -d' ' -f1)
 branch="${branch_override:-${git_user}/fix/${rule}}"
 
+_is_go_repo() {
+  [[ -d "$1" ]] && [[ -f "$1/go.mod" ]]
+}
+
 resolve_repos() {
   local input="$1"
-  local resolved=()
-
   IFS=',' read -ra parts <<< "$input"
   for part in "${parts[@]}"; do
     part=$(echo "$part" | xargs)
     # shellcheck disable=SC2086
     for path in $part; do
-      [[ -d "$path" ]] || continue
-      [[ -f "$path/go.mod" ]] || continue
-      resolved+=("$(cd "$path" && pwd)")
+      _is_go_repo "$path" && (cd "$path" && pwd)
     done
   done
-
-  printf '%s\n' "${resolved[@]}"
 }
 
-run_lint() {
-  local repo_path="$1"
+_scan_repo() {
+  local repo="$1"
   local repo_name
-  repo_name=$(basename "$repo_path")
+  repo_name=$(basename "$repo")
 
-  local output
-  output=$(golangci-lint run --disable-all --enable govet \
+  if $dry_run; then
+    printf "%-30s %s\n" "$repo_name" "(dry-run)"
+    return
+  fi
+
+  local result count
+  result=$(golangci-lint run --disable-all \
     --out-format json ./... 2>/dev/null < /dev/null) || true
+  count=$(echo "$result" | jq '[.Issues[]? | select(.FromLinter == "'"$rule"'")] | length' 2>/dev/null || echo 0)
 
-  local count
-  count=$(echo "$output" | jq '[.Issues[]? | select(.FromLinter == "'"$rule"'")] | length' 2>/dev/null || echo 0)
+  printf "%-30s %s\n" "$repo_name" "$count"
+  [[ "$count" -eq 0 ]] && return
 
-  echo "$repo_name|$count"
+  total_violations=$((total_violations + count))
+  results+=("$repo_name|$count|$repo")
+  $json_output && json_results=$(echo "$json_results" | jq --arg name "$repo_name" --argjson count "$count" --arg path "$repo" \
+    '. + [{"repo": $name, "violations": $count, "path": $path}]')
+}
+
+_create_fix_worktrees() {
+  if ! command -v wt >/dev/null 2>&1; then
+    err "wt (worktrunk) required for --fix mode"
+    exit 1
+  fi
+
+  info "Creating worktrees for ${#results[@]} repos with violations..."
+  for entry in "${results[@]}"; do
+    # shellcheck disable=SC2034  # repo_path used when wt switch adds --dir support
+    IFS='|' read -r repo_name count repo_path <<< "$entry"
+    info "  $repo_name ($count violations) → branch $branch"
+    $dry_run && continue
+    wt switch -c "$branch" 2>/dev/null || warn "  Branch $branch may already exist for $repo_name"
+  done
+
+  echo ""
+  success "Worktrees created. Fix violations, then commit and create PRs."
+  info "Commit: git commit -m 'fix: resolve $rule violations'"
+  info "PR:     task --global pr:create -- --no-issue --draft"
 }
 
 mapfile -t repos < <(resolve_repos "$repos_input")
@@ -112,61 +140,15 @@ printf "%-30s %s\n" "REPO" "VIOLATIONS"
 printf "%-30s %s\n" "----" "----------"
 
 for repo in "${repos[@]}"; do
-  repo_name=$(basename "$repo")
-
-  if $dry_run; then
-    printf "%-30s %s\n" "$repo_name" "(dry-run)"
-    continue
-  fi
-
-  result=$(golangci-lint run --disable-all \
-    --out-format json ./... 2>/dev/null < /dev/null) || true
-
-  count=$(echo "$result" | jq '[.Issues[]? | select(.FromLinter == "'"$rule"'")] | length' 2>/dev/null || echo 0)
-
-  if [[ "$count" -gt 0 ]]; then
-    printf "%-30s %s\n" "$repo_name" "$count"
-    total_violations=$((total_violations + count))
-    results+=("$repo_name|$count|$repo")
-
-    if $json_output; then
-      json_results=$(echo "$json_results" | jq --arg name "$repo_name" --argjson count "$count" --arg path "$repo" \
-        '. + [{"repo": $name, "violations": $count, "path": $path}]')
-    fi
-  else
-    printf "%-30s %s\n" "$repo_name" "0"
-  fi
+  _scan_repo "$repo"
 done
 
 echo ""
 info "Total: $total_violations violations across ${#results[@]} repos"
 
-if $json_output; then
-  echo "$json_results" | jq .
-fi
+$json_output && echo "$json_results" | jq .
 
 if $do_fix && [[ ${#results[@]} -gt 0 ]]; then
   echo ""
-  info "Creating worktrees for ${#results[@]} repos with violations..."
-
-  if ! command -v wt >/dev/null 2>&1; then
-    err "wt (worktrunk) required for --fix mode"
-    exit 1
-  fi
-
-  for entry in "${results[@]}"; do
-    IFS='|' read -r repo_name count repo_path <<< "$entry"
-    info "  $repo_name ($count violations) → branch $branch"
-
-    if $dry_run; then
-      continue
-    fi
-
-    wt switch -c "$branch" 2>/dev/null || warn "  Branch $branch may already exist for $repo_name"
-  done
-
-  echo ""
-  success "Worktrees created. Fix violations, then commit and create PRs."
-  info "Commit: git commit -m 'fix: resolve $rule violations'"
-  info "PR:     task --global pr:create -- --no-issue --draft"
+  _create_fix_worktrees
 fi

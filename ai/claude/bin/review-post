@@ -23,35 +23,16 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from review_common import (  # noqa: E402
+    SECTION_HEADERS, SEVERITY_IDIOMS, SEVERITY_LABELS,
+    SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD,
+    _SEVERITY_NAMES, _derive_path,
+)
+
 
 # ── Constants ────────────────────────────────────────────────────────────────
-
-SEVERITY_MUST = "M"
-SEVERITY_SHOULD = "S"
-SEVERITY_NIT = "N"
-SEVERITY_IDIOMS = "I"
-
-SEVERITY_LABELS = {
-    SEVERITY_MUST: "must-fix",
-    SEVERITY_SHOULD: "should-fix",
-    SEVERITY_NIT: "nit",
-    SEVERITY_IDIOMS: "idiom",
-}
-
-SECTION_HEADERS = {
-    "## must fix": SEVERITY_MUST,
-    "## should fix": SEVERITY_SHOULD,
-    "## nit": SEVERITY_NIT,
-    "## idioms": SEVERITY_IDIOMS,
-}
-
-_SEVERITY_NAMES = {
-    "must fix": SEVERITY_MUST,
-    "should fix": SEVERITY_SHOULD,
-    "nit": SEVERITY_NIT,
-    "nits": SEVERITY_NIT,
-    "idioms": SEVERITY_IDIOMS,
-}
 
 CLASS_INLINE = "inline"
 CLASS_FILE_LEVEL = "file_level"

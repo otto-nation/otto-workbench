@@ -29,6 +29,30 @@ from datetime import date
 from pathlib import Path
 from string import Template
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from review_common import (  # noqa: E402
+    ANSI_DIM, ANSI_RESET, ANSI_INFO, ANSI_WARN,
+    FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
+    FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
+    FINDING_SECTIONS,
+    FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
+    FILENAME_HOLISTIC_LOG, FILENAME_META, FILENAME_PIPELINE_STATE,
+    FILENAME_PRIOR, FILENAME_SESSION, FILENAME_SYNTHESIS_LOG,
+    FILE_STAT_FMT,
+    META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
+    META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
+    MODE_PR, MODE_SELF,
+    PIPELINE_MULTI, PIPELINE_SINGLE,
+    PRIOR_DATE_RE, PRIOR_SHA_RE,
+    SECTION_FILE_TRIAGE, SECTION_IDIOMS, SECTION_MUST_FIX,
+    SECTION_NIT, SECTION_SHOULD_FIX,
+    TEMPLATE_DIR_REL,
+    TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
+    TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
+    _derive_path, _err, _info, _print_lock, _run, _warn,
+)
+
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -80,9 +104,6 @@ class Group:
     files: list[str]
     lines: int
 
-
-MODE_PR = "pr"
-MODE_SELF = "self"
 
 
 @dataclass
@@ -163,72 +184,10 @@ DEFAULT_MODEL_SINGLE = "opus"
 DEFAULT_BASE_BRANCH = "main"
 GIT_RANGE_TO_HEAD = f"origin/{DEFAULT_BASE_BRANCH}..HEAD"
 
-SECTION_FILE_TRIAGE = "File Triage"
-SECTION_MUST_FIX = "Must fix"
-SECTION_SHOULD_FIX = "Should fix"
-SECTION_NIT = "Nit"
-SECTION_IDIOMS = "Idioms"
-
-FINDING_PREFIX_MUST = "M"
-FINDING_PREFIX_SHOULD = "S"
-FINDING_PREFIX_NIT = "N"
-FINDING_PREFIX_IDIOMS = "I"
-
-FINDING_SECTIONS = [
-    (SECTION_MUST_FIX, FINDING_PREFIX_MUST),
-    (SECTION_SHOULD_FIX, FINDING_PREFIX_SHOULD),
-    (SECTION_NIT, FINDING_PREFIX_NIT),
-    (SECTION_IDIOMS, FINDING_PREFIX_IDIOMS),
-]
-
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
 
-TEMPLATE_SINGLE = "single-agent.md"
-TEMPLATE_HOLISTIC = "holistic.md"
-TEMPLATE_GROUP = "group.md"
-TEMPLATE_SYNTHESIS = "synthesis.md"
-TEMPLATE_SELF_REVIEW = "self-review.md"
-TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
-
-FILENAME_PRIOR = "prior.md"
-FILENAME_SESSION = "session.jsonl"
-FILENAME_HOLISTIC = "holistic.md"
-FILENAME_HOLISTIC_LOG = "holistic.jsonl"
-FILENAME_SYNTHESIS_LOG = "synthesis.jsonl"
-FILENAME_GROUP = "group-{}.md"
-FILENAME_GROUP_LOG = "group-{}.jsonl"
-FILENAME_META = "meta.json"
-FILENAME_PIPELINE_STATE = "pipeline.json"
-
-
-def _derive_path(review_file: str, filename: str) -> str:
-    return str(Path(review_file).parent / filename)
-
-
-PIPELINE_MULTI = "multi"
-PIPELINE_SINGLE = "single"
-
-TEMPLATE_DIR_REL = Path("lib") / "review-templates"
-
-FILE_STAT_FMT = "  - {path} (+{additions} -{deletions})"
-META_DATE = "<!-- date: {today} -->"
-META_HEAD_SHA = "<!-- head_sha: {head_sha} -->"
-META_REVIEW_TYPE = "<!-- review_type: {review_type} -->"
-META_PRIOR_SHA = "<!-- prior_sha: {prior_sha} -->"
-META_PRIOR_DATE = "<!-- prior_date: {prior_date} -->"
-META_DELTA_FILES = "<!-- delta_files: {delta_file_count} -->"
-META_SKIPPED_GROUPS = "<!-- skipped_groups: {skipped}/{total} -->"
-META_GENERATOR = "<!-- generator: {generator_version} -->"
-
-PRIOR_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
-PRIOR_DATE_RE = re.compile(r"<!-- date: (\d{4}-\d{2}-\d{2}) -->")
 FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
-
-ANSI_DIM = "\033[2m"
-ANSI_RESET = "\033[0m"
-ANSI_INFO = "\033[1;34m▸\033[0m"
-ANSI_WARN = "\033[1;33m⚠\033[0m"
 
 TIER1_BASENAMES = {
     "CLAUDE.md", ".cursorrules", "AGENTS.md", "GEMINI.md",
@@ -1085,13 +1044,6 @@ def strip_stable_ids(review_file: str) -> None:
 
 # ── PR data fetching ──────────────────────────────────────────────────────────
 
-def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
-    if check and r.returncode != 0:
-        return ""
-    return r.stdout.strip()
-
-
 def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:
     files = []
     total_add = 0
@@ -1505,219 +1457,250 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
     return base_ctx + incremental_note
 
 
+def _prompt_self_review(job, common, extra):
+    prior_ctx = _incremental_prior_ctx(job, (
+        "This is a re-review of your own code. Below are the findings from the previous self-review. "
+        "For each prior finding:\n"
+        "- If the issue has been fixed, omit it from the new review\n"
+        "- If the issue is still present, carry it forward\n"
+        "- Add any new findings from changes since the last review"
+    ))
+    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    preflight = _build_preflight_section(job)
+    sections = {"pr_header": common["pr_header"], "preflight_data": preflight, "delta_section": common["delta_section"], "prior_section": prior_section}
+    kwargs = {
+        "branch_name": extra.get("branch_name", job.pr.head),
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "env_section": common["env_section"],
+        "issue_section": common["issue_section"],
+        "prior_section": prior_section,
+        "review_file": job.review_file,
+        "generator_version": common["generator_version"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+def _prompt_self_synthesis(job, common, extra):
+    holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
+    merged_content = extra["merged_content"]
+    prior_ctx = _incremental_prior_ctx(job,
+        "Omit prior findings that have been fixed. Carry forward open ones.",
+    )
+    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    sections = {
+        "pr_header": common["pr_header"],
+        "holistic_content": holistic_content,
+        "merged_content": merged_content,
+        "delta_section": common["delta_section"],
+        "prior_section": prior_section,
+    }
+    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
+    preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
+    sections["preflight_data"] = preflight
+    kwargs = {
+        "branch_name": extra.get("branch_name", job.pr.head),
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "pr_head_sha": job.pr.head_sha,
+        "holistic_content": holistic_content,
+        "group_count": extra["group_count"],
+        "merged_content": merged_content,
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "review_file": job.review_file,
+        "wt_path": job.wt_path,
+        "today": common["today"],
+        "prior_section": prior_section,
+        "generator_version": common["generator_version"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+def _prompt_single(job, common, extra):
+    prior_ctx = _incremental_prior_ctx(job, (
+        "This is a re-review. Below are the findings from the previous review. "
+        "For each prior finding:\n"
+        "- If the issue has been fixed, note it as resolved and omit from the new review\n"
+        "- If the issue is still present, carry it forward\n"
+        "- Add any new findings from changes since the last review"
+    ))
+    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    preflight = _build_preflight_section(job)
+    sections = {
+        "pr_header": common["pr_header"],
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "reviews_section": common["reviews_section"],
+        "prior_section": prior_section,
+    }
+    kwargs = {
+        "pr_number": job.pr_number,
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "reviews_section": common["reviews_section"],
+        "env_section": common["env_section"],
+        "issue_section": common["issue_section"],
+        "prior_section": prior_section,
+        "review_file": job.review_file,
+        "generator_version": common["generator_version"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+def _prompt_holistic(job, common, extra):
+    sections = {
+        "pr_header": common["pr_header"],
+        "all_files_formatted": job.pr.all_files_formatted,
+        "reviews_section": common["reviews_section"],
+        "issue_section": common["issue_section"],
+        "env_section": common["env_section"],
+        "delta_section": common["delta_section"],
+    }
+    diff_budget = _compute_diff_budget(job, sections)
+    preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
+    sections["preflight_data"] = preflight
+    kwargs = {
+        "pr_number": job.pr_number,
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "all_files_formatted": job.pr.all_files_formatted,
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "reviews_section": common["reviews_section"],
+        "issue_section": common["issue_section"],
+        "env_section": common["env_section"],
+        "holistic_output": extra["holistic_output"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+def _prompt_group(job, common, extra):
+    group_files = extra.get("group_file_paths", [])
+    prior_ctx = _incremental_prior_ctx(job, (
+        "This is a re-review. Below are the prior findings. "
+        "Carry forward findings relevant to YOUR files only. "
+        "Mark fixed findings as resolved."
+    ))
+    prior_section = _build_prior_section(
+        job.prior_review, prior_ctx,
+        file_filter=group_files or None,
+    )
+    holistic_block = _build_holistic_block(
+        extra.get("holistic_content", ""), job.pr.changed_files,
+    )
+    sections = {
+        "pr_header": common["pr_header"],
+        "holistic_block": holistic_block,
+        "issue_section": common["issue_section"],
+        "env_section": common["env_section"],
+        "delta_section": common["delta_section"],
+        "prior_section": prior_section,
+    }
+    diff_budget = _compute_diff_budget(job, sections, file_filter=group_files or None)
+    group_preflight = _build_preflight_section(
+        job, file_filter=group_files or None, max_diff_bytes=diff_budget,
+    )
+    sections["preflight_data"] = group_preflight
+    kwargs = {
+        "pr_number": job.pr_number,
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "group_idx": extra["group_idx"],
+        "group_count": extra["group_count"],
+        "group_name": extra["group_name"],
+        "holistic_block": holistic_block,
+        "group_files_formatted": extra["group_files_formatted"],
+        "preflight_data": group_preflight,
+        "delta_section": common["delta_section"],
+        "issue_section": common["issue_section"],
+        "env_section": common["env_section"],
+        "group_output": extra["group_output"],
+        "prior_section": prior_section,
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, str(extra["group_idx"])
+
+
+def _prompt_synthesis(job, common, extra):
+    holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
+    merged_content = extra["merged_content"]
+    prior_ctx = _incremental_prior_ctx(job,
+        "Include a ## Resolved section noting which prior findings were fixed.",
+    )
+    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    sections = {
+        "pr_header": common["pr_header"],
+        "holistic_content": holistic_content,
+        "merged_content": merged_content,
+        "delta_section": common["delta_section"],
+        "reviews_section": common["reviews_section"],
+        "prior_section": prior_section,
+    }
+    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
+    preflight = _build_preflight_section(
+        job, skip_file_contents=True, max_diff_bytes=diff_budget,
+    )
+    sections["preflight_data"] = preflight
+    kwargs = {
+        "pr_number": job.pr_number,
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "pr_title": job.pr.title,
+        "pr_head_sha": job.pr.head_sha,
+        "holistic_content": holistic_content,
+        "group_count": extra["group_count"],
+        "merged_content": merged_content,
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "reviews_section": common["reviews_section"],
+        "review_file": job.review_file,
+        "wt_path": job.wt_path,
+        "today": common["today"],
+        "prior_section": prior_section,
+        "generator_version": common["generator_version"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+_PROMPT_HANDLERS = {
+    TEMPLATE_SELF_REVIEW: _prompt_self_review,
+    TEMPLATE_SELF_SYNTHESIS: _prompt_self_synthesis,
+    TEMPLATE_SINGLE: _prompt_single,
+    TEMPLATE_HOLISTIC: _prompt_holistic,
+    TEMPLATE_GROUP: _prompt_group,
+    TEMPLATE_SYNTHESIS: _prompt_synthesis,
+}
+
+
 def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
-    today = date.today().isoformat()
-    generator_version = job.generator_version
-    pr_header = _build_pr_header(job.pr, job.ctx)
-    reviews_section = _build_reviews_section(job.ctx)
-    env_section = _build_env_section(job.wt_path, preflight=job.preflight)
-    issue_section = _build_issue_section(job.issue_link, job.issue_context)
-    delta_section = _build_delta_section(job.preflight)
+    handler = _PROMPT_HANDLERS.get(template_name)
+    if handler is None:
+        raise ValueError(f"Unknown template: {template_name}")
 
-    if template_name == TEMPLATE_SELF_REVIEW:
-        prior_ctx = _incremental_prior_ctx(job, (
-            "This is a re-review of your own code. Below are the findings from the previous self-review. "
-            "For each prior finding:\n"
-            "- If the issue has been fixed, omit it from the new review\n"
-            "- If the issue is still present, carry it forward\n"
-            "- Add any new findings from changes since the last review"
-        ))
-        prior_section = _build_prior_section(job.prior_review, prior_ctx)
-        preflight = _build_preflight_section(job)
-        sections = {"pr_header": pr_header, "preflight_data": preflight, "delta_section": delta_section, "prior_section": prior_section}
-        return _log_prompt_size(template_name, render_template(
-            TEMPLATE_SELF_REVIEW,
-            branch_name=extra.get("branch_name", job.pr.head),
-            repo=job.repo,
-            pr_header=pr_header,
-            preflight_data=preflight,
-            delta_section=delta_section,
-            env_section=env_section,
-            issue_section=issue_section,
-            prior_section=prior_section,
-            review_file=job.review_file,
-            generator_version=generator_version,
-            max_turns=max_turns,
-        ), sections, job)
+    common = {
+        "today": date.today().isoformat(),
+        "generator_version": job.generator_version,
+        "pr_header": _build_pr_header(job.pr, job.ctx),
+        "reviews_section": _build_reviews_section(job.ctx),
+        "env_section": _build_env_section(job.wt_path, preflight=job.preflight),
+        "issue_section": _build_issue_section(job.issue_link, job.issue_context),
+        "delta_section": _build_delta_section(job.preflight),
+        "max_turns": max_turns,
+    }
 
-    if template_name == TEMPLATE_SELF_SYNTHESIS:
-        holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
-        merged_content = extra["merged_content"]
-        prior_ctx = _incremental_prior_ctx(job,
-            "Omit prior findings that have been fixed. Carry forward open ones.",
-        )
-        prior_section = _build_prior_section(job.prior_review, prior_ctx)
-        sections = {
-            "pr_header": pr_header,
-            "holistic_content": holistic_content,
-            "merged_content": merged_content,
-            "delta_section": delta_section,
-            "prior_section": prior_section,
-        }
-        diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
-        preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
-        sections["preflight_data"] = preflight
-        return _log_prompt_size(template_name, render_template(
-            TEMPLATE_SELF_SYNTHESIS,
-            branch_name=extra.get("branch_name", job.pr.head),
-            repo=job.repo,
-            pr_header=pr_header,
-            pr_head_sha=job.pr.head_sha,
-            holistic_content=holistic_content,
-            group_count=extra["group_count"],
-            merged_content=merged_content,
-            preflight_data=preflight,
-            delta_section=delta_section,
-            review_file=job.review_file,
-            wt_path=job.wt_path,
-            today=today,
-            prior_section=prior_section,
-            generator_version=generator_version,
-            max_turns=max_turns,
-        ), sections, job)
-
-    if template_name == TEMPLATE_SINGLE:
-        prior_ctx = _incremental_prior_ctx(job, (
-            "This is a re-review. Below are the findings from the previous review. "
-            "For each prior finding:\n"
-            "- If the issue has been fixed, note it as resolved and omit from the new review\n"
-            "- If the issue is still present, carry it forward\n"
-            "- Add any new findings from changes since the last review"
-        ))
-        prior_section = _build_prior_section(job.prior_review, prior_ctx)
-        preflight = _build_preflight_section(job)
-        sections = {"pr_header": pr_header, "preflight_data": preflight, "delta_section": delta_section, "reviews_section": reviews_section, "prior_section": prior_section}
-        return _log_prompt_size(template_name, render_template(
-            TEMPLATE_SINGLE,
-            pr_number=job.pr_number,
-            repo=job.repo,
-            pr_header=pr_header,
-            preflight_data=preflight,
-            delta_section=delta_section,
-            reviews_section=reviews_section,
-            env_section=env_section,
-            issue_section=issue_section,
-            prior_section=prior_section,
-            review_file=job.review_file,
-            generator_version=generator_version,
-            max_turns=max_turns,
-        ), sections, job)
-
-    if template_name == TEMPLATE_HOLISTIC:
-        sections = {
-            "pr_header": pr_header,
-            "all_files_formatted": job.pr.all_files_formatted,
-            "reviews_section": reviews_section,
-            "issue_section": issue_section,
-            "env_section": env_section,
-            "delta_section": delta_section,
-        }
-        diff_budget = _compute_diff_budget(job, sections)
-        preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
-        sections["preflight_data"] = preflight
-        return _log_prompt_size(template_name, render_template(
-            TEMPLATE_HOLISTIC,
-            pr_number=job.pr_number,
-            repo=job.repo,
-            pr_header=pr_header,
-            all_files_formatted=job.pr.all_files_formatted,
-            preflight_data=preflight,
-            delta_section=delta_section,
-            reviews_section=reviews_section,
-            issue_section=issue_section,
-            env_section=env_section,
-            holistic_output=extra["holistic_output"],
-            max_turns=max_turns,
-        ), sections, job)
-
-    if template_name == TEMPLATE_GROUP:
-        group_files = extra.get("group_file_paths", [])
-        prior_ctx = _incremental_prior_ctx(job, (
-            "This is a re-review. Below are the prior findings. "
-            "Carry forward findings relevant to YOUR files only. "
-            "Mark fixed findings as resolved."
-        ))
-        prior_section = _build_prior_section(
-            job.prior_review, prior_ctx,
-            file_filter=group_files or None,
-        )
-        holistic_block = _build_holistic_block(
-            extra.get("holistic_content", ""), job.pr.changed_files,
-        )
-        sections = {
-            "pr_header": pr_header,
-            "holistic_block": holistic_block,
-            "issue_section": issue_section,
-            "env_section": env_section,
-            "delta_section": delta_section,
-            "prior_section": prior_section,
-        }
-        diff_budget = _compute_diff_budget(job, sections, file_filter=group_files or None)
-        group_preflight = _build_preflight_section(
-            job, file_filter=group_files or None, max_diff_bytes=diff_budget,
-        )
-        sections["preflight_data"] = group_preflight
-        return _log_prompt_size(template_name, render_template(
-            TEMPLATE_GROUP,
-            pr_number=job.pr_number,
-            repo=job.repo,
-            pr_header=pr_header,
-            group_idx=extra["group_idx"],
-            group_count=extra["group_count"],
-            group_name=extra["group_name"],
-            holistic_block=holistic_block,
-            group_files_formatted=extra["group_files_formatted"],
-            preflight_data=group_preflight,
-            delta_section=delta_section,
-            issue_section=issue_section,
-            env_section=env_section,
-            group_output=extra["group_output"],
-            prior_section=prior_section,
-            max_turns=max_turns,
-        ), sections, job, label=str(extra["group_idx"]))
-
-    if template_name == TEMPLATE_SYNTHESIS:
-        holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
-        merged_content = extra["merged_content"]
-        prior_ctx = _incremental_prior_ctx(job,
-            "Include a ## Resolved section noting which prior findings were fixed.",
-        )
-        prior_section = _build_prior_section(job.prior_review, prior_ctx)
-        sections = {
-            "pr_header": pr_header,
-            "holistic_content": holistic_content,
-            "merged_content": merged_content,
-            "delta_section": delta_section,
-            "reviews_section": reviews_section,
-            "prior_section": prior_section,
-        }
-        diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
-        preflight = _build_preflight_section(
-            job, skip_file_contents=True, max_diff_bytes=diff_budget,
-        )
-        sections["preflight_data"] = preflight
-        return _log_prompt_size(template_name, render_template(
-            TEMPLATE_SYNTHESIS,
-            pr_number=job.pr_number,
-            repo=job.repo,
-            pr_header=pr_header,
-            pr_title=job.pr.title,
-            pr_head_sha=job.pr.head_sha,
-            holistic_content=holistic_content,
-            group_count=extra["group_count"],
-            merged_content=merged_content,
-            preflight_data=preflight,
-            delta_section=delta_section,
-            reviews_section=reviews_section,
-            review_file=job.review_file,
-            wt_path=job.wt_path,
-            today=today,
-            prior_section=prior_section,
-            generator_version=generator_version,
-            max_turns=max_turns,
-        ), sections, job)
-
-    raise ValueError(f"Unknown template: {template_name}")
+    sections, kwargs, label = handler(job, common, extra)
+    rendered = render_template(template_name, **kwargs)
+    return _log_prompt_size(template_name, rendered, sections, job, label=label)
 
 
 # ── Stream progress ───────────────────────────────────────────────────────────
@@ -2035,19 +2018,6 @@ def _update_group_failed(job: ReviewJob, group_idx: int, reason: str, state: Pip
 
 
 # ── Review pipelines ──────────────────────────────────────────────────────────
-
-_print_lock = threading.Lock()
-
-
-def _info(msg: str):
-    with _print_lock:
-        print(f"{ANSI_INFO} {msg}", flush=True)
-
-
-def _warn(msg: str):
-    with _print_lock:
-        print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
-
 
 def _write_review_sidecar(job: ReviewJob):
     sidecar_path = _derive_path(job.review_file, FILENAME_META)

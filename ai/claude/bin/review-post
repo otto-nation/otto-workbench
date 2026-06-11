@@ -26,9 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from review_common import (  # noqa: E402
-    SECTION_HEADERS, SEVERITY_IDIOMS, SEVERITY_LABELS,
+    SEVERITY_IDIOMS, SEVERITY_LABELS,
     SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD,
-    _SEVERITY_NAMES, _derive_path,
 )
 from review_findings import (  # noqa: E402
     FINDING_ID_RE, FIRST_FILE_RE, PATH_SECTION_RE, STRIKETHROUGH_RE,

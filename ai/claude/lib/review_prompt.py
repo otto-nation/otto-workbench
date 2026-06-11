@@ -13,16 +13,16 @@ from pathlib import Path
 from string import Template
 
 from review_common import (
-    FINDING_SECTIONS, PRIOR_DATE_RE,
     TEMPLATE_DIR_REL,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
-    _derive_path, _info, _warn,
+    _derive_path, _warn,
 )
+from review_findings import annotate_prior_with_stable_ids
 from review_preflight import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
-    PreflightData, ReviewJob,
-    _scope_diff, _truncate_diff, format_preflight_data,
+    PRContext, PRMetadata, PreflightData, ReviewJob,
+    format_preflight_data,
 )
 
 # ── Template rendering ────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ Skip these — do NOT re-fetch from the GitHub API. This data is current as of s
 {ctx.comments}"""
 
 
-def _build_env_section(wt_path: str, preflight: "PreflightData | None" = None) -> str:
+def _build_env_section(wt_path: str, preflight: PreflightData | None = None) -> str:
     if preflight and not preflight.omitted_files:
         return f"""
 ## Environment
@@ -93,7 +93,7 @@ def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
     )
 
 
-def _build_delta_section(preflight: "PreflightData | None") -> str:
+def _build_delta_section(preflight: PreflightData | None) -> str:
     if not preflight or not preflight.prior_head_sha:
         return ""
     prior = preflight.prior_head_sha[:7]
@@ -144,7 +144,7 @@ def _build_delta_section(preflight: "PreflightData | None") -> str:
     return "\n".join(parts)
 
 
-def _is_incremental(job: "ReviewJob") -> bool:
+def _is_incremental(job: ReviewJob) -> bool:
     return bool(job.preflight and job.preflight.prior_head_sha)
 
 
@@ -241,7 +241,7 @@ def render_template(name: str, **kwargs) -> str:
 
 
 def _build_preflight_section(
-    job: "ReviewJob", file_filter: list[str] | None = None,
+    job: ReviewJob, file_filter: list[str] | None = None,
     skip_file_contents: bool = False,
     max_diff_bytes: int | None = None,
 ) -> str:
@@ -255,7 +255,7 @@ def _build_preflight_section(
 
 
 def _compute_diff_budget(
-    job: "ReviewJob",
+    job: ReviewJob,
     known_sections: dict[str, str],
     skip_file_contents: bool = False,
     file_filter: list[str] | None = None,
@@ -288,7 +288,7 @@ def _compute_diff_budget(
     return max(MIN_DIFF_BYTES, remaining)
 
 
-def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: "ReviewJob", label: str = "") -> str:
+def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: ReviewJob, label: str = "") -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
     budget_kb = MAX_PROMPT_BYTES // 1024

@@ -7,15 +7,14 @@ parsing session costs, and diagnosing failures.
 from __future__ import annotations
 
 import json
+import json
 import os
-import re
 import subprocess
-import sys
 from pathlib import Path
 
 from review_common import (
     ANSI_DIM, ANSI_RESET,
-    _derive_path, _info, _print_lock, _warn,
+    _info, _print_lock, _warn,
 )
 
 DEFAULT_MAX_TURNS = 10
@@ -130,9 +129,6 @@ def _is_model_error(log_path: str) -> bool:
         return True
     text = result.get("result", "")
     return isinstance(text, str) and "not available" in text.lower()
-
-
-CONSECUTIVE_FAIL_THRESHOLD = 3
 
 
 def _extract_heredoc(cmd: str) -> str:

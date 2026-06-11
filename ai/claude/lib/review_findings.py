@@ -12,7 +12,7 @@ from pathlib import Path
 
 from review_common import (
     FINDING_SECTIONS, SECTION_FILE_TRIAGE,
-    _warn,
+    _SEVERITY_NAMES, _warn,
 )
 
 
@@ -120,9 +120,6 @@ def _is_section_boundary(stripped: str) -> bool:
     return stripped.startswith("### ") or bool(STRIKETHROUGH_RE.match(stripped))
 
 
-from review_common import _SEVERITY_NAMES  # noqa: E402
-
-
 def _match_severity_header(stripped: str) -> str | None:
     if not stripped.startswith("#"):
         return None
@@ -171,18 +168,20 @@ def parse_findings(text: str) -> list[Finding]:
 
 # ── Diff hunk parsing ────────────────────────────────────────────────────────
 
+_DIFF_FILE_RE = re.compile(r"^\+\+\+ b/(.+)")
+_DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
 def parse_diff_hunks(diff_text: str) -> dict[str, list[tuple[int, int]]]:
     hunks: dict[str, list[tuple[int, int]]] = {}
     current_file: str | None = None
-    file_re = re.compile(r"^\+\+\+ b/(.+)")
-    hunk_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
     for line in diff_text.splitlines():
-        m = file_re.match(line)
+        m = _DIFF_FILE_RE.match(line)
         if m:
             current_file = m.group(1)
             hunks.setdefault(current_file, [])
             continue
-        m = hunk_re.match(line)
+        m = _DIFF_HUNK_RE.match(line)
         if m and current_file is not None:
             start = int(m.group(1))
             length = int(m.group(2)) if m.group(2) is not None else 1
@@ -425,7 +424,7 @@ def _extract_evidence(body: str) -> str | None:
         elif stripped.startswith(">"):
             stripped = stripped[1:]
         cleaned.append(stripped.rstrip())
-    return "\n".join(l for l in cleaned if l)
+    return "\n".join(ln for ln in cleaned if ln)
 
 
 def _normalize_code(text: str) -> str:

@@ -8,22 +8,22 @@ and review post-processing.
 from __future__ import annotations
 
 import json
-import re
+import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
 from review_common import (
     FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
     FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
-    FINDING_SECTIONS,
     FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
     FILENAME_HOLISTIC_LOG, FILENAME_META, FILENAME_PIPELINE_STATE,
     FILENAME_SYNTHESIS_LOG,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
-    MODE_SELF, PIPELINE_MULTI, PIPELINE_SINGLE,
+    MODE_SELF,
     PRIOR_DATE_RE,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
@@ -38,17 +38,16 @@ from review_findings import (
 )
 from review_preflight import (
     DEFAULT_MAX_GROUPS, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
-    HOLISTIC_MIN_GROUPS, MULTI_PHASE_FILE_THRESHOLD,
-    MULTI_PHASE_LINE_THRESHOLD,
-    Group, PipelineState, PreflightData, ReviewJob,
+    HOLISTIC_MIN_GROUPS,
+    Group, PipelineState, ReviewJob,
     group_files,
 )
 from review_prompt import (
-    _build_preflight_section, _is_incremental,
+    _is_incremental,
     build_prompt,
 )
 from review_agent import (
-    CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
+    CONSECUTIVE_FAIL_THRESHOLD,
     _diagnose_missing_output, _is_model_error, _parse_session_cost,
     _resolve_model, _try_recover_review,
     invoke_agent,
@@ -76,7 +75,6 @@ def _pipeline_state_path(job: ReviewJob) -> str:
 
 
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):
-    from dataclasses import asdict
     dest = _pipeline_state_path(job)
     tmp = dest + ".tmp"
     Path(tmp).write_text(json.dumps(asdict(state)))
@@ -332,7 +330,7 @@ def _run_parallel_reviews(
             )
             for i, grp in enumerate(groups, 1)
         ]
-    results = [f.result() for f in futures]
+        results = [f.result() for f in futures]
     print()
     return [failure for _, _, failure in results if failure]
 
@@ -612,14 +610,6 @@ def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 
         )
     Path(job.review_file).write_text(content)
     _write_review_sidecar(job)
-
-
-def _accumulate_group_costs(job: ReviewJob, group_count: int) -> float:
-    total = 0.0
-    for i in range(1, group_count + 1):
-        gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
-        total += _parse_session_cost(gl)
-    return total
 
 
 def _resolve_recovery(

@@ -114,12 +114,14 @@ _set_pr_flag() {
 # Parses PR-specific flags from the CLI_ARGS string.
 # Uses eval to re-parse so quoted multi-word values work:
 #   --title "fix: clean empty markers" --body-file /tmp/body.txt
-# Sets SKIP_ISSUE, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE.
+# Sets SKIP_ISSUE, PR_DRAFT, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE.
 # Returns 1 on unknown flag or missing value.
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false
-  # shellcheck disable=SC2034  # set via _set_pr_flag, read by Taskfile callers
+  # shellcheck disable=SC2034  # PR_DRAFT read by Taskfile callers
+  PR_DRAFT=false
+  # shellcheck disable=SC2034  # PR_BASE read by Taskfile callers
   PR_BASE=""
   PR_TITLE_OVERRIDE=""
   PR_BODY_OVERRIDE=""
@@ -137,8 +139,10 @@ parse_pr_flags() {
       expect_flag=""
       continue
     fi
+    # shellcheck disable=SC2034  # PR_DRAFT is read by Taskfile callers
     case "$arg" in
       --no-issue) SKIP_ISSUE=true ;;
+      --draft)    PR_DRAFT=true ;;
       --base|--title|--body|--body-file) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
     esac

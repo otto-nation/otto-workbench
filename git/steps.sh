@@ -354,9 +354,9 @@ step_worktrunk_pre_switch_fetch() {
   command -v wt >/dev/null 2>&1 || return 0
 
   local config_file="$WORKTRUNK_CONFIG_FILE"
-  local hook_cmd='fetch-default = "git fetch origin {{ default_branch }} && git -C {{ worktree_path_of_branch(default_branch) }} merge --ff-only origin/{{ default_branch }} 2>/dev/null || true"'
+  local hook_cmd='fetch-default = "git fetch origin {{ default_branch }} && git -C {{ worktree_path_of_branch(default_branch) }} merge --ff-only origin/{{ default_branch }} || true"'
 
-  if [[ -f "$config_file" ]] && grep -q 'fetch-default' "$config_file"; then
+  if [[ -f "$config_file" ]] && grep -q '^fetch-default' "$config_file"; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "worktrunk pre-switch fetch already set" || true
     return 0
   fi
@@ -368,7 +368,7 @@ step_worktrunk_pre_switch_fetch() {
 
   if grep -q '^\[pre-switch\]' "$config_file"; then
     # Append under existing [pre-switch] section
-    sed -i '' '/^\[pre-switch\]/a\
+    sed_i '/^\[pre-switch\]/a\
 '"$hook_cmd"'' "$config_file"
   else
     # Append new section at end of file

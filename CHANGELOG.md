@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.1](https://github.com/otto-nation/otto-workbench/compare/v1.18.0...v1.18.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **claude-review:** fix runtime bugs; add comprehensive test coverage ([#216](https://github.com/otto-nation/otto-workbench/issues/216)) ([080205e](https://github.com/otto-nation/otto-workbench/commit/080205e456540933a4fc359ffbf669a79956b5ee))
+
 ## [1.18.0](https://github.com/otto-nation/otto-workbench/compare/v1.17.2...v1.18.0) (2026-06-11)
 
 

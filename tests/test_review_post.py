@@ -846,20 +846,20 @@ class TestHandleApiAttempt:
 class TestCheckExistingPending:
     def test_returns_review_id(self, rp):
         reviews = json.dumps([{"id": 12345, "state": "PENDING"}])
-        with patch.object(rp, "_gh_api", return_value=(0, reviews)):
+        with patch("review_github._gh_api", return_value=(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") == 12345
 
     def test_returns_none_when_no_pending(self, rp):
         reviews = json.dumps([{"id": 1, "state": "APPROVED"}])
-        with patch.object(rp, "_gh_api", return_value=(0, reviews)):
+        with patch("review_github._gh_api", return_value=(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_returns_none_for_empty_list(self, rp):
-        with patch.object(rp, "_gh_api", return_value=(0, "[]")):
+        with patch("review_github._gh_api", return_value=(0, "[]")):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_returns_none_on_api_failure(self, rp):
-        with patch.object(rp, "_gh_api", return_value=(1, "")):
+        with patch("review_github._gh_api", return_value=(1, "")):
             assert rp._check_existing_pending("org/repo", "1") is None
 
 
@@ -906,16 +906,16 @@ class TestPostReview:
 
     def test_no_existing_pending(self, rp):
         with (
-            patch.object(rp, "_check_existing_pending", return_value=None),
-            patch.object(rp, "_gh_api", return_value=(0, '{"id": 42}')),
+            patch("review_github._check_existing_pending", return_value=None),
+            patch("review_github._gh_api", return_value=(0, '{"id": 42}')),
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
 
     def test_deletes_existing_pending(self, rp):
         with (
-            patch.object(rp, "_check_existing_pending", return_value=999),
-            patch.object(rp, "_gh_api", return_value=(0, '{"id": 42}')) as mock_api,
+            patch("review_github._check_existing_pending", return_value=999),
+            patch("review_github._gh_api", return_value=(0, '{"id": 42}')) as mock_api,
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
@@ -932,8 +932,8 @@ class TestPostReview:
             return orig_dump(obj, fp, **kw)
 
         with (
-            patch.object(rp, "_check_existing_pending", return_value=None),
-            patch.object(rp, "_gh_api", return_value=(0, '{"id": 42}')),
+            patch("review_github._check_existing_pending", return_value=None),
+            patch("review_github._gh_api", return_value=(0, '{"id": 42}')),
             patch.object(rp.json, "dump", side_effect=capture_dump),
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD, submit=True)
@@ -966,7 +966,7 @@ class TestFetchPrMetadata:
             "head": {"sha": "abc123", "ref": "feat/branch"},
             "base": {"ref": "main"},
         })
-        with patch.object(rp, "_gh_api", return_value=(0, pr_json)):
+        with patch("review_github._gh_api", return_value=(0, pr_json)):
             meta = rp._fetch_pr_metadata("org/repo", "1")
             assert meta["head_sha"] == "abc123"
             assert meta["head_ref"] == "feat/branch"
@@ -974,7 +974,7 @@ class TestFetchPrMetadata:
 
     def test_failure_exits(self, rp):
         with (
-            patch.object(rp, "_gh_api", return_value=(1, "")),
+            patch("review_github._gh_api", return_value=(1, "")),
             pytest.raises(SystemExit),
         ):
             rp._fetch_pr_metadata("org/repo", "1")
@@ -982,12 +982,12 @@ class TestFetchPrMetadata:
 
 class TestGetDiff:
     def test_success(self, rp):
-        with patch.object(rp, "_gh_api", return_value=(0, "diff --git a/f b/f\n")):
+        with patch("review_github._gh_api", return_value=(0, "diff --git a/f b/f\n")):
             assert rp._get_diff("org/repo", "1") == "diff --git a/f b/f\n"
 
     def test_failure_exits(self, rp):
         with (
-            patch.object(rp, "_gh_api", return_value=(1, "")),
+            patch("review_github._gh_api", return_value=(1, "")),
             pytest.raises(SystemExit),
         ):
             rp._get_diff("org/repo", "1")
@@ -1110,7 +1110,7 @@ class TestDedupAgainstPosted:
             path=path, line=42, end_line=None, body=body,
         )
 
-    @patch("review_post._fetch_bot_comments")
+    @patch("review_dedup._fetch_bot_comments")
     def test_skips_duplicate(self, mock_fetch, rp):
         mock_fetch.return_value = [
             {"path": "handler.go", "body": "missing error check on db.Query result"},
@@ -1121,7 +1121,7 @@ class TestDedupAgainstPosted:
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
 
-    @patch("review_post._fetch_bot_comments")
+    @patch("review_dedup._fetch_bot_comments")
     def test_keeps_non_duplicate(self, mock_fetch, rp):
         mock_fetch.return_value = [
             {"path": "handler.go", "body": "missing error check on db.Query result"},
@@ -1131,7 +1131,7 @@ class TestDedupAgainstPosted:
         assert len(kept) == 1
         assert len(deduped) == 0
 
-    @patch("review_post._fetch_bot_comments")
+    @patch("review_dedup._fetch_bot_comments")
     def test_different_file_not_duplicate(self, mock_fetch, rp):
         mock_fetch.return_value = [
             {"path": "handler.go", "body": "missing error check"},
@@ -1140,7 +1140,7 @@ class TestDedupAgainstPosted:
         kept, deduped = rp.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
 
-    @patch("review_post._fetch_bot_comments")
+    @patch("review_dedup._fetch_bot_comments")
     def test_no_existing_comments_keeps_all(self, mock_fetch, rp):
         mock_fetch.return_value = []
         f = self._make_finding(rp, "M1", "handler.go", "finding text")
@@ -1485,7 +1485,7 @@ class TestDedupAgainstPostedEdgeCases:
             path=path, line=42, end_line=None, body=body,
         )
 
-    @patch("review_post._fetch_bot_comments")
+    @patch("review_dedup._fetch_bot_comments")
     def test_jaccard_at_threshold_boundary(self, mock_fetch, rp):
         # Build words so Jaccard is exactly 0.6: 3 shared out of 5 total
         # a = {"a", "b", "c"}, b = {"a", "b", "c", "d", "e"} => 3/5 = 0.6
@@ -1497,7 +1497,7 @@ class TestDedupAgainstPostedEdgeCases:
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
 
-    @patch("review_post._fetch_bot_comments")
+    @patch("review_dedup._fetch_bot_comments")
     def test_empty_path_on_both_sides_not_matched(self, mock_fetch, rp):
         mock_fetch.return_value = [
             {"path": "", "body": "missing error check"},
@@ -1614,9 +1614,9 @@ class TestReclassifyAndRetry:
         )
 
         with (
-            patch.object(rp, "_get_diff", return_value=self.DIFF_NEW),
-            patch.object(rp, "_post_chunked_review", return_value=[{"id": 42}]),
-            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch("review_github._get_diff", return_value=self.DIFF_NEW),
+            patch("review_posting._post_chunked_review", return_value=[{"id": 42}]),
+            patch("review_github._check_existing_pending", return_value=None),
         ):
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [body_f],
@@ -1641,9 +1641,9 @@ class TestReclassifyAndRetry:
             return [{"id": 99}]
 
         with (
-            patch.object(rp, "_get_diff", return_value=self.DIFF_NEW),
-            patch.object(rp, "_post_chunked_review", side_effect=failing_then_succeeding),
-            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch("review_github._get_diff", return_value=self.DIFF_NEW),
+            patch("review_posting._post_chunked_review", side_effect=failing_then_succeeding),
+            patch("review_github._check_existing_pending", return_value=None),
         ):
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
@@ -1666,12 +1666,142 @@ class TestReclassifyAndRetry:
         )
 
         with (
-            patch.object(rp, "_get_diff", return_value=self.DIFF_NEW),
-            patch.object(rp, "_post_chunked_review", return_value=[{"id": 42}]),
-            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch("review_github._get_diff", return_value=self.DIFF_NEW),
+            patch("review_posting._post_chunked_review", return_value=[{"id": 42}]),
+            patch("review_github._check_existing_pending", return_value=None),
         ):
             _, _, body, _, _ = rp._reclassify_and_retry(
                 self._make_args(), [inline_f], [skipped_f],
                 "abc123", 30, {"M", "I"}, False,
             )
             assert any(f.body == "Good pattern" for f in body)
+
+
+class TestFormatCommentBody:
+    def test_includes_sha_drift_header(self, rp):
+        f = rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=10,
+            end_line=None, body="Fix this", posted_id="M1",
+        )
+        body = rp._format_comment_body([f], {"M"}, "aaa1111", "bbb2222", 3)
+        assert "aaa1111" in body
+        assert "bbb2222" in body
+        assert "3 new commits" in body
+        assert "Fix this" in body
+
+    def test_single_commit_no_plural(self, rp):
+        f = rp.Finding(
+            id="S1", severity="S", seq=1, path="a.go", line=1,
+            end_line=None, body="body", posted_id="S1",
+        )
+        body = rp._format_comment_body([f], {"S"}, "aaa", "bbb", 1)
+        assert "1 new commit)" in body
+        assert "commits" not in body
+
+    def test_renumbers_findings(self, rp):
+        findings = [
+            rp.Finding(id="M1", severity="M", seq=1, path="a.go", line=1,
+                       end_line=None, body="first"),
+            rp.Finding(id="M2", severity="M", seq=2, path="b.go", line=2,
+                       end_line=None, body="second"),
+        ]
+        body = rp._format_comment_body(findings, {"M"}, "aaa", "bbb", 1)
+        assert "[M1]" in body
+        assert "[M2]" in body
+
+
+class TestHandleChunkFailure:
+    def test_exits_with_error(self, rp):
+        with pytest.raises(SystemExit):
+            rp._handle_chunk_failure(2, 3, [])
+
+    def test_logs_partial_post(self, rp, capsys):
+        with pytest.raises(SystemExit):
+            rp._handle_chunk_failure(2, 3, [{"id": 100}])
+        err = capsys.readouterr().err
+        assert "Partial post" in err
+        assert "100" in err
+
+
+class TestCountNewCommits:
+    def test_finds_review_sha_and_counts_after(self, rp):
+        commits = [
+            {"sha": "aaa111"},
+            {"sha": "bbb222"},
+            {"sha": "ccc333"},
+        ]
+        with patch("review_github._gh_api", return_value=(0, json.dumps(commits))):
+            assert rp._count_new_commits("org/repo", "1", "bbb222") == 1
+
+    def test_no_match_returns_total(self, rp):
+        commits = [{"sha": "aaa"}, {"sha": "bbb"}]
+        with patch("review_github._gh_api", return_value=(0, json.dumps(commits))):
+            assert rp._count_new_commits("org/repo", "1", "zzz") == 2
+
+    def test_api_failure_returns_zero(self, rp):
+        with patch("review_github._gh_api", return_value=(1, "")):
+            assert rp._count_new_commits("org/repo", "1", "aaa") == 0
+
+    def test_prefix_match(self, rp):
+        commits = [{"sha": "aabbccdd1234"}, {"sha": "eeff5678"}]
+        with patch("review_github._gh_api", return_value=(0, json.dumps(commits))):
+            assert rp._count_new_commits("org/repo", "1", "aabbccdd") == 1
+
+
+class TestCollectInlineComments:
+    def test_filters_by_bot_user(self, rp):
+        comments = [
+            {"path": "a.go", "body": "fix", "user": {"login": "bot"}},
+            {"path": "b.go", "body": "nit", "user": {"login": "human"}},
+            {"path": "c.go", "body": "issue", "user": {"login": "bot"}},
+        ]
+        with patch("review_github._fetch_json_list", return_value=comments):
+            result = rp._collect_inline_comments("org/repo", "1", "bot")
+            assert len(result) == 2
+            assert all(r["path"] in ("a.go", "c.go") for r in result)
+
+    def test_empty_comments(self, rp):
+        with patch("review_github._fetch_json_list", return_value=[]):
+            result = rp._collect_inline_comments("org/repo", "1", "bot")
+            assert result == []
+
+
+class TestCollectReviewFindings:
+    def test_extracts_from_bot_review_bodies(self, rp):
+        reviews = [
+            {"body": "- **[M1]** **`a.go:1`** — issue one", "user": {"login": "bot"}},
+            {"body": "no findings", "user": {"login": "human"}},
+        ]
+        with patch("review_github._fetch_json_list", return_value=reviews):
+            result = rp._collect_review_findings("org/repo", "1", "bot")
+            assert len(result) == 1
+            assert result[0]["path"] == "a.go"
+
+    def test_skips_empty_bodies(self, rp):
+        reviews = [
+            {"body": "", "user": {"login": "bot"}},
+        ]
+        with patch("review_github._fetch_json_list", return_value=reviews):
+            result = rp._collect_review_findings("org/repo", "1", "bot")
+            assert result == []
+
+
+class TestFetchBotComments:
+    def test_combines_inline_and_review_findings(self, rp):
+        with (
+            patch("review_github._gh_api", return_value=(0, '{"login": "bot"}')),
+            patch("review_github._fetch_json_list", side_effect=[
+                [{"path": "a.go", "body": "inline", "user": {"login": "bot"}}],
+                [{"body": "- **[M1]** **`b.go:1`** — review", "user": {"login": "bot"}}],
+            ]),
+        ):
+            result = rp._fetch_bot_comments("org/repo", "1")
+            assert len(result) == 2
+
+    def test_api_failure_returns_empty(self, rp):
+        with patch("review_github._gh_api", return_value=(1, "")):
+            assert rp._fetch_bot_comments("org/repo", "1") == []
+
+    def test_empty_login_returns_empty(self, rp):
+        with patch("review_github._gh_api", return_value=(0, '{"login": ""}')):
+            assert rp._fetch_bot_comments("org/repo", "1") == []

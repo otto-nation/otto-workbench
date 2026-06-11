@@ -35,6 +35,9 @@ from review_prompt import *  # noqa: E402,F403
 from review_agent import *  # noqa: E402,F403
 from review_pipeline import *  # noqa: E402,F403
 
+from review_common import _derive_path, _info  # noqa: E402
+from review_pipeline import _fetch_metadata  # noqa: E402
+
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
 
 

@@ -62,7 +62,8 @@ git_user=$(git config user.name 2>/dev/null | tr '[:upper:]' '[:lower:]' | cut -
 branch="${branch_override:-${git_user}/fix/${rule}}"
 
 _is_go_repo() {
-  [[ -d "$1" ]] && [[ -f "$1/go.mod" ]]
+  [[ -d "$1" ]] || return 1
+  [[ -f "$1/go.mod" ]]
 }
 
 resolve_repos() {
@@ -72,7 +73,7 @@ resolve_repos() {
     part=$(echo "$part" | xargs)
     # shellcheck disable=SC2086
     for path in $part; do
-      _is_go_repo "$path" && (cd "$path" && pwd)
+      if _is_go_repo "$path"; then (cd "$path" && pwd); fi
     done
   done
 }

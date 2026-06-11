@@ -15,8 +15,12 @@ _has_enough_sessions() {
   for session_file in "${project_dir}"*.jsonl; do
     [ -f "$session_file" ] || continue
     file_ts=$(stat -f %m "$session_file" 2>/dev/null || stat -c %Y "$session_file" 2>/dev/null || echo 0)
-    [ "$file_ts" -gt "$since" ] && count=$((count + 1))
-    [ "$count" -ge "$MIN_SESSIONS" ] && return 0
+    if [ "$file_ts" -gt "$since" ]; then
+      count=$((count + 1))
+    fi
+    if [ "$count" -ge "$MIN_SESSIONS" ]; then
+      return 0
+    fi
   done
   return 1
 }
@@ -34,7 +38,9 @@ for project_dir in ~/.claude/projects/*/; do
   elapsed=$((now - last_promote))
   [ "$elapsed" -lt "$threshold_secs" ] && continue
 
-  _has_enough_sessions "$project_dir" "$last_promote" && exit 0
+  if _has_enough_sessions "$project_dir" "$last_promote"; then
+    exit 0
+  fi
 done
 
 exit 1

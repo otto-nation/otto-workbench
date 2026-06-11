@@ -678,6 +678,8 @@ _check_stale_review() {
   if [[ "$review_sha" == "$pr_head_sha" ]]; then
     warn "No new commits since the last review (HEAD ${pr_head_sha:0:7})"
     confirm "Re-review anyway?" || exit 0
+  else
+    info "Incremental review: new commits since last review (${review_sha:0:7}..${pr_head_sha:0:7})"
   fi
 }
 

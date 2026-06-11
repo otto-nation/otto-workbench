@@ -5,6 +5,7 @@ ${pr_header}
 ## All files in this PR
 ${all_files_formatted}
 ${preflight_data}
+${delta_section}
 
 ## Task
 Review all files listed above (scan-level — understand purpose and structure, not line-by-line deep review).

@@ -2,6 +2,7 @@ Self-review of changes on branch ${branch_name} in ${repo}.
 
 ${pr_header}
 ${preflight_data}
+${delta_section}
 ${env_section}
 
 ## Output format

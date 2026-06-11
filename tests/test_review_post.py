@@ -1888,8 +1888,10 @@ class TestDryRunIntegration:
     @staticmethod
     def _extract_json(stdout):
         """Extract the JSON object from stdout which may contain log lines."""
-        # The JSON payload is printed between blank lines; find the { ... } block
-        match = re.search(r"^\{.*?^\}", stdout, re.MULTILINE | re.DOTALL)
+        # The JSON payload is printed between blank lines. Use greedy match
+        # to find the outermost { ... } — lazy .*? would stop at the first
+        # } at column 0, truncating nested objects.
+        match = re.search(r"^\{.*^\}", stdout, re.MULTILINE | re.DOTALL)
         if match:
             return json.loads(match.group(0))
         raise ValueError(f"No JSON payload found in stdout: {stdout!r}")

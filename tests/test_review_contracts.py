@@ -14,7 +14,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from string import Template
 
 import pytest
 

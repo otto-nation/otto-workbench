@@ -120,7 +120,11 @@ def _collect_bare_underscore_refs(tree: ast.Module) -> set[str]:
 
 
 def _collect_function_locals(func_node: ast.AST) -> set[str]:
-    """Collect names defined locally within a function (params, assignments)."""
+    """Collect names defined locally within a function (params, assignments).
+
+    Only walks the immediate function body — stops at nested function
+    boundaries so inner locals don't mask outer module-level references.
+    """
     local_names: set[str] = set()
     for arg in func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs:
         local_names.add(arg.arg)
@@ -128,47 +132,61 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
         local_names.add(func_node.args.vararg.arg)
     if func_node.args.kwarg:
         local_names.add(func_node.args.kwarg.arg)
-    for child in ast.walk(func_node):
-        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-            local_names.add(child.id)
-        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if child is not func_node:
-                local_names.add(child.name)
-        elif isinstance(child, ast.For) and isinstance(child.target, ast.Name):
-            local_names.add(child.target.id)
+
+    def _walk_shallow(node: ast.AST):
+        """Walk AST children but don't descend into nested functions."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if child is not func_node:
+                    local_names.add(child.name)
+                    continue
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                local_names.add(child.id)
+            elif isinstance(child, ast.For) and isinstance(child.target, ast.Name):
+                local_names.add(child.target.id)
+            _walk_shallow(child)
+
+    _walk_shallow(func_node)
     return local_names
+
+
+def _walk_excluding_nested_functions(node: ast.AST):
+    """Yield all descendant nodes, stopping at nested function boundaries."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if child is not node:
+                continue
+        yield child
+        yield from _walk_excluding_nested_functions(child)
 
 
 def _collect_bare_refs(tree: ast.Module) -> set[str]:
     """Collect bare Name references that depend on module-level scope.
 
-    Excludes names that are locally defined (params, assignments, loop
-    vars) within their enclosing function — those shadow module-level
-    names and are not cross-module references.
+    Walks both top-level functions and class method bodies. Excludes
+    names locally defined (params, assignments, loop vars) within their
+    enclosing function. Stops at nested function boundaries so inner
+    function references don't leak into the outer scope.
     """
     refs: set[str] = set()
 
+    func_nodes = []
     for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        locals_ = _collect_function_locals(node)
-        for child in ast.walk(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_nodes.append(node)
+        elif isinstance(node, ast.ClassDef):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_nodes.append(child)
+
+    for func in func_nodes:
+        locals_ = _collect_function_locals(func)
+        for child in _walk_excluding_nested_functions(func):
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
                 if child.id not in locals_:
                     refs.add(child.id)
 
     return refs - BUILTINS
-
-
-def _collect_from_imports(tree: ast.Module, source_module: str) -> set[str]:
-    """Collect names explicitly imported via ``from source_module import ...``."""
-    names: set[str] = set()
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == source_module:
-            for alias in node.names:
-                if alias.name != "*":
-                    names.add(alias.asname or alias.name)
-    return names
 
 
 def _collect_definitions(mod_path: Path) -> set[str]:
@@ -589,12 +607,6 @@ def _find_missing_cross_module_imports(
         missing.append((ref, _PEER_DEFS[ref]))
     return missing
 
-
-_CROSS_MODULE_CASES = [
-    (name, path)
-    for name, path in _ALL_PYTHON_SOURCES
-    if _find_missing_cross_module_imports(name, path)
-]
 
 
 @pytest.mark.parametrize(

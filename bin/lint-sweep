@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Sweep lint violations across multiple repos.
+
+Detects violations of a given lint rule across a set of repos and reports them.
+With --fix, creates a worktree per repo, runs the linter, and reports results
+for manual or AI-assisted fixing.
+
+Usage: $(basename "$0") --rule <name> --repos <path-glob-or-list> [options]
+
+Options:
+  --rule <name>        Lint rule to sweep (e.g. no-stdlib-log, no-raw-getenv)
+  --repos <glob>       Glob or comma-separated list of repo paths
+  --fix                Create worktrees and branches for fixing (default: report only)
+  --branch <name>      Branch name override (default: <user>/fix/<rule>)
+  --dry-run            Show what would be done
+  --json               Output results as JSON
+  -h, --help           Show this help
+
+Examples:
+  $(basename "$0") --rule no-stdlib-log --repos 'svc-*,orc-*'
+  $(basename "$0") --rule no-raw-getenv --repos ~/src/maximum/main/svc-* --fix
+  $(basename "$0") --rule no-stdlib-log --repos . --dry-run
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ $# -eq 0 ]] && { usage; exit 1; }
+
+command -v golangci-lint >/dev/null 2>&1 || { err "golangci-lint required"; exit 1; }
+
+rule=""
+repos_input=""
+do_fix=false
+branch_override=""
+dry_run=false
+json_output=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rule)     rule="$2"; shift 2 ;;
+    --repos)    repos_input="$2"; shift 2 ;;
+    --fix)      do_fix=true; shift ;;
+    --branch)   branch_override="$2"; shift 2 ;;
+    --dry-run)  dry_run=true; shift ;;
+    --json)     json_output=true; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    *) err "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+[[ -z "$rule" ]] && { err "--rule is required"; exit 1; }
+[[ -z "$repos_input" ]] && { err "--repos is required"; exit 1; }
+
+git_user=$(git config user.name 2>/dev/null | tr '[:upper:]' '[:lower:]' | cut -d' ' -f1)
+branch="${branch_override:-${git_user}/fix/${rule}}"
+
+_is_go_repo() {
+  [[ -d "$1" ]] || return 1
+  [[ -f "$1/go.mod" ]]
+}
+
+resolve_repos() {
+  local input="$1"
+  IFS=',' read -ra parts <<< "$input"
+  for part in "${parts[@]}"; do
+    part=$(echo "$part" | xargs)
+    # shellcheck disable=SC2086
+    for path in $part; do
+      if _is_go_repo "$path"; then (cd "$path" && pwd); fi
+    done
+  done
+}
+
+_scan_repo() {
+  local repo="$1"
+  local repo_name
+  repo_name=$(basename "$repo")
+
+  if $dry_run; then
+    printf "%-30s %s\n" "$repo_name" "(dry-run)"
+    return
+  fi
+
+  local result count
+  result=$(cd "$repo" && golangci-lint run --disable-all --enable "$rule" \
+    --out-format json ./... 2>/dev/null < /dev/null) || true
+  count=$(echo "$result" | jq '[.Issues[]? | select(.FromLinter == "'"$rule"'")] | length' 2>/dev/null || echo 0)
+
+  printf "%-30s %s\n" "$repo_name" "$count"
+  if [[ "$count" -eq 0 ]]; then return; fi
+
+  total_violations=$((total_violations + count))
+  results+=("$repo_name|$count|$repo")
+  if $json_output; then
+    json_results=$(echo "$json_results" | jq --arg name "$repo_name" --argjson count "$count" --arg path "$repo" \
+      '. + [{"repo": $name, "violations": $count, "path": $path}]')
+  fi
+}
+
+_create_fix_worktrees() {
+  if ! command -v wt >/dev/null 2>&1; then
+    err "wt (worktrunk) required for --fix mode"
+    exit 1
+  fi
+
+  info "Creating worktrees for ${#results[@]} repos with violations..."
+  for entry in "${results[@]}"; do
+    IFS='|' read -r repo_name count repo_path <<< "$entry"
+    info "  $repo_name ($count violations) → branch $branch"
+    if $dry_run; then continue; fi
+    (cd "$repo_path" && wt switch -c "$branch") 2>/dev/null || warn "  Branch $branch may already exist for $repo_name"
+  done
+
+  echo ""
+  success "Worktrees created. Fix violations, then commit and create PRs."
+  info "Commit: git commit -m 'fix: resolve $rule violations'"
+  info "PR:     task --global pr:create -- --no-issue --draft"
+}
+
+mapfile -t repos < <(resolve_repos "$repos_input")
+
+if [[ ${#repos[@]} -eq 0 ]]; then
+  err "No Go repos found matching: $repos_input"
+  exit 1
+fi
+
+info "Sweeping rule '$rule' across ${#repos[@]} repos..."
+echo ""
+
+total_violations=0
+results=()
+json_results="[]"
+
+printf "%-30s %s\n" "REPO" "VIOLATIONS"
+printf "%-30s %s\n" "----" "----------"
+
+for repo in "${repos[@]}"; do
+  _scan_repo "$repo"
+done
+
+echo ""
+info "Total: $total_violations violations across ${#results[@]} repos"
+
+$json_output && echo "$json_results" | jq .
+
+if $do_fix && [[ ${#results[@]} -gt 0 ]]; then
+  echo ""
+  _create_fix_worktrees
+fi

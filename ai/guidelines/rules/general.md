@@ -29,6 +29,8 @@
 - Prefer solutions that work for the general case, not just the immediate scenario — check if the pattern exists elsewhere before writing a narrow fix
 - Always check existing tooling before adding anything new
 - Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere. Changes that create a second source of truth introduce drift and must be reworked
+- Never defer review findings to issues — fix them in the current PR or create separate PRs. Do not suggest "track separately" as the response to review findings
+- When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic — simpler tools are easier to reason about and maintain
 
 ## Unknowns & Assumptions
 

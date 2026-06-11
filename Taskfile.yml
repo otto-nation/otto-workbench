@@ -41,6 +41,7 @@ tasks:
       - |
         grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' . \
           | grep -v '^\./\.git/' \
+          | grep -v '^\./ignore/' \
           | sort \
           | xargs shellcheck --severity=warning
         echo "✓ ShellCheck passed"

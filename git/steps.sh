@@ -347,6 +347,36 @@ step_worktrunk_config() {
   success "worktrunk worktree-path default set"
 }
 
+# step_worktrunk_pre_switch_fetch — ensures the worktrunk config has a
+# pre-switch hook that fetches and fast-forwards the default branch so new
+# branches are always created from the latest remote HEAD.
+step_worktrunk_pre_switch_fetch() {
+  command -v wt >/dev/null 2>&1 || return 0
+
+  local config_file="$WORKTRUNK_CONFIG_FILE"
+  local hook_cmd='fetch-default = "git fetch origin {{ default_branch }} && git -C {{ worktree_path_of_branch(default_branch) }} merge --ff-only origin/{{ default_branch }} 2>/dev/null || true"'
+
+  if [[ -f "$config_file" ]] && grep -q 'fetch-default' "$config_file"; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "worktrunk pre-switch fetch already set" || true
+    return 0
+  fi
+
+  if [[ ! -f "$config_file" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && skip "worktrunk config not found — run step_worktrunk_config first" || true
+    return 0
+  fi
+
+  if grep -q '^\[pre-switch\]' "$config_file"; then
+    # Append under existing [pre-switch] section
+    sed -i '' '/^\[pre-switch\]/a\
+'"$hook_cmd"'' "$config_file"
+  else
+    # Append new section at end of file
+    printf '\n[pre-switch]\n%s\n' "$hook_cmd" >> "$config_file"
+  fi
+  success "worktrunk pre-switch fetch hook added"
+}
+
 # install_git — interactive setup path for gitconfig.
 # Called by install.sh (prefers install_<name> over sync_<name> for core components).
 # Prompts for identity and offers overwrite/backup for existing configs.
@@ -370,6 +400,7 @@ install_git() {
 
   echo; info "worktrunk config"
   step_worktrunk_config
+  step_worktrunk_pre_switch_fetch
 }
 
 # sync_git — runs all git sync steps non-interactively.
@@ -387,6 +418,7 @@ sync_git() {
 
   sync_header "worktrunk config"
   step_worktrunk_config
+  step_worktrunk_pre_switch_fetch
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

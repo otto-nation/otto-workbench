@@ -96,14 +96,14 @@ jobs:
             exit 1
           fi
 
-  test:
-    name: Tests
+  test-bats:
+    name: Tests (bats)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bats
-        run: sudo apt-get install -y bats
+      - name: Install bats and parallel
+        run: sudo apt-get install -y bats parallel
 
       - name: Install yq
         run: |
@@ -121,14 +121,8 @@ jobs:
       - name: Verify Taskfile parses
         run: task --list
 
-      - name: Install pytest
-        run: pipx install pytest==8.3.5
-
       - name: Run bats tests
-        run: bats tests/ --recursive --timing
-
-      - name: Run pytest
-        run: pytest tests/ -v
+        run: bats tests/ --recursive --timing --jobs 4 --no-parallelize-within-files
 
       - name: Check tests did not pollute repo config
         run: |
@@ -142,3 +136,15 @@ jobs:
             echo "A test set git config without cd-ing to a temp directory first."
             exit 1
           fi
+
+  test-pytest:
+    name: Tests (pytest)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pytest
+        run: pipx install pytest==8.3.5
+
+      - name: Run pytest
+        run: pytest tests/ -v

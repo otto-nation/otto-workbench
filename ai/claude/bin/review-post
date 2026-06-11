@@ -23,35 +23,21 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from review_common import (  # noqa: E402
+    SEVERITY_IDIOMS, SEVERITY_LABELS,
+    SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD,
+)
+from review_findings import (  # noqa: E402
+    FINDING_ID_RE, FIRST_FILE_RE, PATH_SECTION_RE, STRIKETHROUGH_RE,
+    Finding, _close_previous, _extract_body_text, _extract_path,
+    _finalize_finding, _is_section_boundary, _match_severity_header,
+    _parse_finding_line, parse_diff_hunks, parse_findings,
+)
+
 
 # ── Constants ────────────────────────────────────────────────────────────────
-
-SEVERITY_MUST = "M"
-SEVERITY_SHOULD = "S"
-SEVERITY_NIT = "N"
-SEVERITY_IDIOMS = "I"
-
-SEVERITY_LABELS = {
-    SEVERITY_MUST: "must-fix",
-    SEVERITY_SHOULD: "should-fix",
-    SEVERITY_NIT: "nit",
-    SEVERITY_IDIOMS: "idiom",
-}
-
-SECTION_HEADERS = {
-    "## must fix": SEVERITY_MUST,
-    "## should fix": SEVERITY_SHOULD,
-    "## nit": SEVERITY_NIT,
-    "## idioms": SEVERITY_IDIOMS,
-}
-
-_SEVERITY_NAMES = {
-    "must fix": SEVERITY_MUST,
-    "should fix": SEVERITY_SHOULD,
-    "nit": SEVERITY_NIT,
-    "nits": SEVERITY_NIT,
-    "idioms": SEVERITY_IDIOMS,
-}
 
 CLASS_INLINE = "inline"
 CLASS_FILE_LEVEL = "file_level"
@@ -83,207 +69,7 @@ class LineResolutionError(Exception):
     """GitHub cannot resolve line positions for inline comments."""
 
 
-# ── Data structures ──────────────────────────────────────────────────────────
-
-
-@dataclass
-class Finding:
-    id: str
-    severity: str
-    seq: int
-    path: str
-    line: int | None
-    end_line: int | None
-    body: str
-    full_path: str = ""
-    posted_id: str = ""
-    classification: str = ""
-    skip_reason: str = ""
-
-
-# ── Parsing ──────────────────────────────────────────────────────────────────
-
-# Two-stage parsing:
-# 1. Match the finding ID: - **[S1]**
-# 2. Extract the path section (everything between the ID and the em-dash)
-FINDING_ID_RE = re.compile(
-    r"^- (?:\[ \] )?"           # list item, optional checkbox
-    r"(?:~~)?"                   # optional strikethrough start
-    r"\*\*\[([MSNI])(\d+)\](?:\*\*)?" # [S1] in bold; closing ** optional
-    r"\s+"
-    r"(?:<!-- sid:\w+ -->\s+)?"  # optional stable ID (defense-in-depth)
-)
-
-# Extracts path section from after the finding ID.
-# Handles: **path:line**, `path:line`, **`path:line`**
-PATH_SECTION_RE = re.compile(
-    r"\*\*`(.+?)`\*\*"   # **`path`** (bold + backtick)
-    r"|"
-    r"\*\*(.+?)\*\*"     # **path** (bold only)
-    r"|"
-    r"`(.+?)`"           # `path` (backtick only)
-)
-FIRST_FILE_RE = re.compile(
-    r"([a-zA-Z0-9_/().:-]+\.\w+)"  # filename with extension (parens for Next.js route groups)
-    r"(?::(\d+)(?:[-–](\d+))?)?"   # optional :line or :start-end
-)
-
-STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
-
-
-def _extract_path(after_id: str) -> tuple[str, int | None, int | None]:
-    """Extract (path, line, end_line) from the text after a finding ID."""
-    section_match = PATH_SECTION_RE.match(after_id)
-    if not section_match:
-        return "", None, None
-
-    section_text = section_match.group(1) or section_match.group(2) or section_match.group(3) or ""
-    section_text = section_text.replace("\\_", "_")
-    file_match = FIRST_FILE_RE.match(section_text)
-    if not file_match:
-        return "", None, None
-
-    path = file_match.group(1).strip()
-    line_num = int(file_match.group(2)) if file_match.group(2) else None
-    end_line = int(file_match.group(3)) if file_match.group(3) else None
-    return path, line_num, end_line
-
-
-def _extract_body_text(line: str) -> str:
-    """Extract finding body from the text after the em-dash separator."""
-    em_dash_pos = line.find("—")
-    if em_dash_pos != -1:
-        return line[em_dash_pos + 1:].strip()
-
-    for sep in (" -- ", " - "):
-        pos = line.find(sep)
-        if pos != -1:
-            return line[pos + len(sep):].strip()
-
-    return ""
-
-
-def _parse_finding_line(stripped: str) -> Finding | None:
-    """Parse a single markdown line into a Finding, or None if it isn't one."""
-    id_match = FINDING_ID_RE.match(stripped)
-    if not id_match:
-        return None
-
-    sev = id_match.group(1)
-    seq = int(id_match.group(2))
-    after_id = stripped[id_match.end():]
-    path, line_num, end_line = _extract_path(after_id)
-
-    if path:
-        body = _extract_body_text(stripped)
-    else:
-        body = after_id.strip()
-
-    return Finding(
-        id=f"{sev}{seq}", severity=sev, seq=seq,
-        path=path, line=line_num, end_line=end_line, body=body,
-    )
-
-
-def _finalize_finding(finding: Finding, body_lines: list[str]):
-    """Set a finding's body from accumulated continuation lines."""
-    body = "\n".join(body_lines).strip()
-    if not body:
-        return
-    body = re.sub(r"\n+###[^\n]*$", "", body, flags=re.DOTALL).strip()
-    finding.body = body
-
-
-def _close_previous(findings: list[Finding], body_lines: list[str]):
-    """Finalize the last finding and clear accumulated body lines."""
-    if findings:
-        _finalize_finding(findings[-1], body_lines)
-    body_lines.clear()
-
-
-def _is_section_boundary(stripped: str) -> bool:
-    """Check if a line is a subsection header or struck-through finding."""
-    return stripped.startswith("### ") or bool(STRIKETHROUGH_RE.match(stripped))
-
-
-def _match_severity_header(stripped: str) -> str | None:
-    """Match severity section headers at any heading level, tolerating hyphens."""
-    if not stripped.startswith("#"):
-        return None
-    text = stripped.lstrip("#").strip().lower().replace("-", " ")
-    return _SEVERITY_NAMES.get(text)
-
-
-def parse_findings(text: str) -> list[Finding]:
-    """Extract findings from review markdown."""
-    findings: list[Finding] = []
-    current_severity: str | None = None
-    body_lines: list[str] = []
-    accumulating = False
-
-    for raw_line in text.split("\n"):
-        stripped = raw_line.strip()
-
-        severity = _match_severity_header(stripped)
-        if severity is not None:
-            _close_previous(findings, body_lines)
-            current_severity = severity
-            accumulating = False
-            continue
-
-        if stripped.startswith("## "):
-            _close_previous(findings, body_lines)
-            current_severity = None
-            accumulating = False
-            continue
-
-        if current_severity is None:
-            continue
-
-        if _is_section_boundary(stripped):
-            _close_previous(findings, body_lines)
-            accumulating = False
-            continue
-
-        finding = _parse_finding_line(stripped)
-        if finding:
-            _close_previous(findings, body_lines)
-            body_lines = [finding.body] if finding.body else []
-            findings.append(finding)
-            accumulating = True
-            continue
-
-        if accumulating and stripped:
-            body_lines.append(raw_line.rstrip())
-
-    _close_previous(findings, body_lines)
-
-    return findings
-
-
-# ── Diff parsing and classification ──────────────────────────────────────────
-
-def parse_diff_hunks(diff_text: str) -> dict[str, list[tuple[int, int]]]:
-    """Parse unified diff into {path: [(start, end), ...]} for the new side."""
-    hunks: dict[str, list[tuple[int, int]]] = {}
-    current_file: str | None = None
-    file_re = re.compile(r"^\+\+\+ b/(.+)")
-    hunk_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-
-    for line in diff_text.splitlines():
-        m = file_re.match(line)
-        if m:
-            current_file = m.group(1)
-            hunks.setdefault(current_file, [])
-            continue
-        m = hunk_re.match(line)
-        if m and current_file is not None:
-            start = int(m.group(1))
-            length = int(m.group(2)) if m.group(2) is not None else 1
-            hunks[current_file].append((start, start + length - 1))
-
-    return hunks
-
+# ── Diff classification ───────────────────────────────────────────────────────
 
 def _resolve_path(path: str, hunks: dict[str, list]) -> str | None:
     """Resolve a possibly-bare filename to a full diff path."""
@@ -906,6 +692,10 @@ def write_post_tracking(
     inline_count: int, body_count: int, skipped_count: int,
     submitted: bool = False,
     chunk_count: int = 1,
+    posted_as: str = "review",
+    review_sha: str = "",
+    head_sha_at_post: str = "",
+    sha_drifted: bool = False,
 ):
     """Write a post tracking entry alongside the review file."""
     post_file = str(Path(review_file).parent / "post.jsonl")
@@ -922,6 +712,10 @@ def write_post_tracking(
         "skipped_count": skipped_count,
         "submitted": submitted,
         "chunk_count": chunk_count,
+        "posted_as": posted_as,
+        "review_sha": review_sha,
+        "head_sha_at_post": head_sha_at_post,
+        "sha_drifted": sha_drifted,
     }
     with open(post_file, "w") as f:
         json.dump(entry, f)
@@ -929,6 +723,105 @@ def write_post_tracking(
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def _count_new_commits(repo: str, pr: str, review_sha: str) -> int:
+    """Count commits on the PR since the review SHA."""
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
+    if code != 0:
+        return 0
+    try:
+        commits = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    for i, c in enumerate(commits):
+        sha = c.get("sha", "")
+        if sha.startswith(review_sha) or review_sha.startswith(sha):
+            return len(commits) - i - 1
+    return len(commits)
+
+
+def _format_comment_body(
+    findings: list[Finding], severity_filter: set[str],
+    review_sha: str, head_sha: str, new_commit_count: int,
+) -> str:
+    """Format findings as a single comment body for stale-SHA posting."""
+    _, body_findings = renumber_for_posting([], findings)
+    body = format_body_text(body_findings, False, severity_filter)
+
+    header = (
+        f"> **Note:** This review was written against commit `{review_sha[:7]}`. "
+        f"PR HEAD has since moved to `{head_sha[:7]}` "
+        f"({new_commit_count} new commit{'s' if new_commit_count != 1 else ''}). "
+        f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
+    )
+    return f"{header}\n{body}"
+
+
+def _post_as_comment(
+    args: argparse.Namespace,
+    findings: list[Finding], severity_filter: set[str],
+    review_sha: str, head_sha: str,
+    head_ref: str, base_ref: str,
+):
+    """Post review as a single PR comment when SHA has drifted."""
+    # Dedup against already-posted comments
+    kept, deduped = dedup_against_posted(findings, args.repo, args.pr)
+    if deduped:
+        _info(f"Skipped {len(deduped)} findings duplicating existing comments")
+    findings = kept
+
+    if not findings:
+        _warn("No findings to post after dedup")
+        write_post_tracking(
+            args.review_file, [0], head_sha,
+            inline_count=0, body_count=0, skipped_count=len(deduped),
+            submitted=True,
+            posted_as="comment",
+            review_sha=review_sha,
+            head_sha_at_post=head_sha,
+            sha_drifted=True,
+        )
+        return
+
+    # Resolve permalinks for source references
+    diff_text = _get_diff(args.repo, args.pr)
+    resolve_permalinks(findings, args.repo, diff_text, head_ref, base_ref)
+
+    new_commits = _count_new_commits(args.repo, args.pr, review_sha)
+    body = _format_comment_body(
+        findings, severity_filter, review_sha, head_sha, new_commits,
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix="review-comment-", delete=False,
+    ) as tmp:
+        json.dump({"body": body}, tmp, ensure_ascii=False)
+        tmp_path = tmp.name
+
+    try:
+        result = _post_with_retries(
+            f"repos/{args.repo}/issues/{args.pr}/comments", tmp_path,
+        )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    if result is None:
+        _err("Failed to post review as comment")
+        sys.exit(1)
+
+    comment_id = result.get("id", 0)
+    _info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
+
+    write_post_tracking(
+        args.review_file, [comment_id], head_sha,
+        inline_count=0, body_count=len(findings), skipped_count=0,
+        submitted=True,
+        posted_as="comment",
+        review_sha=review_sha,
+        head_sha_at_post=head_sha,
+        sha_drifted=True,
+    )
 
 
 def _print_dry_run(
@@ -1045,6 +938,8 @@ def _post_and_track(
         len(inline_comments), len(body_findings), len(skipped),
         submitted=submit or is_chunked,
         chunk_count=len(results),
+        review_sha=head_sha,
+        head_sha_at_post=head_sha,
     )
 
 
@@ -1114,14 +1009,17 @@ def main():
     sha_drifted = review_sha and review_sha != head_sha
     if sha_drifted and not args.dry_run:
         _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
+        _info("Posting as comment (inline positions may be inaccurate)")
+        _post_as_comment(
+            args, findings, severity_filter, review_sha, head_sha,
+            head_ref, base_ref,
+        )
+        return
 
-    # 4. Get diff and classify — fetch fresh diff when SHA has drifted
+    # 4. Get diff and classify
     if args.dry_run:
         _info("Fetching diff for classification...")
-    if sha_drifted and not args.dry_run:
-        diff_text = _get_diff(args.repo, args.pr)
-    else:
-        diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
+    diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
 

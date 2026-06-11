@@ -7,6 +7,7 @@ ${holistic_block}
 Review ONLY the following files. Do NOT read or comment on files outside this list:
 ${group_files_formatted}
 ${preflight_data}
+${delta_section}
 
 Prior reviews exist and will be consulted during synthesis. Focus only on your assigned files.
 ${issue_section}

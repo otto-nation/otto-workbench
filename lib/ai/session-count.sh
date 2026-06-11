@@ -8,7 +8,7 @@ _has_enough_sessions() {
   local count=0
   for session_file in "${project_dir}"*.jsonl; do
     [[ -f "$session_file" ]] || continue
-    file_ts=$(stat -f %m "$session_file" 2>/dev/null || stat -c %Y "$session_file" 2>/dev/null || echo 0)
+    file_ts=$(stat -c %Y "$session_file" 2>/dev/null || stat -f %m "$session_file" 2>/dev/null || echo 0)
     if [[ "$file_ts" -gt "$since" ]]; then
       count=$((count + 1))
     fi

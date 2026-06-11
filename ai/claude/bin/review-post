@@ -15,933 +15,83 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
 import sys
-import tempfile
-import time
-from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from review_common import (  # noqa: E402
-    SEVERITY_IDIOMS, SEVERITY_LABELS,
-    SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD,
-)
+import review_common as _rc  # noqa: E402
+import review_dedup as _rd  # noqa: E402
+import review_findings as _rfi  # noqa: E402
+import review_format as _rfmt  # noqa: E402
+import review_github as _rg  # noqa: E402
+import review_posting as _rp  # noqa: E402
+
+from review_common import *  # noqa: E402,F403
+from review_dedup import *  # noqa: E402,F403
+from review_findings import *  # noqa: E402,F403
+from review_format import *  # noqa: E402,F403
+from review_github import *  # noqa: E402,F403
+from review_posting import *  # noqa: E402,F403
+
+from review_common import SEVERITY_LABELS, _err, _info, _warn  # noqa: E402
+from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
-    FINDING_ID_RE, FIRST_FILE_RE, PATH_SECTION_RE, STRIKETHROUGH_RE,
-    Finding, _close_previous, _extract_body_text, _extract_path,
+    Finding, parse_findings,
+    _close_previous, _extract_body_text, _extract_path,
     _finalize_finding, _is_section_boundary, _match_severity_header,
-    _parse_finding_line, parse_diff_hunks, parse_findings,
+    _parse_finding_line, parse_diff_hunks,
+)
+from review_format import (  # noqa: E402
+    CLASS_FILE_LEVEL, CLASS_INLINE,
+    classify_findings, format_body_text, format_inline_comment,
+    renumber_for_posting, resolve_permalinks,
+    _format_path_ref, _format_finding_line, _resolve_path, _hunk_end,
+    _build_permalink,
+)
+from review_github import (  # noqa: E402
+    _fetch_pr_metadata, _get_diff,
+    _gh_api, _check_existing_pending, _fetch_json_list,
+    _is_rate_limited, _is_line_resolution_error,
+    _handle_api_attempt, _post_with_retries, _count_new_commits,
+    LineResolutionError,
+)
+from review_dedup import (  # noqa: E402
+    _word_set, _jaccard, _extract_body_findings, _fetch_bot_comments,
+)
+from review_posting import (  # noqa: E402
+    DEFAULT_CHUNK_SIZE, HEAD_SHA_RE,
+    _post_and_track, _post_as_comment, _print_dry_run,
+    _chunk_comments, _post_chunked_review, post_review,
+    _submit_review, write_post_tracking, _format_submit_command,
+    _reclassify_and_retry,
 )
 
-
-# ── Constants ────────────────────────────────────────────────────────────────
-
-CLASS_INLINE = "inline"
-CLASS_FILE_LEVEL = "file_level"
-CLASS_SKIPPED = "skipped"
-
-DIFF_SIDE_RIGHT = "RIGHT"
-REVIEW_STATE_PENDING = "PENDING"
-
-MAX_RETRIES = 5
-RATE_LIMIT_WAIT = 60
-RATE_LIMIT_BACKOFF = 1.5
-RATE_LIMIT_MAX_WAIT = 300
-NON_RATE_LIMIT_DELAY = 5
-DEFAULT_CHUNK_SIZE = 30
-INTER_CHUNK_DELAY = 30
-GH_API_TIMEOUT = 30
-
-HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
-
-ANSI_INFO = "\033[1;34m●\033[0m"
-ANSI_WARN = "\033[1;33m●\033[0m"
-ANSI_ERR = "\033[1;31m●\033[0m"
-
-
-# ── Exceptions ───────────────────────────────────────────────────────────────
-
-
-class LineResolutionError(Exception):
-    """GitHub cannot resolve line positions for inline comments."""
-
-
-# ── Diff classification ───────────────────────────────────────────────────────
-
-def _resolve_path(path: str, hunks: dict[str, list]) -> str | None:
-    """Resolve a possibly-bare filename to a full diff path."""
-    if path in hunks:
-        return path
-
-    # Try basename matching
-    basename = path.rsplit("/", 1)[-1] if "/" in path else path
-    matches = [p for p in hunks if p.endswith("/" + basename) or p == basename]
-    if len(matches) == 1:
-        return matches[0]
-
-    # Try partial path matching (e.g., "service/file.go" matching "pkg/service/file.go")
-    if "/" in path:
-        matches = [p for p in hunks if p.endswith("/" + path)]
-        if len(matches) == 1:
-            return matches[0]
-
-    return None
-
-
-def _hunk_end(line: int, hunks: list[tuple[int, int]]) -> int | None:
-    """Return the end of the hunk containing line, or None."""
-    for s, e in hunks:
-        if s <= line <= e:
-            return e
-    return None
-
-
-def classify_findings(
-    findings: list[Finding], diff_text: str
-) -> tuple[list[Finding], list[Finding], list[Finding]]:
-    """Classify findings as inline, file_level, or skipped."""
-    hunks = parse_diff_hunks(diff_text)
-    inline, file_level, skipped = [], [], []
-
-    for f in findings:
-        if not f.path:
-            f.classification = CLASS_FILE_LEVEL
-            f.skip_reason = "general finding (no file reference)"
-            file_level.append(f)
-            continue
-
-        resolved = _resolve_path(f.path, hunks)
-
-        if resolved is None:
-            f.classification = CLASS_SKIPPED
-            f.skip_reason = "path not in diff"
-            skipped.append(f)
-            continue
-
-        f.full_path = resolved
-
-        if f.line is None:
-            f.classification = CLASS_FILE_LEVEL
-            f.skip_reason = "no line number"
-            file_level.append(f)
-            continue
-
-        hunk_e = _hunk_end(f.line, hunks[resolved])
-        if hunk_e is None:
-            f.classification = CLASS_FILE_LEVEL
-            f.skip_reason = f"line {f.line} not in any diff hunk"
-            file_level.append(f)
-            continue
-
-        if f.end_line is not None and f.end_line > hunk_e:
-            f.end_line = hunk_e
-
-        f.classification = CLASS_INLINE
-        inline.append(f)
-
-    return inline, file_level, skipped
-
-
-# ── Renumbering ──────────────────────────────────────────────────────────────
-
-def renumber_for_posting(
-    inline: list[Finding], body: list[Finding]
-) -> tuple[list[Finding], list[Finding]]:
-    """Renumber findings sequentially by posted location.
-
-    Inline findings sorted by (path, line) get IDs first,
-    body findings continue the sequence. Each severity prefix
-    is numbered independently.
-    """
-    inline_sorted = sorted(inline, key=lambda f: (f.full_path or f.path, f.line or 0))
-
-    counters = {s: 1 for s in SEVERITY_LABELS}
-    for f in inline_sorted:
-        f.posted_id = f"{f.severity}{counters[f.severity]}"
-        counters[f.severity] += 1
-    for f in body:
-        f.posted_id = f"{f.severity}{counters[f.severity]}"
-        counters[f.severity] += 1
-
-    return inline_sorted, body
-
-
-# ── Formatting ───────────────────────────────────────────────────────────────
-
-def format_inline_comment(f: Finding) -> dict:
-    """Format a finding as a GitHub inline review comment."""
-    label = f"**[{f.posted_id}] [{SEVERITY_LABELS[f.severity]}]**"
-    body = f"{label} {f.body}"
-
-    comment: dict = {
-        "path": f.full_path,
-        "side": DIFF_SIDE_RIGHT,
-        "body": body,
-    }
-
-    if f.end_line is not None and f.line is not None and f.end_line > f.line:
-        comment["start_line"] = f.line
-        comment["line"] = f.end_line
-        comment["start_side"] = DIFF_SIDE_RIGHT
-    elif f.line is not None:
-        comment["line"] = f.line
-
-    return comment
-
-
-def _format_path_ref(f: Finding) -> str:
-    """Format a finding's path as a backtick-wrapped reference."""
-    ref = f.path
-    if f.line is not None:
-        ref += f":{f.line}"
-        if f.end_line is not None:
-            ref += f"-{f.end_line}"
-    return f"`{ref}`"
-
-
-def _format_finding_line(f: Finding) -> str:
-    """Format a single body finding as a markdown list item."""
-    label = f"**[{f.posted_id}] [{SEVERITY_LABELS[f.severity]}]**"
-    if f.path:
-        return f"- {label} {_format_path_ref(f)} — {f.body}"
-    return f"- {label} {f.body}"
-
-
-_BODY_SECTION_ORDER = [SEVERITY_MUST, SEVERITY_SHOULD, SEVERITY_NIT, SEVERITY_IDIOMS]
-_BODY_SECTION_TITLES = {
-    SEVERITY_MUST: "Must fix",
-    SEVERITY_SHOULD: "Should fix",
-    SEVERITY_NIT: "Nit",
-    SEVERITY_IDIOMS: "Idioms",
-}
-
-
-def format_body_text(
-    body_findings: list[Finding],
-    has_inline: bool,
-    severity_filter: set[str],
-) -> str:
-    """Format the review body text with body/skipped findings."""
-    labels = [SEVERITY_LABELS[s] for s in SEVERITY_LABELS if s in severity_filter]
-
-    if has_inline:
-        parts = [f"Have some comments marked as {', '.join(labels)}."]
-    else:
-        parts = [f"Review findings ({', '.join(labels)}):"]
-
-    if not body_findings:
-        return "\n".join(parts)
-
-    parts.append("")
-    if has_inline:
-        parts.append("**Findings not in the diff (file-level):**")
-        parts.append("")
-
-    by_sev: dict[str, list[Finding]] = {}
-    for f in body_findings:
-        by_sev.setdefault(f.severity, []).append(f)
-
-    active_sevs = [s for s in _BODY_SECTION_ORDER if s in by_sev]
-    needs_headers = len(active_sevs) > 1
-
-    for sev in active_sevs:
-        if needs_headers:
-            parts.append(f"### {_BODY_SECTION_TITLES[sev]}")
-            parts.append("")
-        for f in by_sev[sev]:
-            parts.append(_format_finding_line(f))
-        parts.append("")
-
-    return "\n".join(parts).rstrip("\n")
-
-
-# ── Permalink resolution ─────────────────────────────────────────────────────
-
-_PERMALINK_REF_RE = re.compile(
-    r"(?:see |at )"
-    r"`?([a-zA-Z0-9_/().:-]+\.(?:go|ts|tsx|py|sql|yaml|yml|json|md))"
-    r":(\d+)(?:[-–](\d+))?`?"
-)
-
-
-def _build_permalink(repo: str, ref: str, m: re.Match) -> str:
-    """Build a GitHub permalink from a source reference match."""
-    path, start, end = m.group(1), m.group(2), m.group(3)
-    url = f"https://github.com/{repo}/blob/{ref}/{path}#L{start}"
-    if end:
-        url += f"-L{end}"
-    display = f"`{path}:{start}{f'-{end}' if end else ''}`"
-    return f"[{display}]({url})"
-
-
-def resolve_permalinks(
-    findings: list[Finding], repo: str, diff_text: str,
-    head_ref: str, base_ref: str,
-) -> list[Finding]:
-    """Convert source references to GitHub permalink URLs.
-
-    Uses base_ref for files unchanged by the PR and head_ref for
-    files that are new or modified in the PR diff.
-    """
-    if not head_ref or not base_ref:
-        return findings
-
-    hunks = parse_diff_hunks(diff_text)
-
-    def replacer(m: re.Match) -> str:
-        path = m.group(1)
-        resolved = _resolve_path(path, hunks)
-        ref = head_ref if resolved else base_ref
-        return _build_permalink(repo, ref, m)
-
-    for f in findings:
-        f.body = _PERMALINK_REF_RE.sub(replacer, f.body)
-
-    return findings
-
-
-# ── GitHub API ───────────────────────────────────────────────────────────────
-
-def _gh_api(
-    endpoint: str, method: str = "GET", input_file: str | None = None,
-    headers: dict[str, str] | None = None,
-) -> tuple[int, str]:
-    """Call gh api and return (exit_code, stdout)."""
-    cmd = ["gh", "api", endpoint]
-    if method != "GET":
-        cmd.extend(["--method", method])
-    if input_file:
-        cmd.extend(["--input", input_file])
-    for key, val in (headers or {}).items():
-        cmd.extend(["--header", f"{key}: {val}"])
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_API_TIMEOUT)
-    return result.returncode, result.stdout
-
-
-def _fetch_pr_metadata(repo: str, pr: str) -> dict:
-    """Fetch PR metadata (head SHA, head ref, base ref) in one call."""
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}")
-    if code != 0:
-        _err("Failed to fetch PR metadata")
-        sys.exit(1)
-    try:
-        data = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        _err("Failed to parse PR metadata from API response")
-        sys.exit(1)
-    return {
-        "head_sha": data.get("head", {}).get("sha", ""),
-        "head_ref": data.get("head", {}).get("ref", ""),
-        "base_ref": data.get("base", {}).get("ref", ""),
-    }
-
-
-def _get_diff(repo: str, pr: str) -> str:
-    """Get the PR diff."""
-    code, out = _gh_api(
-        f"repos/{repo}/pulls/{pr}",
-        headers={"Accept": "application/vnd.github.v3.diff"},
-    )
-    if code != 0:
-        _err("Failed to get diff")
-        sys.exit(1)
-    return out
-
-
-def _check_existing_pending(repo: str, pr: str) -> int | None:
-    """Check for existing PENDING review and return its ID."""
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
-    if code != 0:
-        return None
-    try:
-        reviews = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    for r in reviews:
-        if r.get("state") == REVIEW_STATE_PENDING:
-            return int(r.get("id", 0)) or None
-    return None
-
-
-# ── Dedup against posted comments ────────────────────────────────────────────
-
-DEDUP_THRESHOLD = 0.6
-
-
-def _word_set(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9_]+", text.lower()))
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a and not b:
-        return 1.0
-    union = a | b
-    if not union:
-        return 0.0
-    return len(a & b) / len(union)
-
-
-_BODY_FINDING_RE = re.compile(
-    r"^- \*\*\[[MSNI]\d+\]\*\*\s+"
-    r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
-    r"(?::\d+(?:[-–]\d+)?)?"
-    r"\s*—\s*(.*)",
-    re.MULTILINE,
-)
-
-
-def _extract_body_findings(body: str) -> list[dict]:
-    results = []
-    for m in _BODY_FINDING_RE.finditer(body):
-        raw_path = (m.group(1) or m.group(2) or "")
-        path = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
-        results.append({"path": path, "body": m.group(3)})
-    return results
-
-
-def _fetch_json_list(endpoint: str) -> list:
-    code, out = _gh_api(endpoint)
-    if code != 0:
-        return []
-    try:
-        return json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return []
-
-
-def _collect_inline_comments(repo: str, pr: str, bot_user: str) -> list[dict]:
-    all_comments = _fetch_json_list(f"repos/{repo}/pulls/{pr}/comments")
-    return [
-        {"path": c.get("path", ""), "body": c.get("body", "")}
-        for c in all_comments
-        if c.get("user", {}).get("login") == bot_user
-    ]
-
-
-def _collect_review_findings(repo: str, pr: str, bot_user: str) -> list[dict]:
-    all_reviews = _fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
-    bot_bodies = [
-        r.get("body", "") for r in all_reviews
-        if r.get("user", {}).get("login") == bot_user
-    ]
-    entries: list[dict] = []
-    for body in bot_bodies:
-        if body:
-            entries.extend(_extract_body_findings(body))
-    return entries
-
-
-def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
-    code, user_out = _gh_api("user")
-    if code != 0:
-        return []
-    try:
-        bot_user = json.loads(user_out).get("login", "")
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not bot_user:
-        return []
-
-    entries = _collect_inline_comments(repo, pr, bot_user)
-    entries.extend(_collect_review_findings(repo, pr, bot_user))
-    return entries
-
-
-def dedup_against_posted(
-    findings: list[Finding], repo: str, pr: str,
-) -> tuple[list[Finding], list[Finding]]:
-    existing = _fetch_bot_comments(repo, pr)
-    if not existing:
-        return findings, []
-
-    posted_entries = [
-        (c["path"], _word_set(c["body"]))
-        for c in existing
-    ]
-
-    kept, deduped = [], []
-    for f in findings:
-        f_words = _word_set(f.body)
-        is_dup = any(
-            f.path and posted_path and
-            f.path == posted_path and
-            _jaccard(f_words, posted_words) >= DEDUP_THRESHOLD
-            for posted_path, posted_words in posted_entries
-        )
-        if is_dup:
-            f.classification = CLASS_SKIPPED
-            f.skip_reason = "duplicate of existing comment"
-            deduped.append(f)
-        else:
-            kept.append(f)
-
-    return kept, deduped
-
-
-def _is_rate_limited(stdout: str) -> bool:
-    """Check if the API response indicates rate limiting."""
-    lower = stdout.lower()
-    return (
-        "secondary rate limit" in lower
-        or '"message": "forbidden"' in lower
-        or "abuse detection" in lower
-        or "retry later" in lower
-    )
-
-
-def _is_line_resolution_error(stdout: str) -> bool:
-    """Check if the API response indicates unresolvable line positions."""
-    return "line could not be resolved" in stdout.lower()
-
-
-def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
-    """Handle a single API attempt result. Returns parsed JSON on success, None to retry."""
-    if rc == 0:
-        try:
-            return json.loads(stdout)
-        except json.JSONDecodeError:
-            _err(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
-            return None
-
-    if _is_line_resolution_error(stdout):
-        raise LineResolutionError(stdout[:200])
-
-    if _is_rate_limited(stdout):
-        wait = int(min(RATE_LIMIT_WAIT * (RATE_LIMIT_BACKOFF ** attempt), RATE_LIMIT_MAX_WAIT))
-        _warn(f"Rate limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s...")
-        time.sleep(wait)
-        return None
-
-    try:
-        parsed = json.loads(stdout)
-        error_msg = parsed.get("message", stdout[:200])
-        errors = parsed.get("errors", [])
-        if errors:
-            error_msg += " — " + "; ".join(str(e) for e in errors)
-    except (json.JSONDecodeError, AttributeError):
-        error_msg = stdout[:200]
-    _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}")
-    if attempt < MAX_RETRIES - 1:
-        time.sleep(NON_RATE_LIMIT_DELAY)
-    return None
-
-
-def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
-    """Post to GitHub API with retry logic. Returns parsed response or None."""
-    for attempt in range(MAX_RETRIES):
-        rc, stdout = _gh_api(endpoint, method="POST", input_file=tmp_path)
-        result = _handle_api_attempt(attempt, rc, stdout)
-        if result is not None:
-            return result
-
-    _err(f"Failed after {MAX_RETRIES} attempts")
-    return None
-
-
-def _chunk_comments(
-    inline_comments: list[dict], chunk_size: int,
-) -> list[list[dict]]:
-    """Split inline comments into chunks of at most chunk_size."""
-    if not inline_comments or len(inline_comments) <= chunk_size:
-        return [inline_comments]
-    return [
-        inline_comments[i:i + chunk_size]
-        for i in range(0, len(inline_comments), chunk_size)
-    ]
-
-
-def _handle_chunk_failure(
-    chunk_num: int, total_chunks: int, prior_results: list[dict],
-) -> None:
-    """Log chunk failure details and exit."""
-    _err(f"Failed to post chunk {chunk_num}/{total_chunks}")
-    if prior_results:
-        posted_ids = [r.get("id", "?") for r in prior_results]
-        _warn(f"Partial post: chunks 1-{chunk_num - 1} succeeded (review IDs: {posted_ids})")
-    sys.exit(1)
-
-
-def _post_chunked_review(
-    repo: str, pr: str, commit_id: str,
-    body_text: str, inline_comments: list[dict],
-    chunk_size: int, submit: bool,
-) -> list[dict]:
-    """Post a review, chunking if the comment count exceeds chunk_size.
-
-    Chunked reviews are submitted immediately (event=COMMENT) because
-    GitHub only allows one PENDING review per user at a time.
-    """
-    chunks = _chunk_comments(inline_comments, chunk_size)
-    is_chunked = len(chunks) > 1
-    results: list[dict] = []
-
-    existing_id = _check_existing_pending(repo, pr)
-    if existing_id:
-        _warn(f"Deleting existing PENDING review #{existing_id}")
-        _gh_api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
-
-    for i, chunk in enumerate(chunks):
-        chunk_num = i + 1
-        total_chunks = len(chunks)
-
-        payload: dict = {"commit_id": commit_id}
-
-        if i == 0:
-            payload["body"] = body_text
-        else:
-            payload["body"] = f"*(continued — part {chunk_num}/{total_chunks})*"
-
-        if chunk:
-            payload["comments"] = chunk
-
-        if is_chunked or submit:
-            payload["event"] = "COMMENT"
-
-        if is_chunked:
-            _info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
-        else:
-            _info(f"Posting review ({len(chunk)} inline)...")
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", prefix="review-post-", delete=False
-        ) as tmp:
-            json.dump(payload, tmp, ensure_ascii=False)
-            tmp_path = tmp.name
-
-        try:
-            result = _post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-
-        if result is None:
-            _handle_chunk_failure(chunk_num, total_chunks, results)
-
-        results.append(result)
-
-        if not is_chunked:
-            continue
-        _info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
-        if i < len(chunks) - 1:
-            _info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
-            time.sleep(INTER_CHUNK_DELAY)
-
-    return results
-
-
-def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict | None:
-    """Post a review to GitHub, optionally submitting it.
-
-    Legacy single-review interface. Delegates to _post_chunked_review
-    with no chunking.
-    """
-    comments = payload.get("comments", [])
-    body_text = payload.get("body", "")
-    commit_id = payload["commit_id"]
-
-    results = _post_chunked_review(
-        repo, pr, commit_id, body_text, comments,
-        chunk_size=len(comments) + 1,
-        submit=submit,
-    )
-    return results[0] if results else None
-
-
-def _submit_review(repo: str, pr: str, review_id: int) -> bool:
-    """Submit a PENDING review with event=COMMENT. Returns True on success."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="review-submit-", delete=False
-    ) as tmp:
-        json.dump({"event": "COMMENT"}, tmp)
-        tmp_path = tmp.name
-
-    try:
-        result = _post_with_retries(
-            f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
-            tmp_path,
-        )
-        if result is None:
-            _warn(f"Failed to submit review #{review_id} after {MAX_RETRIES} attempts")
-            return False
-        return True
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-
-# ── Output helpers ───────────────────────────────────────────────────────────
-
-def _info(msg: str):
-    print(f"{ANSI_INFO} {msg}", flush=True)
-
-
-def _warn(msg: str):
-    print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
-
-
-def _err(msg: str):
-    print(f"{ANSI_ERR} {msg}", file=sys.stderr, flush=True)
-
-
-# ── Post tracking ───────────────────────────────────────────────────────────
-
-def write_post_tracking(
-    review_file: str, review_ids: list[int] | int, commit_id: str,
-    inline_count: int, body_count: int, skipped_count: int,
-    submitted: bool = False,
-    chunk_count: int = 1,
-    posted_as: str = "review",
-    review_sha: str = "",
-    head_sha_at_post: str = "",
-    sha_drifted: bool = False,
-):
-    """Write a post tracking entry alongside the review file."""
-    post_file = str(Path(review_file).parent / "post.jsonl")
-
-    ids = [review_ids] if isinstance(review_ids, int) else review_ids
-
-    entry = {
-        "review_id": ids[0],
-        "review_ids": ids,
-        "commit_id": commit_id,
-        "posted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "inline_count": inline_count,
-        "body_count": body_count,
-        "skipped_count": skipped_count,
-        "submitted": submitted,
-        "chunk_count": chunk_count,
-        "posted_as": posted_as,
-        "review_sha": review_sha,
-        "head_sha_at_post": head_sha_at_post,
-        "sha_drifted": sha_drifted,
-    }
-    with open(post_file, "w") as f:
-        json.dump(entry, f)
-        f.write("\n")
+_SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp)
+
+
+class _ProxyModule(type(sys.modules[__name__])):
+    def __getattr__(self, name):
+        for mod in _SUBMODULES:
+            try:
+                return getattr(mod, name)
+            except AttributeError:
+                continue
+        raise AttributeError(f"module 'review_post' has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        for mod in _SUBMODULES:
+            if hasattr(mod, name):
+                setattr(mod, name, value)
+                super().__setattr__(name, value)
+                return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _ProxyModule
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-
-
-def _count_new_commits(repo: str, pr: str, review_sha: str) -> int:
-    """Count commits on the PR since the review SHA."""
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
-    if code != 0:
-        return 0
-    try:
-        commits = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return 0
-    for i, c in enumerate(commits):
-        sha = c.get("sha", "")
-        if sha.startswith(review_sha) or review_sha.startswith(sha):
-            return len(commits) - i - 1
-    return len(commits)
-
-
-def _format_comment_body(
-    findings: list[Finding], severity_filter: set[str],
-    review_sha: str, head_sha: str, new_commit_count: int,
-) -> str:
-    """Format findings as a single comment body for stale-SHA posting."""
-    _, body_findings = renumber_for_posting([], findings)
-    body = format_body_text(body_findings, False, severity_filter)
-
-    header = (
-        f"> **Note:** This review was written against commit `{review_sha[:7]}`. "
-        f"PR HEAD has since moved to `{head_sha[:7]}` "
-        f"({new_commit_count} new commit{'s' if new_commit_count != 1 else ''}). "
-        f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
-    )
-    return f"{header}\n{body}"
-
-
-def _post_as_comment(
-    args: argparse.Namespace,
-    findings: list[Finding], severity_filter: set[str],
-    review_sha: str, head_sha: str,
-    head_ref: str, base_ref: str,
-):
-    """Post review as a single PR comment when SHA has drifted."""
-    # Dedup against already-posted comments
-    kept, deduped = dedup_against_posted(findings, args.repo, args.pr)
-    if deduped:
-        _info(f"Skipped {len(deduped)} findings duplicating existing comments")
-    findings = kept
-
-    if not findings:
-        _warn("No findings to post after dedup")
-        write_post_tracking(
-            args.review_file, [0], head_sha,
-            inline_count=0, body_count=0, skipped_count=len(deduped),
-            submitted=True,
-            posted_as="comment",
-            review_sha=review_sha,
-            head_sha_at_post=head_sha,
-            sha_drifted=True,
-        )
-        return
-
-    # Resolve permalinks for source references
-    diff_text = _get_diff(args.repo, args.pr)
-    resolve_permalinks(findings, args.repo, diff_text, head_ref, base_ref)
-
-    new_commits = _count_new_commits(args.repo, args.pr, review_sha)
-    body = _format_comment_body(
-        findings, severity_filter, review_sha, head_sha, new_commits,
-    )
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="review-comment-", delete=False,
-    ) as tmp:
-        json.dump({"body": body}, tmp, ensure_ascii=False)
-        tmp_path = tmp.name
-
-    try:
-        result = _post_with_retries(
-            f"repos/{args.repo}/issues/{args.pr}/comments", tmp_path,
-        )
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-    if result is None:
-        _err("Failed to post review as comment")
-        sys.exit(1)
-
-    comment_id = result.get("id", 0)
-    _info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
-
-    write_post_tracking(
-        args.review_file, [comment_id], head_sha,
-        inline_count=0, body_count=len(findings), skipped_count=0,
-        submitted=True,
-        posted_as="comment",
-        review_sha=review_sha,
-        head_sha_at_post=head_sha,
-        sha_drifted=True,
-    )
-
-
-def _print_dry_run(
-    payload: dict, inline: list[Finding],
-    body_findings: list[Finding], skipped: list[Finding],
-    chunk_size: int,
-):
-    comments = payload.get("comments", [])
-    chunks = _chunk_comments(comments, chunk_size)
-    if len(chunks) > 1:
-        _info(f"Would post in {len(chunks)} chunks of <={chunk_size} comments")
-        for i, chunk in enumerate(chunks):
-            _info(f"  Chunk {i + 1}: {len(chunk)} comments")
-
-    print()
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
-    print()
-    _info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
-    _info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
-    for f in skipped:
-        _warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
-
-
-def _format_submit_command(repo: str, pr: str, review_id: int) -> str:
-    return f"gh api repos/{repo}/pulls/{pr}/reviews/{review_id}/events --method POST -f event=COMMENT"
-
-
-def _reclassify_and_retry(
-    args: argparse.Namespace,
-    inline: list[Finding], body_findings: list[Finding],
-    commit_id: str, chunk_size: int, severity_filter: set[str],
-    submit: bool,
-) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
-    """Re-fetch diff and reclassify findings after a LineResolutionError.
-
-    Returns (inline_comments, inline, body_findings, body_text, results).
-    """
-    _warn("Inline comments could not be resolved — re-fetching diff and retrying")
-    fresh_diff = _get_diff(args.repo, args.pr)
-    all_findings = list(inline) + [f for f in body_findings if f.classification != CLASS_SKIPPED]
-    for f in all_findings:
-        f.classification = ""
-        f.full_path = ""
-        f.skip_reason = ""
-
-    new_inline, new_file_level, new_skipped = classify_findings(all_findings, fresh_diff)
-    skipped_body = [f for f in body_findings if f.classification == CLASS_SKIPPED]
-    new_body = new_file_level + new_skipped + skipped_body
-
-    if new_inline:
-        _info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
-        new_inline, new_body = renumber_for_posting(new_inline, new_body)
-        new_inline_comments = [format_inline_comment(f) for f in new_inline]
-        new_body_text = format_body_text(new_body, True, severity_filter)
-        try:
-            results = _post_chunked_review(
-                args.repo, args.pr, commit_id,
-                new_body_text, new_inline_comments,
-                chunk_size, submit,
-            )
-            return new_inline_comments, new_inline, new_body, new_body_text, results
-        except LineResolutionError:
-            _warn("Retry still failed — demoting all to body-level")
-
-    _, new_body = renumber_for_posting([], list(inline) + list(body_findings))
-    new_body_text = format_body_text(new_body, False, severity_filter)
-    results = _post_chunked_review(
-        args.repo, args.pr, commit_id,
-        new_body_text, [],
-        chunk_size, submit,
-    )
-    return [], [], new_body, new_body_text, results
-
-
-def _post_and_track(
-    args: argparse.Namespace,
-    inline_comments: list[dict], body_text: str,
-    inline: list[Finding],
-    body_findings: list[Finding], skipped: list[Finding],
-    commit_id: str, head_sha: str,
-    chunk_size: int, severity_filter: set[str],
-):
-    submit = getattr(args, "submit", False)
-
-    try:
-        results = _post_chunked_review(
-            args.repo, args.pr, commit_id,
-            body_text, inline_comments,
-            chunk_size, submit,
-        )
-    except LineResolutionError:
-        inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
-            args, inline, body_findings,
-            commit_id, chunk_size, severity_filter, submit,
-        )
-
-    if not results:
-        return
-
-    is_chunked = len(results) > 1
-    review_ids = [r.get("id", 0) for r in results]
-
-    if is_chunked:
-        _info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
-    elif submit:
-        _info(f"Review submitted: #{review_ids[0]}")
-    else:
-        _info(f"Review created: #{review_ids[0]} (PENDING)")
-        print()
-        print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
-
-    write_post_tracking(
-        args.review_file, review_ids, commit_id,
-        len(inline_comments), len(body_findings), len(skipped),
-        submitted=submit or is_chunked,
-        chunk_count=len(results),
-        review_sha=head_sha,
-        head_sha_at_post=head_sha,
-    )
-
 
 def main():
     parser = argparse.ArgumentParser(description="Post a review file to GitHub")
@@ -964,7 +114,6 @@ def main():
         _err(f"Review file not found: {review_path}")
         sys.exit(1)
 
-    # Read sidecar metadata (written by review-orchestrate)
     sidecar: dict = {}
     sidecar_path = review_path.parent / "meta.json"
     if sidecar_path.exists():
@@ -976,15 +125,12 @@ def main():
     severity_filter = set(args.severity.upper().split(","))
     text = review_path.read_text()
 
-    # Parse head_sha from review metadata
     sha_match = HEAD_SHA_RE.search(text)
     review_sha = sha_match.group(1) if sha_match else None
 
-    # 1. Parse findings
     all_findings = parse_findings(text)
     _info(f"Parsed {len(all_findings)} findings from review file")
 
-    # 2. Filter by severity
     findings = [f for f in all_findings if f.severity in severity_filter]
     filtered = len(all_findings) - len(findings)
     if filtered:
@@ -994,7 +140,6 @@ def main():
         _warn("No findings to post")
         sys.exit(0)
 
-    # 3. Get PR state — always fetch live metadata so we post against the real HEAD
     head_sha = sidecar.get("head_sha", "")
     head_ref = sidecar.get("head_ref", "")
     base_ref = sidecar.get("base_ref", "")
@@ -1016,14 +161,12 @@ def main():
         )
         return
 
-    # 4. Get diff and classify
     if args.dry_run:
         _info("Fetching diff for classification...")
     diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
 
-    # 4b. Dedup against already-posted comments
     all_postable = inline + file_level
     if not args.dry_run and all_postable:
         kept, deduped = dedup_against_posted(all_postable, args.repo, args.pr)
@@ -1033,21 +176,16 @@ def main():
             inline = [f for f in kept if f.classification == CLASS_INLINE]
             file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
 
-    # 5. Combine body findings (file-level + skipped)
     body_findings = file_level + skipped
 
-    # 6. Resolve permalinks (base_ref for unchanged files, head_ref for changed)
     findings_for_links = inline + body_findings
     resolve_permalinks(findings_for_links, args.repo, diff_text, head_ref, base_ref)
 
-    # 7. Renumber by posted location
     inline, body_findings = renumber_for_posting(inline, body_findings)
 
-    # 8. Format
     inline_comments = [format_inline_comment(f) for f in inline]
     body_text = format_body_text(body_findings, len(inline) > 0, severity_filter)
 
-    # 9. Build payload (for dry-run display) or post
     commit_id = head_sha
     chunk_size = args.chunk_size
 

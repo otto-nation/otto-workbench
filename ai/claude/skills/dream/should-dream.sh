@@ -6,24 +6,11 @@
 
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(dirname "$_SELF")/../../../../lib/ai/session-count.sh"
+
 DREAM_INTERVAL_HOURS=24
 MIN_SESSIONS=5
-
-_has_enough_sessions() {
-  local project_dir="$1" since="$2"
-  local count=0
-  for session_file in "${project_dir}"*.jsonl; do
-    [[ -f "$session_file" ]] || continue
-    file_ts=$(stat -f %m "$session_file" 2>/dev/null || stat -c %Y "$session_file" 2>/dev/null || echo 0)
-    if [[ "$file_ts" -gt "$since" ]]; then
-      count=$((count + 1))
-    fi
-    if [[ "$count" -ge "$MIN_SESSIONS" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
 
 now=$(date +%s)
 threshold_secs=$((DREAM_INTERVAL_HOURS * 3600))
@@ -38,7 +25,7 @@ for project_dir in ~/.claude/projects/*/; do
   elapsed=$((now - last_dream))
   [[ "$elapsed" -lt "$threshold_secs" ]] && continue
 
-  if _has_enough_sessions "$project_dir" "$last_dream"; then
+  if _has_enough_sessions "$project_dir" "$last_dream" "$MIN_SESSIONS"; then
     exit 0
   fi
 done

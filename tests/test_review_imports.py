@@ -54,6 +54,10 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 
 BUILTINS = {"__name__", "__file__", "__class__", "__spec__"}
 
+ALL_LIB_MODULES = sorted(
+    p.stem for p in LIB_DIR.glob("review_*.py")
+)
+
 POST_LIB_MODULES = [
     "review_github",
     "review_format",
@@ -111,6 +115,76 @@ def _collect_bare_underscore_refs(tree: ast.Module) -> set[str]:
         for child in ast.walk(node):
             if isinstance(child, ast.Name) and child.id.startswith("_"):
                 refs.add(child.id)
+
+    return refs - BUILTINS
+
+
+def _collect_function_locals(func_node: ast.AST) -> set[str]:
+    """Collect names defined locally within a function (params, assignments).
+
+    Only walks the immediate function body — stops at nested function
+    boundaries so inner locals don't mask outer module-level references.
+    """
+    local_names: set[str] = set()
+    for arg in func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs:
+        local_names.add(arg.arg)
+    if func_node.args.vararg:
+        local_names.add(func_node.args.vararg.arg)
+    if func_node.args.kwarg:
+        local_names.add(func_node.args.kwarg.arg)
+
+    def _walk_shallow(node: ast.AST):
+        """Walk AST children but don't descend into nested functions."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if child is not func_node:
+                    local_names.add(child.name)
+                    continue
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                local_names.add(child.id)
+            elif isinstance(child, ast.For) and isinstance(child.target, ast.Name):
+                local_names.add(child.target.id)
+            _walk_shallow(child)
+
+    _walk_shallow(func_node)
+    return local_names
+
+
+def _walk_excluding_nested_functions(node: ast.AST):
+    """Yield all descendant nodes, stopping at nested function boundaries."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if child is not node:
+                continue
+        yield child
+        yield from _walk_excluding_nested_functions(child)
+
+
+def _collect_bare_refs(tree: ast.Module) -> set[str]:
+    """Collect bare Name references that depend on module-level scope.
+
+    Walks both top-level functions and class method bodies. Excludes
+    names locally defined (params, assignments, loop vars) within their
+    enclosing function. Stops at nested function boundaries so inner
+    function references don't leak into the outer scope.
+    """
+    refs: set[str] = set()
+
+    func_nodes = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_nodes.append(node)
+        elif isinstance(node, ast.ClassDef):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_nodes.append(child)
+
+    for func in func_nodes:
+        locals_ = _collect_function_locals(func)
+        for child in _walk_excluding_nested_functions(func):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                if child.id not in locals_:
+                    refs.add(child.id)
 
     return refs - BUILTINS
 
@@ -469,4 +543,93 @@ def test_wildcard_import_covers_public_names(mod_name, rp):
     assert not missing, (
         f"Public names from {mod_name} not accessible via rp proxy:\n"
         + "\n".join(f"  - {name}" for name in missing)
+    )
+
+
+# ── 9. Cross-module bare references (dynamic) ────────────────────────────────
+
+# Build a map of {name: defining_module} for all names across all lib modules.
+# Dynamically discovered — adding a module or function updates the map.
+_PEER_DEFS: dict[str, str] = {}
+for _mod_name in ALL_LIB_MODULES:
+    _mod_path = LIB_DIR / f"{_mod_name}.py"
+    for _defn in _collect_all_names(_mod_path):
+        _PEER_DEFS.setdefault(_defn, _mod_name)
+
+# All Python files that import review_* modules (lib modules + entry scripts)
+_ALL_PYTHON_SOURCES = [
+    (mod_name, LIB_DIR / f"{mod_name}.py") for mod_name in ALL_LIB_MODULES
+] + [
+    (script.name, script) for script in SCRIPTS
+]
+
+
+def _collect_wildcard_sources(tree: ast.Module) -> set[str]:
+    """Collect module names from ``from X import *`` statements."""
+    sources: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.name == "*":
+                    sources.add(node.module)
+    return sources
+
+
+def _find_missing_cross_module_imports(
+    source_name: str, source_path: Path,
+) -> list[tuple[str, str]]:
+    """Find bare names referencing peer-module definitions without an import.
+
+    Returns [(name, defining_module), ...] for each missing import.
+    Accounts for wildcard imports (``from X import *``) which make
+    public (non-``_``-prefixed) names available.
+    """
+    tree = ast.parse(source_path.read_text(), filename=str(source_path))
+    bare_refs = _collect_bare_refs(tree)
+    available = _collect_explicit_names(tree)
+
+    wildcard_sources = _collect_wildcard_sources(tree)
+    for wc_mod in wildcard_sources:
+        wc_path = LIB_DIR / f"{wc_mod}.py"
+        if wc_path.exists():
+            available |= _collect_public_names(wc_path)
+
+    own_module = source_path.stem if source_path.suffix == ".py" else source_name
+
+    missing = []
+    for ref in sorted(bare_refs):
+        if ref in available:
+            continue
+        if ref not in _PEER_DEFS:
+            continue
+        if _PEER_DEFS[ref] == own_module:
+            continue
+        missing.append((ref, _PEER_DEFS[ref]))
+    return missing
+
+
+
+@pytest.mark.parametrize(
+    "source_name,source_path",
+    _ALL_PYTHON_SOURCES,
+    ids=[name for name, _ in _ALL_PYTHON_SOURCES],
+)
+def test_cross_module_bare_refs_are_imported(source_name, source_path):
+    """Every bare name that references a peer module's definition must
+    be explicitly imported.
+
+    Bare name lookups use globals() — if a name is defined in
+    review_preflight but used bare in review_pipeline without an
+    explicit import, it's a NameError at runtime. Dynamically
+    discovered from module ASTs so adding modules or functions
+    automatically adds coverage.
+    """
+    missing = _find_missing_cross_module_imports(source_name, source_path)
+
+    assert not missing, (
+        f"{source_name}: bare references to peer-module names "
+        f"without explicit imports (will be NameError at runtime):\n"
+        + "\n".join(
+            f"  - {name} (defined in {mod})" for name, mod in missing
+        )
     )

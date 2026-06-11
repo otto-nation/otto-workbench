@@ -941,23 +941,18 @@ def write_post_tracking(
 
 def _count_new_commits(repo: str, pr: str, review_sha: str) -> int:
     """Count commits on the PR since the review SHA."""
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits")
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
     if code != 0:
         return 0
     try:
         commits = json.loads(out)
     except (json.JSONDecodeError, TypeError):
         return 0
-    found = False
-    count = 0
-    for c in reversed(commits):
+    for i, c in enumerate(commits):
         sha = c.get("sha", "")
         if sha.startswith(review_sha) or review_sha.startswith(sha):
-            found = True
-            continue
-        if found:
-            count += 1
-    return count if found else len(commits)
+            return len(commits) - i - 1
+    return len(commits)
 
 
 def _format_comment_body(
@@ -981,8 +976,23 @@ def _post_as_comment(
     args: argparse.Namespace,
     findings: list[Finding], severity_filter: set[str],
     review_sha: str, head_sha: str,
+    head_ref: str, base_ref: str,
 ):
     """Post review as a single PR comment when SHA has drifted."""
+    # Dedup against already-posted comments
+    kept, deduped = dedup_against_posted(findings, args.repo, args.pr)
+    if deduped:
+        _info(f"Skipped {len(deduped)} findings duplicating existing comments")
+    findings = kept
+
+    if not findings:
+        _warn("No findings to post after dedup")
+        return
+
+    # Resolve permalinks for source references
+    diff_text = _get_diff(args.repo, args.pr)
+    resolve_permalinks(findings, args.repo, diff_text, head_ref, base_ref)
+
     new_commits = _count_new_commits(args.repo, args.pr, review_sha)
     body = _format_comment_body(
         findings, severity_filter, review_sha, head_sha, new_commits,
@@ -1205,7 +1215,10 @@ def main():
     if sha_drifted and not args.dry_run:
         _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
         _info("Posting as comment (inline positions may be inaccurate)")
-        _post_as_comment(args, findings, severity_filter, review_sha, head_sha)
+        _post_as_comment(
+            args, findings, severity_filter, review_sha, head_sha,
+            head_ref, base_ref,
+        )
         return
 
     # 4. Get diff and classify

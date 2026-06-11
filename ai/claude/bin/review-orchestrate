@@ -1485,14 +1485,12 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
     prior_sha = pf.prior_head_sha[:7]
     head_sha = job.pr.head_sha[:7]
     n_files = len(pf.delta_files)
-    return (
-        f"This is an **incremental review**. {n_files} file(s) changed since the "
+    incremental_note = (
+        f"\n\n**Incremental review note:** {n_files} file(s) changed since the "
         f"prior review ({prior_sha}..{head_sha}). Focus on changes in the "
-        f"'Incremental review context' section. For prior findings:\n"
-        f"- If fixed by new commits, omit from the new review\n"
-        f"- If still open, carry forward preserving the stable ID comment\n"
-        f"- Add any new findings from the delta changes"
+        f"'Incremental review context' section."
     )
+    return base_ctx + incremental_note
 
 
 def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
@@ -2410,6 +2408,7 @@ def _write_mechanical_fallback(
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
+    skipped_groups: int = 0,
 ) -> str:
     synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
@@ -2434,7 +2433,9 @@ def _phase_synthesis(
         reason = "no output" if not Path(job.review_file).exists() else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
         _warn(f"Synthesis agent {detail} — falling back to mechanical merge")
-        _write_mechanical_fallback(job, group_count, merged_content)
+        _write_mechanical_fallback(
+            job, group_count, merged_content, skipped_groups=skipped_groups,
+        )
 
     _write_review_sidecar(job)
     return synthesis_log
@@ -2578,13 +2579,12 @@ def _carry_forward_prior_findings(
     if not prior_review or not skip_indices:
         return ""
 
+    annotated = annotate_prior_with_stable_ids(prior_review)
     parts: list[str] = []
     for i, grp in enumerate(groups, 1):
         if i not in skip_indices:
             continue
-        scoped = _scope_prior_review(
-            annotate_prior_with_stable_ids(prior_review), grp.files,
-        )
+        scoped = _scope_prior_review(annotated, grp.files)
         if scoped:
             parts.append(f"### Carried forward: {grp.name}\n{scoped}")
 
@@ -2657,7 +2657,7 @@ def run_multi_phase(
     elif incremental_skips:
         skip_groups = skip_groups | incremental_skips
 
-    # Skip holistic for incremental reviews — prior holistic still applies
+    skip_holistic_incremental = incremental and not skip_holistic
     if incremental:
         skip_holistic = True
 
@@ -2675,7 +2675,12 @@ def run_multi_phase(
         state.holistic_done = True
         _write_pipeline_state(job, state)
     else:
-        reason = "--no-holistic" if skip_holistic else f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
+        if skip_holistic_incremental:
+            reason = "incremental review"
+        elif skip_holistic:
+            reason = "--no-holistic"
+        else:
+            reason = f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
         _info(f"Holistic phase skipped ({reason})")
         holistic_content, holistic_output, holistic_log = "", "", ""
 
@@ -2698,7 +2703,7 @@ def run_multi_phase(
     merged_content = _phase_merge(group_outputs, failed_groups)
 
     if carried_forward:
-        merged_content += "\n## Carried forward from prior review\n" + carried_forward
+        merged_content += "\n" + carried_forward
 
     n_skipped = len(incremental_skips)
     all_groups_failed = len(failed_groups) == group_count
@@ -2729,7 +2734,10 @@ def run_multi_phase(
         state.synthesis_failed = "budget exceeded"
         _write_pipeline_state(job, state)
     else:
-        synthesis_log = _phase_synthesis(job, holistic_content, group_count, merged_content)
+        synthesis_log = _phase_synthesis(
+            job, holistic_content, group_count, merged_content,
+            skipped_groups=n_skipped,
+        )
         state.synthesis_done = True
         # Detect mechanical fallback vs successful synthesis
         review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""

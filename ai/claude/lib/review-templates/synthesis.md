@@ -10,6 +10,7 @@ ${merged_content}
 
 ## Reference data
 ${preflight_data}
+${delta_section}
 ${reviews_section}
 
 ## Task

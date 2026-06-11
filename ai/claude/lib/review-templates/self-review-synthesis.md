@@ -10,6 +10,7 @@ ${merged_content}
 
 ## Reference data
 ${preflight_data}
+${delta_section}
 
 ## Task
 1. Write the header: # Self-Review: ${repo} — ${branch_name}

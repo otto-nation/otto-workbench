@@ -906,6 +906,10 @@ def write_post_tracking(
     inline_count: int, body_count: int, skipped_count: int,
     submitted: bool = False,
     chunk_count: int = 1,
+    posted_as: str = "review",
+    review_sha: str = "",
+    head_sha_at_post: str = "",
+    sha_drifted: bool = False,
 ):
     """Write a post tracking entry alongside the review file."""
     post_file = str(Path(review_file).parent / "post.jsonl")
@@ -922,6 +926,10 @@ def write_post_tracking(
         "skipped_count": skipped_count,
         "submitted": submitted,
         "chunk_count": chunk_count,
+        "posted_as": posted_as,
+        "review_sha": review_sha,
+        "head_sha_at_post": head_sha_at_post,
+        "sha_drifted": sha_drifted,
     }
     with open(post_file, "w") as f:
         json.dump(entry, f)
@@ -929,6 +937,86 @@ def write_post_tracking(
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def _count_new_commits(repo: str, pr: str, review_sha: str) -> int:
+    """Count commits on the PR since the review SHA."""
+    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits")
+    if code != 0:
+        return 0
+    try:
+        commits = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    found = False
+    count = 0
+    for c in reversed(commits):
+        sha = c.get("sha", "")
+        if sha.startswith(review_sha) or review_sha.startswith(sha):
+            found = True
+            continue
+        if found:
+            count += 1
+    return count if found else len(commits)
+
+
+def _format_comment_body(
+    findings: list[Finding], severity_filter: set[str],
+    review_sha: str, head_sha: str, new_commit_count: int,
+) -> str:
+    """Format findings as a single comment body for stale-SHA posting."""
+    _, body_findings = renumber_for_posting([], findings)
+    body = format_body_text(body_findings, False, severity_filter)
+
+    header = (
+        f"> **Note:** This review was written against commit `{review_sha[:7]}`. "
+        f"PR HEAD has since moved to `{head_sha[:7]}` "
+        f"({new_commit_count} new commit{'s' if new_commit_count != 1 else ''}). "
+        f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
+    )
+    return f"{header}\n{body}"
+
+
+def _post_as_comment(
+    args: argparse.Namespace,
+    findings: list[Finding], severity_filter: set[str],
+    review_sha: str, head_sha: str,
+):
+    """Post review as a single PR comment when SHA has drifted."""
+    new_commits = _count_new_commits(args.repo, args.pr, review_sha)
+    body = _format_comment_body(
+        findings, severity_filter, review_sha, head_sha, new_commits,
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix="review-comment-", delete=False,
+    ) as tmp:
+        json.dump({"body": body}, tmp, ensure_ascii=False)
+        tmp_path = tmp.name
+
+    try:
+        result = _post_with_retries(
+            f"repos/{args.repo}/issues/{args.pr}/comments", tmp_path,
+        )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    if result is None:
+        _err("Failed to post review as comment")
+        sys.exit(1)
+
+    comment_id = result.get("id", 0)
+    _info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
+
+    write_post_tracking(
+        args.review_file, [comment_id], head_sha,
+        inline_count=0, body_count=len(findings), skipped_count=0,
+        submitted=True,
+        posted_as="comment",
+        review_sha=review_sha,
+        head_sha_at_post=head_sha,
+        sha_drifted=True,
+    )
 
 
 def _print_dry_run(
@@ -1045,6 +1133,8 @@ def _post_and_track(
         len(inline_comments), len(body_findings), len(skipped),
         submitted=submit or is_chunked,
         chunk_count=len(results),
+        review_sha=head_sha,
+        head_sha_at_post=head_sha,
     )
 
 
@@ -1114,14 +1204,14 @@ def main():
     sha_drifted = review_sha and review_sha != head_sha
     if sha_drifted and not args.dry_run:
         _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
+        _info("Posting as comment (inline positions may be inaccurate)")
+        _post_as_comment(args, findings, severity_filter, review_sha, head_sha)
+        return
 
-    # 4. Get diff and classify — fetch fresh diff when SHA has drifted
+    # 4. Get diff and classify
     if args.dry_run:
         _info("Fetching diff for classification...")
-    if sha_drifted and not args.dry_run:
-        diff_text = _get_diff(args.repo, args.pr)
-    else:
-        diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
+    diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
 

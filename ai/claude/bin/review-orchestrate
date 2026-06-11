@@ -114,6 +114,10 @@ class PreflightData:
     context_md: str
     review_checklists: dict[str, str] = field(default_factory=dict)
     omitted_files: list[str] = field(default_factory=list)
+    delta_diff: str = ""
+    delta_commit_log: str = ""
+    delta_files: list[str] = field(default_factory=list)
+    prior_head_sha: str = ""
 
 
 @dataclass
@@ -125,6 +129,9 @@ class PipelineState:
     groups_failed: dict[int, str] = field(default_factory=dict)
     synthesis_done: bool = False
     synthesis_failed: str = ""
+    review_type: str = "full"
+    prior_sha: str = ""
+    skipped_groups: list[int] = field(default_factory=list)
 
     @property
     def group_count(self):
@@ -207,7 +214,15 @@ TEMPLATE_DIR_REL = Path("lib") / "review-templates"
 FILE_STAT_FMT = "  - {path} (+{additions} -{deletions})"
 META_DATE = "<!-- date: {today} -->"
 META_HEAD_SHA = "<!-- head_sha: {head_sha} -->"
+META_REVIEW_TYPE = "<!-- review_type: {review_type} -->"
+META_PRIOR_SHA = "<!-- prior_sha: {prior_sha} -->"
+META_PRIOR_DATE = "<!-- prior_date: {prior_date} -->"
+META_DELTA_FILES = "<!-- delta_files: {delta_file_count} -->"
+META_SKIPPED_GROUPS = "<!-- skipped_groups: {skipped}/{total} -->"
 META_GENERATOR = "<!-- generator: {generator_version} -->"
+
+PRIOR_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
+PRIOR_DATE_RE = re.compile(r"<!-- date: (\d{4}-\d{2}-\d{2}) -->")
 FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
 
 ANSI_DIM = "\033[2m"
@@ -350,6 +365,35 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         omitted_kb = sum(file_sizes[p] for p in omitted) // 1024
         _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
+    delta_diff = ""
+    delta_commit_log = ""
+    delta_files: list[str] = []
+    prior_head_sha = ""
+
+    if job.prior_review:
+        prior_sha_match = PRIOR_SHA_RE.search(job.prior_review)
+        if prior_sha_match:
+            prior_sha = prior_sha_match.group(1)
+            verify = _run(["git", "cat-file", "-t", prior_sha], cwd=job.wt_path, check=False)
+            if verify.strip() == "commit":
+                prior_head_sha = prior_sha
+                delta_diff = _run(["git", "diff", f"{prior_sha}..HEAD"], cwd=job.wt_path)
+                delta_commit_log = _run(
+                    ["git", "log", "--stat", "--reverse", f"{prior_sha}..HEAD"],
+                    cwd=job.wt_path,
+                )
+                delta_names = _run(
+                    ["git", "diff", "--name-only", f"{prior_sha}..HEAD"],
+                    cwd=job.wt_path,
+                )
+                delta_files = [f for f in delta_names.split("\n") if f.strip()]
+                _info(
+                    f"Incremental review: {len(delta_files)} files changed since "
+                    f"prior review ({prior_sha[:7]}..{job.pr.head_sha[:7]})"
+                )
+            else:
+                _warn(f"Prior review SHA {prior_sha[:7]} not reachable — running full review")
+
     return PreflightData(
         diff=diff,
         commit_log=commit_log,
@@ -359,6 +403,10 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         context_md=context_md,
         review_checklists=review_checklists,
         omitted_files=omitted,
+        delta_diff=delta_diff,
+        delta_commit_log=delta_commit_log,
+        delta_files=delta_files,
+        prior_head_sha=prior_head_sha,
     )
 
 
@@ -1207,6 +1255,61 @@ def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
     )
 
 
+def _build_delta_section(preflight: "PreflightData | None") -> str:
+    if not preflight or not preflight.prior_head_sha:
+        return ""
+    prior = preflight.prior_head_sha[:7]
+    delta_files = preflight.delta_files
+    all_pr_files = set(preflight.file_contents.keys()) | set(preflight.omitted_files)
+    unchanged = sorted(all_pr_files - set(delta_files))
+
+    parts = [
+        "## Incremental review context",
+        "",
+        f"This is an **incremental review**. A prior review exists at commit `{prior}`.",
+        f"{len(delta_files)} file(s) changed since the prior review.",
+        "",
+        "**Focus your review on the delta changes below.** For prior findings on unchanged files,",
+        "carry them forward unless you have evidence they were fixed.",
+    ]
+
+    if preflight.delta_commit_log:
+        parts += [
+            "",
+            "### New commits since prior review",
+            "",
+            "```",
+            preflight.delta_commit_log,
+            "```",
+        ]
+
+    if preflight.delta_diff:
+        parts += [
+            "",
+            "### Delta diff",
+            "",
+            "```diff",
+            preflight.delta_diff,
+            "```",
+        ]
+
+    if delta_files:
+        parts += ["", "### Files modified since prior review"]
+        for f in sorted(delta_files):
+            parts.append(f"- `{f}`")
+
+    if unchanged:
+        parts += ["", "### Files unchanged since prior review (prior findings still apply)"]
+        for f in unchanged:
+            parts.append(f"- `{f}`")
+
+    return "\n".join(parts)
+
+
+def _is_incremental(job: "ReviewJob") -> bool:
+    return bool(job.preflight and job.preflight.prior_head_sha)
+
+
 def _build_issue_section(issue_link: str, issue_context: str) -> str:
     if issue_link:
         return f"\n## Related issue\n{issue_link}"
@@ -1374,6 +1477,24 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
     return prompt
 
 
+def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
+    """Return incremental-aware prior context when delta data is available."""
+    if not _is_incremental(job):
+        return base_ctx
+    pf = job.preflight
+    prior_sha = pf.prior_head_sha[:7]
+    head_sha = job.pr.head_sha[:7]
+    n_files = len(pf.delta_files)
+    return (
+        f"This is an **incremental review**. {n_files} file(s) changed since the "
+        f"prior review ({prior_sha}..{head_sha}). Focus on changes in the "
+        f"'Incremental review context' section. For prior findings:\n"
+        f"- If fixed by new commits, omit from the new review\n"
+        f"- If still open, carry forward preserving the stable ID comment\n"
+        f"- Add any new findings from the delta changes"
+    )
+
+
 def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
     today = date.today().isoformat()
     generator_version = job.generator_version
@@ -1381,24 +1502,26 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     reviews_section = _build_reviews_section(job.ctx)
     env_section = _build_env_section(job.wt_path, preflight=job.preflight)
     issue_section = _build_issue_section(job.issue_link, job.issue_context)
+    delta_section = _build_delta_section(job.preflight)
 
     if template_name == TEMPLATE_SELF_REVIEW:
-        prior_ctx = (
+        prior_ctx = _incremental_prior_ctx(job, (
             "This is a re-review of your own code. Below are the findings from the previous self-review. "
             "For each prior finding:\n"
             "- If the issue has been fixed, omit it from the new review\n"
             "- If the issue is still present, carry it forward\n"
             "- Add any new findings from changes since the last review"
-        )
+        ))
         prior_section = _build_prior_section(job.prior_review, prior_ctx)
         preflight = _build_preflight_section(job)
-        sections = {"pr_header": pr_header, "preflight_data": preflight, "prior_section": prior_section}
+        sections = {"pr_header": pr_header, "preflight_data": preflight, "delta_section": delta_section, "prior_section": prior_section}
         return _log_prompt_size(template_name, render_template(
             TEMPLATE_SELF_REVIEW,
             branch_name=extra.get("branch_name", job.pr.head),
             repo=job.repo,
             pr_header=pr_header,
             preflight_data=preflight,
+            delta_section=delta_section,
             env_section=env_section,
             issue_section=issue_section,
             prior_section=prior_section,
@@ -1410,14 +1533,15 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     if template_name == TEMPLATE_SELF_SYNTHESIS:
         holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
         merged_content = extra["merged_content"]
-        prior_section = _build_prior_section(
-            job.prior_review,
+        prior_ctx = _incremental_prior_ctx(job,
             "Omit prior findings that have been fixed. Carry forward open ones.",
         )
+        prior_section = _build_prior_section(job.prior_review, prior_ctx)
         sections = {
             "pr_header": pr_header,
             "holistic_content": holistic_content,
             "merged_content": merged_content,
+            "delta_section": delta_section,
             "prior_section": prior_section,
         }
         diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
@@ -1433,6 +1557,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
             group_count=extra["group_count"],
             merged_content=merged_content,
             preflight_data=preflight,
+            delta_section=delta_section,
             review_file=job.review_file,
             wt_path=job.wt_path,
             today=today,
@@ -1442,22 +1567,23 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
         ), sections, job)
 
     if template_name == TEMPLATE_SINGLE:
-        prior_ctx = (
+        prior_ctx = _incremental_prior_ctx(job, (
             "This is a re-review. Below are the findings from the previous review. "
             "For each prior finding:\n"
             "- If the issue has been fixed, note it as resolved and omit from the new review\n"
             "- If the issue is still present, carry it forward\n"
             "- Add any new findings from changes since the last review"
-        )
+        ))
         prior_section = _build_prior_section(job.prior_review, prior_ctx)
         preflight = _build_preflight_section(job)
-        sections = {"pr_header": pr_header, "preflight_data": preflight, "reviews_section": reviews_section, "prior_section": prior_section}
+        sections = {"pr_header": pr_header, "preflight_data": preflight, "delta_section": delta_section, "reviews_section": reviews_section, "prior_section": prior_section}
         return _log_prompt_size(template_name, render_template(
             TEMPLATE_SINGLE,
             pr_number=job.pr_number,
             repo=job.repo,
             pr_header=pr_header,
             preflight_data=preflight,
+            delta_section=delta_section,
             reviews_section=reviews_section,
             env_section=env_section,
             issue_section=issue_section,
@@ -1474,6 +1600,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
             "reviews_section": reviews_section,
             "issue_section": issue_section,
             "env_section": env_section,
+            "delta_section": delta_section,
         }
         diff_budget = _compute_diff_budget(job, sections)
         preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
@@ -1485,6 +1612,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
             pr_header=pr_header,
             all_files_formatted=job.pr.all_files_formatted,
             preflight_data=preflight,
+            delta_section=delta_section,
             reviews_section=reviews_section,
             issue_section=issue_section,
             env_section=env_section,
@@ -1494,11 +1622,13 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
 
     if template_name == TEMPLATE_GROUP:
         group_files = extra.get("group_file_paths", [])
-        prior_section = _build_prior_section(
-            job.prior_review,
+        prior_ctx = _incremental_prior_ctx(job, (
             "This is a re-review. Below are the prior findings. "
             "Carry forward findings relevant to YOUR files only. "
-            "Mark fixed findings as resolved.",
+            "Mark fixed findings as resolved."
+        ))
+        prior_section = _build_prior_section(
+            job.prior_review, prior_ctx,
             file_filter=group_files or None,
         )
         holistic_block = _build_holistic_block(
@@ -1509,6 +1639,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
             "holistic_block": holistic_block,
             "issue_section": issue_section,
             "env_section": env_section,
+            "delta_section": delta_section,
             "prior_section": prior_section,
         }
         diff_budget = _compute_diff_budget(job, sections, file_filter=group_files or None)
@@ -1527,6 +1658,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
             holistic_block=holistic_block,
             group_files_formatted=extra["group_files_formatted"],
             preflight_data=group_preflight,
+            delta_section=delta_section,
             issue_section=issue_section,
             env_section=env_section,
             group_output=extra["group_output"],
@@ -1537,14 +1669,15 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     if template_name == TEMPLATE_SYNTHESIS:
         holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
         merged_content = extra["merged_content"]
-        prior_section = _build_prior_section(
-            job.prior_review,
+        prior_ctx = _incremental_prior_ctx(job,
             "Include a ## Resolved section noting which prior findings were fixed.",
         )
+        prior_section = _build_prior_section(job.prior_review, prior_ctx)
         sections = {
             "pr_header": pr_header,
             "holistic_content": holistic_content,
             "merged_content": merged_content,
+            "delta_section": delta_section,
             "reviews_section": reviews_section,
             "prior_section": prior_section,
         }
@@ -1564,6 +1697,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
             group_count=extra["group_count"],
             merged_content=merged_content,
             preflight_data=preflight,
+            delta_section=delta_section,
             reviews_section=reviews_section,
             review_file=job.review_file,
             wt_path=job.wt_path,
@@ -1846,6 +1980,9 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
             groups_failed=groups_failed,
             synthesis_done=data.get("synthesis_done", False),
             synthesis_failed=data.get("synthesis_failed", ""),
+            review_type=data.get("review_type", "full"),
+            prior_sha=data.get("prior_sha", ""),
+            skipped_groups=data.get("skipped_groups", []),
         )
     except (json.JSONDecodeError, KeyError):
         return None
@@ -1913,6 +2050,15 @@ def _write_review_sidecar(job: ReviewJob):
     }
     if job.preflight and job.preflight.diff:
         meta["diff"] = job.preflight.diff
+
+    incremental = _is_incremental(job)
+    meta["review_type"] = "incremental" if incremental else "full"
+    if incremental:
+        pf = job.preflight
+        meta["prior_sha"] = pf.prior_head_sha
+        meta["delta_files"] = pf.delta_files
+        meta["delta_file_count"] = len(pf.delta_files)
+
     Path(sidecar_path).write_text(json.dumps(meta))
 
 
@@ -2118,10 +2264,36 @@ def _phase_merge(group_outputs: list[str], failed_groups: "list[tuple[str, str]]
     return merged_content
 
 
-def _build_meta_header(job: ReviewJob) -> str:
+def _build_meta_header(
+    job: ReviewJob,
+    skipped_groups: int = 0, total_groups: int = 0,
+) -> str:
     today = date.today().isoformat()
-    gen = f"\n{META_GENERATOR.format(generator_version=job.generator_version)}" if job.generator_version else ""
-    return f"{META_DATE.format(today=today)}\n{META_HEAD_SHA.format(head_sha=job.pr.head_sha)}{gen}\n"
+    incremental = _is_incremental(job)
+    review_type = "incremental" if incremental else "full"
+
+    lines = [
+        META_DATE.format(today=today),
+        META_HEAD_SHA.format(head_sha=job.pr.head_sha),
+        META_REVIEW_TYPE.format(review_type=review_type),
+    ]
+
+    if incremental:
+        pf = job.preflight
+        prior_date_match = PRIOR_DATE_RE.search(job.prior_review) if job.prior_review else None
+        prior_date = prior_date_match.group(1) if prior_date_match else "unknown"
+        lines.append(META_PRIOR_SHA.format(prior_sha=pf.prior_head_sha))
+        lines.append(META_PRIOR_DATE.format(prior_date=prior_date))
+        lines.append(META_DELTA_FILES.format(delta_file_count=len(pf.delta_files)))
+        if total_groups > 0:
+            lines.append(META_SKIPPED_GROUPS.format(
+                skipped=skipped_groups, total=total_groups,
+            ))
+
+    if job.generator_version:
+        lines.append(META_GENERATOR.format(generator_version=job.generator_version))
+
+    return "\n".join(lines) + "\n"
 
 
 def _has_findings(merged_content: str) -> bool:
@@ -2179,8 +2351,11 @@ def _mechanical_verdict(counts: dict[str, int]) -> str:
 
 def _build_mechanical_fallback(
     job: ReviewJob, group_count: int, merged_content: str,
+    skipped_groups: int = 0,
 ) -> str:
-    meta = _build_meta_header(job)
+    meta = _build_meta_header(
+        job, skipped_groups=skipped_groups, total_groups=group_count,
+    )
     counts = _count_findings(merged_content)
     total = sum(counts.values())
     count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
@@ -2219,11 +2394,16 @@ def _post_process_review(job: ReviewJob) -> None:
     renumber_findings(job.review_file)
 
 
-def _write_mechanical_fallback(job: ReviewJob, group_count: int, merged_content: str):
+def _write_mechanical_fallback(
+    job: ReviewJob, group_count: int, merged_content: str,
+    skipped_groups: int = 0,
+):
     Path(job.review_file).write_text(merged_content)
     _post_process_review(job)
     processed = Path(job.review_file).read_text()
-    fallback = _build_mechanical_fallback(job, group_count, processed)
+    fallback = _build_mechanical_fallback(
+        job, group_count, processed, skipped_groups=skipped_groups,
+    )
     Path(job.review_file).write_text(fallback)
 
 
@@ -2316,8 +2496,10 @@ def _cleanup_intermediates(
             pass
 
 
-def _write_clean_review(job: ReviewJob, group_count: int):
-    meta = _build_meta_header(job)
+def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 0):
+    meta = _build_meta_header(
+        job, skipped_groups=skipped_groups, total_groups=group_count,
+    )
     if job.mode == MODE_SELF:
         content = (
             f"# Self-Review: {job.repo} — {job.pr.head}\n"
@@ -2389,6 +2571,40 @@ def _resolve_recovery(
     return cost_so_far, skip_groups, skip_holistic, state
 
 
+def _carry_forward_prior_findings(
+    prior_review: str, groups: list[Group], skip_indices: set[int],
+) -> str:
+    """Extract prior findings for skipped groups and return as merged content."""
+    if not prior_review or not skip_indices:
+        return ""
+
+    parts: list[str] = []
+    for i, grp in enumerate(groups, 1):
+        if i not in skip_indices:
+            continue
+        scoped = _scope_prior_review(
+            annotate_prior_with_stable_ids(prior_review), grp.files,
+        )
+        if scoped:
+            parts.append(f"### Carried forward: {grp.name}\n{scoped}")
+
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n"
+
+
+def _identify_incremental_skips(
+    groups: list[Group], delta_files: list[str],
+) -> set[int]:
+    """Return 1-based indices of groups with no files in the delta."""
+    delta_set = set(delta_files)
+    skips: set[int] = set()
+    for i, grp in enumerate(groups, 1):
+        if not any(f in delta_set for f in grp.files):
+            skips.add(i)
+    return skips
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
@@ -2398,6 +2614,24 @@ def run_multi_phase(
     group_count = len(groups)
 
     _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
+
+    incremental = _is_incremental(job)
+    incremental_skips: set[int] = set()
+    carried_forward = ""
+
+    if incremental:
+        incremental_skips = _identify_incremental_skips(
+            groups, job.preflight.delta_files,
+        )
+        if incremental_skips:
+            affected = group_count - len(incremental_skips)
+            _info(
+                f"Incremental: {affected}/{group_count} groups affected, "
+                f"{len(incremental_skips)} unchanged (findings carried forward)"
+            )
+            carried_forward = _carry_forward_prior_findings(
+                job.prior_review, groups, incremental_skips,
+            )
 
     cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_recovery(
         job, groups,
@@ -2411,8 +2645,21 @@ def run_multi_phase(
         state = PipelineState(
             head_sha=job.pr.head_sha,
             group_names=[g.name for g in groups],
+            review_type="incremental" if incremental else "full",
+            prior_sha=job.preflight.prior_head_sha if incremental else "",
+            skipped_groups=sorted(incremental_skips),
         )
         _write_pipeline_state(job, state)
+
+    # Merge incremental skips with any recovery skips
+    if skip_groups is None:
+        skip_groups = incremental_skips if incremental_skips else None
+    elif incremental_skips:
+        skip_groups = skip_groups | incremental_skips
+
+    # Skip holistic for incremental reviews — prior holistic still applies
+    if incremental:
+        skip_holistic = True
 
     run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
@@ -2450,17 +2697,23 @@ def run_multi_phase(
 
     merged_content = _phase_merge(group_outputs, failed_groups)
 
+    if carried_forward:
+        merged_content += "\n## Carried forward from prior review\n" + carried_forward
+
+    n_skipped = len(incremental_skips)
     all_groups_failed = len(failed_groups) == group_count
 
     if not _has_findings(merged_content) and not failed_groups:
         _info("No findings from any group — writing clean review")
-        _write_clean_review(job, group_count)
+        _write_clean_review(job, group_count, skipped_groups=n_skipped)
         synthesis_log = ""
         state.synthesis_done = True
         _write_pipeline_state(job, state)
     elif all_groups_failed:
         _warn("All group agents failed — skipping synthesis")
-        fallback = _build_mechanical_fallback(job, group_count, merged_content)
+        fallback = _build_mechanical_fallback(
+            job, group_count, merged_content, skipped_groups=n_skipped,
+        )
         Path(job.review_file).write_text(fallback)
         _write_review_sidecar(job)
         synthesis_log = ""

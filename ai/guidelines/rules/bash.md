@@ -21,6 +21,7 @@ paths:
 - Scripts in `bin/` should include usage documentation (what, usage, env vars, side effects)
 - Validate required arguments
 - Use functions for reusable logic
+- Scripts should be quiet on success — minimal output (single status line or nothing). On failure: full diagnostic output (what failed, where, relevant context)
 - Under `set -e`, commands that return non-zero on no-match (grep, find, diff) must be guarded with `|| true` or wrapped in `if`/`while` — unguarded usage causes silent script exits
 - **Function-last-statement pitfall**: `[[ condition ]] && cmd` as the final statement of a function returns exit code 1 when the condition is false — the `[[ ]]` is exempt from `set -e`, but the function's return code propagates to the caller and triggers `set -e` there. Fix: end the function with `return 0`, or use `if/then/fi` instead of `&&`
 - Return values via `local -n` (nameref), never `printf -v` — `printf -v "$var"` silently writes to a same-named `local` in the current scope instead of the caller's variable. Use `local -n __out=$1` and assign `__out="value"`. The `__` prefix prevents collisions

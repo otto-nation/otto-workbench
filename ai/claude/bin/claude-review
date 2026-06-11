@@ -623,7 +623,7 @@ Options:
   --self                     Self-review: review your own code (accepts PR number, branch name, or none for current branch)
   --skip-user-verification   Skip ownership check in --self mode
   --force                    Skip pending review and stale review warnings
-  --repo-dir <path>          Path to local repo clone (skips auto-detection)
+  --repo-dir <path>          Path to local repo or worktree (skips auto-detection; alias: --worktree)
   --json-summary             Suppress human output; emit JSON summary to stdout
 EOF
 }
@@ -1232,7 +1232,7 @@ main() {
       --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
-      --repo-dir)     repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "--repo-dir requires a value"; exit 1; }; shift 2 ;;
+      --repo-dir|--worktree) repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "$1 requires a value"; exit 1; }; shift 2 ;;
       -V|--version)    print_version "claude-review"; exit 0 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;

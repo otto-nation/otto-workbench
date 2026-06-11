@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.11.2...claude-review-v1.12.0) (2026-06-11)
+
+
+### Features
+
+* **claude-review:** incremental reviews; modular extraction ([#209](https://github.com/otto-nation/otto-workbench/issues/209)) ([2499a83](https://github.com/otto-nation/otto-workbench/commit/2499a8337e06b5ff71c27fa97b3b3a6699a5866c))
+
+
+### Bug Fixes
+
+* **claude-review:** add --worktree alias for --repo-dir ([#213](https://github.com/otto-nation/otto-workbench/issues/213)) ([c1f167f](https://github.com/otto-nation/otto-workbench/commit/c1f167fe3bc7608d66d31874a3752ece4a15ae01))
+* **dream:** per-project cooldowns; add lint-sweep and --draft flag ([#210](https://github.com/otto-nation/otto-workbench/issues/210)) ([d246939](https://github.com/otto-nation/otto-workbench/commit/d246939199ae9641ca8db93fa2503b3676c9be0e))
+
+
+### Code Refactoring
+
+* **claude-review:** extract review-post into library modules ([#214](https://github.com/otto-nation/otto-workbench/issues/214)) ([719d9ee](https://github.com/otto-nation/otto-workbench/commit/719d9eec252c6f0553fad281e73caef645c59fe0))
+
 ## [1.11.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.11.1...claude-review-v1.11.2) (2026-06-10)
 
 

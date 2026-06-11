@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.18.0](https://github.com/otto-nation/otto-workbench/compare/v1.17.2...v1.18.0) (2026-06-11)
+
+
+### Features
+
+* **claude-review:** incremental reviews; modular extraction ([#209](https://github.com/otto-nation/otto-workbench/issues/209)) ([2499a83](https://github.com/otto-nation/otto-workbench/commit/2499a8337e06b5ff71c27fa97b3b3a6699a5866c))
+* **git:** add worktrunk pre-switch hook to fetch default branch ([#211](https://github.com/otto-nation/otto-workbench/issues/211)) ([825699a](https://github.com/otto-nation/otto-workbench/commit/825699a450c79b46fbb37c9026622b819423e9c4))
+
+
+### Bug Fixes
+
+* **dream:** per-project cooldowns; add lint-sweep and --draft flag ([#210](https://github.com/otto-nation/otto-workbench/issues/210)) ([d246939](https://github.com/otto-nation/otto-workbench/commit/d246939199ae9641ca8db93fa2503b3676c9be0e))
+
+
+### Code Refactoring
+
+* **claude-review:** extract review-post into library modules ([#214](https://github.com/otto-nation/otto-workbench/issues/214)) ([719d9ee](https://github.com/otto-nation/otto-workbench/commit/719d9eec252c6f0553fad281e73caef645c59fe0))
+
 ## [1.17.2](https://github.com/otto-nation/otto-workbench/compare/v1.17.1...v1.17.2) (2026-06-10)
 
 

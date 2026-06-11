@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from review_common import (
+    FILE_STAT_FMT,
     FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
     FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
     FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
@@ -39,17 +40,19 @@ from review_findings import (
 from review_preflight import (
     DEFAULT_MAX_GROUPS, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     HOLISTIC_MIN_GROUPS,
-    Group, PipelineState, ReviewJob,
+    Group, PRContext, PRMetadata, PipelineState, ReviewJob,
+    _merge_smallest_groups,
+    fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
 )
 from review_prompt import (
-    _is_incremental,
+    _is_incremental, _scope_prior_review,
     build_prompt,
 )
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
     _diagnose_missing_output, _is_model_error, _parse_session_cost,
-    _resolve_model, _try_recover_review,
+    _resolve_model, _try_recover_output, _try_recover_review,
     invoke_agent,
 )
 

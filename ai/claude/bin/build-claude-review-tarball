@@ -8,7 +8,7 @@
 # Produces: claude-review-<version>.tar.gz in the current directory.
 # The tarball contains a claude-review-<version>/ directory with:
 #   bin/          — review binaries (patched for standalone paths)
-#   lib/          — output.sh, prompts.sh, ui.sh facade, review-templates/
+#   lib/          — output.sh, prompts.sh, ui.sh facade, review_*.py, review-templates/
 #   agents/       — reviewer.md
 #   VERSION       — version string
 
@@ -59,9 +59,12 @@ cp "$SCRIPT_DIR/review-orchestrate" "$DEST/bin/"
 cp "$SCRIPT_DIR/review-post" "$DEST/bin/"
 cp "$SCRIPT_DIR/validate-review-positions" "$DEST/bin/"
 
-# Library files
+# Library files — bash
 cp "$WORKBENCH_ROOT/lib/output.sh" "$DEST/lib/"
 cp "$WORKBENCH_ROOT/lib/prompts.sh" "$DEST/lib/"
+
+# Library files — Python modules used by review-orchestrate and review-post
+cp "$SCRIPT_DIR/../lib/"review_*.py "$DEST/lib/"
 
 # Templates
 cp "$SCRIPT_DIR/../lib/review-templates/"*.md "$DEST/lib/review-templates/"

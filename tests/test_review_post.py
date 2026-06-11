@@ -1,5 +1,7 @@
 import json
 import re
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1805,3 +1807,119 @@ class TestFetchBotComments:
     def test_empty_login_returns_empty(self, rp):
         with patch("review_github._gh_api", return_value=(0, '{"login": ""}')):
             assert rp._fetch_bot_comments("org/repo", "1") == []
+
+
+class TestDryRunIntegration:
+    """Integration tests exercising the review-post --dry-run code path via subprocess."""
+
+    from pathlib import Path as _Path
+    _REPO_ROOT = _Path(__file__).resolve().parent.parent
+    _REVIEW_POST = _REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
+
+    REVIEW_MD = (
+        "# Review: test-org/test-repo#42 — Fix handler\n"
+        "<!-- head_sha: abc123def456 -->\n"
+        "\n"
+        "## File Triage\n"
+        "- `handler.go` — **Tier 2** (application logic)\n"
+        "\n"
+        "## Must fix\n"
+        "\n"
+        "- **[M1]** **`handler.go:11`** — missing error check\n"
+        "\n"
+        "## Should fix\n"
+        "\n"
+        "- **[S1]** **`handler.go:25`** — unclear variable name\n"
+        "\n"
+        "## Nit\n"
+        "\n"
+        "- **[N1]** **`config.sh:2`** — trailing whitespace\n"
+        "\n"
+        "## Verdict\n"
+        "\n"
+        "Request changes.\n"
+    )
+
+    DIFF_TEXT = (
+        "diff --git a/handler.go b/handler.go\n"
+        "--- a/handler.go\n"
+        "+++ b/handler.go\n"
+        "@@ -10,3 +10,5 @@ func main() {\n"
+        "     existing()\n"
+        "+    added()\n"
+        "+    alsoAdded()\n"
+        "     kept()\n"
+        "diff --git a/config.sh b/config.sh\n"
+        "--- a/config.sh\n"
+        "+++ b/config.sh\n"
+        "@@ -1,3 +1,4 @@\n"
+        " #!/bin/bash\n"
+        "+set -e\n"
+        " echo hello\n"
+    )
+
+    def _setup_review(self, tmp_path):
+        """Write the review markdown and sidecar meta.json into tmp_path."""
+        review_dir = tmp_path / "test-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_MD)
+        meta = {"head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        (review_dir / "meta.json").write_text(json.dumps(meta))
+        return review_file
+
+    def _run_dry_run(self, review_file, extra_args=None):
+        """Run review-post --dry-run and return the CompletedProcess."""
+        cmd = [
+            sys.executable, str(self._REVIEW_POST),
+            "--repo", "test/repo",
+            "--pr", "42",
+            "--review-file", str(review_file),
+            "--dry-run",
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+        import os
+        env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=env,
+        )
+
+    @staticmethod
+    def _extract_json(stdout):
+        """Extract the JSON object from stdout which may contain log lines."""
+        # The JSON payload is printed between blank lines. Use greedy match
+        # to find the outermost { ... } — lazy .*? would stop at the first
+        # } at column 0, truncating nested objects.
+        match = re.search(r"^\{.*^\}", stdout, re.MULTILINE | re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise ValueError(f"No JSON payload found in stdout: {stdout!r}")
+
+    def test_dry_run_exits_0(self, tmp_path):
+        review_file = self._setup_review(tmp_path)
+        result = self._run_dry_run(review_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    def test_dry_run_outputs_json_payload(self, tmp_path):
+        review_file = self._setup_review(tmp_path)
+        result = self._run_dry_run(review_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = self._extract_json(result.stdout)
+        assert "body" in payload or "comments" in payload
+
+    def test_dry_run_with_severity_filter(self, tmp_path):
+        review_file = self._setup_review(tmp_path)
+        result = self._run_dry_run(review_file, extra_args=["--severity", "M"])
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = self._extract_json(result.stdout)
+        # With only M severity, the body/comments should reference M1 but not S1 or N1
+        payload_text = json.dumps(payload)
+        assert "M1" in payload_text
+        assert "S1" not in payload_text
+        assert "N1" not in payload_text
+
+    def test_dry_run_with_missing_review_file_exits_nonzero(self, tmp_path):
+        nonexistent = tmp_path / "does-not-exist.md"
+        result = self._run_dry_run(nonexistent)
+        assert result.returncode != 0

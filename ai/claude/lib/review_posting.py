@@ -20,7 +20,6 @@ import review_format
 import review_github
 
 from review_common import _err, _info, _warn
-from review_dedup import check_review_already_posted, fetch_bot_reviews
 from review_findings import Finding
 from review_github import LineResolutionError
 
@@ -354,10 +353,10 @@ def _post_and_track(
     submit = getattr(args, "submit", False)
 
     # Fetch bot reviews once for both dedup and orphan detection
-    bot_reviews = fetch_bot_reviews(args.repo, args.pr)
+    bot_reviews = review_dedup.fetch_bot_reviews(args.repo, args.pr)
 
     # Check for already-posted duplicate
-    existing_ids = check_review_already_posted(bot_reviews, body_text)
+    existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
     if existing_ids:
         # Also count continuation chunks associated with the matched reviews
         chunk_ids = list(existing_ids)

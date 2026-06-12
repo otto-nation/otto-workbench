@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.19.0](https://github.com/otto-nation/otto-workbench/compare/v1.18.2...v1.19.0) (2026-06-12)
+
+
+### Features
+
+* **retro:** add PR review feedback loop for rules improvement ([#224](https://github.com/otto-nation/otto-workbench/issues/224)) ([40ecb40](https://github.com/otto-nation/otto-workbench/commit/40ecb405e1903eea08b9fd2ad6d59f6215218924))
+
+
+### Bug Fixes
+
+* **dream,promote:** skip projects without memory/ in trigger checks ([#223](https://github.com/otto-nation/otto-workbench/issues/223)) ([cb45c51](https://github.com/otto-nation/otto-workbench/commit/cb45c51f0b18316e579b74cfa0ea971e2de02b6e))
+
 ## [1.18.2](https://github.com/otto-nation/otto-workbench/compare/v1.18.1...v1.18.2) (2026-06-12)
 
 

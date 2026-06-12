@@ -1476,7 +1476,8 @@ class TestPhaseSynthesis:
             mode=ro.MODE_PR if mode == "pr" else ro.MODE_SELF,
         )
 
-    def _patch_pipeline(self, monkeypatch, ro, **overrides):
+    @staticmethod
+    def _patch_pipeline(monkeypatch, ro, **overrides):
         """Patch review_pipeline module-level imports used by _phase_synthesis."""
         import review_pipeline
         defaults = {
@@ -1655,11 +1656,10 @@ class TestRetryFailedGroups:
             from pathlib import Path
             name = kwargs.get("label", "")
             calls.append(name)
-            # grp-a output
             if name == "grp-a":
-                Path(str(tmp_path / "group-1.md")).write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+                Path(reviews_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
             elif name == "grp-b":
-                Path(str(tmp_path / "group-2.md")).write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
+                Path(reviews_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
             Path(log).write_text("")
             return 0
 
@@ -1701,5 +1701,6 @@ class TestRetryFailedGroups:
         result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
         # grp-a retry failed, so grp-b stays as skipped
         assert len(result) == 2
-        skipped_names = [n for n, _ in result]
-        assert "grp-b" in skipped_names
+        result_names = [n for n, _ in result]
+        assert "grp-a" in result_names
+        assert "grp-b" in result_names

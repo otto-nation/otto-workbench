@@ -366,7 +366,7 @@ def _post_and_track(
         _warn(f"Review already posted (review IDs: {chunk_ids})")
         write_post_tracking(
             args.review_file, chunk_ids, commit_id,
-            len(inline_comments), len(body_findings), len(skipped),
+            inline_count=0, body_count=0, skipped_count=0,
             submitted=True, chunk_count=len(chunk_ids),
         )
         return
@@ -395,10 +395,12 @@ def _post_and_track(
                 json.dump({"body": "~~Duplicate — review reposted due to prior partial post.~~"}, tmp)
                 tmp_path = tmp.name
             try:
-                review_github._gh_api(
+                code, _ = review_github._gh_api(
                     f"repos/{args.repo}/pulls/{args.pr}/reviews/{rid}",
                     method="PUT", input_file=tmp_path,
                 )
+                if code != 0:
+                    _warn(f"Failed to mark review #{rid} as duplicate (exit code {code})")
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
 

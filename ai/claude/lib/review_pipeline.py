@@ -139,6 +139,7 @@ def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
         if group_idx not in state.groups_done:
             state.groups_done.append(group_idx)
             state.groups_done.sort()
+        # Clear stale failure entry if this group succeeded on retry
         state.groups_failed.pop(group_idx, None)
         _write_pipeline_state(job, state)
 

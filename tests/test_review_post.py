@@ -1935,11 +1935,19 @@ class TestCheckReviewAlreadyPosted:
         ]
         assert rp.check_review_already_posted(bot_reviews, "some body text here") == [42]
 
-    def test_below_threshold(self, rp):
+    def test_zero_similarity_not_matched(self, rp):
         bot_reviews = [
             {"id": 42, "body": "completely different content", "state": "COMMENTED"},
         ]
-        assert rp.check_review_already_posted(bot_reviews, "some body text here with many words to bring similarity down even further") == []
+        assert rp.check_review_already_posted(bot_reviews, "unrelated words here") == []
+
+    def test_partial_overlap_below_threshold(self, rp):
+        shared = "alpha bravo charlie delta echo foxtrot golf hotel"
+        different = "india juliet kilo lima mike november oscar papa quebec romeo sierra tango"
+        bot_reviews = [
+            {"id": 42, "body": f"{shared} {different}", "state": "COMMENTED"},
+        ]
+        assert rp.check_review_already_posted(bot_reviews, f"{shared} unique words not in review") == []
 
 
 class TestFetchBotReviews:

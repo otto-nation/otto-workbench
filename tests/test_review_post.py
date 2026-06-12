@@ -1926,48 +1926,23 @@ class TestDryRunIntegration:
 
 
 class TestCheckReviewAlreadyPosted:
-    def test_no_reviews_returns_empty(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
-        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [])
-        assert rp.check_review_already_posted("org/repo", "1", "some body") == []
+    def test_no_reviews_returns_empty(self, rp):
+        assert rp.check_review_already_posted([], "some body") == []
 
-    def test_match_returns_ids(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
-        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
-            {"id": 42, "user": {"login": "bot"}, "state": "COMMENTED", "body": "some body text here"},
-        ])
-        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == [42]
+    def test_match_returns_ids(self, rp):
+        bot_reviews = [
+            {"id": 42, "body": "some body text here", "state": "COMMENTED"},
+        ]
+        assert rp.check_review_already_posted(bot_reviews, "some body text here") == [42]
 
-    def test_ignores_pending(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
-        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
-            {"id": 42, "user": {"login": "bot"}, "state": "PENDING", "body": "some body text here"},
-        ])
-        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == []
-
-    def test_ignores_dismissed(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
-        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
-            {"id": 42, "user": {"login": "bot"}, "state": "DISMISSED", "body": "some body text here"},
-        ])
-        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == []
-
-    def test_ignores_other_users(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
-        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
-            {"id": 42, "user": {"login": "alice"}, "state": "COMMENTED", "body": "some body text here"},
-        ])
-        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == []
-
-    def test_below_threshold(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
-        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
-            {"id": 42, "user": {"login": "bot"}, "state": "COMMENTED", "body": "completely different content"},
-        ])
-        assert rp.check_review_already_posted("org/repo", "1", "some body text here with many words to bring similarity down even further") == []
+    def test_below_threshold(self, rp):
+        bot_reviews = [
+            {"id": 42, "body": "completely different content", "state": "COMMENTED"},
+        ]
+        assert rp.check_review_already_posted(bot_reviews, "some body text here with many words to bring similarity down even further") == []
 
 
-class TestFindBotReviews:
+class TestFetchBotReviews:
     def test_returns_bot_reviews(self, rp, monkeypatch):
         monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
         monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
@@ -1975,6 +1950,31 @@ class TestFindBotReviews:
             {"id": 2, "user": {"login": "human"}, "state": "COMMENTED", "body": "human review"},
             {"id": 3, "user": {"login": "bot"}, "state": "PENDING", "body": "pending"},
         ])
-        result = rp._find_bot_reviews("org/repo", "1")
+        result = rp.fetch_bot_reviews("org/repo", "1")
         assert len(result) == 1
         assert result[0]["id"] == 1
+
+    def test_ignores_pending(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "body": "some body text here", "state": "PENDING", "user": {"login": "bot"}},
+        ])
+        assert rp.fetch_bot_reviews("org/repo", "1") == []
+
+    def test_ignores_dismissed(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "body": "some body text here", "state": "DISMISSED", "user": {"login": "bot"}},
+        ])
+        assert rp.fetch_bot_reviews("org/repo", "1") == []
+
+    def test_ignores_other_users(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "body": "some body text here", "state": "COMMENTED", "user": {"login": "alice"}},
+        ])
+        assert rp.fetch_bot_reviews("org/repo", "1") == []
+
+    def test_api_failure_returns_empty(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (1, ""))
+        assert rp.fetch_bot_reviews("org/repo", "1") == []

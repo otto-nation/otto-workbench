@@ -20,7 +20,7 @@ import review_format
 import review_github
 
 from review_common import _err, _info, _warn
-from review_dedup import _jaccard, _word_set, check_review_already_posted
+from review_dedup import check_review_already_posted, fetch_bot_reviews
 from review_findings import Finding
 from review_github import LineResolutionError
 
@@ -33,29 +33,6 @@ INTER_CHUNK_DELAY = 30
 HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 
 _CHUNK_PATTERN = re.compile(r"\*\(continued — part (\d+)/(\d+)\)\*")
-
-
-# ── Bot review helpers ────────────────────────────────────────────────────
-
-def _find_bot_reviews(repo: str, pr: str) -> list[dict]:
-    """Return all non-PENDING, non-DISMISSED reviews from the bot."""
-    code, user_out = review_github._gh_api("user")
-    if code != 0:
-        return []
-    try:
-        bot_user = json.loads(user_out).get("login", "")
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not bot_user:
-        return []
-
-    all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
-    return [
-        {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
-        for r in all_reviews
-        if r.get("user", {}).get("login") == bot_user
-        and r.get("state") not in ("PENDING", "DISMISSED")
-    ]
 
 
 # ── Chunking ────────────────────────────────────────────────────────────────
@@ -376,31 +353,42 @@ def _post_and_track(
 ):
     submit = getattr(args, "submit", False)
 
+    # Fetch bot reviews once for both dedup and orphan detection
+    bot_reviews = fetch_bot_reviews(args.repo, args.pr)
+
     # Check for already-posted duplicate
-    existing_ids = check_review_already_posted(args.repo, args.pr, body_text)
+    existing_ids = check_review_already_posted(bot_reviews, body_text)
     if existing_ids:
-        _warn(f"Review already posted (review IDs: {existing_ids})")
+        # Also count continuation chunks associated with the matched reviews
+        chunk_ids = list(existing_ids)
+        for rev in bot_reviews:
+            if rev["id"] not in existing_ids and _CHUNK_PATTERN.search(rev["body"]):
+                chunk_ids.append(rev["id"])
+        _warn(f"Review already posted (review IDs: {chunk_ids})")
         write_post_tracking(
-            args.review_file, existing_ids, commit_id,
+            args.review_file, chunk_ids, commit_id,
             len(inline_comments), len(body_findings), len(skipped),
-            submitted=True, chunk_count=len(existing_ids),
+            submitted=True, chunk_count=len(chunk_ids),
         )
         return
 
-    # Check for broken/partial posts from a prior killed run.
-    # GitHub's API cannot delete or dismiss COMMENTED reviews, so we
-    # overwrite their body with a strikethrough note instead.
-    bot_reviews = _find_bot_reviews(args.repo, args.pr)
-    orphaned_ids = []
+    # Check for orphaned continuation chunks from a prior killed run.
+    # Only mark INCOMPLETE chunk sets — if all N/M parts exist, the
+    # prior post was complete and should not be struck through.
+    chunk_parts: dict[int, dict[int, int]] = {}  # total -> {part: review_id}
     for rev in bot_reviews:
         m = _CHUNK_PATTERN.search(rev["body"])
         if m:
-            orphaned_ids.append(rev["id"])
-        elif _jaccard(_word_set(rev["body"]), _word_set(body_text)) >= 0.5:
-            # Partial match — likely from a killed first attempt that only posted some chunks
-            orphaned_ids.append(rev["id"])
+            part, total = int(m.group(1)), int(m.group(2))
+            chunk_parts.setdefault(total, {})[part] = rev["id"]
+
+    orphaned_ids = []
+    for total, parts in chunk_parts.items():
+        if len(parts) < total:
+            orphaned_ids.extend(parts.values())
+
     if orphaned_ids:
-        _warn(f"Marking {len(orphaned_ids)} orphaned reviews as duplicates: {orphaned_ids}")
+        _warn(f"Marking {len(orphaned_ids)} orphaned chunk reviews as duplicates: {orphaned_ids}")
         for rid in orphaned_ids:
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", prefix="review-orphan-", delete=False,

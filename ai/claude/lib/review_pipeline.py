@@ -139,6 +139,7 @@ def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
         if group_idx not in state.groups_done:
             state.groups_done.append(group_idx)
             state.groups_done.sort()
+        state.groups_failed.pop(group_idx, None)
         _write_pipeline_state(job, state)
 
 
@@ -343,6 +344,8 @@ def _run_parallel_reviews(
 
 
 def _is_retryable(reason: str) -> bool:
+    if reason.startswith("skipped: "):
+        return False
     if _MAX_TURNS_REASON in reason:
         return True
     if reason in ("no result record in session log", "no session log found"):
@@ -363,10 +366,14 @@ def _retry_failed_groups(
     pipeline_state: "PipelineState | None",
 ) -> "list[tuple[str, str]]":
     retryable = [(name, reason) for name, reason in failed_groups if _is_retryable(reason)]
+    skipped = [(n, r) for n, r in failed_groups if r.startswith("skipped: ")]
+    non_retryable = [
+        (n, r) for n, r in failed_groups
+        if not _is_retryable(r) and not r.startswith("skipped: ")
+    ]
     if not retryable:
         return failed_groups
 
-    non_retryable = [(n, r) for n, r in failed_groups if not _is_retryable(r)]
     group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
 
     _info(f"Retrying {len(retryable)} failed groups...")
@@ -385,6 +392,24 @@ def _retry_failed_groups(
         )
         if failure:
             still_failed.append(failure)
+
+    # If all retries succeeded, run previously-skipped groups too
+    if not still_failed and skipped:
+        _info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
+        for name, reason in skipped:
+            if name not in group_by_name:
+                still_failed.append((name, reason))
+                continue
+            idx, grp = group_by_name[name]
+            _info(f"  Running skipped group: {name}")
+            _, _, failure = _review_group(
+                idx, grp, job, group_count, holistic_content,
+                pipeline_state=pipeline_state,
+            )
+            if failure:
+                still_failed.append(failure)
+    elif skipped:
+        still_failed.extend(skipped)
 
     return non_retryable + still_failed
 

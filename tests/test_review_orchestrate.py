@@ -1566,6 +1566,12 @@ class TestIsRetryable:
     def test_agent_error_not_retryable(self, ro):
         assert ro._is_retryable("agent error: something broke") is False
 
+    def test_skipped_not_retryable(self, ro):
+        assert ro._is_retryable("skipped: 3 consecutive failures (agent hit max turns) — aborting") is False
+
+    def test_skipped_other_reason_not_retryable(self, ro):
+        assert ro._is_retryable("skipped: Model not available — aborting remaining 4 groups") is False
+
 
 class TestRetryTurns:
     def test_max_turns_gets_doubled(self, ro):
@@ -1634,3 +1640,66 @@ class TestRetryFailedGroups:
         failed = [("grp-a", "agent error: something broke")]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
         assert result == failed
+
+    def test_skipped_groups_run_after_retries_succeed(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name="grp-a", files=["a.go"], lines=100),
+            ro.Group(name="grp-b", files=["b.go"], lines=100),
+        ]
+
+        calls = []
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            name = kwargs.get("label", "")
+            calls.append(name)
+            # grp-a output
+            if name == "grp-a":
+                Path(str(tmp_path / "group-1.md")).write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+            elif name == "grp-b":
+                Path(str(tmp_path / "group-2.md")).write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
+            Path(log).write_text("")
+            return 0
+
+        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+
+        failed = [
+            ("grp-a", "agent hit max turns (16)"),
+            ("grp-b", "skipped: 3 consecutive failures (agent hit max turns) — aborting remaining 1 groups"),
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
+        assert result == []
+        assert "grp-a" in calls
+        assert "grp-b" in calls
+
+    def test_skipped_groups_kept_when_retries_fail(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name="grp-a", files=["a.go"], lines=100),
+            ro.Group(name="grp-b", files=["b.go"], lines=100),
+        ]
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            Path(log).write_text("")
+            return 1
+
+        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_pipeline, "_diagnose_missing_output", lambda *a: "agent hit max turns (30)")
+
+        failed = [
+            ("grp-a", "agent hit max turns (16)"),
+            ("grp-b", "skipped: 3 consecutive failures (agent hit max turns) — aborting"),
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
+        # grp-a retry failed, so grp-b stays as skipped
+        assert len(result) == 2
+        skipped_names = [n for n, _ in result]
+        assert "grp-b" in skipped_names

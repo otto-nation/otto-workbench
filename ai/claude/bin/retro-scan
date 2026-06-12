@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -75,7 +75,7 @@ def parse_project_registry(machine_md_path: str) -> list[dict]:
         if REGISTRY_SEPARATOR.match(line):
             continue
         m = REGISTRY_TABLE_PATTERN.match(line)
-        if m and m.group(1) not in ("Project",):
+        if m and m.group(1) != "Project":
             results.append({"name": m.group(1), "path": m.group(2)})
     return results
 
@@ -149,8 +149,8 @@ def _read_last_retro(home: Path) -> int:
 
 
 def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
-    since_date = datetime.utcfromtimestamp(since_ts).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
-    endpoint = f"pulls?state=closed&sort=updated&direction=desc&per_page=100"
+    since_date = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
+    endpoint = "pulls?state=closed&sort=updated&direction=desc&per_page=100"
     prs = _gh_api(endpoint, repo)
     return [
         pr for pr in prs
@@ -252,7 +252,7 @@ def format_report(scan_data: dict) -> str:
     lines.append("# Retro Scan Report")
     version = _version_string("retro-scan").split("\n")[0]
     lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: {version} -->")
-    lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} | substantive: {total_comments} -->")
+    lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} -->")
     lines.append("")
 
     if not repos or total_comments == 0:

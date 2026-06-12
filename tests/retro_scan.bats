@@ -144,6 +144,11 @@ PY
   [[ "$result" == "True" ]]
 }
 
+@test "is_noise: thumbs up emoji is noise" {
+  result=$(_py 'print(mod.is_noise("\U0001f44d"))')
+  [[ "$result" == "True" ]]
+}
+
 @test "is_noise: nit with detail is not noise" {
   result=$(_py 'print(mod.is_noise("nit: rename this to fooBar for consistency"))')
   [[ "$result" == "False" ]]

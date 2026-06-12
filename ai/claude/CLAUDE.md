@@ -14,10 +14,7 @@ If `~/.claude/.promote-pending` exists at session start, run `/promote` as a sub
 
 ## Auto Retro
 
-If `~/.claude/.retro-pending` exists at session start, run `/retro` as a subagent
-in the background, then delete the flag: `rm ~/.claude/.retro-pending`. This analyzes
-recent PR review comments to identify gaps in coding rules. Triggers automatically
-every 3 days via a Stop hook.
+If `~/.claude/.retro-pending` exists at session start, run `/retro` as a subagent in the background, then delete the flag: `rm ~/.claude/.retro-pending`. This analyzes recent PR review comments to identify gaps in coding rules. Triggers automatically every 72 hours via a Stop hook.
 
 ## Machine Profile
 

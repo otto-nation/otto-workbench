@@ -148,7 +148,7 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 ### Record timestamp and clean up
 
 ```bash
-bash ~/.claude/skills/retro/retro-complete.sh
+~/.claude/skills/retro/retro-complete.sh
 ```
 
 ### Summary

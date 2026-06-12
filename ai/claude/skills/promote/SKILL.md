@@ -203,13 +203,7 @@ Before writing the report:
 **Goal:** Record the promote timestamp and clean up.
 
 ```bash
-# Record timestamp in every project that has a memory directory
-for mem_dir in ~/.claude/projects/*/memory/; do
-  [ -d "$mem_dir" ] && date +%s > "${mem_dir}.last-promote"
-done
-
-# Remove the pending flag
-rm -f ~/.claude/.promote-pending
+bash ~/.claude/skills/promote/promote-complete.sh
 ```
 
 ### Summary

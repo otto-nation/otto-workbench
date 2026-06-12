@@ -105,8 +105,7 @@ Remove or archive entries that are:
 
 After completing all 4 phases:
 ```bash
-date +%s > ~/.claude/projects/<project>/memory/.last-dream
-rm -f ~/.claude/.dream-pending
+bash ~/.claude/skills/dream/dream-complete.sh
 ```
 
 ---
@@ -116,7 +115,7 @@ rm -f ~/.claude/.dream-pending
 - **Never delete memory without replacement.** Removed entries must be either contradicted (replaced) or moved (to topic file or archive).
 - **Back up before first run.** On the very first run against a project:
 ```bash
-cp -r ~/.claude/projects/<project>/memory/ ~/.claude/projects/<project>/memory-backup-$(date +%Y%m%d)/
+bash ~/.claude/skills/dream/dream-complete.sh --backup <project-slug>
 ```
 - **Dry run option.** On first use, read through all 4 phases but only print what you WOULD change, without writing. Confirm with the user before applying.
 

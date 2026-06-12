@@ -16,24 +16,12 @@ or when `<!-- last-updated -->` in machine.md is more than 7 days old.
 
 ## Steps
 
-1. **Back up current profile**
+1. **Regenerate with diff**
 ```bash
-cp ~/.claude/machine/machine.md ~/.claude/machine/machine.md.prev 2>/dev/null || true
+bash ~/.claude/skills/machine/generate-machine-profile.sh --force --diff
 ```
 
-2. **Regenerate**
-```bash
-bash ~/.claude/skills/machine/generate-machine-profile.sh --force
-```
-
-3. **Show diff**
-```bash
-diff ~/.claude/machine/machine.md.prev ~/.claude/machine/machine.md 2>/dev/null \
-  || echo "(no previous profile to diff)"
-rm -f ~/.claude/machine/machine.md.prev
-```
-
-4. **Print result**
+2. **Print result**
 
 Read and display `~/.claude/machine/machine.md`.
 

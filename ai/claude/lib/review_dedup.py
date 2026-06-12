@@ -6,6 +6,7 @@ Jaccard similarity, and filters out duplicates before posting.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 
@@ -58,6 +59,7 @@ def _extract_body_findings(body: str) -> list[dict]:
 
 # ── Bot user lookup ─────────────────────────────────────────────────────────
 
+@functools.lru_cache(maxsize=1)
 def _get_bot_login() -> str:
     """Return the authenticated GitHub user's login, or empty string on failure."""
     code, user_out = review_github._gh_api("user")

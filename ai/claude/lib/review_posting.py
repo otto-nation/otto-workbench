@@ -358,32 +358,37 @@ def _post_and_track(
     # Check for already-posted duplicate
     existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
     if existing_ids:
-        # Also count continuation chunks associated with the matched reviews
-        chunk_ids = list(existing_ids)
-        for rev in bot_reviews:
-            if rev["id"] not in existing_ids and _CHUNK_PATTERN.search(rev["body"]):
-                chunk_ids.append(rev["id"])
-        _warn(f"Review already posted (review IDs: {chunk_ids})")
+        _warn(f"Review already posted (review IDs: {existing_ids})")
         write_post_tracking(
-            args.review_file, chunk_ids, commit_id,
+            args.review_file, list(existing_ids), commit_id,
             inline_count=0, body_count=0, skipped_count=0,
-            submitted=True, chunk_count=len(chunk_ids),
+            submitted=submit, chunk_count=len(existing_ids),
         )
         return
 
     # Check for orphaned continuation chunks from a prior killed run.
     # Only mark INCOMPLETE chunk sets — if all N/M parts exist, the
     # prior post was complete and should not be struck through.
-    chunk_parts: dict[int, dict[int, int]] = {}  # total -> {part: review_id}
+    # Separate sets handle multiple runs with the same chunk count.
+    chunk_sets: list[tuple[int, dict[int, int]]] = []  # [(total, {part: review_id})]
     for rev in bot_reviews:
         m = _CHUNK_PATTERN.search(rev["body"])
         if m:
             part, total = int(m.group(1)), int(m.group(2))
-            chunk_parts.setdefault(total, {})[part] = rev["id"]
+            placed = False
+            for cs_total, cs_parts in chunk_sets:
+                if cs_total == total and part not in cs_parts:
+                    cs_parts[part] = rev["id"]
+                    placed = True
+                    break
+            if not placed:
+                chunk_sets.append((total, {part: rev["id"]}))
 
     orphaned_ids = []
-    for total, parts in chunk_parts.items():
-        if len(parts) < total:
+    for total, parts in chunk_sets:
+        # Part 1 is the main body (no chunk pattern), so a complete
+        # set has total-1 continuation chunks.
+        if len(parts) < total - 1:
             orphaned_ids.extend(parts.values())
 
     if orphaned_ids:

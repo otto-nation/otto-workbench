@@ -5,8 +5,9 @@
 # Docker setup, Git identity, and the project registry. Claude reads this at
 # session start to answer environment questions without re-discovering system state.
 #
-# Usage: generate-machine-profile.sh [--force]
+# Usage: generate-machine-profile.sh [--force] [--diff]
 #        --force  Skip the 24h staleness check and regenerate unconditionally.
+#        --diff   Back up the current profile, regenerate, and print the diff.
 #
 # Exit codes:
 #   0 — generated or up-to-date (skipped)
@@ -20,10 +21,21 @@ STAMP_FILE="$MACHINE_DIR/.last-updated"
 STALE_HOURS=24
 GIT_ROOTS=("$HOME/git" "$HOME/src" "$HOME/projects" "$HOME/code")
 
+# ── Argument parsing ─────────────────────────────────────────────────────────
+
+OPT_FORCE=false
+OPT_DIFF=false
+for arg in "$@"; do
+  case "$arg" in
+    --force) OPT_FORCE=true ;;
+    --diff)  OPT_DIFF=true ;;
+  esac
+done
+
 # ── Staleness check ───────────────────────────────────────────────────────────
 
 should_regenerate() {
-  [[ "${1:-}" == "--force" ]] && return 0
+  [[ "$OPT_FORCE" == true ]] && return 0
   [[ ! -f "$STAMP_FILE" ]] && return 0
   local last_updated now elapsed
   last_updated=$(cat "$STAMP_FILE" 2>/dev/null || echo 0)
@@ -32,7 +44,15 @@ should_regenerate() {
   [[ "$elapsed" -ge "$STALE_HOURS" ]]
 }
 
-should_regenerate "$@" || exit 0
+should_regenerate || exit 0
+
+# ── Diff setup ────────────────────────────────────────────────────────────────
+
+prev_file=""
+if [[ "$OPT_DIFF" == true && -f "$PROFILE_FILE" ]]; then
+  prev_file="$(mktemp)"
+  cp "$PROFILE_FILE" "$prev_file"
+fi
 
 mkdir -p "$MACHINE_DIR"
 
@@ -195,3 +215,12 @@ today=$(date +%Y-%m-%d)
 
 mv "$tmp_file" "$PROFILE_FILE"
 date +%s > "$STAMP_FILE"
+
+# ── Diff output ──────────────────────────────────────────────────────────────
+
+if [[ -n "$prev_file" ]]; then
+  diff "$prev_file" "$PROFILE_FILE" 2>/dev/null || true
+  rm -f "$prev_file"
+elif [[ "$OPT_DIFF" == true ]]; then
+  echo "(no previous profile to diff)"
+fi

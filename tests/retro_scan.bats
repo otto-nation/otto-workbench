@@ -192,3 +192,100 @@ PY
 )
   [[ "$result" -le 500 ]]
 }
+
+# Helper: create a rules directory with test rule files
+_make_rules_dir() {
+  local workbench="$1"
+  local rules_dir="$workbench/ai/guidelines/rules"
+  mkdir -p "$rules_dir"
+
+  cat > "$rules_dir/security.md" <<'EOF'
+# Security
+
+## Secrets and Credentials
+
+- Never write secrets, tokens, API keys, passwords, or credentials to any tracked file
+- If you need to reference a secret in a script, read it from the environment
+EOF
+
+  cat > "$rules_dir/general.md" <<'EOF'
+# General Coding Principles
+
+## Code Quality
+
+- Prefer solutions that work for the general case
+- Always check existing tooling before adding anything new
+- Never introduce changes that violate SSOT or DRY
+EOF
+}
+
+# ── load_rules ───────────────────────────────────────────────────────────────
+
+@test "load_rules: loads rules files from workbench" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+print(len(rules))
+for r in rules:
+    print(r["filename"])
+PY
+)
+  [[ "$result" == *"2"* ]]
+  [[ "$result" == *"security.md"* ]]
+  [[ "$result" == *"general.md"* ]]
+}
+
+@test "load_rules: extracts keywords from rule text" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+sec = [r for r in rules if r["filename"] == "security.md"][0]
+print("secrets" in sec["keywords"])
+print("credentials" in sec["keywords"])
+PY
+)
+  [[ "$result" == *"True"* ]]
+  [[ "$result" != *"False"* ]]
+}
+
+@test "load_rules: returns empty list when dir missing" {
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("/nonexistent/wb"))
+print(len(rules))
+PY
+)
+  [[ "$result" == "0" ]]
+}
+
+# ── find_nearest_rule ────────────────────────────────────────────────────────
+
+@test "find_nearest_rule: matches security comment to security.md" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+match = mod.find_nearest_rule("This API key should not be hardcoded in the source", rules)
+print(match["filename"] if match else "None")
+PY
+)
+  [[ "$result" == "security.md" ]]
+}
+
+@test "find_nearest_rule: returns None for unrelated comment" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+match = mod.find_nearest_rule("the button color should be blue", rules)
+print(match["filename"] if match else "None")
+PY
+)
+  [[ "$result" == "None" ]]
+}

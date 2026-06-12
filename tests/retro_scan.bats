@@ -289,3 +289,66 @@ PY
 )
   [[ "$result" == "None" ]]
 }
+
+# ── format_report ────────────────────────────────────────────────────────────
+
+@test "format_report: produces markdown with repo sections" {
+  result=$(_py_here <<'PY'
+scan_data = {
+    "repos": [
+        {
+            "github": "otto-nation/myapp",
+            "prs": [
+                {
+                    "number": 42,
+                    "title": "feat: add auth",
+                    "merged_at": "2026-06-08",
+                    "author": "isaac",
+                    "comments": [
+                        {
+                            "author": "reviewer1",
+                            "body": "Validate the redirect URI",
+                            "path": "src/auth.go",
+                            "line": 45,
+                            "url": "",
+                            "nearest_rule": {"filename": "security.md", "match_snippet": "Never write secrets"},
+                            "direction": "received",
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+    "rules_summary": [
+        {"filename": "security.md", "matched": 1, "gaps": 0},
+    ],
+}
+report = mod.format_report(scan_data)
+print(report)
+PY
+)
+  [[ "$result" == *"otto-nation/myapp"* ]]
+  [[ "$result" == *"PR #42"* ]]
+  [[ "$result" == *"Validate the redirect URI"* ]]
+  [[ "$result" == *"security.md"* ]]
+  [[ "$result" == *"Rules Coverage Summary"* ]]
+}
+
+@test "format_report: handles empty scan" {
+  result=$(_py_here <<'PY'
+scan_data = {"repos": [], "rules_summary": []}
+report = mod.format_report(scan_data)
+print(report)
+PY
+)
+  [[ "$result" == *"Retro Scan Report"* ]]
+  [[ "$result" == *"No PR comments found"* ]]
+}
+
+# ── Integration (with --home, offline) ────────────────────────────────────────
+
+@test "retro-scan: runs with empty home, produces report header" {
+  run "$RETRO_SCAN" --home "$TMPDIR"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"Retro Scan Report"* ]]
+}

@@ -236,6 +236,94 @@ def find_nearest_rule(comment_body: str, rules: list[dict]) -> dict | None:
     return best_match
 
 
+# ── Report formatting ───────────────────────────────────────────────────────
+
+def format_report(scan_data: dict) -> str:
+    repos = scan_data.get("repos", [])
+    rules_summary = scan_data.get("rules_summary", [])
+
+    total_prs = sum(len(r.get("prs", [])) for r in repos)
+    total_comments = sum(
+        len(pr.get("comments", []))
+        for r in repos for pr in r.get("prs", [])
+    )
+
+    lines: list[str] = []
+    lines.append("# Retro Scan Report")
+    lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: retro-scan v0.1.0 -->")
+    lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} | substantive: {total_comments} -->")
+    lines.append("")
+
+    if not repos or total_comments == 0:
+        lines.append("No PR comments found in the scan window.")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("## PR Comments by Repo")
+    lines.append("")
+
+    for repo in repos:
+        lines.append(f"### {repo['github']}")
+        lines.append("")
+        for pr in repo.get("prs", []):
+            if not pr.get("comments"):
+                continue
+            lines.append(f"#### PR #{pr['number']}: {pr['title']} (merged {pr['merged_at']})")
+            lines.append("")
+            for comment in pr["comments"]:
+                location = ""
+                if comment.get("path"):
+                    location = f" (inline: {comment['path']}"
+                    if comment.get("line"):
+                        location += f":{comment['line']}"
+                    location += ")"
+                lines.append(f"- **Comment by @{comment['author']}**{location}")
+                lines.append(f"  > {comment['body'][:200]}")
+                if comment.get("direction"):
+                    lines.append(f"  - Direction: {comment['direction']}")
+                nr = comment.get("nearest_rule")
+                if nr:
+                    lines.append(f"  - Nearest rule: {nr['filename']} (\"{nr.get('match_snippet', '')}\")")
+                else:
+                    lines.append("  - Nearest rule: (none)")
+                lines.append("")
+
+    lines.append("## Rules Coverage Summary")
+    lines.append("")
+    if rules_summary:
+        lines.append("| Rule file | Matched comments | Gaps near this file |")
+        lines.append("|-----------|-----------------|---------------------|")
+        for rs in rules_summary:
+            lines.append(f"| {rs['filename']} | {rs['matched']} | {rs['gaps']} |")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _get_git_user() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.name"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip().lower() if result.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def _best_matching_bullet(comment_body: str, rule: dict) -> str:
+    comment_kw = _extract_keywords(comment_body)
+    best_bullet = ""
+    best_overlap = 0
+    for bullet in rule.get("bullets", []):
+        bullet_kw = _extract_keywords(bullet)
+        overlap = len(comment_kw & bullet_kw)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_bullet = bullet
+    return best_bullet[:100] if best_bullet else rule["filename"]
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -276,19 +364,81 @@ def main() -> None:
             _warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
             continue
         repos.append({**proj, "github": github_slug})
-
     _info(f"Resolved {len(repos)} GitHub repo(s)")
 
-    print("# Retro Scan Report")
-    print(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: retro-scan v0.1.0 -->")
-    print(f"<!-- repos: {len(repos)} | prs: 0 | comments: 0 | substantive: 0 -->")
-    print()
-    if not repos:
-        print("No GitHub repos found in project registry.")
+    rules = load_rules(workbench)
+    _info(f"Loaded {len(rules)} rule file(s)")
+
+    last_retro_ts = _read_last_retro(home)
+    if last_retro_ts > 0:
+        _info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
     else:
-        for r in repos:
-            print(f"- {r['github']} ({r['path']})")
-    print()
+        _info("No previous retro found — scanning all available PRs")
+
+    git_user = _get_git_user()
+
+    scan_repos: list[dict] = []
+    rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0, "gaps": 0} for r in rules}
+
+    for repo in repos:
+        _info(f"Fetching PRs for {repo['github']}...")
+        prs = fetch_merged_prs(repo["github"], last_retro_ts)
+        _info(f"  Found {len(prs)} merged PR(s)")
+
+        repo_prs: list[dict] = []
+        for pr in prs:
+            pr_number = pr["number"]
+            pr_title = pr.get("title", "")
+            pr_author = pr.get("user", {}).get("login", "")
+            merged_at = pr.get("merged_at", "")[:10]
+
+            comments = fetch_pr_comments(repo["github"], pr_number)
+            if not comments:
+                continue
+
+            for comment in comments:
+                comment["direction"] = "received" if pr_author == git_user else "gave"
+                nearest = find_nearest_rule(comment["body"], rules)
+                if nearest:
+                    comment["nearest_rule"] = {
+                        "filename": nearest["filename"],
+                        "match_snippet": _best_matching_bullet(comment["body"], nearest),
+                    }
+                    rule_match_counts[nearest["filename"]]["matched"] += 1
+                else:
+                    comment["nearest_rule"] = None
+
+            repo_prs.append({
+                "number": pr_number,
+                "title": pr_title,
+                "author": pr_author,
+                "merged_at": merged_at,
+                "comments": comments,
+            })
+
+        if repo_prs:
+            scan_repos.append({"github": repo["github"], "prs": repo_prs})
+
+    rules_summary = []
+    for r in rules:
+        rc = rule_match_counts[r["filename"]]
+        rules_summary.append({
+            "filename": r["filename"],
+            "matched": rc["matched"],
+            "gaps": rc["gaps"],
+        })
+    unmatched = sum(
+        1 for repo in scan_repos
+        for pr in repo["prs"]
+        for c in pr["comments"]
+        if c.get("nearest_rule") is None
+    )
+    if unmatched:
+        rules_summary.append({"filename": "(no rule)", "matched": unmatched, "gaps": 0})
+
+    scan_data = {"repos": scan_repos, "rules_summary": rules_summary}
+    report = format_report(scan_data)
+    print(report)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 RULES_REL = Path("ai") / "guidelines" / "rules"
 
 MACHINE_MD_REL = Path(".claude") / "machine" / "machine.md"
-LAST_RETRO_FILE = ".last-retro"
+LAST_RETRO_REL = Path(".claude") / ".last-retro"
 
 DATE_FMT = "%Y-%m-%d"
 
@@ -42,7 +42,7 @@ SSH_REMOTE_PATTERN = re.compile(r"git@github\.com:(.+?)(?:\.git)?$")
 HTTPS_REMOTE_PATTERN = re.compile(r"https://github\.com/(.+?)(?:\.git)?$")
 
 NOISE_PATTERNS = re.compile(
-    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?\s*$|\\U0001f44d)", re.IGNORECASE
+    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?\s*$|\U0001f44d)", re.IGNORECASE
 )
 
 COMMENT_BODY_MAX = 500
@@ -139,7 +139,7 @@ def _gh_api(endpoint: str, repo: str) -> list[dict]:
 
 
 def _read_last_retro(home: Path) -> int:
-    stamp = home / LAST_RETRO_FILE
+    stamp = home / LAST_RETRO_REL
     if not stamp.exists():
         return 0
     try:
@@ -149,7 +149,7 @@ def _read_last_retro(home: Path) -> int:
 
 
 def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
-    since_date = datetime.fromtimestamp(since_ts).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
+    since_date = datetime.utcfromtimestamp(since_ts).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
     endpoint = f"pulls?state=closed&sort=updated&direction=desc&per_page=100"
     prs = _gh_api(endpoint, repo)
     return [
@@ -209,7 +209,7 @@ def load_rules(workbench: Path) -> list[dict]:
         content = f.read_text()
         keywords = _extract_keywords(content)
         bullets = [
-            line.strip().lstrip("- ").strip()
+            line.strip().removeprefix("- ")
             for line in content.splitlines()
             if line.strip().startswith("- ")
         ]
@@ -250,7 +250,8 @@ def format_report(scan_data: dict) -> str:
 
     lines: list[str] = []
     lines.append("# Retro Scan Report")
-    lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: retro-scan v0.1.0 -->")
+    version = _version_string("retro-scan").split("\n")[0]
+    lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: {version} -->")
     lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} | substantive: {total_comments} -->")
     lines.append("")
 
@@ -291,22 +292,22 @@ def format_report(scan_data: dict) -> str:
     lines.append("## Rules Coverage Summary")
     lines.append("")
     if rules_summary:
-        lines.append("| Rule file | Matched comments | Gaps near this file |")
-        lines.append("|-----------|-----------------|---------------------|")
+        lines.append("| Rule file | Matched comments |")
+        lines.append("|-----------|-----------------|")
         for rs in rules_summary:
-            lines.append(f"| {rs['filename']} | {rs['matched']} | {rs['gaps']} |")
+            lines.append(f"| {rs['filename']} | {rs['matched']} |")
         lines.append("")
 
     return "\n".join(lines)
 
 
-def _get_git_user() -> str:
+def _get_github_login() -> str:
     try:
         result = subprocess.run(
-            ["git", "config", "user.name"],
-            capture_output=True, text=True, timeout=5,
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True, timeout=10,
         )
-        return result.stdout.strip().lower() if result.returncode == 0 else ""
+        return result.stdout.strip() if result.returncode == 0 else ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
 
@@ -375,10 +376,11 @@ def main() -> None:
     else:
         _info("No previous retro found — scanning all available PRs")
 
-    git_user = _get_git_user()
+    git_user = _get_github_login()
 
     scan_repos: list[dict] = []
-    rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0, "gaps": 0} for r in rules}
+    rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0} for r in rules}
+    unmatched_count = 0
 
     for repo in repos:
         _info(f"Fetching PRs for {repo['github']}...")
@@ -407,6 +409,7 @@ def main() -> None:
                     rule_match_counts[nearest["filename"]]["matched"] += 1
                 else:
                     comment["nearest_rule"] = None
+                    unmatched_count += 1
 
             repo_prs.append({
                 "number": pr_number,
@@ -425,16 +428,9 @@ def main() -> None:
         rules_summary.append({
             "filename": r["filename"],
             "matched": rc["matched"],
-            "gaps": rc["gaps"],
         })
-    unmatched = sum(
-        1 for repo in scan_repos
-        for pr in repo["prs"]
-        for c in pr["comments"]
-        if c.get("nearest_rule") is None
-    )
-    if unmatched:
-        rules_summary.append({"filename": "(no rule)", "matched": unmatched, "gaps": 0})
+    if unmatched_count:
+        rules_summary.append({"filename": "(no rule)", "matched": unmatched_count})
 
     scan_data = {"repos": scan_repos, "rules_summary": rules_summary}
     report = format_report(scan_data)

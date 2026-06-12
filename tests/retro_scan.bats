@@ -320,7 +320,7 @@ scan_data = {
         }
     ],
     "rules_summary": [
-        {"filename": "security.md", "matched": 1, "gaps": 0},
+        {"filename": "security.md", "matched": 1},
     ],
 }
 report = mod.format_report(scan_data)

@@ -101,11 +101,9 @@ as evidence for each proposal.
 
 **Goal:** Write the report and record the timestamp.
 
-Write `RETRO.md` to the workbench memory directory:
-
-```
-~/git/personal/otto-nation/otto-workbench/ai/memory/RETRO.md
-```
+Write `RETRO.md` to the workbench memory directory (`ai/memory/RETRO.md` relative
+to the workbench root). Determine the workbench path from the `OTTO_WORKBENCH`
+environment variable, or default to `~/git/personal/otto-nation/otto-workbench/main`.
 
 ### Report format
 
@@ -159,7 +157,7 @@ rm -f ~/.claude/.retro-pending
 Print a one-line summary:
 ```
 Retro complete: N PRs analyzed, N findings (N rule-gaps, N refinements, N false-negatives), N proposals written.
-Report: ~/git/personal/otto-nation/otto-workbench/ai/memory/RETRO.md
+Report: <workbench>/ai/memory/RETRO.md
 ```
 
 ---

@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""Scan PR review comments and cross-reference against coding rules.
+
+Replaces Phase 1 of the retro skill (Orient).
+Outputs a structured markdown report to stdout.
+
+Usage:
+  retro-scan [--home DIR] [--workbench DIR]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _version import version_string as _version_string  # noqa: E402
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
+WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
+
+RULES_REL = Path("ai") / "guidelines" / "rules"
+
+MACHINE_MD_REL = Path(".claude") / "machine" / "machine.md"
+LAST_RETRO_REL = Path(".claude") / ".last-retro"
+
+DATE_FMT = "%Y-%m-%d"
+
+REGISTRY_TABLE_PATTERN = re.compile(r"^\|\s*(\S+)\s*\|\s*(\S+)\s*\|")
+REGISTRY_SEPARATOR = re.compile(r"^\|\s*[-]+")
+
+SSH_REMOTE_PATTERN = re.compile(r"git@github\.com:(.+?)(?:\.git)?$")
+HTTPS_REMOTE_PATTERN = re.compile(r"https://github\.com/(.+?)(?:\.git)?$")
+
+NOISE_PATTERNS = re.compile(
+    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?\s*$|\U0001f44d)", re.IGNORECASE
+)
+
+COMMENT_BODY_MAX = 500
+
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+
+_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
+_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
+_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
+
+
+def _info(msg: str) -> None:
+    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
+
+
+def _warn(msg: str) -> None:
+    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+
+
+# ── Project registry ────────────────────────────────────────────────────────
+
+def parse_project_registry(machine_md_path: str) -> list[dict]:
+    path = Path(machine_md_path)
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    results = []
+    for line in lines:
+        if REGISTRY_SEPARATOR.match(line):
+            continue
+        m = REGISTRY_TABLE_PATTERN.match(line)
+        if m and m.group(1) != "Project":
+            results.append({"name": m.group(1), "path": m.group(2)})
+    return results
+
+
+def resolve_github_remote(remote_url: str) -> str | None:
+    for pattern in (SSH_REMOTE_PATTERN, HTTPS_REMOTE_PATTERN):
+        m = pattern.match(remote_url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def get_repo_remote(repo_path: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+# ── Comment filtering ───────────────────────────────────────────────────────
+
+def is_noise(body: str) -> bool:
+    stripped = body.strip()
+    if len(stripped) < 3:
+        return True
+    return bool(NOISE_PATTERNS.match(stripped))
+
+
+def parse_review_comment(comment: dict) -> dict:
+    body = comment.get("body", "")
+    return {
+        "author": comment.get("user", {}).get("login", "unknown"),
+        "body": body[:COMMENT_BODY_MAX],
+        "path": comment.get("path"),
+        "line": comment.get("line"),
+        "url": comment.get("html_url", ""),
+    }
+
+
+# ── GitHub API fetching ─────────────────────────────────────────────────────
+
+def _gh_api(endpoint: str, repo: str) -> list[dict]:
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--paginate", f"repos/{repo}/{endpoint}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            _warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
+            return []
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
+        _warn(f"gh api error for {repo}/{endpoint}: {e}")
+        return []
+
+
+def _read_last_retro(home: Path) -> int:
+    stamp = home / LAST_RETRO_REL
+    if not stamp.exists():
+        return 0
+    try:
+        return int(stamp.read_text().strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
+    since_date = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
+    endpoint = "pulls?state=closed&sort=updated&direction=desc&per_page=100"
+    prs = _gh_api(endpoint, repo)
+    return [
+        pr for pr in prs
+        if pr.get("merged_at") and pr["merged_at"] >= since_date
+    ]
+
+
+def fetch_pr_comments(repo: str, pr_number: int) -> list[dict]:
+    review_comments = _gh_api(f"pulls/{pr_number}/comments", repo)
+    issue_comments = _gh_api(f"issues/{pr_number}/comments", repo)
+    all_comments = []
+    for c in review_comments:
+        parsed = parse_review_comment(c)
+        if not is_noise(parsed["body"]):
+            all_comments.append(parsed)
+    for c in issue_comments:
+        parsed = parse_review_comment(c)
+        if not is_noise(parsed["body"]):
+            all_comments.append(parsed)
+    return all_comments
+
+
+# ── Rules loading and matching ──────────────────────────────────────────────
+
+STOP_WORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "need", "dare", "ought",
+    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+    "as", "into", "through", "during", "before", "after", "above", "below",
+    "between", "out", "off", "over", "under", "again", "further", "then",
+    "once", "here", "there", "when", "where", "why", "how", "all", "each",
+    "every", "both", "few", "more", "most", "other", "some", "such", "no",
+    "nor", "not", "only", "own", "same", "so", "than", "too", "very",
+    "just", "don", "should", "now", "and", "but", "or", "if", "this",
+    "that", "it", "its", "they", "them", "their", "we", "us", "our",
+    "you", "your", "any", "up", "what", "which", "who",
+})
+
+KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
+
+MIN_KEYWORD_OVERLAP = 1
+
+
+def _extract_keywords(text: str) -> set[str]:
+    words = set(KEYWORD_PATTERN.findall(text.lower()))
+    return words - STOP_WORDS
+
+
+def load_rules(workbench: Path) -> list[dict]:
+    rules_dir = workbench / RULES_REL
+    if not rules_dir.exists():
+        return []
+    results = []
+    for f in sorted(rules_dir.glob("*.md")):
+        content = f.read_text()
+        keywords = _extract_keywords(content)
+        bullets = [
+            line.strip().removeprefix("- ")
+            for line in content.splitlines()
+            if line.strip().startswith("- ")
+        ]
+        results.append({
+            "filename": f.name,
+            "keywords": keywords,
+            "bullets": bullets,
+            "content": content,
+        })
+    return results
+
+
+def find_nearest_rule(comment_body: str, rules: list[dict]) -> dict | None:
+    comment_keywords = _extract_keywords(comment_body)
+    if not comment_keywords:
+        return None
+    best_match = None
+    best_score = 0
+    for rule in rules:
+        overlap = len(comment_keywords & rule["keywords"])
+        if overlap > best_score and overlap >= MIN_KEYWORD_OVERLAP:
+            best_score = overlap
+            best_match = rule
+    return best_match
+
+
+# ── Report formatting ───────────────────────────────────────────────────────
+
+def _format_comment_location(comment: dict) -> str:
+    if not comment.get("path"):
+        return ""
+    loc = f" (inline: {comment['path']}"
+    if comment.get("line"):
+        loc += f":{comment['line']}"
+    return loc + ")"
+
+
+def _format_comment(comment: dict) -> list[str]:
+    lines: list[str] = []
+    location = _format_comment_location(comment)
+    lines.append(f"- **Comment by @{comment['author']}**{location}")
+    lines.append(f"  > {comment['body'][:200]}")
+    if comment.get("direction"):
+        lines.append(f"  - Direction: {comment['direction']}")
+    nr = comment.get("nearest_rule")
+    if nr:
+        lines.append(f"  - Nearest rule: {nr['filename']} (\"{nr.get('match_snippet', '')}\")")
+    else:
+        lines.append("  - Nearest rule: (none)")
+    lines.append("")
+    return lines
+
+
+def _format_pr(pr: dict) -> list[str]:
+    if not pr.get("comments"):
+        return []
+    lines: list[str] = []
+    lines.append(f"#### PR #{pr['number']}: {pr['title']} (merged {pr['merged_at']})")
+    lines.append("")
+    for comment in pr["comments"]:
+        lines.extend(_format_comment(comment))
+    return lines
+
+
+def format_report(scan_data: dict) -> str:
+    repos = scan_data.get("repos", [])
+    rules_summary = scan_data.get("rules_summary", [])
+
+    total_prs = sum(len(r.get("prs", [])) for r in repos)
+    total_comments = sum(
+        len(pr.get("comments", []))
+        for r in repos for pr in r.get("prs", [])
+    )
+
+    lines: list[str] = []
+    lines.append("# Retro Scan Report")
+    version = _version_string("retro-scan").split("\n")[0]
+    lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: {version} -->")
+    lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} -->")
+    lines.append("")
+
+    if not repos or total_comments == 0:
+        lines.append("No PR comments found in the scan window.")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("## PR Comments by Repo")
+    lines.append("")
+
+    for repo in repos:
+        lines.append(f"### {repo['github']}")
+        lines.append("")
+        for pr in repo.get("prs", []):
+            lines.extend(_format_pr(pr))
+
+    lines.append("## Rules Coverage Summary")
+    lines.append("")
+    if rules_summary:
+        lines.append("| Rule file | Matched comments |")
+        lines.append("|-----------|-----------------|")
+        for rs in rules_summary:
+            lines.append(f"| {rs['filename']} | {rs['matched']} |")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _get_github_login() -> str:
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def _best_matching_bullet(comment_body: str, rule: dict) -> str:
+    comment_kw = _extract_keywords(comment_body)
+    best_bullet = ""
+    best_overlap = 0
+    for bullet in rule.get("bullets", []):
+        bullet_kw = _extract_keywords(bullet)
+        overlap = len(comment_kw & bullet_kw)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_bullet = bullet
+    return best_bullet[:100] if best_bullet else rule["filename"]
+
+
+# ── Scanning ─────────────────────────────────────────────────────────────────
+
+
+def _annotate_comment(
+    comment: dict, pr_author: str, git_user: str,
+    rules: list[dict], rule_match_counts: dict[str, dict],
+) -> bool:
+    comment["direction"] = "received" if pr_author == git_user else "gave"
+    nearest = find_nearest_rule(comment["body"], rules)
+    if nearest:
+        comment["nearest_rule"] = {
+            "filename": nearest["filename"],
+            "match_snippet": _best_matching_bullet(comment["body"], nearest),
+        }
+        rule_match_counts[nearest["filename"]]["matched"] += 1
+        return False
+    comment["nearest_rule"] = None
+    return True
+
+
+def _process_pr(
+    pr: dict, github_slug: str, git_user: str,
+    rules: list[dict], rule_match_counts: dict[str, dict],
+) -> dict | None:
+    pr_author = pr.get("user", {}).get("login", "")
+    comments = fetch_pr_comments(github_slug, pr["number"])
+    if not comments:
+        return None
+    unmatched = 0
+    for comment in comments:
+        if _annotate_comment(comment, pr_author, git_user, rules, rule_match_counts):
+            unmatched += 1
+    return {
+        "number": pr["number"],
+        "title": pr.get("title", ""),
+        "author": pr_author,
+        "merged_at": pr.get("merged_at", "")[:10],
+        "comments": comments,
+        "unmatched": unmatched,
+    }
+
+
+def _scan_repo(
+    repo: dict, last_retro_ts: int, rules: list[dict],
+    git_user: str, rule_match_counts: dict[str, dict],
+) -> dict:
+    _info(f"Fetching PRs for {repo['github']}...")
+    prs = fetch_merged_prs(repo["github"], last_retro_ts)
+    _info(f"  Found {len(prs)} merged PR(s)")
+
+    repo_prs: list[dict] = []
+    unmatched = 0
+    for pr in prs:
+        result = _process_pr(pr, repo["github"], git_user, rules, rule_match_counts)
+        if not result:
+            continue
+        unmatched += result.pop("unmatched")
+        repo_prs.append(result)
+    return {"prs": repo_prs, "unmatched": unmatched}
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
+
+    parser = argparse.ArgumentParser(
+        description="Scan PR review comments and cross-reference against coding rules.",
+        usage="retro-scan [--home DIR] [--workbench DIR]",
+    )
+    parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
+    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override")
+    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    args = parser.parse_args()
+
+    if args.version:
+        print(_version_string("retro-scan"))
+        raise SystemExit(0)
+
+    home = Path(os.path.expanduser(args.home))
+    workbench = Path(os.path.expanduser(args.workbench)).resolve()
+
+    _info(f"Home: {home}")
+    _info(f"Workbench: {workbench}")
+
+    machine_md = home / MACHINE_MD_REL
+    projects = parse_project_registry(str(machine_md))
+    _info(f"Found {len(projects)} project(s) in registry")
+
+    repos: list[dict] = []
+    for proj in projects:
+        remote_url = get_repo_remote(proj["path"])
+        if not remote_url:
+            _warn(f"No git remote for {proj['name']} at {proj['path']}")
+            continue
+        github_slug = resolve_github_remote(remote_url)
+        if not github_slug:
+            _warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
+            continue
+        repos.append({**proj, "github": github_slug})
+    _info(f"Resolved {len(repos)} GitHub repo(s)")
+
+    rules = load_rules(workbench)
+    _info(f"Loaded {len(rules)} rule file(s)")
+
+    last_retro_ts = _read_last_retro(home)
+    if last_retro_ts > 0:
+        _info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
+    else:
+        _info("No previous retro found — scanning all available PRs")
+
+    git_user = _get_github_login()
+
+    scan_repos: list[dict] = []
+    rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0} for r in rules}
+    unmatched_count = 0
+
+    for repo in repos:
+        result = _scan_repo(repo, last_retro_ts, rules, git_user, rule_match_counts)
+        unmatched_count += result["unmatched"]
+        if result["prs"]:
+            scan_repos.append({"github": repo["github"], "prs": result["prs"]})
+
+    rules_summary = []
+    for r in rules:
+        rc = rule_match_counts[r["filename"]]
+        rules_summary.append({
+            "filename": r["filename"],
+            "matched": rc["matched"],
+        })
+    if unmatched_count:
+        rules_summary.append({"filename": "(no rule)", "matched": unmatched_count})
+
+    scan_data = {"repos": scan_repos, "rules_summary": rules_summary}
+    report = format_report(scan_data)
+    print(report)
+
+
+if __name__ == "__main__":
+    main()

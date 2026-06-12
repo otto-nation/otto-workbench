@@ -57,3 +57,9 @@ tools:
     description: "Scan memories and workbench artifacts for promotion evaluation"
     when_to_use: "Called by the promote skill to replace Phase 1 (Orient); outputs a structured markdown report of all memories and existing workbench artifacts"
     usage: "promote-scan  |  promote-scan --workbench /path/to/workbench"
+
+  - name: retro-scan
+    allow: true
+    description: "Scan PR review comments and cross-reference against coding rules"
+    when_to_use: "Called by the retro skill to replace Phase 1 (Orient); fetches PR comments from all registered repos and outputs a structured markdown report"
+    usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"

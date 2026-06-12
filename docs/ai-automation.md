@@ -43,6 +43,7 @@ This creates `~/.config/task/taskfile.env` with:
 | pr-comments | Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers. |
 | pr-review | Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script. |
 | promote | Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. |
+| retro | Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. |
 
 **Agents:**
 

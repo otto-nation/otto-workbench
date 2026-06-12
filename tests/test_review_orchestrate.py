@@ -1434,3 +1434,117 @@ class TestCheckBudget:
         total, exceeded = ro._check_budget([str(log)], 10.0)
         assert total == 15.0
         assert exceeded is True
+
+
+class TestIsCompleteReview:
+    def test_has_summary(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("# Review\n\n## Summary\nLooks good.\n")
+        assert ro._is_complete_review(str(f)) is True
+
+    def test_has_verdict(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("# Review\n\n## Verdict\nApprove.\n")
+        assert ro._is_complete_review(str(f)) is True
+
+    def test_missing_headers(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("# Review\n\nSome content without required headers.\n")
+        assert ro._is_complete_review(str(f)) is False
+
+    def test_file_not_exists(self, ro, tmp_path):
+        assert ro._is_complete_review(str(tmp_path / "nonexistent.md")) is False
+
+    def test_empty_file(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("")
+        assert ro._is_complete_review(str(f)) is False
+
+
+class TestPhaseSynthesis:
+    def _make_job(self, ro, tmp_path, mode="pr"):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(title="test PR", body="", head="feat", base="main",
+                             head_sha="abc123", additions=100, deletions=50,
+                             changed_files=10, files=[]),
+            ctx=ro.PRContext(),
+            wt_path=str(tmp_path / "wt"),
+            review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode=ro.MODE_PR if mode == "pr" else ro.MODE_SELF,
+        )
+
+    def _patch_pipeline(self, monkeypatch, ro, **overrides):
+        """Patch review_pipeline module-level imports used by _phase_synthesis."""
+        import review_pipeline
+        defaults = {
+            "build_prompt": lambda *a, **kw: "mock prompt",
+            "verify_findings": lambda *a: [],
+            "strip_evidence_blocks": lambda *a: None,
+            "strip_stable_ids": lambda *a: None,
+            "renumber_findings": lambda *a: None,
+        }
+        defaults.update(overrides)
+        for name, func in defaults.items():
+            monkeypatch.setattr(review_pipeline, name, func)
+
+    def test_successful_synthesis(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+        review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            Path(kwargs.get("review_file", job.review_file)).write_text(review_content)
+            Path(log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+
+        ro._phase_synthesis(job, "", 3, "merged content")
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert "## Summary" in result
+        assert ro.FALLBACK_SUMMARY not in result
+
+    def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            Path(log).write_text("")
+            return 1
+
+        self._patch_pipeline(
+            monkeypatch, ro,
+            invoke_agent=mock_invoke,
+            _try_recover_output=lambda *a: False,
+        )
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in result
+
+    def test_incomplete_output_falls_back(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            # Write incomplete review (no Summary or Verdict headers)
+            Path(kwargs.get("review_file", job.review_file)).write_text("# Review\nSome partial content\n")
+            Path(log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+
+        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in result

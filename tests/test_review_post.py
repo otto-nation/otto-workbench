@@ -1923,3 +1923,58 @@ class TestDryRunIntegration:
         nonexistent = tmp_path / "does-not-exist.md"
         result = self._run_dry_run(nonexistent)
         assert result.returncode != 0
+
+
+class TestCheckReviewAlreadyPosted:
+    def test_no_reviews_returns_empty(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [])
+        assert rp.check_review_already_posted("org/repo", "1", "some body") == []
+
+    def test_match_returns_ids(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "user": {"login": "bot"}, "state": "COMMENTED", "body": "some body text here"},
+        ])
+        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == [42]
+
+    def test_ignores_pending(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "user": {"login": "bot"}, "state": "PENDING", "body": "some body text here"},
+        ])
+        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == []
+
+    def test_ignores_dismissed(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "user": {"login": "bot"}, "state": "DISMISSED", "body": "some body text here"},
+        ])
+        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == []
+
+    def test_ignores_other_users(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "user": {"login": "alice"}, "state": "COMMENTED", "body": "some body text here"},
+        ])
+        assert rp.check_review_already_posted("org/repo", "1", "some body text here") == []
+
+    def test_below_threshold(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 42, "user": {"login": "bot"}, "state": "COMMENTED", "body": "completely different content"},
+        ])
+        assert rp.check_review_already_posted("org/repo", "1", "some body text here with many words to bring similarity down even further") == []
+
+
+class TestFindBotReviews:
+    def test_returns_bot_reviews(self, rp, monkeypatch):
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
+            {"id": 1, "user": {"login": "bot"}, "state": "COMMENTED", "body": "review text"},
+            {"id": 2, "user": {"login": "human"}, "state": "COMMENTED", "body": "human review"},
+            {"id": 3, "user": {"login": "bot"}, "state": "PENDING", "body": "pending"},
+        ])
+        result = rp._find_bot_reviews("org/repo", "1")
+        assert len(result) == 1
+        assert result[0]["id"] == 1

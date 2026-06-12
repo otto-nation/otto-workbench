@@ -20,6 +20,7 @@ import review_format
 import review_github
 
 from review_common import _err, _info, _warn
+from review_dedup import _jaccard, _word_set, check_review_already_posted
 from review_findings import Finding
 from review_github import LineResolutionError
 
@@ -30,6 +31,31 @@ DEFAULT_CHUNK_SIZE = 30
 INTER_CHUNK_DELAY = 30
 
 HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
+
+_CHUNK_PATTERN = re.compile(r"\*\(continued — part (\d+)/(\d+)\)\*")
+
+
+# ── Bot review helpers ────────────────────────────────────────────────────
+
+def _find_bot_reviews(repo: str, pr: str) -> list[dict]:
+    """Return all non-PENDING, non-DISMISSED reviews from the bot."""
+    code, user_out = review_github._gh_api("user")
+    if code != 0:
+        return []
+    try:
+        bot_user = json.loads(user_out).get("login", "")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not bot_user:
+        return []
+
+    all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+    return [
+        {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
+        for r in all_reviews
+        if r.get("user", {}).get("login") == bot_user
+        and r.get("state") not in ("PENDING", "DISMISSED")
+    ]
 
 
 # ── Chunking ────────────────────────────────────────────────────────────────
@@ -349,6 +375,45 @@ def _post_and_track(
     chunk_size: int, severity_filter: set[str],
 ):
     submit = getattr(args, "submit", False)
+
+    # Check for already-posted duplicate
+    existing_ids = check_review_already_posted(args.repo, args.pr, body_text)
+    if existing_ids:
+        _warn(f"Review already posted (review IDs: {existing_ids})")
+        write_post_tracking(
+            args.review_file, existing_ids, commit_id,
+            len(inline_comments), len(body_findings), len(skipped),
+            submitted=True, chunk_count=len(existing_ids),
+        )
+        return
+
+    # Check for broken/partial posts from a prior killed run.
+    # GitHub's API cannot delete or dismiss COMMENTED reviews, so we
+    # overwrite their body with a strikethrough note instead.
+    bot_reviews = _find_bot_reviews(args.repo, args.pr)
+    orphaned_ids = []
+    for rev in bot_reviews:
+        m = _CHUNK_PATTERN.search(rev["body"])
+        if m:
+            orphaned_ids.append(rev["id"])
+        elif _jaccard(_word_set(rev["body"]), _word_set(body_text)) >= 0.5:
+            # Partial match — likely from a killed first attempt that only posted some chunks
+            orphaned_ids.append(rev["id"])
+    if orphaned_ids:
+        _warn(f"Marking {len(orphaned_ids)} orphaned reviews as duplicates: {orphaned_ids}")
+        for rid in orphaned_ids:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", prefix="review-orphan-", delete=False,
+            ) as tmp:
+                json.dump({"body": "~~Duplicate — review reposted due to prior partial post.~~"}, tmp)
+                tmp_path = tmp.name
+            try:
+                review_github._gh_api(
+                    f"repos/{args.repo}/pulls/{args.pr}/reviews/{rid}",
+                    method="PUT", input_file=tmp_path,
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
 
     try:
         results = _post_chunked_review(

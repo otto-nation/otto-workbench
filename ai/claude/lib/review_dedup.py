@@ -18,6 +18,7 @@ from review_findings import Finding
 # ── Constants ───────────────────────────────────────────────────────────────
 
 DEDUP_THRESHOLD = 0.6
+REVIEW_BODY_DEDUP_THRESHOLD = 0.8
 
 
 # ── Similarity ──────────────────────────────────────────────────────────────
@@ -126,3 +127,39 @@ def dedup_against_posted(
             kept.append(f)
 
     return kept, deduped
+
+
+# ── Whole-review dedup ────────────────────────────────────────────────────
+
+def check_review_already_posted(
+    repo: str, pr: str, body_text: str,
+) -> list[int]:
+    """Check if a review with matching body has already been posted.
+
+    Returns list of matching review IDs (empty if no match).
+    Used to prevent duplicate posting when review-post is re-run.
+    """
+    code, user_out = review_github._gh_api("user")
+    if code != 0:
+        return []
+    try:
+        bot_user = json.loads(user_out).get("login", "")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not bot_user:
+        return []
+
+    all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+    body_words = _word_set(body_text)
+    matching_ids: list[int] = []
+
+    for r in all_reviews:
+        if r.get("user", {}).get("login") != bot_user:
+            continue
+        if r.get("state") in ("PENDING", "DISMISSED"):
+            continue
+        review_body = r.get("body", "")
+        if _jaccard(body_words, _word_set(review_body)) >= REVIEW_BODY_DEDUP_THRESHOLD:
+            matching_ids.append(r["id"])
+
+    return matching_ids

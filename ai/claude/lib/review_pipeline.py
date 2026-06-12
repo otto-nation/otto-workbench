@@ -62,6 +62,9 @@ DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
 
+RETRY_MAX_TURNS_GROUP = 30
+_MAX_TURNS_REASON = "agent hit max turns"
+
 DEFAULT_MODEL_GROUP = "sonnet"
 DEFAULT_MODEL_HOLISTIC = "opus"
 DEFAULT_MODEL_SYNTHESIS = "opus"
@@ -203,6 +206,7 @@ def _review_group(
     group_count: int, holistic_content: str,
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
+    max_turns: int = DEFAULT_MAX_TURNS_GROUP,
 ) -> tuple[int, str, "tuple[str, str] | None"]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
@@ -220,7 +224,7 @@ def _review_group(
     )
 
     group_prompt = build_prompt(
-        TEMPLATE_GROUP, job, max_turns=DEFAULT_MAX_TURNS_GROUP,
+        TEMPLATE_GROUP, job, max_turns=max_turns,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
         group_file_paths=grp.files,
@@ -228,7 +232,7 @@ def _review_group(
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, max_turns=DEFAULT_MAX_TURNS_GROUP)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, max_turns=max_turns)
 
     failed = None
     if not Path(group_output).exists():
@@ -338,6 +342,53 @@ def _run_parallel_reviews(
     return [failure for _, _, failure in results if failure]
 
 
+def _is_retryable(reason: str) -> bool:
+    if _MAX_TURNS_REASON in reason:
+        return True
+    if reason in ("no result record in session log", "no session log found"):
+        return True
+    return False
+
+
+def _retry_turns(reason: str) -> int:
+    if _MAX_TURNS_REASON in reason:
+        return RETRY_MAX_TURNS_GROUP
+    return DEFAULT_MAX_TURNS_GROUP
+
+
+def _retry_failed_groups(
+    failed_groups: "list[tuple[str, str]]",
+    groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str,
+    pipeline_state: "PipelineState | None",
+) -> "list[tuple[str, str]]":
+    retryable = [(name, reason) for name, reason in failed_groups if _is_retryable(reason)]
+    if not retryable:
+        return failed_groups
+
+    non_retryable = [(n, r) for n, r in failed_groups if not _is_retryable(r)]
+    group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
+
+    _info(f"Retrying {len(retryable)} failed groups...")
+    still_failed: list[tuple[str, str]] = []
+    for name, reason in retryable:
+        if name not in group_by_name:
+            still_failed.append((name, reason))
+            continue
+        idx, grp = group_by_name[name]
+        turns = _retry_turns(reason)
+        _info(f"  Retry: {name} (max_turns={turns})")
+        _, _, failure = _review_group(
+            idx, grp, job, group_count, holistic_content,
+            pipeline_state=pipeline_state,
+            max_turns=turns,
+        )
+        if failure:
+            still_failed.append(failure)
+
+    return non_retryable + still_failed
+
+
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
@@ -354,6 +405,11 @@ def _phase_group_reviews(
     else:
         failed_groups = _run_parallel_reviews(
             groups, job, group_count, holistic_content, workers, skip_groups, pipeline_state,
+        )
+
+    if failed_groups:
+        failed_groups = _retry_failed_groups(
+            failed_groups, groups, job, group_count, holistic_content, pipeline_state,
         )
 
     return group_outputs, failed_groups

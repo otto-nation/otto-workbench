@@ -1548,3 +1548,89 @@ class TestPhaseSynthesis:
         from pathlib import Path
         result = Path(job.review_file).read_text()
         assert ro.FALLBACK_SUMMARY in result
+
+
+class TestIsRetryable:
+    def test_max_turns_is_retryable(self, ro):
+        assert ro._is_retryable("agent hit max turns (16)") is True
+
+    def test_no_session_log_is_retryable(self, ro):
+        assert ro._is_retryable("no session log found") is True
+
+    def test_no_result_record_is_retryable(self, ro):
+        assert ro._is_retryable("no result record in session log") is True
+
+    def test_model_error_not_retryable(self, ro):
+        assert ro._is_retryable("agent error: model not available") is False
+
+    def test_agent_error_not_retryable(self, ro):
+        assert ro._is_retryable("agent error: something broke") is False
+
+
+class TestRetryTurns:
+    def test_max_turns_gets_doubled(self, ro):
+        assert ro._retry_turns("agent hit max turns (16)") == ro.RETRY_MAX_TURNS_GROUP
+
+    def test_other_reason_gets_default(self, ro):
+        assert ro._retry_turns("no session log found") == ro.DEFAULT_MAX_TURNS_GROUP
+
+
+class TestRetryFailedGroups:
+    def _make_job(self, ro, tmp_path):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(title="test PR", body="", head="feat", base="main",
+                             head_sha="abc123", additions=100, deletions=50,
+                             changed_files=5, files=[
+                                 {"path": "a.go", "additions": 10, "deletions": 5, "status": "modified"},
+                                 {"path": "b.go", "additions": 20, "deletions": 10, "status": "modified"},
+                             ]),
+            ctx=ro.PRContext(),
+            wt_path=str(tmp_path / "wt"),
+            review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode=ro.MODE_PR,
+        )
+
+    def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
+
+        calls = []
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            turns = kwargs.get("max_turns", 15)
+            calls.append(turns)
+            output_path = str(tmp_path / "group-1.md")
+            Path(output_path).write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+            Path(log).write_text("")
+            return 0
+
+        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+
+        failed = [("grp-a", "agent hit max turns (16)")]
+        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
+        assert result == []
+        assert calls[-1] == ro.RETRY_MAX_TURNS_GROUP
+
+    def test_skips_model_errors(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
+
+        failed = [("grp-a", "agent error: model not available")]
+        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
+        assert len(result) == 1
+        assert result[0] == ("grp-a", "agent error: model not available")
+
+    def test_non_retryable_preserved(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
+
+        failed = [("grp-a", "agent error: something broke")]
+        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
+        assert result == failed

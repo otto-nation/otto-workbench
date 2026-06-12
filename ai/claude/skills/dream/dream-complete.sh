@@ -22,15 +22,17 @@ done
 
 # ── Safety backup ────────────────────────────────────────────────────────────
 
-if [[ -n "$OPT_BACKUP" ]]; then
-  mem_dir="$HOME/.claude/projects/$OPT_BACKUP/memory"
-  if [[ -d "$mem_dir" ]]; then
-    backup_dir="$HOME/.claude/projects/$OPT_BACKUP/memory-backup-$(date +%Y%m%d)"
-    if [[ ! -d "$backup_dir" ]]; then
-      cp -r "$mem_dir" "$backup_dir"
-    fi
-  fi
-fi
+_run_backup() {
+  local slug="$1"
+  local mem_dir="$HOME/.claude/projects/$slug/memory"
+  [[ -d "$mem_dir" ]] || return 0
+  local backup_dir
+  backup_dir="$HOME/.claude/projects/$slug/memory-backup-$(date +%Y%m%d)"
+  [[ -d "$backup_dir" ]] && return 0
+  cp -r "$mem_dir" "$backup_dir"
+}
+
+[[ -n "$OPT_BACKUP" ]] && _run_backup "$OPT_BACKUP"
 
 # ── Record timestamps ────────────────────────────────────────────────────────
 

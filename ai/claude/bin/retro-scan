@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Scan PR review comments and cross-reference against coding rules.
+
+Replaces Phase 1 of the retro skill (Orient).
+Outputs a structured markdown report to stdout.
+
+Usage:
+  retro-scan [--home DIR] [--workbench DIR]
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _version import version_string as _version_string  # noqa: E402
+
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
+WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
+
+RULES_REL = Path("ai") / "guidelines" / "rules"
+
+MACHINE_MD_REL = Path(".claude") / "machine" / "machine.md"
+LAST_RETRO_FILE = ".last-retro"
+
+DATE_FMT = "%Y-%m-%d"
+
+REGISTRY_TABLE_PATTERN = re.compile(r"^\|\s*(\S+)\s*\|\s*(\S+)\s*\|")
+REGISTRY_SEPARATOR = re.compile(r"^\|\s*[-]+")
+
+SSH_REMOTE_PATTERN = re.compile(r"git@github\.com:(.+?)(?:\.git)?$")
+HTTPS_REMOTE_PATTERN = re.compile(r"https://github\.com/(.+?)(?:\.git)?$")
+
+NOISE_PATTERNS = re.compile(
+    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?\s*$|\\U0001f44d)", re.IGNORECASE
+)
+
+COMMENT_BODY_MAX = 500
+
+
+# ── Output helpers ───────────────────────────────────────────────────────────
+
+_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
+_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
+_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
+
+
+def _info(msg: str) -> None:
+    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
+
+
+def _warn(msg: str) -> None:
+    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+
+
+# ── Project registry ────────────────────────────────────────────────────────
+
+def parse_project_registry(machine_md_path: str) -> list[dict]:
+    path = Path(machine_md_path)
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    results = []
+    for line in lines:
+        if REGISTRY_SEPARATOR.match(line):
+            continue
+        m = REGISTRY_TABLE_PATTERN.match(line)
+        if m and m.group(1) not in ("Project",):
+            results.append({"name": m.group(1), "path": m.group(2)})
+    return results
+
+
+def resolve_github_remote(remote_url: str) -> str | None:
+    for pattern in (SSH_REMOTE_PATTERN, HTTPS_REMOTE_PATTERN):
+        m = pattern.match(remote_url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def get_repo_remote(repo_path: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
+
+    parser = argparse.ArgumentParser(
+        description="Scan PR review comments and cross-reference against coding rules.",
+        usage="retro-scan [--home DIR] [--workbench DIR]",
+    )
+    parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
+    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override")
+    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    args = parser.parse_args()
+
+    if args.version:
+        print(_version_string("retro-scan"))
+        raise SystemExit(0)
+
+    home = Path(os.path.expanduser(args.home))
+    workbench = Path(os.path.expanduser(args.workbench)).resolve()
+
+    _info(f"Home: {home}")
+    _info(f"Workbench: {workbench}")
+
+    machine_md = home / MACHINE_MD_REL
+    projects = parse_project_registry(str(machine_md))
+    _info(f"Found {len(projects)} project(s) in registry")
+
+    repos: list[dict] = []
+    for proj in projects:
+        remote_url = get_repo_remote(proj["path"])
+        if not remote_url:
+            _warn(f"No git remote for {proj['name']} at {proj['path']}")
+            continue
+        github_slug = resolve_github_remote(remote_url)
+        if not github_slug:
+            _warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
+            continue
+        repos.append({**proj, "github": github_slug})
+
+    _info(f"Resolved {len(repos)} GitHub repo(s)")
+
+    print("# Retro Scan Report")
+    print(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: retro-scan v0.1.0 -->")
+    print(f"<!-- repos: {len(repos)} | prs: 0 | comments: 0 | substantive: 0 -->")
+    print()
+    if not repos:
+        print("No GitHub repos found in project registry.")
+    else:
+        for r in repos:
+            print(f"- {r['github']} ({r['path']})")
+    print()
+
+
+if __name__ == "__main__":
+    main()

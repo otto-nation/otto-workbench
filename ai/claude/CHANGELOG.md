@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.12.1...claude-review-v1.12.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* **claude-review:** add --repo alias; add bash safety note to reviewer agent ([#218](https://github.com/otto-nation/otto-workbench/issues/218)) ([edfaccf](https://github.com/otto-nation/otto-workbench/commit/edfaccf21ba725437d3fb6bd4acb451e0a44a4c3))
+* **review-post:** dedup, orphan cleanup; retry failed groups ([#219](https://github.com/otto-nation/otto-workbench/issues/219)) ([7fc0977](https://github.com/otto-nation/otto-workbench/commit/7fc0977c9a33af4e09e84660606a168115a7ab72))
+
 ## [1.12.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.12.0...claude-review-v1.12.1) (2026-06-11)
 
 

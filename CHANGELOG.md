@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.2](https://github.com/otto-nation/otto-workbench/compare/v1.18.1...v1.18.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* **review-post:** dedup, orphan cleanup; retry failed groups ([#219](https://github.com/otto-nation/otto-workbench/issues/219)) ([7fc0977](https://github.com/otto-nation/otto-workbench/commit/7fc0977c9a33af4e09e84660606a168115a7ab72))
+
 ## [1.18.1](https://github.com/otto-nation/otto-workbench/compare/v1.18.0...v1.18.1) (2026-06-11)
 
 

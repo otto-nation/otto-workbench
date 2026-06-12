@@ -116,3 +116,79 @@ PY
   result=$(_py 'print(mod.resolve_github_remote("git@gitlab.com:org/repo.git"))')
   [[ "$result" == "None" ]]
 }
+
+# ── is_noise ─────────────────────────────────────────────────────────────────
+
+@test "is_noise: approvals are noise" {
+  result=$(_py 'print(mod.is_noise("LGTM"))')
+  [[ "$result" == "True" ]]
+}
+
+@test "is_noise: looks good is noise" {
+  result=$(_py 'print(mod.is_noise("Looks good!"))')
+  [[ "$result" == "True" ]]
+}
+
+@test "is_noise: thumbs up is noise" {
+  result=$(_py 'print(mod.is_noise("+1"))')
+  [[ "$result" == "True" ]]
+}
+
+@test "is_noise: substantive comment is not noise" {
+  result=$(_py 'print(mod.is_noise("This should validate the redirect URI against an allowlist"))')
+  [[ "$result" == "False" ]]
+}
+
+@test "is_noise: short nit-only is noise" {
+  result=$(_py 'print(mod.is_noise("nit"))')
+  [[ "$result" == "True" ]]
+}
+
+@test "is_noise: nit with detail is not noise" {
+  result=$(_py 'print(mod.is_noise("nit: rename this to fooBar for consistency"))')
+  [[ "$result" == "False" ]]
+}
+
+# ── parse_review_comment ─────────────────────────────────────────────────────
+
+@test "parse_review_comment: extracts fields from API response" {
+  result=$(_py_here <<'PY'
+comment = {
+    "user": {"login": "reviewer1"},
+    "body": "This should validate the redirect URI",
+    "path": "src/auth.go",
+    "line": 45,
+    "html_url": "https://github.com/org/repo/pull/1#discussion_r123"
+}
+parsed = mod.parse_review_comment(comment)
+print(parsed["author"], parsed["path"], parsed["line"])
+PY
+)
+  [[ "$result" == "reviewer1 src/auth.go 45" ]]
+}
+
+@test "parse_review_comment: handles missing path (general comment)" {
+  result=$(_py_here <<'PY'
+comment = {
+    "user": {"login": "reviewer1"},
+    "body": "Overall this looks good but consider X",
+}
+parsed = mod.parse_review_comment(comment)
+print(parsed["path"], parsed["line"])
+PY
+)
+  [[ "$result" == "None None" ]]
+}
+
+@test "parse_review_comment: truncates long bodies" {
+  result=$(_py_here <<'PY'
+comment = {
+    "user": {"login": "r"},
+    "body": "x" * 1000,
+}
+parsed = mod.parse_review_comment(comment)
+print(len(parsed["body"]))
+PY
+)
+  [[ "$result" -le 500 ]]
+}

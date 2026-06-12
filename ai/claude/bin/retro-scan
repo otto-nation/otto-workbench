@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -98,6 +99,78 @@ def get_repo_remote(repo_path: str) -> str | None:
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return None
+
+
+# ── Comment filtering ───────────────────────────────────────────────────────
+
+def is_noise(body: str) -> bool:
+    stripped = body.strip()
+    if len(stripped) < 3:
+        return True
+    return bool(NOISE_PATTERNS.match(stripped))
+
+
+def parse_review_comment(comment: dict) -> dict:
+    body = comment.get("body", "")
+    return {
+        "author": comment.get("user", {}).get("login", "unknown"),
+        "body": body[:COMMENT_BODY_MAX],
+        "path": comment.get("path"),
+        "line": comment.get("line"),
+        "url": comment.get("html_url", ""),
+    }
+
+
+# ── GitHub API fetching ─────────────────────────────────────────────────────
+
+def _gh_api(endpoint: str, repo: str) -> list[dict]:
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--paginate", f"repos/{repo}/{endpoint}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            _warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
+            return []
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
+        _warn(f"gh api error for {repo}/{endpoint}: {e}")
+        return []
+
+
+def _read_last_retro(home: Path) -> int:
+    stamp = home / LAST_RETRO_FILE
+    if not stamp.exists():
+        return 0
+    try:
+        return int(stamp.read_text().strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
+    since_date = datetime.fromtimestamp(since_ts).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
+    endpoint = f"pulls?state=closed&sort=updated&direction=desc&per_page=100"
+    prs = _gh_api(endpoint, repo)
+    return [
+        pr for pr in prs
+        if pr.get("merged_at") and pr["merged_at"] >= since_date
+    ]
+
+
+def fetch_pr_comments(repo: str, pr_number: int) -> list[dict]:
+    review_comments = _gh_api(f"pulls/{pr_number}/comments", repo)
+    issue_comments = _gh_api(f"issues/{pr_number}/comments", repo)
+    all_comments = []
+    for c in review_comments:
+        parsed = parse_review_comment(c)
+        if not is_noise(parsed["body"]):
+            all_comments.append(parsed)
+    for c in issue_comments:
+        parsed = parse_review_comment(c)
+        if not is_noise(parsed["body"]):
+            all_comments.append(parsed)
+    return all_comments
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

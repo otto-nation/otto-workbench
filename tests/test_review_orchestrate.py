@@ -1434,3 +1434,273 @@ class TestCheckBudget:
         total, exceeded = ro._check_budget([str(log)], 10.0)
         assert total == 15.0
         assert exceeded is True
+
+
+class TestIsCompleteReview:
+    def test_has_summary(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("# Review\n\n## Summary\nLooks good.\n")
+        assert ro._is_complete_review(str(f)) is True
+
+    def test_has_verdict(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("# Review\n\n## Verdict\nApprove.\n")
+        assert ro._is_complete_review(str(f)) is True
+
+    def test_missing_headers(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("# Review\n\nSome content without required headers.\n")
+        assert ro._is_complete_review(str(f)) is False
+
+    def test_file_not_exists(self, ro, tmp_path):
+        assert ro._is_complete_review(str(tmp_path / "nonexistent.md")) is False
+
+    def test_empty_file(self, ro, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("")
+        assert ro._is_complete_review(str(f)) is False
+
+
+class TestPhaseSynthesis:
+    def _make_job(self, ro, tmp_path, mode="pr"):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(title="test PR", body="", head="feat", base="main",
+                             head_sha="abc123", additions=100, deletions=50,
+                             changed_files=10, files=[]),
+            ctx=ro.PRContext(),
+            wt_path=str(tmp_path / "wt"),
+            review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode=ro.MODE_PR if mode == "pr" else ro.MODE_SELF,
+        )
+
+    @staticmethod
+    def _patch_pipeline(monkeypatch, ro, **overrides):
+        """Patch review_pipeline module-level imports used by _phase_synthesis."""
+        import review_pipeline
+        defaults = {
+            "build_prompt": lambda *a, **kw: "mock prompt",
+            "verify_findings": lambda *a: [],
+            "strip_evidence_blocks": lambda *a: None,
+            "strip_stable_ids": lambda *a: None,
+            "renumber_findings": lambda *a: None,
+        }
+        defaults.update(overrides)
+        for name, func in defaults.items():
+            monkeypatch.setattr(review_pipeline, name, func)
+
+    def test_successful_synthesis(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+        review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            Path(kwargs.get("review_file", job.review_file)).write_text(review_content)
+            Path(log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+
+        ro._phase_synthesis(job, "", 3, "merged content")
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert "## Summary" in result
+        assert ro.FALLBACK_SUMMARY not in result
+
+    def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            Path(log).write_text("")
+            return 1
+
+        self._patch_pipeline(
+            monkeypatch, ro,
+            invoke_agent=mock_invoke,
+            _try_recover_output=lambda *a: False,
+        )
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in result
+
+    def test_incomplete_output_falls_back(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            # Write incomplete review (no Summary or Verdict headers)
+            Path(kwargs.get("review_file", job.review_file)).write_text("# Review\nSome partial content\n")
+            Path(log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+
+        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in result
+
+
+class TestIsRetryable:
+    def test_max_turns_is_retryable(self, ro):
+        assert ro._is_retryable("agent hit max turns (16)") is True
+
+    def test_no_session_log_is_retryable(self, ro):
+        assert ro._is_retryable("no session log found") is True
+
+    def test_no_result_record_is_retryable(self, ro):
+        assert ro._is_retryable("no result record in session log") is True
+
+    def test_model_error_not_retryable(self, ro):
+        assert ro._is_retryable("agent error: model not available") is False
+
+    def test_agent_error_not_retryable(self, ro):
+        assert ro._is_retryable("agent error: something broke") is False
+
+    def test_skipped_not_retryable(self, ro):
+        assert ro._is_retryable("skipped: 3 consecutive failures (agent hit max turns) — aborting") is False
+
+    def test_skipped_other_reason_not_retryable(self, ro):
+        assert ro._is_retryable("skipped: Model not available — aborting remaining 4 groups") is False
+
+
+class TestRetryTurns:
+    def test_max_turns_gets_doubled(self, ro):
+        assert ro._retry_turns("agent hit max turns (16)") == ro.RETRY_MAX_TURNS_GROUP
+
+    def test_other_reason_gets_default(self, ro):
+        assert ro._retry_turns("no session log found") == ro.DEFAULT_MAX_TURNS_GROUP
+
+
+class TestRetryFailedGroups:
+    def _make_job(self, ro, tmp_path):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(title="test PR", body="", head="feat", base="main",
+                             head_sha="abc123", additions=100, deletions=50,
+                             changed_files=5, files=[
+                                 {"path": "a.go", "additions": 10, "deletions": 5, "status": "modified"},
+                                 {"path": "b.go", "additions": 20, "deletions": 10, "status": "modified"},
+                             ]),
+            ctx=ro.PRContext(),
+            wt_path=str(tmp_path / "wt"),
+            review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode=ro.MODE_PR,
+        )
+
+    def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
+
+        calls = []
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            turns = kwargs.get("max_turns", 15)
+            calls.append(turns)
+            output_path = str(tmp_path / "group-1.md")
+            Path(output_path).write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+            Path(log).write_text("")
+            return 0
+
+        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+
+        failed = [("grp-a", "agent hit max turns (16)")]
+        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
+        assert result == []
+        assert calls[-1] == ro.RETRY_MAX_TURNS_GROUP
+
+    def test_skips_model_errors(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
+
+        failed = [("grp-a", "agent error: model not available")]
+        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
+        assert len(result) == 1
+        assert result[0] == ("grp-a", "agent error: model not available")
+
+    def test_non_retryable_preserved(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
+
+        failed = [("grp-a", "agent error: something broke")]
+        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
+        assert result == failed
+
+    def test_skipped_groups_run_after_retries_succeed(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name="grp-a", files=["a.go"], lines=100),
+            ro.Group(name="grp-b", files=["b.go"], lines=100),
+        ]
+
+        calls = []
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            name = kwargs.get("label", "")
+            calls.append(name)
+            if name == "grp-a":
+                Path(reviews_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+            elif name == "grp-b":
+                Path(reviews_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
+            Path(log).write_text("")
+            return 0
+
+        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+
+        failed = [
+            ("grp-a", "agent hit max turns (16)"),
+            ("grp-b", "skipped: 3 consecutive failures (agent hit max turns) — aborting remaining 1 groups"),
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
+        assert result == []
+        assert "grp-a" in calls
+        assert "grp-b" in calls
+
+    def test_skipped_groups_kept_when_retries_fail(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name="grp-a", files=["a.go"], lines=100),
+            ro.Group(name="grp-b", files=["b.go"], lines=100),
+        ]
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            Path(log).write_text("")
+            return 1
+
+        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_pipeline, "_diagnose_missing_output", lambda *a: "agent hit max turns (30)")
+
+        failed = [
+            ("grp-a", "agent hit max turns (16)"),
+            ("grp-b", "skipped: 3 consecutive failures (agent hit max turns) — aborting"),
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
+        # grp-a retry failed, so grp-b stays as skipped
+        assert len(result) == 2
+        result_names = [n for n, _ in result]
+        assert "grp-a" in result_names
+        assert "grp-b" in result_names

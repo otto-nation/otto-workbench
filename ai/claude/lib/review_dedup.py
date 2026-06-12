@@ -6,6 +6,7 @@ Jaccard similarity, and filters out duplicates before posting.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 
@@ -18,6 +19,7 @@ from review_findings import Finding
 # ── Constants ───────────────────────────────────────────────────────────────
 
 DEDUP_THRESHOLD = 0.6
+REVIEW_BODY_DEDUP_THRESHOLD = 0.8
 
 
 # ── Similarity ──────────────────────────────────────────────────────────────
@@ -55,6 +57,20 @@ def _extract_body_findings(body: str) -> list[dict]:
     return results
 
 
+# ── Bot user lookup ─────────────────────────────────────────────────────────
+
+@functools.lru_cache(maxsize=1)
+def _get_bot_login() -> str:
+    """Return the authenticated GitHub user's login, or empty string on failure."""
+    code, user_out = review_github._gh_api("user")
+    if code != 0:
+        return ""
+    try:
+        return json.loads(user_out).get("login", "")
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+
 # ── Bot comment collection ──────────────────────────────────────────────────
 
 def _collect_inline_comments(repo: str, pr: str, bot_user: str) -> list[dict]:
@@ -80,13 +96,7 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str) -> list[dict]:
 
 
 def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
-    code, user_out = review_github._gh_api("user")
-    if code != 0:
-        return []
-    try:
-        bot_user = json.loads(user_out).get("login", "")
-    except (json.JSONDecodeError, TypeError):
-        return []
+    bot_user = _get_bot_login()
     if not bot_user:
         return []
 
@@ -126,3 +136,44 @@ def dedup_against_posted(
             kept.append(f)
 
     return kept, deduped
+
+
+# ── Bot review fetching ───────────────────────────────────────────────────
+
+def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
+    """Return all non-PENDING, non-DISMISSED reviews from the bot.
+
+    Each entry has keys: id, body, state.
+    """
+    bot_user = _get_bot_login()
+    if not bot_user:
+        return []
+
+    all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+    return [
+        {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
+        for r in all_reviews
+        if r.get("user", {}).get("login") == bot_user
+        and r.get("state") not in ("PENDING", "DISMISSED")
+    ]
+
+
+# ── Whole-review dedup ────────────────────────────────────────────────────
+
+def check_review_already_posted(
+    bot_reviews: list[dict], body_text: str,
+) -> list[int]:
+    """Check if a review with matching body has already been posted.
+
+    Takes a pre-fetched list of bot reviews (from fetch_bot_reviews).
+    Returns list of matching review IDs (empty if no match).
+    """
+    body_words = _word_set(body_text)
+    matching_ids: list[int] = []
+
+    for r in bot_reviews:
+        review_body = r.get("body", "")
+        if _jaccard(body_words, _word_set(review_body)) >= REVIEW_BODY_DEDUP_THRESHOLD:
+            matching_ids.append(r["id"])
+
+    return matching_ids

@@ -148,8 +148,7 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 ### Record timestamp and clean up
 
 ```bash
-date +%s > ~/.claude/.last-retro
-rm -f ~/.claude/.retro-pending
+bash ~/.claude/skills/retro/retro-complete.sh
 ```
 
 ### Summary

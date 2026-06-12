@@ -139,3 +139,22 @@ _make_project() {
   run "$SHOULD_RETRO"
   [[ "$status" -eq 1 ]]
 }
+
+@test "should-retro: skips projects without memory/ directory" {
+  local now
+  now=$(date +%s)
+  local four_days_ago=$((now - 345600))
+
+  mkdir -p "$HOME/.claude"
+  echo "$four_days_ago" > "$HOME/.claude/.last-retro"
+
+  local dir="$HOME/.claude/projects/no-memory-proj"
+  mkdir -p "$dir"
+  local i
+  for i in $(seq 1 10); do
+    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
+  done
+
+  run "$SHOULD_RETRO"
+  [[ "$status" -eq 1 ]]
+}

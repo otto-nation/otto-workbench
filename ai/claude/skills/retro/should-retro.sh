@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # should-retro.sh — checks whether a retro analysis is due.
-# Returns 0 (true) if 72+ hours AND 5+ sessions (in any project) since last retro.
+# Returns 0 (true) if 72+ hours AND 5+ sessions (in any project with memory/)
+# since last retro. Projects without memory/ are skipped — they have no session
+# activity to measure.
 # Returns 1 (false) otherwise.
 # Uses a global timestamp (~/.claude/.last-retro) since retro scans across all repos.
 
@@ -24,6 +26,7 @@ elapsed=$((now - last_retro))
 
 for project_dir in ~/.claude/projects/*/; do
   [[ -d "$project_dir" ]] || continue
+  [[ -d "${project_dir}memory" ]] || continue
 
   if _has_enough_sessions "$project_dir" "$last_retro" "$MIN_SESSIONS"; then
     exit 0

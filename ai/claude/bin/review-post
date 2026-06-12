@@ -58,9 +58,11 @@ from review_github import (  # noqa: E402
 )
 from review_dedup import (  # noqa: E402
     _word_set, _jaccard, _extract_body_findings, _fetch_bot_comments,
+    _get_bot_login, fetch_bot_reviews,
+    check_review_already_posted, REVIEW_BODY_DEDUP_THRESHOLD,
 )
 from review_posting import (  # noqa: E402
-    DEFAULT_CHUNK_SIZE, HEAD_SHA_RE,
+    DEFAULT_CHUNK_SIZE, HEAD_SHA_RE, _CHUNK_PATTERN,
     _post_and_track, _post_as_comment, _print_dry_run,
     _chunk_comments, _post_chunked_review, post_review,
     _submit_review, write_post_tracking, _format_submit_command,

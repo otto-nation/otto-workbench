@@ -51,6 +51,7 @@ from review_prompt import (
 )
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
+    DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG,
     _diagnose_missing_output, _is_model_error, _parse_session_cost,
     _resolve_model, _try_recover_output, _try_recover_review,
     invoke_agent,
@@ -62,10 +63,20 @@ DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
 
+RETRY_MAX_TURNS_GROUP = 30
+_MAX_TURNS_REASON = "agent hit max turns"
+
 DEFAULT_MODEL_GROUP = "sonnet"
 DEFAULT_MODEL_HOLISTIC = "opus"
 DEFAULT_MODEL_SYNTHESIS = "opus"
 DEFAULT_MODEL_SINGLE = "opus"
+
+
+def _synthesis_max_turns(merged_content: str) -> int:
+    counts = _count_findings(merged_content)
+    total = sum(counts.values())
+    scaled = DEFAULT_MAX_TURNS_SYNTHESIS + max(0, total - 20) // 10
+    return min(scaled, RETRY_MAX_TURNS_GROUP)
 
 
 # ── Pipeline state (resume/retry) ────────────────────────────────────────────
@@ -136,6 +147,8 @@ def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
         if group_idx not in state.groups_done:
             state.groups_done.append(group_idx)
             state.groups_done.sort()
+        # Clear stale failure entry if this group succeeded on retry
+        state.groups_failed.pop(group_idx, None)
         _write_pipeline_state(job, state)
 
 
@@ -203,6 +216,7 @@ def _review_group(
     group_count: int, holistic_content: str,
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
+    max_turns: int = DEFAULT_MAX_TURNS_GROUP,
 ) -> tuple[int, str, "tuple[str, str] | None"]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
@@ -220,7 +234,7 @@ def _review_group(
     )
 
     group_prompt = build_prompt(
-        TEMPLATE_GROUP, job, max_turns=DEFAULT_MAX_TURNS_GROUP,
+        TEMPLATE_GROUP, job, max_turns=max_turns,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
         group_file_paths=grp.files,
@@ -228,7 +242,7 @@ def _review_group(
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, max_turns=DEFAULT_MAX_TURNS_GROUP)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, max_turns=max_turns)
 
     failed = None
     if not Path(group_output).exists():
@@ -338,6 +352,77 @@ def _run_parallel_reviews(
     return [failure for _, _, failure in results if failure]
 
 
+def _is_retryable(reason: str) -> bool:
+    if reason.startswith("skipped: "):
+        return False
+    if _MAX_TURNS_REASON in reason:
+        return True
+    if reason in (DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG):
+        return True
+    return False
+
+
+def _retry_turns(reason: str) -> int:
+    if _MAX_TURNS_REASON in reason:
+        return RETRY_MAX_TURNS_GROUP
+    return DEFAULT_MAX_TURNS_GROUP
+
+
+def _retry_failed_groups(
+    failed_groups: "list[tuple[str, str]]",
+    groups: list[Group], job: ReviewJob,
+    group_count: int, holistic_content: str,
+    pipeline_state: "PipelineState | None",
+) -> "list[tuple[str, str]]":
+    retryable = [(name, reason) for name, reason in failed_groups if _is_retryable(reason)]
+    skipped = [(n, r) for n, r in failed_groups if r.startswith("skipped: ")]
+    non_retryable = [
+        (n, r) for n, r in failed_groups
+        if not _is_retryable(r) and not r.startswith("skipped: ")
+    ]
+    if not retryable:
+        return failed_groups
+
+    group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
+
+    _info(f"Retrying {len(retryable)} failed groups...")
+    still_failed: list[tuple[str, str]] = []
+    for name, reason in retryable:
+        if name not in group_by_name:
+            still_failed.append((name, reason))
+            continue
+        idx, grp = group_by_name[name]
+        turns = _retry_turns(reason)
+        _info(f"  Retry: {name} (max_turns={turns})")
+        _, _, failure = _review_group(
+            idx, grp, job, group_count, holistic_content,
+            pipeline_state=pipeline_state,
+            max_turns=turns,
+        )
+        if failure:
+            still_failed.append(failure)
+
+    # If all retries succeeded, run previously-skipped groups too
+    if not still_failed and skipped:
+        _info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
+        for name, reason in skipped:
+            if name not in group_by_name:
+                still_failed.append((name, reason))
+                continue
+            idx, grp = group_by_name[name]
+            _info(f"  Running skipped group: {name}")
+            _, _, failure = _review_group(
+                idx, grp, job, group_count, holistic_content,
+                pipeline_state=pipeline_state,
+            )
+            if failure:
+                still_failed.append(failure)
+    elif skipped:
+        still_failed.extend(skipped)
+
+    return non_retryable + still_failed
+
+
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
@@ -354,6 +439,11 @@ def _phase_group_reviews(
     else:
         failed_groups = _run_parallel_reviews(
             groups, job, group_count, holistic_content, workers, skip_groups, pipeline_state,
+        )
+
+    if failed_groups:
+        failed_groups = _retry_failed_groups(
+            failed_groups, groups, job, group_count, holistic_content, pipeline_state,
         )
 
     return group_outputs, failed_groups
@@ -505,15 +595,16 @@ def _phase_synthesis(
     synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
+    max_turns = _synthesis_max_turns(merged_content)
     prompt = build_prompt(
-        synthesis_template, job, max_turns=DEFAULT_MAX_TURNS_SYNTHESIS,
+        synthesis_template, job, max_turns=max_turns,
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
-    _info("Phase 4: Synthesis...")
+    _info(f"Phase 4: Synthesis ({max_turns} turns)...")
     print()
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_SYNTHESIS)
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=max_turns)
     print()
 
     if not Path(job.review_file).exists():

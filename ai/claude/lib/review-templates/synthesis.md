@@ -20,7 +20,7 @@ ${reviews_section}
 3. Write ## Summary — what the change does, overall quality, incorporating the holistic assessment
 4. Include all Must fix / Should fix / Nit / Idioms findings from the merged content (use any IDs — they will be mechanically renumbered after you write the file). Use the format `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap file paths in backticks inside bold markers
 5. Preserve evidence blocks from group findings when carrying forward Must-fix and Should-fix items. Do not strip or summarize them — they will be verified programmatically after you write the file.
-6. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings
+6. Group agents already verified findings against source code. Do NOT re-read files to re-verify individual findings — a programmatic verification pass runs after you write. Instead, check for cross-group inconsistencies: does one group's finding contradict another group's analysis of the same code? Drop findings only when you can identify the contradiction from the merged content itself
 7. Check for cross-file concerns — do findings in one group imply issues in files from another group? Deduplicate: if the same issue appears in multiple group reviews (same file, same concern), keep the most complete version and drop the rest
 8. Add any cross-cutting findings
 9. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
@@ -28,7 +28,7 @@ ${reviews_section}
     Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
 
 ## Turn budget
-You have ${max_turns} turns total. Your FIRST action must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
+You have ${max_turns} turns total. Your FIRST action must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read source files before writing. Use remaining turns only for cross-file consistency checks (e.g., confirming a finding about file A aligns with how file B uses it) and Edit updates.
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

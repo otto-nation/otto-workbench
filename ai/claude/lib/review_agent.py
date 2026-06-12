@@ -20,6 +20,9 @@ DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
+DIAG_NO_SESSION_LOG = "no session log found"
+DIAG_NO_RESULT_RECORD = "no result record in session log"
+
 
 # ── Stream progress ───────────────────────────────────────────────────────────
 
@@ -110,10 +113,10 @@ def _diagnose_result_type(result: dict) -> str:
 
 def _diagnose_missing_output(log_path: str) -> str:
     if not Path(log_path).exists():
-        return "no session log found"
+        return DIAG_NO_SESSION_LOG
     results = _parse_jsonl_records(log_path, "result")
     if not results:
-        return "no result record in session log"
+        return DIAG_NO_RESULT_RECORD
     return _diagnose_result_type(results[-1])
 
 

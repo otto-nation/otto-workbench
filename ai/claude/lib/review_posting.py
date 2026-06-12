@@ -31,6 +31,8 @@ INTER_CHUNK_DELAY = 30
 
 HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 
+_CHUNK_PATTERN = re.compile(r"\*\(continued — part (\d+)/(\d+)\)\*")
+
 
 # ── Chunking ────────────────────────────────────────────────────────────────
 
@@ -349,6 +351,63 @@ def _post_and_track(
     chunk_size: int, severity_filter: set[str],
 ):
     submit = getattr(args, "submit", False)
+
+    # Fetch bot reviews once for both dedup and orphan detection
+    bot_reviews = review_dedup.fetch_bot_reviews(args.repo, args.pr)
+
+    # Check for already-posted duplicate
+    existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
+    if existing_ids:
+        _warn(f"Review already posted (review IDs: {existing_ids})")
+        write_post_tracking(
+            args.review_file, list(existing_ids), commit_id,
+            inline_count=0, body_count=0, skipped_count=0,
+            submitted=submit, chunk_count=len(existing_ids),
+        )
+        return
+
+    # Check for orphaned continuation chunks from a prior killed run.
+    # Only mark INCOMPLETE chunk sets — if all N/M parts exist, the
+    # prior post was complete and should not be struck through.
+    # Separate sets handle multiple runs with the same chunk count.
+    chunk_sets: list[tuple[int, dict[int, int]]] = []  # [(total, {part: review_id})]
+    for rev in bot_reviews:
+        m = _CHUNK_PATTERN.search(rev["body"])
+        if m:
+            part, total = int(m.group(1)), int(m.group(2))
+            placed = False
+            for cs_total, cs_parts in chunk_sets:
+                if cs_total == total and part not in cs_parts:
+                    cs_parts[part] = rev["id"]
+                    placed = True
+                    break
+            if not placed:
+                chunk_sets.append((total, {part: rev["id"]}))
+
+    orphaned_ids = []
+    for total, parts in chunk_sets:
+        # Part 1 is the main body (no chunk pattern), so a complete
+        # set has total-1 continuation chunks.
+        if len(parts) < total - 1:
+            orphaned_ids.extend(parts.values())
+
+    if orphaned_ids:
+        _warn(f"Marking {len(orphaned_ids)} orphaned chunk reviews as duplicates: {orphaned_ids}")
+        for rid in orphaned_ids:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", prefix="review-orphan-", delete=False,
+            ) as tmp:
+                json.dump({"body": "~~Duplicate — review reposted due to prior partial post.~~"}, tmp)
+                tmp_path = tmp.name
+            try:
+                code, _ = review_github._gh_api(
+                    f"repos/{args.repo}/pulls/{args.pr}/reviews/{rid}",
+                    method="PUT", input_file=tmp_path,
+                )
+                if code != 0:
+                    _warn(f"Failed to mark review #{rid} as duplicate (exit code {code})")
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
 
     try:
         results = _post_chunked_review(

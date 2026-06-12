@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # should-promote.sh — checks whether a memory promotion review is due.
-# Returns 0 (true) if ANY project is 7+ days AND 10+ sessions since last promote.
+# Returns 0 (true) if ANY project with a memory/ directory is 7+ days AND
+# 10+ sessions since last promote. Projects without memory/ are skipped — they
+# have nothing to promote and no timestamp file to record completion.
 # Returns 1 (false) otherwise.
 # Used by the Stop hook: runs on every session exit (~10ms overhead).
 
@@ -17,6 +19,7 @@ threshold_secs=$((PROMOTE_INTERVAL_HOURS * 3600))
 
 for project_dir in ~/.claude/projects/*/; do
   [[ -d "$project_dir" ]] || continue
+  [[ -d "${project_dir}memory" ]] || continue
 
   stamp_file="${project_dir}memory/.last-promote"
   last_promote=0

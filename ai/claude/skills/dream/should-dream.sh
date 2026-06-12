@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # should-dream.sh — checks whether a dream consolidation is due.
-# Returns 0 (true) if ANY project is 24+ hours AND 5+ sessions since last dream.
+# Returns 0 (true) if ANY project with a memory/ directory is 24+ hours AND
+# 5+ sessions since last dream. Projects without memory/ are skipped — they
+# have nothing to consolidate and no timestamp file to record completion.
 # Returns 1 (false) otherwise.
 # Used by the Stop hook: runs on every session exit (~10ms overhead).
 
@@ -17,6 +19,7 @@ threshold_secs=$((DREAM_INTERVAL_HOURS * 3600))
 
 for project_dir in ~/.claude/projects/*/; do
   [[ -d "$project_dir" ]] || continue
+  [[ -d "${project_dir}memory" ]] || continue
 
   stamp_file="${project_dir}memory/.last-dream"
   last_dream=0

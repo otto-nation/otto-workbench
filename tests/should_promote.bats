@@ -170,3 +170,36 @@ _make_project() {
   run "$SHOULD_PROMOTE"
   [[ "$status" -eq 1 ]]
 }
+
+# ── Projects without memory/ ────────────────────────────────────────────────
+
+@test "should-promote: project without memory/ dir is ignored even with many sessions" {
+  local dir="$HOME/.claude/projects/no-memory-project"
+  mkdir -p "$dir"
+
+  local i
+  for i in $(seq 1 20); do
+    printf '{"type":"user"}\n' > "$dir/session-$i.jsonl"
+  done
+
+  run "$SHOULD_PROMOTE"
+  [[ "$status" -eq 1 ]]
+}
+
+@test "should-promote: project without memory/ does not block eligible project" {
+  local now
+  now=$(date +%s)
+  local eight_days_ago=$((now - 691200))
+
+  local no_mem_dir="$HOME/.claude/projects/aaa-no-memory"
+  mkdir -p "$no_mem_dir"
+  local i
+  for i in $(seq 1 20); do
+    printf '{"type":"user"}\n' > "$no_mem_dir/session-$i.jsonl"
+  done
+
+  _make_project "zzz-has-memory" "$eight_days_ago" 12
+
+  run "$SHOULD_PROMOTE"
+  [[ "$status" -eq 0 ]]
+}

@@ -12,6 +12,13 @@ If `~/.claude/.dream-pending` exists at session start, run `/dream` as a subagen
 
 If `~/.claude/.promote-pending` exists at session start, run `/promote` as a subagent in the background, then delete the flag: `rm ~/.claude/.promote-pending`. This reviews accumulated memories for promotion into workbench artifacts (lint rules, scripts, coding rules, hooks). Triggers automatically every 7 days via a Stop hook.
 
+## Auto Retro
+
+If `~/.claude/.retro-pending` exists at session start, run `/retro` as a subagent
+in the background, then delete the flag: `rm ~/.claude/.retro-pending`. This analyzes
+recent PR review comments to identify gaps in coding rules. Triggers automatically
+every 3 days via a Stop hook.
+
 ## Machine Profile
 
 If `~/.claude/machine/machine.md` exists, read it at session start — it contains

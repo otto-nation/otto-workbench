@@ -58,6 +58,32 @@ This creates `~/.config/task/taskfile.env` with:
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 <!-- AI-INSTALLS-END -->
 
+<!-- LIFECYCLE-START -->
+## Session Lifecycle
+
+Skills auto-trigger on a cadence via Stop hooks in `settings.json`. The pipeline:
+
+1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`
+2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag
+3. **Skill completion** — completion script records a timestamp so the cooldown resets
+
+### Auto-triggered skills
+
+| Skill | Cadence | Min Sessions | Scope | Output |
+|-------|---------|--------------|-------|--------|
+| anatomy | on HEAD change | — | per-project | `.claude/anatomy.md` |
+| dream | 24h | 5 | per-project | `Memory files in project memory/` |
+| machine | 24h | — | global | `~/.claude/machine/machine.md` |
+| promote | 7 days | 10 | per-project | `ai/memory/PROMOTE.md` |
+| retro | 72h | 5 | global | `ai/memory/RETRO.md` |
+
+Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
+
+### Manual triggers
+
+All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
+<!-- LIFECYCLE-END -->
+
 ## Task Automation
 
 Use `--global` to run tasks from `~/.config/task/` rather than a local project Taskfile.

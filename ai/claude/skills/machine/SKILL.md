@@ -2,6 +2,9 @@
 name: machine
 description: "Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh."
 source: otto-workbench/ai/claude/skills/machine/SKILL.md
+lifecycle_cadence: "24h"
+lifecycle_scope: global
+lifecycle_output: "~/.claude/machine/machine.md"
 ---
 
 # Machine — Machine Profile Refresh

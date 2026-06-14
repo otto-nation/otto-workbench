@@ -2,6 +2,10 @@
 name: promote
 description: "Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose."
 source: otto-workbench/ai/claude/skills/promote/SKILL.md
+lifecycle_cadence: "7 days"
+lifecycle_min_sessions: 10
+lifecycle_scope: per-project
+lifecycle_output: "ai/memory/PROMOTE.md"
 ---
 
 # Promote — Memory-to-Artifact Pipeline

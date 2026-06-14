@@ -375,6 +375,49 @@ _readme_ai_installs() {
 
 }
 
+# _readme_lifecycle — renders the Session Lifecycle section for ai-automation.md.
+# Reads lifecycle_* frontmatter fields from SKILL.md files to build the auto-triggered
+# skills table. Skills without lifecycle_cadence are skipped.
+_readme_lifecycle() {
+  local claude_skills_src="$AI_DIR/claude/skills"
+
+  printf '## Session Lifecycle\n\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf 'Skills auto-trigger on a cadence via Stop hooks in `settings.json`. The pipeline:\n\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`\n'
+  printf '2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag\n'
+  printf '3. **Skill completion** — completion script records a timestamp so the cooldown resets\n'
+  printf '\n### Auto-triggered skills\n\n'
+  printf '| Skill | Cadence | Min Sessions | Scope | Output |\n'
+  printf '|-------|---------|--------------|-------|--------|\n'
+
+  for d in "$claude_skills_src"/*/; do
+    [[ -d "$d" ]] || continue
+    local cadence
+    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")" || true
+    [[ -z "$cadence" ]] && continue
+
+    local skill_name min_sessions scope output
+    skill_name="$(basename "$d")"
+    min_sessions="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_min_sessions")" || true
+    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")" || true
+    output="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_output")" || true
+    [[ -z "$min_sessions" ]] && min_sessions="—"
+    [[ -z "$scope" ]] && scope="—"
+    [[ -z "$output" ]] && output="—"
+
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '| %s | %s | %s | %s | `%s` |\n' "$skill_name" "$cadence" "$min_sessions" "$scope" "$output"
+  done
+
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '\nAdditionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.\n'
+  printf '\n### Manual triggers\n\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf 'All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.\n'
+}
+
 # _tool_readme_table_row NAME DESCRIPTION WHEN_TO_USE USAGE DOCS
 # Renders a single row for the README tools table. Name links to docs if available.
 _tool_readme_table_row() {
@@ -527,6 +570,7 @@ if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$R
 if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$TOOLS_DOC_PATH" "SCRIPTS-TABLE";    _gen_success "Updated docs/tools.md scripts table";    fi
 if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$TOOLS_DOC_PATH" "TOOLS-TABLE";      _gen_success "Updated docs/tools.md tools table";      fi
 if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$AI_DOC_PATH" "AI-INSTALLS";         _gen_success "Updated docs/ai-automation.md installs"; fi
+if [[ -d "$AI_DIR" ]];          then _readme_lifecycle      | _splice_readme "$AI_DOC_PATH" "LIFECYCLE";           _gen_success "Updated docs/ai-automation.md lifecycle"; fi
 if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
                                      _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
                                      _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"

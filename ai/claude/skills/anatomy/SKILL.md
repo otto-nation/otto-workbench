@@ -2,6 +2,9 @@
 name: anatomy
 description: "Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring."
 source: otto-workbench/ai/claude/skills/anatomy/SKILL.md
+lifecycle_cadence: "on HEAD change"
+lifecycle_scope: per-project
+lifecycle_output: ".claude/anatomy.md"
 ---
 
 # Anatomy — Project File Index

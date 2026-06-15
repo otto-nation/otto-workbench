@@ -12,6 +12,22 @@
 
 set -e
 
+usage() {
+  cat <<EOF
+Usage: run-auto-task <skill-name>
+
+Run a Claude Code skill as a headless background session.
+
+Spawns \`claude -p\` with --bare (skips hooks to prevent cascading) and
+streams output to ~/.claude/logs/<skill>-<timestamp>.log.
+
+Env:
+  CLAUDE_LOG_DIR  override log directory (default: ~/.claude/logs)
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
 skill="${1:?Usage: run-auto-task <skill-name>}"
 
 log_dir="${CLAUDE_LOG_DIR:-$HOME/.claude/logs}"

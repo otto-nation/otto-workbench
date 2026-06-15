@@ -1,12 +1,14 @@
 ---
 name: pr-comments
-description: "Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers."
+description: "Address incoming PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 ---
 
 # PR Comments
 
-Responds to review comments on a PR: fetches all threads, verifies each suggestion against the actual codebase, applies valid fixes, and replies inline.
+Responds to review comments on a PR with full lifecycle tracking. Fetches threads, classifies them, verifies suggestions against the codebase, applies fixes, replies inline, and auto-resolves acknowledged threads.
+
+Tracks multi-round review cycles: knows what's been addressed, what the reviewer acknowledged, what they pushed back on, and what's still open.
 
 Run with `/pr-comments` or `/pr-comments <pr_number>`.
 
@@ -14,48 +16,35 @@ Run with `/pr-comments` or `/pr-comments <pr_number>`.
 
 ## Steps
 
-### 1. Identify the PR and fetch comments
+### 1. Fetch status and display dashboard
+
+Run the status script to fetch all threads, compute lifecycle states, and display the dashboard:
 
 ```bash
-# Get PR number from argument or current branch
-PR_NUMBER=$(gh pr view --json number -q '.number')
+pr-comments-status [--pr <number>] [--repo <owner/repo>]
 ```
 
-If no PR exists for the current branch, ask the user which PR to address.
+The script outputs:
+- **stderr:** Human-readable status dashboard (reviewer verdicts, thread counts by state, merge blockers)
+- **stdout:** Structured JSON report with all threads, their lifecycle states, comments, and verdicts
 
-Determine the current GitHub user:
+If the script fails (non-zero exit code), ask the user which PR to address and re-run with explicit `--pr` and `--repo` flags.
 
-```bash
-MY_LOGIN=$(gh api user --jq '.login')
-```
+Parse the JSON report from stdout. If there are no threads in `new`, `contested`, or `ambiguous` state, and no unaddressed issue-level comments, report that nothing needs action and stop.
 
-Fetch all comment types — use `--paginate` to get every page:
+If a specific reviewer was mentioned (e.g., "address Gemini's comments"), filter the threads to that reviewer.
 
-```bash
-# Inline review comments (code-level)
-gh api repos/{owner}/{repo}/pulls/{number}/comments --paginate \
-  --jq '.[] | "ID: \(.id)\nUser: \(.user.login)\nFile: \(.path)\nLine: \(.line // .original_line)\nReplyTo: \(.in_reply_to_id)\nBody: \(.body)\n---"'
+### 2. Classify threads needing action
 
-# Top-level review bodies
-gh api repos/{owner}/{repo}/pulls/{number}/reviews --paginate \
-  --jq '.[] | select(.body != "") | "ReviewID: \(.id)\nUser: \(.user.login)\nState: \(.state)\nBody: \(.body)\n---"'
+From the JSON report, present threads that need action, grouped in priority order:
 
-# Issue-level comments (general discussion)
-gh api repos/{owner}/{repo}/issues/{number}/comments --paginate \
-  --jq '.[] | "CommentID: \(.id)\nUser: \(.user.login)\nBody: \(.body)\n---"'
-```
+1. **Contested** — reviewer pushed back after your fix (urgent)
+2. **Ambiguous** — script couldn't determine if the reply was acknowledgment or pushback (needs your input)
+3. **New** — never addressed
 
-Group comments by thread using `in_reply_to_id`. Filter out:
-- Comments from `$MY_LOGIN` (your own replies)
-- Threads that already have a reply from `$MY_LOGIN` (already addressed)
+For each thread, show the **full conversation** (all comments in the thread), not just the latest comment. Include the lifecycle state and reviewer name.
 
-Print a summary: N unaddressed threads, N comments, which reviewers.
-
-If a specific reviewer was mentioned (e.g., "address Gemini's comments"), filter to that reviewer.
-
-### 2. Classify each comment
-
-For each unaddressed comment or thread, classify as:
+Classify each as:
 
 | Classification | Description | Action |
 |---|---|---|
@@ -64,19 +53,23 @@ For each unaddressed comment or thread, classify as:
 | **Approval/acknowledgment** | No action needed | Skip |
 | **Conflicting** | Contradicts another reviewer's suggestion | Flag |
 
-Present the classification to the user for confirmation before proceeding. Example:
+For **contested** threads, also show what changed since the last round — your prior reply and the reviewer's response.
+
+Present the classification table for user confirmation:
 
 ```
-## Comment Classification
+## Threads Needing Action
 
-| # | Reviewer | File | Classification | Summary |
-|---|----------|------|----------------|---------|
-| 1 | @alice | handler.go:42 | Suggestion | Use RunTx instead of manual tx |
-| 2 | @gemini | service.go:18 | Question | Why not use the shared helper? |
-| 3 | @bob | handler.go:42 | Conflicting | Contradicts #1 — suggests BeginTx |
+| # | State | Reviewer | File | Classification | Summary |
+|---|-------|----------|------|----------------|---------|
+| 1 | ⚠ contested | @alice | handler.go:42 | Suggestion | Still wants RunTx, not manual tx |
+| 2 | ? ambiguous | @bob | service.go:18 | Question | Unclear if ack or pushback |
+| 3 | → new | @gemini | util.go:5 | Suggestion | Use shared helper |
 
 Proceed with this classification? (y/n)
 ```
+
+Also classify any **issue-level comments** from the `issue_comments` array in the JSON report. These are general PR discussion comments (not inline code threads). They don't have lifecycle states — classify them the same way as threads (suggestion, question, acknowledgment, conflicting) and include them in the classification table.
 
 ### 3. Verify actionable suggestions
 
@@ -126,7 +119,9 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
 REPLY_BODY
 ```
 
-Examples:
+Use the `databaseId` from the thread's first comment as the `comment_id` for replies.
+
+Reply examples by outcome:
 
 **Accepted:**
 ```bash
@@ -136,7 +131,7 @@ Fixed.
 REPLY_BODY
 ```
 
-**Rejected:**
+**Rejected (with evidence):**
 ```bash
 gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
   --method POST -F body=@- <<'REPLY_BODY'
@@ -144,31 +139,72 @@ Not applying — `helperFn()` does not exist in the `utils` package. Checked `pk
 REPLY_BODY
 ```
 
-**Question answered / Conflicting:** Same pattern.
+**Re-addressing a contested thread:**
+```bash
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+  --method POST -F body=@- <<'REPLY_BODY'
+Good point about the error handling. Updated to use `RunTx` with proper rollback — see latest commit.
+REPLY_BODY
+```
 
-### 6. Emit feedback signals
+**Question answered / Conflicting:** Same heredoc pattern.
+
+### 6. Resolve verified threads
+
+After replying, resolve threads that have been verified (reviewer acknowledged your fix):
+
+```bash
+pr-comments-status --resolve-verified [--pr <number>] [--repo <owner/repo>]
+```
+
+This auto-resolves verified threads on GitHub via GraphQL mutation. Only threads where the reviewer explicitly acknowledged the fix are resolved — never contested or ambiguous threads.
+
+### 7. Emit feedback signals
 
 After processing all comments, print a structured summary:
 
 ```markdown
 ## Review Feedback Summary
 
-| Finding | Reviewer | Outcome | Reason |
-|---------|----------|---------|--------|
-| [M1] | @alice | accepted | Fixed in abc123 |
-| [S1] | @gemini | rejected | Utility does not exist |
-| — | @bob | needs-discussion | Conflicts with @alice |
+| Thread | Reviewer | State | Outcome | Reason |
+|--------|----------|-------|---------|--------|
+| T_abc | @alice | contested→addressed | re-fixed | Updated to use RunTx |
+| T_def | @gemini | new→addressed | accepted | Fixed in abc123 |
+| T_ghi | @bob | new→addressed | rejected | Utility does not exist |
+| T_jkl | @alice | verified→resolved | auto-resolved | Reviewer acknowledged |
 ```
 
 This summary appears in the session transcript and is picked up by `/dream` for review quality tracking.
 
-### 7. Report
+### 8. Report
 
 Print:
 - Number of fixes applied
 - Number of replies posted
-- Number of comments skipped or needing discussion
+- Number of threads resolved
+- Number of threads still contested or needing discussion
+- Number of threads awaiting reviewer response
 - Link to the PR
+
+---
+
+## Thread Lifecycle States
+
+The status script tracks each thread through these states:
+
+```
+new → addressed → verified → resolved
+                ↘ contested (→ re-addressed → verified → resolved)
+```
+
+| State | Meaning |
+|-------|---------|
+| **new** | Reviewer comment with no reply from you |
+| **addressed** | You replied or pushed a fix, awaiting reviewer response |
+| **verified** | Reviewer acknowledged your fix (short positive reply, thumbs up) |
+| **contested** | Reviewer pushed back after your fix |
+| **ambiguous** | Reply couldn't be classified as ack or pushback — needs your input |
+| **resolved** | Thread resolved on GitHub |
 
 ---
 
@@ -176,6 +212,8 @@ Print:
 
 - NEVER apply fixes without user confirmation of the classification (Step 2)
 - NEVER reply to comments without user confirmation
+- NEVER auto-resolve contested or ambiguous threads — only verified ones
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans — verify all suggestions against source code
 - If conflicting suggestions exist, flag both and apply neither until resolved
 - If the PR has been updated since comments were posted, warn the user before applying fixes
+- State file lives at `<worktree>/ignore/pr-comments/state.json` — travels with the branch

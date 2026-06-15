@@ -44,6 +44,7 @@ This creates `~/.config/task/taskfile.env` with:
 | pr-review | Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script. | — | — |
 | promote | Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. | 7 days | per-project |
 | retro | Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. | 72h | global |
+| self-review-fix | Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running. | — | — |
 
 **Agents:**
 

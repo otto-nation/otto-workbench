@@ -14,7 +14,8 @@
 #   --no-post                  Skip all interactive prompts; run review and exit
 #   --post                     Run review then post automatically (fully headless)
 #   --issue <link>             Attach an issue link for reviewer context
-#   --self                     Self-review mode: review your own code, output to ignore/reviews/self-review.md
+#   --self                     Self-review mode: review your own code
+#   --fix                      Apply fixes for review findings (requires --self)
 #   --skip-user-verification   Skip ownership check in self-review mode
 #
 # When calling from Claude Code:
@@ -52,9 +53,6 @@ _generator_version() {
 
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
 LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
-
-SELF_REVIEW_DIR="ignore/reviews"
-SELF_REVIEW_FILE="self-review.md"
 
 REVIEW_EXT=".md"
 
@@ -186,15 +184,6 @@ _self_review_repo() {
     _repo_from_remote __out "${wt_path:-.}"
   else
     _extract_repo __out "${pr_input:-local}"
-  fi
-}
-
-_ensure_ignore_dir() {
-  local wt_path="$1"
-  mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
-  local gitignore="${wt_path}/.gitignore"
-  if [[ ! -f "$gitignore" ]] || ! grep -qx "ignore/" "$gitignore"; then
-    echo "ignore/" >> "$gitignore"
   fi
 }
 
@@ -621,6 +610,7 @@ Options:
   --model <name>             Override model for all agents (e.g. sonnet, opus)
   --no-holistic              Skip holistic phase in multi-phase reviews
   --self                     Self-review: review your own code (accepts PR number, branch name, or none for current branch)
+  --fix                      Apply fixes for review findings (requires --self)
   --skip-user-verification   Skip ownership check in --self mode
   --force                    Skip pending review and stale review warnings
   --repo-dir <path>          Path to local repo or worktree (skips auto-detection; aliases: --repo, --worktree)
@@ -1014,6 +1004,7 @@ _run_self_review() {
   local max_cost="${7:-}"
   local model="${8:-}"
   local repo_dir="${9:-}"
+  local fix_pass="${10:-false}"
 
   _prune_merged_reviews
 
@@ -1059,10 +1050,14 @@ _run_self_review() {
     _switch_to_branch wt_path wt_cleanup "$pr_input" "$repo"
   fi
 
-  # ── Review file in worktree ──
-  _ensure_ignore_dir "$wt_path"
-  local self_review_dir="${wt_path}/${SELF_REVIEW_DIR}"
-  local review_file="${self_review_dir}/${SELF_REVIEW_FILE}"
+  # ── Review file in centralized reviews directory ──
+  local repo_name="${repo##*/}"
+  local branch_name
+  branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  local branch_sanitized="${branch_name//\//-}"
+  local self_review_dir="${REVIEWS_DIR}/${repo_name}-self-${branch_sanitized}"
+  mkdir -p "$self_review_dir"
+  local review_file="${self_review_dir}/review${REVIEW_EXT}"
 
   local session_log="${self_review_dir}/${FILENAME_SESSION}"
 
@@ -1074,9 +1069,6 @@ _run_self_review() {
 
   local prior_review_path=""
   _resolve_prior_review prior_review_path "$review_file" "$session_log" "$has_pipeline_state"
-
-  local branch_name
-  branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
 
   local issue_context=""
   if [[ -z "$issue_link" ]]; then
@@ -1104,6 +1096,7 @@ _run_self_review() {
   [[ -n "$issue_link" ]] && orchestrate_args+=(--issue-link "$issue_link")
   [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
   orchestrate_args+=(--max-parallel "$max_parallel")
+  [[ "$fix_pass" == "true" ]] && orchestrate_args+=(--fix)
   _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
 
   if ! _run_orchestrate "${orchestrate_args[@]}"; then
@@ -1207,6 +1200,7 @@ main() {
   local auto_post="false"
   local auto_submit="false"
   local self_review="false"
+  local fix_pass="false"
   local skip_user_verification="false"
   local force="false"
   local no_holistic="false"
@@ -1224,6 +1218,7 @@ main() {
       --post)          auto_post="true"; shift ;;
       --submit)        auto_submit="true"; shift ;;
       --self)          self_review="true"; shift ;;
+      --fix)           fix_pass="true"; shift ;;
       --skip-user-verification) skip_user_verification="true"; shift ;;
       --force)         force="true"; shift ;;
       --no-holistic)   no_holistic="true"; shift ;;
@@ -1253,8 +1248,13 @@ main() {
     repo_dir="$REPO_DIR"
   fi
 
+  if [[ "$fix_pass" == "true" && "$self_review" != "true" ]]; then
+    err "--fix requires --self"
+    exit 1
+  fi
+
   if [[ "$self_review" == "true" ]]; then
-    _run_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir"
+    _run_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir" "$fix_pass"
     if [[ -n "$_json_stdout" ]]; then
       exec {_json_stdout}>&-
     fi

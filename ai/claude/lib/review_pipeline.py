@@ -834,36 +834,40 @@ def _identify_incremental_skips(
     return skips
 
 
+def _holistic_skip_reason(
+    skip_holistic: bool, incremental: bool, group_count: int,
+) -> str | None:
+    if incremental:
+        return "incremental review"
+    if skip_holistic:
+        return "--no-holistic"
+    if group_count < HOLISTIC_MIN_GROUPS:
+        return f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
+    return None
+
+
 def _run_holistic_phase(
     job: ReviewJob, group_count: int, state: PipelineState,
-    skip_holistic: bool, skip_holistic_phase: bool, incremental: bool,
+    skip_holistic: bool, resume_exists: bool, incremental: bool,
 ) -> tuple[str, str, str, float]:
-    run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
+    _empty = ("", "", "", 0.0)
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
     holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
-    cost = 0.0
 
-    if run_holistic and skip_holistic_phase and Path(holistic_output).exists():
-        _info("Phase 1: Holistic scan skipped (exists)")
-        holistic_content = Path(holistic_output).read_text()
-    elif run_holistic:
-        holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
-        if holistic_log:
-            cost = _parse_session_cost(holistic_log)
-        state.holistic_done = True
-        _write_pipeline_state(job, state)
-    else:
-        skip_holistic_incremental = incremental and not skip_holistic
-        if skip_holistic_incremental:
-            reason = "incremental review"
-        elif skip_holistic:
-            reason = "--no-holistic"
-        else:
-            reason = f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
+    reason = _holistic_skip_reason(skip_holistic, incremental, group_count)
+    if reason:
         _info(f"Holistic phase skipped ({reason})")
-        holistic_content, holistic_output, holistic_log = "", "", ""
+        return _empty
 
-    return holistic_content, holistic_output, holistic_log, cost
+    if resume_exists and Path(holistic_output).exists():
+        _info("Phase 1: Holistic scan skipped (exists)")
+        return Path(holistic_output).read_text(), holistic_output, holistic_log, 0.0
+
+    content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+    cost = _parse_session_cost(holistic_log) if holistic_log else 0.0
+    state.holistic_done = True
+    _write_pipeline_state(job, state)
+    return content, holistic_output, holistic_log, cost
 
 
 def _run_groups_and_angles(
@@ -1005,9 +1009,6 @@ def run_multi_phase(
         skip_groups = incremental_skips if incremental_skips else None
     elif incremental_skips:
         skip_groups = skip_groups | incremental_skips
-
-    if incremental:
-        skip_holistic = True
 
     # ── Phase 1: Holistic ────────────────────────────────────────────────────
     holistic_content, holistic_output, holistic_log, holistic_cost = _run_holistic_phase(

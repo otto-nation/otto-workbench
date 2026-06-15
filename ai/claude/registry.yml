@@ -12,7 +12,7 @@ tools:
     allow: true
     description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. For multiple PRs, dispatch separate Agent subagents — do not background with &"
-    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review --self --repo /path/to/worktree"
+    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review threads [<pr_url_or_number>]"
 
   - name: claude-rules
     allow: true
@@ -20,10 +20,10 @@ tools:
     when_to_use: "Adding machine-specific or project-specific Claude instructions"
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
-  - name: pr-comments-status
+  - name: review-threads
     context: none
-    description: "Fetch PR review threads, compute lifecycle states, and output status dashboard + JSON report"
-    when_to_use: "Called by the pr-comments skill to gather thread data and compute lifecycle states; not invoked directly"
+    description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
+    when_to_use: "Called internally by claude-review threads; not invoked directly"
 
   - name: review-orchestrate
     context: none

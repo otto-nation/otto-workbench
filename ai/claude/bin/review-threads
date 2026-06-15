@@ -5,8 +5,8 @@ Renders a human-readable dashboard to stderr and structured JSON to stdout.
 Manages local state in <worktree>/ignore/pr-comments/state.json.
 
 Usage:
-  pr-comments-status [--pr NUMBER] [--repo OWNER/REPO] [--repo-dir PATH]
-  pr-comments-status --resolve-verified
+  review-threads [--pr NUMBER] [--repo OWNER/REPO] [--repo-dir PATH]
+  review-threads --resolve-verified
 """
 
 import argparse
@@ -33,7 +33,7 @@ def _detect_pr() -> tuple[str, int]:
     head_repo = data.get("headRepository") or {}
     repo = head_repo.get("nameWithOwner", "")
     if not repo or "/" not in repo:
-        print(f"Cannot determine repository from PR metadata", file=sys.stderr)
+        print("Cannot determine repository from PR metadata", file=sys.stderr)
         sys.exit(1)
     return repo, data["number"]
 
@@ -74,7 +74,7 @@ def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PR comments status")
+    parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", type=int, help="PR number")
     parser.add_argument("--repo", help="Repository (owner/repo)")
     parser.add_argument("--resolve-verified", action="store_true",

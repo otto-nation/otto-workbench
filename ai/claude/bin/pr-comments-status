@@ -65,6 +65,20 @@ def _my_login() -> str:
     return result.stdout.strip()
 
 
+def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
+    """Resolve all verified threads on GitHub. Returns count resolved."""
+    resolved = 0
+    for thread_data in threads_raw:
+        tid = thread_data["id"]
+        if threads.get(tid, {}).get("state") != pc.STATE_VERIFIED:
+            continue
+        if not pc.resolve_thread(tid):
+            continue
+        threads[tid]["state"] = pc.STATE_RESOLVED
+        resolved += 1
+    return resolved
+
+
 def main():
     parser = argparse.ArgumentParser(description="PR comments status")
     parser.add_argument("--pr", type=int, help="PR number")
@@ -101,13 +115,7 @@ def main():
 
     # Resolve verified threads if requested
     if args.resolve_verified:
-        resolved_count = 0
-        for thread_data in threads_raw:
-            tid = thread_data["id"]
-            if threads.get(tid, {}).get("state") == pc.STATE_VERIFIED:
-                if pc.resolve_thread(tid):
-                    threads[tid]["state"] = pc.STATE_RESOLVED
-                    resolved_count += 1
+        resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
             print(f"Resolved {resolved_count} verified threads", file=sys.stderr)
 

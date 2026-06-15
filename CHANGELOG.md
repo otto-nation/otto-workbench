@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.1](https://github.com/otto-nation/otto-workbench/compare/v1.22.0...v1.22.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **review-post:** handle large PRs, minimized reviews, write errors ([#240](https://github.com/otto-nation/otto-workbench/issues/240)) ([9804ec1](https://github.com/otto-nation/otto-workbench/commit/9804ec16b162082366cda6f734e6bc5b0eea843a))
+
 ## [1.22.0](https://github.com/otto-nation/otto-workbench/compare/v1.21.0...v1.22.0) (2026-06-15)
 
 

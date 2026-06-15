@@ -34,3 +34,4 @@ otto-workbench changelog       # show recent changes from conventional commits
 - **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
 - **Return values via `local -n` (nameref), never `printf -v`** — `printf -v "$var"` silently writes to a same-named `local` in the current scope instead of the caller's variable. Use `local -n __out=$1` and assign `__out="value"`. The `__` prefix convention prevents collisions with caller variables.
 - Migrations are state-tracked in `~/.config/workbench/migrations.applied` and auto-pruned when removed.
+- **Documentation is part of the deliverable** — features, behavioral changes, and new tools must include doc updates before the PR is created. See `ai/guidelines/rules/general.md` (Comments & Documentation) for specifics.

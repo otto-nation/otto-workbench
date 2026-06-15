@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Fetch PR review threads, compute lifecycle states, and output status.
+
+Renders a human-readable dashboard to stderr and structured JSON to stdout.
+Manages local state in <worktree>/ignore/pr-comments/state.json.
+
+Usage:
+  pr-comments-status [--pr NUMBER] [--repo OWNER/REPO]
+  pr-comments-status --resolve-verified
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import pr_comments as pc
+
+
+def _detect_pr() -> tuple[str, int]:
+    """Detect repo and PR number from current branch."""
+    result = subprocess.run(
+        ["gh", "pr", "view", "--json", "number,headRepository"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print("No PR found for current branch", file=sys.stderr)
+        sys.exit(1)
+    data = json.loads(result.stdout)
+    repo_result = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        capture_output=True, text=True,
+    )
+    repo = repo_result.stdout.strip()
+    return repo, data["number"]
+
+
+def _git_toplevel() -> Path:
+    """Get the git toplevel directory."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    return Path(result.stdout.strip())
+
+
+def _my_login() -> str:
+    """Get the current GitHub user login."""
+    result = subprocess.run(
+        ["gh", "api", "user", "--jq", ".login"],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="PR comments status")
+    parser.add_argument("--pr", type=int, help="PR number")
+    parser.add_argument("--repo", help="Repository (owner/repo)")
+    parser.add_argument("--resolve-verified", action="store_true",
+                        help="Resolve all verified threads on GitHub")
+    args = parser.parse_args()
+
+    if args.repo and args.pr:
+        repo, pr_number = args.repo, args.pr
+    else:
+        repo, pr_number = _detect_pr()
+
+    owner, repo_name = repo.split("/", 1)
+    my_login = _my_login()
+
+    # State file
+    toplevel = _git_toplevel()
+    state_path = toplevel / "ignore" / "pr-comments" / "state.json"
+
+    # Load prior state
+    prior_state = pc.load_state(state_path)
+    prior_threads = prior_state.get("threads", {}) if prior_state else {}
+
+    # Fetch from GitHub
+    threads_raw = pc.fetch_threads(owner, repo_name, pr_number)
+    verdicts = pc.fetch_reviewer_verdicts(repo, pr_number)
+    issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login)
+
+    # Sync
+    threads = pc.sync_threads(threads_raw, prior_threads, my_login)
+
+    # Resolve verified threads if requested
+    if args.resolve_verified:
+        resolved_count = 0
+        for thread_data in threads_raw:
+            tid = thread_data["id"]
+            if threads.get(tid, {}).get("state") == pc.STATE_VERIFIED:
+                if pc.resolve_thread(tid):
+                    threads[tid]["state"] = pc.STATE_RESOLVED
+                    resolved_count += 1
+        if resolved_count:
+            print(f"Resolved {resolved_count} verified threads", file=sys.stderr)
+
+    # Save state
+    state = pc.empty_state(repo, pr_number, my_login)
+    state["threads"] = threads
+    pc.save_state(state_path, state)
+
+    # Dashboard to stderr
+    dashboard = pc.render_dashboard(pr_number, threads, verdicts, issue_comments)
+    print(dashboard, file=sys.stderr)
+
+    # JSON report to stdout
+    report = {
+        "repo": repo,
+        "pr_number": pr_number,
+        "my_login": my_login,
+        "threads": [],
+        "issue_comments": issue_comments,
+        "verdicts": verdicts,
+    }
+    for thread_data in threads_raw:
+        tid = thread_data["id"]
+        t = threads.get(tid, {})
+        comments = thread_data.get("comments", {}).get("nodes", [])
+        report["threads"].append({
+            "id": tid,
+            "state": t.get("state", "new"),
+            "classification": t.get("classification"),
+            "reviewer": t.get("reviewer", ""),
+            "comments": comments,
+            "is_resolved": thread_data.get("isResolved", False),
+            "file": thread_data.get("path"),
+            "line": thread_data.get("line"),
+        })
+
+    json.dump(report, sys.stdout, indent=2)
+    print()
+
+
+if __name__ == "__main__":
+    main()

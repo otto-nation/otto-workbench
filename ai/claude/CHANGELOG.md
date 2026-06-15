@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.17.1...claude-review-v1.17.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* **skills:** handle bare repos and permission prompts in self-review-fix ([#242](https://github.com/otto-nation/otto-workbench/issues/242)) ([15ef7bc](https://github.com/otto-nation/otto-workbench/commit/15ef7bc1b605f86438ab95c862a8fd476b5276cf))
+
 ## [1.17.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.17.0...claude-review-v1.17.1) (2026-06-15)
 
 

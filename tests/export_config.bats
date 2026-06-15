@@ -118,7 +118,7 @@ _build_tarball() {
 
 @test "_export_claude_config: includes non-excluded skills" {
   [ -d "$EXPORT_DIR/skills/anatomy" ]
-  [ -d "$EXPORT_DIR/skills/pr-review" ]
+  [ -d "$EXPORT_DIR/skills/pr-comments" ]
 }
 
 @test "_export_claude_config: total skill count matches source minus excluded" {
@@ -226,7 +226,7 @@ _build_tarball() {
 @test "workbench-export: tarball includes non-excluded skills" {
   _build_tarball
   [ -d "$TARBALL_ROOT/skills/anatomy" ]
-  [ -d "$TARBALL_ROOT/skills/pr-review" ]
+  [ -d "$TARBALL_ROOT/skills/pr-comments" ]
 }
 
 @test "workbench-export: reads version from release-please manifest" {

@@ -17,7 +17,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
-| `pr-comments-status` | Fetch PR review threads, compute lifecycle states, and output status dashboard + JSON report |
+| `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
 | `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
@@ -247,22 +247,19 @@ claude-rules <command> [<args>]
 
 Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → `bash`, `yml` → `yaml`.
 
-### `pr-comments-status`
+### `claude-review threads`
 
-Fetch PR review threads, compute lifecycle states, and output a status dashboard + JSON report.
+Show thread lifecycle status for a PR — dashboard and JSON report.
 
 ```
-pr-comments-status [--pr <NUMBER> --repo <OWNER/REPO>] [--repo-dir <PATH>] [--resolve-verified]
+claude-review threads [<pr_url_or_number>] [--resolve-verified] [--repo-dir <PATH>]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--pr <NUMBER>` | PR number |
-| `--repo <OWNER/REPO>` | Repository |
-| `--repo-dir <PATH>` | Git worktree directory (aliases: `--worktree`) |
+| `<pr_url_or_number>` | PR number or URL (auto-detects from current branch if omitted) |
 | `--resolve-verified` | Resolve all verified threads on GitHub |
-
-Without `--pr` and `--repo`, auto-detects from the current branch. When specified, both `--pr` and `--repo` are required together.
+| `--repo-dir <PATH>` | Git worktree directory (aliases: `--repo`, `--worktree`) |
 
 ### `serena-mcp`
 

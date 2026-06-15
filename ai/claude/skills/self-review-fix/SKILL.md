@@ -29,7 +29,7 @@ Reviews your current branch and automatically applies fixes for the findings.
 ```bash
 repo_name=$(basename "$(gh repo view --json name -q .name 2>/dev/null)" 2>/dev/null) || repo_name=""
 branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch_name=""
-branch_sanitized="${branch_name//\//-}"
+branch_sanitized=$(echo "$branch_name" | tr '/' '-')
 review_dir="$HOME/.config/workbench/reviews/${repo_name}-self-${branch_sanitized}"
 review_file="${review_dir}/review.md"
 ```

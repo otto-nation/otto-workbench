@@ -30,16 +30,10 @@ def _detect_pr() -> tuple[str, int]:
         print("No PR found for current branch", file=sys.stderr)
         sys.exit(1)
     data = json.loads(result.stdout)
-    repo_result = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True,
-    )
-    if repo_result.returncode != 0:
-        print("Failed to detect repository", file=sys.stderr)
-        sys.exit(1)
-    repo = repo_result.stdout.strip()
+    head_repo = data.get("headRepository") or {}
+    repo = head_repo.get("nameWithOwner", "")
     if not repo or "/" not in repo:
-        print(f"Invalid repository format: {repo!r}", file=sys.stderr)
+        print(f"Cannot determine repository from PR metadata", file=sys.stderr)
         sys.exit(1)
     return repo, data["number"]
 

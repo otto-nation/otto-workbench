@@ -1,6 +1,6 @@
 ---
 name: pr-comments
-description: "Address incoming PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve. Tracks multi-round review cycles."
+description: "Address incoming PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 ---
 

@@ -52,7 +52,7 @@ STATE_CONTESTED = "contested"
 STATE_RESOLVED = "resolved"
 STATE_AMBIGUOUS = "ambiguous"
 
-_ACK_WORDS = {"done", "lgtm", "looks good", "thanks", "fixed", "nice", "great"}
+_ACK_WORDS = {"done", "lgtm", "looks good", "thanks", "thank you", "fixed", "nice", "great", "sounds good", "perfect", "agreed", "makes sense"}
 _ACK_EMOJI = {"👍", "✅", ":thumbsup:", ":white_check_mark:"}
 _PUSHBACK_WORDS = {"still", "but", "however", "actually", "i think we should", "not quite", "doesn't address"}
 

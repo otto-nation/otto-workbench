@@ -1,6 +1,5 @@
 """Tests for pr_comments library."""
 
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -62,7 +61,7 @@ def _make_comments(*entries):
             "databaseId": 1000 + i,
             "author": {"login": login},
             "body": body,
-            "createdAt": f"2026-06-{10+i:02d}T10:00:00Z",
+            "createdAt": f"2026-01-01T{i:02d}:00:00Z",
         })
     return comments
 
@@ -203,6 +202,7 @@ def test_sync_new_thread_no_prior_state():
     assert "T_abc" in result
     assert result["T_abc"]["state"] == STATE_NEW
     assert result["T_abc"]["reviewer"] == "alice"
+    assert result["T_abc"]["last_seen_reply_id"] == 1000
 
 
 def test_sync_keeps_cached_classification():

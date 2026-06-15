@@ -31,6 +31,17 @@ One sentence: what the changes do and overall quality assessment.
 - [ ] **[I1]** `path/file.ext:LINE` — Description of the issue
 ```
 
+## Review angles
+
+Apply these 7 lenses when scanning the diff:
+1. **Line-by-line scan** — inverted conditions, off-by-one, null deref, missing await, falsy-zero, wrong-variable copy-paste, swallowed errors
+2. **Removed behavior** — for each deleted/replaced line, check if the invariant it enforced is re-established elsewhere
+3. **Cross-file tracer** — for each changed function, check callers and callees for broken contracts
+4. **Reuse** — flag new code that reimplements an existing helper in the codebase
+5. **Simplification** — redundant state, copy-paste with slight variation, deep nesting, dead code
+6. **Efficiency** — redundant computation, sequential independent ops, hot-path waste
+7. **Altitude** — special cases layered on shared infrastructure instead of generalizing
+
 Rules:
 - Every finding MUST start with `- [ ]` (unchecked checkbox)
 - Every finding MUST include a file:line reference

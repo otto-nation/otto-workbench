@@ -15,6 +15,7 @@ from string import Template
 
 from review_common import (
     TEMPLATE_DIR_REL,
+    TEMPLATE_ANGLES, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path, _warn,
@@ -547,6 +548,51 @@ def _prompt_synthesis(job, common, extra):
     return sections, kwargs, ""
 
 
+def _prompt_angles(job, common, extra):
+    holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
+    holistic_block = _build_holistic_block(holistic_content, job.pr.changed_files)
+    sections = {
+        "pr_header": common["pr_header"],
+        "holistic_block": holistic_block,
+        "env_section": common["env_section"],
+        "delta_section": common["delta_section"],
+    }
+    diff_budget = _compute_diff_budget(job, sections)
+    preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
+    sections["preflight_data"] = preflight
+    kwargs = {
+        "branch_name": job.pr.head,
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "holistic_block": holistic_block,
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "env_section": common["env_section"],
+        "angles_output": extra["angles_output"],
+        "wt_path": job.wt_path,
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+def _prompt_fix(job, common, extra):
+    review_content = ""
+    if Path(job.review_file).exists():
+        review_content = Path(job.review_file).read_text()
+    sections = {
+        "review_content": review_content,
+    }
+    kwargs = {
+        "branch_name": job.pr.head,
+        "repo": job.repo,
+        "review_content": review_content,
+        "review_file": job.review_file,
+        "wt_path": job.wt_path,
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
 _PROMPT_HANDLERS = {
     TEMPLATE_SELF_REVIEW: _prompt_self_review,
     TEMPLATE_SELF_SYNTHESIS: _prompt_self_synthesis,
@@ -554,6 +600,8 @@ _PROMPT_HANDLERS = {
     TEMPLATE_HOLISTIC: _prompt_holistic,
     TEMPLATE_GROUP: _prompt_group,
     TEMPLATE_SYNTHESIS: _prompt_synthesis,
+    TEMPLATE_ANGLES: _prompt_angles,
+    TEMPLATE_FIX: _prompt_fix,
 }
 
 

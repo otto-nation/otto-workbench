@@ -132,12 +132,12 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 **Output:** `ai/memory/RETRO.md`
 **Auto-trigger:** 72h (via Stop hook)
 
-### `/self-review-fix`
+### `/self-review-fix [branch_name]`
 
 Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running.
 
 ```
-/self-review-fix
+/self-review-fix [branch_name]
 ```
 <!-- SKILL-REFERENCE-END -->
 

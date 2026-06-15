@@ -190,6 +190,35 @@ _self_review_repo() {
   fi
 }
 
+_resolve_bare_repo_worktree() {
+  local branch="${1:-}"
+  local wt_line wt_dir
+
+  if [[ -n "$branch" ]]; then
+    wt_line=$(git worktree list 2>/dev/null | grep -F "[$branch]") || true
+    if [[ -n "$wt_line" ]]; then
+      wt_dir=$(echo "$wt_line" | awk '{print $1}')
+      echo "$wt_dir"
+      return 0
+    fi
+  fi
+
+  # Fall back to the default branch worktree
+  local default_branch
+  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
+  [[ -n "$default_branch" ]] || default_branch="main"
+
+  wt_line=$(git worktree list 2>/dev/null | grep -F "[$default_branch]") || true
+  if [[ -n "$wt_line" ]]; then
+    wt_dir=$(echo "$wt_line" | awk '{print $1}')
+    echo "$wt_dir"
+    return 0
+  fi
+
+  err "Bare repository — no worktree found for ${branch:-$default_branch}. Pass --repo-dir to specify a worktree"
+  exit 1
+}
+
 _extract_pr_number() {
   local -n __out=$1
   local input="$2"
@@ -1044,8 +1073,12 @@ _run_self_review() {
     }
   else
     wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || {
-      err "Not in a git repository — pass --repo-dir to specify the repo"
-      exit 1
+      if [[ "$(git rev-parse --is-bare-repository 2>/dev/null)" == "true" ]]; then
+        wt_path=$(_resolve_bare_repo_worktree "$pr_input")
+      else
+        err "Not in a git repository — pass --repo-dir to specify the repo"
+        exit 1
+      fi
     }
   fi
 

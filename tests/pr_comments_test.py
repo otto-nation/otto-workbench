@@ -10,7 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_comments import load_state, save_state, empty_state
+from pr_comments import load_state, save_state, empty_state, compute_thread_state
 
 
 def test_empty_state_has_required_fields():
@@ -52,3 +52,99 @@ def test_save_creates_parent_directories():
         state = empty_state("repo", 1, "user")
         save_state(path, state)
         assert path.exists()
+
+
+def _make_comments(*entries):
+    """Helper: create comment list from (login, body) tuples."""
+    comments = []
+    for i, (login, body) in enumerate(entries):
+        comments.append({
+            "databaseId": 1000 + i,
+            "author": {"login": login},
+            "body": body,
+            "createdAt": f"2026-06-{10+i:02d}T10:00:00Z",
+        })
+    return comments
+
+
+def test_new_thread_no_replies():
+    state = compute_thread_state(
+        comments=_make_comments(("alice", "Use RunTx here")),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "new"
+
+
+def test_addressed_my_reply_is_latest():
+    state = compute_thread_state(
+        comments=_make_comments(
+            ("alice", "Use RunTx here"),
+            ("isaacg", "Fixed."),
+        ),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "addressed"
+
+
+def test_verified_reviewer_acks():
+    state = compute_thread_state(
+        comments=_make_comments(
+            ("alice", "Use RunTx here"),
+            ("isaacg", "Fixed."),
+            ("alice", "LGTM, thanks!"),
+        ),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "verified"
+
+
+def test_contested_reviewer_pushes_back():
+    state = compute_thread_state(
+        comments=_make_comments(
+            ("alice", "Use RunTx here"),
+            ("isaacg", "Fixed."),
+            ("alice", "I still think we should use the shared helper instead"),
+        ),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "contested"
+
+
+def test_resolved_on_github():
+    state = compute_thread_state(
+        comments=_make_comments(("alice", "Use RunTx here")),
+        is_resolved=True,
+        my_login="isaacg",
+    )
+    assert state == "resolved"
+
+
+def test_re_addressed_after_contested():
+    state = compute_thread_state(
+        comments=_make_comments(
+            ("alice", "Use RunTx here"),
+            ("isaacg", "Fixed."),
+            ("alice", "Not quite, still need to handle the error"),
+            ("isaacg", "Good point, updated."),
+        ),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "addressed"
+
+
+def test_ambiguous_short_question():
+    state = compute_thread_state(
+        comments=_make_comments(
+            ("alice", "Use RunTx here"),
+            ("isaacg", "Fixed."),
+            ("alice", "Hmm?"),
+        ),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "ambiguous"

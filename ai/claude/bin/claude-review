@@ -59,6 +59,7 @@ REVIEW_EXT=".md"
 FILENAME_PRIOR="prior${REVIEW_EXT}"
 FILENAME_SESSION="session.jsonl"
 FILENAME_POST_SESSION="post.jsonl"
+FILENAME_META="meta.json"
 FILENAME_PIPELINE_STATE="pipeline.json"
 
 ARCHIVE_KEEP_COUNT=3
@@ -369,6 +370,12 @@ _json_summary() {
     review_content_raw=$(cat "$review_file" 2>/dev/null) || true
   fi
 
+  local head_sha="" head_ref="" base_ref="" review_type=""
+  local meta_file="${review_dir}/${FILENAME_META}"
+  if [[ -f "$meta_file" ]]; then
+    read -r head_sha head_ref base_ref review_type <<< "$(jq -r '[.head_sha // "", .head_ref // "", .base_ref // "", .review_type // ""] | @tsv' "$meta_file" 2>/dev/null)" || true
+  fi
+
   jq_args+=(
     --argjson total "$total" --arg verdict "$verdict"
     --argjson cost_usd "${cost_usd:-0}"
@@ -378,6 +385,10 @@ _json_summary() {
     --argjson cache_write_tokens "${cache_write_tokens:-0}"
     --argjson duration_ms "${duration_ms:-0}"
     --arg review_content "$review_content_raw"
+    --arg head_sha "${head_sha:-}"
+    --arg head_ref "${head_ref:-}"
+    --arg base_ref "${base_ref:-}"
+    --arg review_type "${review_type:-}"
   )
 
   local json
@@ -385,6 +396,10 @@ _json_summary() {
     "{
       repo: \$repo,
       pr_number: (if \$pr == \"\" then null else (\$pr | tonumber) end),
+      head_sha: (if \$head_sha == \"\" then null else \$head_sha end),
+      head_ref: (if \$head_ref == \"\" then null else \$head_ref end),
+      base_ref: (if \$base_ref == \"\" then null else \$base_ref end),
+      review_type: (if \$review_type == \"\" then null else \$review_type end),
       review_file: \$review_file,
       review_content: (if \$review_content == \"\" then null else \$review_content end),
       findings: { ${keys_expr}total: \$total },
@@ -1402,7 +1417,7 @@ PRUNE_MAX_FILES=10
 _prune_merged_reviews() {
   local pruned=0 checked=0
 
-  for meta_file in "$REVIEWS_DIR"/*/meta.json; do
+  for meta_file in "$REVIEWS_DIR"/*/"${FILENAME_META}"; do
     [[ -f "$meta_file" ]] || continue
     (( checked >= PRUNE_MAX_FILES )) && break
 

@@ -745,6 +745,39 @@ EOF
   [ "$(echo "$json" | jq '.findings.total')" = "2" ]
 }
 
+@test "_json_summary: includes metadata from meta.json" {
+  local review_dir="$TMPDIR/reviews/org-repo-42"
+  mkdir -p "$review_dir"
+  cat > "$review_dir/review.md" <<'EOF'
+## Should fix
+- **[S1]** path:1 — improvement
+EOF
+  cat > "$review_dir/meta.json" <<'EOF'
+{"head_sha":"abc123def456","head_ref":"feat/my-branch","base_ref":"main","review_type":"full"}
+EOF
+  run _json_summary "org/repo" "42" "$review_dir/review.md"
+  [ "$status" -eq 0 ]
+  local json="${output#REVIEW_SUMMARY:}"
+  [ "$(echo "$json" | jq -r '.head_sha')" = "abc123def456" ]
+  [ "$(echo "$json" | jq -r '.head_ref')" = "feat/my-branch" ]
+  [ "$(echo "$json" | jq -r '.base_ref')" = "main" ]
+  [ "$(echo "$json" | jq -r '.review_type')" = "full" ]
+}
+
+@test "_json_summary: metadata fields are null without meta.json" {
+  cat > "$TMPDIR/review.md" <<'EOF'
+## Should fix
+- **[S1]** path:1 — improvement
+EOF
+  run _json_summary "org/repo" "42" "$TMPDIR/review.md"
+  [ "$status" -eq 0 ]
+  local json="${output#REVIEW_SUMMARY:}"
+  [ "$(echo "$json" | jq '.head_sha')" = "null" ]
+  [ "$(echo "$json" | jq '.head_ref')" = "null" ]
+  [ "$(echo "$json" | jq '.base_ref')" = "null" ]
+  [ "$(echo "$json" | jq '.review_type')" = "null" ]
+}
+
 @test "_json_summary: missing review file" {
   run _json_summary "org/repo" "42" "$TMPDIR/nonexistent.md"
   [ "$status" -eq 0 ]

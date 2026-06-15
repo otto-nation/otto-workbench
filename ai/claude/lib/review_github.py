@@ -83,14 +83,15 @@ def _fetch_pr_metadata(repo: str, pr: str) -> dict:
 
 
 def _get_diff(repo: str, pr: str) -> str:
-    """Get the PR diff."""
+    """Get the PR diff. Returns empty string if the diff is unavailable
+    (e.g. PRs exceeding GitHub's 300-file limit)."""
     code, out = _gh_api(
         f"repos/{repo}/pulls/{pr}",
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
     if code != 0:
-        _err("Failed to get diff")
-        sys.exit(1)
+        _warn("Failed to get diff from API — inline positioning unavailable")
+        return ""
     return out
 
 

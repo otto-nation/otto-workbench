@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.16.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.15.0...claude-review-v1.16.0) (2026-06-15)
+
+
+### Features
+
+* **review:** add head_sha, head_ref, base_ref, review_type to JSON summary ([#235](https://github.com/otto-nation/otto-workbench/issues/235)) ([7643455](https://github.com/otto-nation/otto-workbench/commit/7643455dd22c7b3b89c81eb152fe2a665dd794d9))
+
+
+### Bug Fixes
+
+* avoid bash parameter substitution in skill code blocks ([#237](https://github.com/otto-nation/otto-workbench/issues/237)) ([72e8d96](https://github.com/otto-nation/otto-workbench/commit/72e8d9604669f686ef93f88d6b1487a622e5b9b2))
+
 ## [1.15.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.14.0...claude-review-v1.15.0) (2026-06-15)
 
 

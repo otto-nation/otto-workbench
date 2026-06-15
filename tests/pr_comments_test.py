@@ -10,7 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_comments import load_state, save_state, empty_state, compute_thread_state
+from pr_comments import load_state, save_state, empty_state, compute_thread_state, sync_threads, STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED
 
 
 def test_empty_state_has_required_fields():
@@ -148,3 +148,80 @@ def test_ambiguous_short_question():
         my_login="isaacg",
     )
     assert state == "ambiguous"
+
+
+def test_sync_new_thread_no_prior_state():
+    threads = [{
+        "id": "T_abc",
+        "isResolved": False,
+        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
+    }]
+    prior_threads = {}
+    result = sync_threads(threads, prior_threads, "isaacg")
+    assert "T_abc" in result
+    assert result["T_abc"]["state"] == STATE_NEW
+    assert result["T_abc"]["reviewer"] == "alice"
+
+
+def test_sync_keeps_cached_classification():
+    threads = [{
+        "id": "T_abc",
+        "isResolved": False,
+        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
+    }]
+    prior_threads = {
+        "T_abc": {
+            "state": STATE_NEW,
+            "classification": "suggestion",
+            "reviewer": "alice",
+            "file": "handler.go",
+            "line": 42,
+            "summary": "Fix the handler",
+            "decided_at": "2026-06-14T15:00:00Z",
+            "last_seen_reply_id": 1000,
+        },
+    }
+    result = sync_threads(threads, prior_threads, "isaacg")
+    assert result["T_abc"]["classification"] == "suggestion"
+    assert result["T_abc"]["summary"] == "Fix the handler"
+
+
+def test_sync_detects_new_reply_updates_state():
+    threads = [{
+        "id": "T_abc",
+        "isResolved": False,
+        "comments": {"nodes": _make_comments(
+            ("alice", "Fix this"),
+            ("isaacg", "Fixed."),
+        )},
+    }]
+    prior_threads = {
+        "T_abc": {
+            "state": STATE_NEW,
+            "classification": "suggestion",
+            "reviewer": "alice",
+            "file": None,
+            "line": None,
+            "summary": None,
+            "decided_at": None,
+            "last_seen_reply_id": 1000,
+        },
+    }
+    result = sync_threads(threads, prior_threads, "isaacg")
+    assert result["T_abc"]["state"] == STATE_ADDRESSED
+    assert result["T_abc"]["last_seen_reply_id"] == 1001
+
+
+def test_sync_resolved_on_github_overrides():
+    threads = [{
+        "id": "T_abc",
+        "isResolved": True,
+        "comments": {"nodes": _make_comments(("alice", "Fix this"))},
+    }]
+    prior_threads = {
+        "T_abc": {"state": STATE_NEW, "last_seen_reply_id": 1000,
+                  "classification": None, "reviewer": "alice",
+                  "file": None, "line": None, "summary": None, "decided_at": None},
+    }
+    result = sync_threads(threads, prior_threads, "isaacg")
+    assert result["T_abc"]["state"] == STATE_RESOLVED

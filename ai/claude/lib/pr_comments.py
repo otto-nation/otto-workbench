@@ -245,3 +245,114 @@ def resolve_thread(thread_id: str) -> bool:
         input=query, capture_output=True, text=True,
     )
     return result.returncode == 0
+
+
+# ── State sync ─────────────────────────────────────────────────────────────
+
+def sync_threads(
+    threads: list[dict],
+    prior_threads: dict,
+    my_login: str,
+) -> dict:
+    """Sync GitHub thread data with local state. Returns updated threads dict."""
+    result = {}
+    for thread in threads:
+        tid = thread["id"]
+        comments = thread.get("comments", {}).get("nodes", [])
+        is_resolved = thread.get("isResolved", False)
+
+        state = compute_thread_state(comments, is_resolved, my_login)
+        last_comment_id = comments[-1]["databaseId"] if comments else None
+        first_comment = comments[0] if comments else {}
+        reviewer = (first_comment.get("author") or {}).get("login", "")
+
+        prior = prior_threads.get(tid, {})
+        prior_last_seen = prior.get("last_seen_reply_id")
+
+        has_new_replies = prior_last_seen is not None and last_comment_id != prior_last_seen
+
+        entry = {
+            "state": state,
+            "reviewer": reviewer,
+            "last_seen_reply_id": last_comment_id,
+            "file": thread.get("path"),
+            "line": thread.get("line"),
+            "summary": prior.get("summary"),
+            "decided_at": prior.get("decided_at"),
+            "classification": prior.get("classification") if not has_new_replies else None,
+        }
+
+        if not has_new_replies and prior.get("classification"):
+            entry["classification"] = prior["classification"]
+            entry["summary"] = prior.get("summary")
+            entry["decided_at"] = prior.get("decided_at")
+
+        result[tid] = entry
+    return result
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────────
+
+def _relative_time(iso_str: str) -> str:
+    """Convert ISO timestamp to relative time string."""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - dt
+        hours = int(delta.total_seconds() // 3600)
+        if hours < 1:
+            return f"{int(delta.total_seconds() // 60)} minutes ago"
+        if hours < 24:
+            return f"{hours} hours ago"
+        days = hours // 24
+        return f"{days} day{'s' if days != 1 else ''} ago"
+    except (ValueError, TypeError):
+        return ""
+
+
+def render_dashboard(
+    pr_number: int,
+    threads: dict,
+    verdicts: list[dict],
+    issue_comments: list[dict],
+) -> str:
+    """Render the status dashboard as a string."""
+    lines = [f"## PR #{pr_number} Review Status", ""]
+
+    lines.append("Reviewers:")
+    for v in sorted(verdicts, key=lambda x: x.get("submitted_at", ""), reverse=True):
+        time_str = _relative_time(v.get("submitted_at", ""))
+        lines.append(f"  @{v['user']} — {v['state']} ({time_str})")
+    lines.append("")
+
+    counts = {STATE_RESOLVED: 0, STATE_ADDRESSED: 0, STATE_CONTESTED: 0,
+              STATE_NEW: 0, STATE_VERIFIED: 0, STATE_AMBIGUOUS: 0}
+    for t in threads.values():
+        counts[t["state"]] = counts.get(t["state"], 0) + 1
+    total = len(threads)
+
+    lines.append(f"Threads: {total} total")
+    if counts[STATE_RESOLVED]:
+        lines.append(f"  ✓ {counts[STATE_RESOLVED]} resolved")
+    if counts[STATE_VERIFIED]:
+        lines.append(f"  ✓ {counts[STATE_VERIFIED]} verified (ready to resolve)")
+    if counts[STATE_ADDRESSED]:
+        lines.append(f"  ⏳ {counts[STATE_ADDRESSED]} addressed (awaiting reviewer)")
+    if counts[STATE_CONTESTED]:
+        lines.append(f"  ⚠ {counts[STATE_CONTESTED]} contested (reviewer pushed back)")
+    if counts[STATE_AMBIGUOUS]:
+        lines.append(f"  ? {counts[STATE_AMBIGUOUS]} ambiguous (needs your input)")
+    if counts[STATE_NEW]:
+        lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
+
+    if issue_comments:
+        lines.append(f"  💬 {len(issue_comments)} discussion comments")
+    lines.append("")
+
+    blockers = [v["user"] for v in verdicts if v["state"] == "CHANGES_REQUESTED"]
+    if blockers:
+        lines.append(f"Blocking merge: {', '.join('@' + b for b in blockers)}")
+    elif not any(v["state"] == "APPROVED" for v in verdicts):
+        lines.append("Blocking merge: no approvals yet")
+    lines.append("")
+
+    return "\n".join(lines)

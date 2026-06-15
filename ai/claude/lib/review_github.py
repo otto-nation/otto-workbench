@@ -52,6 +52,19 @@ def _gh_api(
     return result.returncode, result.stdout
 
 
+def _gh_graphql(query: str, variables: dict) -> tuple[int, str]:
+    """Call gh api graphql and return (exit_code, stdout).
+
+    The query string is passed as a raw field (-f); all variables are passed
+    as typed fields (-F) so gh auto-detects integers and booleans.
+    """
+    cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for key, val in variables.items():
+        cmd.extend(["-F", f"{key}={val}"])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_API_TIMEOUT)
+    return result.returncode, result.stdout
+
+
 def _fetch_json_list(endpoint: str) -> list:
     code, out = _gh_api(endpoint)
     if code != 0:

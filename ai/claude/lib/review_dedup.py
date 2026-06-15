@@ -9,7 +9,6 @@ from __future__ import annotations
 import functools
 import json
 import re
-import subprocess
 
 import review_github
 
@@ -147,6 +146,9 @@ def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
     Uses GraphQL to detect minimized (hidden/outdated) reviews and exclude
     them — the REST API does not expose minimizedReason.
     Each entry has keys: id, body, state.
+
+    Note: fetches at most the last 100 reviews. PRs with more than 100 reviews
+    may miss older bot reviews — cursor-based pagination is not implemented.
     """
     bot_user = _get_bot_login()
     if not bot_user:
@@ -170,15 +172,10 @@ def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
       }
     }
     """
-    result = subprocess.run(
-        ["gh", "api", "graphql",
-         "-f", f"query={query}",
-         "-F", f"owner={owner}",
-         "-F", f"name={name}",
-         "-F", f"pr={pr}"],
-        capture_output=True, text=True, timeout=30,
+    rc, stdout = review_github._gh_graphql(
+        query, {"owner": owner, "name": name, "pr": int(pr)},
     )
-    if result.returncode != 0:
+    if rc != 0:
         # Fall back to REST (without minimized filtering)
         all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
         return [
@@ -189,7 +186,7 @@ def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
         ]
 
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(stdout)
         nodes = data["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return []

@@ -67,13 +67,6 @@
   - `find ... -print0 | xargs -0 <command>` for other commands
   - Both `find` and `xargs` are already auto-allowed
 
-## Avoid Bash Parameter Substitution in Skill Code Blocks
-
-- Never use `${var//pattern/replacement}` or `${var#pattern}` in skill SKILL.md code blocks — Claude Code's static analyzer can't parse these and triggers a permission prompt every time. Use piped alternatives instead:
-  - `echo "$var" | tr '/' '-'` instead of `${var//\//-}`
-  - `echo "$var" | sed 's/pattern/replacement/g'` for complex substitutions
-  - This only applies to code blocks in SKILL.md files (run via Bash tool). Standalone `.sh` scripts run directly and are unaffected
-
 ## Rebase, Cherry-Pick, Merge Conflicts
 
 - During interactive git operations (rebase, cherry-pick, merge conflict resolution), use only Bash commands — the Edit tool can corrupt git's index state and abort the operation

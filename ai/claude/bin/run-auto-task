@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Run a Claude Code skill as a headless background session.
+#
+# Usage: run-auto-task <skill-name>
+#
+# Spawns `claude -p` in the background with --bare (skips hooks to prevent
+# cascading) and streams output to ~/.claude/logs/<skill>-<timestamp>.log.
+# Designed to be called from Stop hooks instead of setting pending flags.
+#
+# Env:
+#   CLAUDE_LOG_DIR  — override log directory (default: ~/.claude/logs)
+
+set -e
+
+skill="${1:?Usage: run-auto-task <skill-name>}"
+
+log_dir="${CLAUDE_LOG_DIR:-$HOME/.claude/logs}"
+mkdir -p "$log_dir"
+timestamp="$(date +%Y%m%d-%H%M%S)"
+log_file="${log_dir}/${skill}-${timestamp}.log"
+
+nohup claude -p "/$skill" --bare --permission-mode bypassPermissions \
+  > "$log_file" 2>&1 & disown

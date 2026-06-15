@@ -114,61 +114,67 @@ def _collect_available_names(tree: ast.Module) -> set[str]:
     return names
 
 
+def _walk_scope(node: ast.AST) -> list[ast.AST]:
+    """Walk all descendants of node, stopping at nested scope boundaries.
+
+    Yields every node inside the given function/method body but does NOT
+    descend into nested functions, async functions, or lambdas — those
+    are separate scopes.
+    """
+    result: list[ast.AST] = []
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        child = stack.pop()
+        result.append(child)
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(child))
+    return result
+
+
+def _extract_assigned_names(node: ast.AST) -> set[str]:
+    """Extract names bound by a single AST node (assignment target, loop var, etc.)."""
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.Tuple):
+        return {elt.id for elt in node.elts if isinstance(elt, ast.Name)}
+    return set()
+
+
 def _collect_function_locals(func_node: ast.AST) -> set[str]:
-    """Collect names defined locally within a function (params, assignments, loops)."""
-    local_names: set[str] = set()
-    for arg in func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs:
-        local_names.add(arg.arg)
-    if func_node.args.vararg:
-        local_names.add(func_node.args.vararg.arg)
-    if func_node.args.kwarg:
-        local_names.add(func_node.args.kwarg.arg)
+    """Collect all names bound inside a function scope."""
+    names: set[str] = set()
 
-    def _walk_shallow(node: ast.AST):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if child is not func_node:
-                    local_names.add(child.name)
-                    continue
-            if isinstance(child, ast.Lambda):
-                for a in child.args.args:
-                    local_names.add(a.arg)
-                continue
-            if isinstance(child, ast.Import):
-                for alias in child.names:
-                    local_names.add(alias.asname or alias.name)
-            elif isinstance(child, ast.ImportFrom):
-                for alias in child.names:
-                    name = alias.asname or alias.name
-                    if name != "*":
-                        local_names.add(name)
-            elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-                local_names.add(child.id)
-            elif isinstance(child, ast.ExceptHandler) and child.name:
-                local_names.add(child.name)
-            elif isinstance(child, ast.For) and isinstance(child.target, ast.Name):
-                local_names.add(child.target.id)
-            elif isinstance(child, ast.For) and isinstance(child.target, ast.Tuple):
-                for elt in child.target.elts:
-                    if isinstance(elt, ast.Name):
-                        local_names.add(elt.id)
-            elif isinstance(child, ast.comprehension):
-                if isinstance(child.target, ast.Name):
-                    local_names.add(child.target.id)
-                elif isinstance(child.target, ast.Tuple):
-                    for elt in child.target.elts:
-                        if isinstance(elt, ast.Name):
-                            local_names.add(elt.id)
-            _walk_shallow(child)
+    args = func_node.args
+    for arg in args.args + args.posonlyargs + args.kwonlyargs:
+        names.add(arg.arg)
+    if args.vararg:
+        names.add(args.vararg.arg)
+    if args.kwarg:
+        names.add(args.kwarg.arg)
 
-    _walk_shallow(func_node)
-    return local_names
+    for node in _walk_scope(func_node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.For, ast.comprehension)):
+            names |= _extract_assigned_names(node.target)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+
+    return names
 
 
 def _collect_bare_refs(tree: ast.Module) -> set[str]:
     """Collect bare Name references in function/method bodies that need module scope."""
-    refs: set[str] = set()
-
     func_nodes: list[ast.AST] = []
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -178,22 +184,13 @@ def _collect_bare_refs(tree: ast.Module) -> set[str]:
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     func_nodes.append(child)
 
-    def _walk_excluding_nested(node: ast.AST):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if child is not node:
-                    continue
-            if isinstance(child, ast.Lambda):
-                continue
-            yield child
-            yield from _walk_excluding_nested(child)
-
+    refs: set[str] = set()
     for func in func_nodes:
         locals_ = _collect_function_locals(func)
-        for child in _walk_excluding_nested(func):
-            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
-                if child.id not in locals_:
-                    refs.add(child.id)
+        for node in _walk_scope(func):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id not in locals_:
+                    refs.add(node.id)
 
     return refs
 

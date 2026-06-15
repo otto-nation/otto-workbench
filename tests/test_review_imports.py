@@ -337,53 +337,31 @@ def test_library_module_imports_independently(mod_name, rp):
 # ── 7. Proxy submodule completeness ────────────────────────────────────────
 
 
-def _get_proxy_submodule_names(script: Path) -> list[str]:
-    """Extract module names from _SUBMODULES tuple in a script."""
-    tree = ast.parse(script.read_text(), filename=str(script))
-
-    aliases: list[str] = []
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_SUBMODULES":
-                    if isinstance(node.value, ast.Tuple):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Name):
-                                aliases.append(elt.id)
-
-    import_map: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                import_map[alias.asname or alias.name] = alias.name
-
-    return [import_map.get(a, a) for a in aliases]
-
-
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_proxy_submodules_match_imports(script):
     """Every module listed in _SUBMODULES must have a matching import."""
-    source = script.read_text()
-    tree = ast.parse(source, filename=str(script))
+    tree = ast.parse(script.read_text(), filename=str(script))
 
-    submodule_aliases: list[str] = []
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_SUBMODULES":
-                    if isinstance(node.value, ast.Tuple):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Name):
-                                submodule_aliases.append(elt.id)
+    aliases = [
+        elt.id
+        for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id == "_SUBMODULES"
+        and isinstance(node.value, ast.Tuple)
+        for elt in node.value.elts
+        if isinstance(elt, ast.Name)
+    ]
 
-    import_map: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                import_map[alias.asname or alias.name] = alias.name
+    imports = {
+        alias.asname or alias.name
+        for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
 
-    for alias in submodule_aliases:
-        assert alias in import_map, (
+    for alias in aliases:
+        assert alias in imports, (
             f"{script.name}: _SUBMODULES references '{alias}' but no "
             f"'import ... as {alias}' found"
         )

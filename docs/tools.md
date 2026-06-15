@@ -32,6 +32,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
 | `validate-nesting` | Validates bash script nesting depth to enforce flat control flow |
 | `validate-errexit` | Validates bash scripts for dangerous && patterns that silently exit under set -e |
+| `validate-skills` | Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing |
 | `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |

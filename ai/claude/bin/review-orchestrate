@@ -28,20 +28,25 @@ import review_prompt as _rpmt  # noqa: E402
 import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
 
-from review_common import *  # noqa: E402,F403
-from review_findings import *  # noqa: E402,F403
-from review_preflight import *  # noqa: E402,F403
-from review_prompt import *  # noqa: E402,F403
-from review_agent import *  # noqa: E402,F403
-from review_pipeline import *  # noqa: E402,F403
-
-from review_common import _derive_path, _info  # noqa: E402
-from review_pipeline import _fetch_metadata  # noqa: E402
+from review_common import (  # noqa: E402
+    FILENAME_SESSION, MODE_PR, MODE_SELF, PIPELINE_MULTI, PIPELINE_SINGLE,
+    _derive_path, _info,
+)
+from review_preflight import (  # noqa: E402
+    DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL,
+    MULTI_PHASE_FILE_THRESHOLD, MULTI_PHASE_LINE_THRESHOLD,
+    ReviewJob, collect_preflight_data,
+)
+from review_pipeline import (  # noqa: E402
+    _fetch_metadata, run_fix_pass, run_multi_phase, run_single_agent,
+)
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
 
 
 class _ProxyModule(type(sys.modules[__name__])):
+    """Allows tests to access submodule attributes via the script module."""
+
     def __getattr__(self, name):
         for mod in _SUBMODULES:
             try:

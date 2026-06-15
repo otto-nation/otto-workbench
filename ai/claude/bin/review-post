@@ -27,13 +27,6 @@ import review_format as _rfmt  # noqa: E402
 import review_github as _rg  # noqa: E402
 import review_posting as _rp  # noqa: E402
 
-from review_common import *  # noqa: E402,F403
-from review_dedup import *  # noqa: E402,F403
-from review_findings import *  # noqa: E402,F403
-from review_format import *  # noqa: E402,F403
-from review_github import *  # noqa: E402,F403
-from review_posting import *  # noqa: E402,F403
-
 from review_common import SEVERITY_LABELS, _err, _info, _warn  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
@@ -73,6 +66,8 @@ _SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp)
 
 
 class _ProxyModule(type(sys.modules[__name__])):
+    """Allows tests to access submodule attributes via the script module."""
+
     def __getattr__(self, name):
         for mod in _SUBMODULES:
             try:

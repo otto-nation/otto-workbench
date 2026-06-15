@@ -206,6 +206,29 @@ ALL_SOURCES = _discover_python_sources()
     ALL_SOURCES,
     ids=[p.name for p in ALL_SOURCES],
 )
+def test_no_wildcard_imports(source_path: Path):
+    """No Python file should use ``from X import *``."""
+    source = source_path.read_text()
+    tree = ast.parse(source, filename=str(source_path))
+
+    wildcards: list[str] = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    wildcards.append(f"  - from {node.module} import * (line {node.lineno})")
+
+    assert not wildcards, (
+        f"{source_path.name}: wildcard imports found:\n"
+        + "\n".join(wildcards)
+    )
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    ALL_SOURCES,
+    ids=[p.name for p in ALL_SOURCES],
+)
 def test_bare_refs_resolvable(source_path: Path):
     """Every bare name in a function body must be a builtin, import, or definition.
 
@@ -215,9 +238,6 @@ def test_bare_refs_resolvable(source_path: Path):
     """
     source = source_path.read_text()
     tree = ast.parse(source, filename=str(source_path))
-
-    if _has_wildcard_import(tree):
-        pytest.skip("wildcard imports — covered by test_review_imports.py")
 
     available = _collect_available_names(tree) | BUILTIN_NAMES
     bare_refs = _collect_bare_refs(tree)

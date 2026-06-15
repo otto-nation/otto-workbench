@@ -1,37 +1,24 @@
-"""Regression tests for the proxy-module import pattern.
+"""Import convention tests for review scripts and library modules.
 
-Python's ``from module import *`` skips names starting with ``_``.
-The proxy module's ``__getattr__`` handles external access
-(``module.name``), but bare name lookups inside functions use
-``globals()`` — which only contains explicitly imported names.
-
-These tests verify multiple layers of correctness:
+These tests verify correctness of import patterns:
 
 1. **AST: bare underscore imports** — every ``_``-prefixed bare name
-   used in a function body is explicitly imported (not just via wildcard
-   or proxy fallback).
+   used in a function body is explicitly imported.
 
 2. **AST: cross-module call pattern** — library modules that call into
    other library modules use ``import module`` + ``module.func()``
-   (module-qualified), not ``from module import func``.  The latter
-   creates a local binding that ``patch("module.func", ...)`` can't
-   reach, breaking testability.
+   (module-qualified), not ``from module import func``.
 
-3. **Proxy resolution** — every name defined in library modules is
-   accessible through the proxy, catching missing submodules or
-   explicit imports.
-
-4. **Function identity** — proxy-resolved objects are the same objects
-   as in the defining module, catching stale bindings or shadowing.
-
-5. **No duplicate definitions** — each function/class is defined in
+3. **No duplicate definitions** — each function/class is defined in
    exactly one library module.
 
-6. **No circular imports** — each library module is independently
+4. **No circular imports** — each library module is independently
    importable.
 
-7. **Proxy submodule completeness** — ``_SUBMODULES`` references match
-   actual ``import ... as`` statements.
+5. **Entry point callable** — ``main()`` is resolvable in each script.
+
+6. **Cross-module bare references** — every bare name referencing a
+   peer module's definition has an explicit import.
 
 All expectations are derived dynamically from module ASTs and runtime
 state — no hardcoded name lists that drift as modules evolve.
@@ -245,44 +232,6 @@ def _collect_cross_module_from_imports(
     return results
 
 
-def _get_proxy_submodule_names(script: Path) -> list[str]:
-    """Extract module names from _SUBMODULES tuple in a script."""
-    tree = ast.parse(script.read_text(), filename=str(script))
-
-    aliases: list[str] = []
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_SUBMODULES":
-                    if isinstance(node.value, ast.Tuple):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Name):
-                                aliases.append(elt.id)
-
-    import_map: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                import_map[alias.asname or alias.name] = alias.name
-
-    return [import_map.get(a, a) for a in aliases]
-
-
-def _get_submodule_defined_names(script: Path) -> list[tuple[str, str]]:
-    """Get (module_name, defined_name) for all names defined in the
-    script's proxy submodules.  Drives parametrized proxy resolution
-    and identity tests dynamically.
-    """
-    pairs: list[tuple[str, str]] = []
-    for mod_name in _get_proxy_submodule_names(script):
-        mod_path = LIB_DIR / f"{mod_name}.py"
-        if not mod_path.exists():
-            continue
-        for name in sorted(_collect_all_names(mod_path)):
-            pairs.append((mod_name, name))
-    return pairs
-
-
 # ── 1. AST: bare underscore imports ────────────────────────────────────────
 
 
@@ -338,81 +287,7 @@ def test_cross_module_calls_use_module_qualified_pattern(mod_name):
     )
 
 
-# ── 3. Proxy resolution (dynamic) ──────────────────────────────────────────
-
-
-_RP_SUBMODULE_NAMES = _get_submodule_defined_names(SCRIPTS[0])
-_RO_SUBMODULE_NAMES = _get_submodule_defined_names(SCRIPTS[1])
-
-
-@pytest.mark.parametrize(
-    "mod_name,name",
-    _RP_SUBMODULE_NAMES,
-    ids=[f"rp.{n}" for _, n in _RP_SUBMODULE_NAMES],
-)
-def test_rp_proxy_resolves_name(mod_name, name, rp):
-    """Every name defined in a review-post submodule must be accessible
-    through the proxy.  Derived dynamically from module ASTs — adding
-    a function to any submodule automatically adds a test case.
-    """
-    assert hasattr(rp, name), (
-        f"rp.{name} (defined in {mod_name}) is not resolvable through "
-        f"the proxy — check explicit imports and _SUBMODULES"
-    )
-
-
-@pytest.mark.parametrize(
-    "mod_name,name",
-    _RO_SUBMODULE_NAMES,
-    ids=[f"ro.{n}" for _, n in _RO_SUBMODULE_NAMES],
-)
-def test_ro_proxy_resolves_name(mod_name, name, ro):
-    """Every name defined in a review-orchestrate submodule must be
-    accessible through the proxy.
-    """
-    assert hasattr(ro, name), (
-        f"ro.{name} (defined in {mod_name}) is not resolvable through "
-        f"the proxy — check explicit imports and _SUBMODULES"
-    )
-
-
-# ── 4. Function identity (dynamic) ─────────────────────────────────────────
-
-
-def _callable_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Filter to callable functions (not constants/regex patterns)."""
-    return [(m, n) for m, n in pairs if not n.isupper()]
-
-
-_RP_CALLABLE_PAIRS = _callable_pairs(_RP_SUBMODULE_NAMES)
-
-
-@pytest.mark.parametrize(
-    "mod_name,func_name",
-    _RP_CALLABLE_PAIRS,
-    ids=[f"{m}.{n}" for m, n in _RP_CALLABLE_PAIRS],
-)
-def test_rp_proxy_returns_original_object(mod_name, func_name, rp):
-    """rp.func must be the exact same object as module.func.
-
-    If the proxy returns a different object (stale binding, accidental
-    shadowing, wrong submodule), patches on the defining module won't
-    affect what rp.func calls.
-    """
-    source_mod = sys.modules.get(mod_name)
-    if source_mod is None:
-        pytest.skip(f"{mod_name} not in sys.modules")
-    if not hasattr(source_mod, func_name):
-        pytest.skip(f"{mod_name}.{func_name} not found at runtime")
-
-    proxy_obj = getattr(rp, func_name)
-    source_obj = getattr(source_mod, func_name)
-    assert proxy_obj is source_obj, (
-        f"rp.{func_name} is not the same object as {mod_name}.{func_name}"
-    )
-
-
-# ── 5. No duplicate definitions ────────────────────────────────────────────
+# ── 3. No duplicate definitions ────────────────────────────────────────────
 
 
 def test_no_duplicate_definitions_across_post_modules():
@@ -449,7 +324,7 @@ def test_no_duplicate_definitions_across_post_modules():
 
 
 @pytest.mark.parametrize("mod_name", POST_LIB_MODULES)
-def test_library_module_imports_independently(mod_name):
+def test_library_module_imports_independently(mod_name, rp):
     """Each library module must be importable on its own."""
     mod = sys.modules.get(mod_name)
     assert mod is not None, (
@@ -460,6 +335,29 @@ def test_library_module_imports_independently(mod_name):
 
 
 # ── 7. Proxy submodule completeness ────────────────────────────────────────
+
+
+def _get_proxy_submodule_names(script: Path) -> list[str]:
+    """Extract module names from _SUBMODULES tuple in a script."""
+    tree = ast.parse(script.read_text(), filename=str(script))
+
+    aliases: list[str] = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_SUBMODULES":
+                    if isinstance(node.value, ast.Tuple):
+                        for elt in node.value.elts:
+                            if isinstance(elt, ast.Name):
+                                aliases.append(elt.id)
+
+    import_map: dict[str, str] = {}
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                import_map[alias.asname or alias.name] = alias.name
+
+    return [import_map.get(a, a) for a in aliases]
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
@@ -506,7 +404,22 @@ def test_main_callable(script, fixture, request):
     assert callable(mod.main)
 
 
-# ── 8. Wildcard coverage (dynamic) ─────────────────────────────────────────
+# ── 8. Cross-module bare references (dynamic) ────────────────────────────────
+
+# Build a map of {name: defining_module} for all names across all lib modules.
+# Dynamically discovered — adding a module or function updates the map.
+_PEER_DEFS: dict[str, str] = {}
+for _mod_name in ALL_LIB_MODULES:
+    _mod_path = LIB_DIR / f"{_mod_name}.py"
+    for _defn in _collect_all_names(_mod_path):
+        _PEER_DEFS.setdefault(_defn, _mod_name)
+
+# All Python files that import review_* modules (lib modules + entry scripts)
+_ALL_PYTHON_SOURCES = [
+    (mod_name, LIB_DIR / f"{mod_name}.py") for mod_name in ALL_LIB_MODULES
+] + [
+    (script.name, script) for script in SCRIPTS
+]
 
 
 def _collect_public_names(mod_path: Path) -> set[str]:
@@ -525,43 +438,6 @@ def _collect_public_names(mod_path: Path) -> set[str]:
                 if isinstance(target, ast.Name) and not target.id.startswith("_"):
                     names.add(target.id)
     return names
-
-
-@pytest.mark.parametrize("mod_name", POST_LIB_MODULES)
-def test_wildcard_import_covers_public_names(mod_name, rp):
-    """Public names from each library module must be accessible via rp.
-
-    Wildcard import covers public names (no _ prefix). If a module
-    defines a new public function but isn't in _SUBMODULES, this
-    catches it.
-    """
-    mod_path = LIB_DIR / f"{mod_name}.py"
-    public_names = _collect_public_names(mod_path)
-
-    missing = sorted(name for name in public_names if not hasattr(rp, name))
-
-    assert not missing, (
-        f"Public names from {mod_name} not accessible via rp proxy:\n"
-        + "\n".join(f"  - {name}" for name in missing)
-    )
-
-
-# ── 9. Cross-module bare references (dynamic) ────────────────────────────────
-
-# Build a map of {name: defining_module} for all names across all lib modules.
-# Dynamically discovered — adding a module or function updates the map.
-_PEER_DEFS: dict[str, str] = {}
-for _mod_name in ALL_LIB_MODULES:
-    _mod_path = LIB_DIR / f"{_mod_name}.py"
-    for _defn in _collect_all_names(_mod_path):
-        _PEER_DEFS.setdefault(_defn, _mod_name)
-
-# All Python files that import review_* modules (lib modules + entry scripts)
-_ALL_PYTHON_SOURCES = [
-    (mod_name, LIB_DIR / f"{mod_name}.py") for mod_name in ALL_LIB_MODULES
-] + [
-    (script.name, script) for script in SCRIPTS
-]
 
 
 def _collect_wildcard_sources(tree: ast.Module) -> set[str]:

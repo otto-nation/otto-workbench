@@ -127,13 +127,13 @@ for skill_dir in "$SKILLS_DIR"/*/; do
     _fail "$display: lifecycle_scope present but lifecycle_cadence missing"
   elif [[ -n "$local_cadence" && -n "$local_scope" ]]; then
     _pass "$display: lifecycle fields paired"
+  fi
 
-    # Validate scope value
-    if [[ "$local_scope" == "per-project" || "$local_scope" == "global" ]]; then
-      _pass "$display: lifecycle_scope valid"
-    else
-      _fail "$display: lifecycle_scope '$local_scope' must be 'per-project' or 'global'"
-    fi
+  # Validate scope value (only when both lifecycle fields are present)
+  if [[ -n "$local_cadence" && -n "$local_scope" ]]; then
+    [[ "$local_scope" == "per-project" || "$local_scope" == "global" ]] \
+      && _pass "$display: lifecycle_scope valid" \
+      || _fail "$display: lifecycle_scope '$local_scope' must be 'per-project' or 'global'"
   fi
 done
 

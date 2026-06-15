@@ -150,6 +150,48 @@ def test_ambiguous_short_question():
     assert state == "ambiguous"
 
 
+def test_long_positive_reply_is_ambiguous_not_contested():
+    long_positive = "Great work on this! The implementation looks solid and handles all the edge cases I was worried about. Ship it when ready, this is excellent."
+    state = compute_thread_state(
+        comments=_make_comments(
+            ("alice", "Use RunTx here"),
+            ("isaacg", "Fixed."),
+            ("alice", long_positive),
+        ),
+        is_resolved=False,
+        my_login="isaacg",
+    )
+    assert state == "ambiguous"
+
+
+def test_sync_clears_summary_on_new_replies():
+    threads = [{
+        "id": "T_abc",
+        "isResolved": False,
+        "comments": {"nodes": _make_comments(
+            ("alice", "Fix this"),
+            ("isaacg", "Fixed."),
+            ("alice", "Not quite, still needs work"),
+        )},
+    }]
+    prior_threads = {
+        "T_abc": {
+            "state": STATE_ADDRESSED,
+            "classification": "suggestion",
+            "reviewer": "alice",
+            "file": None,
+            "line": None,
+            "summary": "Old summary",
+            "decided_at": "2026-06-14T15:00:00Z",
+            "last_seen_reply_id": 1001,
+        },
+    }
+    result = sync_threads(threads, prior_threads, "isaacg")
+    assert result["T_abc"]["classification"] is None
+    assert result["T_abc"]["summary"] is None
+    assert result["T_abc"]["decided_at"] is None
+
+
 def test_sync_new_thread_no_prior_state():
     threads = [{
         "id": "T_abc",

@@ -28,7 +28,9 @@ The script outputs:
 - **stderr:** Human-readable status dashboard (reviewer verdicts, thread counts by state, merge blockers)
 - **stdout:** Structured JSON report with all threads, their lifecycle states, comments, and verdicts
 
-Parse the JSON report from stdout. If there are no threads in `new`, `contested`, or `ambiguous` state, report that nothing needs action and stop.
+If the script fails (non-zero exit code), ask the user which PR to address and re-run with explicit `--pr` and `--repo` flags.
+
+Parse the JSON report from stdout. If there are no threads in `new`, `contested`, or `ambiguous` state, and no unaddressed issue-level comments, report that nothing needs action and stop.
 
 If a specific reviewer was mentioned (e.g., "address Gemini's comments"), filter the threads to that reviewer.
 
@@ -66,6 +68,8 @@ Present the classification table for user confirmation:
 
 Proceed with this classification? (y/n)
 ```
+
+Also classify any **issue-level comments** from the `issue_comments` array in the JSON report. These are general PR discussion comments (not inline code threads). They don't have lifecycle states — classify them the same way as threads (suggestion, question, acknowledgment, conflicting) and include them in the classification table.
 
 ### 3. Verify actionable suggestions
 

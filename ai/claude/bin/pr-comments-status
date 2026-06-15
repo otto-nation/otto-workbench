@@ -34,7 +34,13 @@ def _detect_pr() -> tuple[str, int]:
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         capture_output=True, text=True,
     )
+    if repo_result.returncode != 0:
+        print("Failed to detect repository", file=sys.stderr)
+        sys.exit(1)
     repo = repo_result.stdout.strip()
+    if not repo or "/" not in repo:
+        print(f"Invalid repository format: {repo!r}", file=sys.stderr)
+        sys.exit(1)
     return repo, data["number"]
 
 
@@ -44,6 +50,9 @@ def _git_toplevel() -> Path:
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        print("Not in a git repository", file=sys.stderr)
+        sys.exit(1)
     return Path(result.stdout.strip())
 
 
@@ -66,6 +75,8 @@ def main():
 
     if args.repo and args.pr:
         repo, pr_number = args.repo, args.pr
+    elif args.repo or args.pr:
+        parser.error("--repo and --pr must be provided together")
     else:
         repo, pr_number = _detect_pr()
 

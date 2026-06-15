@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,8 +81,6 @@ def _is_pushback(body: str) -> bool:
             return True
     if "?" in body and len(lower) > 10:
         return True
-    if len(lower) > ACK_MAX_LEN and not _is_acknowledgment(body):
-        return True
     return False
 
 
@@ -131,12 +130,14 @@ query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       reviewThreads(first: 100) {
+        totalCount
         nodes {
           id
           isResolved
           path
           line
           comments(first: 50) {
+            totalCount
             nodes {
               id
               databaseId
@@ -175,7 +176,19 @@ def fetch_threads(owner: str, repo_name: str, pr_number: int) -> list[dict]:
         return []
     try:
         data = json.loads(result.stdout)
-        return data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        threads_data = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+        nodes = threads_data["nodes"]
+        total = threads_data.get("totalCount", len(nodes))
+        if total > len(nodes):
+            print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (GraphQL limit)", file=sys.stderr)
+        for node in nodes:
+            comments_data = node.get("comments", {})
+            comment_total = comments_data.get("totalCount", 0)
+            comment_nodes = comments_data.get("nodes", [])
+            if comment_total > len(comment_nodes):
+                path = node.get("path", "?")
+                print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched", file=sys.stderr)
+        return nodes
     except (json.JSONDecodeError, KeyError, TypeError):
         return []
 
@@ -191,7 +204,7 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
 
 def fetch_reviewer_verdicts(repo: str, pr_number: int) -> list[dict]:
     """Fetch latest review verdict per reviewer."""
-    code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews")
+    code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100")
     if code != 0:
         return []
     try:
@@ -271,23 +284,25 @@ def sync_threads(
 
         has_new_replies = prior_last_seen is not None and last_comment_id != prior_last_seen
 
-        entry = {
+        if has_new_replies:
+            classification = None
+            summary = None
+            decided_at = None
+        else:
+            classification = prior.get("classification")
+            summary = prior.get("summary")
+            decided_at = prior.get("decided_at")
+
+        result[tid] = {
             "state": state,
             "reviewer": reviewer,
             "last_seen_reply_id": last_comment_id,
             "file": thread.get("path"),
             "line": thread.get("line"),
-            "summary": prior.get("summary"),
-            "decided_at": prior.get("decided_at"),
-            "classification": prior.get("classification") if not has_new_replies else None,
+            "classification": classification,
+            "summary": summary,
+            "decided_at": decided_at,
         }
-
-        if not has_new_replies and prior.get("classification"):
-            entry["classification"] = prior["classification"]
-            entry["summary"] = prior.get("summary")
-            entry["decided_at"] = prior.get("decided_at")
-
-        result[tid] = entry
     return result
 
 

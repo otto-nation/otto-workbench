@@ -72,7 +72,7 @@ Skills auto-trigger on a cadence via Stop hooks in `settings.json`. The pipeline
 | Skill | Cadence | Min Sessions | Scope | Output |
 |-------|---------|--------------|-------|--------|
 | anatomy | on HEAD change | — | per-project | `.claude/anatomy.md` |
-| dream | 24h | 5 | per-project | `Memory files in project memory/` |
+| dream | 24h | 5 | per-project | `~/.claude/projects/*/memory/` |
 | machine | 24h | — | global | `~/.claude/machine/machine.md` |
 | promote | 7 days | 10 | per-project | `ai/memory/PROMOTE.md` |
 | retro | 72h | 5 | global | `ai/memory/RETRO.md` |

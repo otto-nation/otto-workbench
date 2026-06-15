@@ -308,7 +308,8 @@ _extract_frontmatter_field() {
     | grep "^${field}:" \
     | sed "s/^${field}:[[:space:]]*//" \
     | sed 's/^"\(.*\)"$/\1/' \
-    | head -1
+    | head -1 \
+    || true
 }
 
 _readme_ai_installs() {
@@ -395,20 +396,24 @@ _readme_lifecycle() {
   for d in "$claude_skills_src"/*/; do
     [[ -d "$d" ]] || continue
     local cadence
-    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")" || true
+    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")"
     [[ -z "$cadence" ]] && continue
 
     local skill_name min_sessions scope output
     skill_name="$(basename "$d")"
-    min_sessions="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_min_sessions")" || true
-    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")" || true
-    output="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_output")" || true
+    min_sessions="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_min_sessions")"
+    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")"
+    output="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_output")"
     [[ -z "$min_sessions" ]] && min_sessions="—"
     [[ -z "$scope" ]] && scope="—"
-    [[ -z "$output" ]] && output="—"
+    local output_fmt="$output"
+    if [[ -n "$output" ]]; then
+      output_fmt="\`${output}\`"
+    else
+      output_fmt="—"
+    fi
 
-    # shellcheck disable=SC2016  # backticks are markdown literals
-    printf '| %s | %s | %s | %s | `%s` |\n' "$skill_name" "$cadence" "$min_sessions" "$scope" "$output"
+    printf '| %s | %s | %s | %s | %s |\n' "$skill_name" "$cadence" "$min_sessions" "$scope" "$output_fmt"
   done
 
   # shellcheck disable=SC2016  # backticks are markdown literals

@@ -5,7 +5,7 @@ source: otto-workbench/ai/claude/skills/dream/SKILL.md
 lifecycle_cadence: "24h"
 lifecycle_min_sessions: 5
 lifecycle_scope: per-project
-lifecycle_output: "Memory files in project memory/"
+lifecycle_output: "~/.claude/projects/*/memory/"
 ---
 
 # Dream - Memory Consolidation

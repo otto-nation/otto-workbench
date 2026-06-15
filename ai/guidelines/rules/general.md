@@ -46,7 +46,7 @@
 - Silent fallbacks and defense-in-depth patterns require a comment explaining intent
 - When adding docs, extend existing files rather than creating new ones
 - When adding a skill, agent, or task: update source frontmatter (SKILL.md, agent .md) and run `generate-tool-context` — generated sections in ai-automation.md, tools.md, and components.md update automatically
-- When adding or changing auto-triggered lifecycle behavior (hooks, cooldowns, pending flags), update the skill's SKILL.md frontmatter (`lifecycle_*` fields) and run `generate-tool-context`
+- When adding or changing auto-triggered lifecycle behavior (hooks, cooldowns, pending flags), update both the `should-*.sh` script constants and the skill's SKILL.md frontmatter (`lifecycle_*` fields), then run `generate-tool-context`
 - When adding CLI commands or changing command signatures, update `docs/ai-automation.md` and/or `README.md`
 
 ## Testing

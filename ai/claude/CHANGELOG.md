@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.13.0...claude-review-v1.14.0) (2026-06-15)
+
+
+### Features
+
+* **pr-comments:** add thread lifecycle tracking for multi-round reviews ([#226](https://github.com/otto-nation/otto-workbench/issues/226)) ([6b49dc6](https://github.com/otto-nation/otto-workbench/commit/6b49dc6fb2beb0abfd02fd189ba385da481aa17c))
+
 ## [1.13.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.12.2...claude-review-v1.13.0) (2026-06-12)
 
 

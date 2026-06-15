@@ -59,118 +59,100 @@ This creates `~/.config/task/taskfile.env` with:
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 <!-- AI-INSTALLS-END -->
 
+<!-- SKILL-REFERENCE-START -->
 ## Skill Reference
 
 ### `/analyze-project`
 
-Analyze a project's codebase and populate scaffolded `.claude/CLAUDE.md` and `.claude/rules/` files with project-specific conventions.
+Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. Run after scaffolding a new project.
 
 ```
 /analyze-project
 ```
 
-No arguments. Run after `otto-workbench ai init` scaffolds a new project. Three phases: DISCOVER (scan identity, paths, workflow, patterns) → PROPOSE (draft content with user confirmation) → APPLY (write to scaffolded files).
-
-**Output:** `.claude/CLAUDE.md`, `.claude/rules/`
+**Output:** `.claude/CLAUDE.md, .claude/rules/`
 
 ### `/anatomy`
 
-Generate or refresh a project file index with per-file descriptions and token estimates.
+Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring.
 
 ```
 /anatomy
 ```
 
-No arguments. Scans `git ls-files`, extracts first meaningful comment (lines 1–15), estimates tokens as `lines × 4`, writes markdown table grouped by directory. Skips binary files, lock files, and generated code.
-
 **Output:** `.claude/anatomy.md`
-**Auto-trigger:** on git HEAD change (via Stop hook)
+**Auto-trigger:** on HEAD change (via Stop hook)
 
 ### `/context`
 
-Refresh `.claude/context.md` with architectural facts from recent sessions and memory.
+On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md.
 
 ```
 /context
 ```
 
-No arguments. Lighter than `/dream` — focuses only on context.md, not memory consolidation. Identifies wrong-software discoveries, tool availability findings, architectural confirmations, and new services. Proposes additions with evidence before applying.
-
 **Output:** `.claude/context.md`
 
 ### `/dream`
 
-Memory consolidation — scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files.
+Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory.
 
 ```
 /dream
 ```
 
-No arguments. Five phases: ORIENT → GATHER SIGNAL → CONSOLIDATE → PRUNE & INDEX → CONTEXT UPDATE. Routes facts to the correct destination (`machine.md`, `context.md`, or `memory/`). Runs `dream-verify` for integrity checks.
-
-**Output:** `memory/` topic files (preferences, decisions, corrections, patterns, review-feedback)
-**Auto-trigger:** every 24h (via Stop hook)
+**Output:** `memory/ topic files`
+**Auto-trigger:** 24h (via Stop hook)
 
 ### `/machine`
 
-Refresh the machine profile with hardware, OS, runtimes, Docker, Git identity, and project registry.
+Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh.
 
 ```
 /machine
 ```
 
-No arguments. Regenerates unconditionally, bypassing the 24h staleness check. Run after upgrading tools or when `<!-- last-updated -->` is more than 7 days old.
-
 **Output:** `~/.claude/machine/machine.md`
-**Auto-trigger:** every 24h (via Stop hook)
+**Auto-trigger:** 24h (via Stop hook)
 
-### `/pr-comments`
+### `/pr-comments [<pr_number>]`
 
-Analyze and address PR review comments with lifecycle tracking.
+Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles.
 
 ```
 /pr-comments [<pr_number>]
 ```
 
-`<pr_number>` is optional — auto-detects from the current branch when omitted.
+### `/pr-review <pr_number>`
 
-Eight steps: Fetch → Classify (actionable/question/approval/conflicting) → Verify suggestions against codebase → Apply fixes → Reply inline → Resolve verified threads → Emit feedback signals → Report. Tracks thread lifecycle: new → addressed → verified → resolved (or contested → re-addressed).
-
-### `/pr-review`
-
-Manage GitHub PR review lifecycle — analyze unanswered threads, update review files, and post replies.
+Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script.
 
 ```
 /pr-review <pr_number>
 ```
 
-`<pr_number>` is required. Works with existing PENDING reviews or submitted reviews with unanswered threads. Updates review file at `~/.config/workbench/reviews/<repo>-<pr_number>.md`.
-
 ### `/promote`
 
-Review accumulated memories for promotion into durable workbench artifacts.
+Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose.
 
 ```
 /promote
 ```
 
-No arguments. Four phases: ORIENT → EVALUATE → PROPOSE → RECORD. Uses priority ladder: Lint rules → Scripts/Automation → Coding rules → Agent/Skill updates → Keep as memory → Delete.
-
-**Output:** `ai/memory/PROMOTE.md` (read-only report — user reviews and applies manually)
-**Auto-trigger:** every 7 days (via Stop hook)
+**Output:** `ai/memory/PROMOTE.md`
+**Auto-trigger:** 7 days (via Stop hook)
 
 ### `/retro`
 
-Analyze PR review comments to identify gaps in coding rules.
+Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements.
 
 ```
 /retro
 ```
 
-No arguments. Four phases: ORIENT → CLASSIFY (rule-gap, rule-refinement, false-negative, one-off, noise) → PROPOSE → REPORT. Elevates patterns appearing 2+ times.
-
-**Output:** `ai/memory/RETRO.md` (read-only report — user reviews and applies manually)
-**Auto-trigger:** every 72h (via Stop hook)
+**Output:** `ai/memory/RETRO.md`
+**Auto-trigger:** 72h (via Stop hook)
+<!-- SKILL-REFERENCE-END -->
 
 <!-- LIFECYCLE-START -->
 ## Session Lifecycle

@@ -89,6 +89,7 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   local_name="$(_frontmatter_field "$skill_file" "name")"
   local_desc="$(_frontmatter_field "$skill_file" "description")"
   local_source="$(_frontmatter_field "$skill_file" "source")"
+  local_invocation="$(_frontmatter_field "$skill_file" "invocation")"
 
   [[ -n "$local_name" ]] \
     && _pass "$display: name field present" \
@@ -97,6 +98,10 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   [[ -n "$local_desc" ]] \
     && _pass "$display: description field present" \
     || _fail "$display: missing required field: description"
+
+  [[ -n "$local_invocation" ]] \
+    && _pass "$display: invocation field present" \
+    || _fail "$display: missing required field: invocation"
 
   [[ -n "$local_source" ]] \
     && _pass "$display: source field present" \

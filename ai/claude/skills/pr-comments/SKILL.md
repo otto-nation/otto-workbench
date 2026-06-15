@@ -2,6 +2,7 @@
 name: pr-comments
 description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
+invocation: "/pr-comments [<pr_number>]"
 ---
 
 # PR Comments

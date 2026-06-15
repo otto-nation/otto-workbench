@@ -29,6 +29,7 @@ _make_skill() {
     echo "name: $name"
     echo "description: \"Test skill description.\""
     echo "source: otto-workbench/ai/claude/skills/$name/SKILL.md"
+    echo "invocation: \"/$name\""
     [[ -n "$cadence" ]] && echo "lifecycle_cadence: \"$cadence\""
     [[ -n "$scope" ]] && echo "lifecycle_scope: $scope"
     echo "---"
@@ -139,6 +140,21 @@ EOF
   _run_validate
   [ "$status" -eq 1 ]
   [[ "$output" == *"missing required field: description"* ]]
+}
+
+@test "missing invocation field fails" {
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-invoc"
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<'EOF'
+---
+name: no-invoc
+description: "Has description"
+source: otto-workbench/ai/claude/skills/no-invoc/SKILL.md
+---
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing required field: invocation"* ]]
 }
 
 @test "missing source field fails" {
@@ -271,6 +287,7 @@ EOF
 name: 'quoted'
 description: 'A skill with single-quoted values'
 source: 'otto-workbench/ai/claude/skills/quoted/SKILL.md'
+invocation: '/quoted'
 ---
 EOF
   _run_validate

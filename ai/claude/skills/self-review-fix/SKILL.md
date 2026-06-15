@@ -2,6 +2,7 @@
 name: self-review-fix
 description: "Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running."
 source: otto-workbench/ai/claude/skills/self-review-fix/SKILL.md
+invocation: "/self-review-fix"
 ---
 
 # Self-Review Fix

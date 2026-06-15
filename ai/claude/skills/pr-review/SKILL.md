@@ -2,6 +2,7 @@
 name: pr-review
 description: "Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script."
 source: otto-workbench/ai/claude/skills/pr-review/SKILL.md
+invocation: "/pr-review <pr_number>"
 ---
 
 # PR Review

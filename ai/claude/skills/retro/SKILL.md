@@ -2,6 +2,8 @@
 name: retro
 description: "Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements."
 source: otto-workbench/ai/claude/skills/retro/SKILL.md
+invocation: "/retro"
+output: "ai/memory/RETRO.md"
 lifecycle_cadence: "72h"
 lifecycle_scope: global
 ---

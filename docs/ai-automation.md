@@ -31,7 +31,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, context, dream, machine, pr-comments, pr-review, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, context, dream, machine, pr-comments, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -108,14 +108,6 @@ Analyze and address PR review comments with lifecycle tracking: fetch, classify,
 
 ```
 /pr-comments [<pr_number>]
-```
-
-### `/pr-review <pr_number>`
-
-Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script.
-
-```
-/pr-review <pr_number>
 ```
 
 ### `/promote`

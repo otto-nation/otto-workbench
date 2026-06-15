@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Validate SKILL.md frontmatter conventions across all workbench skills.
+#
+# Usage: bin/local/validate-skills [--quiet]
+#
+# Checks:
+#   - SKILL.md has YAML frontmatter (opening and closing ---)
+#   - Required fields: name, description, source
+#   - name matches the skill directory name
+#   - source matches otto-workbench/ai/claude/skills/<name>/SKILL.md
+#   - lifecycle_cadence and lifecycle_scope must appear together
+#   - lifecycle_scope is one of: per-project, global
+#
+# Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(dirname "$_SELF")/../../lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate SKILL.md frontmatter conventions across all workbench skills.
+
+Options:
+  --quiet     Suppress per-check output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+ERRORS=0
+CHECKS=0
+FOUND=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+# Read a field from YAML frontmatter. Returns empty string if not found.
+_frontmatter_field() {
+  local file="$1" field="$2"
+  sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null \
+    | grep "^${field}:" \
+    | sed "s/^${field}:[[:space:]]*//" \
+    | sed 's/^"\(.*\)"$/\1/' \
+    | head -1 \
+    || true
+}
+
+SKILLS_DIR="$WORKBENCH_DIR/ai/claude/skills"
+
+for skill_dir in "$SKILLS_DIR"/*/; do
+  [[ -d "$skill_dir" ]] || continue
+  dir_name="$(basename "$skill_dir")"
+  skill_file="$skill_dir/SKILL.md"
+  display="skills/$dir_name"
+
+  # SKILL.md must exist
+  if [[ ! -f "$skill_file" ]]; then
+    FOUND=$(( FOUND + 1 ))
+    _fail "$display: missing SKILL.md"
+    continue
+  fi
+
+  FOUND=$(( FOUND + 1 ))
+
+  # Frontmatter presence
+  first_line="$(head -1 "$skill_file")"
+  if [[ "$first_line" != "---" ]]; then
+    _fail "$display: missing YAML frontmatter (file must start with ---)"
+    continue
+  fi
+
+  closing_line="$(awk 'NR > 1 && /^---$/ { print NR; exit }' "$skill_file")"
+  if [[ -z "$closing_line" ]]; then
+    _fail "$display: missing closing --- in frontmatter"
+    continue
+  fi
+
+  _pass "$display: frontmatter present"
+
+  # Required fields
+  local_name="$(_frontmatter_field "$skill_file" "name")"
+  local_desc="$(_frontmatter_field "$skill_file" "description")"
+  local_source="$(_frontmatter_field "$skill_file" "source")"
+
+  [[ -n "$local_name" ]] \
+    && _pass "$display: name field present" \
+    || _fail "$display: missing required field: name"
+
+  [[ -n "$local_desc" ]] \
+    && _pass "$display: description field present" \
+    || _fail "$display: missing required field: description"
+
+  [[ -n "$local_source" ]] \
+    && _pass "$display: source field present" \
+    || _fail "$display: missing required field: source"
+
+  # name must match directory
+  if [[ -n "$local_name" ]]; then
+    [[ "$local_name" == "$dir_name" ]] \
+      && _pass "$display: name matches directory" \
+      || _fail "$display: name '$local_name' does not match directory '$dir_name'"
+  fi
+
+  # source must match expected path
+  if [[ -n "$local_source" ]]; then
+    expected_source="otto-workbench/ai/claude/skills/$dir_name/SKILL.md"
+    [[ "$local_source" == "$expected_source" ]] \
+      && _pass "$display: source path valid" \
+      || _fail "$display: source '$local_source' does not match expected '$expected_source'"
+  fi
+
+  # Lifecycle fields must appear together
+  local_cadence="$(_frontmatter_field "$skill_file" "lifecycle_cadence")"
+  local_scope="$(_frontmatter_field "$skill_file" "lifecycle_scope")"
+
+  if [[ -n "$local_cadence" && -z "$local_scope" ]]; then
+    _fail "$display: lifecycle_cadence present but lifecycle_scope missing"
+  elif [[ -z "$local_cadence" && -n "$local_scope" ]]; then
+    _fail "$display: lifecycle_scope present but lifecycle_cadence missing"
+  elif [[ -n "$local_cadence" && -n "$local_scope" ]]; then
+    _pass "$display: lifecycle fields paired"
+
+    # Validate scope value
+    if [[ "$local_scope" == "per-project" || "$local_scope" == "global" ]]; then
+      _pass "$display: lifecycle_scope valid"
+    else
+      _fail "$display: lifecycle_scope '$local_scope' must be 'per-project' or 'global'"
+    fi
+  fi
+done
+
+# Summary
+echo
+if (( FOUND == 0 )); then
+  echo -e "  ${DIM}no skill directories found${NC}"
+  exit 0
+elif (( ERRORS == 0 )); then
+  success "$CHECKS checks passed ($FOUND skills)"
+  exit 0
+else
+  err "$ERRORS of $CHECKS checks failed"
+  exit 1
+fi

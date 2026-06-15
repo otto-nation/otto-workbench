@@ -329,21 +329,25 @@ _readme_ai_installs() {
   # shellcheck disable=SC2016
   printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
 
-  # Skills table with descriptions from SKILL.md frontmatter
+  # Skills table with descriptions and lifecycle metadata from SKILL.md frontmatter
   local has_skills=false
   for d in "$claude_skills_src"/*/; do
     [[ -d "$d" ]] || continue
     if [[ "$has_skills" == false ]]; then
       printf '\n**Skills:**\n\n'
-      printf '| Skill | Description |\n'
-      printf '|-------|-------------|\n'
+      printf '| Skill | Description | Cadence | Scope |\n'
+      printf '|-------|-------------|---------|-------|\n'
       has_skills=true
     fi
-    local skill_name skill_desc
+    local skill_name skill_desc cadence scope
     skill_name="$(basename "$d")"
     skill_desc="$(_extract_frontmatter_field "$d/SKILL.md" "description")"
+    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")"
+    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")"
     [[ -z "$skill_desc" ]] && skill_desc="—"
-    printf '| %s | %s |\n' "$skill_name" "$skill_desc"
+    [[ -z "$cadence" ]] && cadence="—"
+    [[ -z "$scope" ]] && scope="—"
+    printf '| %s | %s | %s | %s |\n' "$skill_name" "$skill_desc" "$cadence" "$scope"
   done
 
   # Agents table with descriptions from agent .md frontmatter
@@ -377,45 +381,16 @@ _readme_ai_installs() {
 }
 
 # _readme_lifecycle — renders the Session Lifecycle section for ai-automation.md.
-# Reads lifecycle_* frontmatter fields from SKILL.md files to build the auto-triggered
-# skills table. Skills without lifecycle_cadence are skipped.
+# Explains the auto-trigger pipeline. Skill cadences are shown in the skills table
+# rendered by _readme_ai_installs (single source for all skill metadata).
 _readme_lifecycle() {
-  local claude_skills_src="$AI_DIR/claude/skills"
-
   printf '## Session Lifecycle\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
-  printf 'Skills auto-trigger on a cadence via Stop hooks in `settings.json`. The pipeline:\n\n'
+  printf 'Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf '1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`\n'
   printf '2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag\n'
   printf '3. **Skill completion** — completion script records a timestamp so the cooldown resets\n'
-  printf '\n### Auto-triggered skills\n\n'
-  printf '| Skill | Cadence | Min Sessions | Scope | Output |\n'
-  printf '|-------|---------|--------------|-------|--------|\n'
-
-  for d in "$claude_skills_src"/*/; do
-    [[ -d "$d" ]] || continue
-    local cadence
-    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")"
-    [[ -z "$cadence" ]] && continue
-
-    local skill_name min_sessions scope output
-    skill_name="$(basename "$d")"
-    min_sessions="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_min_sessions")"
-    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")"
-    output="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_output")"
-    [[ -z "$min_sessions" ]] && min_sessions="—"
-    [[ -z "$scope" ]] && scope="—"
-    local output_fmt="$output"
-    if [[ -n "$output" ]]; then
-      output_fmt="\`${output}\`"
-    else
-      output_fmt="—"
-    fi
-
-    printf '| %s | %s | %s | %s | %s |\n' "$skill_name" "$cadence" "$min_sessions" "$scope" "$output_fmt"
-  done
-
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf '\nAdditionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.\n'
   printf '\n### Manual triggers\n\n'

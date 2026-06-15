@@ -4,7 +4,6 @@ description: "Generate or refresh a project file index (.claude/anatomy.md) with
 source: otto-workbench/ai/claude/skills/anatomy/SKILL.md
 lifecycle_cadence: "on HEAD change"
 lifecycle_scope: per-project
-lifecycle_output: ".claude/anatomy.md"
 ---
 
 # Anatomy — Project File Index

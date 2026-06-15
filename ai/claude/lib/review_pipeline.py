@@ -834,6 +834,126 @@ def _identify_incremental_skips(
     return skips
 
 
+def _run_holistic_phase(
+    job: ReviewJob, group_count: int, state: PipelineState,
+    skip_holistic: bool, skip_holistic_phase: bool, incremental: bool,
+) -> tuple[str, str, str, float]:
+    run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
+    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
+    cost = 0.0
+
+    if run_holistic and skip_holistic_phase and Path(holistic_output).exists():
+        _info("Phase 1: Holistic scan skipped (exists)")
+        holistic_content = Path(holistic_output).read_text()
+    elif run_holistic:
+        holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+        if holistic_log:
+            cost = _parse_session_cost(holistic_log)
+        state.holistic_done = True
+        _write_pipeline_state(job, state)
+    else:
+        skip_holistic_incremental = incremental and not skip_holistic
+        if skip_holistic_incremental:
+            reason = "incremental review"
+        elif skip_holistic:
+            reason = "--no-holistic"
+        else:
+            reason = f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
+        _info(f"Holistic phase skipped ({reason})")
+        holistic_content, holistic_output, holistic_log = "", "", ""
+
+    return holistic_content, holistic_output, holistic_log, cost
+
+
+def _run_groups_and_angles(
+    job: ReviewJob, groups: list[Group], group_count: int,
+    holistic_content: str, max_parallel: int,
+    skip_groups: "set[int] | None", state: PipelineState,
+) -> tuple[list[str], "list[tuple[str, str]]", str, str, float]:
+    run_angles = job.mode == MODE_SELF and not getattr(state, "angles_done", False)
+    angles_output, angles_log = "", ""
+    cost = 0.0
+
+    if run_angles:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            angles_future = pool.submit(_phase_angles, job, holistic_content)
+            groups_future = pool.submit(
+                _phase_group_reviews,
+                groups, job, group_count, holistic_content, max_parallel,
+                skip_groups, state,
+            )
+            _, angles_output, angles_log = angles_future.result()
+            group_outputs, failed_groups = groups_future.result()
+        state.angles_done = True
+        _write_pipeline_state(job, state)
+        if angles_log:
+            cost += _parse_session_cost(angles_log)
+    else:
+        group_outputs, failed_groups = _phase_group_reviews(
+            groups, job, group_count, holistic_content, max_parallel,
+            skip_groups=skip_groups, pipeline_state=state,
+        )
+
+    new_group_indices = [
+        i for i in range(1, len(group_outputs) + 1)
+        if skip_groups is None or i not in skip_groups
+    ]
+    for i in new_group_indices:
+        gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
+        cost += _parse_session_cost(gl)
+
+    return group_outputs, failed_groups, angles_output, angles_log, cost
+
+
+def _run_synthesis_or_fallback(
+    job: ReviewJob, state: PipelineState,
+    holistic_content: str, group_count: int,
+    merged_content: str, failed_groups: "list[tuple[str, str]]",
+    n_skipped: int, cost_so_far: float, max_cost: float,
+) -> str:
+    all_groups_failed = len(failed_groups) == group_count
+
+    if not _has_findings(merged_content) and not failed_groups:
+        _info("No findings from any group — writing clean review")
+        _write_clean_review(job, group_count, skipped_groups=n_skipped)
+        state.synthesis_done = True
+        _write_pipeline_state(job, state)
+        return ""
+
+    if all_groups_failed:
+        _warn("All group agents failed — skipping synthesis")
+        fallback = _build_mechanical_fallback(
+            job, group_count, merged_content, skipped_groups=n_skipped,
+        )
+        Path(job.review_file).write_text(fallback)
+        _write_review_sidecar(job)
+        state.synthesis_done = True
+        state.synthesis_failed = "all groups failed"
+        _write_pipeline_state(job, state)
+        return ""
+
+    if cost_so_far > max_cost:
+        _warn("Using merged group output as final review (synthesis skipped due to budget)")
+        Path(job.review_file).write_text(merged_content)
+        _write_review_sidecar(job)
+        state.synthesis_done = True
+        state.synthesis_failed = "budget exceeded"
+        _write_pipeline_state(job, state)
+        return ""
+
+    synthesis_log = _phase_synthesis(
+        job, holistic_content, group_count, merged_content,
+        skipped_groups=n_skipped,
+    )
+    state.synthesis_done = True
+    review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
+    if _MECHANICAL_NOTE in review_content:
+        state.synthesis_failed = "mechanical fallback"
+    _write_pipeline_state(job, state)
+    return synthesis_log
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
@@ -886,67 +1006,29 @@ def run_multi_phase(
     elif incremental_skips:
         skip_groups = skip_groups | incremental_skips
 
-    skip_holistic_incremental = incremental and not skip_holistic
     if incremental:
         skip_holistic = True
 
-    run_holistic = not skip_holistic and group_count >= HOLISTIC_MIN_GROUPS
-    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
-    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
+    # ── Phase 1: Holistic ────────────────────────────────────────────────────
+    holistic_content, holistic_output, holistic_log, holistic_cost = _run_holistic_phase(
+        job, group_count, state, skip_holistic, skip_holistic_phase, incremental,
+    )
+    cost_so_far += holistic_cost
 
-    if run_holistic and skip_holistic_phase and Path(holistic_output).exists():
-        _info("Phase 1: Holistic scan skipped (exists)")
-        holistic_content = Path(holistic_output).read_text()
-    elif run_holistic:
-        holistic_content, holistic_output, holistic_log = _phase_holistic(job, group_count)
-        if holistic_log:
-            cost_so_far += _parse_session_cost(holistic_log)
-        state.holistic_done = True
-        _write_pipeline_state(job, state)
-    else:
-        if skip_holistic_incremental:
-            reason = "incremental review"
-        elif skip_holistic:
-            reason = "--no-holistic"
-        else:
-            reason = f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
-        _info(f"Holistic phase skipped ({reason})")
-        holistic_content, holistic_output, holistic_log = "", "", ""
-
-    run_angles = job.mode == MODE_SELF and not getattr(state, "angles_done", False)
-    angles_content, angles_output, angles_log = "", "", ""
-
+    # ── Phase 2: Groups + Angles ─────────────────────────────────────────────
     if cost_so_far > max_cost:
         _warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
-        group_outputs, failed_groups = [], [(g.name, "budget exceeded") for g in groups]
+        group_outputs: list[str] = []
+        failed_groups: list[tuple[str, str]] = [(g.name, "budget exceeded") for g in groups]
+        angles_output, angles_log = "", ""
     else:
-        if run_angles:
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                angles_future = pool.submit(_phase_angles, job, holistic_content)
-                groups_future = pool.submit(
-                    _phase_group_reviews,
-                    groups, job, group_count, holistic_content, max_parallel,
-                    skip_groups, state,
-                )
-                angles_content, angles_output, angles_log = angles_future.result()
-                group_outputs, failed_groups = groups_future.result()
-            state.angles_done = True
-            _write_pipeline_state(job, state)
-            if angles_log:
-                cost_so_far += _parse_session_cost(angles_log)
-        else:
-            group_outputs, failed_groups = _phase_group_reviews(
-                groups, job, group_count, holistic_content, max_parallel,
-                skip_groups=skip_groups, pipeline_state=state,
-            )
-        new_group_indices = [
-            i for i in range(1, len(group_outputs) + 1)
-            if skip_groups is None or i not in skip_groups
-        ]
-        for i in new_group_indices:
-            gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
-            cost_so_far += _parse_session_cost(gl)
+        group_outputs, failed_groups, angles_output, angles_log, ga_cost = _run_groups_and_angles(
+            job, groups, group_count, holistic_content, max_parallel,
+            skip_groups, state,
+        )
+        cost_so_far += ga_cost
 
+    # ── Phase 3: Merge ───────────────────────────────────────────────────────
     all_merge_inputs = group_outputs[:]
     if angles_output and Path(angles_output).exists():
         all_merge_inputs.append(angles_output)
@@ -955,46 +1037,14 @@ def run_multi_phase(
     if carried_forward:
         merged_content += "\n" + carried_forward
 
+    # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
-    all_groups_failed = len(failed_groups) == group_count
+    synthesis_log = _run_synthesis_or_fallback(
+        job, state, holistic_content, group_count,
+        merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
+    )
 
-    if not _has_findings(merged_content) and not failed_groups:
-        _info("No findings from any group — writing clean review")
-        _write_clean_review(job, group_count, skipped_groups=n_skipped)
-        synthesis_log = ""
-        state.synthesis_done = True
-        _write_pipeline_state(job, state)
-    elif all_groups_failed:
-        _warn("All group agents failed — skipping synthesis")
-        fallback = _build_mechanical_fallback(
-            job, group_count, merged_content, skipped_groups=n_skipped,
-        )
-        Path(job.review_file).write_text(fallback)
-        _write_review_sidecar(job)
-        synthesis_log = ""
-        state.synthesis_done = True
-        state.synthesis_failed = "all groups failed"
-        _write_pipeline_state(job, state)
-    elif cost_so_far > max_cost:
-        _warn("Using merged group output as final review (synthesis skipped due to budget)")
-        Path(job.review_file).write_text(merged_content)
-        _write_review_sidecar(job)
-        synthesis_log = ""
-        state.synthesis_done = True
-        state.synthesis_failed = "budget exceeded"
-        _write_pipeline_state(job, state)
-    else:
-        synthesis_log = _phase_synthesis(
-            job, holistic_content, group_count, merged_content,
-            skipped_groups=n_skipped,
-        )
-        state.synthesis_done = True
-        # Detect mechanical fallback vs successful synthesis
-        review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-        if _MECHANICAL_NOTE in review_content:
-            state.synthesis_failed = "mechanical fallback"
-        _write_pipeline_state(job, state)
-
+    # ── Cleanup ──────────────────────────────────────────────────────────────
     _consolidate_logs(job, holistic_log, group_count, synthesis_log, angles_log=angles_log)
 
     if not failed_groups:

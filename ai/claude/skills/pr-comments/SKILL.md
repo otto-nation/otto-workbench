@@ -1,6 +1,6 @@
 ---
 name: pr-comments
-description: "Address incoming PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles."
+description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 ---
 
@@ -21,12 +21,22 @@ Run with `/pr-comments` or `/pr-comments <pr_number>`.
 Run the status script to fetch all threads, compute lifecycle states, and display the dashboard:
 
 ```bash
-pr-comments-status [--pr <number>] [--repo <owner/repo>]
+pr-comments-status [--pr <number>] [--repo <owner/repo>] [--repo-dir <path>]
 ```
 
 The script outputs:
 - **stderr:** Human-readable status dashboard (reviewer verdicts, thread counts by state, merge blockers)
 - **stdout:** Structured JSON report with all threads, their lifecycle states, comments, and verdicts
+
+**Bare repo handling:** If CWD is a bare repo (`git rev-parse --is-bare-repository` returns `true`), the script cannot auto-detect the git toplevel. Use `wt switch <branch> --no-cd --format json --no-hooks` to find the worktree path, then pass it via `--repo-dir`:
+
+```bash
+wt switch <branch> --no-cd --format json --no-hooks 2>/dev/null
+# Extract .path from JSON output, then:
+pr-comments-status --pr <number> --repo <owner/repo> --repo-dir <worktree_path> 2>&1
+```
+
+**Invocation rules:** Run the command as a single simple statement. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. Never use temp files, `<<<`, compound multi-statement commands, or run the script twice.
 
 If the script fails (non-zero exit code), ask the user which PR to address and re-run with explicit `--pr` and `--repo` flags.
 

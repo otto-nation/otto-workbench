@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.16.0...claude-review-v1.17.0) (2026-06-15)
+
+
+### Features
+
+* **claude-review:** add summary subcommand to regenerate JSON from disk ([#238](https://github.com/otto-nation/otto-workbench/issues/238)) ([6141a06](https://github.com/otto-nation/otto-workbench/commit/6141a064c452b459089fa288aef468b299975ad6))
+
 ## [1.16.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.15.0...claude-review-v1.16.0) (2026-06-15)
 
 

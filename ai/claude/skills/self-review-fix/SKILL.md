@@ -2,12 +2,19 @@
 name: self-review-fix
 description: "Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running."
 source: otto-workbench/ai/claude/skills/self-review-fix/SKILL.md
-invocation: "/self-review-fix"
+invocation: "/self-review-fix [branch_name]"
 ---
 
 # Self-Review Fix
 
-Reviews your current branch and automatically applies fixes for the findings.
+Reviews a branch and automatically applies fixes for the findings.
+
+---
+
+## Arguments
+
+- `branch_name` (optional): Branch to review. Defaults to the current branch.
+  Required when the CWD is a bare repo (no HEAD to detect).
 
 ---
 
@@ -26,43 +33,47 @@ Reviews your current branch and automatically applies fixes for the findings.
 
 ### Step 1: Check for existing review
 
+Determine the review file path. Run each lookup as a **separate** Bash call —
+never chain variable assignments with `&&`.
+
+1. Get the repo name:
+   ```bash
+   gh repo view --json name -q .name
+   ```
+
+2. Determine the branch name — use the skill argument if provided, otherwise:
+   ```bash
+   git rev-parse --abbrev-ref HEAD
+   ```
+
+3. Sanitize the branch name and check for the review file:
+   ```bash
+   echo "<branch_name>" | tr '/' '-'
+   ```
+   ```bash
+   ls ~/.config/workbench/reviews/<repo>-self-<sanitized>/review.md
+   ```
+
+If the review file exists, read it with the Read tool. Extract the
+`<!-- head_sha: -->` value and compare against `git rev-parse HEAD`.
+
+- **HEAD matches**: Count unchecked findings (`- [ ]`).
+  If unchecked findings exist, go to Step 2.
+  If all findings are checked, report "all findings already addressed" and stop.
+- **HEAD doesn't match**: The review is stale. Go to Step 2.
+- **No review file**: Go to Step 2.
+
+### Step 2: Run claude-review
+
 ```bash
-repo_name=$(basename "$(gh repo view --json name -q .name 2>/dev/null)" 2>/dev/null) || repo_name=""
-branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch_name=""
-branch_sanitized=$(echo "$branch_name" | tr '/' '-')
-review_dir="$HOME/.config/workbench/reviews/${repo_name}-self-${branch_sanitized}"
-review_file="${review_dir}/review.md"
+claude-review --self --fix [<branch_name>]
 ```
 
-Check if `$review_file` exists. If it does, read the `<!-- head_sha: -->` comment
-and compare against `git rev-parse HEAD`.
+Pass the branch name argument if one was provided. `claude-review` handles
+bare repos, worktree resolution, and fresh-vs-existing review detection
+internally.
 
-- **HEAD matches**: Read the review and count unchecked findings (`- [ ]`).
-  If there are unchecked findings, run the fix pass only (Step 3).
-  If all findings are checked, report "all findings already addressed."
-- **HEAD doesn't match**: The review is stale. Run full review + fix (Step 2).
-- **No review file**: Run full review + fix (Step 2).
-
-### Step 2: Run full self-review with fix
-
-```bash
-claude-review --self --fix
-```
-
-This runs the review pipeline and then applies fixes automatically.
-
-### Step 3: Fix from existing review (fix pass only)
-
-If there's an existing current review with unchecked findings, run just the fix
-pass without re-running the review:
-
-```bash
-claude-review --self --fix
-```
-
-The orchestrator detects the existing review and runs only the fix pass.
-
-### Step 4: Summary
+### Step 3: Summary
 
 Read the review file and present:
 - Count of fixed findings (`- [x]`)

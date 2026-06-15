@@ -118,6 +118,7 @@ class PipelineState:
     review_type: str = "full"
     prior_sha: str = ""
     skipped_groups: list[int] = field(default_factory=list)
+    angles_done: bool = False
 
     @property
     def group_count(self):

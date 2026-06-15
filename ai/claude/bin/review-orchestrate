@@ -87,6 +87,8 @@ def main():
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
                         help="Override model for all agents (e.g. sonnet, opus)")
+    parser.add_argument("--fix", action="store_true",
+                        help="Run fix pass after review to apply findings")
     args = parser.parse_args()
 
     if args.mode == MODE_PR and not args.pr:
@@ -127,6 +129,9 @@ def main():
         )
     else:
         run_single_agent(job)
+
+    if args.fix and Path(job.review_file).exists():
+        run_fix_pass(job)
 
     result = {
         "review_file": job.review_file,

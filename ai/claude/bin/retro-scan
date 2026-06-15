@@ -47,6 +47,17 @@ NOISE_PATTERNS = re.compile(
 
 COMMENT_BODY_MAX = 500
 
+REVIEWS_DIR_REL = Path(".config") / "workbench" / "reviews"
+
+FINDING_RE = re.compile(
+    r"^- \[[ x]\] \*\*\[([MSNI])(\d+)\]\*\*\s+"
+    r"(?:\*\*)?`([^`]+)`(?:\*\*)?\s*—\s*(.+)",
+)
+
+REVIEW_HEADER_RE = re.compile(
+    r"^#\s+(?:Self-)?Review:\s+(\S+)\s*(?:—|#)",
+)
+
 
 # ── Output helpers ───────────────────────────────────────────────────────────
 
@@ -402,6 +413,113 @@ def _scan_repo(
     return {"prs": repo_prs, "unmatched": unmatched}
 
 
+# ── Local review scanning ──────────────────────────────────────────────────
+
+
+def _parse_review_findings(content: str) -> list[dict]:
+    findings: list[dict] = []
+    for line in content.splitlines():
+        m = FINDING_RE.match(line.strip())
+        if not m:
+            continue
+        severity, _num, file_ref, description = m.groups()
+        path = file_ref.split(":")[0] if ":" in file_ref else file_ref
+        line_num = None
+        if ":" in file_ref:
+            try:
+                line_num = int(file_ref.split(":")[1])
+            except ValueError:
+                pass
+        findings.append({
+            "severity": severity,
+            "path": path,
+            "line": line_num,
+            "body": description.strip(),
+        })
+    return findings
+
+
+def _extract_repo_from_review(content: str, dir_name: str) -> str:
+    m = REVIEW_HEADER_RE.search(content)
+    if m:
+        return m.group(1)
+    parts = dir_name.split("-self-", 1)
+    if len(parts) == 2:
+        return parts[0]
+    parts = dir_name.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return dir_name
+
+
+def scan_local_reviews(
+    home: Path, rules: list[dict], rule_match_counts: dict[str, dict],
+) -> tuple[list[dict], int]:
+    reviews_dir = home / REVIEWS_DIR_REL
+    if not reviews_dir.exists():
+        return [], 0
+
+    local_repos: dict[str, list[dict]] = {}
+    unmatched = 0
+
+    for review_dir in sorted(reviews_dir.iterdir()):
+        if not review_dir.is_dir():
+            continue
+        review_file = review_dir / "review.md"
+        if not review_file.exists():
+            continue
+
+        content = review_file.read_text()
+        findings = _parse_review_findings(content)
+        if not findings:
+            continue
+
+        dir_name = review_dir.name
+        repo_key = _extract_repo_from_review(content, dir_name)
+        is_self = "-self-" in dir_name
+        source = "self-review" if is_self else "claude-review"
+
+        comments: list[dict] = []
+        for f in findings:
+            comment = {
+                "author": source,
+                "body": f"[{f['severity']}] {f['body']}",
+                "path": f["path"],
+                "line": f["line"],
+                "url": "",
+                "direction": "received",
+                "source_file": str(review_file),
+            }
+            nearest = find_nearest_rule(comment["body"], rules)
+            if nearest:
+                comment["nearest_rule"] = {
+                    "filename": nearest["filename"],
+                    "match_snippet": _best_matching_bullet(comment["body"], nearest),
+                }
+                rule_match_counts[nearest["filename"]]["matched"] += 1
+            else:
+                comment["nearest_rule"] = None
+                unmatched += 1
+            comments.append(comment)
+
+        if repo_key not in local_repos:
+            local_repos[repo_key] = []
+        local_repos[repo_key].append({
+            "number": f"local:{dir_name}",
+            "title": f"Local review ({source})",
+            "author": source,
+            "merged_at": "",
+            "comments": comments,
+        })
+
+    result = []
+    for repo_key, prs in local_repos.items():
+        result.append({"github": f"local/{repo_key}", "prs": prs})
+
+    _info(f"Found {sum(len(r['prs']) for r in result)} local review(s)")
+    return result, unmatched
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -464,6 +582,10 @@ def main() -> None:
         unmatched_count += result["unmatched"]
         if result["prs"]:
             scan_repos.append({"github": repo["github"], "prs": result["prs"]})
+
+    local_repos, local_unmatched = scan_local_reviews(home, rules, rule_match_counts)
+    scan_repos.extend(local_repos)
+    unmatched_count += local_unmatched
 
     rules_summary = []
     for r in rules:

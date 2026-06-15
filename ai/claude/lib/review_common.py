@@ -75,6 +75,8 @@ TEMPLATE_GROUP = "group.md"
 TEMPLATE_SYNTHESIS = "synthesis.md"
 TEMPLATE_SELF_REVIEW = "self-review.md"
 TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
+TEMPLATE_ANGLES = "angles.md"
+TEMPLATE_FIX = "fix-findings.md"
 
 TEMPLATE_DIR_REL = Path("lib") / "review-templates"
 
@@ -88,6 +90,9 @@ FILENAME_HOLISTIC_LOG = "holistic.jsonl"
 FILENAME_SYNTHESIS_LOG = "synthesis.jsonl"
 FILENAME_GROUP = "group-{}.md"
 FILENAME_GROUP_LOG = "group-{}.jsonl"
+FILENAME_ANGLES = "angles.md"
+FILENAME_ANGLES_LOG = "angles.jsonl"
+FILENAME_FIX_LOG = "fix.jsonl"
 FILENAME_META = "meta.json"
 FILENAME_PIPELINE_STATE = "pipeline.json"
 

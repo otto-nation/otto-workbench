@@ -52,6 +52,19 @@ def _gh_api(
     return result.returncode, result.stdout
 
 
+def _gh_graphql(query: str, variables: dict) -> tuple[int, str]:
+    """Call gh api graphql and return (exit_code, stdout).
+
+    The query string is passed as a raw field (-f); all variables are passed
+    as typed fields (-F) so gh auto-detects integers and booleans.
+    """
+    cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for key, val in variables.items():
+        cmd.extend(["-F", f"{key}={val}"])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_API_TIMEOUT)
+    return result.returncode, result.stdout
+
+
 def _fetch_json_list(endpoint: str) -> list:
     code, out = _gh_api(endpoint)
     if code != 0:
@@ -83,14 +96,15 @@ def _fetch_pr_metadata(repo: str, pr: str) -> dict:
 
 
 def _get_diff(repo: str, pr: str) -> str:
-    """Get the PR diff."""
+    """Get the PR diff. Returns empty string if the diff is unavailable
+    (e.g. PRs exceeding GitHub's 300-file limit)."""
     code, out = _gh_api(
         f"repos/{repo}/pulls/{pr}",
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
     if code != 0:
-        _err("Failed to get diff")
-        sys.exit(1)
+        _warn("Failed to get diff from API — inline positioning unavailable")
+        return ""
     return out
 
 

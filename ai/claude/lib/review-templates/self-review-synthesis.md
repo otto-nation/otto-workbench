@@ -17,7 +17,7 @@ ${delta_section}
    Include <!-- date: ${today} -->, <!-- head_sha: ${pr_head_sha} -->, and <!-- generator: ${generator_version} --> comments
 2. Write ## Summary — one sentence on what the changes do and overall quality
 3. Include all Must fix / Should fix / Nit / Idioms findings from the merged content
-4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms)
+4. Convert each finding to checklist format: `- [ ] **[M1]** \`path:line\` — description` (use I prefix for Idioms). NEVER use ### headings for findings — downstream counters and fix tools parse the `- [ ] **[X1]**` list-item format only
 5. Use any finding IDs — they will be mechanically renumbered after you write the file
 6. Preserve evidence blocks from group findings when carrying forward Must-fix and Should-fix items.
 7. Before including a Must-fix or Should-fix finding, verify its factual claims if they depend on config scope (check exclude rules, path filters), API contracts (trace the consumer chain to confirm required fields), or diff attribution (check `git log origin/main` to distinguish branch deletions from stale-base gaps). Drop findings that are factually incorrect — false positives erode trust more than missed findings

@@ -59,6 +59,124 @@ This creates `~/.config/task/taskfile.env` with:
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 <!-- AI-INSTALLS-END -->
 
+## Skill Reference
+
+### `/analyze-project`
+
+Analyze a project's codebase and populate scaffolded `.claude/CLAUDE.md` and `.claude/rules/` files with project-specific conventions.
+
+```
+/analyze-project
+```
+
+No arguments. Run after `otto-workbench ai init` scaffolds a new project. Three phases: DISCOVER (scan identity, paths, workflow, patterns) → PROPOSE (draft content with user confirmation) → APPLY (write to scaffolded files).
+
+**Output:** `.claude/CLAUDE.md`, `.claude/rules/`
+
+### `/anatomy`
+
+Generate or refresh a project file index with per-file descriptions and token estimates.
+
+```
+/anatomy
+```
+
+No arguments. Scans `git ls-files`, extracts first meaningful comment (lines 1–15), estimates tokens as `lines × 4`, writes markdown table grouped by directory. Skips binary files, lock files, and generated code.
+
+**Output:** `.claude/anatomy.md`
+**Auto-trigger:** on git HEAD change (via Stop hook)
+
+### `/context`
+
+Refresh `.claude/context.md` with architectural facts from recent sessions and memory.
+
+```
+/context
+```
+
+No arguments. Lighter than `/dream` — focuses only on context.md, not memory consolidation. Identifies wrong-software discoveries, tool availability findings, architectural confirmations, and new services. Proposes additions with evidence before applying.
+
+**Output:** `.claude/context.md`
+
+### `/dream`
+
+Memory consolidation — scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files.
+
+```
+/dream
+```
+
+No arguments. Five phases: ORIENT → GATHER SIGNAL → CONSOLIDATE → PRUNE & INDEX → CONTEXT UPDATE. Routes facts to the correct destination (`machine.md`, `context.md`, or `memory/`). Runs `dream-verify` for integrity checks.
+
+**Output:** `memory/` topic files (preferences, decisions, corrections, patterns, review-feedback)
+**Auto-trigger:** every 24h (via Stop hook)
+
+### `/machine`
+
+Refresh the machine profile with hardware, OS, runtimes, Docker, Git identity, and project registry.
+
+```
+/machine
+```
+
+No arguments. Regenerates unconditionally, bypassing the 24h staleness check. Run after upgrading tools or when `<!-- last-updated -->` is more than 7 days old.
+
+**Output:** `~/.claude/machine/machine.md`
+**Auto-trigger:** every 24h (via Stop hook)
+
+### `/pr-comments`
+
+Analyze and address PR review comments with lifecycle tracking.
+
+```
+/pr-comments [<pr_number>]
+```
+
+| Argument / Flag | Description |
+|-----------------|-------------|
+| `<pr_number>` | PR number (optional — auto-detects from current branch) |
+| `--repo <OWNER/REPO>` | Repository |
+| `--repo-dir <PATH>` | Git worktree directory (aliases: `--worktree`) |
+| `--resolve-verified` | Resolve all verified threads on GitHub |
+
+Eight steps: Fetch → Classify (actionable/question/approval/conflicting) → Verify suggestions against codebase → Apply fixes → Reply inline → Resolve verified threads → Emit feedback signals → Report. Tracks thread lifecycle: new → addressed → verified → resolved (or contested → re-addressed).
+
+### `/pr-review`
+
+Manage GitHub PR review lifecycle — analyze unanswered threads, update review files, and post replies.
+
+```
+/pr-review <pr_number>
+```
+
+`<pr_number>` is required. Works with existing PENDING reviews or submitted reviews with unanswered threads. Updates review file at `~/.config/workbench/reviews/<repo>-<pr_number>.md`.
+
+### `/promote`
+
+Review accumulated memories for promotion into durable workbench artifacts.
+
+```
+/promote
+```
+
+No arguments. Four phases: ORIENT → EVALUATE → PROPOSE → RECORD. Uses priority ladder: Lint rules → Scripts/Automation → Coding rules → Agent/Skill updates → Keep as memory → Delete.
+
+**Output:** `ai/memory/PROMOTE.md` (read-only report — user reviews and applies manually)
+**Auto-trigger:** every 7 days (via Stop hook)
+
+### `/retro`
+
+Analyze PR review comments to identify gaps in coding rules.
+
+```
+/retro
+```
+
+No arguments. Four phases: ORIENT → CLASSIFY (rule-gap, rule-refinement, false-negative, one-off, noise) → PROPOSE → REPORT. Elevates patterns appearing 2+ times.
+
+**Output:** `ai/memory/RETRO.md` (read-only report — user reviews and applies manually)
+**Auto-trigger:** every 72h (via Stop hook)
+
 <!-- LIFECYCLE-START -->
 ## Session Lifecycle
 

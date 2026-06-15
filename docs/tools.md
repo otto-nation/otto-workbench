@@ -39,6 +39,244 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
 <!-- SCRIPTS-TABLE-END -->
 
+## Script Reference
+
+Detailed usage for user-facing scripts. Internal scripts (validators, generators, scanners) are listed in the table above but not detailed here.
+
+### `otto-workbench`
+
+Manage your workbench developer environment.
+
+```
+otto-workbench [--workbench-dir <path>] <command>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--workbench-dir <path>` | Override workbench root (e.g., a worktree checkout) |
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `install [--all] [COMPONENT ...]` | Bootstrap the workbench (first-time, interactive). `--all` skips menus |
+| `sync` | Re-apply all workbench config to `~/` — migrations, symlinks, tool context, AI settings |
+| `ai init [--force] [--analyze]` | Scaffold `.claude/` in the current git repo. `--force` re-scaffolds existing, `--analyze` runs `/analyze-project` after |
+| `ai sync` | Sync machine-level AI config (settings, rules, MCPs, skills, agents) |
+| `ai override <type> [name] [flags]` | Manage user overrides for agents, skills, or rules. Flags: `--add`, `--disable`, `--enable`, `--status` |
+| `discover [regenerate]` | Show installed components, scripts, and launchd agents. `regenerate` re-detects components |
+| `autoupdate start [SECONDS]` | Start scheduled pull + sync via launchd (default: every 12h) |
+| `autoupdate stop` | Stop autoupdate |
+| `autoupdate status` | Show autoupdate status |
+| `autoupdate run` | Run update now |
+| `autoupdate logs` | Show recent log entries |
+| `changelog` | Show recent changes from conventional commits |
+
+### `task`
+
+Wrapper around go-task that adds `--global` support.
+
+```
+task [--global] <task-name> [-- <task-args>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--global` | Use the global Taskfile (`~/.config/task/Taskfile.yml`) from any directory |
+| `-h`, `--help` | Show help |
+
+Without `--global`, uses `./Taskfile.yml` in the current directory.
+
+### `mem-analyze`
+
+macOS memory analysis report — pressure, swap usage, top processes, per-user totals.
+
+```
+mem-analyze
+```
+
+| Flag | Description |
+|------|-------------|
+| `-h`, `--help` | Show help |
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `SWAP_WARN_THRESHOLD_MB` | Swap warning threshold in MB | `10240` |
+| `PROCESS_WARN_THRESHOLD_KB` | Process memory warning threshold in KB | `500000` |
+
+### `wt-cleanup`
+
+Remove stale git worktrees — merged branches and optionally age-based cleanup.
+
+```
+wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--age <days>` | Also remove worktrees inactive for N+ days | — |
+| `--no-grace-period` | Skip the 600s grace period (remove immediately) | grace period on |
+| `--dry-run` | Show what would be removed | — |
+| `--quiet` | No output (for hooks) | — |
+| `-h`, `--help` | Show help | — |
+
+### `wt-init`
+
+Convert a regular git repo to a bare repo with worktrees.
+
+```
+wt-init [--dry-run] [<path>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview what would happen |
+| `-h`, `--help` | Show help |
+
+`<path>` defaults to the current directory.
+
+### `lint-sweep`
+
+Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches.
+
+```
+lint-sweep --rule <name> --repos <glob> [--fix] [--branch <name>] [--dry-run] [--json]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--rule <name>` | Lint rule to sweep (required) | — |
+| `--repos <glob>` | Glob or comma-separated list of repo paths (required) | — |
+| `--fix` | Create worktrees and branches for fixing | report only |
+| `--branch <name>` | Branch name override | `<user>/fix/<rule>` |
+| `--dry-run` | Show what would be done | — |
+| `--json` | Output results as JSON | — |
+| `-h`, `--help` | Show help | — |
+
+### `gcloud-reauth`
+
+Check GCP application-default credentials and re-login if expired, with self-managed launchd agent.
+
+```
+gcloud-reauth [<command>]
+```
+
+| Command | Description |
+|---------|-------------|
+| *(none)* | Check credentials, launch login if expired |
+| `install` | Install launchd agent (runs every 12h) |
+| `uninstall` | Remove launchd agent |
+| `status` | Show agent status |
+| `-h`, `--help` | Show help |
+
+### `get-secret`
+
+Interactively retrieves a secret from AWS Secrets Manager by listing and selecting.
+
+```
+get-secret
+```
+
+| Flag | Description |
+|------|-------------|
+| `-h`, `--help` | Show help |
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `AWS_REGION` | Target region | `us-east-1` |
+| `AWS_PROFILE` | Credential profile | ambient credential chain |
+
+Outputs the raw SecretString value to stdout.
+
+### `claude-review`
+
+Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
+
+```
+claude-review [<flags>] <pr_url_or_number>
+claude-review gc
+claude-review post <pr_url_or_number>
+```
+
+| Command | Description |
+|---------|-------------|
+| `<pr_url_or_number>` | Run review (default) |
+| `gc` | Clean up stale review artifacts |
+| `post <pr_url_or_number>` | Post an existing review file |
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--no-post` | Skip all interactive prompts; run review and exit | — |
+| `--post` | Run review then post automatically (fully headless) | — |
+| `--submit` | Submit the review (use with `--post` for fully headless) | — |
+| `--self` | Self-review mode: output to `ignore/reviews/self-review.md` | — |
+| `--skip-user-verification` | Skip ownership check in self-review mode | — |
+| `--force` | Skip pending review and stale review warnings | — |
+| `--no-holistic` | Skip holistic phase in multi-phase reviews | — |
+| `--json-summary` | Suppress human output; emit JSON summary to stdout | — |
+| `--issue <link>` | Attach an issue link for reviewer context | — |
+| `--max-parallel <N>` | Max concurrent group reviews | `4` |
+| `--max-cost <USD>` | Max total review cost in USD | `20` |
+| `--model <name>` | Override model for all agents (e.g., `sonnet`, `opus`) | — |
+| `--repo-dir <path>` | Path to local repo or worktree (aliases: `--repo`, `--worktree`) | auto-detected |
+| `-V`, `--version` | Show version | — |
+| `-h`, `--help` | Show help | — |
+
+`--no-post` and `--post` are mutually exclusive.
+
+### `claude-rules`
+
+Manages local Claude Code rule additions not tracked in the workbench.
+
+```
+claude-rules <command> [<args>]
+```
+
+| Command | Description |
+|---------|-------------|
+| `sync` | Re-symlink workbench rules and regenerate `workbench.md` |
+| `add <domain> "rule"` | Append a rule to `~/.claude/rules/<domain>.local.md` |
+| `list` | List all local rule files with line counts |
+| `status` | Show local rules not tracked in workbench |
+| `open [domain]` | Open a local rule file in `$EDITOR` |
+| `project add "rule"` | Append a convention to the current repo's `CLAUDE.md` |
+| `project show` | Display the current repo's `CLAUDE.md` |
+| `-V`, `--version` | Show version |
+| `-h`, `--help` | Show help |
+
+Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → `bash`, `yml` → `yaml`.
+
+### `pr-comments-status`
+
+Fetch PR review threads, compute lifecycle states, and output a status dashboard + JSON report.
+
+```
+pr-comments-status [--pr <NUMBER> --repo <OWNER/REPO>] [--repo-dir <PATH>] [--resolve-verified]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--pr <NUMBER>` | PR number |
+| `--repo <OWNER/REPO>` | Repository |
+| `--repo-dir <PATH>` | Git worktree directory (aliases: `--worktree`) |
+| `--resolve-verified` | Resolve all verified threads on GitHub |
+
+Without `--pr` and `--repo`, auto-detects from the current branch. When specified, both `--pr` and `--repo` are required together.
+
+### `serena-mcp`
+
+Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.
+
+```
+serena-mcp <command>
+```
+
+| Command | Description |
+|---------|-------------|
+| `init` | Add Serena to `.mcp.json` in the current directory (creates if missing) |
+| `status` | Show whether Serena is configured in the current project |
+| `-h`, `--help` | Show help |
+
 ## Installed Tools
 
 <!-- TOOLS-TABLE-START -->

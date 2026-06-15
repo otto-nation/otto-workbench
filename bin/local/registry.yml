@@ -44,6 +44,13 @@ tools:
     when_to_use: "After writing bash functions with conditional && chains; runs automatically on pre-push"
     usage: "bin/local/validate-errexit [--quiet]"
 
+  - name: validate-skills
+    allow: true
+    context: reference
+    description: "Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing"
+    when_to_use: "After adding or editing any SKILL.md; runs automatically on pre-push"
+    usage: "bin/local/validate-skills [--quiet]"
+
   - name: generate-tool-context
     allow: true
     context: reference

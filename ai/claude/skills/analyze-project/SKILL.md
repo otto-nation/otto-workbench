@@ -2,6 +2,8 @@
 name: analyze-project
 description: "Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. Run after scaffolding a new project."
 source: otto-workbench/ai/claude/skills/analyze-project/SKILL.md
+invocation: "/analyze-project"
+output: ".claude/CLAUDE.md, .claude/rules/"
 ---
 
 # Analyze Project

@@ -26,6 +26,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `dream-verify` | Verify dream memory file integrity across all projects |
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
+| `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |

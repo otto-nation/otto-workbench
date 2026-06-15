@@ -68,3 +68,8 @@ tools:
     description: "Scan PR review comments and cross-reference against coding rules"
     when_to_use: "Called by the retro skill to replace Phase 1 (Orient); fetches PR comments from all registered repos and outputs a structured markdown report"
     usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"
+
+  - name: run-auto-task
+    context: none
+    description: "Run a Claude Code skill as a headless background session with output logging"
+    when_to_use: "Called by Stop hooks to run dream/promote/retro skills after session exit; not invoked directly"

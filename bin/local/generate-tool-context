@@ -329,26 +329,17 @@ _readme_ai_installs() {
   # shellcheck disable=SC2016
   printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
 
-  # Skills table with descriptions and lifecycle metadata from SKILL.md frontmatter
-  local has_skills=false
+  # Skills summary with link to the full Skill Reference section
+  local skill_names=()
   for d in "$claude_skills_src"/*/; do
     [[ -d "$d" ]] || continue
-    if [[ "$has_skills" == false ]]; then
-      printf '\n**Skills:**\n\n'
-      printf '| Skill | Description | Cadence | Scope |\n'
-      printf '|-------|-------------|---------|-------|\n'
-      has_skills=true
-    fi
-    local skill_name skill_desc cadence scope
-    skill_name="$(basename "$d")"
-    skill_desc="$(_extract_frontmatter_field "$d/SKILL.md" "description")"
-    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")"
-    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")"
-    [[ -z "$skill_desc" ]] && skill_desc="—"
-    [[ -z "$cadence" ]] && cadence="—"
-    [[ -z "$scope" ]] && scope="—"
-    printf '| %s | %s | %s | %s |\n' "$skill_name" "$skill_desc" "$cadence" "$scope"
+    skill_names+=("$(basename "$d")")
   done
+  if [[ ${#skill_names[@]} -gt 0 ]]; then
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '\n**Skills:** %s — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.\n' \
+      "$(_join ', ' "${skill_names[@]}")"
+  fi
 
   # Agents table with descriptions from agent .md frontmatter
   local has_agents=false

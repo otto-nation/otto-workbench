@@ -141,20 +141,62 @@ def dedup_against_posted(
 # ── Bot review fetching ───────────────────────────────────────────────────
 
 def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
-    """Return all non-PENDING, non-DISMISSED reviews from the bot.
+    """Return all visible, non-PENDING, non-DISMISSED reviews from the bot.
 
+    Uses GraphQL to detect minimized (hidden/outdated) reviews and exclude
+    them — the REST API does not expose minimizedReason.
     Each entry has keys: id, body, state.
+
+    Note: fetches at most the last 100 reviews. PRs with more than 100 reviews
+    may miss older bot reviews — cursor-based pagination is not implemented.
     """
     bot_user = _get_bot_login()
     if not bot_user:
         return []
 
-    all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+    owner, name = repo.split("/", 1)
+    query = """
+    query($owner: String!, $name: String!, $pr: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $pr) {
+          reviews(last: 100) {
+            nodes {
+              databaseId
+              state
+              body
+              minimizedReason
+              author { login }
+            }
+          }
+        }
+      }
+    }
+    """
+    rc, stdout = review_github._gh_graphql(
+        query, {"owner": owner, "name": name, "pr": int(pr)},
+    )
+    if rc != 0:
+        # Fall back to REST (without minimized filtering)
+        all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+        return [
+            {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
+            for r in all_reviews
+            if r.get("user", {}).get("login") == bot_user
+            and r.get("state") not in ("PENDING", "DISMISSED")
+        ]
+
+    try:
+        data = json.loads(stdout)
+        nodes = data["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return []
+
     return [
-        {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
-        for r in all_reviews
-        if r.get("user", {}).get("login") == bot_user
-        and r.get("state") not in ("PENDING", "DISMISSED")
+        {"id": n["databaseId"], "body": n.get("body", ""), "state": n.get("state", "")}
+        for n in nodes
+        if n.get("author", {}).get("login") == bot_user
+        and n.get("state") not in ("PENDING", "DISMISSED")
+        and not n.get("minimizedReason")
     ]
 
 

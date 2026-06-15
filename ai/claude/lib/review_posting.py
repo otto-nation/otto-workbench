@@ -199,9 +199,12 @@ def write_post_tracking(
         "head_sha_at_post": head_sha_at_post,
         "sha_drifted": sha_drifted,
     }
-    with open(post_file, "w") as f:
-        json.dump(entry, f)
-        f.write("\n")
+    try:
+        with open(post_file, "w") as f:
+            json.dump(entry, f)
+            f.write("\n")
+    except OSError as e:
+        _warn(f"Failed to write post tracking ({post_file}): {e}")
 
 
 # ── SHA-drift fallback ──────────────────────────────────────────────────────

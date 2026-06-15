@@ -987,12 +987,9 @@ class TestGetDiff:
         with patch("review_github._gh_api", return_value=(0, "diff --git a/f b/f\n")):
             assert rp._get_diff("org/repo", "1") == "diff --git a/f b/f\n"
 
-    def test_failure_exits(self, rp):
-        with (
-            patch("review_github._gh_api", return_value=(1, "")),
-            pytest.raises(SystemExit),
-        ):
-            rp._get_diff("org/repo", "1")
+    def test_failure_returns_empty(self, rp):
+        with patch("review_github._gh_api", return_value=(1, "")):
+            assert rp._get_diff("org/repo", "1") == ""
 
 
 class TestExtractPathEscapedUnderscores:

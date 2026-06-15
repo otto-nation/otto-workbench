@@ -33,17 +33,17 @@ This creates `~/.config/task/taskfile.env` with:
 
 **Skills:**
 
-| Skill | Description |
-|-------|-------------|
-| analyze-project | Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. Run after scaffolding a new project. |
-| anatomy | Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring. |
-| context | On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. |
-| dream | Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory. |
-| machine | Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh. |
-| pr-comments | Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers. |
-| pr-review | Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script. |
-| promote | Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. |
-| retro | Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. |
+| Skill | Description | Cadence | Scope |
+|-------|-------------|---------|-------|
+| analyze-project | Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. Run after scaffolding a new project. | — | — |
+| anatomy | Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring. | on HEAD change | per-project |
+| context | On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. | — | — |
+| dream | Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory. | 24h | per-project |
+| machine | Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh. | 24h | global |
+| pr-comments | Address incoming PR review comments: fetch, verify, fix, and reply. Works with human and bot reviewers. | — | — |
+| pr-review | Manage GitHub PR review lifecycle: analyze unanswered threads, update review files, and post replies. Initial posting is handled by the review-post script. | — | — |
+| promote | Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. | 7 days | per-project |
+| retro | Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. | 72h | global |
 
 **Agents:**
 
@@ -57,6 +57,22 @@ This creates `~/.config/task/taskfile.env` with:
 | migrate | Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them. |
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 <!-- AI-INSTALLS-END -->
+
+<!-- LIFECYCLE-START -->
+## Session Lifecycle
+
+Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:
+
+1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`
+2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag
+3. **Skill completion** — completion script records a timestamp so the cooldown resets
+
+Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
+
+### Manual triggers
+
+All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
+<!-- LIFECYCLE-END -->
 
 ## Task Automation
 

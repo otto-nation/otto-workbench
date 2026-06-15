@@ -308,7 +308,8 @@ _extract_frontmatter_field() {
     | grep "^${field}:" \
     | sed "s/^${field}:[[:space:]]*//" \
     | sed 's/^"\(.*\)"$/\1/' \
-    | head -1
+    | head -1 \
+    || true
 }
 
 _readme_ai_installs() {
@@ -328,21 +329,25 @@ _readme_ai_installs() {
   # shellcheck disable=SC2016
   printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
 
-  # Skills table with descriptions from SKILL.md frontmatter
+  # Skills table with descriptions and lifecycle metadata from SKILL.md frontmatter
   local has_skills=false
   for d in "$claude_skills_src"/*/; do
     [[ -d "$d" ]] || continue
     if [[ "$has_skills" == false ]]; then
       printf '\n**Skills:**\n\n'
-      printf '| Skill | Description |\n'
-      printf '|-------|-------------|\n'
+      printf '| Skill | Description | Cadence | Scope |\n'
+      printf '|-------|-------------|---------|-------|\n'
       has_skills=true
     fi
-    local skill_name skill_desc
+    local skill_name skill_desc cadence scope
     skill_name="$(basename "$d")"
     skill_desc="$(_extract_frontmatter_field "$d/SKILL.md" "description")"
+    cadence="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_cadence")"
+    scope="$(_extract_frontmatter_field "$d/SKILL.md" "lifecycle_scope")"
     [[ -z "$skill_desc" ]] && skill_desc="—"
-    printf '| %s | %s |\n' "$skill_name" "$skill_desc"
+    [[ -z "$cadence" ]] && cadence="—"
+    [[ -z "$scope" ]] && scope="—"
+    printf '| %s | %s | %s | %s |\n' "$skill_name" "$skill_desc" "$cadence" "$scope"
   done
 
   # Agents table with descriptions from agent .md frontmatter
@@ -373,6 +378,24 @@ _readme_ai_installs() {
     printf '\n**MCP Servers:** %s\n' "$(_join ', ' "${mcps[@]}")"
   fi
 
+}
+
+# _readme_lifecycle — renders the Session Lifecycle section for ai-automation.md.
+# Explains the auto-trigger pipeline. Skill cadences are shown in the skills table
+# rendered by _readme_ai_installs (single source for all skill metadata).
+_readme_lifecycle() {
+  printf '## Session Lifecycle\n\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf 'Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:\n\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`\n'
+  printf '2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag\n'
+  printf '3. **Skill completion** — completion script records a timestamp so the cooldown resets\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf '\nAdditionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.\n'
+  printf '\n### Manual triggers\n\n'
+  # shellcheck disable=SC2016  # backticks are markdown literals
+  printf 'All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.\n'
 }
 
 # _tool_readme_table_row NAME DESCRIPTION WHEN_TO_USE USAGE DOCS
@@ -527,6 +550,7 @@ if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$R
 if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$TOOLS_DOC_PATH" "SCRIPTS-TABLE";    _gen_success "Updated docs/tools.md scripts table";    fi
 if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$TOOLS_DOC_PATH" "TOOLS-TABLE";      _gen_success "Updated docs/tools.md tools table";      fi
 if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$AI_DOC_PATH" "AI-INSTALLS";         _gen_success "Updated docs/ai-automation.md installs"; fi
+if [[ -d "$AI_DIR" ]];          then _readme_lifecycle      | _splice_readme "$AI_DOC_PATH" "LIFECYCLE";           _gen_success "Updated docs/ai-automation.md lifecycle"; fi
 if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
                                      _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
                                      _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"

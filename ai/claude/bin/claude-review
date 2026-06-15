@@ -54,9 +54,6 @@ _generator_version() {
 REVIEWS_DIR="$HOME/.config/workbench/reviews"
 LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
 
-SELF_REVIEW_DIR="ignore/reviews"
-SELF_REVIEW_FILE="self-review.md"
-
 REVIEW_EXT=".md"
 
 FILENAME_PRIOR="prior${REVIEW_EXT}"
@@ -187,15 +184,6 @@ _self_review_repo() {
     _repo_from_remote __out "${wt_path:-.}"
   else
     _extract_repo __out "${pr_input:-local}"
-  fi
-}
-
-_ensure_ignore_dir() {
-  local wt_path="$1"
-  mkdir -p "${wt_path}/${SELF_REVIEW_DIR}"
-  local gitignore="${wt_path}/.gitignore"
-  if [[ ! -f "$gitignore" ]] || ! grep -qx "ignore/" "$gitignore"; then
-    echo "ignore/" >> "$gitignore"
   fi
 }
 

@@ -86,7 +86,7 @@ _run_step "Validating components"   "$REPO_ROOT/bin/local/validate-components" -
 _run_step "Validating migrations"   "$REPO_ROOT/bin/local/validate-migrations" --quiet
 _run_step "Validating nesting"      "$REPO_ROOT/bin/local/validate-nesting" --quiet
 _run_step "Validating errexit"     "$REPO_ROOT/bin/local/validate-errexit" --quiet
-_run_step "Validating skills"      "$REPO_ROOT/bin/local/validate-skills" --quiet
+_run_step "Validating skills"       "$REPO_ROOT/bin/local/validate-skills" --quiet
 
 # ── Generation ───────────────────────────────────────────────────────────────
 

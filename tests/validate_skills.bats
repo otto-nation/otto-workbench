@@ -250,6 +250,34 @@ EOF
   [[ "$output" != *"frontmatter present"* ]]
 }
 
+@test "--quiet with failure exits 1 and shows summary" {
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/bad-skill"
+  mkdir -p "$dir"
+  echo "# No frontmatter" > "$dir/SKILL.md"
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"failed"* ]]
+  # Quiet mode still shows errors but not per-check pass marks
+  [[ "$output" != *"✓"* ]]
+}
+
+# ── Single-quoted values ─────────────────────────────────────────────────────
+
+@test "single-quoted field values are stripped correctly" {
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/quoted"
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<'EOF'
+---
+name: 'quoted'
+description: 'A skill with single-quoted values'
+source: 'otto-workbench/ai/claude/skills/quoted/SKILL.md'
+---
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"name matches directory"* ]]
+}
+
 # ── Missing SKILL.md ─────────────────────────────────────────────────────────
 
 @test "skill directory without SKILL.md fails" {

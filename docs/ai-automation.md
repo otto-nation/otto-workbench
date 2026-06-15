@@ -132,12 +132,7 @@ Analyze and address PR review comments with lifecycle tracking.
 /pr-comments [<pr_number>]
 ```
 
-| Argument / Flag | Description |
-|-----------------|-------------|
-| `<pr_number>` | PR number (optional — auto-detects from current branch) |
-| `--repo <OWNER/REPO>` | Repository |
-| `--repo-dir <PATH>` | Git worktree directory (aliases: `--worktree`) |
-| `--resolve-verified` | Resolve all verified threads on GitHub |
+`<pr_number>` is optional — auto-detects from the current branch when omitted.
 
 Eight steps: Fetch → Classify (actionable/question/approval/conflicting) → Verify suggestions against codebase → Apply fixes → Reply inline → Resolve verified threads → Emit feedback signals → Report. Tracks thread lifecycle: new → addressed → verified → resolved (or contested → re-addressed).
 

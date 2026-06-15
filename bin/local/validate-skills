@@ -42,13 +42,13 @@ FOUND=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
-# Read a field from YAML frontmatter. Returns empty string if not found.
+# Read a field from YAML frontmatter (between first and second ---). Returns empty if not found.
 _frontmatter_field() {
   local file="$1" field="$2"
-  sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null \
+  awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { exit } in_fm { print }' "$file" \
     | grep "^${field}:" \
     | sed "s/^${field}:[[:space:]]*//" \
-    | sed 's/^"\(.*\)"$/\1/' \
+    | sed "s/^['\"]\\(.*\\)['\"]$/\\1/" \
     | head -1 \
     || true
 }

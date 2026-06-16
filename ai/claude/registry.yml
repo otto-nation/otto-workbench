@@ -20,6 +20,11 @@ tools:
     when_to_use: "Adding machine-specific or project-specific Claude instructions"
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
+  - name: review-rebuild
+    context: none
+    description: "Rebuild review.md from group finding files — recovers from synthesis formatting drift"
+    when_to_use: "Called internally by claude-review rebuild; not invoked directly"
+
   - name: review-threads
     context: none
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"

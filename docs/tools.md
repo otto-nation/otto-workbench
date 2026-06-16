@@ -17,6 +17,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
+| `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
 | `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
 | `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |

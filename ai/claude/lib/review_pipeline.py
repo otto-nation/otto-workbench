@@ -18,8 +18,6 @@ from pathlib import Path
 
 from review_common import (
     FILE_STAT_FMT,
-    FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
-    FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
     FILENAME_ANGLES, FILENAME_ANGLES_LOG,
     FILENAME_FIX_LOG,
     FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
@@ -35,11 +33,12 @@ from review_common import (
     _derive_path, _info, _warn,
 )
 from review_findings import (
-    _check_orphaned_prior_ids, _count_findings, _has_findings,
+    _MECHANICAL_NOTE,
+    _count_findings, _has_findings,
     _validate_group_output,
-    annotate_prior_with_stable_ids, merge_reviews,
-    renumber_findings, strip_evidence_blocks, strip_stable_ids,
-    verify_findings,
+    annotate_prior_with_stable_ids,
+    build_mechanical_review,
+    merge_reviews, post_process_findings,
 )
 from review_preflight import (
     DEFAULT_MAX_GROUPS, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
@@ -178,7 +177,12 @@ def _write_review_sidecar(job: ReviewJob):
         "head_sha": job.pr.head_sha,
         "head_ref": job.pr.head,
         "base_ref": job.pr.base,
+        "title": job.pr.title,
+        "changed_files": job.pr.changed_files,
+        "mode": job.mode,
     }
+    if job.generator_version:
+        meta["generator_version"] = job.generator_version
     if job.preflight and job.preflight.diff:
         meta["diff"] = job.preflight.diff
 
@@ -548,34 +552,6 @@ def _is_complete_review(review_file: str) -> bool:
     return "## Summary" in content or "## Verdict" in content
 
 
-_VERDICT_LABELS = [
-    (FINDING_PREFIX_MUST, "must-fix"),
-    (FINDING_PREFIX_SHOULD, "should-fix"),
-    (FINDING_PREFIX_NIT, "nit"),
-    (FINDING_PREFIX_IDIOMS, "idiom"),
-]
-
-_MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
-
-
-def _mechanical_verdict(counts: dict[str, int]) -> str:
-    parts = [f"{counts[p]} {label}" for p, label in _VERDICT_LABELS if counts.get(p)]
-    must = counts.get(FINDING_PREFIX_MUST, 0)
-    should = counts.get(FINDING_PREFIX_SHOULD, 0)
-
-    if must:
-        action = "Request changes"
-    elif should:
-        action = "Needs discussion"
-    elif parts:
-        action = "Approve"
-    else:
-        return f"Approve — no findings {_MECHANICAL_NOTE}.\n"
-
-    suffix = " only" if not must and not should else ""
-    return f"{action} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
-
-
 def _build_mechanical_fallback(
     job: ReviewJob, group_count: int, merged_content: str,
     skipped_groups: int = 0,
@@ -583,42 +559,23 @@ def _build_mechanical_fallback(
     meta = _build_meta_header(
         job, skipped_groups=skipped_groups, total_groups=group_count,
     )
-    counts = _count_findings(merged_content)
-    total = sum(counts.values())
-    count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
-
     if job.mode == MODE_SELF:
         title = f"# Self-Review: {job.repo} — {job.pr.head}"
     else:
         title = f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}"
 
-    summary = (
-        f"{title}\n{meta}\n"
-        f"## Summary\n"
-        f"{count_summary} across {job.pr.changed_files} files in {group_count} groups. "
-        f"{FALLBACK_SUMMARY}\n\n"
-        f"{merged_content}\n"
+    return build_mechanical_review(
+        merged_content,
+        title=title,
+        meta_header=meta,
+        group_count=group_count,
+        summary_note=FALLBACK_SUMMARY,
+        include_verdict=(job.mode != MODE_SELF),
     )
-    if job.mode == MODE_SELF:
-        return summary
-    return f"{summary}\n## Verdict\n{_mechanical_verdict(counts)}"
 
 
 def _post_process_review(job: ReviewJob) -> None:
-    """Run verification and cleanup passes on the review file."""
-    if job.prior_review:
-        orphaned = _check_orphaned_prior_ids(
-            annotate_prior_with_stable_ids(job.prior_review),
-            Path(job.review_file).read_text(),
-        )
-        if orphaned:
-            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
-    dropped = verify_findings(job.review_file, job.wt_path)
-    if dropped:
-        _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
-    strip_evidence_blocks(job.review_file)
-    strip_stable_ids(job.review_file)
-    renumber_findings(job.review_file)
+    post_process_findings(job.review_file, job.wt_path, job.prior_review)
 
 
 def _write_mechanical_fallback(

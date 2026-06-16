@@ -20,6 +20,12 @@
 - Never run `git push` while on `main` or targeting `main` — branch protection will reject it, so don't attempt it at all
 - All changes reach `main` through a merged PR, no exceptions
 
+## Pushing
+
+- Never run `git push --force` or `git push --force-with-lease` — always print the exact command for the user to run and stop
+- After a rebase, skip the regular push attempt entirely — rebase rewrites history so a regular push will always be rejected, and pre-push hooks waste time on a push that cannot succeed. Print the force-push command immediately
+- When a regular push fails because the branch diverged (without a preceding rebase), print the force-push command for the user
+
 ## Commit History
 
 - Never use `git commit --amend` — always create a new commit. Amending a pushed commit causes force-push situations, and amending after a failed pre-commit hook silently modifies the previous commit instead of creating the intended one

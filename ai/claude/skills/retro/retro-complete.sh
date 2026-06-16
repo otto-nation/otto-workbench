@@ -15,13 +15,16 @@
 
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+
 # ── Record timestamp ────────────────────────────────────────────────────────
 
-date +%s > "$HOME/.claude/.last-retro"
+date +%s > "$CLAUDE_DIR/.last-retro"
 
 # ── Clean up consumed reviews ───────────────────────────────────────────────
 
-REVIEWS_DIR="$HOME/.config/workbench/reviews"
+REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
 if [[ -d "$REVIEWS_DIR" ]]; then
   for review_dir in "$REVIEWS_DIR"/*/; do
     [[ -d "$review_dir" ]] || continue
@@ -33,4 +36,4 @@ fi
 
 # ── Remove pending flag ──────────────────────────────────────────────────────
 
-rm -f "$HOME/.claude/.retro-pending"
+rm -f "$CLAUDE_DIR/.retro-pending"

@@ -9,7 +9,7 @@
 # ── Environment setup from registries ──────────────────────────────────────────
 
 # shellcheck source=registries.sh
-. "$WORKBENCH_DIR/lib/registries.sh"
+. "$LIB_SRC_DIR/registries.sh"
 
 # _env_ensure_header — prints the "Environment setup" header on first call.
 # Uses dynamic scoping: reads/writes `_env_found` from the calling function.
@@ -224,7 +224,7 @@ run_component_summaries() {
   if [[ $# -eq 0 ]]; then
     # Auto-discover all components with summary.sh (skip lib/ — it's not a component)
     for _f in "$WORKBENCH_DIR"/*/summary.sh; do
-      if [[ -f "$_f" && "$(dirname "$_f")" != "$WORKBENCH_DIR/lib" ]]; then files+=("$_f"); fi
+      if [[ -f "$_f" && "$(dirname "$_f")" != "$LIB_SRC_DIR" ]]; then files+=("$_f"); fi
     done
   else
     for _c in "$@"; do

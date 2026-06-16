@@ -12,6 +12,9 @@
 
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+
 usage() {
   cat <<EOF
 Usage: run-auto-task <skill-name>
@@ -30,7 +33,7 @@ EOF
 
 skill="${1:?Usage: run-auto-task <skill-name>}"
 
-log_dir="${CLAUDE_LOG_DIR:-$HOME/.claude/logs}"
+log_dir="${CLAUDE_LOG_DIR:-$CLAUDE_DIR/logs}"
 mkdir -p "$log_dir"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 log_file="${log_dir}/${skill}-${timestamp}.log"

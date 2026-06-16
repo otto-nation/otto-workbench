@@ -53,7 +53,7 @@ _frontmatter_field() {
     || true
 }
 
-SKILLS_DIR="$WORKBENCH_DIR/ai/claude/skills"
+SKILLS_DIR="$CLAUDE_SKILLS_SRC_DIR"
 
 for skill_dir in "$SKILLS_DIR"/*/; do
   [[ -d "$skill_dir" ]] || continue

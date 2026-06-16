@@ -19,7 +19,7 @@ if [[ -z "${WORKBENCH_DIR:-}" ]]; then
 fi
 
 # shellcheck source=components.sh
-. "$WORKBENCH_DIR/lib/components.sh"
+. "$LIB_SRC_DIR/components.sh"
 
 _array_contains() {
   local needle="$1"; shift

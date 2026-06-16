@@ -15,7 +15,10 @@
 
 set -e
 
-MACHINE_DIR="$HOME/.claude/machine"
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+
+MACHINE_DIR="$CLAUDE_DIR/machine"
 PROFILE_FILE="$MACHINE_DIR/machine.md"
 STAMP_FILE="$MACHINE_DIR/.last-updated"
 STALE_HOURS=24
@@ -131,7 +134,7 @@ done
 # Discover git repos and cross-reference with ~/.claude/projects/ for memory status.
 
 declare -A memory_status=()
-for mem_dir in "$HOME/.claude/projects"/*/memory/; do
+for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
   [[ -d "$mem_dir" ]] || continue
   local_slug=$(basename "$(dirname "$mem_dir")")
   file_count=$(find "$mem_dir" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')

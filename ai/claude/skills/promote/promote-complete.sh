@@ -12,15 +12,18 @@
 
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+
 # ── Record timestamps ────────────────────────────────────────────────────────
 
 now=$(date +%s)
 
-for mem_dir in "$HOME/.claude/projects"/*/memory/; do
+for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
   [[ -d "$mem_dir" ]] || continue
   echo "$now" > "${mem_dir}.last-promote"
 done
 
 # ── Remove pending flag ──────────────────────────────────────────────────────
 
-rm -f "$HOME/.claude/.promote-pending"
+rm -f "$CLAUDE_DIR/.promote-pending"

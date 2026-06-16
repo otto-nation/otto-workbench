@@ -161,7 +161,7 @@ step_claude_settings() {
   fi
 
   # Inject registry-derived permissions into the template
-  # shellcheck source=../../lib/registries.sh
+  # shellcheck source=/dev/null
   if ! declare -F collect_registry_permissions >/dev/null 2>&1; then
     . "$LIB_SRC_DIR/registries.sh"
   fi
@@ -287,8 +287,8 @@ step_claude_machine_profile() {
 # step_claude_backup_memory — copies ~/.claude/projects/*/memory/*.md into ai/memory/.
 # Preserves the slug directory structure so step_claude_restore_memory can reverse it.
 step_claude_backup_memory() {
-  local projects_dir="$HOME/.claude/projects"
-  local backup_dir="$WORKBENCH_DIR/ai/memory"
+  local projects_dir="$CLAUDE_DIR/projects"
+  local backup_dir="$AI_MEMORY_BACKUP_DIR"
   [[ -d "$projects_dir" ]] || { skip "No ~/.claude/projects/ — skipping memory backup"; return; }
   mkdir -p "$backup_dir"
 
@@ -311,14 +311,14 @@ step_claude_backup_memory() {
 # step_claude_restore_memory — copies ai/memory/ back to ~/.claude/projects/*/memory/.
 # Only runs when a project memory directory is absent (new-machine setup guard).
 step_claude_restore_memory() {
-  local backup_dir="$WORKBENCH_DIR/ai/memory"
+  local backup_dir="$AI_MEMORY_BACKUP_DIR"
   [[ -d "$backup_dir" ]] || { skip "No ai/memory/ backup — skipping restore"; return; }
 
   local slug dest_base count=0
   for slug_dir in "$backup_dir"/*/; do
     [[ -d "$slug_dir" ]] || continue
     slug=$(basename "$slug_dir")
-    dest_base="$HOME/.claude/projects/$slug/memory"
+    dest_base="$CLAUDE_DIR/projects/$slug/memory"
     # Only restore if memory dir is absent or empty — never overwrite existing session learning
     if [[ -d "$dest_base" ]] && [[ -n "$(ls -A "$dest_base" 2>/dev/null)" ]]; then
       skip "Memory for $slug already exists — skipping restore"

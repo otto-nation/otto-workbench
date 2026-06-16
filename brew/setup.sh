@@ -5,7 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$SCRIPT_DIR/../lib/ui.sh"
+. "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)/lib/ui.sh"
 
 require_command brew "Homebrew not found — skipping package install" || exit 0
 require_command jq  "jq not found — required for brew install status" || exit 1

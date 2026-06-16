@@ -2,7 +2,7 @@
 # Zed setup — sourced by editors/setup.sh, do not run directly.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$SCRIPT_DIR/../../lib/ui.sh"
+. "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)/lib/ui.sh"
 # shellcheck source=editors/zed/steps.sh
 . "$SCRIPT_DIR/steps.sh"
 

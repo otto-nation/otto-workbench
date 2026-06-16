@@ -9,7 +9,7 @@ print_brew_summary() {
   summary_section "Homebrew"
 
   if command -v brew >/dev/null 2>&1; then
-    if brew bundle check --file="$WORKBENCH_DIR/brew/Brewfile" >/dev/null 2>&1; then
+    if brew bundle check --file="$BREWFILE" >/dev/null 2>&1; then
       summary_ok "packages in sync"
     else
       summary_info "some packages not installed — run: ${DIM}otto-workbench install brew${NC}"

@@ -4,11 +4,11 @@ All shared code lives in `lib/`. Most modules are loaded through the `ui.sh` fac
 
 ## Loading
 
-Scripts source `lib/ui.sh` via the `_SELF` readlink pattern:
+Scripts source `lib/ui.sh` via `git rev-parse --show-toplevel` — depth-independent:
 
 ```bash
-_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
-. "$(dirname "$_SELF")/../lib/ui.sh"
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 ```
 
 `ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers.

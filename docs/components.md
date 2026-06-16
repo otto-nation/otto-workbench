@@ -42,9 +42,7 @@ ssh/
 # ssh/steps.sh
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -e
-  _D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  . "$_D/../lib/ui.sh"
-  unset _D
+  . "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/lib/ui.sh"
 fi
 
 step_ssh_config() {

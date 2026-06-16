@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.18.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.17.2...claude-review-v1.18.0) (2026-06-16)
+
+
+### Features
+
+* **claude-review:** add rebuild subcommand ([#244](https://github.com/otto-nation/otto-workbench/issues/244)) ([657fe42](https://github.com/otto-nation/otto-workbench/commit/657fe421262dac20dc8d8f68e41c865d59adadf4))
+
+
+### Bug Fixes
+
+* **claude-review:** handle corrupt prompt-stats.json from concurrent writes ([#247](https://github.com/otto-nation/otto-workbench/issues/247)) ([a378db9](https://github.com/otto-nation/otto-workbench/commit/a378db9050b1b5380561c07f23fd908a525daa95))
+* **claude-review:** reduce prompt bloat with density-based file skipping ([#245](https://github.com/otto-nation/otto-workbench/issues/245)) ([54846bd](https://github.com/otto-nation/otto-workbench/commit/54846bd4ec0098adc5e256636741cce99d051524))
+
 ## [1.17.2](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.17.1...claude-review-v1.17.2) (2026-06-15)
 
 

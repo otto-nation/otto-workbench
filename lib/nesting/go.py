@@ -8,58 +8,117 @@ _FUNC_DECL = re.compile(
     r'(\w+)\s*\('           # function name
 )
 _NESTING_KEYWORD = re.compile(r'\b(if|for|switch|select)\b')
-# Matches `} else if ...` — the `if` here is a continuation, not new nesting
 _ELSE_IF = re.compile(r'\}\s*else\s+if\b')
-# Matches `} else {` — a continuation block, not new nesting
 _ELSE = re.compile(r'\}\s*else\s*\{')
-# Matches func literals (closures): func( or func () but NOT named func declarations
 _FUNC_LITERAL = re.compile(r'\bfunc\s*\(')
+_LINE_COMMENT = re.compile(r'//.*$')
+_BLOCK_COMMENT_OPEN = re.compile(r'/\*')
+
+
+def _advance_in_literal(ch: str, line: str, i: int, mode: str) -> tuple[int, str]:
+    """Advance past one character inside a string/rune literal. Returns (new_i, mode)."""
+    if mode == 'rune':
+        if ch == '\\':
+            return i + 2, mode
+        if ch == "'":
+            return i + 1, ''
+        return i + 1, mode
+    if mode == 'string':
+        if ch == '\\':
+            return i + 2, mode
+        if ch == '"':
+            return i + 1, ''
+        return i + 1, mode
+    # mode == 'raw'
+    if ch == '`':
+        return i + 1, ''
+    return i + 1, mode
 
 
 def _strip_strings_and_comments(line: str) -> str:
     result = []
     i = 0
-    in_rune = False
-    in_string = False
-    in_raw = False
+    mode = ''
     while i < len(line):
         ch = line[i]
-        if in_rune:
-            if ch == '\\':
-                i += 1
-            elif ch == "'":
-                in_rune = False
-            i += 1
-            continue
-        if in_string:
-            if ch == '\\':
-                i += 1
-            elif ch == '"':
-                in_string = False
-            i += 1
-            continue
-        if in_raw:
-            if ch == '`':
-                in_raw = False
-            i += 1
+        if mode:
+            i, mode = _advance_in_literal(ch, line, i, mode)
             continue
         if ch == '/' and i + 1 < len(line) and line[i + 1] == '/':
             break
         if ch == "'":
-            in_rune = True
-            i += 1
-            continue
-        if ch == '"':
-            in_string = True
-            i += 1
-            continue
-        if ch == '`':
-            in_raw = True
-            i += 1
-            continue
-        result.append(ch)
+            mode = 'rune'
+        elif ch == '"':
+            mode = 'string'
+        elif ch == '`':
+            mode = 'raw'
+        else:
+            result.append(ch)
         i += 1
     return ''.join(result)
+
+
+def _handle_raw_string(in_raw_string: bool, line: str) -> tuple[bool, str | None]:
+    """Handle multiline raw string state. Returns (new_state, remaining_line_or_None)."""
+    if not in_raw_string:
+        return False, None
+    if '`' not in line:
+        return True, None
+    return False, line[line.index('`') + 1:]
+
+
+def _handle_block_comment(in_block_comment: bool, line: str) -> tuple[bool, str | None]:
+    """Handle block comment state. Returns (new_state, remaining_line_or_None)."""
+    if not in_block_comment:
+        return False, None
+    if '*/' not in line:
+        return True, None
+    return False, line[line.index('*/') + 2:]
+
+
+def _strip_block_comment(line: str) -> tuple[str, bool]:
+    """Remove inline block comment. Returns (cleaned_line, entered_block_comment)."""
+    if '/*' not in line:
+        return line, False
+    before = line[:line.index('/*')]
+    after = line[line.index('/*') + 2:]
+    if '*/' in after:
+        return before + after[after.index('*/') + 2:], False
+    return before, True
+
+
+def _record_violation(
+    violations: list[Violation], lineno: int, depth: int, func_name: str,
+) -> None:
+    violations.append(Violation(line_number=lineno, depth=depth, function_name=func_name))
+
+
+def _count_keyword_nesting(
+    stripped: str, violations: list[Violation], lineno: int,
+    nesting_depth: int, func_name: str, max_depth: int,
+) -> tuple[int, int]:
+    """Process nesting keywords and func literals. Returns (new_nesting_depth, remaining_open_braces)."""
+    else_if_count = len(_ELSE_IF.findall(stripped))
+    else_count = len(_ELSE.findall(stripped))
+    effective_keywords = len(_NESTING_KEYWORD.findall(stripped)) - else_if_count
+    func_literals = len(_FUNC_LITERAL.findall(stripped))
+    effective_close = stripped.count('}') - else_count - else_if_count
+    effective_open = stripped.count('{') - else_count - else_if_count
+
+    remaining_open = effective_open
+    for _ in range(effective_keywords + func_literals):
+        if remaining_open <= 0:
+            break
+        nesting_depth += 1
+        if nesting_depth > max_depth:
+            _record_violation(violations, lineno, nesting_depth, func_name)
+        remaining_open -= 1
+
+    for _ in range(effective_close):
+        if nesting_depth > 0:
+            nesting_depth -= 1
+
+    return nesting_depth, effective_open - effective_close
 
 
 class GoChecker:
@@ -78,38 +137,22 @@ class GoChecker:
         for lineno, raw_line in enumerate(lines, 1):
             line = raw_line.rstrip('\n')
 
-            # If we're inside a multiline backtick raw string, skip until closing backtick
-            if in_raw_string:
-                if '`' in line:
-                    in_raw_string = False
-                    line = line[line.index('`') + 1:]
-                else:
-                    continue
+            in_raw_string, remaining = _handle_raw_string(in_raw_string, line)
+            if remaining is not None:
+                line = remaining
+            elif in_raw_string:
+                continue
 
-            if in_block_comment:
-                if '*/' in line:
-                    in_block_comment = False
-                    line = line[line.index('*/') + 2:]
-                else:
-                    continue
+            in_block_comment, remaining = _handle_block_comment(in_block_comment, line)
+            if remaining is not None:
+                line = remaining
+            elif in_block_comment:
+                continue
 
-            if '/*' in line:
-                before = line[:line.index('/*')]
-                after = line[line.index('/*') + 2:]
-                if '*/' in after:
-                    line = before + after[after.index('*/') + 2:]
-                else:
-                    in_block_comment = True
-                    line = before
-
+            line, in_block_comment = _strip_block_comment(line)
             stripped = _strip_strings_and_comments(line)
 
-            # Count backticks on the line with // comments removed (but
-            # strings preserved) to detect multiline raw string boundaries.
-            # Can't use `stripped` because _strip_strings_and_comments
-            # consumes backtick content; can't use `line` because //
-            # comments may contain stray backticks.
-            line_no_comment = line[:line.index('//')] if '//' in line else line
+            line_no_comment = _LINE_COMMENT.sub('', line)
             if line_no_comment.count('`') % 2 == 1:
                 in_raw_string = True
 
@@ -117,76 +160,14 @@ class GoChecker:
             if fm:
                 func_name = fm.group(1)
                 nesting_depth = 0
-                brace_depth = 0
-                open_count = stripped.count('{')
-                close_count = stripped.count('}')
-                brace_depth += open_count - close_count
+                brace_depth = stripped.count('{') - stripped.count('}')
                 continue
 
-            # Count `} else if` and `} else {` occurrences so we can handle
-            # them correctly: these are continuations, not new nesting levels.
-            else_if_count = len(_ELSE_IF.findall(stripped))
-            else_count = len(_ELSE.findall(stripped))
-
-            keywords = _NESTING_KEYWORD.findall(stripped)
-            open_braces = stripped.count('{')
-            close_braces = stripped.count('}')
-
-            # Subtract `else if` keyword matches — they are not new nesting.
-            # Each `} else if` contributes one spurious `if` to the keyword list.
-            effective_keywords = len(keywords) - else_if_count
-
-            # Count func literals (closures) as nesting — they open a new scope.
-            # Named func declarations are already handled above, so _FUNC_LITERAL
-            # here only fires for anonymous functions/closures.
-            func_literals = len(_FUNC_LITERAL.findall(stripped))
-
-            # `} else {` lines: the closing `}` is a continuation brace, not a
-            # block-end for nesting purposes. The opening `{` after `else` is
-            # also a continuation, not a new nesting level. Adjust close/open
-            # brace counts so they cancel each other out for `else` branches.
-            effective_close_braces = close_braces - else_count
-            effective_open_braces = open_braces - else_count
-
-            # `} else if x {`: the `}` closes the previous `if` block and the
-            # `{` opens the `else if` body. Both are continuations — subtract them.
-            # Each `else if` has one `}` and one `{` that are continuations.
-            effective_close_braces -= else_if_count
-            effective_open_braces -= else_if_count
-
-            # Process nesting keywords (if/for/switch/select), each consuming
-            # one open brace from the line.
-            remaining_open = effective_open_braces
-            for _ in range(effective_keywords):
-                if remaining_open > 0:
-                    nesting_depth += 1
-                    if nesting_depth > max_depth:
-                        violations.append(Violation(
-                            line_number=lineno,
-                            depth=nesting_depth,
-                            function_name=func_name,
-                        ))
-                    remaining_open -= 1
-
-            # Func literals consume one open brace and count as nesting.
-            for _ in range(func_literals):
-                if remaining_open > 0:
-                    nesting_depth += 1
-                    if nesting_depth > max_depth:
-                        violations.append(Violation(
-                            line_number=lineno,
-                            depth=nesting_depth,
-                            function_name=func_name,
-                        ))
-                    remaining_open -= 1
-
-            # Update brace depth using effective counts (excluding else continuations).
-            brace_depth += effective_open_braces - effective_close_braces
-
-            # Decrement nesting depth for closing braces (excluding else continuations).
-            for _ in range(effective_close_braces):
-                if nesting_depth > 0:
-                    nesting_depth -= 1
+            depth_delta, brace_delta = _count_keyword_nesting(
+                stripped, violations, lineno, nesting_depth, func_name, max_depth,
+            )
+            nesting_depth = depth_delta
+            brace_depth += brace_delta
 
             if func_name and brace_depth <= 0:
                 func_name = ''

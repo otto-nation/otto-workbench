@@ -43,10 +43,12 @@ def _get_checker_by_ext(filepath: str, ext: str):
     checker = get_checker_for_extension(ext)
     if not checker:
         return None
-    if ext == '.bats':
+    if ext == '.bats' or checker.SHEBANG_RE is None:
         return checker
     shebang = _read_shebang(filepath)
-    return checker if shebang is not None else None
+    if shebang is None:
+        return None
+    return checker if checker.SHEBANG_RE.search(shebang) else None
 
 
 def _get_checker(filepath: str):

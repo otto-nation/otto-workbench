@@ -16,10 +16,25 @@
 # module, template, or agent requires no changes to this build script.
 
 set -euo pipefail
+shopt -s nullglob
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 WORKBENCH_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# ─── Constants ────────────────────────────────────────────────────────────
+
+MANIFEST_KEY="ai/claude"
+
+# Bash modules from lib/ that claude-review needs at runtime.
+# The full ui.sh sources the entire workbench framework; the tarball facade
+# sources only these. claude-review does not use constants.sh.
+BASH_MODULES=(output.sh prompts.sh)
+
+# Minimum expected file counts — catches silent glob failures
+MIN_PYTHON_MODULES=5
+MIN_REVIEW_TEMPLATES=4
+MIN_AGENTS=1
 
 # ─── Version ─────────────────────────────────────────────────────────────
 
@@ -37,7 +52,7 @@ if [[ -z "$VERSION" ]]; then
     echo "ERROR: No version argument and $MANIFEST not found" >&2
     exit 1
   fi
-  VERSION=$(jq -r '.["ai/claude"]' "$MANIFEST")
+  VERSION=$(jq -r ".\"${MANIFEST_KEY}\"" "$MANIFEST")
   if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
     echo "ERROR: Could not read version from $MANIFEST" >&2
     exit 1
@@ -59,28 +74,27 @@ mkdir -p "$DEST/bin" "$DEST/lib/review-templates" "$DEST/agents"
 # Binaries — claude-review plus all review-*/validate-review-* scripts
 cp "$SCRIPT_DIR/claude-review" "$DEST/bin/"
 for bin in "$SCRIPT_DIR"/review-* "$SCRIPT_DIR"/validate-review-*; do
-  if [[ -f "$bin" ]]; then cp "$bin" "$DEST/bin/"; fi
+  cp "$bin" "$DEST/bin/"
 done
 
 # Library files — all Python modules
 for py in "$SCRIPT_DIR/../lib/"*.py; do
-  if [[ -f "$py" ]]; then cp "$py" "$DEST/lib/"; fi
+  cp "$py" "$DEST/lib/"
 done
 
-# Library files — all bash modules sourced by claude-review
-# claude-review sources ui.sh which sources output.sh and prompts.sh
-for sh in output.sh prompts.sh; do
+# Library files — bash modules required by claude-review
+for sh in "${BASH_MODULES[@]}"; do
   cp "$WORKBENCH_ROOT/lib/$sh" "$DEST/lib/"
 done
 
 # Templates — all .md files in the templates directory
 for tpl in "$SCRIPT_DIR/../lib/review-templates/"*.md; do
-  if [[ -f "$tpl" ]]; then cp "$tpl" "$DEST/lib/review-templates/"; fi
+  cp "$tpl" "$DEST/lib/review-templates/"
 done
 
 # Agents — all .md files in the agents directory
 for agent in "$SCRIPT_DIR/../agents/"*.md; do
-  if [[ -f "$agent" ]]; then cp "$agent" "$DEST/agents/"; fi
+  cp "$agent" "$DEST/agents/"
 done
 
 # Version file
@@ -92,6 +106,7 @@ echo "$VERSION" > "$DEST/VERSION"
 
 {
   echo '#!/usr/bin/env bash'
+  # shellcheck disable=SC2016
   echo '_ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"'
   for sh in "$DEST/lib/"*.sh; do
     name="$(basename "$sh")"
@@ -102,6 +117,9 @@ echo "$VERSION" > "$DEST/VERSION"
 } > "$DEST/lib/ui.sh"
 
 # ─── Patch claude-review for standalone layout ────────────────────────────
+# Patches are anchored to @tarball-patch sentinel comments in claude-review.
+# This is robust against whitespace/expression changes in the source.
+#
 # In the monorepo, claude-review is at ai/claude/bin/ and sources
 # ../../../lib/ui.sh. In the standalone tarball it's at bin/ and needs
 # ../lib/ui.sh. Similarly, _WORKBENCH_ROOT goes from ../../.. to ..
@@ -111,27 +129,76 @@ REVIEW="$DEST/bin/claude-review"
 # shellcheck source=lib/output.sh
 source "$WORKBENCH_ROOT/lib/output.sh"
 
-# Patch lib/ui.sh source path
-# shellcheck disable=SC2016  # single quotes intentional — literal string replacement
-sed_i 's|"$(dirname "\$_SELF")/../../../lib/ui.sh"|"$(dirname "$_SELF")/../lib/ui.sh"|' "$REVIEW"
-
-# Patch _WORKBENCH_ROOT
+# Patch lib/ui.sh source path: ../../../lib → ../lib
 # shellcheck disable=SC2016
-sed_i 's|_WORKBENCH_ROOT="$(cd "$(dirname "\$_SELF")/../../.." && pwd)"|_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/.." \&\& pwd)"|' "$REVIEW"
+sed_i '/@tarball-patch: ui-source/s|\.\./\.\./\.\./lib|../lib|' "$REVIEW"
+
+# Patch _WORKBENCH_ROOT: ../../.. → ..
+# shellcheck disable=SC2016
+sed_i '/@tarball-patch: workbench-root/s|\.\./\.\./\.\.|..|' "$REVIEW"
 
 # Patch _generator_version to read VERSION file instead of release-please manifest
 # shellcheck disable=SC2016
-sed_i '/_generator_version()/,/^}/c\
+sed_i '/@tarball-patch-start: generator-version/,/@tarball-patch-end: generator-version/c\
+# @tarball-patch-start: generator-version\
 _generator_version() {\
   local version\
   version=$(cat "${_WORKBENCH_ROOT}/VERSION" 2>/dev/null || echo "unknown")\
   echo "claude-review ${version}"\
-}' "$REVIEW"
+}\
+# @tarball-patch-end: generator-version' "$REVIEW"
+
+# ─── Verify patches ──────────────────────────────────────────────────────
+
+bash -n "$REVIEW"
+for old_pattern in '../../../lib/ui.sh' '/../../.." && pwd)'; do
+  if grep -qF "$old_pattern" "$REVIEW"; then
+    echo "ERROR: patch failed — old pattern still present: $old_pattern" >&2
+    exit 1
+  fi
+done
+# generator-version: verify patched body reads VERSION file, not print_version
+if sed -n '/@tarball-patch-start: generator-version/,/@tarball-patch-end: generator-version/p' "$REVIEW" \
+    | grep -qF 'print_version'; then
+  echo "ERROR: generator-version patch failed — old body still present" >&2
+  exit 1
+fi
 
 # ─── Build tarball ────────────────────────────────────────────────────────
 
 TARBALL="claude-review-${VERSION}.tar.gz"
 tar -czf "$TARBALL" -C "$STAGING" "claude-review-${VERSION}"
+
+# ─── Verify tarball ──────────────────────────────────────────────────────
+
+contents=$(tar -tzf "$TARBALL")
+failed=false
+
+for entry in "bin/claude-review" "lib/ui.sh" "VERSION"; do
+  if ! echo "$contents" | grep -q "$entry"; then
+    echo "ERROR: tarball missing $entry" >&2
+    failed=true
+  fi
+done
+
+py_count=$(echo "$contents" | grep -c '\.py$' || true)
+agent_count=$(echo "$contents" | grep -c 'agents/.*\.md$' || true)
+tpl_count=$(echo "$contents" | grep -c 'review-templates/.*\.md$' || true)
+
+if (( py_count < MIN_PYTHON_MODULES )); then
+  echo "ERROR: tarball has $py_count Python modules, expected >= $MIN_PYTHON_MODULES" >&2
+  failed=true
+fi
+if (( agent_count < MIN_AGENTS )); then
+  echo "ERROR: tarball has $agent_count agents, expected >= $MIN_AGENTS" >&2
+  failed=true
+fi
+if (( tpl_count < MIN_REVIEW_TEMPLATES )); then
+  echo "ERROR: tarball has $tpl_count templates, expected >= $MIN_REVIEW_TEMPLATES" >&2
+  failed=true
+fi
+
+if $failed; then exit 1; fi
 
 echo "Created $TARBALL"
 echo "SHA256: $(shasum -a 256 "$TARBALL" | cut -d' ' -f1)"

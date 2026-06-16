@@ -27,6 +27,7 @@ import sys
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from nesting.preprocess import strip_strings_and_comments  # noqa: E402
 
 # ── Bash patterns ────────────────────────────────────────────────────────────
 
@@ -53,13 +54,6 @@ PYTHON_SHEBANG = re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)')
 
 BASH_EXTENSIONS = {'.sh', '.bash', '.bats'}
 PYTHON_EXTENSIONS = {'.py'}
-
-def strip_strings_and_comments(line: str) -> str:
-    line = re.sub(r"'[^']*'", '', line)
-    line = re.sub(r'"[^"]*"', '', line)
-    line = re.sub(r'#.*', '', line)
-    return line
-
 
 # ── Bash checker ─────────────────────────────────────────────────────────────
 

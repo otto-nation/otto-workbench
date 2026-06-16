@@ -101,11 +101,13 @@ EOF
   done
   _make_memory_dir "bloated-project" "$content"
 
-  # Create all referenced files so only the line count fails
+  # Batch-create all referenced files so only the line count fails
   local dir="$HOME/.claude/projects/bloated-project/memory"
-  for i in $(seq 1 201); do
-    _make_topic_file "$dir" "entry-$i.md" "entry-$i"
-  done
+  python3 -c "
+for i in range(1, 202):
+    with open(f'$dir/entry-{i}.md', 'w') as f:
+        f.write(f'---\nname: entry-{i}\ndescription: test entry\nmetadata:\n  type: feedback\n---\n\n\n')
+"
 
   run "$DREAM_VERIFY"
   [[ "$status" -eq 1 ]]

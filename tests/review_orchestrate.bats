@@ -1969,36 +1969,36 @@ print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
   [ "$result" = "M=2,S=1,N=3,I=1" ]
 }
 
-@test "_mechanical_verdict: must-fix triggers request changes" {
+@test "mechanical_verdict: must-fix triggers request changes" {
   result=$(_py "
 counts = {'M': 2, 'S': 1, 'N': 0, 'I': 0}
-print(mod._mechanical_verdict(counts))
+print(mod.mechanical_verdict(counts))
 ")
   [[ "$result" == *"Request changes"* ]]
   [[ "$result" == *"2 must-fix"* ]]
 }
 
-@test "_mechanical_verdict: should-fix only triggers needs discussion" {
+@test "mechanical_verdict: should-fix only triggers needs discussion" {
   result=$(_py "
 counts = {'M': 0, 'S': 3, 'N': 1, 'I': 0}
-print(mod._mechanical_verdict(counts))
+print(mod.mechanical_verdict(counts))
 ")
   [[ "$result" == *"Needs discussion"* ]]
 }
 
-@test "_mechanical_verdict: nits only triggers approve" {
+@test "mechanical_verdict: nits only triggers approve" {
   result=$(_py "
 counts = {'M': 0, 'S': 0, 'N': 2, 'I': 1}
-print(mod._mechanical_verdict(counts))
+print(mod.mechanical_verdict(counts))
 ")
   [[ "$result" == *"Approve"* ]]
   [[ "$result" == *"2 nit"* ]]
 }
 
-@test "_mechanical_verdict: no findings triggers approve" {
+@test "mechanical_verdict: no findings triggers approve" {
   result=$(_py "
 counts = {'M': 0, 'S': 0, 'N': 0, 'I': 0}
-print(mod._mechanical_verdict(counts))
+print(mod.mechanical_verdict(counts))
 ")
   [[ "$result" == *"Approve"* ]]
   [[ "$result" == *"no findings"* ]]
@@ -2703,4 +2703,81 @@ print(f'contents={in_contents},omitted={in_omitted}')
 PYEOF
 )
   [ "$result" = "contents=False,omitted=True" ]
+}
+# ── review-rebuild smoke tests ───────────────────────────────────────────────
+
+@test "review-rebuild: rebuilds review.md from group files" {
+  # Get section headers from constants
+  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
+  should_section=$(_py "print(mod.SECTION_SHOULD_FIX)")
+  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
+  should_prefix=$(_py "print(mod.FINDING_PREFIX_SHOULD)")
+
+  mkdir -p "$TMPDIR/review"
+  cat > "$TMPDIR/review/group-1.md" <<EOF
+## $must_section
+- **[${must_prefix}1]** **\`foo.py:10\`** — missing error check
+EOF
+  cat > "$TMPDIR/review/group-2.md" <<EOF
+## $should_section
+- **[${should_prefix}1]** **\`bar.py:5\`** — unused import
+EOF
+  cat > "$TMPDIR/review/meta.json" <<'EOF'
+{"repo":"org/repo","pr_number":"42","head_sha":"abc123","head_ref":"feat/test","base_ref":"main","review_type":"full","title":"Test PR","changed_files":3,"mode":"pr"}
+EOF
+
+  "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+    --review-dir "$TMPDIR/review" --repo org/repo --pr 42
+
+  [ -f "$TMPDIR/review/review.md" ]
+  grep -q "# Review: org/repo#42 — Test PR" "$TMPDIR/review/review.md"
+  grep -q "## $must_section" "$TMPDIR/review/review.md"
+  grep -q "## $should_section" "$TMPDIR/review/review.md"
+  grep -q "## Verdict" "$TMPDIR/review/review.md"
+  grep -q "2 groups" "$TMPDIR/review/review.md"
+}
+
+@test "review-rebuild: self-review mode omits verdict" {
+  nit_section=$(_py "print(mod.SECTION_NIT)")
+  nit_prefix=$(_py "print(mod.FINDING_PREFIX_NIT)")
+
+  mkdir -p "$TMPDIR/review"
+  cat > "$TMPDIR/review/group-1.md" <<EOF
+## $nit_section
+- **[${nit_prefix}1]** **\`foo.py:1\`** — style nit
+EOF
+  cat > "$TMPDIR/review/meta.json" <<'EOF'
+{"repo":"org/repo","pr_number":"","head_sha":"abc","head_ref":"feat/self","base_ref":"main","review_type":"full","mode":"self"}
+EOF
+
+  "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+    --review-dir "$TMPDIR/review" --repo org/repo --pr ""
+
+  grep -q "# Self-Review: org/repo — feat/self" "$TMPDIR/review/review.md"
+  ! grep -q "## Verdict" "$TMPDIR/review/review.md"
+}
+
+@test "review-rebuild: no group files exits with error" {
+  mkdir -p "$TMPDIR/empty"
+  run "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+    --review-dir "$TMPDIR/empty" --repo org/repo --pr 1
+  [ "$status" -ne 0 ]
+}
+
+@test "review-rebuild: works without meta.json" {
+  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
+  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
+
+  mkdir -p "$TMPDIR/review"
+  cat > "$TMPDIR/review/group-1.md" <<EOF
+## $must_section
+- **[${must_prefix}1]** **\`foo.py:10\`** — bug
+EOF
+
+  "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+    --review-dir "$TMPDIR/review" --repo org/repo --pr 99
+
+  [ -f "$TMPDIR/review/review.md" ]
+  grep -q "# Review: org/repo#99" "$TMPDIR/review/review.md"
+  grep -q "1 finding" "$TMPDIR/review/review.md"
 }

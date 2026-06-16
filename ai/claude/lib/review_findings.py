@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from review_common import (
+    FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
+    FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
     FINDING_SECTIONS, SECTION_FILE_TRIAGE,
-    _SEVERITY_NAMES, _warn,
+    _SEVERITY_NAMES, _info, _warn,
 )
 
 
@@ -616,3 +618,79 @@ def strip_stable_ids(review_file: str) -> None:
     cleaned = re.sub(r" <!-- sid:\w+ -->", "", text)
     if cleaned != text:
         path.write_text(cleaned)
+
+
+# ── Mechanical verdict and review assembly ──────────────────────────────────
+
+_VERDICT_LABELS = [
+    (FINDING_PREFIX_MUST, "must-fix"),
+    (FINDING_PREFIX_SHOULD, "should-fix"),
+    (FINDING_PREFIX_NIT, "nit"),
+    (FINDING_PREFIX_IDIOMS, "idiom"),
+]
+
+_MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
+
+
+def mechanical_verdict(counts: dict[str, int]) -> str:
+    parts = [f"{counts[p]} {label}" for p, label in _VERDICT_LABELS if counts.get(p)]
+    must = counts.get(FINDING_PREFIX_MUST, 0)
+    should = counts.get(FINDING_PREFIX_SHOULD, 0)
+
+    if must:
+        action = "Request changes"
+    elif should:
+        action = "Needs discussion"
+    elif parts:
+        action = "Approve"
+    else:
+        return f"Approve — no findings {_MECHANICAL_NOTE}.\n"
+
+    suffix = " only" if not must and not should else ""
+    return f"{action} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
+
+
+def post_process_findings(
+    review_file: str,
+    wt_path: str = "",
+    prior_review: str = "",
+) -> None:
+    if prior_review:
+        orphaned = _check_orphaned_prior_ids(
+            annotate_prior_with_stable_ids(prior_review),
+            Path(review_file).read_text(),
+        )
+        if orphaned:
+            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
+    if wt_path:
+        dropped = verify_findings(review_file, wt_path)
+        if dropped:
+            _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+    strip_evidence_blocks(review_file)
+    strip_stable_ids(review_file)
+    renumber_findings(review_file)
+
+
+def build_mechanical_review(
+    merged_content: str,
+    *,
+    title: str,
+    meta_header: str,
+    group_count: int,
+    summary_note: str,
+    include_verdict: bool = True,
+) -> str:
+    counts = _count_findings(merged_content)
+    total = sum(counts.values())
+    count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
+
+    summary = (
+        f"{title}\n{meta_header}\n"
+        f"## Summary\n"
+        f"{count_summary} across {group_count} groups. "
+        f"{summary_note}\n\n"
+        f"{merged_content}\n"
+    )
+    if not include_verdict:
+        return summary
+    return f"{summary}\n## Verdict\n{mechanical_verdict(counts)}"

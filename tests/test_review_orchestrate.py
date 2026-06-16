@@ -354,19 +354,19 @@ class TestMechanicalVerdict:
     def test_must_fix_present(self, ro):
         counts = {ro.FINDING_PREFIX_MUST: 2, ro.FINDING_PREFIX_SHOULD: 1,
                   ro.FINDING_PREFIX_NIT: 0, ro.FINDING_PREFIX_IDIOMS: 0}
-        result = ro._mechanical_verdict(counts)
+        result = ro.mechanical_verdict(counts)
         assert result.startswith("Request changes")
 
     def test_should_fix_no_must(self, ro):
         counts = {ro.FINDING_PREFIX_MUST: 0, ro.FINDING_PREFIX_SHOULD: 3,
                   ro.FINDING_PREFIX_NIT: 1, ro.FINDING_PREFIX_IDIOMS: 0}
-        result = ro._mechanical_verdict(counts)
+        result = ro.mechanical_verdict(counts)
         assert result.startswith("Needs discussion")
 
     def test_nits_and_idioms_only(self, ro):
         counts = {ro.FINDING_PREFIX_MUST: 0, ro.FINDING_PREFIX_SHOULD: 0,
                   ro.FINDING_PREFIX_NIT: 2, ro.FINDING_PREFIX_IDIOMS: 1}
-        result = ro._mechanical_verdict(counts)
+        result = ro.mechanical_verdict(counts)
         assert result.startswith("Approve")
         assert "2 nit" in result
         assert "1 idiom" in result
@@ -374,13 +374,13 @@ class TestMechanicalVerdict:
     def test_no_findings(self, ro):
         counts = {ro.FINDING_PREFIX_MUST: 0, ro.FINDING_PREFIX_SHOULD: 0,
                   ro.FINDING_PREFIX_NIT: 0, ro.FINDING_PREFIX_IDIOMS: 0}
-        result = ro._mechanical_verdict(counts)
+        result = ro.mechanical_verdict(counts)
         assert "no findings" in result
 
     def test_zero_counts_for_some(self, ro):
         counts = {ro.FINDING_PREFIX_MUST: 1, ro.FINDING_PREFIX_SHOULD: 0,
                   ro.FINDING_PREFIX_NIT: 0, ro.FINDING_PREFIX_IDIOMS: 0}
-        result = ro._mechanical_verdict(counts)
+        result = ro.mechanical_verdict(counts)
         assert "Request changes" in result
         assert "1 must-fix" in result
         assert "should-fix" not in result
@@ -1482,10 +1482,7 @@ class TestPhaseSynthesis:
         import review_pipeline
         defaults = {
             "build_prompt": lambda *a, **kw: "mock prompt",
-            "verify_findings": lambda *a: [],
-            "strip_evidence_blocks": lambda *a: None,
-            "strip_stable_ids": lambda *a: None,
-            "renumber_findings": lambda *a: None,
+            "post_process_findings": lambda *a, **kw: None,
         }
         defaults.update(overrides)
         for name, func in defaults.items():
@@ -1840,3 +1837,169 @@ class TestPromptStats:
         assert isinstance(stats, list)
         assert len(stats) == 1
         assert stats[0]["template"] == "test"
+# ── post_process_findings ───────────────────────────────────────────────────
+
+
+class TestPostProcessFindings:
+    def test_skips_verify_when_no_wt_path(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        must = ro.SECTION_MUST_FIX
+        prefix = ro.FINDING_PREFIX_MUST
+        review.write_text(
+            f"## {must}\n"
+            f"- **[{prefix}1]** **`missing.py:10`** — bug\n"
+            "  > ```\n"
+            "  > old_code()\n"
+            "  > ```\n"
+        )
+        ro.post_process_findings(str(review))
+        result = review.read_text()
+        assert f"[{prefix}1]" in result
+
+    def test_strips_evidence_blocks(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        must = ro.SECTION_MUST_FIX
+        prefix = ro.FINDING_PREFIX_MUST
+        review.write_text(
+            f"## {must}\n"
+            f"- **[{prefix}1]** **`foo.py:1`** — issue\n"
+            "  > ```python\n"
+            "  > x = 1\n"
+            "  > ```\n"
+        )
+        ro.post_process_findings(str(review))
+        assert "```python" not in review.read_text()
+
+    def test_strips_stable_ids(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        must = ro.SECTION_MUST_FIX
+        prefix = ro.FINDING_PREFIX_MUST
+        review.write_text(
+            f"## {must}\n"
+            f"- **[{prefix}1]** <!-- sid:abc12345 --> **`foo.py:1`** — issue\n"
+        )
+        ro.post_process_findings(str(review))
+        assert "sid:" not in review.read_text()
+
+    def test_renumbers_findings(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        must = ro.SECTION_MUST_FIX
+        prefix = ro.FINDING_PREFIX_MUST
+        review.write_text(
+            f"## {must}\n"
+            f"- **[{prefix}3]** **`foo.py:1`** — first\n"
+            f"- **[{prefix}7]** **`bar.py:1`** — second\n"
+        )
+        ro.post_process_findings(str(review))
+        result = review.read_text()
+        assert f"[{prefix}1]" in result
+        assert f"[{prefix}2]" in result
+
+
+# ── build_mechanical_review ─────────────────────────────────────────────────
+
+
+class TestBuildMechanicalReview:
+    @staticmethod
+    def _must_fix_content(ro, count=1):
+        must = ro.SECTION_MUST_FIX
+        prefix = ro.FINDING_PREFIX_MUST
+        lines = [f"## {must}"]
+        for i in range(1, count + 1):
+            lines.append(f"- **[{prefix}{i}]** **`f{i}.py`** — bug {i}")
+        return "\n".join(lines) + "\n"
+
+    def test_includes_title_and_summary(self, ro):
+        result = ro.build_mechanical_review(
+            self._must_fix_content(ro),
+            title="# Review: org/repo#1 — title",
+            meta_header="<!-- date: 2026-01-01 -->\n",
+            group_count=2,
+            summary_note="Test note.",
+        )
+        assert result.startswith("# Review: org/repo#1 — title")
+        assert "1 finding" in result
+        assert "2 groups" in result
+        assert "Test note." in result
+
+    def test_includes_verdict_by_default(self, ro):
+        result = ro.build_mechanical_review(
+            self._must_fix_content(ro),
+            title="# Review",
+            meta_header="",
+            group_count=1,
+            summary_note="note",
+        )
+        assert "## Verdict" in result
+        assert "Request changes" in result
+
+    def test_excludes_verdict_when_disabled(self, ro):
+        result = ro.build_mechanical_review(
+            self._must_fix_content(ro),
+            title="# Self-Review",
+            meta_header="",
+            group_count=1,
+            summary_note="note",
+            include_verdict=False,
+        )
+        assert "## Verdict" not in result
+
+    def test_no_findings_verdict(self, ro):
+        must = ro.SECTION_MUST_FIX
+        result = ro.build_mechanical_review(
+            f"## {must}\n_none._\n",
+            title="# Review",
+            meta_header="",
+            group_count=1,
+            summary_note="note",
+        )
+        assert "No findings" in result
+        assert "Approve" in result
+
+
+# ── _write_review_sidecar enriched meta.json ────────────────────────────────
+
+
+class TestWriteReviewSidecar:
+    @staticmethod
+    def _make_job(ro, tmp_path):
+        pr = ro.PRMetadata(
+            title="Test PR", body="", head="feat/test", base="main",
+            head_sha="abc123", additions=10, deletions=5,
+            changed_files=3, files=[],
+        )
+        ctx = ro.PRContext()
+        review_file = str(tmp_path / "review.md")
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42", pr=pr, ctx=ctx,
+            wt_path=str(tmp_path), review_file=review_file,
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            generator_version="test-v1",
+        )
+
+    def test_meta_includes_title_and_changed_files(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert meta["title"] == "Test PR"
+        assert meta["changed_files"] == 3
+
+    def test_meta_includes_mode(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert meta["mode"] == "pr"
+
+    def test_meta_includes_generator_version(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert meta["generator_version"] == "test-v1"
+
+    def test_meta_omits_generator_when_empty(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        job.generator_version = ""
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert "generator_version" not in meta

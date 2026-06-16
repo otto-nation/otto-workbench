@@ -81,6 +81,7 @@ WORKTREE_FALLBACK_DIR=".worktrees"
 COMMANDS=(
   "gc"                            "Clean up stale review artifacts"
   "post <pr_url_or_number>"       "Post an existing review file via poster agent"
+  "rebuild <pr_url_or_number>"    "Rebuild review.md from group finding files"
   "summary <pr_url_or_number>"    "Regenerate JSON summary from disk artifacts"
   "threads [<pr_url_or_number>]"  "Show thread lifecycle status for a PR"
 )
@@ -1265,6 +1266,26 @@ cmd_threads() {
   "$(dirname "$_SELF")/review-threads" "${threads_args[@]}"
 }
 
+cmd_rebuild() {
+  local pr_input="${1:-}"
+  [[ -n "$pr_input" ]] || { err "Usage: claude-review rebuild <pr_url_or_number>"; exit 1; }
+
+  local pr_number pr_repo review_file
+  _extract_pr_number pr_number "$pr_input"
+  _extract_repo pr_repo "$pr_input"
+  _review_file review_file "$pr_repo" "$pr_number"
+
+  local review_dir
+  review_dir="$(dirname "$review_file")"
+
+  if [[ ! -d "$review_dir" ]]; then
+    err "No review directory found: $review_dir"
+    exit 1
+  fi
+
+  "$(dirname "$_SELF")/review-rebuild" --review-dir "$review_dir" --repo "$pr_repo" --pr "$pr_number"
+}
+
 cmd_summary() {
   local pr_input="${1:-}"
   [[ -n "$pr_input" ]] || { err "Usage: claude-review summary <pr_url_or_number>"; exit 1; }
@@ -1374,6 +1395,17 @@ main() {
         local post_review_file
         _review_file post_review_file "$post_repo" "$post_pr_number"
         _json_summary "$post_repo" "$post_pr_number" "$post_review_file" >&"$_json_stdout"
+        exec {_json_stdout}>&-
+      fi
+      ;;
+    rebuild)
+      cmd_rebuild "${positional[1]:-}"
+      if [[ "$json_summary" == "true" ]]; then
+        local rebuild_pr_number rebuild_repo rebuild_review_file
+        _extract_pr_number rebuild_pr_number "${positional[1]:-}"
+        _extract_repo rebuild_repo "${positional[1]:-}"
+        _review_file rebuild_review_file "$rebuild_repo" "$rebuild_pr_number"
+        _json_summary "$rebuild_repo" "$rebuild_pr_number" "$rebuild_review_file" >&"$_json_stdout"
         exec {_json_stdout}>&-
       fi
       ;;

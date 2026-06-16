@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Rebuild review.md from group finding files.
+
+Reads group-N.md files from the review directory, merges findings,
+post-processes them, and writes a new review.md. Used to recover from
+synthesis agent formatting drift or corrupted review files.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from review_common import (
+    FILENAME_GROUP,
+    META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
+    MODE_SELF,
+    _err, _info,
+)
+from review_findings import (
+    build_mechanical_review, merge_reviews, post_process_findings,
+)
+
+REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
+
+
+def _discover_group_files(review_dir: Path) -> list[str]:
+    groups = []
+    i = 1
+    while True:
+        path = review_dir / FILENAME_GROUP.format(i)
+        if not path.exists():
+            break
+        groups.append(str(path))
+        i += 1
+    return groups
+
+
+def _read_meta(review_dir: Path) -> dict:
+    meta_path = review_dir / "meta.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _build_meta_header(meta: dict) -> str:
+    lines = [
+        META_DATE.format(today=date.today().isoformat()),
+    ]
+    if meta.get("head_sha"):
+        lines.append(META_HEAD_SHA.format(head_sha=meta["head_sha"]))
+    review_type = meta.get("review_type", "full")
+    lines.append(META_REVIEW_TYPE.format(review_type=review_type))
+    if meta.get("generator_version"):
+        lines.append(META_GENERATOR.format(generator_version=meta["generator_version"]))
+    return "\n".join(lines) + "\n"
+
+
+def _build_title(meta: dict, repo: str, pr: str) -> str:
+    mode = meta.get("mode", "")
+    if mode == MODE_SELF:
+        head_ref = meta.get("head_ref", "unknown")
+        return f"# Self-Review: {repo} — {head_ref}"
+    title = meta.get("title", "")
+    if title:
+        return f"# Review: {repo}#{pr} — {title}"
+    return f"# Review: {repo}#{pr}"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Rebuild review.md from group findings")
+    parser.add_argument("--review-dir", required=True, help="Path to the review directory")
+    parser.add_argument("--repo", required=True, help="GitHub owner/repo")
+    parser.add_argument("--pr", required=True, help="PR number")
+    args = parser.parse_args()
+
+    review_dir = Path(args.review_dir)
+    review_file = review_dir / "review.md"
+
+    group_files = _discover_group_files(review_dir)
+    if not group_files:
+        _err(f"No group finding files in {review_dir}")
+        sys.exit(1)
+
+    _info(f"Found {len(group_files)} group files")
+
+    meta = _read_meta(review_dir)
+    mode = meta.get("mode", "")
+
+    merged_content = merge_reviews(group_files)
+
+    review_file.write_text(merged_content)
+    post_process_findings(str(review_file))
+    processed = review_file.read_text()
+
+    title = _build_title(meta, args.repo, args.pr)
+    meta_header = _build_meta_header(meta)
+
+    final = build_mechanical_review(
+        processed,
+        title=title,
+        meta_header=meta_header,
+        group_count=len(group_files),
+        summary_note=REBUILD_SUMMARY,
+        include_verdict=(mode != MODE_SELF),
+    )
+
+    review_file.write_text(final)
+    _info(f"Rebuilt {review_file}")
+
+
+if __name__ == "__main__":
+    main()

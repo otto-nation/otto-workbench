@@ -183,6 +183,9 @@ MAX_DELTA_LOG_BYTES = 20_000
 NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
 MIN_DIFF_BYTES = 20_000
 
+FILE_CONTENT_DENSITY_THRESHOLD = 0.15
+FILE_CONTENT_MIN_SIZE = 5120
+
 
 # ── Pre-flight data collection ───────────────────────────────────────────────
 
@@ -292,10 +295,12 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
 
     all_contents: dict[str, str] = {}
     all_permissions: dict[str, str] = {}
+    file_changes: dict[str, int] = {}
     for f in job.pr.files:
         p = wt / f["path"]
         all_contents[f["path"]] = _read_file_safe(p)
         all_permissions[f["path"]] = _file_permissions(p)
+        file_changes[f["path"]] = f.get("additions", 0) + f.get("deletions", 0)
 
     file_sizes = {p: len(c.encode()) for p, c in all_contents.items()}
 
@@ -317,13 +322,27 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     included: dict[str, str] = {}
     included_perms: dict[str, str] = {}
     omitted: list[str] = []
+    density_skipped: list[str] = []
     for path in sorted_paths:
-        if file_sizes[path] <= remaining:
+        size = file_sizes[path]
+        if size > FILE_CONTENT_MIN_SIZE:
+            total_lines = all_contents[path].count("\n") or 1
+            changed = file_changes.get(path, total_lines)
+            density = changed / total_lines
+            if density < FILE_CONTENT_DENSITY_THRESHOLD:
+                omitted.append(path)
+                density_skipped.append(path)
+                continue
+        if size <= remaining:
             included[path] = all_contents[path]
             included_perms[path] = all_permissions[path]
-            remaining -= file_sizes[path]
+            remaining -= size
         else:
             omitted.append(path)
+
+    if density_skipped:
+        density_kb = sum(file_sizes[p] for p in density_skipped) // 1024
+        _info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
 
     if omitted:
         omitted_kb = sum(file_sizes[p] for p in omitted) // 1024

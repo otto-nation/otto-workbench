@@ -1815,3 +1815,28 @@ class TestPromptStats:
         assert len(stats) == 2
         assert stats[0]["template"] == "first"
         assert stats[1]["template"] == "second"
+
+    def test_prompt_stats_survives_corrupt_file(self, ro, tmp_path):
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main",
+            head_sha="abc", additions=1, deletions=0,
+            changed_files=1, files=[],
+        )
+        ctx = ro.PRContext()
+        review_file = str(tmp_path / "review.md")
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(tmp_path), review_file=review_file,
+            session_log=str(tmp_path / "s.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+
+        stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
+        stats_file.write_text("")
+
+        ro._log_prompt_size("test", "hello", {}, job)
+
+        stats = json.loads(stats_file.read_text())
+        assert isinstance(stats, list)
+        assert len(stats) == 1
+        assert stats[0]["template"] == "test"

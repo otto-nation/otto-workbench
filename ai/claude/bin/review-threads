@@ -87,7 +87,7 @@ def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="PR review thread status")
-    parser.add_argument("--pr", type=int, help="PR number")
+    parser.add_argument("--pr", help="PR number")
     parser.add_argument("--resolve-verified", action="store_true",
                         help="Resolve all verified threads on GitHub")
     parser.add_argument("--repo-dir", "--repo", "--worktree",
@@ -97,7 +97,7 @@ def main():
     cwd = args.repo_dir or None
     if args.pr:
         repo = _detect_repo(cwd)
-        pr_number = args.pr
+        pr_number = int(args.pr)
     else:
         repo, pr_number = _detect_pr(cwd)
 

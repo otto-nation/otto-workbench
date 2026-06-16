@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.19.0...claude-review-v1.19.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **review-post:** propagate sidecar repo to args.repo ([#261](https://github.com/otto-nation/otto-workbench/issues/261)) ([12a6ec1](https://github.com/otto-nation/otto-workbench/commit/12a6ec11dc4ec342a1dd6384bb45e0cf3f48cafb))
+
 ## [1.19.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.18.1...claude-review-v1.19.0) (2026-06-16)
 
 

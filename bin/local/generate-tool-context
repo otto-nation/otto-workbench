@@ -35,14 +35,13 @@
 
 set -euo pipefail
 
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
-WORKBENCH_DIR="$REPO_ROOT"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$REPO_ROOT}"
 
 # shellcheck source=/dev/null
-. "$WORKBENCH_DIR/lib/ui.sh"
+. "$REPO_ROOT/lib/ui.sh"
 # shellcheck source=/dev/null
-. "$WORKBENCH_DIR/lib/registries.sh"
+. "$REPO_ROOT/lib/registries.sh"
 
 BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
 BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"

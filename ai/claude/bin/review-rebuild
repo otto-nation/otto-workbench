@@ -77,7 +77,6 @@ def _build_title(meta: dict, repo: str, pr: str) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Rebuild review.md from group findings")
     parser.add_argument("--review-dir", required=True, help="Path to the review directory")
-    parser.add_argument("--repo", required=True, help="GitHub owner/repo")
     parser.add_argument("--pr", required=True, help="PR number")
     args = parser.parse_args()
 
@@ -92,6 +91,10 @@ def main():
     _info(f"Found {len(group_files)} group files")
 
     meta = _read_meta(review_dir)
+    repo = meta.get("repo", "")
+    if not repo:
+        _err("Cannot determine repository — meta.json missing or has no 'repo' field")
+        sys.exit(1)
     mode = meta.get("mode", "")
 
     merged_content = merge_reviews(group_files)
@@ -100,7 +103,7 @@ def main():
     post_process_findings(str(review_file))
     processed = review_file.read_text()
 
-    title = _build_title(meta, args.repo, args.pr)
+    title = _build_title(meta, repo, args.pr)
     meta_header = _build_meta_header(meta)
 
     final = build_mechanical_review(

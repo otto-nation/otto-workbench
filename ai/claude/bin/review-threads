@@ -5,7 +5,7 @@ Renders a human-readable dashboard to stderr and structured JSON to stdout.
 Manages local state in <worktree>/ignore/pr-comments/state.json.
 
 Usage:
-  review-threads [--pr NUMBER] [--repo OWNER/REPO] [--repo-dir PATH]
+  review-threads [--pr NUMBER] [--repo-dir PATH]
   review-threads --resolve-verified
 """
 
@@ -20,11 +20,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import pr_comments as pc
 
 
-def _detect_pr() -> tuple[str, int]:
+def _detect_repo(cwd: str | None = None) -> str:
+    """Detect owner/repo from the git remote."""
+    result = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        print("Cannot determine repository from git remote", file=sys.stderr)
+        sys.exit(1)
+    return result.stdout.strip()
+
+
+def _detect_pr(cwd: str | None = None) -> tuple[str, int]:
     """Detect repo and PR number from current branch."""
     result = subprocess.run(
         ["gh", "pr", "view", "--json", "number,headRepository"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=cwd,
     )
     if result.returncode != 0:
         print("No PR found for current branch", file=sys.stderr)
@@ -76,19 +88,18 @@ def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
 def main():
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", type=int, help="PR number")
-    parser.add_argument("--repo", help="Repository (owner/repo)")
     parser.add_argument("--resolve-verified", action="store_true",
                         help="Resolve all verified threads on GitHub")
-    parser.add_argument("--repo-dir", "--worktree",
+    parser.add_argument("--repo-dir", "--repo", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
     args = parser.parse_args()
 
-    if args.repo and args.pr:
-        repo, pr_number = args.repo, args.pr
-    elif args.repo or args.pr:
-        parser.error("--repo and --pr must be provided together")
+    cwd = args.repo_dir or None
+    if args.pr:
+        repo = _detect_repo(cwd)
+        pr_number = args.pr
     else:
-        repo, pr_number = _detect_pr()
+        repo, pr_number = _detect_pr(cwd)
 
     owner, repo_name = repo.split("/", 1)
     my_login = _my_login()

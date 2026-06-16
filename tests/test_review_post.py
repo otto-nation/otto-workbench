@@ -1861,7 +1861,7 @@ class TestDryRunIntegration:
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         review_file.write_text(self.REVIEW_MD)
-        meta = {"head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
         (review_dir / "meta.json").write_text(json.dumps(meta))
         return review_file
 
@@ -1869,7 +1869,6 @@ class TestDryRunIntegration:
         """Run review-post --dry-run and return the CompletedProcess."""
         cmd = [
             sys.executable, str(self._REVIEW_POST),
-            "--repo", "test/repo",
             "--pr", "42",
             "--review-file", str(review_file),
             "--dry-run",

@@ -7,7 +7,7 @@ location (inline first, then body), and creates a PENDING review via
 the GitHub API. Pass --submit to submit the review immediately.
 
 Usage:
-  review-post --repo OWNER/REPO --pr NUMBER --review-file PATH
+  review-post --pr NUMBER --review-file PATH
               [--severity M,S,N] [--dry-run]
 """
 
@@ -92,7 +92,6 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 def main():
     parser = argparse.ArgumentParser(description="Post a review file to GitHub")
-    parser.add_argument("--repo", required=True, help="GitHub owner/repo")
     parser.add_argument("--pr", required=True, help="PR number")
     parser.add_argument("--review-file", required=True, help="Path to review markdown file")
     all_sevs = ",".join(SEVERITY_LABELS)
@@ -119,6 +118,12 @@ def main():
         except (json.JSONDecodeError, OSError):
             pass
 
+    repo = sidecar.get("repo", "")
+    if not repo:
+        _err("Cannot determine repository — meta.json missing or has no 'repo' field")
+        sys.exit(1)
+    args.repo = repo
+
     severity_filter = set(args.severity.upper().split(","))
     text = review_path.read_text()
 
@@ -141,7 +146,7 @@ def main():
     head_ref = sidecar.get("head_ref", "")
     base_ref = sidecar.get("base_ref", "")
     if not args.dry_run:
-        pr_meta = _fetch_pr_metadata(args.repo, args.pr)
+        pr_meta = _fetch_pr_metadata(repo, args.pr)
         head_sha = pr_meta["head_sha"]
         head_ref = head_ref or pr_meta["head_ref"]
         base_ref = base_ref or pr_meta["base_ref"]
@@ -160,13 +165,13 @@ def main():
 
     if args.dry_run:
         _info("Fetching diff for classification...")
-    diff_text = sidecar.get("diff") or _get_diff(args.repo, args.pr)
+    diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
 
     all_postable = inline + file_level
     if not args.dry_run and all_postable:
-        kept, deduped = dedup_against_posted(all_postable, args.repo, args.pr)
+        kept, deduped = dedup_against_posted(all_postable, repo, args.pr)
         if deduped:
             _info(f"Skipped {len(deduped)} findings duplicating existing comments")
             skipped.extend(deduped)
@@ -176,7 +181,7 @@ def main():
     body_findings = file_level + skipped
 
     findings_for_links = inline + body_findings
-    resolve_permalinks(findings_for_links, args.repo, diff_text, head_ref, base_ref)
+    resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref)
 
     inline, body_findings = renumber_for_posting(inline, body_findings)
 

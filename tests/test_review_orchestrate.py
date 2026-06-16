@@ -1956,6 +1956,17 @@ class TestBuildMechanicalReview:
         assert "No findings" in result
         assert "Approve" in result
 
+    def test_file_count_in_scope(self, ro):
+        result = ro.build_mechanical_review(
+            self._must_fix_content(ro),
+            title="# Review",
+            meta_header="",
+            group_count=2,
+            summary_note="note",
+            file_count=3,
+        )
+        assert "across 3 files in 2 groups" in result
+
 
 # ── _write_review_sidecar enriched meta.json ────────────────────────────────
 

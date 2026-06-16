@@ -8,6 +8,7 @@ TEST_VERSION="0.99.0-test"
 
 setup_file() {
   load 'test_helper'
+  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
   # Build the tarball once for all tests
   TARBALL_DIR="$BATS_FILE_TMPDIR/tarball_build"
   mkdir -p "$TARBALL_DIR"

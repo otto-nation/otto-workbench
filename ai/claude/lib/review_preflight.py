@@ -183,6 +183,9 @@ MAX_DELTA_LOG_BYTES = 20_000
 NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
 MIN_DIFF_BYTES = 20_000
 
+FILE_CONTENT_DENSITY_THRESHOLD = 0.15
+FILE_CONTENT_MIN_SIZE = 5120
+
 
 # ── Pre-flight data collection ───────────────────────────────────────────────
 
@@ -256,22 +259,26 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
     return delta_diff, delta_log, delta_files, prior_sha
 
 
-def collect_preflight_data(job: "ReviewJob") -> PreflightData:
-    wt = Path(job.wt_path)
-    base = job.pr.base or DEFAULT_BASE_BRANCH
-    _run(["git", "fetch", "origin", base], cwd=job.wt_path, check=False)
+def _collect_git_data(
+    wt_path: str, base: str, pr_files: list[dict],
+) -> tuple[str, str]:
+    _run(["git", "fetch", "origin", base], cwd=wt_path, check=False)
     git_range = f"origin/{base}...HEAD"
     git_range_log = f"origin/{base}..HEAD"
 
-    diff = _run(["git", "diff", git_range], cwd=job.wt_path)
-    commit_log = _run(["git", "log", "--stat", "--reverse", git_range_log], cwd=job.wt_path)
-
+    diff = _run(["git", "diff", git_range], cwd=wt_path)
+    commit_log = _run(["git", "log", "--stat", "--reverse", git_range_log], cwd=wt_path)
     commit_log = _truncate_log(commit_log, MAX_COMMIT_LOG_BYTES)
 
-    # Fall back to uncommitted diff when no commits exist on the branch
-    if not diff and job.pr.files:
-        diff = _run(["git", "diff", "HEAD"], cwd=job.wt_path)
+    if not diff and pr_files:
+        diff = _run(["git", "diff", "HEAD"], cwd=wt_path)
 
+    return diff, commit_log
+
+
+def _collect_project_context(
+    wt: Path,
+) -> tuple[str, str, dict[str, str]]:
     claude_md = ""
     for name in ("CLAUDE.md", ".claude/CLAUDE.md"):
         p = wt / name
@@ -290,14 +297,78 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         for checklist in sorted(review_dir.glob("*.md")):
             review_checklists[checklist.name] = _read_file_safe(checklist)
 
-    all_contents: dict[str, str] = {}
-    all_permissions: dict[str, str] = {}
-    for f in job.pr.files:
-        p = wt / f["path"]
-        all_contents[f["path"]] = _read_file_safe(p)
-        all_permissions[f["path"]] = _file_permissions(p)
+    return claude_md, context_md, review_checklists
 
-    file_sizes = {p: len(c.encode()) for p, c in all_contents.items()}
+
+def _collect_file_data(
+    wt: Path, pr_files: list[dict],
+) -> tuple[dict[str, str], dict[str, str], dict[str, int]]:
+    contents: dict[str, str] = {}
+    permissions: dict[str, str] = {}
+    changes: dict[str, int] = {}
+    for f in pr_files:
+        p = wt / f["path"]
+        contents[f["path"]] = _read_file_safe(p)
+        permissions[f["path"]] = _file_permissions(p)
+        changes[f["path"]] = f.get("additions", 0) + f.get("deletions", 0)
+    return contents, permissions, changes
+
+
+def _is_low_density(path: str, content: str, file_changes: dict[str, int]) -> bool:
+    size = len(content.encode())
+    if size <= FILE_CONTENT_MIN_SIZE:
+        return False
+    total_lines = content.count("\n") or 1
+    changed = file_changes.get(path, total_lines)
+    return (changed / total_lines) < FILE_CONTENT_DENSITY_THRESHOLD
+
+
+def _fit_to_budget(
+    all_contents: dict[str, str],
+    all_permissions: dict[str, str],
+    file_changes: dict[str, int],
+    base_size: int,
+) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    density_skipped = [
+        p for p, c in all_contents.items()
+        if _is_low_density(p, c, file_changes)
+    ]
+    candidates = {p: c for p, c in all_contents.items() if p not in set(density_skipped)}
+
+    file_sizes = {p: len(c.encode()) for p, c in candidates.items()}
+    sorted_paths = sorted(candidates, key=lambda p: (classify_tier(p), file_sizes[p]))
+
+    included: dict[str, str] = {}
+    included_perms: dict[str, str] = {}
+    budget_omitted: list[str] = []
+    remaining = max(0, MAX_PROMPT_BYTES - base_size)
+    for path in sorted_paths:
+        if file_sizes[path] <= remaining:
+            included[path] = candidates[path]
+            included_perms[path] = all_permissions[path]
+            remaining -= file_sizes[path]
+        else:
+            budget_omitted.append(path)
+
+    omitted = density_skipped + budget_omitted
+
+    if density_skipped:
+        density_kb = sum(len(all_contents[p].encode()) for p in density_skipped) // 1024
+        _info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
+    if omitted:
+        omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
+        _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+
+    return included, included_perms, omitted
+
+
+def collect_preflight_data(job: "ReviewJob") -> PreflightData:
+    wt = Path(job.wt_path)
+    base = job.pr.base or DEFAULT_BASE_BRANCH
+
+    diff, commit_log = _collect_git_data(job.wt_path, base, job.pr.files)
+    claude_md, context_md, review_checklists = _collect_project_context(wt)
+    all_contents, all_permissions, file_changes = _collect_file_data(wt, job.pr.files)
 
     base_size = (
         len(diff.encode())
@@ -307,27 +378,9 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         + sum(len(v.encode()) for v in review_checklists.values())
         + TEMPLATE_OVERHEAD_BYTES
     )
-    remaining = max(0, MAX_PROMPT_BYTES - base_size)
-
-    sorted_paths = sorted(
-        all_contents.keys(),
-        key=lambda p: (classify_tier(p), file_sizes[p]),
+    included, included_perms, omitted = _fit_to_budget(
+        all_contents, all_permissions, file_changes, base_size,
     )
-
-    included: dict[str, str] = {}
-    included_perms: dict[str, str] = {}
-    omitted: list[str] = []
-    for path in sorted_paths:
-        if file_sizes[path] <= remaining:
-            included[path] = all_contents[path]
-            included_perms[path] = all_permissions[path]
-            remaining -= file_sizes[path]
-        else:
-            omitted.append(path)
-
-    if omitted:
-        omitted_kb = sum(file_sizes[p] for p in omitted) // 1024
-        _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
     delta_diff, delta_commit_log, delta_files, prior_head_sha = _collect_delta(job)
 

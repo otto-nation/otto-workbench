@@ -32,6 +32,12 @@
 - Never defer review findings to issues — fix them in the current PR or create separate PRs. Do not suggest "track separately" as the response to review findings
 - When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic — simpler tools are easier to reason about and maintain
 
+## Debugging
+
+- Always fix root causes, not symptoms — if a process hits a resource limit, investigate why it consumed so much, don't just raise the limit
+- When diagnosing an issue, check if the diagnostic path itself was sufficient. If you had to manually reconstruct data that should have been persisted, add instrumentation as part of the fix
+- Persist diagnostic data that would help future investigations — structured files (JSON) over transient console output, surviving successful runs not just failures
+
 ## Unknowns & Assumptions
 
 - Do not make assumptions about code without context

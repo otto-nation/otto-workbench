@@ -12,7 +12,7 @@
 # Auto-derived from this file's location (lib/constants.sh → workbench root).
 # Respects DOTFILES_DIR (set by install.sh) and WORKBENCH_DIR if already set.
 if [[ -z "${WORKBENCH_DIR:-}" ]]; then
-  _constants_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _constants_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
   WORKBENCH_DIR="${DOTFILES_DIR:-"$(dirname "$_constants_dir")"}"
   unset _constants_dir
 fi

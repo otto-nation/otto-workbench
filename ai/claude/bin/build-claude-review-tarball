@@ -160,8 +160,16 @@ _generator_version() {\
 
 bash -n "$REVIEW"
 for _sentinel in 'ui-source' 'workbench-root'; do
+  if ! grep -q "@tarball-patch: $_sentinel" "$REVIEW"; then
+    echo "ERROR: $_sentinel sentinel line missing after patch" >&2
+    exit 1
+  fi
   if grep "@tarball-patch: $_sentinel" "$REVIEW" | grep -qF 'rev-parse'; then
     echo "ERROR: $_sentinel patch failed — rev-parse still present" >&2
+    exit 1
+  fi
+  if ! grep "@tarball-patch: $_sentinel" "$REVIEW" | grep -qF 'dirname'; then
+    echo "ERROR: $_sentinel patch failed — dirname replacement missing" >&2
     exit 1
   fi
 done

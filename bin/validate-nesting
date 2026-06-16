@@ -3,68 +3,33 @@
 
 Usage: validate-nesting [--quiet] [--max-depth N] [file...]
 
-For bash/zsh scripts: tracks nesting from block-opening keywords (if, for,
-while, until, case) and their closers (fi, done, esac).  Depth resets at
-each function boundary.  Skips heredoc content and command substitution
-bodies to avoid false positives from embedded languages.
+Checks nesting depth in bash, Python, and Go scripts. Each language has
+its own default max depth (bash/python: 2, go: 3) overridable with
+--max-depth.
 
-For Python scripts: tracks nesting via indentation for control-flow blocks
-(if, for, while, with, try).  Depth resets at each def/class boundary.
-Skips triple-quoted strings and decorator lines.
-
-When no files are given, discovers all scripts in the repo by extension and
-shebang.
+When no files are given, discovers all scripts in the repo by extension
+and shebang.
 
 Exit code: 0 if all files pass, 1 if any exceed max depth.
 """
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
-from nesting.bash import BashChecker  # noqa: E402
-from nesting.python import PythonChecker  # noqa: E402
+from nesting import get_checker_for_extension, get_checker_for_shebang, get_all_extensions  # noqa: E402
 
-# ── Shebang patterns ─────────────────────────────────────────────────────────
+# ── Discovery ────────────────────────────────────────────────────────────────
 
-BASH_SHEBANG = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
-PYTHON_SHEBANG = re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)')
+SKIP_DIRS = {
+    '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 'venv',
+    '.tox', '.mypy_cache', 'dist', 'build', '.eggs', '.cache',
+}
 
-BASH_EXTENSIONS = {'.sh', '.bash', '.bats'}
-PYTHON_EXTENSIONS = {'.py'}
-
-# ── Bash checker wrapper ──────────────────────────────────────────────────────
-
-_bash_checker = BashChecker()
-
-
-def check_file_bash(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
-    """Return list of (line_number, depth, function_name) violations for bash."""
-    with open(filepath) as f:
-        lines = f.readlines()
-    violations = _bash_checker.check_nesting(lines, max_depth)
-    return [(v.line_number, v.depth, v.function_name) for v in violations]
-
-
-# ── Python checker wrapper ───────────────────────────────────────────────────
-
-_python_checker = PythonChecker()
-
-
-def check_file_python(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
-    """Return list of (line_number, depth, function_name) violations for Python."""
-    with open(filepath) as f:
-        lines = f.readlines()
-    violations = _python_checker.check_nesting(lines, max_depth)
-    return [(v.line_number, v.depth, v.function_name) for v in violations]
-
-
-# ── Language detection ───────────────────────────────────────────────────────
 
 def _read_shebang(path: str) -> bytes | None:
     try:
@@ -74,80 +39,35 @@ def _read_shebang(path: str) -> bytes | None:
         return None
 
 
-def _classify_shebang(shebang: bytes) -> str | None:
-    if BASH_SHEBANG.search(shebang):
-        return 'bash'
-    if PYTHON_SHEBANG.search(shebang):
-        return 'python'
-    return None
-
-
-def detect_language(filepath: str) -> str | None:
-    """Detect script language from extension or shebang."""
+def _get_checker(filepath: str):
     _, ext = os.path.splitext(filepath)
-    if ext in BASH_EXTENSIONS:
-        return 'bash'
-    if ext in PYTHON_EXTENSIONS:
-        return 'python'
+    if ext:
+        checker = get_checker_for_extension(ext)
+        if checker and ext != '.bats':
+            shebang = _read_shebang(filepath)
+            if shebang is None:
+                return None
+        return checker
 
     shebang = _read_shebang(filepath)
     if shebang:
-        return _classify_shebang(shebang)
+        return get_checker_for_shebang(shebang)
     return None
 
 
-# ── Discovery ────────────────────────────────────────────────────────────────
-
-SKIP_DIRS = {
-    '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 'venv',
-    '.tox', '.mypy_cache', 'dist', 'build', '.eggs', '.cache',
-}
-
-KNOWN_EXTENSIONS = BASH_EXTENSIONS | PYTHON_EXTENSIONS
-
-
-def _classify_by_extension(path: str, ext: str) -> str | None:
-    """Return language for a file with a known extension, or None."""
-    if ext == '.bats':
-        return 'bash'
-
-    shebang = _read_shebang(path)
-    if shebang is None:
-        return None
-
-    if ext in BASH_EXTENSIONS and BASH_SHEBANG.search(shebang):
-        return 'bash'
-    if ext in PYTHON_EXTENSIONS and PYTHON_SHEBANG.search(shebang):
-        return 'python'
-    return None
-
-
-def _classify_by_shebang(path: str) -> str | None:
-    """Return language for an extensionless file via shebang, or None."""
-    shebang = _read_shebang(path)
-    return _classify_shebang(shebang) if shebang else None
-
-
-def _classify_file(path: str, fname: str) -> str | None:
-    """Return language for a file by extension or shebang, or None."""
-    _, ext = os.path.splitext(fname)
-    if ext in KNOWN_EXTENSIONS:
-        return _classify_by_extension(path, ext)
-    if '.' not in fname:
-        return _classify_by_shebang(path)
-    return None
-
-
-def _discover_in_dir(dirpath: str, filenames: list[str], scripts: set[tuple[str, str]]) -> None:
+def _discover_in_dir(dirpath, filenames, scripts):
+    all_exts = get_all_extensions()
     for fname in filenames:
-        lang = _classify_file(os.path.join(dirpath, fname), fname)
-        if lang:
-            scripts.add((os.path.join(dirpath, fname), lang))
+        path = os.path.join(dirpath, fname)
+        _, ext = os.path.splitext(fname)
+        if ext in all_exts or '.' not in fname:
+            checker = _get_checker(path)
+            if checker:
+                scripts.add((path, checker))
 
 
-def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
-    """Find all scripts in the repo. Returns sorted (path, language) tuples."""
-    scripts: set[tuple[str, str]] = set()
+def discover_scripts(repo_root):
+    scripts = set()
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         _discover_in_dir(dirpath, filenames, scripts)
@@ -156,36 +76,42 @@ def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
 
 # ── Reporting ────────────────────────────────────────────────────────────────
 
-def _report_violations(relpath: str, violations: list[tuple[int, int, str]], max_depth: int) -> None:
+def _report_violations(relpath, violations, max_depth):
     print(f'{RED}✗{NC} {relpath}: nesting exceeds {max_depth} levels', file=sys.stderr)
     prev_func = None
-    for lineno, depth, func in violations:
-        if func != prev_func:
-            print(f'    {DIM}in {func}():{NC}', file=sys.stderr)
-            prev_func = func
-        print(f'      line {lineno}: depth {depth}', file=sys.stderr)
+    for v in violations:
+        if v.function_name != prev_func:
+            print(f'    {DIM}in {v.function_name}():{NC}', file=sys.stderr)
+            prev_func = v.function_name
+        print(f'      line {v.line_number}: depth {v.depth}', file=sys.stderr)
 
 
-def _print_summary(files_checked: int, errors: int, max_depth: int) -> None:
+def _print_summary(files_checked, errors):
     print()
     if errors == 0:
         print(f'{GREEN}✓{NC} {files_checked} files checked, no excessive nesting')
     else:
-        print(f'{RED}✗{NC} {errors} of {files_checked} files exceed max nesting depth of {max_depth}', file=sys.stderr)
+        print(f'{RED}✗{NC} {errors} of {files_checked} files exceed max nesting depth', file=sys.stderr)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-def _resolve_files(args, repo_root: str) -> list[tuple[str, str]]:
+def _resolve_files(args, repo_root):
     if args.files:
-        return [(f, lang) for f in args.files if (lang := detect_language(f))]
+        result = []
+        for f in args.files:
+            checker = _get_checker(f)
+            if checker:
+                result.append((f, checker))
+        return result
     return discover_scripts(repo_root)
 
 
 def main():
     parser = argparse.ArgumentParser(description='Validate script nesting depth.')
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
-    parser.add_argument('--max-depth', type=int, default=2, help='Maximum nesting depth (default: 2)')
+    parser.add_argument('--max-depth', type=int, default=None,
+                        help='Maximum nesting depth (overrides per-language defaults)')
     parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
@@ -195,22 +121,24 @@ def main():
         ).decode().strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         repo_root = os.getcwd()
-    file_langs = _resolve_files(args, repo_root)
+
+    file_checkers = _resolve_files(args, repo_root)
 
     errors = 0
-    checkers = {'python': check_file_python, 'bash': check_file_bash}
-
-    for filepath, language in file_langs:
-        violations = checkers[language](filepath, args.max_depth)
+    for filepath, checker in file_checkers:
+        max_depth = args.max_depth if args.max_depth is not None else checker.DEFAULT_MAX_DEPTH
+        with open(filepath) as f:
+            lines = f.readlines()
+        violations = checker.check_nesting(lines, max_depth)
         relpath = os.path.relpath(filepath, repo_root)
 
         if violations:
             errors += 1
-            _report_violations(relpath, violations, args.max_depth)
+            _report_violations(relpath, violations, max_depth)
         elif not args.quiet:
             print(f'  {GREEN}✓{NC} {relpath}')
 
-    _print_summary(len(file_langs), errors, args.max_depth)
+    _print_summary(len(file_checkers), errors)
     if errors:
         sys.exit(1)
 

@@ -220,3 +220,87 @@ func deepFunc() {
 '''
         violations = _check(code)
         assert violations[0].function_name == "deepFunc"
+
+
+class TestCommentsAndStrings:
+    def test_single_line_comment_skipped(self):
+        code = '''\
+func foo() {
+    // if for switch select — all ignored
+    if x > 0 {
+        fmt.Println("ok")
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_multiline_comment_skipped(self):
+        code = '''\
+func foo() {
+    /*
+    if x > 0 {
+        for _, item := range items {
+            switch item.Type {
+            }
+        }
+    }
+    */
+    if x > 0 {
+        fmt.Println("ok")
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_string_keywords_skipped(self):
+        code = '''\
+func foo() {
+    msg := "if for while switch select"
+    if x > 0 {
+        fmt.Println(msg)
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_raw_string_keywords_skipped(self):
+        code = '''\
+func foo() {
+    msg := `
+    if x > 0 {
+        for _, item := range items {
+            switch {
+            }
+        }
+    }
+    `
+    if x > 0 {
+        fmt.Println(msg)
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_rune_literal_skipped(self):
+        code = '''\
+func foo() {
+    ch := '{'
+    if x > 0 {
+        fmt.Println(ch)
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_multiline_raw_string_braces_not_counted(self):
+        code = '''\
+func foo() {
+    tmpl := `{{{
+        if for switch
+    }}}`
+    if x > 0 {
+        fmt.Println("ok")
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []

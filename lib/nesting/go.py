@@ -73,9 +73,18 @@ class GoChecker:
         nesting_depth = 0
         brace_depth = 0
         in_block_comment = False
+        in_raw_string = False
 
         for lineno, raw_line in enumerate(lines, 1):
             line = raw_line.rstrip('\n')
+
+            # If we're inside a multiline backtick raw string, skip until closing backtick
+            if in_raw_string:
+                if '`' in line:
+                    in_raw_string = False
+                    line = line[line.index('`') + 1:]
+                else:
+                    continue
 
             if in_block_comment:
                 if '*/' in line:
@@ -94,6 +103,12 @@ class GoChecker:
                     line = before
 
             stripped = _strip_strings_and_comments(line)
+
+            # An odd number of backticks on the original line (outside of
+            # already-handled single-line raw strings) means a raw string was
+            # opened but not closed — it continues onto the next line(s).
+            if line.count('`') % 2 == 1:
+                in_raw_string = True
 
             fm = _FUNC_DECL.match(stripped)
             if fm:

@@ -24,7 +24,7 @@ from review_common import (
     FILENAME_FIX_LOG,
     FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
     FILENAME_HOLISTIC_LOG, FILENAME_META, FILENAME_PIPELINE_STATE,
-    FILENAME_SYNTHESIS_LOG,
+    FILENAME_PROMPT_STATS, FILENAME_SYNTHESIS_LOG,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     MODE_SELF,
@@ -726,6 +726,8 @@ def _cleanup_intermediates(
 
     review_dir = str(Path(job.review_file).parent)
     for p in Path(review_dir).glob("prompt-*"):
+        if p.name == FILENAME_PROMPT_STATS:
+            continue
         cleanup.append(str(p))
 
     for path in cleanup:

@@ -2287,6 +2287,35 @@ print(f'remaining={remaining}')
   [ "$result" = "remaining=[]" ]
 }
 
+@test "_cleanup_intermediates: preserves prompt-stats.json" {
+  echo '[]' > "$TMPDIR/prompt-stats.json"
+  echo "prompt" > "$TMPDIR/prompt-self-review.md"
+
+  result=$(_py "
+import io, contextlib, os
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/session.jsonl',
+        reviews_dir='/tmp/reviews',
+    )
+    mod._cleanup_intermediates(
+        job,
+        holistic_output='', holistic_log='',
+        group_outputs=[], group_count=0,
+        synthesis_log='',
+    )
+stats_exists = os.path.exists('$TMPDIR/prompt-stats.json')
+prompt_exists = os.path.exists('$TMPDIR/prompt-self-review.md')
+print(f'stats={stats_exists},prompt={prompt_exists}')
+")
+  [ "$result" = "stats=True,prompt=False" ]
+}
+
 @test "_review_group: skip=True returns early when output exists" {
   echo "existing group review" > "$TMPDIR/group-1.md"
 
@@ -2633,4 +2662,45 @@ print(f'has_diff={has_diff},has_file={has_file}')
 PYEOF
 )
   [ "$result" = "has_diff=True,has_file=True" ]
+}
+
+# ── Density-based file content skipping ──────────────────────────────────────
+
+@test "collect_preflight_data: low-density large file omitted from contents" {
+  repo="$TMPDIR/repo_density"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q && git checkout -b main -q
+  git config user.email "test@test.com" && git config user.name "Test"
+  git config commit.gpgsign false
+  python3 -c "print('x = 1\n' * 2000)" > "$repo/big.py"
+  git add . && git commit -q --no-verify -m "init"
+  git remote add origin "$repo" && git fetch -q origin main
+  git checkout -b feat -q
+  # Append 2 lines to a 1000-line file (0.2% density)
+  echo "new_line_1" >> "$repo/big.py"
+  echo "new_line_2" >> "$repo/big.py"
+  git add . && git commit -q --no-verify -m "small change"
+
+  result=$(_py_here <<PYEOF
+import io, contextlib
+pr = mod.PRMetadata(
+    title='t', body='', head='feat', base='main', head_sha='abc',
+    additions=2, deletions=0, changed_files=1,
+    files=[{'path': 'big.py', 'additions': 2, 'deletions': 0}],
+)
+ctx = mod.PRContext()
+job = mod.ReviewJob(
+    repo='r', pr_number='1', pr=pr, ctx=ctx,
+    wt_path='$repo', review_file='/tmp/r.md',
+    session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
+)
+with contextlib.redirect_stdout(io.StringIO()):
+    data = mod.collect_preflight_data(job)
+in_contents = 'big.py' in data.file_contents
+in_omitted = 'big.py' in data.omitted_files
+print(f'contents={in_contents},omitted={in_omitted}')
+PYEOF
+)
+  [ "$result" = "contents=False,omitted=True" ]
 }

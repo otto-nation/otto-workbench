@@ -95,6 +95,7 @@ FILENAME_ANGLES_LOG = "angles.jsonl"
 FILENAME_FIX_LOG = "fix.jsonl"
 FILENAME_META = "meta.json"
 FILENAME_PIPELINE_STATE = "pipeline.json"
+FILENAME_PROMPT_STATS = "prompt-stats.json"
 
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"

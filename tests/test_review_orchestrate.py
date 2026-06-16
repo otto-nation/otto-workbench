@@ -1704,3 +1704,114 @@ class TestRetryFailedGroups:
         result_names = [n for n, _ in result]
         assert "grp-a" in result_names
         assert "grp-b" in result_names
+
+
+# ── Density-based file content skipping ─────────────────────────────────────
+
+
+class TestDensitySkipping:
+    @staticmethod
+    def _make_job(ro, tmp_path, files):
+        pr = ro.PRMetadata(
+            title="Test PR", body="", head="feat/test", base="main",
+            head_sha="abc123", additions=0, deletions=0,
+            changed_files=len(files), files=files,
+        )
+        ctx = ro.PRContext()
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(tmp_path), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+
+    def test_large_file_small_diff_omitted(self, ro, tmp_path, monkeypatch):
+        big_file = tmp_path / "big.py"
+        big_file.write_text("x = 1\n" * 2000)
+        files = [{"path": "big.py", "additions": 2, "deletions": 1}]
+        job = self._make_job(ro, tmp_path, files)
+
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+
+        assert "big.py" not in data.file_contents
+        assert "big.py" in data.omitted_files
+
+    def test_small_file_always_included(self, ro, tmp_path, monkeypatch):
+        small_file = tmp_path / "small.py"
+        small_file.write_text("x = 1\n")
+        files = [{"path": "small.py", "additions": 1, "deletions": 0}]
+        job = self._make_job(ro, tmp_path, files)
+
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+
+        assert "small.py" in data.file_contents
+
+    def test_high_density_file_included(self, ro, tmp_path, monkeypatch):
+        file = tmp_path / "refactored.py"
+        file.write_text("line\n" * 100)
+        files = [{"path": "refactored.py", "additions": 80, "deletions": 70}]
+        job = self._make_job(ro, tmp_path, files)
+
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+
+        assert "refactored.py" in data.file_contents
+
+
+# ── Prompt stats persistence ────────────────────────────────────────────────
+
+
+class TestPromptStats:
+    def test_prompt_stats_written(self, ro, tmp_path):
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main",
+            head_sha="abc", additions=1, deletions=0,
+            changed_files=1, files=[],
+        )
+        ctx = ro.PRContext()
+        review_file = str(tmp_path / "review.md")
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(tmp_path), review_file=review_file,
+            session_log=str(tmp_path / "s.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+
+        ro._log_prompt_size("test", "hello world", {"sec": "data"}, job)
+
+        stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
+        assert stats_file.exists()
+        stats = json.loads(stats_file.read_text())
+        assert isinstance(stats, list)
+        assert stats[0]["template"] == "test"
+        assert stats[0]["prompt_bytes"] == len(b"hello world")
+        assert "utilization_pct" in stats[0]
+        assert stats[0]["sections"]["sec"] == len(b"data")
+
+    def test_prompt_stats_appends(self, ro, tmp_path):
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main",
+            head_sha="abc", additions=1, deletions=0,
+            changed_files=1, files=[],
+        )
+        ctx = ro.PRContext()
+        review_file = str(tmp_path / "review.md")
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(tmp_path), review_file=review_file,
+            session_log=str(tmp_path / "s.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+
+        ro._log_prompt_size("first", "aaa", {}, job)
+        ro._log_prompt_size("second", "bbb", {}, job)
+
+        stats = json.loads((tmp_path / ro.FILENAME_PROMPT_STATS).read_text())
+        assert len(stats) == 2
+        assert stats[0]["template"] == "first"
+        assert stats[1]["template"] == "second"

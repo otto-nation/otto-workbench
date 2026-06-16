@@ -39,6 +39,30 @@ When adding or modifying a review phase, verify these integration points:
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
 
+## Debugging claude-review
+
+Review artifacts live in `~/.config/workbench/reviews/{repo}-{pr_or_branch}/`:
+
+| File | Survives success | Purpose |
+|------|-----------------|---------|
+| `review.md` | yes | Final review output |
+| `meta.json` | yes | PR metadata sidecar |
+| `session.jsonl` | yes | Agent cost/usage/errors |
+| `prompt-stats.json` | yes | Prompt composition diagnostics |
+| `prompt-*.md` | no (kept on failure) | Full prompts sent to agents |
+| `pipeline.json` | no | Resume state for multi-phase |
+
+**Diagnosing max-turns failures:**
+1. Read `prompt-stats.json` — check `utilization_pct` and `file_contents.omitted` for prompt bloat
+2. Read `session.jsonl` — count `tool_use` records to see how the agent spent its turns
+3. Check `prompt-*.md` (preserved on failure) — look for oversized sections
+
+**Diagnosing prompt bloat:**
+- `prompt-stats.json` → `sections` shows per-section byte sizes
+- `prompt-stats.json` → `file_contents.included` shows which files were injected and their sizes
+- Large files with small diffs are automatically skipped by the density filter (`FILE_CONTENT_DENSITY_THRESHOLD`)
+- Budget constants: `MAX_PROMPT_BYTES` (480KB), `TEMPLATE_OVERHEAD_BYTES` (20KB), `FILE_CONTENT_MIN_SIZE` (5KB)
+
 ## Output
 
 - Do not summarize changes at the end of a response — the diff speaks for itself

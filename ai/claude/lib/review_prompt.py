@@ -13,7 +13,9 @@ from datetime import date
 from pathlib import Path
 from string import Template
 
+import json
 from review_common import (
+    FILENAME_PROMPT_STATS,
     TEMPLATE_DIR_REL,
     TEMPLATE_ANGLES, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
@@ -295,9 +297,11 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
     prompt_kb = prompt_bytes // 1024
     budget_kb = MAX_PROMPT_BYTES // 1024
 
+    section_sizes = {}
     parts = []
     for name, value in sections.items():
         size = len(value.encode()) if value else 0
+        section_sizes[name] = size
         if size > 1024:
             parts.append(f"{name}={size // 1024}KB")
     section_summary = ", ".join(parts) if parts else "all <1KB"
@@ -311,6 +315,35 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
     prompt_file = _derive_path(job.review_file, f"prompt-{template_name}{suffix}")
     try:
         Path(prompt_file).write_text(prompt)
+    except OSError:
+        pass
+
+    stats: dict = {
+        "template": f"{template_name}{suffix}",
+        "prompt_bytes": prompt_bytes,
+        "budget_bytes": MAX_PROMPT_BYTES,
+        "utilization_pct": round(prompt_bytes / MAX_PROMPT_BYTES * 100, 1),
+        "sections": section_sizes,
+    }
+    if job.preflight:
+        pf = job.preflight
+        stats["file_contents"] = {
+            "included": {p: len(c.encode()) for p, c in pf.file_contents.items()},
+            "omitted": pf.omitted_files,
+        }
+        stats["file_count"] = {
+            "included": len(pf.file_contents),
+            "omitted": len(pf.omitted_files),
+        }
+    stats_file = _derive_path(job.review_file, FILENAME_PROMPT_STATS)
+    try:
+        existing: list = []
+        if Path(stats_file).exists():
+            existing = json.loads(Path(stats_file).read_text())
+            if not isinstance(existing, list):
+                existing = [existing]
+        existing.append(stats)
+        Path(stats_file).write_text(json.dumps(existing, indent=2))
     except OSError:
         pass
 

@@ -104,7 +104,7 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 
 ### `/pr-comments [<pr_number>]`
 
-Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles.
+Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or claude-review instead); self-review before PR creation (use self-review-fix instead).
 
 ```
 /pr-comments [<pr_number>]

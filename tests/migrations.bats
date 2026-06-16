@@ -29,6 +29,7 @@ STUB
   cat > "$FAKE_ROOT/lib/constants.sh" <<CONST
 #!/usr/bin/env bash
 WORKBENCH_DIR="$FAKE_ROOT"
+LIB_SRC_DIR="$FAKE_ROOT/lib"
 WORKBENCH_STATE_DIR="$FAKE_STATE"
 MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
 CONST

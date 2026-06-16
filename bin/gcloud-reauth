@@ -31,7 +31,7 @@ PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$HOME/Library/Logs/otto-workbench"
 INTERVAL=43200  # 12 hours
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-MISE="$HOME/.local/bin/mise"
+MISE="$LOCAL_BIN_DIR/mise"
 
 _resolve_gcloud() {
   local gcloud_dir

@@ -30,7 +30,7 @@ otto-workbench changelog       # show recent changes from conventional commits
 - Generated files (`tools.generated.md`, `git.generated.md`) are never edited directly — edit the source and regenerate.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
 - All scripts and git hooks use `#!/usr/bin/env bash` (not `#!/bin/bash`) to pick up Homebrew's modern bash on macOS. Bash 4.3+ is required. Never invoke scripts with `bash script.sh` — run them directly (`./script.sh` or `"$path/script.sh"`) so their shebang is honored.
-- All scripts source `lib/ui.sh` via `_SELF` readlink pattern for portability.
+- All scripts source `lib/ui.sh` via `git rev-parse --show-toplevel` — depth-independent, no `../` paths.
 - Scripts use `set -e`.
 - **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
 - **Return values via `local -n` (nameref), never `printf -v`** — `printf -v "$var"` silently writes to a same-named `local` in the current scope instead of the caller's variable. Use `local -n __out=$1` and assign `__out="value"`. The `__` prefix convention prevents collisions with caller variables.

@@ -250,7 +250,7 @@ resolve_known_components() {
       continue
     fi
     KNOWN_OPTIONAL_COMPONENTS+=("$_c")
-  done < "$WORKBENCH_DIR/install.components"
+  done < "$INSTALL_COMPONENTS_FILE"
 }
 
 # validate_install_targets TARGETS... — checks that every target is a known component.
@@ -375,7 +375,7 @@ parse_install_flags() {
 # print_install_summary — prints the final "All done" screen with a
 # consolidated file listing, editable configs, and per-component summaries.
 print_install_summary() {
-  . "$WORKBENCH_DIR/lib/summary.sh"
+  . "$LIB_SRC_DIR/summary.sh"
 
   echo
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"

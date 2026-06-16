@@ -3,7 +3,7 @@ set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 
 usage() {
   cat <<EOF
@@ -228,7 +228,7 @@ mkdir -p ".git/worktrees/$worktree_name"
 echo "gitdir: $(pwd)/.git/worktrees/$worktree_name" > "$worktree_name/.git"
 echo "$(pwd)/$worktree_name" > ".git/worktrees/$worktree_name/gitdir"
 echo "ref: refs/heads/$current_branch" > ".git/worktrees/$worktree_name/HEAD"
-echo "../.." > ".git/worktrees/$worktree_name/commondir"
+echo "$(pwd)/.git" > ".git/worktrees/$worktree_name/commondir"
 
 # Rebuild the index for the new worktree location
 git -C "$worktree_name" reset >/dev/null 2>&1 || warn "Index reset failed — run 'git reset' in the worktree"

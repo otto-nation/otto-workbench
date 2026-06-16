@@ -27,7 +27,7 @@ set -Eeo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../../lib/ui.sh"  # @tarball-patch: ui-source
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"  # @tarball-patch: ui-source
 
 _on_err() {
   local rc=$?
@@ -45,7 +45,7 @@ trap '_on_int' INT
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"  # @tarball-patch: workbench-root
+_WORKBENCH_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"  # @tarball-patch: workbench-root
 
 # @tarball-patch-start: generator-version
 _generator_version() {
@@ -53,8 +53,8 @@ _generator_version() {
 }
 # @tarball-patch-end: generator-version
 
-REVIEWS_DIR="$HOME/.config/workbench/reviews"
-LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
+REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
+LEGACY_REVIEWS_DIR="$CLAUDE_DIR/reviews"
 
 REVIEW_EXT=".md"
 
@@ -459,8 +459,8 @@ _load_issue_provider() {
   local config_file=""
   if [[ -n "$wt_path" && -f "${wt_path}/.claude/review.yml" ]]; then
     config_file="${wt_path}/.claude/review.yml"
-  elif [[ -f "${HOME}/.config/workbench/review.yml" ]]; then
-    config_file="${HOME}/.config/workbench/review.yml"
+  elif [[ -f "$WORKBENCH_STATE_DIR/review.yml" ]]; then
+    config_file="$WORKBENCH_STATE_DIR/review.yml"
   fi
   [[ -n "$config_file" ]] || return 0
 

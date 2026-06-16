@@ -5,8 +5,10 @@
 # from the workbench template (non-destructive: skips if config already exists).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$SCRIPT_DIR/../../lib/ui.sh"
-. "$SCRIPT_DIR/../../lib/migrations.sh"
+_WB_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+. "$_WB_ROOT/lib/ui.sh"
+. "$_WB_ROOT/lib/migrations.sh"
+unset _WB_ROOT
 # shellcheck source=terminals/ghostty/steps.sh
 . "$SCRIPT_DIR/steps.sh"
 

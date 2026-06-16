@@ -116,7 +116,7 @@ _check_install_needed() {
   local -a install_reasons=()
 
   # 1. Check core Brewfile for missing packages
-  local brewfile="$WORKBENCH_DIR/brew/Brewfile"
+  local brewfile="$BREWFILE"
   if [[ -f "$brewfile" ]] && command -v brew >/dev/null 2>&1; then
     local missing_output
     if ! missing_output=$(brew bundle check --file="$brewfile" --no-upgrade 2>&1); then
@@ -133,7 +133,7 @@ _check_install_needed() {
   fi
 
   # 2. Check optional components with check commands in setup.conf
-  local registry="$WORKBENCH_DIR/install.components"
+  local registry="$INSTALL_COMPONENTS_FILE"
   if [[ -f "$registry" ]]; then
     local component check_cmd
     while IFS= read -r component; do
@@ -238,7 +238,7 @@ cmd_install() {
   echo -e "\n${BOLD}${GREEN}✓ Dotfiles installed!${NC}"
 
   # ─── Optional components ────────────────────────────────────────────────
-  local registry="$WORKBENCH_DIR/install.components"
+  local registry="$INSTALL_COMPONENTS_FILE"
   validate_components "$registry"
   discover_components  "$registry"
   select_components
@@ -505,7 +505,7 @@ _autoupdate_is_loaded() {
 
 _autoupdate_install_plist() {
   local interval="${1:-$_AUTOUPDATE_DEFAULT_INTERVAL}"
-  local template="$WORKBENCH_DIR/autoupdate/autoupdate.plist.template"
+  local template="$AUTOUPDATE_SRC_DIR/autoupdate.plist.template"
 
   mkdir -p "$(dirname "$_AUTOUPDATE_PLIST")" "$_AUTOUPDATE_LOG_DIR"
 
@@ -574,7 +574,7 @@ cmd_autoupdate_status() {
 
 cmd_autoupdate_run() {
   info "Running update now"
-  "$WORKBENCH_DIR/autoupdate/bin/otto-workbench-autoupdate"
+  "$AUTOUPDATE_SRC_DIR/bin/otto-workbench-autoupdate"
 }
 
 cmd_autoupdate_logs() {
@@ -903,7 +903,7 @@ _discover_components() {
 }
 
 _discover_scripts() {
-  local registry="$WORKBENCH_DIR/bin/registry.yml"
+  local registry="$BIN_REGISTRY_FILE"
   if [[ ! -f "$registry" ]] || ! command -v yq &>/dev/null; then
     echo -e "    ${DIM}(registry not found or yq not installed)${NC}"
     return

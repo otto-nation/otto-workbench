@@ -10,9 +10,9 @@ set -euo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
-_PROJECT_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
+_PROJECT_ROOT="$(git -C "$_SCRIPT_DIR" rev-parse --show-toplevel)"
 
-# shellcheck source=../lib/output.sh
+# shellcheck source=/dev/null
 source "$_PROJECT_ROOT/lib/output.sh"
 
 readonly REPO="otto-nation/otto-workbench"

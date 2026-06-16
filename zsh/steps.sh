@@ -22,9 +22,7 @@
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -e
-  _D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  . "$_D/../lib/ui.sh"
-  unset _D
+  . "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/lib/ui.sh"
 fi
 
 # ─── Steps ────────────────────────────────────────────────────────────────────
@@ -239,12 +237,12 @@ _render_registry_env() {
 # Sources lib/registries.sh on first call (lazy load — not needed for other zsh steps).
 _generate_env_section() {
   if ! declare -f collect_registries >/dev/null 2>&1; then
-    # shellcheck source=../lib/registries.sh
-    . "$WORKBENCH_DIR/lib/registries.sh"
+    # shellcheck source=/dev/null
+    . "$LIB_SRC_DIR/registries.sh"
   fi
   local output="" section_output first=true
   local -a unique_registries=()
-  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$WORKBENCH_DIR/brew"
+  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$BREW_SRC_DIR"
 
   for registry in "${unique_registries[@]}"; do
     section_output=$(_render_registry_env "$registry")

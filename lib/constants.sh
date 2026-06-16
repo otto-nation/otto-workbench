@@ -12,17 +12,9 @@
 # Auto-derived from this file's location (lib/constants.sh → workbench root).
 # Respects DOTFILES_DIR (set by install.sh) and WORKBENCH_DIR if already set.
 if [[ -z "${WORKBENCH_DIR:-}" ]]; then
-  _constants_src="${BASH_SOURCE[0]}"
-  while [[ -L "$_constants_src" ]]; do
-    _constants_link="$(readlink "$_constants_src")"
-    # Absolute symlinks can be used directly; relative ones need resolution
-    [[ "$_constants_link" == /* ]] \
-      && _constants_src="$_constants_link" \
-      || _constants_src="$(cd "$(dirname "$_constants_src")" && pwd)/$_constants_link"
-  done
-  unset _constants_link
-  WORKBENCH_DIR="${DOTFILES_DIR:-"$(cd "$(dirname "$_constants_src")/.." && pwd)"}"
-  unset _constants_src
+  _constants_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  WORKBENCH_DIR="${DOTFILES_DIR:-"$(dirname "$_constants_dir")"}"
+  unset _constants_dir
 fi
 
 # Stable symlink target — in bare repos, resolves to the main worktree so
@@ -81,8 +73,17 @@ CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
+BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
 TASKFILE_SRC="$WORKBENCH_DIR/Taskfile.global.yml"
+INSTALL_COMPONENTS_FILE="$WORKBENCH_DIR/install.components"
+
+# ─── Workbench source — brew ─────────────────────────────────────────────────
+BREW_SRC_DIR="$WORKBENCH_DIR/brew"
+BREWFILE="$WORKBENCH_DIR/brew/Brewfile"
+
+# ─── Workbench source — autoupdate ───────────────────────────────────────────
+AUTOUPDATE_SRC_DIR="$WORKBENCH_DIR/autoupdate"
 
 # ─── Workbench source — docker ────────────────────────────────────────────────
 DOCKER_SRC_DIR="$WORKBENCH_DIR/docker"
@@ -120,6 +121,7 @@ AI_SRC_DIR="$WORKBENCH_DIR/ai"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
 
+AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"

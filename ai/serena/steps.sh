@@ -6,9 +6,7 @@
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -e
-  _D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  . "$_D/../../lib/ui.sh"
-  unset _D
+  . "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/lib/ui.sh"
 fi
 
 # sync_serena — symlinks serena scripts to ~/.local/bin/.

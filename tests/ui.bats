@@ -7,7 +7,7 @@ setup() {
   TMPDIR="$(mktemp -d)"
   export NO_COLOR=1
   # Source lib/ui.sh so all helpers are available in test process
-  # shellcheck source=../lib/ui.sh
+  # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/ui.sh"
 }
 

@@ -132,7 +132,7 @@ if ! command -v shellcheck >/dev/null 2>&1; then
 fi
 
 _step "Running ShellCheck"
-if _sc_output=$(grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' "$REPO_ROOT" --exclude-dir='.git' --exclude-dir='ignore' \
+if _sc_output=$(grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' "$REPO_ROOT" --exclude-dir='.git' --exclude-dir='ignore' --exclude='*.py' \
   | sort \
   | xargs shellcheck --severity=warning 2>&1); then
   _pass

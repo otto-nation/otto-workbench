@@ -16,6 +16,7 @@ jobs:
         run: |
           grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' . \
             | grep -v '^\./\.git/' \
+            | grep -v '\.py$' \
             | sort \
             | xargs shellcheck --severity=warning
 

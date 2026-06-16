@@ -13,7 +13,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
 | `wt-init` | Convert a regular git repo to a bare repo with worktrees |
 | `lint-sweep` | Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches |
-| `validate-nesting` | Validate bash and Python script nesting depth to enforce flat control flow |
+| `validate-nesting` | Validate bash, Python, and Go script nesting depth to enforce flat control flow |
 | `gcloud-reauth` | Check GCP application-default credentials and re-login if expired, with self-managed launchd agent |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |

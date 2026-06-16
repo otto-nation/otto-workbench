@@ -79,7 +79,7 @@ tools:
 
   - name: validate-nesting
     allow: true
-    description: "Validate bash and Python script nesting depth to enforce flat control flow"
+    description: "Validate bash, Python, and Go script nesting depth to enforce flat control flow"
     when_to_use: "After writing deeply nested conditionals or loops; runs automatically on pre-push for all repos"
     usage: "validate-nesting [--quiet] [--max-depth N] [file...]"
 

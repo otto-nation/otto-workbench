@@ -5,7 +5,8 @@
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -e
-  . "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/lib/ui.sh"
+  WORKBENCH_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+  . "$WORKBENCH_DIR/lib/ui.sh"
 fi
 
 # step_sublime_settings — merges workbench-managed keys into Preferences.sublime-settings.

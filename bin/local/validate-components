@@ -24,10 +24,11 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+. "$WORKBENCH_DIR/lib/ui.sh"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/components.sh"
+. "$WORKBENCH_DIR/lib/components.sh"
 
 usage() {
   cat <<EOF

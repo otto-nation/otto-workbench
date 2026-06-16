@@ -2,7 +2,8 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(dirname "$_SELF")/../lib/ui.sh"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+. "$WORKBENCH_DIR/lib/ui.sh"
 
 GRACE_PERIOD_SECS=600
 

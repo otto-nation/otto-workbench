@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Global pre-push hook: delegates to the repo-local .git/hooks/pre-push if present.
+# Global pre-push hook: runs global checks, then delegates to repo-local hook.
 # Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/pre-push).
 #
 # When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
 # This hook restores that delegation so per-repo pre-push checks still run.
 
 set -euo pipefail
+
+# ── Global checks ───────────────────────────────────────────────────────────
+
+if command -v validate-nesting >/dev/null 2>&1; then
+  validate-nesting --quiet
+fi
+
+# ── Repo-local delegation ──────────────────────────────────────────────────
 
 # Use --git-common-dir so delegation works from worktrees (where .git is a file, not a dir)
 _git_common="$(git rev-parse --git-common-dir)"

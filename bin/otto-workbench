@@ -62,12 +62,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$(cd "$(dirname "$_SELF")/.." && pwd)}"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/ui.sh"
+. "$WORKBENCH_DIR/lib/ui.sh"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/migrations.sh"
+. "$WORKBENCH_DIR/lib/migrations.sh"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../lib/install.sh"
+. "$WORKBENCH_DIR/lib/install.sh"
 
 # Auto-discover and source all steps.sh files.
 # Each steps.sh self-derives its own paths; no external variables need to be injected.
@@ -304,7 +305,7 @@ cmd_sync() {
   unset WORKBENCH_CURRENT_COMPONENT
 
   # shellcheck source=/dev/null
-  . "$(dirname "$_SELF")/../lib/summary.sh"
+  . "$WORKBENCH_DIR/lib/summary.sh"
 
   # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
   # Only warnings/errors surface during sync (summary_ok/summary_info are suppressed).

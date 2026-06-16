@@ -6,7 +6,7 @@ setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
-  VALIDATE_NESTING="$REPO_ROOT/bin/local/validate-nesting"
+  VALIDATE_NESTING="$REPO_ROOT/bin/validate-nesting"
 }
 
 teardown() {

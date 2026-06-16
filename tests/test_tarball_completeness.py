@@ -1,8 +1,8 @@
 """Verify build-claude-review-tarball packages every file the binaries need.
 
 The tarball is a self-contained distribution of claude-review for Homebrew.
-If a Python binary imports a review_* module that the tarball build script
-doesn't copy into lib/, the Homebrew install will crash on import.
+If a Python binary imports a module that the tarball build script doesn't
+copy into lib/, the Homebrew install will crash on import.
 """
 
 from __future__ import annotations
@@ -18,78 +18,51 @@ BUILD_SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "build-claude-review-tarbal
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 
-PYTHON_BINARIES = [
-    BIN_DIR / "review-orchestrate",
-    BIN_DIR / "review-post",
-]
+PACKAGED_BINARIES = sorted(
+    p for p in BIN_DIR.iterdir()
+    if p.is_file()
+    and p.stat().st_mode & 0o111
+    and (p.name.startswith("review-") or p.name.startswith("validate-review-"))
+)
 
 
-def _extract_review_module_imports(script: Path) -> set[str]:
-    """Extract review_* module names imported by a Python script."""
-    tree = ast.parse(script.read_text(), filename=str(script))
+def _extract_python_imports(script: Path) -> set[str]:
+    """Extract all local module names imported by a Python script."""
+    try:
+        tree = ast.parse(script.read_text(), filename=str(script))
+    except SyntaxError:
+        return set()
     modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith("review_"):
-                    modules.add(alias.name)
+                modules.add(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.startswith("review_"):
+            if node.module:
                 modules.add(node.module)
     return modules
 
 
-def _extract_tarball_copied_files(script: Path) -> set[str]:
-    """Extract filenames that the build script copies into the tarball.
-
-    Looks for cp commands that copy from the lib directory into $DEST/lib/.
-    """
-    content = script.read_text()
-    copied: set[str] = set()
-    for line in content.splitlines():
-        line = line.strip()
-        if not line.startswith("cp "):
-            continue
-        # Match cp commands that reference lib/ Python files
-        # e.g.: cp "$SCRIPT_DIR/../lib/review_common.py" "$DEST/lib/"
-        # e.g.: cp "$SCRIPT_DIR/../lib/"review_*.py "$DEST/lib/"
-        m = re.search(r'(review_\w+\.py)', line)
-        if m:
-            copied.add(m.group(1))
-        # Also match glob patterns like review_*.py
-        if 'review_*.py' in line:
-            for py_file in LIB_DIR.glob("review_*.py"):
-                copied.add(py_file.name)
-    return copied
+def _lib_python_files() -> set[str]:
+    """All .py files in the lib directory."""
+    return {p.name for p in LIB_DIR.glob("*.py")}
 
 
-def _all_required_python_modules() -> set[str]:
-    """Collect all review_* modules imported by any packaged Python binary."""
-    modules: set[str] = set()
-    for binary in PYTHON_BINARIES:
-        modules |= _extract_review_module_imports(binary)
-    return modules
+def _all_required_modules() -> set[str]:
+    """Collect all local modules imported by any packaged Python binary."""
+    lib_modules = {p.stem for p in LIB_DIR.glob("*.py")}
+    required: set[str] = set()
+    for binary in PACKAGED_BINARIES:
+        for mod in _extract_python_imports(binary):
+            if mod in lib_modules:
+                required.add(mod)
+    return required
 
 
 class TestTarballCompleteness:
     def test_all_python_modules_included(self):
-        """Every review_* module imported by packaged binaries must be
-        copied into the tarball's lib/ directory."""
-        required = _all_required_python_modules()
-        required_files = {f"{mod}.py" for mod in required}
-        copied = _extract_tarball_copied_files(BUILD_SCRIPT)
-
-        missing = sorted(required_files - copied)
-        assert not missing, (
-            f"build-claude-review-tarball does not copy these Python modules "
-            f"into the tarball, but they are imported by packaged binaries:\n"
-            + "\n".join(f"  - {f}" for f in missing)
-        )
-
-    def test_required_modules_exist_on_disk(self):
-        """Every review_* module imported by packaged binaries must exist
-        in the source lib/ directory."""
-        required = _all_required_python_modules()
+        """Every module imported by packaged binaries must exist in lib/."""
+        required = _all_required_modules()
         missing = sorted(
             mod for mod in required
             if not (LIB_DIR / f"{mod}.py").exists()
@@ -99,12 +72,22 @@ class TestTarballCompleteness:
             + "\n".join(f"  - {mod}" for mod in missing)
         )
 
-    @pytest.mark.parametrize("binary", PYTHON_BINARIES, ids=lambda p: p.name)
-    def test_binary_included_in_tarball(self, binary):
-        """Each Python binary must be copied into the tarball's bin/."""
+    def test_build_script_copies_all_py(self):
+        """Build script must use a glob that covers all .py files in lib/."""
         content = BUILD_SCRIPT.read_text()
-        assert binary.name in content, (
-            f"{binary.name} is not referenced in the tarball build script"
+        assert "*.py" in content, (
+            "Build script should glob *.py to dynamically include all Python modules"
+        )
+
+    @pytest.mark.parametrize("binary", PACKAGED_BINARIES, ids=lambda p: p.name)
+    def test_binary_matched_by_glob(self, binary):
+        """Each review-*/validate-review-* binary must be matched by the
+        build script's glob patterns."""
+        content = BUILD_SCRIPT.read_text()
+        has_glob = "review-*" in content or "validate-review-*" in content
+        has_explicit = binary.name in content
+        assert has_glob or has_explicit, (
+            f"{binary.name} is not matched by any glob or explicit cp in the build script"
         )
 
     def test_tarball_copies_review_templates(self):

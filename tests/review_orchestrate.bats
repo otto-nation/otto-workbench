@@ -2683,6 +2683,7 @@ PYEOF
   git add . && git commit -q --no-verify -m "small change"
 
   result=$(_py_here <<PYEOF
+import io, contextlib
 pr = mod.PRMetadata(
     title='t', body='', head='feat', base='main', head_sha='abc',
     additions=2, deletions=0, changed_files=1,
@@ -2694,7 +2695,8 @@ job = mod.ReviewJob(
     wt_path='$repo', review_file='/tmp/r.md',
     session_log='/tmp/s.jsonl', reviews_dir='/tmp/rev',
 )
-data = mod.collect_preflight_data(job)
+with contextlib.redirect_stdout(io.StringIO()):
+    data = mod.collect_preflight_data(job)
 in_contents = 'big.py' in data.file_contents
 in_omitted = 'big.py' in data.omitted_files
 print(f'contents={in_contents},omitted={in_omitted}')

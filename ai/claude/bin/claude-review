@@ -27,7 +27,7 @@ set -Eeo pipefail
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../../lib/ui.sh"  # @tarball-patch: ui-source
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"  # @tarball-patch: ui-source
 
 _on_err() {
   local rc=$?
@@ -45,7 +45,7 @@ trap '_on_int' INT
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-_WORKBENCH_ROOT="$(cd "$(dirname "$_SELF")/../../.." && pwd)"  # @tarball-patch: workbench-root
+_WORKBENCH_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"  # @tarball-patch: workbench-root
 
 # @tarball-patch-start: generator-version
 _generator_version() {

@@ -8,11 +8,11 @@
 #   files.sh   — install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch
 #   setup.sh   — require_command, install_cask, register_step, run_steps, run_migrations
 #
-# Sourcing patterns:
+# Sourcing patterns (use git rev-parse to find the repo root — depth-independent):
 #   install.sh        . "$DOTFILES_DIR/lib/ui.sh"
-#   ai/setup.sh       . "$SCRIPT_DIR/../lib/ui.sh"
-#   bin/* (bash)      _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"; . "$(dirname "$_SELF")/../lib/ui.sh"
-#   bin/* (zsh)       _SELF="$(readlink "$0" 2>/dev/null || echo "$0")"; . "$(dirname "$_SELF")/../lib/ui.sh"
+#   */setup.sh        . "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)/lib/ui.sh"
+#   */steps.sh        . "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/lib/ui.sh"
+#   bin/*             _SELF="$(readlink ...)"; . "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 
 # Source path and filename constants — resolved relative to this file in bash
 if [[ -n "${BASH_VERSION:-}" ]]; then

@@ -9,7 +9,7 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(dirname "$_SELF")/../../../../lib/ai/session-count.sh"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ai/session-count.sh"
 
 PROMOTE_INTERVAL_HOURS=168  # 7 days
 MIN_SESSIONS=10

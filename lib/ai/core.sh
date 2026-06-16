@@ -16,8 +16,8 @@ if [ -n "${BASH_SOURCE:-}" ]; then
 else
   _ai_core_dir="${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai"
 fi
-# shellcheck source=../conventions.sh
-. "$_ai_core_dir/../conventions.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$_ai_core_dir")/conventions.sh"
 unset _ai_core_dir
 
 # Maximum characters of diff content sent to the AI.

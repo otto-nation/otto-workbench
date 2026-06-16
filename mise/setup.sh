@@ -4,7 +4,7 @@ set -e
 
 _D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-. "$_D/../lib/ui.sh"
+. "$(git -C "$_D" rev-parse --show-toplevel)/lib/ui.sh"
 # shellcheck source=/dev/null
 . "$_D/steps.sh"
 

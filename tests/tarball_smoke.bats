@@ -60,10 +60,12 @@ teardown() {
 
 # ── 4. Patched source path ──────────────────────────────────────────────────
 
-@test "patched claude-review sources ../lib/ui.sh not ../../../lib/ui.sh" {
-  run grep '../lib/ui.sh' "$TARBALL_ROOT/bin/claude-review"
+@test "patched claude-review resolves paths via dirname not rev-parse" {
+  run bash -c "grep '@tarball-patch: ui-source' '$TARBALL_ROOT/bin/claude-review' | grep -q dirname"
   [ "$status" -eq 0 ]
-  run grep '../../../lib/ui.sh' "$TARBALL_ROOT/bin/claude-review"
+  run bash -c "grep '@tarball-patch: workbench-root' '$TARBALL_ROOT/bin/claude-review' | grep -q dirname"
+  [ "$status" -eq 0 ]
+  run bash -c "grep '@tarball-patch: ui-source' '$TARBALL_ROOT/bin/claude-review' | grep -q rev-parse"
   [ "$status" -ne 0 ]
 }
 

@@ -20,7 +20,8 @@ shopt -s nullglob
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
-WORKBENCH_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+WORKBENCH_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+_CLAUDE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # ─── Constants ────────────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ for bin in "$SCRIPT_DIR"/review-* "$SCRIPT_DIR"/validate-review-*; do
 done
 
 # Library files — all Python modules
-for py in "$SCRIPT_DIR/../lib/"*.py; do
+for py in "$_CLAUDE_DIR/lib/"*.py; do
   cp "$py" "$DEST/lib/"
 done
 
@@ -88,12 +89,12 @@ for sh in "${BASH_MODULES[@]}"; do
 done
 
 # Templates — all .md files in the templates directory
-for tpl in "$SCRIPT_DIR/../lib/review-templates/"*.md; do
+for tpl in "$_CLAUDE_DIR/lib/review-templates/"*.md; do
   cp "$tpl" "$DEST/lib/review-templates/"
 done
 
 # Agents — all .md files in the agents directory
-for agent in "$SCRIPT_DIR/../agents/"*.md; do
+for agent in "$_CLAUDE_DIR/agents/"*.md; do
   cp "$agent" "$DEST/agents/"
 done
 
@@ -120,22 +121,24 @@ echo "$VERSION" > "$DEST/VERSION"
 # Patches are anchored to @tarball-patch sentinel comments in claude-review.
 # This is robust against whitespace/expression changes in the source.
 #
-# In the monorepo, claude-review is at ai/claude/bin/ and sources
-# ../../../lib/ui.sh. In the standalone tarball it's at bin/ and needs
-# ../lib/ui.sh. Similarly, _WORKBENCH_ROOT goes from ../../.. to ..
+# In the monorepo, claude-review uses git rev-parse to find the repo root.
+# In the standalone tarball there's no git repo, so we use dirname chains
+# to resolve paths relative to the script's location.
 
 REVIEW="$DEST/bin/claude-review"
 
-# shellcheck source=lib/output.sh
+# shellcheck source=/dev/null
 source "$WORKBENCH_ROOT/lib/output.sh"
 
-# Patch lib/ui.sh source path: ../../../lib → ../lib
+# Patch ui-source: replace git rev-parse with dirname chain
 # shellcheck disable=SC2016
-sed_i '/@tarball-patch: ui-source/s|\.\./\.\./\.\./lib|../lib|' "$REVIEW"
+sed_i '/@tarball-patch: ui-source/c\
+. "$(dirname "$(cd "$(dirname "$_SELF")" && pwd)")/lib/ui.sh"  # @tarball-patch: ui-source' "$REVIEW"
 
-# Patch _WORKBENCH_ROOT: ../../.. → ..
+# Patch workbench-root: replace git rev-parse with dirname chain
 # shellcheck disable=SC2016
-sed_i '/@tarball-patch: workbench-root/s|\.\./\.\./\.\.|..|' "$REVIEW"
+sed_i '/@tarball-patch: workbench-root/c\
+_WORKBENCH_ROOT="$(dirname "$(cd "$(dirname "$_SELF")" && pwd)")"  # @tarball-patch: workbench-root' "$REVIEW"
 
 # Patch _generator_version to read VERSION file instead of release-please manifest
 # shellcheck disable=SC2016
@@ -151,9 +154,9 @@ _generator_version() {\
 # ─── Verify patches ──────────────────────────────────────────────────────
 
 bash -n "$REVIEW"
-for old_pattern in '../../../lib/ui.sh' '/../../.." && pwd)'; do
-  if grep -qF "$old_pattern" "$REVIEW"; then
-    echo "ERROR: patch failed — old pattern still present: $old_pattern" >&2
+for _sentinel in 'ui-source' 'workbench-root'; do
+  if grep "@tarball-patch: $_sentinel" "$REVIEW" | grep -qF 'rev-parse'; then
+    echo "ERROR: $_sentinel patch failed — rev-parse still present" >&2
     exit 1
   fi
 done

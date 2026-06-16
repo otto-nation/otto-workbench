@@ -161,7 +161,7 @@ step_claude_settings() {
   fi
 
   # Inject registry-derived permissions into the template
-  # shellcheck source=../../lib/registries.sh
+  # shellcheck source=/dev/null
   if ! declare -F collect_registry_permissions >/dev/null 2>&1; then
     . "$LIB_SRC_DIR/registries.sh"
   fi

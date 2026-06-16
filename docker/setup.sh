@@ -14,7 +14,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$SCRIPT_DIR/../lib/ui.sh"
+. "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)/lib/ui.sh"
 
 # ─── Runtime aliases symlink ──────────────────────────────────────────────────
 

@@ -1,8 +1,10 @@
 ---
 name: retro
-description: "Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements."
+description: "Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. TRIGGER when: user wants to analyze review patterns for rule gaps, after a batch of PR reviews. SKIP: addressing comments on a specific PR (use pr-comments); memory consolidation (use dream)."
 source: otto-workbench/ai/claude/skills/retro/SKILL.md
 invocation: "/retro"
+trigger: "Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers every 72h."
+skip: "Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead)."
 output: "ai/memory/RETRO.md"
 lifecycle_cadence: "72h"
 lifecycle_scope: global

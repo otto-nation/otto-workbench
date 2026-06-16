@@ -292,6 +292,8 @@ _claude_setup() {
 
 @test "step_claude_settings: second run produces identical settings.json" {
   _claude_setup
+  # Stub registry scanning — it takes ~1s per call and idempotency doesn't depend on registry content
+  collect_registry_permissions() { local -n __out=$1; __out=("Bash(git:*)"); }
 
   step_claude_settings >/dev/null 2>&1
   content1=$(cat "$FAKE_HOME/.claude/settings.json")

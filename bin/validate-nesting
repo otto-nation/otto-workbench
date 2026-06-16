@@ -39,16 +39,20 @@ def _read_shebang(path: str) -> bytes | None:
         return None
 
 
+def _get_checker_by_ext(filepath: str, ext: str):
+    checker = get_checker_for_extension(ext)
+    if not checker:
+        return None
+    if ext == '.bats':
+        return checker
+    shebang = _read_shebang(filepath)
+    return checker if shebang is not None else None
+
+
 def _get_checker(filepath: str):
     _, ext = os.path.splitext(filepath)
     if ext:
-        checker = get_checker_for_extension(ext)
-        if checker and ext != '.bats':
-            shebang = _read_shebang(filepath)
-            if shebang is None:
-                return None
-        return checker
-
+        return _get_checker_by_ext(filepath, ext)
     shebang = _read_shebang(filepath)
     if shebang:
         return get_checker_for_shebang(shebang)
@@ -58,12 +62,13 @@ def _get_checker(filepath: str):
 def _discover_in_dir(dirpath, filenames, scripts):
     all_exts = get_all_extensions()
     for fname in filenames:
-        path = os.path.join(dirpath, fname)
         _, ext = os.path.splitext(fname)
-        if ext in all_exts or '.' not in fname:
-            checker = _get_checker(path)
-            if checker:
-                scripts.add((path, checker))
+        if ext not in all_exts and '.' in fname:
+            continue
+        path = os.path.join(dirpath, fname)
+        checker = _get_checker(path)
+        if checker:
+            scripts.add((path, checker))
 
 
 def discover_scripts(repo_root):
@@ -97,14 +102,9 @@ def _print_summary(files_checked, errors):
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _resolve_files(args, repo_root):
-    if args.files:
-        result = []
-        for f in args.files:
-            checker = _get_checker(f)
-            if checker:
-                result.append((f, checker))
-        return result
-    return discover_scripts(repo_root)
+    if not args.files:
+        return discover_scripts(repo_root)
+    return [(f, c) for f in args.files if (c := _get_checker(f))]
 
 
 def main():

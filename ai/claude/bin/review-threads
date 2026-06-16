@@ -97,7 +97,11 @@ def main():
     cwd = args.repo_dir or None
     if args.pr:
         repo = _detect_repo(cwd)
-        pr_number = int(args.pr)
+        try:
+            pr_number = int(args.pr)
+        except ValueError:
+            print(f"--pr: invalid integer value: {args.pr!r}", file=sys.stderr)
+            sys.exit(1)
     else:
         repo, pr_number = _detect_pr(cwd)
 

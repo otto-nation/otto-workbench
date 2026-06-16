@@ -2,7 +2,8 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(dirname "$_SELF")/../lib/ui.sh"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)}"
+. "$WORKBENCH_DIR/lib/ui.sh"
 
 usage() {
   cat <<EOF

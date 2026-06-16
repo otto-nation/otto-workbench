@@ -3,9 +3,9 @@
 
 set -e
 
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$(git rev-parse --show-toplevel)}"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+. "$WORKBENCH_DIR/lib/ui.sh"
 
 usage() {
   cat <<EOF

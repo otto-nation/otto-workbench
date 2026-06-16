@@ -19,6 +19,10 @@ import os
 import re
 import sys
 
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
 FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
 FUNC_END = re.compile(r'^\}\s*$')
 HEREDOC_START = re.compile(r"<<-?\s*'?([A-Za-z_]\w*)'?")
@@ -26,12 +30,6 @@ CMD_SUB_OPEN = re.compile(r'\$\(')
 SCOPE_CLOSER = re.compile(r'^\s*(fi|done|esac|\})\s*(#.*)?$')
 CONDITION_LEADER = re.compile(r'^\s*(if|elif|while|until)\b')
 CASE_TERMINATOR = re.compile(r';;\s*(#.*)?$')
-
-if os.environ.get('NO_COLOR') or not sys.stderr.isatty():
-    RED = GREEN = DIM = NC = ''
-else:
-    RED, GREEN, DIM, NC = '\033[0;31m', '\033[0;32m', '\033[2m', '\033[0m'
-
 
 def strip_strings_and_comments(line: str) -> str:
     line = re.sub(r"'[^']*'", '', line)

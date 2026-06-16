@@ -15,9 +15,10 @@
 
 set -e
 
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$_SCRIPT_ROOT}"
 # shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+. "$_SCRIPT_ROOT/lib/ui.sh"
 
 usage() {
   cat <<EOF

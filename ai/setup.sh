@@ -16,7 +16,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)/lib/ui.sh"
+WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+. "$WORKBENCH_DIR/lib/ui.sh"
 
 # Source all tool step files — any subdirectory containing steps.sh is a tool
 for _dir in "$SCRIPT_DIR"/*/; do

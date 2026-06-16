@@ -77,6 +77,12 @@ tools:
     when_to_use: "Remediating a lint rule across many repos at once (e.g. no-stdlib-log, no-raw-getenv)"
     usage: "lint-sweep --rule no-stdlib-log --repos 'svc-*'  |  lint-sweep --rule no-raw-getenv --repos ~/src/maximum/main/svc-* --fix  |  lint-sweep --rule <name> --repos . --dry-run"
 
+  - name: validate-nesting
+    allow: true
+    description: "Validate bash and Python script nesting depth to enforce flat control flow"
+    when_to_use: "After writing deeply nested conditionals or loops; runs automatically on pre-push for all repos"
+    usage: "validate-nesting [--quiet] [--max-depth N] [file...]"
+
   - name: gcloud-reauth
     context: reference
     description: "Check GCP application-default credentials and re-login if expired, with self-managed launchd agent"

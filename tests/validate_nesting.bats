@@ -6,7 +6,7 @@ setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
-  VALIDATE_NESTING="$REPO_ROOT/bin/local/validate-nesting"
+  VALIDATE_NESTING="$REPO_ROOT/bin/validate-nesting"
 }
 
 teardown() {
@@ -574,6 +574,75 @@ SCRIPT
   )
   result=$(_py "print(len(mod.check_file_python('$f', 2)))")
   [ "$result" = "0" ]
+}
+
+@test "check_file_python: deep nesting inside elif violates max_depth" {
+  local f
+  f=$(_write_script "elif_deep.py" <<'SCRIPT'
+#!/usr/bin/env python3
+def foo():
+    if True:
+        print("shallow")
+    elif False:
+        for x in range(10):
+            if x > 5:
+                print("too deep inside elif")
+SCRIPT
+  )
+  result=$(_py "print(len(mod.check_file_python('$f', 2)))")
+  [ "$result" -gt 0 ]
+}
+
+@test "check_file_python: deep nesting inside else violates max_depth" {
+  local f
+  f=$(_write_script "else_deep.py" <<'SCRIPT'
+#!/usr/bin/env python3
+def foo():
+    if True:
+        print("shallow")
+    else:
+        for x in range(10):
+            if x > 5:
+                print("too deep inside else")
+SCRIPT
+  )
+  result=$(_py "print(len(mod.check_file_python('$f', 2)))")
+  [ "$result" -gt 0 ]
+}
+
+@test "check_file_python: deep nesting inside except violates max_depth" {
+  local f
+  f=$(_write_script "except_deep.py" <<'SCRIPT'
+#!/usr/bin/env python3
+def foo():
+    try:
+        print("shallow")
+    except ValueError:
+        for x in range(10):
+            if x > 5:
+                print("too deep inside except")
+SCRIPT
+  )
+  result=$(_py "print(len(mod.check_file_python('$f', 2)))")
+  [ "$result" -gt 0 ]
+}
+
+@test "check_file_python: triple quotes in regex pattern do not suppress violations" {
+  local f
+  f=$(_write_script "triple_in_regex.py" <<'PYEOF'
+#!/usr/bin/env python3
+import re
+TRIPLE = re.compile(r'"""|\'\'\'')
+
+def foo():
+    if True:
+        for x in range(10):
+            if x > 5:
+                print("too deep")
+PYEOF
+  )
+  result=$(_py "print(len(mod.check_file_python('$f', 2)))")
+  [ "$result" -gt 0 ]
 }
 
 @test "check_file_python: async for/with count as nesting" {

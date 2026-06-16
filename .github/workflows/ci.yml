@@ -65,7 +65,7 @@ jobs:
         run: bash bin/local/validate-migrations
 
       - name: Validate nesting depth
-        run: python3 bin/local/validate-nesting --quiet
+        run: python3 bin/validate-nesting --quiet
 
       - name: Validate errexit safety
         run: python3 bin/local/validate-errexit --quiet

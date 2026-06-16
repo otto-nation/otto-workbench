@@ -9,9 +9,10 @@ set -euo pipefail
 trap 'echo "✗ pre-push hook failed (exit $?) at line $LINENO" >&2' ERR
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="$REPO_ROOT"
 
 # shellcheck source=../../lib/ui.sh
-. "$REPO_ROOT/lib/ui.sh"
+. "$WORKBENCH_DIR/lib/ui.sh"
 
 # ── Output helpers ───────────────────────────────────────────────────────────
 
@@ -84,7 +85,6 @@ fi
 _run_step "Validating registries"   "$REPO_ROOT/bin/local/validate-registries" --quiet
 _run_step "Validating components"   "$REPO_ROOT/bin/local/validate-components" --quiet
 _run_step "Validating migrations"   "$REPO_ROOT/bin/local/validate-migrations" --quiet
-_run_step "Validating nesting"      "$REPO_ROOT/bin/local/validate-nesting" --quiet
 _run_step "Validating errexit"     "$REPO_ROOT/bin/local/validate-errexit" --quiet
 _run_step "Validating skills"       "$REPO_ROOT/bin/local/validate-skills" --quiet
 

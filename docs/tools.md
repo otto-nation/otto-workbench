@@ -13,6 +13,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
 | `wt-init` | Convert a regular git repo to a bare repo with worktrees |
 | `lint-sweep` | Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches |
+| `validate-nesting` | Validate bash and Python script nesting depth to enforce flat control flow |
 | `gcloud-reauth` | Check GCP application-default credentials and re-login if expired, with self-managed launchd agent |
 | `get-secret` | Interactively retrieves a secret from AWS Secrets Manager by listing and selecting |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
@@ -32,7 +33,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
-| `validate-nesting` | Validates bash script nesting depth to enforce flat control flow |
 | `validate-errexit` | Validates bash scripts for dangerous && patterns that silently exit under set -e |
 | `validate-skills` | Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing |
 | `generate-tool-context` | Generates ai/guidelines/rules/tools.generated.md from the domain registries |

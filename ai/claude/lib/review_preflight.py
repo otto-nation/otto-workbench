@@ -314,47 +314,49 @@ def _collect_file_data(
     return contents, permissions, changes
 
 
+def _is_low_density(path: str, content: str, file_changes: dict[str, int]) -> bool:
+    size = len(content.encode())
+    if size <= FILE_CONTENT_MIN_SIZE:
+        return False
+    total_lines = content.count("\n") or 1
+    changed = file_changes.get(path, total_lines)
+    return (changed / total_lines) < FILE_CONTENT_DENSITY_THRESHOLD
+
+
 def _fit_to_budget(
     all_contents: dict[str, str],
     all_permissions: dict[str, str],
     file_changes: dict[str, int],
     base_size: int,
 ) -> tuple[dict[str, str], dict[str, str], list[str]]:
-    file_sizes = {p: len(c.encode()) for p, c in all_contents.items()}
-    remaining = max(0, MAX_PROMPT_BYTES - base_size)
+    density_skipped = [
+        p for p, c in all_contents.items()
+        if _is_low_density(p, c, file_changes)
+    ]
+    candidates = {p: c for p, c in all_contents.items() if p not in set(density_skipped)}
 
-    sorted_paths = sorted(
-        all_contents.keys(),
-        key=lambda p: (classify_tier(p), file_sizes[p]),
-    )
+    file_sizes = {p: len(c.encode()) for p, c in candidates.items()}
+    sorted_paths = sorted(candidates, key=lambda p: (classify_tier(p), file_sizes[p]))
 
     included: dict[str, str] = {}
     included_perms: dict[str, str] = {}
-    omitted: list[str] = []
-    density_skipped: list[str] = []
+    budget_omitted: list[str] = []
+    remaining = max(0, MAX_PROMPT_BYTES - base_size)
     for path in sorted_paths:
-        size = file_sizes[path]
-        if size > FILE_CONTENT_MIN_SIZE:
-            total_lines = all_contents[path].count("\n") or 1
-            changed = file_changes.get(path, total_lines)
-            density = changed / total_lines
-            if density < FILE_CONTENT_DENSITY_THRESHOLD:
-                omitted.append(path)
-                density_skipped.append(path)
-                continue
-        if size <= remaining:
-            included[path] = all_contents[path]
+        if file_sizes[path] <= remaining:
+            included[path] = candidates[path]
             included_perms[path] = all_permissions[path]
-            remaining -= size
+            remaining -= file_sizes[path]
         else:
-            omitted.append(path)
+            budget_omitted.append(path)
+
+    omitted = density_skipped + budget_omitted
 
     if density_skipped:
-        density_kb = sum(file_sizes[p] for p in density_skipped) // 1024
+        density_kb = sum(len(all_contents[p].encode()) for p in density_skipped) // 1024
         _info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
-
     if omitted:
-        omitted_kb = sum(file_sizes[p] for p in omitted) // 1024
+        omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
         _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
     return included, included_perms, omitted

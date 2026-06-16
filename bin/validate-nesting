@@ -3,252 +3,33 @@
 
 Usage: validate-nesting [--quiet] [--max-depth N] [file...]
 
-For bash/zsh scripts: tracks nesting from block-opening keywords (if, for,
-while, until, case) and their closers (fi, done, esac).  Depth resets at
-each function boundary.  Skips heredoc content and command substitution
-bodies to avoid false positives from embedded languages.
+Checks nesting depth in bash, Python, and Go scripts. Each language has
+its own default max depth (bash/python: 2, go: 3) overridable with
+--max-depth.
 
-For Python scripts: tracks nesting via indentation for control-flow blocks
-(if, for, while, with, try).  Depth resets at each def/class boundary.
-Skips triple-quoted strings and decorator lines.
-
-When no files are given, discovers all scripts in the repo by extension and
-shebang.
+When no files are given, discovers all scripts in the repo by extension
+and shebang.
 
 Exit code: 0 if all files pass, 1 if any exceed max depth.
 """
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from nesting import get_checker_for_extension, get_checker_for_shebang, get_all_extensions  # noqa: E402
 
-# ── Bash patterns ────────────────────────────────────────────────────────────
+# ── Discovery ────────────────────────────────────────────────────────────────
 
-OPENERS = re.compile(r'\b(if|for|while|until|case)\b')
-CLOSERS = re.compile(r'\b(fi|done|esac)\b')
-FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
-FUNC_END = re.compile(r'^\}\s*$')
-HEREDOC_START = re.compile(r"<<-?\s*'?([A-Za-z_]\w*)'?")
-CMD_SUB_OPEN = re.compile(r'\$\(')
-BATS_TEST = re.compile(r'^@test\b')
+SKIP_DIRS = {
+    '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 'venv',
+    '.tox', '.mypy_cache', 'dist', 'build', '.eggs', '.cache',
+}
 
-# ── Python patterns ──────────────────────────────────────────────────────────
-
-PY_OPENER = re.compile(r'^\s*(?:async\s+)?(if|for|while|with|try)\b')
-PY_CONTINUATION = re.compile(r'^\s*(elif|else|except|finally)\b')
-PY_SCOPE_RESET = re.compile(r'^\s*(?:async\s+)?(def|class)\s+(\w+)')
-PY_DECORATOR = re.compile(r'^\s*@')
-PY_TRIPLE_QUOTE = re.compile(r'"""|\'\'\'')
-
-# ── Shebang patterns ─────────────────────────────────────────────────────────
-
-BASH_SHEBANG = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
-PYTHON_SHEBANG = re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)')
-
-BASH_EXTENSIONS = {'.sh', '.bash', '.bats'}
-PYTHON_EXTENSIONS = {'.py'}
-
-def strip_strings_and_comments(line: str) -> str:
-    line = re.sub(r"'[^']*'", '', line)
-    line = re.sub(r'"[^"]*"', '', line)
-    line = re.sub(r'#.*', '', line)
-    return line
-
-
-# ── Bash checker ─────────────────────────────────────────────────────────────
-
-class _BashState:
-    __slots__ = ('func_name', 'depth', 'sub_depth', 'heredoc_end', 'in_function')
-
-    def __init__(self):
-        self.func_name = '(top-level)'
-        self.depth = 0
-        self.sub_depth = 0
-        self.heredoc_end = None
-        self.in_function = False
-
-
-def _preprocess_bash_line(state: _BashState, raw_line: str) -> str | None:
-    """Strip noise (heredocs, command substitutions). Returns cleaned line or None to skip."""
-    line = raw_line.rstrip('\n')
-
-    if state.heredoc_end is not None:
-        if line.strip() == state.heredoc_end:
-            state.heredoc_end = None
-        return None
-
-    m = HEREDOC_START.search(line)
-    if m:
-        state.heredoc_end = m.group(1)
-
-    stripped = strip_strings_and_comments(line)
-
-    opens = len(CMD_SUB_OPEN.findall(stripped))
-    state.sub_depth += opens
-    if state.sub_depth <= 0:
-        return stripped
-
-    net_close = stripped.count(')') - (stripped.count('(') - opens)
-    if net_close > 0:
-        state.sub_depth = max(0, state.sub_depth - net_close)
-    return None
-
-
-def _handle_bash_function(state: _BashState, stripped: str, raw_line: str) -> bool:
-    """Handle function definition/end boundaries. Returns True if line was consumed."""
-    fm = FUNC_DEF.match(stripped)
-    if fm:
-        if stripped.rstrip().endswith('}'):
-            return True
-        state.depth = 0
-        state.in_function = True
-        state.func_name = fm.group(1)
-        return True
-
-    if BATS_TEST.match(stripped):
-        state.depth = 0
-        state.in_function = True
-        m = re.search(r'"([^"]+)"', raw_line)
-        state.func_name = m.group(1) if m else '(test)'
-        return True
-
-    if state.in_function and FUNC_END.match(stripped):
-        state.in_function = False
-        state.depth = 0
-        state.func_name = '(top-level)'
-        return True
-
-    return False
-
-
-def _check_bash_line(
-    state: _BashState, violations: list, lineno: int, raw_line: str, max_depth: int,
-) -> None:
-    stripped = _preprocess_bash_line(state, raw_line)
-    if stripped is None or _handle_bash_function(state, stripped, raw_line):
-        return
-
-    opener_count = len(OPENERS.findall(stripped))
-    closer_count = len(CLOSERS.findall(stripped))
-    matched = min(opener_count, closer_count)
-
-    state.depth += opener_count - matched
-    if state.depth > max_depth:
-        violations.append((lineno, state.depth, state.func_name))
-    state.depth = max(0, state.depth - (closer_count - matched))
-
-
-def check_file_bash(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
-    """Return list of (line_number, depth, function_name) violations for bash."""
-    violations = []
-    state = _BashState()
-    with open(filepath) as f:
-        for lineno, raw_line in enumerate(f, 1):
-            _check_bash_line(state, violations, lineno, raw_line, max_depth)
-    return violations
-
-
-# ── Python checker ───────────────────────────────────────────────────────────
-
-class _PythonState:
-    __slots__ = ('func_name', 'stack', 'in_multiline_string', 'paren_depth')
-
-    def __init__(self):
-        self.func_name = '(module-level)'
-        self.stack: list[tuple[int, str]] = []
-        self.in_multiline_string = False
-        self.paren_depth = 0
-
-
-def _has_odd_triple_quotes(line: str) -> bool:
-    cleaned = re.sub(r"'[^']*'", '', line)
-    return len(PY_TRIPLE_QUOTE.findall(cleaned)) % 2 == 1
-
-
-def _paren_delta(line: str) -> int:
-    """Net change in paren/bracket depth, counting only structural delimiters."""
-    stripped = strip_strings_and_comments(line)
-    opens = stripped.count('(') + stripped.count('[') + stripped.count('{')
-    closes = stripped.count(')') + stripped.count(']') + stripped.count('}')
-    return opens - closes
-
-
-def _skip_python_line(state: _PythonState, line: str, trimmed: str) -> bool:
-    """Returns True if this line should be skipped (non-structural content)."""
-    if state.in_multiline_string:
-        if _has_odd_triple_quotes(line):
-            state.in_multiline_string = False
-        return True
-
-    if not trimmed or trimmed.startswith('#'):
-        return True
-
-    if _has_odd_triple_quotes(line):
-        state.in_multiline_string = True
-        return True
-
-    delta = _paren_delta(trimmed)
-    if state.paren_depth > 0:
-        state.paren_depth = max(0, state.paren_depth + delta)
-        return True
-
-    state.paren_depth = max(0, state.paren_depth + delta)
-
-    return PY_DECORATOR.match(trimmed) is not None
-
-
-def _classify_python_line(
-    state: _PythonState, violations: list, lineno: int, indent: int,
-    trimmed: str, max_depth: int,
-) -> None:
-    """Classify a Python line and update nesting stack."""
-    while state.stack and state.stack[-1][0] >= indent:
-        state.stack.pop()
-
-    sm = PY_SCOPE_RESET.match(trimmed)
-    if sm:
-        state.func_name = sm.group(2)
-        state.stack.clear()
-        return
-
-    if PY_OPENER.match(trimmed):
-        state.stack.append((indent, 'opener'))
-        if len(state.stack) > max_depth:
-            violations.append((lineno, len(state.stack), state.func_name))
-        return
-
-    if PY_CONTINUATION.match(trimmed):
-        state.stack.append((indent, 'continuation'))
-
-
-def _check_python_line(
-    state: _PythonState, violations: list, lineno: int, raw_line: str, max_depth: int,
-) -> None:
-    line = raw_line.rstrip('\n')
-    trimmed = line.lstrip()
-    if _skip_python_line(state, line, trimmed):
-        return
-    indent = len(line) - len(trimmed)
-    _classify_python_line(state, violations, lineno, indent, trimmed, max_depth)
-
-
-def check_file_python(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
-    """Return list of (line_number, depth, function_name) violations for Python."""
-    violations = []
-    state = _PythonState()
-    with open(filepath) as f:
-        for lineno, raw_line in enumerate(f, 1):
-            _check_python_line(state, violations, lineno, raw_line, max_depth)
-    return violations
-
-
-# ── Language detection ───────────────────────────────────────────────────────
 
 def _read_shebang(path: str) -> bytes | None:
     try:
@@ -258,80 +39,42 @@ def _read_shebang(path: str) -> bytes | None:
         return None
 
 
-def _classify_shebang(shebang: bytes) -> str | None:
-    if BASH_SHEBANG.search(shebang):
-        return 'bash'
-    if PYTHON_SHEBANG.search(shebang):
-        return 'python'
-    return None
-
-
-def detect_language(filepath: str) -> str | None:
-    """Detect script language from extension or shebang."""
-    _, ext = os.path.splitext(filepath)
-    if ext in BASH_EXTENSIONS:
-        return 'bash'
-    if ext in PYTHON_EXTENSIONS:
-        return 'python'
-
+def _get_checker_by_ext(filepath: str, ext: str):
+    checker = get_checker_for_extension(ext)
+    if not checker:
+        return None
+    if ext == '.bats' or checker.SHEBANG_RE is None:
+        return checker
     shebang = _read_shebang(filepath)
-    if shebang:
-        return _classify_shebang(shebang)
-    return None
-
-
-# ── Discovery ────────────────────────────────────────────────────────────────
-
-SKIP_DIRS = {
-    '.git', 'node_modules', 'vendor', '__pycache__', '.venv', 'venv',
-    '.tox', '.mypy_cache', 'dist', 'build', '.eggs', '.cache',
-}
-
-KNOWN_EXTENSIONS = BASH_EXTENSIONS | PYTHON_EXTENSIONS
-
-
-def _classify_by_extension(path: str, ext: str) -> str | None:
-    """Return language for a file with a known extension, or None."""
-    if ext == '.bats':
-        return 'bash'
-
-    shebang = _read_shebang(path)
     if shebang is None:
         return None
+    return checker if checker.SHEBANG_RE.search(shebang) else None
 
-    if ext in BASH_EXTENSIONS and BASH_SHEBANG.search(shebang):
-        return 'bash'
-    if ext in PYTHON_EXTENSIONS and PYTHON_SHEBANG.search(shebang):
-        return 'python'
+
+def _get_checker(filepath: str):
+    _, ext = os.path.splitext(filepath)
+    if ext:
+        return _get_checker_by_ext(filepath, ext)
+    shebang = _read_shebang(filepath)
+    if shebang:
+        return get_checker_for_shebang(shebang)
     return None
 
 
-def _classify_by_shebang(path: str) -> str | None:
-    """Return language for an extensionless file via shebang, or None."""
-    shebang = _read_shebang(path)
-    return _classify_shebang(shebang) if shebang else None
-
-
-def _classify_file(path: str, fname: str) -> str | None:
-    """Return language for a file by extension or shebang, or None."""
-    _, ext = os.path.splitext(fname)
-    if ext in KNOWN_EXTENSIONS:
-        return _classify_by_extension(path, ext)
-    if '.' not in fname:
-        return _classify_by_shebang(path)
-    return None
-
-
-def _discover_in_dir(dirpath: str, filenames: list[str], scripts: set[tuple[str, str]]) -> None:
+def _discover_in_dir(dirpath, filenames, scripts):
+    all_exts = get_all_extensions()
     for fname in filenames:
-        lang = _classify_file(os.path.join(dirpath, fname), fname)
-        if lang:
-            scripts.add((os.path.join(dirpath, fname), lang))
+        _, ext = os.path.splitext(fname)
+        if ext not in all_exts and '.' in fname:
+            continue
+        path = os.path.join(dirpath, fname)
+        checker = _get_checker(path)
+        if checker:
+            scripts.add((path, checker))
 
 
-def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
-    """Find all scripts in the repo. Returns sorted (path, language) tuples."""
-    scripts: set[tuple[str, str]] = set()
+def discover_scripts(repo_root):
+    scripts = set()
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         _discover_in_dir(dirpath, filenames, scripts)
@@ -340,36 +83,37 @@ def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
 
 # ── Reporting ────────────────────────────────────────────────────────────────
 
-def _report_violations(relpath: str, violations: list[tuple[int, int, str]], max_depth: int) -> None:
+def _report_violations(relpath, violations, max_depth):
     print(f'{RED}✗{NC} {relpath}: nesting exceeds {max_depth} levels', file=sys.stderr)
     prev_func = None
-    for lineno, depth, func in violations:
-        if func != prev_func:
-            print(f'    {DIM}in {func}():{NC}', file=sys.stderr)
-            prev_func = func
-        print(f'      line {lineno}: depth {depth}', file=sys.stderr)
+    for v in violations:
+        if v.function_name != prev_func:
+            print(f'    {DIM}in {v.function_name}():{NC}', file=sys.stderr)
+            prev_func = v.function_name
+        print(f'      line {v.line_number}: depth {v.depth}', file=sys.stderr)
 
 
-def _print_summary(files_checked: int, errors: int, max_depth: int) -> None:
+def _print_summary(files_checked, errors):
     print()
     if errors == 0:
         print(f'{GREEN}✓{NC} {files_checked} files checked, no excessive nesting')
     else:
-        print(f'{RED}✗{NC} {errors} of {files_checked} files exceed max nesting depth of {max_depth}', file=sys.stderr)
+        print(f'{RED}✗{NC} {errors} of {files_checked} files exceed max nesting depth', file=sys.stderr)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-def _resolve_files(args, repo_root: str) -> list[tuple[str, str]]:
-    if args.files:
-        return [(f, lang) for f in args.files if (lang := detect_language(f))]
-    return discover_scripts(repo_root)
+def _resolve_files(args, repo_root):
+    if not args.files:
+        return discover_scripts(repo_root)
+    return [(f, c) for f in args.files if (c := _get_checker(f))]
 
 
 def main():
     parser = argparse.ArgumentParser(description='Validate script nesting depth.')
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
-    parser.add_argument('--max-depth', type=int, default=2, help='Maximum nesting depth (default: 2)')
+    parser.add_argument('--max-depth', type=int, default=None,
+                        help='Maximum nesting depth (overrides per-language defaults)')
     parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
@@ -379,22 +123,24 @@ def main():
         ).decode().strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         repo_root = os.getcwd()
-    file_langs = _resolve_files(args, repo_root)
+
+    file_checkers = _resolve_files(args, repo_root)
 
     errors = 0
-    checkers = {'python': check_file_python, 'bash': check_file_bash}
-
-    for filepath, language in file_langs:
-        violations = checkers[language](filepath, args.max_depth)
+    for filepath, checker in file_checkers:
+        max_depth = args.max_depth if args.max_depth is not None else checker.DEFAULT_MAX_DEPTH
+        with open(filepath) as f:
+            lines = f.readlines()
+        violations = checker.check_nesting(lines, max_depth)
         relpath = os.path.relpath(filepath, repo_root)
 
         if violations:
             errors += 1
-            _report_violations(relpath, violations, args.max_depth)
+            _report_violations(relpath, violations, max_depth)
         elif not args.quiet:
             print(f'  {GREEN}✓{NC} {relpath}')
 
-    _print_summary(len(file_langs), errors, args.max_depth)
+    _print_summary(len(file_checkers), errors)
     if errors:
         sys.exit(1)
 

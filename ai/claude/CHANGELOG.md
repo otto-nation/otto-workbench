@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.18.0...claude-review-v1.18.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **ci:** dynamically include all review scripts and Python libs in tarball ([#249](https://github.com/otto-nation/otto-workbench/issues/249)) ([f47388c](https://github.com/otto-nation/otto-workbench/commit/f47388cd8f9080cf8d0936110bce973ea0c2bc9b))
+
 ## [1.18.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.17.2...claude-review-v1.18.0) (2026-06-16)
 
 

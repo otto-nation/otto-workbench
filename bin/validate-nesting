@@ -163,7 +163,8 @@ class _PythonState:
 
 
 def _has_odd_triple_quotes(line: str) -> bool:
-    return len(PY_TRIPLE_QUOTE.findall(line)) % 2 == 1
+    cleaned = re.sub(r"'[^']*'", '', line)
+    return len(PY_TRIPLE_QUOTE.findall(cleaned)) % 2 == 1
 
 
 def _paren_delta(line: str) -> int:

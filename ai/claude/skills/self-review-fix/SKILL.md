@@ -1,8 +1,10 @@
 ---
 name: self-review-fix
-description: "Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running."
+description: "Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments)."
 source: otto-workbench/ai/claude/skills/self-review-fix/SKILL.md
 invocation: "/self-review-fix [branch_name]"
+trigger: "Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR."
+skip: "Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead)."
 ---
 
 # Self-Review Fix

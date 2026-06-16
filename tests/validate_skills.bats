@@ -21,6 +21,7 @@ _make_skill() {
   local name="$1"
   local cadence="${2:-}"
   local scope="${3:-}"
+  local trigger="${4:-Use when testing}"
   local dir="$FAKE_WORKBENCH/ai/claude/skills/$name"
   mkdir -p "$dir"
 
@@ -30,6 +31,7 @@ _make_skill() {
     echo "description: \"Test skill description.\""
     echo "source: otto-workbench/ai/claude/skills/$name/SKILL.md"
     echo "invocation: \"/$name\""
+    echo "trigger: \"$trigger\""
     [[ -n "$cadence" ]] && echo "lifecycle_cadence: \"$cadence\""
     [[ -n "$scope" ]] && echo "lifecycle_scope: $scope"
     echo "---"
@@ -171,6 +173,56 @@ EOF
   [[ "$output" == *"missing required field: source"* ]]
 }
 
+@test "missing trigger field fails" {
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-trigger"
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<'EOF'
+---
+name: no-trigger
+description: "Has description"
+source: otto-workbench/ai/claude/skills/no-trigger/SKILL.md
+invocation: "/no-trigger"
+---
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing required field: trigger"* ]]
+}
+
+@test "valid skill with trigger and skip passes" {
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/full-skill"
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<'EOF'
+---
+name: full-skill
+description: "A complete skill"
+source: otto-workbench/ai/claude/skills/full-skill/SKILL.md
+invocation: "/full-skill"
+trigger: "Use when the user asks for full skill functionality"
+skip: "Do not use for partial operations"
+---
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"trigger field present"* ]]
+}
+
+@test "skill without skip field passes" {
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-skip"
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<'EOF'
+---
+name: no-skip
+description: "Has trigger but no skip"
+source: otto-workbench/ai/claude/skills/no-skip/SKILL.md
+invocation: "/no-skip"
+trigger: "Use when testing skip optionality"
+---
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
 # ── Name mismatch ────────────────────────────────────────────────────────────
 
 @test "name not matching directory fails" {
@@ -288,6 +340,7 @@ name: 'quoted'
 description: 'A skill with single-quoted values'
 source: 'otto-workbench/ai/claude/skills/quoted/SKILL.md'
 invocation: '/quoted'
+trigger: 'Use when testing quote handling'
 ---
 EOF
   _run_validate

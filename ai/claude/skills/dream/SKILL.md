@@ -1,8 +1,10 @@
 ---
 name: dream
-description: "Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory."
+description: "Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use context); machine profile updates (use machine)."
 source: otto-workbench/ai/claude/skills/dream/SKILL.md
 invocation: "/dream"
+trigger: "Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h."
+skip: "Do not use for project architecture facts (use context instead) or machine profile updates (use machine instead)."
 output: "memory/ topic files"
 lifecycle_cadence: "24h"
 lifecycle_scope: per-project

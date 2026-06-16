@@ -401,12 +401,14 @@ _readme_skill_reference() {
     local skill_file="$d/SKILL.md"
     [[ -f "$skill_file" ]] || continue
 
-    local skill_name skill_desc invocation output cadence
+    local skill_name skill_desc invocation output cadence trigger skip
     skill_name="$(basename "$d")"
     skill_desc="$(_extract_frontmatter_field "$skill_file" "description")"
     invocation="$(_extract_frontmatter_field "$skill_file" "invocation")"
     output="$(_extract_frontmatter_field "$skill_file" "output")"
     cadence="$(_extract_frontmatter_field "$skill_file" "lifecycle_cadence")"
+    trigger="$(_extract_frontmatter_field "$skill_file" "trigger")"
+    skip="$(_extract_frontmatter_field "$skill_file" "skip")"
 
     [[ -z "$invocation" ]] && invocation="/$skill_name"
     [[ -z "$skill_desc" ]] && skill_desc="—"
@@ -422,6 +424,12 @@ _readme_skill_reference() {
     fi
     if [[ -n "$cadence" ]]; then
       printf '**Auto-trigger:** %s (via Stop hook)\n' "$cadence"
+    fi
+    if [[ -n "$trigger" ]]; then
+      printf '**Trigger:** %s\n' "$trigger"
+    fi
+    if [[ -n "$skip" ]]; then
+      printf '**Skip:** %s\n' "$skip"
     fi
   done
 }

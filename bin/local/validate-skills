@@ -5,7 +5,7 @@
 #
 # Checks:
 #   - SKILL.md has YAML frontmatter (opening and closing ---)
-#   - Required fields: name, description, source
+#   - Required fields: name, description, source, trigger
 #   - name matches the skill directory name
 #   - source matches otto-workbench/ai/claude/skills/<name>/SKILL.md
 #   - lifecycle_cadence and lifecycle_scope must appear together
@@ -90,6 +90,7 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   local_desc="$(_frontmatter_field "$skill_file" "description")"
   local_source="$(_frontmatter_field "$skill_file" "source")"
   local_invocation="$(_frontmatter_field "$skill_file" "invocation")"
+  local_trigger="$(_frontmatter_field "$skill_file" "trigger")"
 
   [[ -n "$local_name" ]] \
     && _pass "$display: name field present" \
@@ -106,6 +107,10 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   [[ -n "$local_source" ]] \
     && _pass "$display: source field present" \
     || _fail "$display: missing required field: source"
+
+  [[ -n "$local_trigger" ]] \
+    && _pass "$display: trigger field present" \
+    || _fail "$display: missing required field: trigger"
 
   # name must match directory
   if [[ -n "$local_name" ]]; then

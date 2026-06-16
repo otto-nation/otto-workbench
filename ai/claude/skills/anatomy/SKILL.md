@@ -1,8 +1,10 @@
 ---
 name: anatomy
-description: "Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring."
+description: "Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring. TRIGGER when: user wants an overview of codebase structure, before exploring an unfamiliar project, or after significant file changes. SKIP: user asks about a specific known file — read it directly."
 source: otto-workbench/ai/claude/skills/anatomy/SKILL.md
 invocation: "/anatomy"
+trigger: "Run to refresh the project file index before exploring an unfamiliar codebase, or after significant file changes."
+skip: "Do not use when the user asks about a specific file they already know — just read it directly."
 output: ".claude/anatomy.md"
 lifecycle_cadence: "on HEAD change"
 lifecycle_scope: per-project

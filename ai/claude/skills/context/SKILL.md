@@ -1,8 +1,10 @@
 ---
 name: context
-description: "On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md."
+description: "On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or context.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine)."
 source: otto-workbench/ai/claude/skills/context/SKILL.md
 invocation: "/context"
+trigger: "Run after discovering wrong-software assumptions, adding a new service or role to a project, when context.md last-reviewed date is more than 14 days old, or after discovering container tool constraints."
+skip: "Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead)."
 output: ".claude/context.md"
 ---
 

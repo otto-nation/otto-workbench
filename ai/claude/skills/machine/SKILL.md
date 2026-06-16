@@ -1,8 +1,10 @@
 ---
 name: machine
-description: "Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh."
+description: "Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific context (use context); memory consolidation (use dream)."
 source: otto-workbench/ai/claude/skills/machine/SKILL.md
 invocation: "/machine"
+trigger: "Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h."
+skip: "Do not use for project-specific context (use context instead) or memory consolidation (use dream instead)."
 output: "~/.claude/machine/machine.md"
 lifecycle_cadence: "24h"
 lifecycle_scope: global

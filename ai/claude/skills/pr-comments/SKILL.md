@@ -1,6 +1,6 @@
 ---
 name: pr-comments
-description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles."
+description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles.\nTRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.\nSKIP: initial code review requests (use code-review or claude-review instead); self-review before PR creation (use self-review-fix instead)."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 invocation: "/pr-comments [<pr_number>]"
 ---

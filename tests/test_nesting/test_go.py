@@ -156,9 +156,9 @@ func foo() {
     }
 }
 '''
-        violations = _check(code)
+        violations = _check(code, max_depth=2)
         assert len(violations) > 0
-        assert violations[0].depth == 4
+        assert violations[0].depth == 3
 
     def test_select_counts_as_nesting(self):
         code = '''\

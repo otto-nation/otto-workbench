@@ -136,10 +136,6 @@ class GoChecker:
             effective_close_braces -= else_if_count
             effective_open_braces -= else_if_count
 
-            # `case` in switch/select bodies: Go case clauses don't use braces
-            # but they do represent a new nesting level inside the switch body.
-            case_keywords = len(re.findall(r'\bcase\b', stripped))
-
             # Process nesting keywords (if/for/switch/select), each consuming
             # one open brace from the line.
             remaining_open = effective_open_braces
@@ -165,16 +161,6 @@ class GoChecker:
                             function_name=func_name,
                         ))
                     remaining_open -= 1
-
-            # `case` clauses add nesting depth without braces.
-            for _ in range(case_keywords):
-                nesting_depth += 1
-                if nesting_depth > max_depth:
-                    violations.append(Violation(
-                        line_number=lineno,
-                        depth=nesting_depth,
-                        function_name=func_name,
-                    ))
 
             # Update brace depth using effective counts (excluding else continuations).
             brace_depth += effective_open_braces - effective_close_braces

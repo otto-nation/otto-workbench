@@ -7,10 +7,13 @@
 #
 # Produces: claude-review-<version>.tar.gz in the current directory.
 # The tarball contains a claude-review-<version>/ directory with:
-#   bin/          — review binaries (patched for standalone paths)
-#   lib/          — output.sh, prompts.sh, ui.sh facade, review_*.py, review-templates/
-#   agents/       — reviewer.md
+#   bin/          — claude-review + all review-*/validate-review-* scripts
+#   lib/          — bash modules, Python modules, review-templates/, ui.sh facade
+#   agents/       — agent definitions
 #   VERSION       — version string
+#
+# All contents are discovered dynamically via globs — adding a new script,
+# module, template, or agent requires no changes to this build script.
 
 set -euo pipefail
 
@@ -53,48 +56,50 @@ mkdir -p "$DEST/bin" "$DEST/lib/review-templates" "$DEST/agents"
 
 # ─── Copy files ───────────────────────────────────────────────────────────
 
-# Binaries
+# Binaries — claude-review plus all review-*/validate-review-* scripts
 cp "$SCRIPT_DIR/claude-review" "$DEST/bin/"
-cp "$SCRIPT_DIR/review-orchestrate" "$DEST/bin/"
-cp "$SCRIPT_DIR/review-post" "$DEST/bin/"
-cp "$SCRIPT_DIR/validate-review-positions" "$DEST/bin/"
+for bin in "$SCRIPT_DIR"/review-* "$SCRIPT_DIR"/validate-review-*; do
+  if [[ -f "$bin" ]]; then cp "$bin" "$DEST/bin/"; fi
+done
 
-# Library files — bash
-cp "$WORKBENCH_ROOT/lib/output.sh" "$DEST/lib/"
-cp "$WORKBENCH_ROOT/lib/prompts.sh" "$DEST/lib/"
+# Library files — all Python modules
+for py in "$SCRIPT_DIR/../lib/"*.py; do
+  if [[ -f "$py" ]]; then cp "$py" "$DEST/lib/"; fi
+done
 
-# Library files — Python modules used by review-orchestrate and review-post
-cp "$SCRIPT_DIR/../lib/"review_*.py "$DEST/lib/"
+# Library files — all bash modules sourced by claude-review
+# claude-review sources ui.sh which sources output.sh and prompts.sh
+for sh in output.sh prompts.sh; do
+  cp "$WORKBENCH_ROOT/lib/$sh" "$DEST/lib/"
+done
 
-# Templates
-cp "$SCRIPT_DIR/../lib/review-templates/"*.md "$DEST/lib/review-templates/"
+# Templates — all .md files in the templates directory
+for tpl in "$SCRIPT_DIR/../lib/review-templates/"*.md; do
+  if [[ -f "$tpl" ]]; then cp "$tpl" "$DEST/lib/review-templates/"; fi
+done
 
-# Agent definition
-cp "$SCRIPT_DIR/../agents/reviewer.md" "$DEST/agents/"
+# Agents — all .md files in the agents directory
+for agent in "$SCRIPT_DIR/../agents/"*.md; do
+  if [[ -f "$agent" ]]; then cp "$agent" "$DEST/agents/"; fi
+done
 
 # Version file
 echo "$VERSION" > "$DEST/VERSION"
 
 # ─── Create standalone ui.sh facade ──────────────────────────────────────
-# The monorepo's lib/ui.sh sources constants.sh, files.sh, setup.sh, state.sh —
-# none of which are needed by claude-review. This facade sources only the two
-# modules it uses.
+# The monorepo's lib/ui.sh sources the full workbench framework. This facade
+# sources only the modules copied above.
 
-cat > "$DEST/lib/ui.sh" << 'FACADE'
-#!/usr/bin/env bash
-# Standalone ui.sh facade for claude-review distribution.
-# Sources only output and prompt helpers — no workbench framework dependencies.
-
-_ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# shellcheck source=output.sh
-. "$_ui_lib_dir/output.sh"
-
-# shellcheck source=prompts.sh
-. "$_ui_lib_dir/prompts.sh"
-
-unset _ui_lib_dir
-FACADE
+{
+  echo '#!/usr/bin/env bash'
+  echo '_ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"'
+  for sh in "$DEST/lib/"*.sh; do
+    name="$(basename "$sh")"
+    [[ "$name" == "ui.sh" ]] && continue
+    echo ". \"\$_ui_lib_dir/$name\""
+  done
+  echo 'unset _ui_lib_dir'
+} > "$DEST/lib/ui.sh"
 
 # ─── Patch claude-review for standalone layout ────────────────────────────
 # In the monorepo, claude-review is at ai/claude/bin/ and sources

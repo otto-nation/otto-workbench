@@ -127,26 +127,30 @@ def _handle_bash_function(state: _BashState, stripped: str, raw_line: str) -> bo
     return False
 
 
+def _check_bash_line(
+    state: _BashState, violations: list, lineno: int, raw_line: str, max_depth: int,
+) -> None:
+    stripped = _preprocess_bash_line(state, raw_line)
+    if stripped is None or _handle_bash_function(state, stripped, raw_line):
+        return
+
+    opener_count = len(OPENERS.findall(stripped))
+    closer_count = len(CLOSERS.findall(stripped))
+    matched = min(opener_count, closer_count)
+
+    state.depth += opener_count - matched
+    if state.depth > max_depth:
+        violations.append((lineno, state.depth, state.func_name))
+    state.depth = max(0, state.depth - (closer_count - matched))
+
+
 def check_file_bash(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
     """Return list of (line_number, depth, function_name) violations for bash."""
     violations = []
     state = _BashState()
-
     with open(filepath) as f:
         for lineno, raw_line in enumerate(f, 1):
-            stripped = _preprocess_bash_line(state, raw_line)
-            if stripped is None or _handle_bash_function(state, stripped, raw_line):
-                continue
-
-            opener_count = len(OPENERS.findall(stripped))
-            closer_count = len(CLOSERS.findall(stripped))
-            matched = min(opener_count, closer_count)
-
-            state.depth += opener_count - matched
-            if state.depth > max_depth:
-                violations.append((lineno, state.depth, state.func_name))
-            state.depth = max(0, state.depth - (closer_count - matched))
-
+            _check_bash_line(state, violations, lineno, raw_line, max_depth)
     return violations
 
 
@@ -223,22 +227,24 @@ def _classify_python_line(
         state.stack.append((indent, 'continuation'))
 
 
+def _check_python_line(
+    state: _PythonState, violations: list, lineno: int, raw_line: str, max_depth: int,
+) -> None:
+    line = raw_line.rstrip('\n')
+    trimmed = line.lstrip()
+    if _skip_python_line(state, line, trimmed):
+        return
+    indent = len(line) - len(trimmed)
+    _classify_python_line(state, violations, lineno, indent, trimmed, max_depth)
+
+
 def check_file_python(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
     """Return list of (line_number, depth, function_name) violations for Python."""
     violations = []
     state = _PythonState()
-
     with open(filepath) as f:
         for lineno, raw_line in enumerate(f, 1):
-            line = raw_line.rstrip('\n')
-            trimmed = line.lstrip()
-
-            if _skip_python_line(state, line, trimmed):
-                continue
-
-            indent = len(line) - len(trimmed)
-            _classify_python_line(state, violations, lineno, indent, trimmed, max_depth)
-
+            _check_python_line(state, violations, lineno, raw_line, max_depth)
     return violations
 
 
@@ -316,17 +322,19 @@ def _classify_file(path: str, fname: str) -> str | None:
     return None
 
 
+def _discover_in_dir(dirpath: str, filenames: list[str], scripts: set[tuple[str, str]]) -> None:
+    for fname in filenames:
+        lang = _classify_file(os.path.join(dirpath, fname), fname)
+        if lang:
+            scripts.add((os.path.join(dirpath, fname), lang))
+
+
 def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
     """Find all scripts in the repo. Returns sorted (path, language) tuples."""
     scripts: set[tuple[str, str]] = set()
-
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for fname in filenames:
-            lang = _classify_file(os.path.join(dirpath, fname), fname)
-            if lang:
-                scripts.add((os.path.join(dirpath, fname), lang))
-
+        _discover_in_dir(dirpath, filenames, scripts)
     return sorted(scripts, key=lambda t: t[0])
 
 

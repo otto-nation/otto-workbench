@@ -51,17 +51,18 @@ This creates `~/.config/task/taskfile.env` with:
 
 ### `/analyze-project`
 
-Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. Run after scaffolding a new project.
+Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty .claude/CLAUDE.md or .claude/rules/ sections.
 
 ```
 /analyze-project
 ```
 
 **Output:** `.claude/CLAUDE.md, .claude/rules/`
+**Trigger:** Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when .claude/CLAUDE.md or .claude/rules/ files have empty sections.
 
 ### `/anatomy`
 
-Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring.
+Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring. TRIGGER when: user wants an overview of codebase structure, before exploring an unfamiliar project, or after significant file changes. SKIP: user asks about a specific known file — read it directly.
 
 ```
 /anatomy
@@ -69,20 +70,24 @@ Generate or refresh a project file index (.claude/anatomy.md) with per-file desc
 
 **Output:** `.claude/anatomy.md`
 **Auto-trigger:** on HEAD change (via Stop hook)
+**Trigger:** Run to refresh the project file index before exploring an unfamiliar codebase, or after significant file changes.
+**Skip:** Do not use when the user asks about a specific file they already know — just read it directly.
 
 ### `/context`
 
-On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md.
+On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or context.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine).
 
 ```
 /context
 ```
 
 **Output:** `.claude/context.md`
+**Trigger:** Run after discovering wrong-software assumptions, adding a new service or role to a project, when context.md last-reviewed date is more than 14 days old, or after discovering container tool constraints.
+**Skip:** Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead).
 
 ### `/dream`
 
-Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. Inspired by how sleep consolidates human memory.
+Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use context); machine profile updates (use machine).
 
 ```
 /dream
@@ -90,10 +95,12 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 
 **Output:** `memory/ topic files`
 **Auto-trigger:** 24h (via Stop hook)
+**Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h.
+**Skip:** Do not use for project architecture facts (use context instead) or machine profile updates (use machine instead).
 
 ### `/machine`
 
-Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. Run after upgrading tools or to force a refresh.
+Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific context (use context); memory consolidation (use dream).
 
 ```
 /machine
@@ -101,6 +108,8 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 
 **Output:** `~/.claude/machine/machine.md`
 **Auto-trigger:** 24h (via Stop hook)
+**Trigger:** Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h.
+**Skip:** Do not use for project-specific context (use context instead) or memory consolidation (use dream instead).
 
 ### `/pr-comments [<pr_number>]`
 
@@ -109,10 +118,12 @@ Analyze and address PR review comments with lifecycle tracking: fetch, classify,
 ```
 /pr-comments [<pr_number>]
 ```
+**Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
+**Skip:** Do not use for initial code review requests (use code-review or claude-review instead); do not use for self-review before PR creation (use self-review-fix instead).
 
 ### `/promote`
 
-Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose.
+Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. TRIGGER when: user wants to review memories for promotion, or after dream has consolidated corrections. SKIP: direct rule/script edits — just edit them; memory consolidation (use dream).
 
 ```
 /promote
@@ -120,10 +131,12 @@ Reviews accumulated Claude Code memories for promotion into durable workbench ar
 
 **Output:** `ai/memory/PROMOTE.md`
 **Auto-trigger:** 7 days (via Stop hook)
+**Trigger:** Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers every 7 days.
+**Skip:** Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead).
 
 ### `/retro`
 
-Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements.
+Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. TRIGGER when: user wants to analyze review patterns for rule gaps, after a batch of PR reviews. SKIP: addressing comments on a specific PR (use pr-comments); memory consolidation (use dream).
 
 ```
 /retro
@@ -131,14 +144,18 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 
 **Output:** `ai/memory/RETRO.md`
 **Auto-trigger:** 72h (via Stop hook)
+**Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers every 72h.
+**Skip:** Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead).
 
 ### `/self-review-fix [branch_name]`
 
-Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running.
+Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments).
 
 ```
 /self-review-fix [branch_name]
 ```
+**Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
+**Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
 <!-- SKILL-REFERENCE-END -->
 
 <!-- LIFECYCLE-START -->

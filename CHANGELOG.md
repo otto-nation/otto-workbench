@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.23.1](https://github.com/otto-nation/otto-workbench/compare/v1.23.0...v1.23.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **ci:** dynamically include all review scripts and Python libs in tarball ([#249](https://github.com/otto-nation/otto-workbench/issues/249)) ([f47388c](https://github.com/otto-nation/otto-workbench/commit/f47388cd8f9080cf8d0936110bce973ea0c2bc9b))
+* **claude-review:** handle corrupt prompt-stats.json; speed up tests ([#248](https://github.com/otto-nation/otto-workbench/issues/248)) ([7606d85](https://github.com/otto-nation/otto-workbench/commit/7606d8504c6d16e27099c034b61e382aea1aba25))
+
 ## [1.23.0](https://github.com/otto-nation/otto-workbench/compare/v1.22.2...v1.23.0) (2026-06-16)
 
 

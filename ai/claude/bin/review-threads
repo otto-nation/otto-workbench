@@ -18,18 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import pr_comments as pc
-
-
-def _detect_repo(cwd: str | None = None) -> str:
-    """Detect owner/repo from the git remote."""
-    result = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        print("Cannot determine repository from git remote", file=sys.stderr)
-        sys.exit(1)
-    return result.stdout.strip()
+from review_common import detect_repo as _detect_repo
 
 
 def _detect_pr(cwd: str | None = None) -> tuple[str, int]:

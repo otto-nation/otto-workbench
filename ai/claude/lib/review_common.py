@@ -146,6 +146,20 @@ def _err(msg: str):
         print(f"{ANSI_ERR_DOT} {msg}", file=sys.stderr, flush=True)
 
 
+# ── Repo detection ────────────────────────────────────────────────────────────
+
+def detect_repo(cwd: str | None = None) -> str:
+    """Detect owner/repo from the git remote via ``gh``."""
+    r = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        _err("Cannot determine repository from git remote")
+        sys.exit(1)
+    return r.stdout.strip()
+
+
 # ── Path helpers ─────────────────────────────────────────────────────────────
 
 def _derive_path(review_file: str, filename: str) -> str:

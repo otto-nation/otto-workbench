@@ -53,8 +53,8 @@ _generator_version() {
 }
 # @tarball-patch-end: generator-version
 
-REVIEWS_DIR="$HOME/.config/workbench/reviews"
-LEGACY_REVIEWS_DIR="$HOME/.claude/reviews"
+REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
+LEGACY_REVIEWS_DIR="$CLAUDE_DIR/reviews"
 
 REVIEW_EXT=".md"
 
@@ -459,8 +459,8 @@ _load_issue_provider() {
   local config_file=""
   if [[ -n "$wt_path" && -f "${wt_path}/.claude/review.yml" ]]; then
     config_file="${wt_path}/.claude/review.yml"
-  elif [[ -f "${HOME}/.config/workbench/review.yml" ]]; then
-    config_file="${HOME}/.config/workbench/review.yml"
+  elif [[ -f "$WORKBENCH_STATE_DIR/review.yml" ]]; then
+    config_file="$WORKBENCH_STATE_DIR/review.yml"
   fi
   [[ -n "$config_file" ]] || return 0
 

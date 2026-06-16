@@ -13,6 +13,9 @@
 
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+
 OPT_BACKUP=""
 for arg in "$@"; do
   case "$arg" in
@@ -24,10 +27,10 @@ done
 
 _run_backup() {
   local slug="$1"
-  local mem_dir="$HOME/.claude/projects/$slug/memory"
+  local mem_dir="$CLAUDE_DIR/projects/$slug/memory"
   [[ -d "$mem_dir" ]] || return 0
   local backup_dir
-  backup_dir="$HOME/.claude/projects/$slug/memory-backup-$(date +%Y%m%d)"
+  backup_dir="$CLAUDE_DIR/projects/$slug/memory-backup-$(date +%Y%m%d)"
   [[ -d "$backup_dir" ]] && return 0
   cp -r "$mem_dir" "$backup_dir"
 }
@@ -38,11 +41,11 @@ _run_backup() {
 
 now=$(date +%s)
 
-for mem_dir in "$HOME/.claude/projects"/*/memory/; do
+for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
   [[ -d "$mem_dir" ]] || continue
   echo "$now" > "${mem_dir}.last-dream"
 done
 
 # ── Remove pending flag ──────────────────────────────────────────────────────
 
-rm -f "$HOME/.claude/.dream-pending"
+rm -f "$CLAUDE_DIR/.dream-pending"

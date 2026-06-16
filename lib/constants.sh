@@ -73,8 +73,17 @@ CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
+BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
 TASKFILE_SRC="$WORKBENCH_DIR/Taskfile.global.yml"
+INSTALL_COMPONENTS_FILE="$WORKBENCH_DIR/install.components"
+
+# ─── Workbench source — brew ─────────────────────────────────────────────────
+BREW_SRC_DIR="$WORKBENCH_DIR/brew"
+BREWFILE="$WORKBENCH_DIR/brew/Brewfile"
+
+# ─── Workbench source — autoupdate ───────────────────────────────────────────
+AUTOUPDATE_SRC_DIR="$WORKBENCH_DIR/autoupdate"
 
 # ─── Workbench source — docker ────────────────────────────────────────────────
 DOCKER_SRC_DIR="$WORKBENCH_DIR/docker"
@@ -112,6 +121,7 @@ AI_SRC_DIR="$WORKBENCH_DIR/ai"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
 
+AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"

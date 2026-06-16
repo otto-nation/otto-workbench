@@ -4,7 +4,7 @@
 # User values now live below ENV-END.
 
 migration_20260428_env_local_split() {
-  local env_file="$HOME/.env.local"
+  local env_file="$ENV_LOCAL_FILE"
   [[ -f "$env_file" ]] || return 0
   grep -q '# --- ENV-START ---' "$env_file" || return 0
 

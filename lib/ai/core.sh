@@ -36,7 +36,7 @@ GIT_REMOTE="origin"
 # Global env file path — single source of truth is lib/constants.sh (TASKFILE_ENV).
 # When sourced via Taskfile tasks (sh, not bash), lib/constants.sh is not available,
 # so we fall back to the same value defined there.
-: "${TASKFILE_ENV:="$HOME/.config/task/taskfile.env"}"
+: "${TASKFILE_ENV:="$TASK_CONFIG_DIR/taskfile.env"}"
 
 # Local per-project override takes priority over the global TASKFILE_ENV.
 AI_LOCAL_ENV_PATH=".taskfile/taskfile.env"

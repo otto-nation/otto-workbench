@@ -103,7 +103,7 @@ _check_duplicate_names() {
 
 found_projects=0
 
-for dir in "$HOME/.claude/projects"/*/memory; do
+for dir in "$CLAUDE_DIR/projects"/*/memory; do
   [[ -d "$dir" ]] || continue
   [[ -f "$dir/MEMORY.md" ]] || continue
   found_projects=$((found_projects + 1))

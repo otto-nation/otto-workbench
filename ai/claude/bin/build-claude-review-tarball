@@ -107,6 +107,11 @@ echo "$VERSION" > "$DEST/VERSION"
 
 {
   echo '#!/usr/bin/env bash'
+  # Constants that claude-review references (subset of lib/constants.sh)
+  # shellcheck disable=SC2016
+  echo 'CLAUDE_DIR="$HOME/.claude"'
+  # shellcheck disable=SC2016
+  echo 'WORKBENCH_STATE_DIR="$HOME/.config/workbench"'
   # shellcheck disable=SC2016
   echo '_ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"'
   for sh in "$DEST/lib/"*.sh; do

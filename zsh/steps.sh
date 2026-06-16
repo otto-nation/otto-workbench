@@ -238,11 +238,11 @@ _render_registry_env() {
 _generate_env_section() {
   if ! declare -f collect_registries >/dev/null 2>&1; then
     # shellcheck source=/dev/null
-    . "$WORKBENCH_DIR/lib/registries.sh"
+    . "$LIB_SRC_DIR/registries.sh"
   fi
   local output="" section_output first=true
   local -a unique_registries=()
-  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$WORKBENCH_DIR/brew"
+  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$BREW_SRC_DIR"
 
   for registry in "${unique_registries[@]}"; do
     section_output=$(_render_registry_env "$registry")

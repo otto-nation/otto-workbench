@@ -27,6 +27,16 @@ $1
 "
 }
 
+# Helper: run Python expression importing from nesting.preprocess
+_preprocess() {
+  python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/lib')
+from nesting.preprocess import strip_strings_and_comments
+$1
+"
+}
+
 # Helper: write a bash script to a temp file and return its path
 _write_script() {
   local name="$1"
@@ -38,28 +48,28 @@ _write_script() {
 # ── strip_strings_and_comments ───────────────────────────────────────────────
 
 @test "strip_strings_and_comments: removes single-quoted strings" {
-  result=$(_py "print(mod.strip_strings_and_comments(\"echo 'hello world'\"))")
+  result=$(_preprocess "print(strip_strings_and_comments(\"echo 'hello world'\"))")
   [ "$result" = "echo " ]
 }
 
 @test "strip_strings_and_comments: removes double-quoted strings" {
-  result=$(_py 'print(mod.strip_strings_and_comments("echo \"hello\""))')
+  result=$(_preprocess 'print(strip_strings_and_comments("echo \"hello\""))')
   [ "$result" = "echo " ]
 }
 
 @test "strip_strings_and_comments: removes comments" {
-  result=$(_py "print(mod.strip_strings_and_comments('code # comment'))")
+  result=$(_preprocess "print(strip_strings_and_comments('code # comment'))")
   [ "$result" = "code " ]
 }
 
 @test "strip_strings_and_comments: keywords inside strings are stripped" {
-  result=$(_py "print(mod.strip_strings_and_comments(\"echo 'if then fi'\"))")
+  result=$(_preprocess "print(strip_strings_and_comments(\"echo 'if then fi'\"))")
   [[ "$result" != *"if"* ]]
   [[ "$result" != *"fi"* ]]
 }
 
 @test "strip_strings_and_comments: line with no strings or comments unchanged" {
-  result=$(_py "print(mod.strip_strings_and_comments('for x in y; do echo; done'))")
+  result=$(_preprocess "print(strip_strings_and_comments('for x in y; do echo; done'))")
   [ "$result" = "for x in y; do echo; done" ]
 }
 

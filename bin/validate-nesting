@@ -28,15 +28,7 @@ _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
 from nesting.bash import BashChecker  # noqa: E402
-from nesting.preprocess import strip_strings_and_comments  # noqa: E402
-
-# ── Python patterns ──────────────────────────────────────────────────────────
-
-PY_OPENER = re.compile(r'^\s*(?:async\s+)?(if|for|while|with|try)\b')
-PY_CONTINUATION = re.compile(r'^\s*(elif|else|except|finally)\b')
-PY_SCOPE_RESET = re.compile(r'^\s*(?:async\s+)?(def|class)\s+(\w+)')
-PY_DECORATOR = re.compile(r'^\s*@')
-PY_TRIPLE_QUOTE = re.compile(r'"""|\'\'\'')
+from nesting.python import PythonChecker  # noqa: E402
 
 # ── Shebang patterns ─────────────────────────────────────────────────────────
 
@@ -59,98 +51,17 @@ def check_file_bash(filepath: str, max_depth: int) -> list[tuple[int, int, str]]
     return [(v.line_number, v.depth, v.function_name) for v in violations]
 
 
-# ── Python checker ───────────────────────────────────────────────────────────
+# ── Python checker wrapper ───────────────────────────────────────────────────
 
-class _PythonState:
-    __slots__ = ('func_name', 'stack', 'in_multiline_string', 'paren_depth')
-
-    def __init__(self):
-        self.func_name = '(module-level)'
-        self.stack: list[tuple[int, str]] = []
-        self.in_multiline_string = False
-        self.paren_depth = 0
-
-
-def _has_odd_triple_quotes(line: str) -> bool:
-    cleaned = re.sub(r"'[^']*'", '', line)
-    return len(PY_TRIPLE_QUOTE.findall(cleaned)) % 2 == 1
-
-
-def _paren_delta(line: str) -> int:
-    """Net change in paren/bracket depth, counting only structural delimiters."""
-    stripped = strip_strings_and_comments(line)
-    opens = stripped.count('(') + stripped.count('[') + stripped.count('{')
-    closes = stripped.count(')') + stripped.count(']') + stripped.count('}')
-    return opens - closes
-
-
-def _skip_python_line(state: _PythonState, line: str, trimmed: str) -> bool:
-    """Returns True if this line should be skipped (non-structural content)."""
-    if state.in_multiline_string:
-        if _has_odd_triple_quotes(line):
-            state.in_multiline_string = False
-        return True
-
-    if not trimmed or trimmed.startswith('#'):
-        return True
-
-    if _has_odd_triple_quotes(line):
-        state.in_multiline_string = True
-        return True
-
-    delta = _paren_delta(trimmed)
-    if state.paren_depth > 0:
-        state.paren_depth = max(0, state.paren_depth + delta)
-        return True
-
-    state.paren_depth = max(0, state.paren_depth + delta)
-
-    return PY_DECORATOR.match(trimmed) is not None
-
-
-def _classify_python_line(
-    state: _PythonState, violations: list, lineno: int, indent: int,
-    trimmed: str, max_depth: int,
-) -> None:
-    """Classify a Python line and update nesting stack."""
-    while state.stack and state.stack[-1][0] >= indent:
-        state.stack.pop()
-
-    sm = PY_SCOPE_RESET.match(trimmed)
-    if sm:
-        state.func_name = sm.group(2)
-        state.stack.clear()
-        return
-
-    if PY_OPENER.match(trimmed):
-        state.stack.append((indent, 'opener'))
-        if len(state.stack) > max_depth:
-            violations.append((lineno, len(state.stack), state.func_name))
-        return
-
-    if PY_CONTINUATION.match(trimmed):
-        state.stack.append((indent, 'continuation'))
-
-
-def _check_python_line(
-    state: _PythonState, violations: list, lineno: int, raw_line: str, max_depth: int,
-) -> None:
-    line = raw_line.rstrip('\n')
-    trimmed = line.lstrip()
-    if _skip_python_line(state, line, trimmed):
-        return
-    indent = len(line) - len(trimmed)
-    _classify_python_line(state, violations, lineno, indent, trimmed, max_depth)
+_python_checker = PythonChecker()
 
 
 def check_file_python(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
     """Return list of (line_number, depth, function_name) violations for Python."""
-    violations = []
-    state = _PythonState()
     with open(filepath) as f:
-        for lineno, raw_line in enumerate(f, 1):
-            _check_python_line(state, violations, lineno, raw_line, max_depth)
-    return violations
+        lines = f.readlines()
+    violations = _python_checker.check_nesting(lines, max_depth)
+    return [(v.line_number, v.depth, v.function_name) for v in violations]
 
 
 # ── Language detection ───────────────────────────────────────────────────────

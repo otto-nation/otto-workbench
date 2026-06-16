@@ -1,8 +1,10 @@
 ---
 name: promote
-description: "Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose."
+description: "Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. TRIGGER when: user wants to review memories for promotion, or after dream has consolidated corrections. SKIP: direct rule/script edits — just edit them; memory consolidation (use dream)."
 source: otto-workbench/ai/claude/skills/promote/SKILL.md
 invocation: "/promote"
+trigger: "Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers every 7 days."
+skip: "Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead)."
 output: "ai/memory/PROMOTE.md"
 lifecycle_cadence: "7 days"
 lifecycle_scope: per-project

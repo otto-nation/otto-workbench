@@ -1,8 +1,9 @@
 ---
 name: analyze-project
-description: "Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. Run after scaffolding a new project."
+description: "Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty .claude/CLAUDE.md or .claude/rules/ sections."
 source: otto-workbench/ai/claude/skills/analyze-project/SKILL.md
 invocation: "/analyze-project"
+trigger: "Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when .claude/CLAUDE.md or .claude/rules/ files have empty sections."
 output: ".claude/CLAUDE.md, .claude/rules/"
 ---
 

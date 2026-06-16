@@ -299,6 +299,22 @@ def _classify_by_extension(path: str, ext: str) -> str | None:
     return None
 
 
+def _classify_by_shebang(path: str) -> str | None:
+    """Return language for an extensionless file via shebang, or None."""
+    shebang = _read_shebang(path)
+    return _classify_shebang(shebang) if shebang else None
+
+
+def _classify_file(path: str, fname: str) -> str | None:
+    """Return language for a file by extension or shebang, or None."""
+    _, ext = os.path.splitext(fname)
+    if ext in KNOWN_EXTENSIONS:
+        return _classify_by_extension(path, ext)
+    if '.' not in fname:
+        return _classify_by_shebang(path)
+    return None
+
+
 def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
     """Find all scripts in the repo. Returns sorted (path, language) tuples."""
     scripts: set[tuple[str, str]] = set()
@@ -306,19 +322,9 @@ def discover_scripts(repo_root: str) -> list[tuple[str, str]]:
     for dirpath, dirnames, filenames in os.walk(repo_root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fname in filenames:
-            _, ext = os.path.splitext(fname)
-            path = os.path.join(dirpath, fname)
-
-            if ext in KNOWN_EXTENSIONS:
-                lang = _classify_by_extension(path, ext)
-                if lang:
-                    scripts.add((path, lang))
-            elif '.' not in fname:
-                shebang = _read_shebang(path)
-                if shebang:
-                    lang = _classify_shebang(shebang)
-                    if lang:
-                        scripts.add((path, lang))
+            lang = _classify_file(os.path.join(dirpath, fname), fname)
+            if lang:
+                scripts.add((os.path.join(dirpath, fname), lang))
 
     return sorted(scripts, key=lambda t: t[0])
 

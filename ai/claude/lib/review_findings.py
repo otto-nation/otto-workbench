@@ -679,15 +679,21 @@ def build_mechanical_review(
     group_count: int,
     summary_note: str,
     include_verdict: bool = True,
+    file_count: int = 0,
 ) -> str:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
     count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
 
+    if file_count:
+        scope = f"across {file_count} file{'s' if file_count != 1 else ''} in {group_count} groups"
+    else:
+        scope = f"across {group_count} groups"
+
     summary = (
         f"{title}\n{meta_header}\n"
         f"## Summary\n"
-        f"{count_summary} across {group_count} groups. "
+        f"{count_summary} {scope}. "
         f"{summary_note}\n\n"
         f"{merged_content}\n"
     )

@@ -1,66 +1,77 @@
 #!/usr/bin/env python3
 """Rebuild review.md from group finding files.
 
-Reads group-*.md files from the review directory, merges findings,
-renumbers them, and writes a new review.md. Used to recover from
+Reads group-N.md files from the review directory, merges findings,
+post-processes them, and writes a new review.md. Used to recover from
 synthesis agent formatting drift or corrupted review files.
 """
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from review_common import _err, _info, _warn
+from review_common import (
+    FILENAME_GROUP,
+    META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
+    MODE_SELF,
+    _err, _info,
+)
 from review_findings import (
-    FINDING_SECTIONS,
-    merge_reviews,
-    renumber_findings,
-    strip_evidence_blocks,
-    strip_stable_ids,
+    build_mechanical_review, merge_reviews, post_process_findings,
 )
 
-
-def _count_findings(text: str) -> dict[str, int]:
-    import re
-    counts = {}
-    for _, prefix in FINDING_SECTIONS:
-        matches = set(re.findall(
-            rf"^- (?:\[ \] )?\*\*\[{prefix}(\d+)\]\*\*",
-            text, re.MULTILINE,
-        ))
-        if matches:
-            counts[prefix] = len(matches)
-    return counts
+REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
 
 
-def _mechanical_verdict(counts: dict[str, int]) -> str:
-    if counts.get("M", 0) > 0:
-        return "Request changes — must-fix issues found."
-    if counts.get("S", 0) > 0:
-        return "Request changes — should-fix issues to address."
-    return "Approve — no blocking findings."
+def _discover_group_files(review_dir: Path) -> list[str]:
+    groups = []
+    i = 1
+    while True:
+        path = review_dir / FILENAME_GROUP.format(i)
+        if not path.exists():
+            break
+        groups.append(str(path))
+        i += 1
+    return groups
 
 
-def _extract_header_comments(review_file: Path) -> tuple[str, str, str]:
-    """Extract date, generator, and prior_review comment lines from review header."""
-    date_line = ""
-    generator_line = ""
-    prior_line = ""
-    if not review_file.exists():
-        return date_line, generator_line, prior_line
-    for line in review_file.read_text().split("\n")[:10]:
-        if line.startswith("<!-- date:"):
-            date_line = line
-        elif line.startswith("<!-- generator:"):
-            generator_line = line
-        elif line.startswith("<!-- prior_review:"):
-            prior_line = line
-    return date_line, generator_line, prior_line
+def _read_meta(review_dir: Path) -> dict:
+    meta_path = review_dir / "meta.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _build_meta_header(meta: dict) -> str:
+    lines = [
+        META_DATE.format(today=date.today().isoformat()),
+    ]
+    if meta.get("head_sha"):
+        lines.append(META_HEAD_SHA.format(head_sha=meta["head_sha"]))
+    review_type = meta.get("review_type", "full")
+    lines.append(META_REVIEW_TYPE.format(review_type=review_type))
+    if meta.get("generator_version"):
+        lines.append(META_GENERATOR.format(generator_version=meta["generator_version"]))
+    return "\n".join(lines) + "\n"
+
+
+def _build_title(meta: dict, repo: str, pr: str) -> str:
+    mode = meta.get("mode", "")
+    if mode == MODE_SELF:
+        head_ref = meta.get("head_ref", "unknown")
+        return f"# Self-Review: {repo} — {head_ref}"
+    title = meta.get("title", "")
+    if title:
+        return f"# Review: {repo}#{pr} — {title}"
+    return f"# Review: {repo}#{pr}"
 
 
 def main():
@@ -73,70 +84,36 @@ def main():
     review_dir = Path(args.review_dir)
     review_file = review_dir / "review.md"
 
-    group_files = sorted(glob.glob(str(review_dir / "group-*.md")))
+    group_files = _discover_group_files(review_dir)
     if not group_files:
         _err(f"No group finding files in {review_dir}")
         sys.exit(1)
 
     _info(f"Found {len(group_files)} group files")
 
+    meta = _read_meta(review_dir)
+    mode = meta.get("mode", "")
+
     merged_content = merge_reviews(group_files)
 
-    # Read metadata from meta.json if available
-    meta_path = review_dir / "meta.json"
-    head_sha = ""
-    review_type = "full"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text())
-            head_sha = meta.get("head_sha", "")
-            review_type = meta.get("review_type", "full")
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    date_line, generator_line, prior_line = _extract_header_comments(review_file)
-
-    # Build header
-    header_parts = []
-    if date_line:
-        header_parts.append(date_line)
-    if head_sha:
-        header_parts.append(f"<!-- head_sha: {head_sha} -->")
-    if generator_line:
-        header_parts.append(generator_line)
-    if prior_line:
-        header_parts.append(prior_line)
-    if review_type != "full":
-        header_parts.append(f"<!-- review_type: {review_type} -->")
-    header = "\n".join(header_parts)
-
-    # Write merged content to review file for post-processing
     review_file.write_text(merged_content)
-
-    # Post-process: renumber, strip evidence blocks and stable IDs
-    strip_stable_ids(str(review_file))
-    renumber_findings(str(review_file))
-    strip_evidence_blocks(str(review_file))
-
+    post_process_findings(str(review_file))
     processed = review_file.read_text()
-    counts = _count_findings(processed)
-    total = sum(counts.values())
-    count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
 
-    title = f"# Review: {args.repo}#{args.pr}"
-    summary = (
-        f"{title}\n{header}\n\n"
-        f"## Summary\n"
-        f"{count_summary} across {len(group_files)} groups. "
-        f"Rebuilt mechanically from group finding files.\n\n"
-        f"{processed}\n\n"
-        f"## Verdict\n{_mechanical_verdict(counts)}\n"
+    title = _build_title(meta, args.repo, args.pr)
+    meta_header = _build_meta_header(meta)
+
+    final = build_mechanical_review(
+        processed,
+        title=title,
+        meta_header=meta_header,
+        group_count=len(group_files),
+        summary_note=REBUILD_SUMMARY,
+        include_verdict=(mode != MODE_SELF),
     )
 
-    review_file.write_text(summary)
-    _info(f"Rebuilt {review_file}: {count_summary}")
-    for prefix, count in sorted(counts.items()):
-        _info(f"  {prefix}: {count}")
+    review_file.write_text(final)
+    _info(f"Rebuilt {review_file}")
 
 
 if __name__ == "__main__":

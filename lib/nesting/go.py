@@ -64,7 +64,7 @@ def _strip_strings_and_comments(line: str) -> str:
 
 class GoChecker:
     EXTENSIONS: set[str] = {'.go'}
-    SHEBANGS: set[str] = set()
+    SHEBANG_RE: re.Pattern[bytes] | None = None
     DEFAULT_MAX_DEPTH: int = 3
 
     def check_nesting(self, lines: list[str], max_depth: int) -> list[Violation]:
@@ -104,10 +104,13 @@ class GoChecker:
 
             stripped = _strip_strings_and_comments(line)
 
-            # An odd number of backticks on the original line (outside of
-            # already-handled single-line raw strings) means a raw string was
-            # opened but not closed — it continues onto the next line(s).
-            if line.count('`') % 2 == 1:
+            # Count backticks on the line with // comments removed (but
+            # strings preserved) to detect multiline raw string boundaries.
+            # Can't use `stripped` because _strip_strings_and_comments
+            # consumes backtick content; can't use `line` because //
+            # comments may contain stray backticks.
+            line_no_comment = line[:line.index('//')] if '//' in line else line
+            if line_no_comment.count('`') % 2 == 1:
                 in_raw_string = True
 
             fm = _FUNC_DECL.match(stripped)

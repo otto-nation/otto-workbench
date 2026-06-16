@@ -203,4 +203,5 @@ deep_func() {
 }
 '''
     violations = _check(code)
+    assert len(violations) > 0
     assert violations[0].function_name == "deep_func"

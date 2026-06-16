@@ -98,7 +98,7 @@ def _check_line(
 
 class BashChecker:
     EXTENSIONS: set[str] = {'.sh', '.bash', '.bats'}
-    SHEBANGS: set[str] = {'bash', 'sh'}
+    SHEBANG_RE: re.Pattern[bytes] | None = re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)')
     DEFAULT_MAX_DEPTH: int = 2
 
     def check_nesting(self, lines: list[str], max_depth: int) -> list[Violation]:

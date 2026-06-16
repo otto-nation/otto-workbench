@@ -219,6 +219,7 @@ func deepFunc() {
 }
 '''
         violations = _check(code)
+        assert len(violations) > 0
         assert violations[0].function_name == "deepFunc"
 
 
@@ -298,6 +299,17 @@ func foo() {
     tmpl := `{{{
         if for switch
     }}}`
+    if x > 0 {
+        fmt.Println("ok")
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_backtick_in_line_comment_ignored(self):
+        code = '''\
+func foo() {
+    // prefix with backtick ` in comment
     if x > 0 {
         fmt.Println("ok")
     }

@@ -12,8 +12,9 @@ for _checker in _CHECKERS:
         _EXT_MAP[_ext] = _checker
 
 _SHEBANG_PATTERNS: list[tuple[re.Pattern[bytes], object]] = [
-    (re.compile(rb'^#!.*(/(ba)?sh|/env (ba)?sh)'), _CHECKERS[0]),
-    (re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)'), _CHECKERS[1]),
+    (_checker.SHEBANG_RE, _checker)
+    for _checker in _CHECKERS
+    if _checker.SHEBANG_RE is not None
 ]
 
 

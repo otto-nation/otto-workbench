@@ -96,7 +96,7 @@ def _check_line(
 
 class PythonChecker:
     EXTENSIONS: set[str] = {'.py'}
-    SHEBANGS: set[str] = {'python3', 'python'}
+    SHEBANG_RE: re.Pattern[bytes] | None = re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)')
     DEFAULT_MAX_DEPTH: int = 2
 
     def check_nesting(self, lines: list[str], max_depth: int) -> list[Violation]:

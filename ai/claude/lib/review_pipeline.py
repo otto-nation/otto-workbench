@@ -571,6 +571,7 @@ def _build_mechanical_fallback(
         group_count=group_count,
         summary_note=FALLBACK_SUMMARY,
         include_verdict=(job.mode != MODE_SELF),
+        file_count=job.pr.changed_files,
     )
 
 

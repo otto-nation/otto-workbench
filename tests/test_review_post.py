@@ -1861,7 +1861,7 @@ class TestDryRunIntegration:
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         review_file.write_text(self.REVIEW_MD)
-        meta = {"head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
         (review_dir / "meta.json").write_text(json.dumps(meta))
         return review_file
 
@@ -1869,7 +1869,6 @@ class TestDryRunIntegration:
         """Run review-post --dry-run and return the CompletedProcess."""
         cmd = [
             sys.executable, str(self._REVIEW_POST),
-            "--repo", "test/repo",
             "--pr", "42",
             "--review-file", str(review_file),
             "--dry-run",
@@ -1920,6 +1919,17 @@ class TestDryRunIntegration:
         nonexistent = tmp_path / "does-not-exist.md"
         result = self._run_dry_run(nonexistent)
         assert result.returncode != 0
+
+    def test_dry_run_without_repo_in_meta_exits_nonzero(self, tmp_path):
+        review_dir = tmp_path / "no-repo-meta"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_MD)
+        # meta.json present but missing the 'repo' field
+        (review_dir / "meta.json").write_text(json.dumps({"head_sha": "abc123"}))
+        result = self._run_dry_run(review_file)
+        assert result.returncode != 0
+        assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
 
 
 class TestCheckReviewAlreadyPosted:

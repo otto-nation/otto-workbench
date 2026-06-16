@@ -67,6 +67,24 @@
   - `find ... -print0 | xargs -0 <command>` for other commands
   - Both `find` and `xargs` are already auto-allowed
 
+## Branch Completion
+
+- When the user states what they want to do next ("create a PR", "merge this", "push it"), execute that action directly — do not present a menu of options
+- Only present completion options when implementation finishes and the user has not indicated next steps
+- Never re-ask after the user has already chosen — if a chosen action fails, debug the failure, don't fall back to the options menu
+
+## Git Failure Debugging
+
+When a git command fails (push, fetch, pull, clone), do not retry. Diagnose in this order:
+
+1. **Check hooks first** — `git config core.hooksPath` and list the relevant hook file (pre-push, pre-commit, etc.). Run the hook directly to see its output — hooks that fail silently are the most common cause of unexplained git errors
+2. **Check git config** — signing requirements (`commit.gpgSign`, `gpg.format`, `gpg.program`), credential helpers, push configuration (`push.default`, `push.autoSetupRemote`)
+3. **Check connectivity** — `ssh -T git@github.com` for SSH remotes, or test HTTPS auth. Verify the remote URL is correct with `git remote -v`
+4. **Check ref state** — `git status`, upstream tracking (`git rev-parse --abbrev-ref @{upstream}`), whether the branch exists on the remote (`git ls-remote origin <branch>`)
+5. **Surface the diagnosis** — report what you found and the specific fix. If you cannot determine the cause after these steps, tell the user what you checked and ask them to run the failing command manually with `!` so the raw output lands in the conversation
+
+Never run the same push/fetch command more than once. If it failed, the second attempt will also fail — diagnose instead.
+
 ## Rebase, Cherry-Pick, Merge Conflicts
 
 - During interactive git operations (rebase, cherry-pick, merge conflict resolution), use only Bash commands — the Edit tool can corrupt git's index state and abort the operation

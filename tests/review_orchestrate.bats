@@ -44,7 +44,7 @@ _py_here() {
 }
 
 @test "review-orchestrate missing required args exits non-zero" {
-  run "$ORCHESTRATE" --repo foo/bar
+  run "$ORCHESTRATE" --pr 42
   [ "$status" -ne 0 ]
 }
 
@@ -2727,7 +2727,7 @@ EOF
 EOF
 
   "$REPO_ROOT/ai/claude/bin/review-rebuild" \
-    --review-dir "$TMPDIR/review" --repo org/repo --pr 42
+    --review-dir "$TMPDIR/review" --pr 42
 
   [ -f "$TMPDIR/review/review.md" ]
   grep -q "# Review: org/repo#42 — Test PR" "$TMPDIR/review/review.md"
@@ -2751,7 +2751,7 @@ EOF
 EOF
 
   "$REPO_ROOT/ai/claude/bin/review-rebuild" \
-    --review-dir "$TMPDIR/review" --repo org/repo --pr ""
+    --review-dir "$TMPDIR/review" --pr ""
 
   grep -q "# Self-Review: org/repo — feat/self" "$TMPDIR/review/review.md"
   ! grep -q "## Verdict" "$TMPDIR/review/review.md"
@@ -2759,12 +2759,15 @@ EOF
 
 @test "review-rebuild: no group files exits with error" {
   mkdir -p "$TMPDIR/empty"
+  cat > "$TMPDIR/empty/meta.json" <<'EOF'
+{"repo":"org/repo"}
+EOF
   run "$REPO_ROOT/ai/claude/bin/review-rebuild" \
-    --review-dir "$TMPDIR/empty" --repo org/repo --pr 1
+    --review-dir "$TMPDIR/empty" --pr 1
   [ "$status" -ne 0 ]
 }
 
-@test "review-rebuild: works without meta.json" {
+@test "review-rebuild: works with minimal meta.json" {
   must_section=$(_py "print(mod.SECTION_MUST_FIX)")
   must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
 
@@ -2773,11 +2776,29 @@ EOF
 ## $must_section
 - **[${must_prefix}1]** **\`foo.py:10\`** — bug
 EOF
+  cat > "$TMPDIR/review/meta.json" <<'EOF'
+{"repo":"org/repo"}
+EOF
 
   "$REPO_ROOT/ai/claude/bin/review-rebuild" \
-    --review-dir "$TMPDIR/review" --repo org/repo --pr 99
+    --review-dir "$TMPDIR/review" --pr 99
 
   [ -f "$TMPDIR/review/review.md" ]
   grep -q "# Review: org/repo#99" "$TMPDIR/review/review.md"
   grep -q "1 finding" "$TMPDIR/review/review.md"
+}
+
+@test "review-rebuild: fails without meta.json" {
+  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
+  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
+
+  mkdir -p "$TMPDIR/no-meta"
+  cat > "$TMPDIR/no-meta/group-1.md" <<EOF
+## $must_section
+- **[${must_prefix}1]** **\`foo.py:1\`** — bug
+EOF
+
+  run "$REPO_ROOT/ai/claude/bin/review-rebuild" \
+    --review-dir "$TMPDIR/no-meta" --pr 1
+  [ "$status" -ne 0 ]
 }

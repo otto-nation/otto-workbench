@@ -217,6 +217,8 @@ def _read_file_safe(path: Path) -> str:
         return f"<binary file, {size} bytes>"
     except PermissionError:
         return "<permission denied>"
+    except IsADirectoryError:
+        return "<directory>"
 
 
 def _file_permissions(path: Path) -> str:

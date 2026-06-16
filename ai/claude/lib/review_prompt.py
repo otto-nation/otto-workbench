@@ -335,14 +335,16 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
             "included": len(pf.file_contents),
             "omitted": len(pf.omitted_files),
         }
+    # Read existing stats — corrupt files from concurrent writes are discarded
     stats_file = _derive_path(job.review_file, FILENAME_PROMPT_STATS)
+    existing: list = []
     try:
-        existing: list = []
-        if Path(stats_file).exists():
-            existing = json.loads(Path(stats_file).read_text())
-            if not isinstance(existing, list):
-                existing = [existing]
-        existing.append(stats)
+        parsed = json.loads(Path(stats_file).read_text())
+        existing = parsed if isinstance(parsed, list) else [parsed]
+    except (OSError, json.JSONDecodeError):
+        pass
+    existing.append(stats)
+    try:
         Path(stats_file).write_text(json.dumps(existing, indent=2))
     except OSError:
         pass

@@ -37,6 +37,7 @@
 - Always fix root causes, not symptoms — if a process hits a resource limit, investigate why it consumed so much, don't just raise the limit
 - When diagnosing an issue, check if the diagnostic path itself was sufficient. If you had to manually reconstruct data that should have been persisted, add instrumentation as part of the fix
 - Persist diagnostic data that would help future investigations — structured files (JSON) over transient console output, surviving successful runs not just failures
+- Never retry a failing command with minor variations (different flags, piping stderr, adding `echo $?`). On first failure, stop and diagnose: check config, hooks, environment, and connectivity. Act on the diagnosis, not on hope that a slightly different invocation will work
 
 ## Unknowns & Assumptions
 

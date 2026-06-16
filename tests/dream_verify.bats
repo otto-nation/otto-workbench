@@ -95,19 +95,16 @@ EOF
 # ── MEMORY.md line count ─────────────────────────────────────────────────────
 
 @test "dream-verify: fails on MEMORY.md over 200 lines" {
-  local content=""
-  for i in $(seq 1 201); do
-    content+="- [Entry $i](entry-$i.md) — line $i"$'\n'
-  done
-  _make_memory_dir "bloated-project" "$content"
-
-  # Batch-create all referenced files so only the line count fails
+  # Build 201 lines: 1 real reference + 200 padding lines
   local dir="$HOME/.claude/projects/bloated-project/memory"
+  mkdir -p "$dir"
   python3 -c "
-for i in range(1, 202):
-    with open(f'$dir/entry-{i}.md', 'w') as f:
-        f.write(f'---\nname: entry-{i}\ndescription: test entry\nmetadata:\n  type: feedback\n---\n\n\n')
+lines = ['- [Entry](entry.md) — real entry']
+lines += ['- padding line %d' % i for i in range(200)]
+with open('$dir/MEMORY.md', 'w') as f:
+    f.write('\n'.join(lines) + '\n')
 "
+  _make_topic_file "$dir" "entry.md" "entry"
 
   run "$DREAM_VERIFY"
   [[ "$status" -eq 1 ]]

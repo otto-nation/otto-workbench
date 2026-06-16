@@ -10,8 +10,8 @@ archive management, and interactive prompts.
 
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
-    --wt-path PATH --reviews-dir PATH [--session-log PATH] \
-    [--prior-review PATH] [--issue-link URL] [--issue-context JSON]
+    --repo-dir PATH --reviews-dir PATH [--session-log PATH] \
+    [--prior-review PATH] [--issue URL] [--issue-context JSON]
 """
 
 import argparse
@@ -74,11 +74,12 @@ def main():
     parser = argparse.ArgumentParser(description="Review orchestration for claude-review")
     parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
     parser.add_argument("--review-file", required=True, help="Output review file path")
-    parser.add_argument("--wt-path", required=True, help="Worktree path")
+    parser.add_argument("--repo-dir", "--repo", "--worktree",
+                        required=True, help="Worktree path")
     parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
     parser.add_argument("--session-log", help="Session log path")
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
-    parser.add_argument("--issue-link", default="", help="Issue URL")
+    parser.add_argument("--issue", default="", help="Issue URL")
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
                         help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
@@ -102,7 +103,7 @@ def main():
 
     result = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True, cwd=args.wt_path,
+        capture_output=True, text=True, cwd=args.repo_dir,
     )
     if result.returncode != 0 or not result.stdout.strip():
         print("error: cannot determine repository from worktree", file=sys.stderr)
@@ -111,7 +112,7 @@ def main():
 
     session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 
-    pr, ctx = _fetch_metadata(repo, args.pr, args.mode, args.wt_path)
+    pr, ctx = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
@@ -119,9 +120,9 @@ def main():
 
     job = ReviewJob(
         repo=repo, pr_number=args.pr, pr=pr, ctx=ctx,
-        wt_path=args.wt_path, review_file=args.review_file,
+        wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log, reviews_dir=args.reviews_dir,
-        issue_link=args.issue_link, issue_context=args.issue_context,
+        issue_link=args.issue, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
         model=args.model,

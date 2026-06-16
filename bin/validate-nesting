@@ -27,17 +27,8 @@ import sys
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from nesting.bash import BashChecker  # noqa: E402
 from nesting.preprocess import strip_strings_and_comments  # noqa: E402
-
-# ── Bash patterns ────────────────────────────────────────────────────────────
-
-OPENERS = re.compile(r'\b(if|for|while|until|case)\b')
-CLOSERS = re.compile(r'\b(fi|done|esac)\b')
-FUNC_DEF = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{')
-FUNC_END = re.compile(r'^\}\s*$')
-HEREDOC_START = re.compile(r"<<-?\s*'?([A-Za-z_]\w*)'?")
-CMD_SUB_OPEN = re.compile(r'\$\(')
-BATS_TEST = re.compile(r'^@test\b')
 
 # ── Python patterns ──────────────────────────────────────────────────────────
 
@@ -55,97 +46,17 @@ PYTHON_SHEBANG = re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)')
 BASH_EXTENSIONS = {'.sh', '.bash', '.bats'}
 PYTHON_EXTENSIONS = {'.py'}
 
-# ── Bash checker ─────────────────────────────────────────────────────────────
+# ── Bash checker wrapper ──────────────────────────────────────────────────────
 
-class _BashState:
-    __slots__ = ('func_name', 'depth', 'sub_depth', 'heredoc_end', 'in_function')
-
-    def __init__(self):
-        self.func_name = '(top-level)'
-        self.depth = 0
-        self.sub_depth = 0
-        self.heredoc_end = None
-        self.in_function = False
-
-
-def _preprocess_bash_line(state: _BashState, raw_line: str) -> str | None:
-    """Strip noise (heredocs, command substitutions). Returns cleaned line or None to skip."""
-    line = raw_line.rstrip('\n')
-
-    if state.heredoc_end is not None:
-        if line.strip() == state.heredoc_end:
-            state.heredoc_end = None
-        return None
-
-    m = HEREDOC_START.search(line)
-    if m:
-        state.heredoc_end = m.group(1)
-
-    stripped = strip_strings_and_comments(line)
-
-    opens = len(CMD_SUB_OPEN.findall(stripped))
-    state.sub_depth += opens
-    if state.sub_depth <= 0:
-        return stripped
-
-    net_close = stripped.count(')') - (stripped.count('(') - opens)
-    if net_close > 0:
-        state.sub_depth = max(0, state.sub_depth - net_close)
-    return None
-
-
-def _handle_bash_function(state: _BashState, stripped: str, raw_line: str) -> bool:
-    """Handle function definition/end boundaries. Returns True if line was consumed."""
-    fm = FUNC_DEF.match(stripped)
-    if fm:
-        if stripped.rstrip().endswith('}'):
-            return True
-        state.depth = 0
-        state.in_function = True
-        state.func_name = fm.group(1)
-        return True
-
-    if BATS_TEST.match(stripped):
-        state.depth = 0
-        state.in_function = True
-        m = re.search(r'"([^"]+)"', raw_line)
-        state.func_name = m.group(1) if m else '(test)'
-        return True
-
-    if state.in_function and FUNC_END.match(stripped):
-        state.in_function = False
-        state.depth = 0
-        state.func_name = '(top-level)'
-        return True
-
-    return False
-
-
-def _check_bash_line(
-    state: _BashState, violations: list, lineno: int, raw_line: str, max_depth: int,
-) -> None:
-    stripped = _preprocess_bash_line(state, raw_line)
-    if stripped is None or _handle_bash_function(state, stripped, raw_line):
-        return
-
-    opener_count = len(OPENERS.findall(stripped))
-    closer_count = len(CLOSERS.findall(stripped))
-    matched = min(opener_count, closer_count)
-
-    state.depth += opener_count - matched
-    if state.depth > max_depth:
-        violations.append((lineno, state.depth, state.func_name))
-    state.depth = max(0, state.depth - (closer_count - matched))
+_bash_checker = BashChecker()
 
 
 def check_file_bash(filepath: str, max_depth: int) -> list[tuple[int, int, str]]:
     """Return list of (line_number, depth, function_name) violations for bash."""
-    violations = []
-    state = _BashState()
     with open(filepath) as f:
-        for lineno, raw_line in enumerate(f, 1):
-            _check_bash_line(state, violations, lineno, raw_line, max_depth)
-    return violations
+        lines = f.readlines()
+    violations = _bash_checker.check_nesting(lines, max_depth)
+    return [(v.line_number, v.depth, v.function_name) for v in violations]
 
 
 # ── Python checker ───────────────────────────────────────────────────────────

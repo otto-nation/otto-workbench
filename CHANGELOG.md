@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.24.0](https://github.com/otto-nation/otto-workbench/compare/v1.23.1...v1.24.0) (2026-06-16)
+
+
+### Features
+
+* **nesting:** add Go support; refactor into pluggable checker framework ([#260](https://github.com/otto-nation/otto-workbench/issues/260)) ([d7a9903](https://github.com/otto-nation/otto-workbench/commit/d7a9903f8e465bb078fc14bff2bee1acc0485637))
+* **skills:** add trigger/skip frontmatter fields to SKILL.md validation and docs ([#258](https://github.com/otto-nation/otto-workbench/issues/258)) ([c81cc89](https://github.com/otto-nation/otto-workbench/commit/c81cc89ef7a56ac19371701584878f27eda24302))
+
+
+### Bug Fixes
+
+* **claude-review:** cleanup flags, self-review fixes; speed up tests ([#255](https://github.com/otto-nation/otto-workbench/issues/255)) ([48ea5f5](https://github.com/otto-nation/otto-workbench/commit/48ea5f5d57318975a19d398381581315c27c558c))
+* **pr-comments:** add TRIGGER/SKIP criteria to skill description ([#257](https://github.com/otto-nation/otto-workbench/issues/257)) ([98875dd](https://github.com/otto-nation/otto-workbench/commit/98875dd6c7bfc22f697d245881bd8b3959eea413))
+
+
+### Code Refactoring
+
+* globalize validate-nesting; standardize lib/ui.sh sourcing ([#259](https://github.com/otto-nation/otto-workbench/issues/259)) ([e8ce861](https://github.com/otto-nation/otto-workbench/commit/e8ce861f7bac45c6a156928f6296b4ed18124495))
+* replace fragile ../ paths; centralize constants ([#254](https://github.com/otto-nation/otto-workbench/issues/254)) ([285d750](https://github.com/otto-nation/otto-workbench/commit/285d750bf8a02d26e5e17388960d85000c0fdde5))
+
 ## [1.23.1](https://github.com/otto-nation/otto-workbench/compare/v1.23.0...v1.23.1) (2026-06-16)
 
 

@@ -8,6 +8,12 @@ _FUNC_DECL = re.compile(
     r'(\w+)\s*\('           # function name
 )
 _NESTING_KEYWORD = re.compile(r'\b(if|for|switch|select)\b')
+# Matches `} else if ...` — the `if` here is a continuation, not new nesting
+_ELSE_IF = re.compile(r'\}\s*else\s+if\b')
+# Matches `} else {` — a continuation block, not new nesting
+_ELSE = re.compile(r'\}\s*else\s*\{')
+# Matches func literals (closures): func( or func () but NOT named func declarations
+_FUNC_LITERAL = re.compile(r'\bfunc\s*\(')
 
 
 def _strip_strings_and_comments(line: str) -> str:
@@ -99,12 +105,46 @@ class GoChecker:
                 brace_depth += open_count - close_count
                 continue
 
+            # Count `} else if` and `} else {` occurrences so we can handle
+            # them correctly: these are continuations, not new nesting levels.
+            else_if_count = len(_ELSE_IF.findall(stripped))
+            else_count = len(_ELSE.findall(stripped))
+
             keywords = _NESTING_KEYWORD.findall(stripped)
             open_braces = stripped.count('{')
             close_braces = stripped.count('}')
 
-            for _ in keywords:
-                if open_braces > 0:
+            # Subtract `else if` keyword matches — they are not new nesting.
+            # Each `} else if` contributes one spurious `if` to the keyword list.
+            effective_keywords = len(keywords) - else_if_count
+
+            # Count func literals (closures) as nesting — they open a new scope.
+            # Named func declarations are already handled above, so _FUNC_LITERAL
+            # here only fires for anonymous functions/closures.
+            func_literals = len(_FUNC_LITERAL.findall(stripped))
+
+            # `} else {` lines: the closing `}` is a continuation brace, not a
+            # block-end for nesting purposes. The opening `{` after `else` is
+            # also a continuation, not a new nesting level. Adjust close/open
+            # brace counts so they cancel each other out for `else` branches.
+            effective_close_braces = close_braces - else_count
+            effective_open_braces = open_braces - else_count
+
+            # `} else if x {`: the `}` closes the previous `if` block and the
+            # `{` opens the `else if` body. Both are continuations — subtract them.
+            # Each `else if` has one `}` and one `{` that are continuations.
+            effective_close_braces -= else_if_count
+            effective_open_braces -= else_if_count
+
+            # `case` in switch/select bodies: Go case clauses don't use braces
+            # but they do represent a new nesting level inside the switch body.
+            case_keywords = len(re.findall(r'\bcase\b', stripped))
+
+            # Process nesting keywords (if/for/switch/select), each consuming
+            # one open brace from the line.
+            remaining_open = effective_open_braces
+            for _ in range(effective_keywords):
+                if remaining_open > 0:
                     nesting_depth += 1
                     if nesting_depth > max_depth:
                         violations.append(Violation(
@@ -112,11 +152,35 @@ class GoChecker:
                             depth=nesting_depth,
                             function_name=func_name,
                         ))
-                    open_braces -= 1
+                    remaining_open -= 1
 
-            brace_depth += stripped.count('{') - close_braces
+            # Func literals consume one open brace and count as nesting.
+            for _ in range(func_literals):
+                if remaining_open > 0:
+                    nesting_depth += 1
+                    if nesting_depth > max_depth:
+                        violations.append(Violation(
+                            line_number=lineno,
+                            depth=nesting_depth,
+                            function_name=func_name,
+                        ))
+                    remaining_open -= 1
 
-            for _ in range(close_braces):
+            # `case` clauses add nesting depth without braces.
+            for _ in range(case_keywords):
+                nesting_depth += 1
+                if nesting_depth > max_depth:
+                    violations.append(Violation(
+                        line_number=lineno,
+                        depth=nesting_depth,
+                        function_name=func_name,
+                    ))
+
+            # Update brace depth using effective counts (excluding else continuations).
+            brace_depth += effective_open_braces - effective_close_braces
+
+            # Decrement nesting depth for closing braces (excluding else continuations).
+            for _ in range(effective_close_braces):
                 if nesting_depth > 0:
                     nesting_depth -= 1
 

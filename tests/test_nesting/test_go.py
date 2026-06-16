@@ -85,3 +85,138 @@ func foo() {
 '''
         violations = _check(code, max_depth=2)
         assert len(violations) > 0
+
+
+class TestScopeBoundaries:
+    def test_function_boundary_resets_depth(self):
+        code = '''\
+func funcA() {
+    for _, item := range items {
+        if item.Valid {
+            if item.Active {
+                fmt.Println(item)
+            }
+        }
+    }
+}
+
+func funcB() {
+    if x > 0 {
+        fmt.Println("depth 1 again")
+    }
+}
+'''
+        assert _check(code) == []
+
+    def test_method_resets_depth(self):
+        code = '''\
+func (s *Server) handleA() {
+    for _, r := range requests {
+        if r.Valid {
+            if r.Auth {
+                process(r)
+            }
+        }
+    }
+}
+
+func (s *Server) handleB() {
+    if s.ready {
+        fmt.Println("ok")
+    }
+}
+'''
+        assert _check(code) == []
+
+    def test_closure_counts_as_nesting(self):
+        code = '''\
+func main() {
+    for _, item := range items {
+        if item.Valid {
+            go func() {
+                fmt.Println("inside closure")
+            }()
+        }
+    }
+}
+'''
+        violations = _check(code, max_depth=2)
+        assert len(violations) > 0
+
+    def test_switch_counts_as_nesting(self):
+        code = '''\
+func foo() {
+    for _, item := range items {
+        switch item.Type {
+        case "a":
+            if item.Active {
+                fmt.Println("deep")
+            }
+        }
+    }
+}
+'''
+        violations = _check(code)
+        assert len(violations) > 0
+        assert violations[0].depth == 4
+
+    def test_select_counts_as_nesting(self):
+        code = '''\
+func foo() {
+    for {
+        select {
+        case msg := <-ch:
+            if msg.Important {
+                for _, r := range msg.Recipients {
+                    send(r, msg)
+                }
+            }
+        }
+    }
+}
+'''
+        violations = _check(code)
+        assert len(violations) > 0
+
+    def test_else_does_not_increase_depth(self):
+        code = '''\
+func foo() {
+    if x > 0 {
+        fmt.Println("pos")
+    } else {
+        fmt.Println("neg")
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_else_if_does_not_increase_depth(self):
+        code = '''\
+func foo() {
+    if x > 0 {
+        fmt.Println("pos")
+    } else if x == 0 {
+        fmt.Println("zero")
+    } else {
+        fmt.Println("neg")
+    }
+}
+'''
+        assert _check(code, max_depth=1) == []
+
+    def test_violation_reports_correct_function_name(self):
+        code = '''\
+func deepFunc() {
+    for _, item := range items {
+        if item.Valid {
+            if item.Active {
+                for _, sub := range item.Subs {
+                    fmt.Println(sub)
+                }
+            }
+        }
+    }
+}
+'''
+        violations = _check(code)
+        assert violations[0].function_name == "deepFunc"

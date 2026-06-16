@@ -21,12 +21,12 @@
 
 set -euo pipefail
 
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$REPO_ROOT}"
 
-# shellcheck source=../../lib/ui.sh
+# shellcheck source=/dev/null
 . "$REPO_ROOT/lib/ui.sh"
-# shellcheck source=../../lib/registries.sh
+# shellcheck source=/dev/null
 . "$REPO_ROOT/lib/registries.sh"
 
 usage() {

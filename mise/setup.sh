@@ -2,10 +2,11 @@
 # Interactive mise installer — delegates to step_mise_install in steps.sh.
 set -e
 
-_D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKBENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=/dev/null
-. "$(git -C "$_D" rev-parse --show-toplevel)/lib/ui.sh"
+. "$WORKBENCH_DIR/lib/ui.sh"
 # shellcheck source=/dev/null
-. "$_D/steps.sh"
+. "$SCRIPT_DIR/steps.sh"
 
 step_mise_install

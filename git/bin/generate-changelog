@@ -11,9 +11,9 @@
 
 set -e
 
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-# shellcheck source=/dev/null
-. "$(dirname "$_SELF")/../../lib/ui.sh"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$(git rev-parse --show-toplevel)}"
+# shellcheck source=../../lib/ui.sh
+. "$WORKBENCH_DIR/lib/ui.sh"
 # shellcheck source=../lib/conventions.sh
 . "$WORKBENCH_DIR/lib/conventions.sh"
 

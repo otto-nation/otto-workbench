@@ -101,14 +101,14 @@ def main():
         print("error: --pr is required in pr mode", file=sys.stderr)
         sys.exit(1)
 
-    result = subprocess.run(
+    proc = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         capture_output=True, text=True, cwd=args.repo_dir,
     )
-    if result.returncode != 0 or not result.stdout.strip():
+    if proc.returncode != 0 or not proc.stdout.strip():
         print("error: cannot determine repository from worktree", file=sys.stderr)
         sys.exit(1)
-    repo = result.stdout.strip()
+    repo = proc.stdout.strip()
 
     session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 

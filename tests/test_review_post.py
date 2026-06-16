@@ -1920,6 +1920,17 @@ class TestDryRunIntegration:
         result = self._run_dry_run(nonexistent)
         assert result.returncode != 0
 
+    def test_dry_run_without_repo_in_meta_exits_nonzero(self, tmp_path):
+        review_dir = tmp_path / "no-repo-meta"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_MD)
+        # meta.json present but missing the 'repo' field
+        (review_dir / "meta.json").write_text(json.dumps({"head_sha": "abc123"}))
+        result = self._run_dry_run(review_file)
+        assert result.returncode != 0
+        assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
+
 
 class TestCheckReviewAlreadyPosted:
     def test_no_reviews_returns_empty(self, rp):

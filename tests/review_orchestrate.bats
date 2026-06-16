@@ -2789,10 +2789,13 @@ EOF
 }
 
 @test "review-rebuild: fails without meta.json" {
+  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
+  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
+
   mkdir -p "$TMPDIR/no-meta"
-  cat > "$TMPDIR/no-meta/group-1.md" <<'EOF'
-## Must Fix
-- **[M1]** **`foo.py:1`** — bug
+  cat > "$TMPDIR/no-meta/group-1.md" <<EOF
+## $must_section
+- **[${must_prefix}1]** **\`foo.py:1\`** — bug
 EOF
 
   run "$REPO_ROOT/ai/claude/bin/review-rebuild" \

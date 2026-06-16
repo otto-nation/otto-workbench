@@ -122,7 +122,6 @@ def main():
     if not repo:
         _err("Cannot determine repository — meta.json missing or has no 'repo' field")
         sys.exit(1)
-    args.repo = repo
 
     severity_filter = set(args.severity.upper().split(","))
     text = review_path.read_text()

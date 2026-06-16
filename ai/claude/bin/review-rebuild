@@ -113,6 +113,7 @@ def main():
         group_count=len(group_files),
         summary_note=REBUILD_SUMMARY,
         include_verdict=(mode != MODE_SELF),
+        file_count=meta.get("changed_files", 0),
     )
 
     review_file.write_text(final)

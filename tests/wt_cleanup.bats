@@ -232,31 +232,23 @@ JSON
 
 # ── Uncommitted changes protection ──────────────────────────────────────────
 
-@test "worktree with uncommitted changes is skipped" {
+@test "merged worktree with uncommitted changes is not removed" {
   _write_worktrees <<'JSON'
 [{"branch":"feat/dirty","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}]
 JSON
   _run_cleanup
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no stale worktrees"* ]]
+  [ ! -f "$WT_REMOVE_LOG" ]
 }
 
-@test "worktree with untracked files is skipped" {
+@test "unmerged worktree with uncommitted changes is silently skipped" {
   _write_worktrees <<'JSON'
-[{"branch":"feat/untracked","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}}]
+[{"branch":"feat/dirty-unmerged","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑3","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}]
 JSON
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
-}
-
-@test "worktree with staged changes is skipped" {
-  _write_worktrees <<'JSON'
-[{"branch":"feat/staged","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":true,"modified":false,"untracked":false,"renamed":false,"deleted":false}}]
-JSON
-  _run_cleanup
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"no stale worktrees"* ]]
+  [[ "$output" != *"uncommitted"* ]]
 }
 
 @test "clean worktree is still removed when merged" {
@@ -266,6 +258,78 @@ JSON
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" == *"removing: feat/clean-merged"* ]]
+}
+
+# ── Dirty-merged summary ───────────────────────────────────────────────────
+
+@test "dirty merged worktree shows summary with change types" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/dirty","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":true,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Merged worktrees with uncommitted changes"* ]]
+  [[ "$output" == *"feat/dirty"* ]]
+  [[ "$output" == *"modified"* ]]
+  [[ "$output" == *"untracked"* ]]
+}
+
+@test "dirty merged summary shows staged changes" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/staged","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":true,"modified":false,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"feat/staged"* ]]
+  [[ "$output" == *"staged"* ]]
+}
+
+@test "dirty merged summary shows multiple worktrees" {
+  _write_worktrees <<'JSON'
+[
+  {"branch":"feat/a","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":true,"modified":false,"untracked":false,"renamed":false,"deleted":false}},
+  {"branch":"feat/b","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":true,"renamed":false,"deleted":false}}
+]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"feat/a"* ]]
+  [[ "$output" == *"feat/b"* ]]
+}
+
+@test "dirty merged summary suppressed by --quiet" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/dirty","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup --quiet
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "dirty merged summary appears alongside removals" {
+  _write_worktrees <<'JSON'
+[
+  {"branch":"feat/clean","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false}},
+  {"branch":"feat/dirty","is_main":false,"is_current":false,"main_state":"merged","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}
+]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feat/clean"* ]]
+  [[ "$output" == *"Merged worktrees with uncommitted changes"* ]]
+  [[ "$output" == *"feat/dirty"* ]]
+}
+
+@test "squash-merged dirty worktree detected via gh fallback" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/squash-dirty","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  echo "feat/squash-dirty" > "$GH_PR_MERGED"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"Merged worktrees with uncommitted changes"* ]]
+  [[ "$output" == *"feat/squash-dirty"* ]]
 }
 
 # ── Grace period ────────────────────────────────────────────────────────────

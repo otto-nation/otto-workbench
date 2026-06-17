@@ -55,6 +55,8 @@ done
 
 now=$(date +%s)
 removed=0
+dirty_merged_branches=()
+dirty_merged_changes=()
 default_branch=$(git config worktrunk.default-branch 2>/dev/null \
   || git config init.defaultBranch 2>/dev/null \
   || echo "main")
@@ -80,6 +82,28 @@ _has_uncommitted_changes() {
   result=$(echo "$worktrees" | jq -r "
     .[$idx].working_tree | (.staged or .modified or .untracked or .renamed or .deleted)")
   [[ "$result" == "true" ]]
+}
+
+_describe_changes() {
+  local idx="$1"
+  echo "$worktrees" | jq -r "
+    .[$idx].working_tree |
+    [if .staged then \"staged\" else empty end,
+     if .modified then \"modified\" else empty end,
+     if .untracked then \"untracked\" else empty end,
+     if .renamed then \"renamed\" else empty end,
+     if .deleted then \"deleted\" else empty end] | join(\", \")"
+}
+
+_is_merged() {
+  local main_state="$1" symbols="$2" branch="$3"
+  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
+    return 0
+  elif [[ "$use_gh" == "true" ]] && \
+       gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q MERGED; then
+    return 0
+  fi
+  return 1
 }
 
 _within_grace_period() {
@@ -120,8 +144,10 @@ for ((i = 0; i < count; i++)); do
   [[ "$is_current" == "true" ]] && continue
 
   if _has_uncommitted_changes "$i"; then
-    [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
-      echo "skipping: $branch (has uncommitted changes)"
+    if _is_merged "$main_state" "$symbols" "$branch"; then
+      dirty_merged_branches+=("$branch")
+      dirty_merged_changes+=("$(_describe_changes "$i")")
+    fi
     continue
   fi
 
@@ -143,6 +169,18 @@ for ((i = 0; i < count; i++)); do
   fi
 done
 
-if [[ "$quiet" != "true" && "$removed" -eq 0 ]]; then
+if [[ "$quiet" != "true" && "$removed" -eq 0 && ${#dirty_merged_branches[@]} -eq 0 ]]; then
   echo "no stale worktrees"
+fi
+
+if [[ "$quiet" != "true" && ${#dirty_merged_branches[@]} -gt 0 ]]; then
+  max_len=0
+  for b in "${dirty_merged_branches[@]}"; do
+    (( ${#b} > max_len )) && max_len=${#b}
+  done
+  [[ "$removed" -gt 0 ]] && echo ""
+  warn "Merged worktrees with uncommitted changes:"
+  for ((j = 0; j < ${#dirty_merged_branches[@]}; j++)); do
+    printf "  %-${max_len}s  ${DIM}%s${NC}\n" "${dirty_merged_branches[$j]}" "${dirty_merged_changes[$j]}"
+  done
 fi

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -321,6 +323,44 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     return angles_content, angles_output, angles_log
 
 
+def _commit_fixes(job: ReviewJob):
+    """Commit source-file fixes applied by the fix-pass agent."""
+    result = subprocess.run(
+        ["git", "-C", job.wt_path, "diff", "--quiet"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return
+
+    fixed, skipped = 0, 0
+    if Path(job.review_file).exists():
+        content = Path(job.review_file).read_text()
+        match = re.search(
+            r"<!-- fix-pass: (\d+) fixed, (\d+) skipped -->", content,
+        )
+        if match:
+            fixed, skipped = int(match.group(1)), int(match.group(2))
+
+    subprocess.run(
+        ["git", "-C", job.wt_path, "add", "-u"],
+        capture_output=True, check=True,
+    )
+
+    msg = "fix: self-review findings"
+    if fixed:
+        msg += f"\n\n{fixed} fixed, {skipped} skipped"
+
+    result = subprocess.run(
+        ["git", "-C", job.wt_path, "commit", "-m", msg],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        _warn(f"Failed to commit fixes: {result.stderr.strip()}")
+        return
+
+    _info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
+
+
 def run_fix_pass(job: ReviewJob):
     if not Path(job.review_file).exists():
         _warn("No review file to fix — skipping fix pass")
@@ -334,6 +374,7 @@ def run_fix_pass(job: ReviewJob):
     print()
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_FIX)
     print()
+    _commit_fixes(job)
 
 
 def _check_serial_abort(

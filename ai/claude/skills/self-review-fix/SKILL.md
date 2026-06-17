@@ -83,14 +83,17 @@ If the review file exists, read it with the Read tool. Extract the
 claude-review --self --fix [<branch_name>]
 ```
 
+Run synchronously — do **not** background this command. Step 4 reads
+the completed review file; backgrounding produces stale results.
+
 Pass the resolved branch name. `claude-review` handles bare repos, worktree
 resolution, and fresh-vs-existing review detection internally.
 
 ### Step 4: Report results
 
-Read the review file and present:
-- Count of fixed findings (`- [x]`)
-- Count of remaining unfixed findings (`- [ ]`)
+Read the review file **after the command completes** and present:
+- Extract fixed/skipped counts from the `<!-- fix-pass: N fixed, M skipped -->`
+  comment — this is the authoritative source, not manual checkbox counting
 - If Must-fix or Should-fix findings remain unfixed, list them prominently
 
 **Do not** ask "how would you like to proceed" or offer choices.

@@ -11,6 +11,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
+| `resolve-branch` | Resolve a fuzzy branch name to an exact git branch — tries exact, worktree, separator, fuzzy |
 | `wt-init` | Convert a regular git repo to a bare repo with worktrees |
 | `lint-sweep` | Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches |
 | `validate-nesting` | Validate bash, Python, and Go script nesting depth to enforce flat control flow |

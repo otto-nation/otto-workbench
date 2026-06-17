@@ -69,12 +69,15 @@ Bash call — never chain variable assignments with `&&`.
    ```
 
 If the review file exists, read it with the Read tool. Extract the
-`<!-- head_sha: -->` value and compare against `git rev-parse HEAD`.
+`<!-- head_sha: -->` value and compare against the **resolved branch** HEAD:
+```bash
+git rev-parse <branch_name>
+```
 
-- **HEAD matches**: Count unchecked findings (`- [ ]`).
+- **SHA matches**: Count unchecked findings (`- [ ]`).
   If unchecked findings exist, go to Step 3.
   If all findings are checked, report "all findings already addressed" and stop.
-- **HEAD doesn't match**: The review is stale. Go to Step 3.
+- **SHA doesn't match**: The review is stale. Go to Step 3.
 - **No review file**: Go to Step 3.
 
 ### Step 3: Run claude-review

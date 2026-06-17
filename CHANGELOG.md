@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.0](https://github.com/otto-nation/otto-workbench/compare/v1.26.0...v1.27.0) (2026-06-17)
+
+
+### Features
+
+* **wt-cleanup:** surface merged worktrees with uncommitted changes ([#272](https://github.com/otto-nation/otto-workbench/issues/272)) ([815fa3e](https://github.com/otto-nation/otto-workbench/commit/815fa3efffa7d035be0f8a7b9869d92819c1fb5a))
+
 ## [1.26.0](https://github.com/otto-nation/otto-workbench/compare/v1.25.0...v1.26.0) (2026-06-17)
 
 

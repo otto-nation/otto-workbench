@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.20.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.19.1...claude-review-v1.20.0) (2026-06-17)
+
+
+### Features
+
+* add resolve-branch script for fuzzy branch resolution ([#263](https://github.com/otto-nation/otto-workbench/issues/263)) ([afd7e11](https://github.com/otto-nation/otto-workbench/commit/afd7e116c45375da7ea6016fd21d6c37474981e4))
+* **review:** severity registry with posting routing ([#267](https://github.com/otto-nation/otto-workbench/issues/267)) ([de11526](https://github.com/otto-nation/otto-workbench/commit/de11526285dc561cfa1b4c7b7972fd1559795bf3))
+
+
+### Bug Fixes
+
+* **self-review-fix:** avoid permission prompt from command substitution ([#268](https://github.com/otto-nation/otto-workbench/issues/268)) ([ce01a6a](https://github.com/otto-nation/otto-workbench/commit/ce01a6a51cbffb49f16fdd964c22ba3caab0ad58))
+* **self-review-fix:** prevent permission prompts from fix-pass agent ([#269](https://github.com/otto-nation/otto-workbench/issues/269)) ([1761394](https://github.com/otto-nation/otto-workbench/commit/1761394df087fe467ba9ebb46f05f9d3d32efe37))
+* **self-review-fix:** prevent stale reporting and fix-pass comment misplacement ([#266](https://github.com/otto-nation/otto-workbench/issues/266)) ([a55fd61](https://github.com/otto-nation/otto-workbench/commit/a55fd61fb82b8bbb638e2b9255dec74993916ce3))
+
+
+### Code Refactoring
+
+* **self-review-fix:** use git remote instead of gh CLI for repo name ([#265](https://github.com/otto-nation/otto-workbench/issues/265)) ([7fc5c57](https://github.com/otto-nation/otto-workbench/commit/7fc5c57bd8131a6a84aba4af92b1b8ec2c2cf50c))
+
 ## [1.19.1](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.19.0...claude-review-v1.19.1) (2026-06-16)
 
 

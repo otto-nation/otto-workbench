@@ -2707,11 +2707,11 @@ PYEOF
 # ── review-rebuild smoke tests ───────────────────────────────────────────────
 
 @test "review-rebuild: rebuilds review.md from group files" {
-  # Get section headers from constants
-  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
-  should_section=$(_py "print(mod.SECTION_SHOULD_FIX)")
-  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
-  should_prefix=$(_py "print(mod.FINDING_PREFIX_SHOULD)")
+  # Get section headers from severity registry
+  must_section=$(_py "print(mod.severity_by_key('M').section)")
+  should_section=$(_py "print(mod.severity_by_key('S').section)")
+  must_prefix="M"
+  should_prefix="S"
 
   mkdir -p "$TMPDIR/review"
   cat > "$TMPDIR/review/group-1.md" <<EOF
@@ -2738,8 +2738,8 @@ EOF
 }
 
 @test "review-rebuild: self-review mode omits verdict" {
-  nit_section=$(_py "print(mod.SECTION_NIT)")
-  nit_prefix=$(_py "print(mod.FINDING_PREFIX_NIT)")
+  nit_section=$(_py "print(mod.severity_by_key('N').section)")
+  nit_prefix="N"
 
   mkdir -p "$TMPDIR/review"
   cat > "$TMPDIR/review/group-1.md" <<EOF
@@ -2768,8 +2768,8 @@ EOF
 }
 
 @test "review-rebuild: works with minimal meta.json" {
-  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
-  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
+  must_section=$(_py "print(mod.severity_by_key('M').section)")
+  must_prefix="M"
 
   mkdir -p "$TMPDIR/review"
   cat > "$TMPDIR/review/group-1.md" <<EOF
@@ -2789,8 +2789,8 @@ EOF
 }
 
 @test "review-rebuild: fails without meta.json" {
-  must_section=$(_py "print(mod.SECTION_MUST_FIX)")
-  must_prefix=$(_py "print(mod.FINDING_PREFIX_MUST)")
+  must_section=$(_py "print(mod.severity_by_key('M').section)")
+  must_prefix="M"
 
   mkdir -p "$TMPDIR/no-meta"
   cat > "$TMPDIR/no-meta/group-1.md" <<EOF

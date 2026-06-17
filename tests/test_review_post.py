@@ -470,6 +470,41 @@ class TestClassifyFindings:
         assert (len(inline), len(fl), len(skipped)) == (1, 0, 0)
         assert inline[0].end_line == 8
 
+    def test_body_only_severity_forced_to_file_level(self, rp):
+        """Nit findings are routed to body even when their line is in a diff hunk."""
+        f = rp.Finding(id="N1", severity="N", seq=1, path="file.go", line=5, end_line=None, body="style issue")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF_INLINE)
+        assert (len(inline), len(fl), len(skipped)) == (0, 1, 0)
+        assert fl[0].classification == "file_level"
+        assert "body-only" in fl[0].skip_reason
+
+    def test_body_only_severity_resolves_full_path(self, rp):
+        """Body-only findings still get full_path resolved for by_file grouping."""
+        diff = (
+            "diff --git a/pkg/handler.go b/pkg/handler.go\n"
+            "--- a/pkg/handler.go\n"
+            "+++ b/pkg/handler.go\n"
+            "@@ -1,3 +1,10 @@\n"
+            "+line\n"
+        )
+        f = rp.Finding(id="I1", severity="I", seq=1, path="handler.go", line=5, end_line=None, body="use pattern")
+        inline, fl, skipped = rp.classify_findings([f], diff)
+        assert len(fl) == 1
+        assert fl[0].full_path == "pkg/handler.go"
+
+    def test_idiom_with_no_path_still_file_level(self, rp):
+        """Body-only findings without a path go to file_level with general finding reason."""
+        f = rp.Finding(id="I1", severity="I", seq=1, path="", line=None, end_line=None, body="good pattern")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF_INLINE)
+        assert len(fl) == 1
+        assert "general finding" in fl[0].skip_reason
+
+    def test_inline_severity_still_inline(self, rp):
+        """Must-fix findings with lines in diff are still inline."""
+        f = rp.Finding(id="M1", severity="M", seq=1, path="file.go", line=5, end_line=None, body="bug")
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF_INLINE)
+        assert len(inline) == 1
+
 
 class TestRenumberForPosting:
     def test_inline_sorted_by_path_then_line(self, rp):
@@ -588,14 +623,14 @@ class TestFormatBodyText:
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
         assert "### Should fix" in result
-        assert "### Nit" in result
+        assert "### b.go" in result
         s_idx = result.index("### Should fix")
-        n_idx = result.index("### Nit")
+        n_idx = result.index("### b.go")
         assert s_idx < n_idx
         assert result.index("S1") < result.index("N1")
         assert result.index("S2") < result.index("N1")
 
-    def test_single_severity_no_headers(self, rp):
+    def test_single_severity_nits_grouped_by_file(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
                        end_line=None, body="Nit one", posted_id="N1"),
@@ -603,9 +638,75 @@ class TestFormatBodyText:
                        end_line=None, body="Nit two", posted_id="N2"),
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
-        assert "### " not in result
+        assert "### a.go" in result
+        assert "### b.go" in result
         assert "N1" in result
         assert "N2" in result
+
+
+class TestFormatBodyTextByFile:
+    def test_nits_grouped_by_file(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
+                       end_line=None, body="Style issue", posted_id="N1"),
+            rp.Finding(id="N2", severity="N", seq=2, path="b.go", line=20,
+                       end_line=None, body="Naming issue", posted_id="N2"),
+            rp.Finding(id="N3", severity="N", seq=3, path="a.go", line=30,
+                       end_line=None, body="Another style", posted_id="N3"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        assert "### a.go" in result
+        assert "### b.go" in result
+        a_idx = result.index("### a.go")
+        b_idx = result.index("### b.go")
+        assert a_idx < b_idx
+
+    def test_nits_within_file_sorted_by_line(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=30,
+                       end_line=None, body="Later", posted_id="N1"),
+            rp.Finding(id="N2", severity="N", seq=2, path="a.go", line=10,
+                       end_line=None, body="Earlier", posted_id="N2"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        assert result.index("Earlier") < result.index("Later")
+
+    def test_mixed_severity_body_shows_severity_then_file_groups(self, rp):
+        findings = [
+            rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
+                       end_line=None, body="Should fix this", posted_id="S1"),
+            rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
+                       end_line=None, body="Nit issue", posted_id="N1"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
+        assert "### Should fix" in result
+        assert "### b.go" in result
+        assert result.index("### Should fix") < result.index("### b.go")
+
+    def test_idioms_and_nits_share_file_groups(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
+                       end_line=None, body="Nit", posted_id="N1"),
+            rp.Finding(id="I1", severity="I", seq=1, path="a.go", line=20,
+                       end_line=None, body="Idiom", posted_id="I1"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N", "I"})
+        assert result.count("### a.go") == 1
+        assert "Nit" in result
+        assert "Idiom" in result
+
+    def test_pathless_body_only_finding_at_end(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
+                       end_line=None, body="File nit", posted_id="N1"),
+            rp.Finding(id="I1", severity="I", seq=1, path="", line=None,
+                       end_line=None, body="General pattern", posted_id="I1"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N", "I"})
+        assert "### a.go" in result
+        assert "General pattern" in result
+        # Pathless finding appears after file-grouped findings
+        assert result.index("### a.go") < result.index("General pattern")
 
 
 class TestFormatPathRef:

@@ -1843,8 +1843,8 @@ class TestPromptStats:
 class TestPostProcessFindings:
     def test_skips_verify_when_no_wt_path(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = "Must fix"
-        prefix = "M"
+        must = ro.severity_by_key(ro.SEVERITY_MUST).section
+        prefix = ro.SEVERITY_MUST
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}1]** **`missing.py:10`** — bug\n"
@@ -1858,8 +1858,8 @@ class TestPostProcessFindings:
 
     def test_strips_evidence_blocks(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = "Must fix"
-        prefix = "M"
+        must = ro.severity_by_key(ro.SEVERITY_MUST).section
+        prefix = ro.SEVERITY_MUST
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}1]** **`foo.py:1`** — issue\n"
@@ -1872,8 +1872,8 @@ class TestPostProcessFindings:
 
     def test_strips_stable_ids(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = "Must fix"
-        prefix = "M"
+        must = ro.severity_by_key(ro.SEVERITY_MUST).section
+        prefix = ro.SEVERITY_MUST
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}1]** <!-- sid:abc12345 --> **`foo.py:1`** — issue\n"
@@ -1883,8 +1883,8 @@ class TestPostProcessFindings:
 
     def test_renumbers_findings(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = "Must fix"
-        prefix = "M"
+        must = ro.severity_by_key(ro.SEVERITY_MUST).section
+        prefix = ro.SEVERITY_MUST
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}3]** **`foo.py:1`** — first\n"

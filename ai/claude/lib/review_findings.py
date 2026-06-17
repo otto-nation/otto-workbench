@@ -19,12 +19,19 @@ from review_common import (
 _FINDING_SECTIONS = [(s.section, s.key) for s in SEVERITIES]
 
 # Severity header name -> key mapping (section + aliases, lowercased)
-_SEVERITY_NAMES: dict[str, str] = {}
-for _s in SEVERITIES:
-    _SEVERITY_NAMES[_s.section.lower()] = _s.key
-    _SEVERITY_NAMES[_s.section.lower().replace("-", " ")] = _s.key
-    for _alias in _s.aliases:
-        _SEVERITY_NAMES[_alias.lower()] = _s.key
+def _build_severity_names() -> dict[str, str]:
+    names: dict[str, str] = {}
+    for s in SEVERITIES:
+        names[s.section.lower()] = s.key
+        # replace("-", " ") mirrors _match_severity_header's input normalisation so
+        # future hyphenated section names (e.g. "Should-fix") still resolve correctly.
+        names[s.section.lower().replace("-", " ")] = s.key
+        for alias in s.aliases:
+            names[alias.lower()] = s.key
+    return names
+
+
+_SEVERITY_NAMES = _build_severity_names()
 
 
 # ── Finding dataclass ────────────────────────────────────────────────────────

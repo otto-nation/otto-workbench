@@ -61,13 +61,11 @@ _worktree_match() {
   while IFS= read -r line; do
     basename=$(echo "$line" | awk '{print $1}')
     basename="${basename##*/}"
-    if [[ "$basename" == "$input" ]]; then
-      branch=$(echo "$line" | grep -o '\[.*\]' | tr -d '[]') || true
-      if [[ -n "$branch" ]]; then
-        echo "$branch"
-        return 0
-      fi
-    fi
+    [[ "$basename" == "$input" ]] || continue
+    branch=$(echo "$line" | grep -o '\[.*\]' | tr -d '[]') || true
+    [[ -n "$branch" ]] || continue
+    echo "$branch"
+    return 0
   done < <(git worktree list 2>/dev/null)
   return 1
 }

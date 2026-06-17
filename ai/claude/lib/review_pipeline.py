@@ -359,6 +359,28 @@ def _commit_fixes(job: ReviewJob):
         return
 
     _info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
+    _push_fixes(job)
+
+
+def _push_fixes(job: ReviewJob):
+    """Push committed fixes to the remote."""
+    result = subprocess.run(
+        ["git", "-C", job.wt_path, "push"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        _info("Pushed fixes")
+        return
+
+    result = subprocess.run(
+        ["git", "-C", job.wt_path, "push", "--force-with-lease"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        _info("Force-pushed fixes (branch had diverged)")
+        return
+
+    _warn(f"Failed to push fixes: {result.stderr.strip()}")
 
 
 def run_fix_pass(job: ReviewJob):

@@ -42,18 +42,16 @@ Bash call — never chain variable assignments with `&&`.
    git rev-parse --abbrev-ref HEAD
    ```
 
-2. **If a skill argument was provided**, validate the branch exists:
+2. **If a skill argument was provided**, resolve the branch:
    ```bash
-   git branch -a --list "<branch>" "remotes/origin/<branch>"
+   resolve-branch "<argument>"
    ```
-   If no exact match, fuzzy-search:
-   ```bash
-   git branch -a | grep -i "<branch>"
-   ```
-   - **One match**: use it (strip `remotes/origin/` prefix if present, trim
-     whitespace)
-   - **Multiple matches**: list them and ask the user to pick
-   - **No matches**: error and stop
+   This tries exact match, worktree directory match, separator normalization
+   (`-` → `/`), and fuzzy search — in that order.
+   - **Success (exit 0)**: use the stdout output as the branch name
+   - **Multiple matches (exit 1)**: candidates are listed on stderr — show
+     them and ask the user to pick
+   - **No matches (exit 1)**: error and stop
 
 ### Step 2: Check for existing review
 

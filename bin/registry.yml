@@ -65,6 +65,13 @@ tools:
     when_to_use: "Cleaning up accumulated worktrees; runs automatically on Claude session stop"
     usage: "wt-cleanup  |  wt-cleanup --age 7  |  wt-cleanup --dry-run"
 
+  - name: resolve-branch
+    allow: true
+    context: reference
+    description: "Resolve a fuzzy branch name to an exact git branch — tries exact, worktree, separator, fuzzy"
+    when_to_use: "When a branch name might use dashes instead of slashes, or might be a worktree directory name"
+    usage: "resolve-branch <input>"
+
   - name: wt-init
     allow: true
     description: "Convert a regular git repo to a bare repo with worktrees"

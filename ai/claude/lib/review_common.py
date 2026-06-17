@@ -16,6 +16,12 @@ from pathlib import Path
 
 # ── Severity ─────────────────────────────────────────────────────────────────
 
+SEVERITY_MUST = "M"
+SEVERITY_SHOULD = "S"
+SEVERITY_NIT = "N"
+SEVERITY_IDIOMS = "I"
+
+
 @dataclass(frozen=True)
 class SeverityConfig:
     key: str
@@ -27,10 +33,10 @@ class SeverityConfig:
 
 
 SEVERITIES = [
-    SeverityConfig("M", "must-fix",  "Must fix",  posting="inline", body_group="by_severity"),
-    SeverityConfig("S", "should-fix", "Should fix", posting="inline", body_group="by_severity"),
-    SeverityConfig("N", "nit",       "Nit",        posting="body",   body_group="by_file", aliases=("Nits",)),
-    SeverityConfig("I", "idiom",     "Idioms",     posting="body",   body_group="by_file"),
+    SeverityConfig(SEVERITY_MUST,    "must-fix",  "Must fix",  posting="inline", body_group="by_severity"),
+    SeverityConfig(SEVERITY_SHOULD,  "should-fix", "Should fix", posting="inline", body_group="by_severity"),
+    SeverityConfig(SEVERITY_NIT,     "nit",       "Nit",        posting="body",   body_group="by_file", aliases=("Nits",)),
+    SeverityConfig(SEVERITY_IDIOMS,  "idiom",     "Idioms",     posting="body",   body_group="by_file"),
 ]
 
 _SEVERITY_BY_KEY = {s.key: s for s in SEVERITIES}

@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from review_common import (
-    SEVERITIES, SECTION_FILE_TRIAGE,
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
+    SECTION_FILE_TRIAGE,
     _info, _warn,
 )
 
@@ -534,7 +535,7 @@ def verify_findings(review_file: str, wt_path: str) -> list[str]:
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
     for f in findings:
-        if f["severity"] not in ("M", "S"):
+        if f["severity"] not in (SEVERITY_MUST, SEVERITY_SHOULD):
             continue
         evidence = _extract_evidence(f["body"])
         if not _verify_finding(f["path"], evidence, wt_path):
@@ -637,8 +638,8 @@ _MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
 
 def mechanical_verdict(counts: dict[str, int]) -> str:
     parts = [f"{counts[key]} {label}" for key, label in _VERDICT_LABELS if counts.get(key)]
-    must = counts.get("M", 0)
-    should = counts.get("S", 0)
+    must = counts.get(SEVERITY_MUST, 0)
+    should = counts.get(SEVERITY_SHOULD, 0)
 
     if must:
         action = "Request changes"

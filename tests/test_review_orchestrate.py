@@ -262,7 +262,7 @@ class TestCountFindings:
     def test_counts_unique_ids(self, ro):
         text = "- **[M1]** finding\n- **[M2]** another"
         counts = ro._count_findings(text)
-        assert counts[ro.FINDING_PREFIX_MUST] == 2
+        assert counts["M"] == 2
 
     def test_no_findings(self, ro):
         counts = ro._count_findings("no findings here")
@@ -271,10 +271,10 @@ class TestCountFindings:
     def test_mixed_severities(self, ro):
         text = "- **[M1]** must\n- **[S1]** should\n- **[N1]** nit\n- **[I1]** idiom"
         counts = ro._count_findings(text)
-        assert counts[ro.FINDING_PREFIX_MUST] == 1
-        assert counts[ro.FINDING_PREFIX_SHOULD] == 1
-        assert counts[ro.FINDING_PREFIX_NIT] == 1
-        assert counts[ro.FINDING_PREFIX_IDIOMS] == 1
+        assert counts["M"] == 1
+        assert counts["S"] == 1
+        assert counts["N"] == 1
+        assert counts["I"] == 1
 
     def test_cross_references_not_counted(self, ro):
         text = (
@@ -283,13 +283,13 @@ class TestCountFindings:
             "- **[N2]** **`file.go:20`** — once [M1] is resolved, update this\n"
         )
         counts = ro._count_findings(text)
-        assert counts[ro.FINDING_PREFIX_MUST] == 0
-        assert counts[ro.FINDING_PREFIX_NIT] == 2
+        assert counts["M"] == 0
+        assert counts["N"] == 2
 
     def test_checkbox_findings_counted(self, ro):
         text = "- [ ] **[S1]** **`file.go:10`** — open finding"
         counts = ro._count_findings(text)
-        assert counts[ro.FINDING_PREFIX_SHOULD] == 1
+        assert counts["S"] == 1
 
 
 class TestMergeReviewsCleanup:
@@ -352,34 +352,34 @@ class TestCheckOrphanedPriorIds:
 
 class TestMechanicalVerdict:
     def test_must_fix_present(self, ro):
-        counts = {ro.FINDING_PREFIX_MUST: 2, ro.FINDING_PREFIX_SHOULD: 1,
-                  ro.FINDING_PREFIX_NIT: 0, ro.FINDING_PREFIX_IDIOMS: 0}
+        counts = {"M": 2, "S": 1,
+                  "N": 0, "I": 0}
         result = ro.mechanical_verdict(counts)
         assert result.startswith("Request changes")
 
     def test_should_fix_no_must(self, ro):
-        counts = {ro.FINDING_PREFIX_MUST: 0, ro.FINDING_PREFIX_SHOULD: 3,
-                  ro.FINDING_PREFIX_NIT: 1, ro.FINDING_PREFIX_IDIOMS: 0}
+        counts = {"M": 0, "S": 3,
+                  "N": 1, "I": 0}
         result = ro.mechanical_verdict(counts)
         assert result.startswith("Needs discussion")
 
     def test_nits_and_idioms_only(self, ro):
-        counts = {ro.FINDING_PREFIX_MUST: 0, ro.FINDING_PREFIX_SHOULD: 0,
-                  ro.FINDING_PREFIX_NIT: 2, ro.FINDING_PREFIX_IDIOMS: 1}
+        counts = {"M": 0, "S": 0,
+                  "N": 2, "I": 1}
         result = ro.mechanical_verdict(counts)
         assert result.startswith("Approve")
         assert "2 nit" in result
         assert "1 idiom" in result
 
     def test_no_findings(self, ro):
-        counts = {ro.FINDING_PREFIX_MUST: 0, ro.FINDING_PREFIX_SHOULD: 0,
-                  ro.FINDING_PREFIX_NIT: 0, ro.FINDING_PREFIX_IDIOMS: 0}
+        counts = {"M": 0, "S": 0,
+                  "N": 0, "I": 0}
         result = ro.mechanical_verdict(counts)
         assert "no findings" in result
 
     def test_zero_counts_for_some(self, ro):
-        counts = {ro.FINDING_PREFIX_MUST: 1, ro.FINDING_PREFIX_SHOULD: 0,
-                  ro.FINDING_PREFIX_NIT: 0, ro.FINDING_PREFIX_IDIOMS: 0}
+        counts = {"M": 1, "S": 0,
+                  "N": 0, "I": 0}
         result = ro.mechanical_verdict(counts)
         assert "Request changes" in result
         assert "1 must-fix" in result
@@ -1843,8 +1843,8 @@ class TestPromptStats:
 class TestPostProcessFindings:
     def test_skips_verify_when_no_wt_path(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = ro.SECTION_MUST_FIX
-        prefix = ro.FINDING_PREFIX_MUST
+        must = "Must fix"
+        prefix = "M"
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}1]** **`missing.py:10`** — bug\n"
@@ -1858,8 +1858,8 @@ class TestPostProcessFindings:
 
     def test_strips_evidence_blocks(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = ro.SECTION_MUST_FIX
-        prefix = ro.FINDING_PREFIX_MUST
+        must = "Must fix"
+        prefix = "M"
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}1]** **`foo.py:1`** — issue\n"
@@ -1872,8 +1872,8 @@ class TestPostProcessFindings:
 
     def test_strips_stable_ids(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = ro.SECTION_MUST_FIX
-        prefix = ro.FINDING_PREFIX_MUST
+        must = "Must fix"
+        prefix = "M"
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}1]** <!-- sid:abc12345 --> **`foo.py:1`** — issue\n"
@@ -1883,8 +1883,8 @@ class TestPostProcessFindings:
 
     def test_renumbers_findings(self, ro, tmp_path):
         review = tmp_path / "review.md"
-        must = ro.SECTION_MUST_FIX
-        prefix = ro.FINDING_PREFIX_MUST
+        must = "Must fix"
+        prefix = "M"
         review.write_text(
             f"## {must}\n"
             f"- **[{prefix}3]** **`foo.py:1`** — first\n"
@@ -1902,8 +1902,8 @@ class TestPostProcessFindings:
 class TestBuildMechanicalReview:
     @staticmethod
     def _must_fix_content(ro, count=1):
-        must = ro.SECTION_MUST_FIX
-        prefix = ro.FINDING_PREFIX_MUST
+        must = "Must fix"
+        prefix = "M"
         lines = [f"## {must}"]
         for i in range(1, count + 1):
             lines.append(f"- **[{prefix}{i}]** **`f{i}.py`** — bug {i}")
@@ -1945,7 +1945,7 @@ class TestBuildMechanicalReview:
         assert "## Verdict" not in result
 
     def test_no_findings_verdict(self, ro):
-        must = ro.SECTION_MUST_FIX
+        must = "Must fix"
         result = ro.build_mechanical_review(
             f"## {must}\n_none._\n",
             title="# Review",

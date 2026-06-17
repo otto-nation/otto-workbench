@@ -11,11 +11,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from review_common import (
-    FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
-    FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
-    FINDING_SECTIONS, SECTION_FILE_TRIAGE,
-    _SEVERITY_NAMES, _info, _warn,
+    SEVERITIES, SECTION_FILE_TRIAGE,
+    severity_by_key, _info, _warn,
 )
+
+# Derived from SEVERITIES registry — same shape as the old constants
+FINDING_SECTIONS = [(s.section, s.key) for s in SEVERITIES]
+FINDING_PREFIX_MUST = severity_by_key("M").key
+FINDING_PREFIX_SHOULD = severity_by_key("S").key
+FINDING_PREFIX_NIT = severity_by_key("N").key
+FINDING_PREFIX_IDIOMS = severity_by_key("I").key
+
+# Severity header name -> key mapping (section + aliases, lowercased)
+_SEVERITY_NAMES: dict[str, str] = {}
+for _s in SEVERITIES:
+    _SEVERITY_NAMES[_s.section.lower()] = _s.key
+    for _alias in _s.aliases:
+        _SEVERITY_NAMES[_alias.lower()] = _s.key
 
 
 # ── Finding dataclass ────────────────────────────────────────────────────────

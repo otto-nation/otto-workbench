@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import re
 
-from review_common import (
-    SEVERITY_IDIOMS, SEVERITY_LABELS,
-    SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD,
-)
+from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
+
+# Derived from SEVERITIES registry — same shape as the old constants
+SEVERITY_LABELS = {s.key: s.label for s in SEVERITIES}
+SEVERITY_MUST = severity_by_key("M").key
+SEVERITY_SHOULD = severity_by_key("S").key
+SEVERITY_NIT = severity_by_key("N").key
+SEVERITY_IDIOMS = severity_by_key("I").key
 
 
 # ── Classification constants ────────────────────────────────────────────────

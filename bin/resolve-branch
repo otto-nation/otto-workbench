@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Resolve a fuzzy branch name to an exact git branch.
+#
+# Usage: resolve-branch <input>
+#
+# Resolution cascade (stops at first match):
+#   1. Exact match against local and remote branches
+#   2. Worktree directory basename match
+#   3. Separator normalization (- → / for first two segments)
+#   4. Case-insensitive fuzzy search
+#
+# Output: resolved branch name on stdout (cleaned of remotes/origin/ prefix)
+# Exit:   0 on success, 1 on failure (error/candidates on stderr)
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <input>
+
+Resolve a fuzzy branch name to an exact git branch.
+
+Resolution cascade (stops at first match):
+  1. Exact match against local and remote branches
+  2. Worktree directory basename match
+  3. Separator normalization (- → / for first two segments)
+  4. Case-insensitive fuzzy search
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+_clean_branch() {
+  local raw="$1"
+  raw="${raw#\* }"
+  raw="${raw#+ }"
+  raw="${raw#"${raw%%[! ]*}"}"
+  raw="${raw#remotes/origin/}"
+  echo "$raw"
+}
+
+_exact_match() {
+  local input="$1"
+  local result
+  result=$(git branch -a --list "$input" "origin/$input" 2>/dev/null) || true
+  if [[ -n "$result" ]]; then
+    _clean_branch "$(echo "$result" | head -1)"
+    return 0
+  fi
+  return 1
+}
+
+_worktree_match() {
+  local input="$1"
+  local line basename branch
+  while IFS= read -r line; do
+    basename=$(echo "$line" | awk '{print $1}')
+    basename="${basename##*/}"
+    if [[ "$basename" == "$input" ]]; then
+      branch=$(echo "$line" | grep -o '\[.*\]' | tr -d '[]') || true
+      if [[ -n "$branch" ]]; then
+        echo "$branch"
+        return 0
+      fi
+    fi
+  done < <(git worktree list 2>/dev/null)
+  return 1
+}
+
+_separator_match() {
+  local input="$1"
+  local normalized
+  normalized=$(echo "$input" | sed 's/-/\//; s/-/\//')
+  if [[ "$normalized" != "$input" ]]; then
+    _exact_match "$normalized"
+    return $?
+  fi
+  return 1
+}
+
+_fuzzy_match() {
+  local input="$1"
+  local matches match_count
+  matches=$(git branch -a 2>/dev/null | sed 's/^[ *]*//' | grep -i "$input") || true
+  if [[ -z "$matches" ]]; then
+    return 1
+  fi
+
+  match_count=$(echo "$matches" | wc -l | tr -d ' ')
+  if [[ "$match_count" -eq 1 ]]; then
+    _clean_branch "$matches"
+    return 0
+  fi
+
+  err "Multiple branches match '$input':"
+  while IFS= read -r line; do
+    echo "  $(_clean_branch "$line")" >&2
+  done <<< "$matches"
+  return 1
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+input="${1:-}"
+if [[ -z "$input" ]]; then
+  err "Usage: $(basename "$0") <input>"
+  exit 1
+fi
+
+_exact_match "$input" && exit 0
+_worktree_match "$input" && exit 0
+_separator_match "$input" && exit 0
+_fuzzy_match "$input" && exit 0
+
+err "No branch found matching '$input'"
+exit 1

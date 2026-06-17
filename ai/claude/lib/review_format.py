@@ -11,8 +11,6 @@ import re
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
 
-SEVERITY_LABELS = {s.key: s.label for s in SEVERITIES}
-
 
 # ── Classification constants ────────────────────────────────────────────────
 

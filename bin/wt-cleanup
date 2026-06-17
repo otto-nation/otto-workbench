@@ -87,12 +87,8 @@ _has_uncommitted_changes() {
 _describe_changes() {
   local idx="$1"
   echo "$worktrees" | jq -r "
-    .[$idx].working_tree |
-    [if .staged then \"staged\" else empty end,
-     if .modified then \"modified\" else empty end,
-     if .untracked then \"untracked\" else empty end,
-     if .renamed then \"renamed\" else empty end,
-     if .deleted then \"deleted\" else empty end] | join(\", \")"
+    .[$idx].working_tree | to_entries
+    | map(select(.value == true) | .key) | join(\", \")"
 }
 
 _is_merged() {
@@ -144,10 +140,9 @@ for ((i = 0; i < count; i++)); do
   [[ "$is_current" == "true" ]] && continue
 
   if _has_uncommitted_changes "$i"; then
-    if _is_merged "$main_state" "$symbols" "$branch"; then
-      dirty_merged_branches+=("$branch")
-      dirty_merged_changes+=("$(_describe_changes "$i")")
-    fi
+    _is_merged "$main_state" "$symbols" "$branch" \
+      && dirty_merged_branches+=("$branch") \
+      && dirty_merged_changes+=("$(_describe_changes "$i")")
     continue
   fi
 

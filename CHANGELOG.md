@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/otto-nation/otto-workbench/compare/v1.25.0...v1.26.0) (2026-06-17)
+
+
+### Features
+
+* **self-review-fix:** auto-commit applied fixes ([#270](https://github.com/otto-nation/otto-workbench/issues/270)) ([1399213](https://github.com/otto-nation/otto-workbench/commit/1399213ee8e306ab89edfc5503ccbc105ebf7383))
+
 ## [1.25.0](https://github.com/otto-nation/otto-workbench/compare/v1.24.0...v1.25.0) (2026-06-17)
 
 

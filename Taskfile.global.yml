@@ -118,6 +118,8 @@ tasks:
     desc: "Reword a commit message with AI (default: HEAD; or: task reword -- SHA)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    env:
+      _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
@@ -126,7 +128,7 @@ tasks:
         load_ai_command || exit 1
 
         # CLI_ARGS contains everything after "--"; strip whitespace so empty args become HEAD
-        RAW_ARG="{{.CLI_ARGS}}"
+        RAW_ARG="$_CLI_ARGS"
         COMMIT_SHA="${RAW_ARG// /}"
         COMMIT_SHA="${COMMIT_SHA:-HEAD}"
 
@@ -213,12 +215,14 @@ tasks:
     desc: "Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    env:
+      _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
-        load_pr "{{.CLI_ARGS}}" || exit 1
+        load_pr "$_CLI_ARGS" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         echo "→ Analyzing changes: $BRANCH"
@@ -235,12 +239,14 @@ tasks:
     desc: "Create AI-powered pull request (-- --no-issue, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    env:
+      _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
-        load_pr "{{.CLI_ARGS}}" || exit 1
+        load_pr "$_CLI_ARGS" || exit 1
         push_branch "$BRANCH" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
@@ -268,12 +274,14 @@ tasks:
     desc: "Update current PR description (-- --no-issue, --base <branch>, --title <title>, --body <body>)"
     silent: true
     dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
+    env:
+      _CLI_ARGS: '{{.CLI_ARGS}}'
     cmds:
       - |
         . "{{.TASKFILE_DIR}}/lib/ai/core.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
-        load_pr "{{.CLI_ARGS}}" || exit 1
+        load_pr "$_CLI_ARGS" || exit 1
 
         echo "→ Checking for existing PR..."
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)

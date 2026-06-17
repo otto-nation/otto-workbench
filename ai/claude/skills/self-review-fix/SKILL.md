@@ -94,6 +94,8 @@ resolution, and fresh-vs-existing review detection internally.
 
 ### Step 4: Report results
 
+Fixes are automatically committed by `claude-review` — no manual commit needed.
+
 Read the review file **after the command completes** and present:
 - Extract fixed/skipped counts from the `<!-- fix-pass: N fixed, M skipped -->`
   comment — this is the authoritative source, not manual checkbox counting
@@ -108,8 +110,10 @@ what is auto-fixable; trust its judgment.
 
 ## Safety
 
+- **Auto-committed.** Applied fixes are committed automatically after the fix
+  pass completes. The commit message includes fix/skip counts.
 - **Non-destructive.** All fixes are applied via Edit tool — individual changes
-  are reviewable in the git diff.
+  are reviewable in the git log.
 - **Idempotent.** Running twice on the same review skips already-fixed findings.
 - **Review preserved.** The review file is kept in `~/.config/workbench/reviews/`
   for retro analysis — it is not deleted after fixing.

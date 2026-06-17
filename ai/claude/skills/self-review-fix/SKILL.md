@@ -57,7 +57,7 @@ Bash call — never chain variable assignments with `&&`.
 
 1. Get the repo name:
    ```bash
-   basename -s .git "$(git remote get-url origin)"
+   git remote get-url origin | xargs basename -s .git
    ```
 
 2. Sanitize the branch name and check for the review file:

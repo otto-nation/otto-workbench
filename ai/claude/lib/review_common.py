@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -20,45 +21,32 @@ SEVERITY_SHOULD = "S"
 SEVERITY_NIT = "N"
 SEVERITY_IDIOMS = "I"
 
-SEVERITY_LABELS = {
-    SEVERITY_MUST: "must-fix",
-    SEVERITY_SHOULD: "should-fix",
-    SEVERITY_NIT: "nit",
-    SEVERITY_IDIOMS: "idiom",
-}
 
-SECTION_FILE_TRIAGE = "File Triage"
-SECTION_MUST_FIX = "Must fix"
-SECTION_SHOULD_FIX = "Should fix"
-SECTION_NIT = "Nit"
-SECTION_IDIOMS = "Idioms"
+@dataclass(frozen=True)
+class SeverityConfig:
+    key: str
+    label: str
+    section: str
+    posting: str
+    body_group: str
+    aliases: tuple[str, ...] = ()
 
-FINDING_PREFIX_MUST = "M"
-FINDING_PREFIX_SHOULD = "S"
-FINDING_PREFIX_NIT = "N"
-FINDING_PREFIX_IDIOMS = "I"
 
-FINDING_SECTIONS = [
-    (SECTION_MUST_FIX, FINDING_PREFIX_MUST),
-    (SECTION_SHOULD_FIX, FINDING_PREFIX_SHOULD),
-    (SECTION_NIT, FINDING_PREFIX_NIT),
-    (SECTION_IDIOMS, FINDING_PREFIX_IDIOMS),
+SEVERITIES = [
+    SeverityConfig(SEVERITY_MUST,    "must-fix",  "Must fix",  posting="inline", body_group="by_severity"),
+    SeverityConfig(SEVERITY_SHOULD,  "should-fix", "Should fix", posting="inline", body_group="by_severity"),
+    SeverityConfig(SEVERITY_NIT,     "nit",       "Nit",        posting="body",   body_group="by_file", aliases=("Nits",)),
+    SeverityConfig(SEVERITY_IDIOMS,  "idiom",     "Idioms",     posting="body",   body_group="by_file"),
 ]
 
-SECTION_HEADERS = {
-    "## must fix": SEVERITY_MUST,
-    "## should fix": SEVERITY_SHOULD,
-    "## nit": SEVERITY_NIT,
-    "## idioms": SEVERITY_IDIOMS,
-}
+_SEVERITY_BY_KEY = {s.key: s for s in SEVERITIES}
 
-_SEVERITY_NAMES = {
-    "must fix": SEVERITY_MUST,
-    "should fix": SEVERITY_SHOULD,
-    "nit": SEVERITY_NIT,
-    "nits": SEVERITY_NIT,
-    "idioms": SEVERITY_IDIOMS,
-}
+
+def severity_by_key(key: str) -> SeverityConfig:
+    return _SEVERITY_BY_KEY[key]
+
+
+SECTION_FILE_TRIAGE = "File Triage"
 
 
 # ── Modes ────────────────────────────────────────────────────────────────────

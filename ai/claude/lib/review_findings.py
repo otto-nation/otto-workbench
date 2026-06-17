@@ -11,11 +11,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from review_common import (
-    FINDING_PREFIX_IDIOMS, FINDING_PREFIX_MUST,
-    FINDING_PREFIX_NIT, FINDING_PREFIX_SHOULD,
-    FINDING_SECTIONS, SECTION_FILE_TRIAGE,
-    _SEVERITY_NAMES, _info, _warn,
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
+    SECTION_FILE_TRIAGE,
+    _info, _warn,
 )
+
+_FINDING_SECTIONS = [(s.section, s.key) for s in SEVERITIES]
+
+# Severity header name -> key mapping (section + aliases, lowercased)
+def _build_severity_names() -> dict[str, str]:
+    names: dict[str, str] = {}
+    for s in SEVERITIES:
+        names[s.section.lower()] = s.key
+        # replace("-", " ") mirrors _match_severity_header's input normalisation so
+        # future hyphenated section names (e.g. "Should-fix") still resolve correctly.
+        names[s.section.lower().replace("-", " ")] = s.key
+        for alias in s.aliases:
+            names[alias.lower()] = s.key
+    return names
+
+
+_SEVERITY_NAMES = _build_severity_names()
 
 
 # ── Finding dataclass ────────────────────────────────────────────────────────
@@ -215,7 +231,7 @@ def _clean_section_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-_VALID_SECTION_HEADERS = {s.lower() for s, _ in FINDING_SECTIONS} | {SECTION_FILE_TRIAGE.lower()}
+_VALID_SECTION_HEADERS = {s.section.lower() for s in SEVERITIES} | {SECTION_FILE_TRIAGE.lower()}
 
 
 def _validate_group_output(output_path: str, group_name: str) -> bool:
@@ -278,7 +294,7 @@ def renumber_findings(review_file: str) -> None:
     if not path.exists():
         return
     text = path.read_text()
-    for _, prefix in FINDING_SECTIONS:
+    for _, prefix in _FINDING_SECTIONS:
         text = _renumber_prefix(text, prefix)
     path.write_text(text)
 
@@ -340,7 +356,7 @@ def _merge_one_review(
         cleaned = _clean_triage(triage)
         if cleaned:
             merged_triage += cleaned + "\n"
-    for section, prefix in FINDING_SECTIONS:
+    for section, prefix in _FINDING_SECTIONS:
         raw = _clean_section_text(_extract_section(content, section))
         text, count = renumber_section(prefix, raw, offsets[section])
         if text:
@@ -363,8 +379,8 @@ def _dedup_triage(triage: str) -> str:
 
 def merge_reviews(group_files: list[str]) -> str:
     merged_triage = ""
-    merged: dict[str, str] = {section: "" for section, _ in FINDING_SECTIONS}
-    offsets: dict[str, int] = {section: 0 for section, _ in FINDING_SECTIONS}
+    merged: dict[str, str] = {section: "" for section, _ in _FINDING_SECTIONS}
+    offsets: dict[str, int] = {section: 0 for section, _ in _FINDING_SECTIONS}
 
     for path in group_files:
         p = Path(path)
@@ -374,12 +390,12 @@ def merge_reviews(group_files: list[str]) -> str:
 
     merged_triage = _dedup_triage(merged_triage)
 
-    for section, prefix in FINDING_SECTIONS:
+    for section, prefix in _FINDING_SECTIONS:
         if merged[section]:
             merged[section] = _dedup_findings(merged[section], prefix)
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
-    for section, _ in FINDING_SECTIONS:
+    for section, _ in _FINDING_SECTIONS:
         if merged[section]:
             parts.append(f"## {section}\n{merged[section]}")
     return "\n".join(parts)
@@ -394,12 +410,12 @@ def _count_findings(text: str) -> dict[str, int]:
             text,
             re.MULTILINE,
         )))
-        for _, prefix in FINDING_SECTIONS
+        for _, prefix in _FINDING_SECTIONS
     }
 
 
 def _has_findings(merged_content: str) -> bool:
-    for _, prefix in FINDING_SECTIONS:
+    for _, prefix in _FINDING_SECTIONS:
         if re.search(rf"\[{prefix}\d+\]", merged_content):
             return True
     return False
@@ -526,7 +542,7 @@ def verify_findings(review_file: str, wt_path: str) -> list[str]:
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
     for f in findings:
-        if f["severity"] not in ("M", "S"):
+        if f["severity"] not in (SEVERITY_MUST, SEVERITY_SHOULD):
             continue
         evidence = _extract_evidence(f["body"])
         if not _verify_finding(f["path"], evidence, wt_path):
@@ -622,20 +638,15 @@ def strip_stable_ids(review_file: str) -> None:
 
 # ── Mechanical verdict and review assembly ──────────────────────────────────
 
-_VERDICT_LABELS = [
-    (FINDING_PREFIX_MUST, "must-fix"),
-    (FINDING_PREFIX_SHOULD, "should-fix"),
-    (FINDING_PREFIX_NIT, "nit"),
-    (FINDING_PREFIX_IDIOMS, "idiom"),
-]
+_VERDICT_LABELS = [(s.key, s.label) for s in SEVERITIES]
 
 _MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
 
 
 def mechanical_verdict(counts: dict[str, int]) -> str:
-    parts = [f"{counts[p]} {label}" for p, label in _VERDICT_LABELS if counts.get(p)]
-    must = counts.get(FINDING_PREFIX_MUST, 0)
-    should = counts.get(FINDING_PREFIX_SHOULD, 0)
+    parts = [f"{counts[key]} {label}" for key, label in _VERDICT_LABELS if counts.get(key)]
+    must = counts.get(SEVERITY_MUST, 0)
+    should = counts.get(SEVERITY_SHOULD, 0)
 
     if must:
         action = "Request changes"

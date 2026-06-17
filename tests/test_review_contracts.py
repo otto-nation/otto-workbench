@@ -115,36 +115,73 @@ class TestTemplateFileConsistency:
 
 
 class TestSeverityConsistency:
-    """Severity-related constants stay in sync across review_common."""
+    """Severity registry is internally consistent."""
 
-    def test_finding_sections_cover_all_severity_labels(self):
-        severity_keys = set(review_common.SEVERITY_LABELS.keys())
-        section_prefixes = {prefix for _, prefix in review_common.FINDING_SECTIONS}
-        missing = severity_keys - section_prefixes
-        assert not missing, (
-            f"SEVERITY_LABELS keys not covered in FINDING_SECTIONS prefixes: {missing}"
-        )
+    def test_every_severity_key_is_single_char(self):
+        for s in review_common.SEVERITIES:
+            assert len(s.key) == 1, f"{s.key} is not a single character"
 
-    def test_section_headers_cover_all_severities(self):
-        severity_keys = set(review_common.SEVERITY_LABELS.keys())
-        header_values = set(review_common.SECTION_HEADERS.values())
-        missing = severity_keys - header_values
-        assert not missing, (
-            f"SEVERITY_LABELS keys not covered in SECTION_HEADERS values: {missing}"
-        )
+    def test_posting_values_are_valid(self):
+        for s in review_common.SEVERITIES:
+            assert s.posting in ("inline", "body"), f"{s.key} has invalid posting: {s.posting}"
 
-    def test_finding_prefix_constants_match_sections(self):
-        # Collect all FINDING_PREFIX_* constant values from the module
-        prefix_constants = set()
-        for name in dir(review_common):
-            if name.startswith("FINDING_PREFIX_"):
-                prefix_constants.add(getattr(review_common, name))
+    def test_body_group_values_are_valid(self):
+        for s in review_common.SEVERITIES:
+            assert s.body_group in ("by_severity", "by_file"), f"{s.key} has invalid body_group: {s.body_group}"
 
-        section_prefixes = {prefix for _, prefix in review_common.FINDING_SECTIONS}
-        assert prefix_constants == section_prefixes, (
-            f"FINDING_PREFIX_* values {prefix_constants} != "
-            f"FINDING_SECTIONS prefixes {section_prefixes}"
-        )
+    def test_finding_id_regex_accepts_all_severity_keys(self):
+        keys = [s.key for s in review_common.SEVERITIES]
+        regex_keys = review_findings.FINDING_ID_RE.pattern
+        for key in keys:
+            assert key in regex_keys, f"FINDING_ID_RE does not include severity key {key}"
+
+
+# ── 2b. TestSeverityRegistry ─────────────────────────────────────────────────
+
+
+class TestSeverityRegistry:
+    """SeverityConfig registry provides all severity metadata."""
+
+    def test_severities_has_four_entries(self):
+        assert len(review_common.SEVERITIES) == 4
+
+    def test_severity_keys_are_unique(self):
+        keys = [s.key for s in review_common.SEVERITIES]
+        assert len(keys) == len(set(keys))
+
+    def test_severity_keys_are_msni(self):
+        keys = [s.key for s in review_common.SEVERITIES]
+        assert keys == ["M", "S", "N", "I"]
+
+    def test_severity_by_key_returns_correct_config(self):
+        m = review_common.severity_by_key("M")
+        assert m.label == "must-fix"
+        assert m.section == "Must fix"
+        assert m.posting == "inline"
+        assert m.body_group == "by_severity"
+
+    def test_severity_by_key_unknown_raises(self):
+        with pytest.raises(KeyError):
+            review_common.severity_by_key("X")
+
+    def test_nit_is_body_posting(self):
+        n = review_common.severity_by_key("N")
+        assert n.posting == "body"
+        assert n.body_group == "by_file"
+
+    def test_idiom_is_body_posting(self):
+        i = review_common.severity_by_key("I")
+        assert i.posting == "body"
+        assert i.body_group == "by_file"
+
+    def test_nit_aliases_include_nits(self):
+        n = review_common.severity_by_key("N")
+        assert "Nits" in n.aliases
+
+    def test_severity_config_is_frozen(self):
+        m = review_common.severity_by_key("M")
+        with pytest.raises(AttributeError):
+            m.key = "X"
 
 
 # ── 3. TestFindingIdRegex ────────────────────────────────────────────────────

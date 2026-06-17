@@ -27,7 +27,7 @@ import review_format as _rfmt  # noqa: E402
 import review_github as _rg  # noqa: E402
 import review_posting as _rp  # noqa: E402
 
-from review_common import SEVERITY_LABELS, _err, _info, _warn  # noqa: E402
+from review_common import SEVERITIES, _err, _info, _warn  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
     Finding, parse_findings,
@@ -94,7 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description="Post a review file to GitHub")
     parser.add_argument("--pr", required=True, help="PR number")
     parser.add_argument("--review-file", required=True, help="Path to review markdown file")
-    all_sevs = ",".join(SEVERITY_LABELS)
+    all_sevs = ",".join(s.key for s in SEVERITIES)
     parser.add_argument("--severity", default=all_sevs,
                         help=f"Severity levels to post (comma-separated, default: {all_sevs})")
     parser.add_argument("--dry-run", action="store_true",

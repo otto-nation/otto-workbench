@@ -34,8 +34,9 @@ protocol before taking action. Agent files live at `~/.claude/agents/`.
 ## claude-review Development
 
 When adding or modifying a review phase, verify these integration points:
-- `review-orchestrate`: `FINDING_SECTIONS` list, `SECTION_*` and `FINDING_PREFIX_*` constants, `renumber_section()`, `merge_reviews()`, `build_prompt()` template rendering
-- `review-post`: `SECTION_HEADERS`, `SEVERITY_LABELS`, `renumber_for_posting()`, `parse_findings()` parser
+- `review_common.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
+- `review-orchestrate`: `_FINDING_SECTIONS` (derived from registry), `renumber_section()`, `merge_reviews()`, `build_prompt()` template rendering
+- `review-post`: `renumber_for_posting()`, `parse_findings()` parser, `classify_findings()` posting routing
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
 

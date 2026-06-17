@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.25.0](https://github.com/otto-nation/otto-workbench/compare/v1.24.0...v1.25.0) (2026-06-17)
+
+
+### Features
+
+* add resolve-branch script for fuzzy branch resolution ([#263](https://github.com/otto-nation/otto-workbench/issues/263)) ([afd7e11](https://github.com/otto-nation/otto-workbench/commit/afd7e116c45375da7ea6016fd21d6c37474981e4))
+* **review:** severity registry with posting routing ([#267](https://github.com/otto-nation/otto-workbench/issues/267)) ([de11526](https://github.com/otto-nation/otto-workbench/commit/de11526285dc561cfa1b4c7b7972fd1559795bf3))
+
 ## [1.24.0](https://github.com/otto-nation/otto-workbench/compare/v1.23.1...v1.24.0) (2026-06-16)
 
 

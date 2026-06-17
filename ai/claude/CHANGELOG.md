@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.20.0...claude-review-v1.21.0) (2026-06-17)
+
+
+### Features
+
+* **self-review-fix:** auto-commit applied fixes ([#270](https://github.com/otto-nation/otto-workbench/issues/270)) ([1399213](https://github.com/otto-nation/otto-workbench/commit/1399213ee8e306ab89edfc5503ccbc105ebf7383))
+
 ## [1.20.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.19.1...claude-review-v1.20.0) (2026-06-17)
 
 

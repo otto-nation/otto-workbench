@@ -105,10 +105,8 @@ class CIState:
 def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
     """Classify a CI job by name pattern, with infra override from annotations."""
     for annotation in annotations:
-        annotation_lower = annotation.lower()
-        for signature in INFRA_SIGNATURES:
-            if signature in annotation_lower:
-                return FailureKind.INFRA
+        if any(sig in annotation.lower() for sig in INFRA_SIGNATURES):
+            return FailureKind.INFRA
 
     for pattern, kind in JOB_PATTERNS:
         if pattern.search(job_name):
@@ -276,6 +274,25 @@ def compute_progression(
 
 # ── Root-cause grouping ────────────────────────────────────────────────────
 
+def _partition_group_items(
+    group: FailureGroup,
+    keyed: dict[tuple[str, int], list[FailureItem]],
+    keyed_jobs: dict[tuple[str, int], str],
+    keyed_kinds: dict[tuple[str, int], FailureKind],
+) -> list[FailureItem]:
+    """Partition items into keyed (by file+line) and orphans."""
+    orphan_items: list[FailureItem] = []
+    for item in group.items:
+        if item.file is None or item.line is None:
+            orphan_items.append(item)
+            continue
+        key = (item.file, item.line)
+        keyed.setdefault(key, []).append(item)
+        keyed_jobs.setdefault(key, group.job)
+        keyed_kinds.setdefault(key, group.kind)
+    return orphan_items
+
+
 def group_by_root_cause(groups: list[FailureGroup]) -> list[FailureGroup]:
     """Deduplicate failure items across groups by (file, line).
 
@@ -288,16 +305,7 @@ def group_by_root_cause(groups: list[FailureGroup]) -> list[FailureGroup]:
     ungrouped: list[FailureGroup] = []
 
     for group in groups:
-        orphan_items: list[FailureItem] = []
-        for item in group.items:
-            if item.file is not None and item.line is not None:
-                key = (item.file, item.line)
-                keyed.setdefault(key, []).append(item)
-                if key not in keyed_jobs:
-                    keyed_jobs[key] = group.job
-                    keyed_kinds[key] = group.kind
-            else:
-                orphan_items.append(item)
+        orphan_items = _partition_group_items(group, keyed, keyed_jobs, keyed_kinds)
         if orphan_items:
             ungrouped.append(FailureGroup(
                 job=group.job, kind=group.kind,
@@ -316,6 +324,24 @@ def group_by_root_cause(groups: list[FailureGroup]) -> list[FailureGroup]:
 
 # ── State sync ─────────────────────────────────────────────────────────────
 
+def _carry_forward_item(
+    item: FailureItem, prior_items: dict[str, FailureItem],
+) -> FailureItem:
+    """Carry forward diagnosis/fix_sha from a prior run's matching item."""
+    prior = prior_items.get(item.id)
+    if not prior or not (prior.diagnosis or prior.fix_sha):
+        return item
+    return FailureItem(
+        id=item.id,
+        annotation=item.annotation,
+        file=item.file,
+        line=item.line,
+        diagnosis=prior.diagnosis if item.diagnosis is None else item.diagnosis,
+        fix_sha=prior.fix_sha if item.fix_sha is None else item.fix_sha,
+        outcome=item.outcome,
+    )
+
+
 def sync_state(state: CIState, run: RunState) -> CIState:
     """Merge a new run into state, preserving prior diagnosis and fix history.
 
@@ -327,21 +353,7 @@ def sync_state(state: CIState, run: RunState) -> CIState:
 
     synced_failures: dict[str, FailureGroup] = {}
     for group_key, group in run.failures.items():
-        synced_items: list[FailureItem] = []
-        for item in group.items:
-            prior = prior_items.get(item.id)
-            if prior and (prior.diagnosis or prior.fix_sha):
-                synced_items.append(FailureItem(
-                    id=item.id,
-                    annotation=item.annotation,
-                    file=item.file,
-                    line=item.line,
-                    diagnosis=prior.diagnosis if item.diagnosis is None else item.diagnosis,
-                    fix_sha=prior.fix_sha if item.fix_sha is None else item.fix_sha,
-                    outcome=item.outcome,
-                ))
-            else:
-                synced_items.append(item)
+        synced_items = [_carry_forward_item(item, prior_items) for item in group.items]
         synced_failures[group_key] = FailureGroup(
             job=group.job, kind=group.kind,
             items=tuple(synced_items),
@@ -386,11 +398,10 @@ def render_dashboard(run: RunState, progression: dict[str, Outcome]) -> str:
         outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
 
     if outcome_counts:
-        parts = []
-        for outcome in Outcome:
-            count = outcome_counts.get(outcome, 0)
-            if count:
-                parts.append(f"{count} {outcome.value}")
+        parts = [
+            f"{outcome_counts[o]} {o.value}"
+            for o in Outcome if outcome_counts.get(o, 0)
+        ]
         lines.append("Progression: " + ", ".join(parts))
         lines.append("")
 

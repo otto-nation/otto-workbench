@@ -127,6 +127,47 @@ def _build_failure_id(annotation: dict, job_name: str) -> str:
     return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
 
 
+def _log_fallback_annotations(repo: str, run_id: int) -> tuple[list[dict], list[str]]:
+    """Fetch failed logs and convert to synthetic annotations."""
+    log_text = _fetch_failed_logs(repo, run_id)
+    if not log_text:
+        return [], []
+    annotations = [{"message": log_text[-2000:], "path": "", "start_line": 0, "title": ""}]
+    return annotations, [a["message"] for a in annotations]
+
+
+def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.FailureItem]:
+    """Convert raw annotations to FailureItems, skipping notices."""
+    items: list[ci.FailureItem] = []
+    for ann in annotations:
+        if ann.get("annotation_level") == "notice":
+            continue
+        item_id = _build_failure_id(ann, job_name)
+        items.append(ci.FailureItem(
+            id=item_id,
+            annotation=ann.get("message", ann.get("title", "")),
+            file=ann.get("path") or None,
+            line=ann.get("start_line") or None,
+            diagnosis=None,
+            fix_sha=None,
+            outcome=None,
+        ))
+    return items
+
+
+def _fallback_item(job_name: str) -> ci.FailureItem:
+    """Create a placeholder item for a failed job with no annotations."""
+    return ci.FailureItem(
+        id=f"{job_name}-no-annotation",
+        annotation=f"Job '{job_name}' failed with no annotations",
+        file=None,
+        line=None,
+        diagnosis=None,
+        fix_sha=None,
+        outcome=None,
+    )
+
+
 def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
     jobs = run_data.get("jobs", [])
@@ -145,37 +186,10 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         kind = ci.classify_job(job_name, annotation_texts)
 
         if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.INFRA):
-            log_text = _fetch_failed_logs(repo, run_data["databaseId"])
-            if log_text:
-                annotations = [{"message": log_text[-2000:], "path": "", "start_line": 0, "title": ""}]
-                annotation_texts = [a["message"] for a in annotations]
-                kind = ci.classify_job(job_name, annotation_texts)
+            annotations, annotation_texts = _log_fallback_annotations(repo, run_data["databaseId"])
+            kind = ci.classify_job(job_name, annotation_texts) if annotation_texts else kind
 
-        items: list[ci.FailureItem] = []
-        if annotations:
-            for ann in annotations:
-                if ann.get("annotation_level") == "notice":
-                    continue
-                item_id = _build_failure_id(ann, job_name)
-                items.append(ci.FailureItem(
-                    id=item_id,
-                    annotation=ann.get("message", ann.get("title", "")),
-                    file=ann.get("path") or None,
-                    line=ann.get("start_line") or None,
-                    diagnosis=None,
-                    fix_sha=None,
-                    outcome=None,
-                ))
-        else:
-            items.append(ci.FailureItem(
-                id=f"{job_name}-no-annotation",
-                annotation=f"Job '{job_name}' failed with no annotations",
-                file=None,
-                line=None,
-                diagnosis=None,
-                fix_sha=None,
-                outcome=None,
-            ))
+        items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
 
         if items:
             job_key = job_name.lower().replace(" ", "-").replace("/", "-")
@@ -283,9 +297,10 @@ def main():
     if prior_run:
         prior_item_ids = ci.collect_item_ids(prior_run.failures)
         current_item_ids = ci.collect_item_ids(run_state.failures)
-        for item_id in prior_item_ids:
-            if item_id not in current_item_ids:
-                report["resolved_since_prior"].append(item_id)
+        report["resolved_since_prior"] = [
+            item_id for item_id in prior_item_ids
+            if item_id not in current_item_ids
+        ]
 
     json.dump(report, sys.stdout, indent=2)
     print()

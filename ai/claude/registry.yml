@@ -74,6 +74,11 @@ tools:
     when_to_use: "Called by the retro skill to replace Phase 1 (Orient); fetches PR comments from all registered repos and outputs a structured markdown report"
     usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"
 
+  - name: ci-check
+    context: none
+    description: "Fetch CI run data, classify failures, and output status dashboard"
+    when_to_use: "Called by the ci-failures skill to fetch and classify GitHub Actions failures; not invoked directly"
+
   - name: run-auto-task
     context: none
     description: "Run a Claude Code skill as a headless background session with output logging"

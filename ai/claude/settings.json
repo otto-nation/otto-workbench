@@ -14,6 +14,10 @@
           {
             "type": "command",
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^[A-Z_][A-Z0-9_]*= ]]; then echo 'BLOCKED: VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See git-operations.md.' >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^cd[[:space:]] ]] && [[ \"$command\" == *'&&'* || \"$command\" == *';'* ]]; then echo 'BLOCKED: Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See git-operations.md.' >&2; exit 2; fi"
           }
         ]
       },

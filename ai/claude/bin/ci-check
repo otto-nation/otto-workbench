@@ -36,11 +36,11 @@ def _git_toplevel() -> Path:
     return Path(result.stdout.strip())
 
 
-def _current_branch() -> str:
+def _current_branch(cwd: str | None = None) -> str:
     """Get the current branch name."""
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=cwd,
     )
     return result.stdout.strip()
 
@@ -134,7 +134,7 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
 
     for job in jobs:
         conclusion = job.get("conclusion", "")
-        if conclusion == "success":
+        if conclusion in ("success", "skipped", "cancelled", "neutral"):
             continue
 
         job_name = job.get("name", "unknown")
@@ -204,7 +204,7 @@ def main():
 
     cwd = args.repo_dir or None
     repo = detect_repo(cwd)
-    branch = _current_branch()
+    branch = _current_branch(cwd)
     pr_number = None
 
     if args.pr:

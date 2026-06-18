@@ -21,7 +21,7 @@ class FailureKind(Enum):
     TEST = "test"
     BUILD = "build"
     INFRA = "infra"
-    FLAKY = "flaky"
+    FLAKY = "flaky"  # user-override only; not auto-detected by classify_job
 
 
 class Outcome(Enum):

@@ -236,3 +236,39 @@ def save_state(worktree_root: Path, state: CIState) -> None:
     with open(path, "w") as f:
         json.dump(state_to_dict(state), f, indent=2)
         f.write("\n")
+
+
+# ── Progression ────────────────────────────────────────────────────────────
+
+def collect_item_ids(failures: dict[str, FailureGroup]) -> dict[str, FailureItem]:
+    """Collect all failure items indexed by ID."""
+    result: dict[str, FailureItem] = {}
+    for group in failures.values():
+        for item in group.items:
+            result[item.id] = item
+    return result
+
+
+def compute_progression(
+    current_failures: dict[str, FailureGroup],
+    prior_failures: dict[str, FailureGroup],
+) -> dict[str, Outcome]:
+    """Compare current vs prior failures and assign outcomes.
+
+    Returns a mapping of current item IDs to their progression outcome.
+    Resolved items (in prior but not current) are not included.
+    """
+    current_items = collect_item_ids(current_failures)
+    prior_items = collect_item_ids(prior_failures)
+
+    result: dict[str, Outcome] = {}
+    for item_id, item in current_items.items():
+        prior_item = prior_items.get(item_id)
+        if prior_item is None:
+            result[item_id] = Outcome.NEW
+        elif prior_item.outcome == Outcome.FIXED:
+            result[item_id] = Outcome.REGRESSED
+        else:
+            result[item_id] = Outcome.PERSISTING
+
+    return result

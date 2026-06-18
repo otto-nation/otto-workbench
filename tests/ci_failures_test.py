@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     empty_state, load_state, save_state, state_to_dict, state_from_dict,
+    compute_progression,
 )
 
 
@@ -201,3 +202,66 @@ def test_state_roundtrip_with_run():
     assert len(restored_group.items) == 1
     assert restored_group.items[0].outcome == Outcome.FIXED
     assert restored_group.items[0].fix_sha == "abc123"
+
+
+# ── Progression Tests ──────────────────────────────────────────────────────
+
+def _make_item(item_id: str, **kwargs) -> FailureItem:
+    defaults = dict(
+        id=item_id, annotation="err", file="a.sh", line=1,
+        diagnosis=None, fix_sha=None, outcome=None,
+    )
+    defaults.update(kwargs)
+    return FailureItem(**defaults)
+
+
+def _make_group(job: str, kind: FailureKind, item_ids: list[str]) -> FailureGroup:
+    return FailureGroup(
+        job=job, kind=kind,
+        items=tuple(_make_item(i) for i in item_ids),
+    )
+
+
+def test_progression_all_new_when_no_prior():
+    current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a", "b"])}
+    result = compute_progression(current, {})
+    assert result["a"] == Outcome.NEW
+    assert result["b"] == Outcome.NEW
+
+
+def test_progression_persisting():
+    prior = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
+    current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
+    result = compute_progression(current, prior)
+    assert result["a"] == Outcome.PERSISTING
+
+
+def test_progression_resolved():
+    prior = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a", "b"])}
+    current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
+    result = compute_progression(current, prior)
+    assert result["a"] == Outcome.PERSISTING
+    assert "b" not in result  # resolved items not in current
+
+
+def test_progression_resolved_items():
+    prior = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a", "b"])}
+    current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
+    result = compute_progression(current, prior)
+    assert result["a"] == Outcome.PERSISTING
+
+
+def test_progression_regressed():
+    prior_item = _make_item("a", fix_sha="abc123", outcome=Outcome.FIXED)
+    prior = {"shellcheck": FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=(prior_item,))}
+    current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
+    result = compute_progression(current, prior)
+    assert result["a"] == Outcome.REGRESSED
+
+
+def test_progression_mixed():
+    prior = {"sc": _make_group("sc", FailureKind.LINT, ["a", "b"])}
+    current = {"sc": _make_group("sc", FailureKind.LINT, ["a", "c"])}
+    result = compute_progression(current, prior)
+    assert result["a"] == Outcome.PERSISTING
+    assert result["c"] == Outcome.NEW

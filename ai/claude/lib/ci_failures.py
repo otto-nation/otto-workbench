@@ -272,3 +272,88 @@ def compute_progression(
             result[item_id] = Outcome.PERSISTING
 
     return result
+
+
+# ── Root-cause grouping ────────────────────────────────────────────────────
+
+def group_by_root_cause(groups: list[FailureGroup]) -> list[FailureGroup]:
+    """Deduplicate failure items across groups by (file, line).
+
+    Items sharing the same file and line (both non-None) are merged into
+    one group. Items without file/line stay in their original group.
+    """
+    keyed: dict[tuple[str, int], list[FailureItem]] = {}
+    keyed_jobs: dict[tuple[str, int], str] = {}
+    keyed_kinds: dict[tuple[str, int], FailureKind] = {}
+    ungrouped: list[FailureGroup] = []
+
+    for group in groups:
+        orphan_items: list[FailureItem] = []
+        for item in group.items:
+            if item.file is not None and item.line is not None:
+                key = (item.file, item.line)
+                keyed.setdefault(key, []).append(item)
+                if key not in keyed_jobs:
+                    keyed_jobs[key] = group.job
+                    keyed_kinds[key] = group.kind
+            else:
+                orphan_items.append(item)
+        if orphan_items:
+            ungrouped.append(FailureGroup(
+                job=group.job, kind=group.kind,
+                items=tuple(orphan_items),
+            ))
+
+    merged = []
+    for key, items in keyed.items():
+        merged.append(FailureGroup(
+            job=keyed_jobs[key], kind=keyed_kinds[key],
+            items=tuple(items),
+        ))
+
+    return merged + ungrouped
+
+
+# ── State sync ─────────────────────────────────────────────────────────────
+
+def sync_state(state: CIState, run: RunState) -> CIState:
+    """Merge a new run into state, preserving prior diagnosis and fix history.
+
+    If a failure item existed in the prior run with a diagnosis or fix_sha,
+    those values carry forward to the new run's matching item.
+    """
+    prior_run = state.runs.get(state.latest_run_id) if state.latest_run_id else None
+    prior_items = collect_item_ids(prior_run.failures) if prior_run else {}
+
+    synced_failures: dict[str, FailureGroup] = {}
+    for group_key, group in run.failures.items():
+        synced_items: list[FailureItem] = []
+        for item in group.items:
+            prior = prior_items.get(item.id)
+            if prior and (prior.diagnosis or prior.fix_sha):
+                synced_items.append(FailureItem(
+                    id=item.id,
+                    annotation=item.annotation,
+                    file=item.file,
+                    line=item.line,
+                    diagnosis=prior.diagnosis if item.diagnosis is None else item.diagnosis,
+                    fix_sha=prior.fix_sha if item.fix_sha is None else item.fix_sha,
+                    outcome=item.outcome,
+                ))
+            else:
+                synced_items.append(item)
+        synced_failures[group_key] = FailureGroup(
+            job=group.job, kind=group.kind,
+            items=tuple(synced_items),
+        )
+
+    synced_run = RunState(
+        run_id=run.run_id, run_number=run.run_number,
+        head_sha=run.head_sha, status=run.status,
+        conclusion=run.conclusion, fetched_at=run.fetched_at,
+        failures=synced_failures,
+    )
+
+    state.runs[run.run_id] = synced_run
+    state.latest_run_id = run.run_id
+    return state

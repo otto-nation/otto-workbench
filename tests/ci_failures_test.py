@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     empty_state, load_state, save_state, state_to_dict, state_from_dict,
-    compute_progression,
+    compute_progression, group_by_root_cause, sync_state,
 )
 
 
@@ -265,3 +265,92 @@ def test_progression_mixed():
     result = compute_progression(current, prior)
     assert result["a"] == Outcome.PERSISTING
     assert result["c"] == Outcome.NEW
+
+
+# ── Root-Cause Grouping Tests ─────────────────────────────────────────────
+
+def test_group_by_root_cause_no_overlap():
+    g1 = FailureGroup(
+        job="shellcheck", kind=FailureKind.LINT,
+        items=(_make_item("a", file="a.sh", line=1),),
+    )
+    g2 = FailureGroup(
+        job="pytest", kind=FailureKind.TEST,
+        items=(_make_item("b", file="b.py", line=10),),
+    )
+    result = group_by_root_cause([g1, g2])
+    assert len(result) == 2
+
+
+def test_group_by_root_cause_same_file_and_line():
+    g1 = FailureGroup(
+        job="shellcheck", kind=FailureKind.LINT,
+        items=(_make_item("lint-a", file="a.sh", line=5),),
+    )
+    g2 = FailureGroup(
+        job="validate", kind=FailureKind.BUILD,
+        items=(_make_item("build-a", file="a.sh", line=5),),
+    )
+    result = group_by_root_cause([g1, g2])
+    assert len(result) == 1
+    assert len(result[0].items) == 2
+
+
+def test_group_by_root_cause_no_file_stays_separate():
+    g1 = FailureGroup(
+        job="shellcheck", kind=FailureKind.LINT,
+        items=(_make_item("a", file=None, line=None),),
+    )
+    g2 = FailureGroup(
+        job="pytest", kind=FailureKind.TEST,
+        items=(_make_item("b", file=None, line=None),),
+    )
+    result = group_by_root_cause([g1, g2])
+    assert len(result) == 2
+
+
+# ── State Sync Tests ──────────────────────────────────────────────────────
+
+def test_sync_state_adds_new_run():
+    state = empty_state("owner/repo", "branch")
+    run = RunState(
+        run_id=100, run_number=1, head_sha="aaa",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T14:30:00+00:00", failures={},
+    )
+    updated = sync_state(state, run)
+    assert 100 in updated.runs
+    assert updated.latest_run_id == 100
+
+
+def test_sync_state_preserves_prior_diagnosis():
+    diagnosed_item = _make_item("a", diagnosis="root cause found", fix_sha="abc")
+    prior_group = FailureGroup(
+        job="shellcheck", kind=FailureKind.LINT, items=(diagnosed_item,),
+    )
+    prior_run = RunState(
+        run_id=100, run_number=1, head_sha="aaa",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T00:00:00+00:00",
+        failures={"shellcheck": prior_group},
+    )
+    state = empty_state("owner/repo", "branch")
+    state.runs[100] = prior_run
+    state.latest_run_id = 100
+
+    new_item = _make_item("a")
+    new_group = FailureGroup(
+        job="shellcheck", kind=FailureKind.LINT, items=(new_item,),
+    )
+    new_run = RunState(
+        run_id=200, run_number=2, head_sha="bbb",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T15:00:00+00:00",
+        failures={"shellcheck": new_group},
+    )
+
+    updated = sync_state(state, new_run)
+    assert updated.latest_run_id == 200
+    synced_item = updated.runs[200].failures["shellcheck"].items[0]
+    assert synced_item.diagnosis == "root cause found"
+    assert synced_item.fix_sha == "abc"

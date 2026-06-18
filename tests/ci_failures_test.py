@@ -8,7 +8,7 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from ci_failures import FailureKind, Outcome
+from ci_failures import FailureKind, Outcome, classify_job
 
 
 def test_failure_kind_members():
@@ -85,3 +85,43 @@ def test_ci_state_fields():
     assert state.repo == "owner/repo"
     assert state.pr_number == 42
     assert state.latest_run_id is None
+
+
+def test_classify_job_shellcheck():
+    assert classify_job("lint / shellcheck", []) == FailureKind.LINT
+
+
+def test_classify_job_pytest():
+    assert classify_job("test / pytest", []) == FailureKind.TEST
+
+
+def test_classify_job_bats():
+    assert classify_job("test / bats", []) == FailureKind.TEST
+
+
+def test_classify_job_docker_build():
+    assert classify_job("build / docker", []) == FailureKind.BUILD
+
+
+def test_classify_job_unknown_defaults_to_build():
+    assert classify_job("deploy / staging", []) == FailureKind.BUILD
+
+
+def test_classify_job_infra_override_from_annotations():
+    annotations = ["Error: connection refused to registry.npmjs.org"]
+    assert classify_job("test / pytest", annotations) == FailureKind.INFRA
+
+
+def test_classify_job_timeout_is_infra():
+    annotations = ["The job running on runner timed out"]
+    assert classify_job("lint / shellcheck", annotations) == FailureKind.INFRA
+
+
+def test_classify_job_case_insensitive():
+    assert classify_job("ShellCheck", []) == FailureKind.LINT
+    assert classify_job("PYTEST", []) == FailureKind.TEST
+
+
+def test_classify_job_no_infra_override_without_signature():
+    annotations = ["SC2086: Double quote to prevent globbing"]
+    assert classify_job("lint / shellcheck", annotations) == FailureKind.LINT

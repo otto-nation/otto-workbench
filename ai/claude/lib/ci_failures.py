@@ -96,3 +96,20 @@ class CIState:
     branch: str
     runs: dict[int, RunState]
     latest_run_id: int | None
+
+
+# ── Classification ─────────────────────────────────────────────────────────
+
+def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
+    """Classify a CI job by name pattern, with infra override from annotations."""
+    for annotation in annotations:
+        annotation_lower = annotation.lower()
+        for signature in INFRA_SIGNATURES:
+            if signature in annotation_lower:
+                return FailureKind.INFRA
+
+    for pattern, kind in JOB_PATTERNS:
+        if pattern.search(job_name):
+            return kind
+
+    return FailureKind.BUILD

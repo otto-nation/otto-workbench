@@ -66,6 +66,13 @@
   - `mise -C /path run ...` (not `REPO_DIR=/path mise run ...`)
   - `otto-workbench --workbench-dir /path ...` (not `WORKBENCH_DIR=/path otto-workbench ...`)
 
+## Avoid Brace Expansion
+
+- Never use `{a,b,c}` brace expansion in Bash commands — Claude Code flags it with an unsuppressible "Brace expansion" permission prompt. Use these alternatives instead:
+  - List files as separate arguments: `wc -l file1.go file2.go file3.go`
+  - Use a glob when files share a pattern: `grep -rE "pattern" activities/*.go`
+  - Use `find ... | xargs` for more complex selections
+
 ## Avoid `find -exec`
 
 - Never use `find ... -exec` — Claude Code blocks `-exec` even with `Bash(find:*)` allowed because `-exec` can run arbitrary commands. Use piped alternatives instead:

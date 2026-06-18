@@ -13,7 +13,7 @@ Diagnoses and fixes GitHub Actions failures on PR branches with full lifecycle
 tracking. Fetches run data, classifies failures by kind, diagnoses root causes,
 applies fixes, pushes, and tracks progression across workflow runs.
 
-Run with `/ci-failures` or `/ci-failures <pr_number>`.
+Run with `/ci-failures`, `/ci-failures <pr_number>`, or `/ci-failures <run_id>`.
 
 ---
 
@@ -88,7 +88,7 @@ git commit -m "fix: address CI failures from run #<number>"
 git push
 ```
 
-Group all fixes into a single commit. Update the state file with fix_sha for each fixed item.
+Group all fixes into a single commit. The state file is updated automatically on the next `ci-check` invocation.
 
 ### 5. Monitor (on re-invocation)
 

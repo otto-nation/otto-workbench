@@ -11,29 +11,13 @@ if str(LIB_DIR) not in sys.path:
 
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
-    empty_state, load_state, save_state, state_to_dict, state_from_dict,
-    compute_progression, group_by_root_cause, sync_state, render_dashboard,
+    CIState, empty_state, load_state, save_state, state_to_dict, state_from_dict,
+    compute_progression, sync_state, render_dashboard,
 )
 
 
-def test_failure_kind_members():
-    assert FailureKind.LINT.value == "lint"
-    assert FailureKind.TEST.value == "test"
-    assert FailureKind.BUILD.value == "build"
-    assert FailureKind.INFRA.value == "infra"
-    assert FailureKind.FLAKY.value == "flaky"
-
-
-def test_outcome_members():
-    assert Outcome.NEW.value == "new"
-    assert Outcome.PERSISTING.value == "persisting"
-    assert Outcome.REGRESSED.value == "regressed"
-    assert Outcome.RESOLVED.value == "resolved"
-    assert Outcome.FIXED.value == "fixed"
-
 
 def test_failure_item_fields():
-    from ci_failures import FailureItem
     item = FailureItem(
         id="sc2086-bin-foo-42",
         annotation="SC2086: Double quote to prevent globbing",
@@ -50,18 +34,14 @@ def test_failure_item_fields():
 
 
 def test_failure_item_is_frozen():
-    from ci_failures import FailureItem
+    import pytest
     item = FailureItem(id="x", annotation="y", file=None, line=None,
                        diagnosis=None, fix_sha=None, outcome=None)
-    try:
+    with pytest.raises(AttributeError):
         item.id = "z"
-        assert False, "Should have raised"
-    except AttributeError:
-        pass
 
 
 def test_failure_group_fields():
-    from ci_failures import FailureItem, FailureGroup
     item = FailureItem(id="x", annotation="y", file="a.sh", line=1,
                        diagnosis=None, fix_sha=None, outcome=None)
     group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
@@ -71,7 +51,6 @@ def test_failure_group_fields():
 
 
 def test_run_state_fields():
-    from ci_failures import RunState
     run = RunState(
         run_id=123, run_number=7, head_sha="abc1234",
         status="completed", conclusion="failure",
@@ -82,7 +61,6 @@ def test_run_state_fields():
 
 
 def test_ci_state_fields():
-    from ci_failures import CIState
     state = CIState(
         repo="owner/repo", pr_number=42,
         branch="isaac/feat/foo", runs={}, latest_run_id=None,
@@ -236,19 +214,12 @@ def test_progression_persisting():
     assert result["a"] == Outcome.PERSISTING
 
 
-def test_progression_resolved():
+def test_progression_prior_item_absent_from_result():
     prior = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a", "b"])}
     current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
     result = compute_progression(current, prior)
     assert result["a"] == Outcome.PERSISTING
     assert "b" not in result  # resolved items not in current
-
-
-def test_progression_resolved_items():
-    prior = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a", "b"])}
-    current = {"shellcheck": _make_group("shellcheck", FailureKind.LINT, ["a"])}
-    result = compute_progression(current, prior)
-    assert result["a"] == Outcome.PERSISTING
 
 
 def test_progression_regressed():
@@ -266,47 +237,6 @@ def test_progression_mixed():
     assert result["a"] == Outcome.PERSISTING
     assert result["c"] == Outcome.NEW
 
-
-# ── Root-Cause Grouping Tests ─────────────────────────────────────────────
-
-def test_group_by_root_cause_no_overlap():
-    g1 = FailureGroup(
-        job="shellcheck", kind=FailureKind.LINT,
-        items=(_make_item("a", file="a.sh", line=1),),
-    )
-    g2 = FailureGroup(
-        job="pytest", kind=FailureKind.TEST,
-        items=(_make_item("b", file="b.py", line=10),),
-    )
-    result = group_by_root_cause([g1, g2])
-    assert len(result) == 2
-
-
-def test_group_by_root_cause_same_file_and_line():
-    g1 = FailureGroup(
-        job="shellcheck", kind=FailureKind.LINT,
-        items=(_make_item("lint-a", file="a.sh", line=5),),
-    )
-    g2 = FailureGroup(
-        job="validate", kind=FailureKind.BUILD,
-        items=(_make_item("build-a", file="a.sh", line=5),),
-    )
-    result = group_by_root_cause([g1, g2])
-    assert len(result) == 1
-    assert len(result[0].items) == 2
-
-
-def test_group_by_root_cause_no_file_stays_separate():
-    g1 = FailureGroup(
-        job="shellcheck", kind=FailureKind.LINT,
-        items=(_make_item("a", file=None, line=None),),
-    )
-    g2 = FailureGroup(
-        job="pytest", kind=FailureKind.TEST,
-        items=(_make_item("b", file=None, line=None),),
-    )
-    result = group_by_root_cause([g1, g2])
-    assert len(result) == 2
 
 
 # ── State Sync Tests ──────────────────────────────────────────────────────

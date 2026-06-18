@@ -21,7 +21,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import ci_failures as ci
-from review_common import detect_repo, _err
+from review_common import detect_repo
+
+
+def _err(msg: str) -> None:
+    print(f"✗ {msg}", file=sys.stderr)
 
 
 def _git_toplevel() -> Path:

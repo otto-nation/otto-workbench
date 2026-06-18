@@ -260,7 +260,7 @@ def compute_progression(
     prior_items = collect_item_ids(prior_failures)
 
     result: dict[str, Outcome] = {}
-    for item_id, item in current_items.items():
+    for item_id in current_items:
         prior_item = prior_items.get(item_id)
         if prior_item is None:
             result[item_id] = Outcome.NEW
@@ -271,55 +271,6 @@ def compute_progression(
 
     return result
 
-
-# ── Root-cause grouping ────────────────────────────────────────────────────
-
-def _partition_group_items(
-    group: FailureGroup,
-    keyed: dict[tuple[str, int], list[FailureItem]],
-    keyed_jobs: dict[tuple[str, int], str],
-    keyed_kinds: dict[tuple[str, int], FailureKind],
-) -> list[FailureItem]:
-    """Partition items into keyed (by file+line) and orphans."""
-    orphan_items: list[FailureItem] = []
-    for item in group.items:
-        if item.file is None or item.line is None:
-            orphan_items.append(item)
-            continue
-        key = (item.file, item.line)
-        keyed.setdefault(key, []).append(item)
-        keyed_jobs.setdefault(key, group.job)
-        keyed_kinds.setdefault(key, group.kind)
-    return orphan_items
-
-
-def group_by_root_cause(groups: list[FailureGroup]) -> list[FailureGroup]:
-    """Deduplicate failure items across groups by (file, line).
-
-    Items sharing the same file and line (both non-None) are merged into
-    one group. Items without file/line stay in their original group.
-    """
-    keyed: dict[tuple[str, int], list[FailureItem]] = {}
-    keyed_jobs: dict[tuple[str, int], str] = {}
-    keyed_kinds: dict[tuple[str, int], FailureKind] = {}
-    ungrouped: list[FailureGroup] = []
-
-    for group in groups:
-        orphan_items = _partition_group_items(group, keyed, keyed_jobs, keyed_kinds)
-        if orphan_items:
-            ungrouped.append(FailureGroup(
-                job=group.job, kind=group.kind,
-                items=tuple(orphan_items),
-            ))
-
-    merged = []
-    for key, items in keyed.items():
-        merged.append(FailureGroup(
-            job=keyed_jobs[key], kind=keyed_kinds[key],
-            items=tuple(items),
-        ))
-
-    return merged + ungrouped
 
 
 # ── State sync ─────────────────────────────────────────────────────────────
@@ -368,6 +319,14 @@ def sync_state(state: CIState, run: RunState) -> CIState:
 
     state.runs[run.run_id] = synced_run
     state.latest_run_id = run.run_id
+
+    # Prune old runs to bound state file size
+    _MAX_RUNS = 10
+    if len(state.runs) > _MAX_RUNS:
+        oldest_ids = sorted(state.runs)[:len(state.runs) - _MAX_RUNS]
+        for old_id in oldest_ids:
+            del state.runs[old_id]
+
     return state
 
 

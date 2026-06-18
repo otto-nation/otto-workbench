@@ -1,5 +1,10 @@
 # Claude Skills
 
+## Usage
+
+- When a user's prompt matches a skill's trigger condition, invoke the skill before making any tool calls — never manually implement what a skill covers
+- If unsure whether a skill applies, invoke it — a skill that turns out irrelevant is cheaper than reimplementing its workflow by hand
+
 ## Authoring
 
 - When adding a skill, agent, or task: update source frontmatter (SKILL.md, agent .md) and run `generate-tool-context` — generated sections in ai-automation.md, tools.md, and components.md update automatically

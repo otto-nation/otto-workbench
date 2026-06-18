@@ -140,6 +140,26 @@ label_from_filename() {
   printf '%s' "${base^}"
 }
 
+# _find_primary_worktree — for bare repos, prints the primary worktree path.
+# Looks for the worktree matching the default branch (origin/HEAD → main → master).
+_find_primary_worktree() {
+  local default_branch
+  default_branch="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')" || true
+  if [[ -z "$default_branch" ]]; then
+    if git rev-parse --verify master >/dev/null 2>&1 && ! git rev-parse --verify main >/dev/null 2>&1; then
+      default_branch="master"
+    else
+      default_branch="main"
+    fi
+  fi
+
+  local wt_path
+  wt_path="$(git worktree list 2>/dev/null | grep "\[$default_branch\]" | awk '{print $1}')"
+  if [[ -n "$wt_path" && -d "$wt_path" ]]; then
+    printf '%s' "$wt_path"
+  fi
+}
+
 # ── Ansible section ──────────────────────────────────────────────────────────
 
 # generate_ansible_section OUTPUT_FILE — appends a "Service Stack" section to the
@@ -219,19 +239,35 @@ generate_ansible_section() {
 
 main() {
   local project_root="${1:-}"
+  local anatomy_root="" source_root=""
 
-  # Resolve git repo root
-  if [[ -z "$project_root" ]]; then
-    project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+  if [[ -n "$project_root" ]]; then
+    cd "$project_root" 2>/dev/null || exit 0
   fi
 
-  cd "$project_root" || exit 0
+  # Resolve where .claude/ lives (anatomy_root) and where source files live (source_root).
+  # In regular repos both are the same. In bare repos they differ: .claude/ is at the
+  # bare root, source files are in the primary worktree.
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 
-  # Require .claude/ directory (project must be initialized)
-  [[ -d ".claude" ]] || exit 0
+  if [[ -n "$toplevel" ]]; then
+    source_root="$toplevel"
+    anatomy_root="$toplevel"
+  elif [[ "$(git rev-parse --is-bare-repository 2>/dev/null)" == "true" ]]; then
+    anatomy_root="$(pwd)"
+    source_root="$(_find_primary_worktree)"
+    [[ -n "$source_root" ]] || exit 0
+  else
+    exit 0
+  fi
+
+  [[ -d "$anatomy_root/.claude" ]] || exit 0
+
+  cd "$source_root" || exit 0
 
   # ── Staleness check ──────────────────────────────────────────────────────
-  local current_hash anatomy_file=".claude/anatomy.md"
+  local current_hash anatomy_file="$anatomy_root/.claude/anatomy.md"
   current_hash="$(git rev-parse HEAD 2>/dev/null)" || exit 0
 
   if [[ -f "$anatomy_file" ]]; then

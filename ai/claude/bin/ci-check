@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""Fetch CI run data, classify failures, and output status.
+
+Renders a human-readable dashboard to stderr and structured JSON to stdout.
+Manages local state in <worktree>/ignore/ci-failures/state.json.
+
+Usage:
+  ci-check                      # latest run for current branch
+  ci-check --run <run_id>       # specific run
+  ci-check --pr <number_or_url> # discover branch from PR
+  ci-check --repo-dir <path>    # specify worktree directory
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import ci_failures as ci
+from review_common import detect_repo
+
+
+def _err(msg: str) -> None:
+    print(f"✗ {msg}", file=sys.stderr)
+
+
+def _git_toplevel() -> Path:
+    """Get the git toplevel directory."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        _err("Not in a git repository")
+        sys.exit(1)
+    return Path(result.stdout.strip())
+
+
+def _current_branch(cwd: str | None = None) -> str:
+    """Get the current branch name."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    return result.stdout.strip()
+
+
+def _detect_pr_number(cwd: str | None = None) -> int | None:
+    """Try to detect PR number from current branch."""
+    result = subprocess.run(
+        ["gh", "pr", "view", "--json", "number", "-q", ".number"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _fetch_latest_run_id(repo: str, branch: str) -> int | None:
+    """Fetch the latest workflow run ID for a branch."""
+    result = subprocess.run(
+        ["gh", "run", "list", "--repo", repo, "--branch", branch,
+         "--limit", "1", "--json", "databaseId", "-q", ".[0].databaseId"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _fetch_run_data(repo: str, run_id: int) -> dict | None:
+    """Fetch run metadata and job results."""
+    result = subprocess.run(
+        ["gh", "run", "view", str(run_id), "--repo", repo,
+         "--json", "databaseId,number,headSha,status,conclusion,jobs"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _fetch_annotations(repo: str, job_id: int) -> list[dict]:
+    """Fetch annotations for a check run (job)."""
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/check-runs/{job_id}/annotations",
+         "--paginate"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+    try:
+        return json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _fetch_failed_logs(repo: str, run_id: int) -> str:
+    """Fetch logs for failed steps. Returns raw log text."""
+    result = subprocess.run(
+        ["gh", "run", "view", str(run_id), "--repo", repo, "--log-failed"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
+def _build_failure_id(annotation: dict, job_name: str) -> str:
+    """Build a deterministic failure item ID from annotation data."""
+    path = annotation.get("path", "")
+    line = annotation.get("start_line", 0)
+    title = annotation.get("title", "")
+    if path and line:
+        slug = title.split(":")[0].strip().lower() if title else "err"
+        return f"{slug}-{path}-{line}"
+    message = annotation.get("message", "")
+    return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
+
+
+def _log_fallback_annotations(repo: str, run_id: int) -> tuple[list[dict], list[str]]:
+    """Fetch failed logs and convert to synthetic annotations."""
+    log_text = _fetch_failed_logs(repo, run_id)
+    if not log_text:
+        return [], []
+    annotations = [{"message": log_text[-2000:], "path": "", "start_line": 0, "title": ""}]
+    return annotations, [a["message"] for a in annotations]
+
+
+def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.FailureItem]:
+    """Convert raw annotations to FailureItems, skipping notices."""
+    items: list[ci.FailureItem] = []
+    for ann in annotations:
+        if ann.get("annotation_level") == "notice":
+            continue
+        item_id = _build_failure_id(ann, job_name)
+        items.append(ci.FailureItem(
+            id=item_id,
+            annotation=ann.get("message", ann.get("title", "")),
+            file=ann.get("path") or None,
+            line=ann.get("start_line") or None,
+            diagnosis=None,
+            fix_sha=None,
+            outcome=None,
+        ))
+    return items
+
+
+def _fallback_item(job_name: str) -> ci.FailureItem:
+    """Create a placeholder item for a failed job with no annotations."""
+    return ci.FailureItem(
+        id=f"{job_name}-no-annotation",
+        annotation=f"Job '{job_name}' failed with no annotations",
+        file=None,
+        line=None,
+        diagnosis=None,
+        fix_sha=None,
+        outcome=None,
+    )
+
+
+def _parse_run(repo: str, run_data: dict) -> ci.RunState:
+    """Parse gh run data into a RunState with classified failures."""
+    jobs = run_data.get("jobs", [])
+    failures: dict[str, ci.FailureGroup] = {}
+
+    for job in jobs:
+        conclusion = job.get("conclusion", "")
+        if conclusion in ("success", "skipped", "cancelled", "neutral"):
+            continue
+
+        job_name = job.get("name", "unknown")
+        job_id = job.get("databaseId", 0)
+
+        annotations = _fetch_annotations(repo, job_id) if job_id else []
+        annotation_texts = [a.get("message", "") for a in annotations]
+        kind = ci.classify_job(job_name, annotation_texts)
+
+        if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.INFRA):
+            annotations, annotation_texts = _log_fallback_annotations(repo, run_data["databaseId"])
+            kind = ci.classify_job(job_name, annotation_texts) if annotation_texts else kind
+
+        items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
+
+        if items:
+            job_key = job_name.lower().replace(" ", "-").replace("/", "-")
+            failures[job_key] = ci.FailureGroup(
+                job=job_name, kind=kind, items=tuple(items),
+            )
+
+    return ci.RunState(
+        run_id=run_data["databaseId"],
+        run_number=run_data.get("number", 0),
+        head_sha=run_data.get("headSha", ""),
+        status=run_data.get("status", ""),
+        conclusion=run_data.get("conclusion", ""),
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        failures=failures,
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="CI failure status")
+    parser.add_argument("--pr", help="PR number or URL")
+    parser.add_argument("--run", type=int, help="Specific run ID")
+    parser.add_argument("--repo-dir", "--repo", "--worktree",
+                        help="Git worktree directory")
+    args = parser.parse_args()
+
+    cwd = args.repo_dir or None
+    repo = detect_repo(cwd)
+    branch = _current_branch(cwd)
+    pr_number = None
+
+    if args.pr:
+        pr_input = args.pr.split("/")[-1] if "/" in args.pr else args.pr
+        try:
+            pr_number = int(pr_input)
+        except ValueError:
+            _err(f"--pr: invalid value: {args.pr!r}")
+            sys.exit(1)
+    else:
+        pr_number = _detect_pr_number(cwd)
+
+    # Determine run ID
+    if args.run:
+        run_id = args.run
+    else:
+        run_id = _fetch_latest_run_id(repo, branch)
+        if run_id is None:
+            _err(f"No workflow runs found for branch '{branch}'")
+            sys.exit(1)
+
+    # Fetch run data
+    run_data = _fetch_run_data(repo, run_id)
+    if run_data is None:
+        _err(f"Failed to fetch run {run_id}")
+        sys.exit(1)
+
+    # Parse into typed state
+    run_state = _parse_run(repo, run_data)
+
+    # Load and sync state
+    toplevel = Path(args.repo_dir) if args.repo_dir else _git_toplevel()
+    prior_state = ci.load_state(toplevel)
+    if prior_state is None:
+        prior_state = ci.empty_state(repo, branch, pr_number)
+
+    prior_run = prior_state.runs.get(prior_state.latest_run_id) if prior_state.latest_run_id else None
+    prior_failures = prior_run.failures if prior_run else {}
+    progression = ci.compute_progression(run_state.failures, prior_failures)
+
+    state = ci.sync_state(prior_state, run_state)
+    ci.save_state(toplevel, state)
+
+    # Dashboard to stderr
+    dashboard = ci.render_dashboard(run_state, progression)
+    print(dashboard, file=sys.stderr)
+
+    # JSON report to stdout
+    report = {
+        "repo": repo,
+        "branch": branch,
+        "pr_number": pr_number,
+        "run_id": run_state.run_id,
+        "run_number": run_state.run_number,
+        "head_sha": run_state.head_sha,
+        "conclusion": run_state.conclusion,
+        "failures": [],
+        "progression": {k: v.value for k, v in progression.items()},
+        "resolved_since_prior": [],
+    }
+
+    for group_key, group in run_state.failures.items():
+        for item in group.items:
+            report["failures"].append({
+                "id": item.id,
+                "job": group.job,
+                "kind": group.kind.value,
+                "annotation": item.annotation,
+                "file": item.file,
+                "line": item.line,
+                "diagnosis": item.diagnosis,
+                "fix_sha": item.fix_sha,
+                "outcome": progression.get(item.id, ci.Outcome.NEW).value,
+            })
+
+    if prior_run:
+        prior_item_ids = ci.collect_item_ids(prior_run.failures)
+        current_item_ids = ci.collect_item_ids(run_state.failures)
+        report["resolved_since_prior"] = [
+            item_id for item_id in prior_item_ids
+            if item_id not in current_item_ids
+        ]
+
+    json.dump(report, sys.stdout, indent=2)
+    print()
+
+
+if __name__ == "__main__":
+    main()

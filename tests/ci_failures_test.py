@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     empty_state, load_state, save_state, state_to_dict, state_from_dict,
-    compute_progression, group_by_root_cause, sync_state,
+    compute_progression, group_by_root_cause, sync_state, render_dashboard,
 )
 
 
@@ -354,3 +354,53 @@ def test_sync_state_preserves_prior_diagnosis():
     synced_item = updated.runs[200].failures["shellcheck"].items[0]
     assert synced_item.diagnosis == "root cause found"
     assert synced_item.fix_sha == "abc"
+
+
+# ── Dashboard Rendering Tests ─────────────────────────────────────────────
+
+def test_render_dashboard_basic():
+    item = _make_item("a", file="bin/foo.sh", line=42, annotation="SC2086: Double quote")
+    group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
+    run = RunState(
+        run_id=123, run_number=7, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T14:30:00+00:00",
+        failures={"shellcheck": group},
+    )
+    progression = {"a": Outcome.NEW}
+    dashboard = render_dashboard(run, progression)
+    assert "Run #7" in dashboard
+    assert "abc1234" in dashboard
+    assert "lint" in dashboard.lower()
+    assert "1 new" in dashboard.lower()
+
+
+def test_render_dashboard_all_pass():
+    run = RunState(
+        run_id=123, run_number=7, head_sha="abc1234",
+        status="completed", conclusion="success",
+        fetched_at="2026-06-18T14:30:00+00:00",
+        failures={},
+    )
+    dashboard = render_dashboard(run, {})
+    assert "pass" in dashboard.lower() or "success" in dashboard.lower()
+
+
+def test_render_dashboard_mixed_progression():
+    items = [
+        _make_item("a", file="a.sh", line=1),
+        _make_item("b", file="b.sh", line=2),
+        _make_item("c", file="c.sh", line=3),
+    ]
+    group = FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=tuple(items))
+    run = RunState(
+        run_id=456, run_number=8, head_sha="def5678",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T15:00:00+00:00",
+        failures={"shellcheck": group},
+    )
+    progression = {"a": Outcome.NEW, "b": Outcome.PERSISTING, "c": Outcome.REGRESSED}
+    dashboard = render_dashboard(run, progression)
+    assert "1 new" in dashboard.lower()
+    assert "1 persisting" in dashboard.lower()
+    assert "1 regressed" in dashboard.lower()

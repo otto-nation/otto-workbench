@@ -357,3 +357,41 @@ def sync_state(state: CIState, run: RunState) -> CIState:
     state.runs[run.run_id] = synced_run
     state.latest_run_id = run.run_id
     return state
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────────
+
+def render_dashboard(run: RunState, progression: dict[str, Outcome]) -> str:
+    """Render a human-readable dashboard string for stderr output."""
+    lines = [f"## CI Run #{run.run_number} ({run.head_sha[:7]})", ""]
+
+    if not run.failures:
+        lines.append("All checks passed.")
+        return "\n".join(lines)
+
+    kind_counts: dict[FailureKind, int] = {}
+    for group in run.failures.values():
+        kind_counts[group.kind] = kind_counts.get(group.kind, 0) + len(group.items)
+
+    total = sum(kind_counts.values())
+    lines.append(f"Failures: {total} total")
+    for kind in FailureKind:
+        count = kind_counts.get(kind, 0)
+        if count:
+            lines.append(f"  {kind.value}: {count}")
+    lines.append("")
+
+    outcome_counts: dict[Outcome, int] = {}
+    for outcome in progression.values():
+        outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+
+    if outcome_counts:
+        parts = []
+        for outcome in Outcome:
+            count = outcome_counts.get(outcome, 0)
+            if count:
+                parts.append(f"{count} {outcome.value}")
+        lines.append("Progression: " + ", ".join(parts))
+        lines.append("")
+
+    return "\n".join(lines)

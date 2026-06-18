@@ -6,6 +6,8 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 . "$WORKBENCH_DIR/lib/ui.sh"
 
 GRACE_PERIOD_SECS=600
+CLEANUP_LOG_DIR="${CLEANUP_LOG_DIR:-$WORKBENCH_STATE_DIR/logs}"
+CLEANUP_LOG="$CLEANUP_LOG_DIR/wt-cleanup.log"
 
 usage() {
   cat <<EOF
@@ -84,6 +86,12 @@ _has_uncommitted_changes() {
   [[ "$result" == "true" ]]
 }
 
+_log() {
+  { [[ -d "$CLEANUP_LOG_DIR" ]] || mkdir -p "$CLEANUP_LOG_DIR"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$CLEANUP_LOG"
+  } 2>/dev/null || true
+}
+
 _describe_changes() {
   local idx="$1"
   echo "$worktrees" | jq -r "
@@ -91,12 +99,17 @@ _describe_changes() {
     | map(select(.value == true) | .key) | join(\", \")"
 }
 
+_pr_state() {
+  local branch="$1"
+  [[ "$use_gh" != "true" ]] && return 1
+  gh pr view "$branch" --json state --jq .state 2>/dev/null
+}
+
 _is_merged() {
-  local main_state="$1" symbols="$2" branch="$3"
-  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
+  local main_state="$1" symbols="$2" pr_state="$3"
+  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]; then
     return 0
-  elif [[ "$use_gh" == "true" ]] && \
-       gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q MERGED; then
+  elif [[ "$pr_state" == "MERGED" ]]; then
     return 0
   fi
   return 1
@@ -111,11 +124,10 @@ _within_grace_period() {
 }
 
 _detect_reason() {
-  local main_state="$1" symbols="$2" branch="$3" timestamp="$4"
-  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "merged" ]]; then
+  local main_state="$1" symbols="$2" pr_state="$3" timestamp="$4"
+  if [[ "$symbols" == *"⊂"* ]] || [[ "$main_state" == "integrated" ]]; then
     echo "merged"
-  elif [[ "$use_gh" == "true" ]] && \
-       gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -q MERGED; then
+  elif [[ "$pr_state" == "MERGED" ]]; then
     echo "pr merged"
   elif [[ -n "$max_age_days" ]]; then
     local age=$((now - timestamp))
@@ -125,6 +137,8 @@ _detect_reason() {
     fi
   fi
 }
+
+_log "START count=$count dry_run=$dry_run quiet=$quiet max_age=$max_age_days"
 
 for ((i = 0; i < count; i++)); do
   is_main=$(echo "$worktrees" | jq -r ".[$i].is_main")
@@ -139,8 +153,17 @@ for ((i = 0; i < count; i++)); do
   [[ "$branch" == "$default_branch" ]] && continue
   [[ "$is_current" == "true" ]] && continue
 
+  pr_state=$(_pr_state "$branch") || pr_state=""
+
+  if [[ "$pr_state" == "OPEN" ]]; then
+    _log "SKIP-OPEN-PR branch=$branch main_state=$main_state symbols=$symbols"
+    [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+      echo "skipping: $branch (open PR)"
+    continue
+  fi
+
   if _has_uncommitted_changes "$i"; then
-    _is_merged "$main_state" "$symbols" "$branch" \
+    _is_merged "$main_state" "$symbols" "$pr_state" \
       && dirty_merged_branches+=("$branch") \
       && dirty_merged_changes+=("$(_describe_changes "$i")")
     continue
@@ -152,17 +175,21 @@ for ((i = 0; i < count; i++)); do
     continue
   fi
 
-  reason=$(_detect_reason "$main_state" "$symbols" "$branch" "$timestamp")
+  reason=$(_detect_reason "$main_state" "$symbols" "$pr_state" "$timestamp")
   [[ -z "$reason" ]] && continue
 
   removed=$((removed + 1))
   if [[ "$dry_run" == "true" ]]; then
+    _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
     [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
   else
+    _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
     [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
     wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
   fi
 done
+
+_log "END removed=$removed dirty_merged=${#dirty_merged_branches[@]}"
 
 if [[ "$quiet" != "true" && "$removed" -eq 0 && ${#dirty_merged_branches[@]} -eq 0 ]]; then
   echo "no stale worktrees"

@@ -137,6 +137,8 @@
       "Bash(bash:*)",
       "Bash(pip3:*)",
       "Bash(gofmt:*)",
+      "Bash(bin/local/*:*)",
+      "Bash(git/bin/local/*:*)",
       "Bash(* --help)",
       "Bash(* --help *)",
       "WebFetch(domain:docs.anthropic.com)",

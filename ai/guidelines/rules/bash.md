@@ -29,7 +29,7 @@ paths:
 - All setup scripts, sync functions, and migrations must be idempotent — safe to re-run with no side effects
 
 ## Script Invocation
-- Never invoke scripts by absolute path — use the bare command name (`validate-skills`, not `/Users/.../bin/local/validate-skills`). Permission rules match the first word of the command; an absolute path like `/Users/.../validate-skills` does not match `Bash(validate-skills:*)`, so every absolute-path invocation triggers a permission prompt
+- Never invoke scripts by absolute path — use the relative path from the repo root (`bin/local/validate-skills`, not `/Users/.../bin/local/validate-skills`). Permission rules match the first word of the command; an absolute path triggers a permission prompt every time
 
 ## Portability
 - Target macOS BSD userland — avoid GNU-specific flags and syntax

@@ -28,10 +28,11 @@ FAKEWT
   # Fake gh — branches in GH_PR_MERGED_FILE return "MERGED", in GH_PR_OPEN_FILE return "OPEN"
   GH_PR_MERGED="$TMPDIR/gh-pr-merged.txt"
   GH_PR_OPEN="$TMPDIR/gh-pr-open.txt"
+  GH_PR_CLOSED="$TMPDIR/gh-pr-closed.txt"
   cat > "$MOCK_BIN/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
-  [[ -f "$GH_PR_MERGED_FILE" || -f "$GH_PR_OPEN_FILE" ]] && exit 0
+  [[ -f "$GH_PR_MERGED_FILE" || -f "$GH_PR_OPEN_FILE" || -f "$GH_PR_CLOSED_FILE" ]] && exit 0
   exit 1
 elif [[ "$1" == "pr" && "$2" == "view" ]]; then
   branch="$3"
@@ -40,6 +41,9 @@ elif [[ "$1" == "pr" && "$2" == "view" ]]; then
     exit 0
   elif [[ -f "$GH_PR_OPEN_FILE" ]] && grep -qx "$branch" "$GH_PR_OPEN_FILE"; then
     echo "OPEN"
+    exit 0
+  elif [[ -f "$GH_PR_CLOSED_FILE" ]] && grep -qx "$branch" "$GH_PR_CLOSED_FILE"; then
+    echo "CLOSED"
     exit 0
   fi
   exit 1
@@ -61,6 +65,7 @@ _run_cleanup() {
     WT_REMOVE_LOG_FILE="$WT_REMOVE_LOG" \
     GH_PR_MERGED_FILE="$GH_PR_MERGED" \
     GH_PR_OPEN_FILE="$GH_PR_OPEN" \
+    GH_PR_CLOSED_FILE="$GH_PR_CLOSED" \
     CLEANUP_LOG_DIR="$TMPDIR/logs" \
     NO_COLOR=1 \
     run "$WT_CLEANUP" "$@"
@@ -407,6 +412,17 @@ JSON
   _run_cleanup --age 30
   [ "$status" -eq 0 ]
   [ ! -f "$WT_REMOVE_LOG" ]
+}
+
+@test "closed PR is not guarded — integrated worktree still removed" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/closed","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  echo "feat/closed" > "$GH_PR_CLOSED"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feat/closed"* ]]
+  grep -q "feat/closed" "$WT_REMOVE_LOG"
 }
 
 @test "dirty worktree with open PR is not added to dirty-merged summary" {

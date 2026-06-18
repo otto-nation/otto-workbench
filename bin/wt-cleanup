@@ -87,8 +87,9 @@ _has_uncommitted_changes() {
 }
 
 _log() {
-  [[ -d "$CLEANUP_LOG_DIR" ]] || mkdir -p "$CLEANUP_LOG_DIR"
-  echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$CLEANUP_LOG"
+  { [[ -d "$CLEANUP_LOG_DIR" ]] || mkdir -p "$CLEANUP_LOG_DIR"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$CLEANUP_LOG"
+  } 2>/dev/null || true
 }
 
 _describe_changes() {

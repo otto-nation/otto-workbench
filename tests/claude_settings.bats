@@ -34,19 +34,22 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-# ── Template does not contain registry-derived entries ───────────────────────
+# ── Registry permissions are auto-managed ────────────────────────────────────
 
-@test "template does not hardcode tool permissions that come from registries" {
+@test "registry-derived permissions are tracked in _generated_permissions" {
+  local -a registry_perms=()
+  collect_registry_permissions registry_perms "$REPO_ROOT"
+  [ "${#registry_perms[@]}" -gt 0 ]
+  for perm in "${registry_perms[@]}"; do
+    run jq -e --arg p "$perm" '._generated_permissions | index($p) != null' "$SETTINGS"
+    [ "$status" -eq 0 ] || { echo "missing from _generated_permissions: $perm"; return 1; }
+  done
+}
+
+@test "_generated_permissions entries are all in permissions.allow" {
   local count
-  count=$(jq '[.permissions.allow[] | select(
-    startswith("Bash(gh ") or
-    . == "Bash(task:*)" or
-    . == "Bash(go:*)" or
-    . == "Bash(wt:*)" or
-    . == "Bash(shellcheck:*)" or
-    . == "Bash(jq:*)" or
-    . == "Bash(yq:*)"
-  )] | length' "$SETTINGS")
+  count=$(jq '.permissions.allow as $allow |
+    [._generated_permissions[] | select(. as $p | $allow | index($p) == null)] | length' "$SETTINGS")
   [ "$count" -eq 0 ]
 }
 

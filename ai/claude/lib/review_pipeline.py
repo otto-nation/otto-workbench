@@ -82,6 +82,15 @@ DEFAULT_MAX_TURNS_ANGLES = 15
 DEFAULT_MAX_TURNS_FIX = 20
 
 
+OMITTED_FILE_TURNS = 2
+
+
+def _omitted_turns(job: "ReviewJob") -> int:
+    if not job.preflight or not job.preflight.omitted_files:
+        return 0
+    return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS
+
+
 def _synthesis_max_turns(merged_content: str) -> int:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
@@ -201,14 +210,15 @@ def _write_review_sidecar(job: ReviewJob):
 
 def run_single_agent(job: ReviewJob):
     template = TEMPLATE_SELF_REVIEW if job.mode == MODE_SELF else TEMPLATE_SINGLE
+    max_turns = DEFAULT_MAX_TURNS_SINGLE + _omitted_turns(job)
     prompt = build_prompt(
-        template, job, max_turns=DEFAULT_MAX_TURNS_SINGLE, branch_name=job.pr.head,
+        template, job, max_turns=max_turns, branch_name=job.pr.head,
     )
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
     _info(f"Running review agent on {label}...")
     print()
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_SINGLE)
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=max_turns)
     print()
 
     reason = ""
@@ -282,13 +292,14 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
     holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
+    max_turns = DEFAULT_MAX_TURNS_HOLISTIC + _omitted_turns(job)
     prompt = build_prompt(
-        TEMPLATE_HOLISTIC, job, max_turns=DEFAULT_MAX_TURNS_HOLISTIC, holistic_output=holistic_output,
+        TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=DEFAULT_MAX_TURNS_HOLISTIC)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, max_turns=max_turns)
     print()
 
     holistic_content = ""
@@ -305,13 +316,14 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     angles_output = _derive_path(job.review_file, FILENAME_ANGLES)
     angles_log = _derive_path(job.review_file, FILENAME_ANGLES_LOG)
 
+    max_turns = DEFAULT_MAX_TURNS_ANGLES + _omitted_turns(job)
     prompt = build_prompt(
-        TEMPLATE_ANGLES, job, max_turns=DEFAULT_MAX_TURNS_ANGLES,
+        TEMPLATE_ANGLES, job, max_turns=max_turns,
         angles_output=angles_output, holistic_content=holistic_content,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_ANGLES_MODEL", DEFAULT_MODEL_ANGLES)
     _info("Angles scan (7 review angles)...")
-    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, max_turns=DEFAULT_MAX_TURNS_ANGLES)
+    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, max_turns=max_turns)
 
     angles_content = ""
     if Path(angles_output).exists():
@@ -420,11 +432,13 @@ def _run_serial_reviews(
     failed_groups: list[tuple[str, str]] = []
     consecutive_same_reason = 0
     last_reason = ""
+    group_turns = DEFAULT_MAX_TURNS_GROUP + _omitted_turns(job)
     for i, grp in enumerate(groups, 1):
         skip = skip_groups is not None and i in skip_groups
         _, _, failed = _review_group(
             i, grp, job, group_count, holistic_content,
             skip=skip, pipeline_state=pipeline_state,
+            max_turns=group_turns,
         )
         if not failed:
             consecutive_same_reason = 0
@@ -476,10 +490,11 @@ def _is_retryable(reason: str) -> bool:
     return False
 
 
-def _retry_turns(reason: str) -> int:
+def _retry_turns(reason: str, job: "ReviewJob") -> int:
+    extra = _omitted_turns(job)
     if _MAX_TURNS_REASON in reason:
-        return RETRY_MAX_TURNS_GROUP
-    return DEFAULT_MAX_TURNS_GROUP
+        return RETRY_MAX_TURNS_GROUP + extra
+    return DEFAULT_MAX_TURNS_GROUP + extra
 
 
 def _retry_failed_groups(
@@ -506,7 +521,7 @@ def _retry_failed_groups(
             still_failed.append((name, reason))
             continue
         idx, grp = group_by_name[name]
-        turns = _retry_turns(reason)
+        turns = _retry_turns(reason, job)
         _info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
@@ -528,6 +543,7 @@ def _retry_failed_groups(
             _, _, failure = _review_group(
                 idx, grp, job, group_count, holistic_content,
                 pipeline_state=pipeline_state,
+                max_turns=DEFAULT_MAX_TURNS_GROUP + _omitted_turns(job),
             )
             if failure:
                 still_failed.append(failure)

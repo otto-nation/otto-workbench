@@ -27,4 +27,4 @@ Sections: ## Holistic Assessment, ## Flags for Detailed Review, ## Cross-module 
 Do NOT write per-file findings — those come from the detailed review phase.
 
 ## Turn budget
-You have ${max_turns} turns. Write your assessment file within the first few turns. For files listed under "Files not pre-collected," read only those critical to the holistic assessment.
+You have ${max_turns} turns.${omitted_guidance} Write your assessment file within the first few turns. For files listed under "Files not pre-collected," read only those critical to the holistic assessment.

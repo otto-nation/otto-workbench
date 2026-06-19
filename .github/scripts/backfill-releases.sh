@@ -20,6 +20,7 @@ NOTES_FILE=$(mktemp)
 trap cleanup EXIT
 
 # Create a release if the tag doesn't already exist.
+# Extracts changelog from $BODY_FILE using the summary_key.
 # Returns 0 on success or if already exists, 1 on failure.
 create_release() {
   local tag="$1" title="$2" summary_key="$3" merge_sha="$4"
@@ -41,6 +42,20 @@ create_release() {
     --target "$merge_sha" \
     --title "$title" \
     --notes-file "$NOTES_FILE"
+}
+
+# Try to backfill a single release. Sets pr_ok=false on failure.
+# Args: version tag title summary_key merge_sha
+try_backfill() {
+  local version="$1" tag="$2" title="$3" summary_key="$4" merge_sha="$5"
+  [[ -n "$version" ]] || return 0
+
+  if create_release "$tag" "$title" "$summary_key" "$merge_sha"; then
+    backfilled=$((backfilled + 1))
+    return 0
+  fi
+  echo "::error::Failed to create release $tag"
+  pr_ok=false
 }
 
 pending_prs=$(gh pr list \
@@ -72,27 +87,11 @@ while IFS= read -r pr; do
 
   root_version=$(grep -oE '<details><summary>[0-9]+\.[0-9]+\.[0-9]+</summary>' "$BODY_FILE" \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
-
-  if [[ -n "$root_version" ]]; then
-    if create_release "v${root_version}" "v${root_version}" "$root_version" "$merge_sha"; then
-      backfilled=$((backfilled + 1))
-    else
-      echo "::error::Failed to create release v${root_version}"
-      pr_ok=false
-    fi
-  fi
+  try_backfill "$root_version" "v${root_version}" "v${root_version}" "$root_version" "$merge_sha"
 
   cr_version=$(grep -oE '<details><summary>claude-review: [0-9]+\.[0-9]+\.[0-9]+</summary>' "$BODY_FILE" \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
-
-  if [[ -n "$cr_version" ]]; then
-    if create_release "claude-review-v${cr_version}" "claude-review: v${cr_version}" "claude-review: $cr_version" "$merge_sha"; then
-      backfilled=$((backfilled + 1))
-    else
-      echo "::error::Failed to create release claude-review-v${cr_version}"
-      pr_ok=false
-    fi
-  fi
+  try_backfill "$cr_version" "claude-review-v${cr_version}" "claude-review: v${cr_version}" "claude-review: $cr_version" "$merge_sha"
 
   if [[ "$pr_ok" == true ]]; then
     gh pr edit "$pr_num" --repo "$REPO" \

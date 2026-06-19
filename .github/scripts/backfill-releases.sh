@@ -19,6 +19,30 @@ BODY_FILE=$(mktemp)
 NOTES_FILE=$(mktemp)
 trap cleanup EXIT
 
+# Create a release if the tag doesn't already exist.
+# Returns 0 on success or if already exists, 1 on failure.
+create_release() {
+  local tag="$1" title="$2" summary_key="$3" merge_sha="$4"
+
+  if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+    echo "Release $tag already exists, skipping"
+    return 0
+  fi
+
+  awk -v ver="$summary_key" '
+    $0 ~ "<details><summary>" ver "</summary>" { found=1; next }
+    found && /<\/details>/ { exit }
+    found { print }
+  ' "$BODY_FILE" > "$NOTES_FILE"
+
+  echo "Creating release $tag"
+  gh release create "$tag" \
+    --repo "$REPO" \
+    --target "$merge_sha" \
+    --title "$title" \
+    --notes-file "$NOTES_FILE"
+}
+
 pending_prs=$(gh pr list \
   --repo "$REPO" \
   --state merged \
@@ -42,67 +66,31 @@ while IFS= read -r pr; do
   merge_sha=$(echo "$pr" | jq -r '.mergeCommit.oid')
 
   echo "::group::PR #$pr_num (commit $merge_sha)"
-
   echo "$pr" | jq -r '.body' > "$BODY_FILE"
 
   pr_ok=true
 
-  # Extract root package version: <details><summary>X.Y.Z</summary> (no component prefix)
   root_version=$(grep -oE '<details><summary>[0-9]+\.[0-9]+\.[0-9]+</summary>' "$BODY_FILE" \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
 
   if [[ -n "$root_version" ]]; then
-    tag="v${root_version}"
-    if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
-      echo "Release $tag already exists, skipping"
+    if create_release "v${root_version}" "v${root_version}" "$root_version" "$merge_sha"; then
+      backfilled=$((backfilled + 1))
     else
-      # Extract changelog between the <details> tags
-      awk -v ver="$root_version" '
-        $0 ~ "<details><summary>" ver "</summary>" { found=1; next }
-        found && /<\/details>/ { exit }
-        found { print }
-      ' "$BODY_FILE" > "$NOTES_FILE"
-
-      echo "Creating release $tag"
-      if gh release create "$tag" \
-          --repo "$REPO" \
-          --target "$merge_sha" \
-          --title "v${root_version}" \
-          --notes-file "$NOTES_FILE"; then
-        backfilled=$((backfilled + 1))
-      else
-        echo "::error::Failed to create release $tag"
-        pr_ok=false
-      fi
+      echo "::error::Failed to create release v${root_version}"
+      pr_ok=false
     fi
   fi
 
-  # Extract claude-review version: <details><summary>claude-review: X.Y.Z</summary>
   cr_version=$(grep -oE '<details><summary>claude-review: [0-9]+\.[0-9]+\.[0-9]+</summary>' "$BODY_FILE" \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
 
   if [[ -n "$cr_version" ]]; then
-    tag="claude-review-v${cr_version}"
-    if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
-      echo "Release $tag already exists, skipping"
+    if create_release "claude-review-v${cr_version}" "claude-review: v${cr_version}" "claude-review: $cr_version" "$merge_sha"; then
+      backfilled=$((backfilled + 1))
     else
-      awk -v ver="claude-review: $cr_version" '
-        $0 ~ "<details><summary>" ver "</summary>" { found=1; next }
-        found && /<\/details>/ { exit }
-        found { print }
-      ' "$BODY_FILE" > "$NOTES_FILE"
-
-      echo "Creating release $tag"
-      if gh release create "$tag" \
-          --repo "$REPO" \
-          --target "$merge_sha" \
-          --title "claude-review: v${cr_version}" \
-          --notes-file "$NOTES_FILE"; then
-        backfilled=$((backfilled + 1))
-      else
-        echo "::error::Failed to create release $tag"
-        pr_ok=false
-      fi
+      echo "::error::Failed to create release claude-review-v${cr_version}"
+      pr_ok=false
     fi
   fi
 

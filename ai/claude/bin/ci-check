@@ -194,15 +194,17 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         kind = ci.classify_job(job_name, annotation_texts)
 
         if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.INFRA):
-            annotations, annotation_texts = _log_fallback_annotations(repo, run_data["databaseId"])
+            source_run_id = job.get("_source_run_id", run_data["databaseId"])
+            annotations, annotation_texts = _log_fallback_annotations(repo, source_run_id)
             kind = ci.classify_job(job_name, annotation_texts) if annotation_texts else kind
 
         items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
 
         if items:
             job_key = job_name.lower().replace(" ", "-").replace("/", "-")
+            prior_items = failures[job_key].items if job_key in failures else ()
             failures[job_key] = ci.FailureGroup(
-                job=job_name, kind=kind, items=tuple(items),
+                job=job_name, kind=kind, items=prior_items + tuple(items),
             )
 
     return ci.RunState(
@@ -257,13 +259,15 @@ def main():
             continue
         if primary_run_data is None:
             primary_run_data = rd
-        else:
-            if rd.get("conclusion") == "failure":
-                primary_run_data["conclusion"] = "failure"
-        all_jobs.extend(rd.get("jobs", []))
+        if rd.get("conclusion") not in ("success", None):
+            primary_run_data["conclusion"] = "failure"
+        jobs = rd.get("jobs", [])
+        for job in jobs:
+            job["_source_run_id"] = rid
+        all_jobs.extend(jobs)
 
     if primary_run_data is None:
-        _err(f"Failed to fetch run data")
+        _err("Failed to fetch run data")
         sys.exit(1)
 
     primary_run_data["jobs"] = all_jobs

@@ -6,6 +6,7 @@ Manages local state in <worktree>/ignore/ci-failures/state.json.
 
 Usage:
   ci-check                      # latest run for current branch
+  ci-check --branch <name>      # specific branch (works from bare repos)
   ci-check --run <run_id>       # specific run
   ci-check --pr <number_or_url> # discover branch from PR
   ci-check --repo-dir <path>    # specify worktree directory
@@ -49,12 +50,19 @@ def _current_branch(cwd: str | None = None) -> str:
     return result.stdout.strip()
 
 
-def _detect_pr_number(cwd: str | None = None) -> int | None:
-    """Try to detect PR number from current branch."""
-    result = subprocess.run(
-        ["gh", "pr", "view", "--json", "number", "-q", ".number"],
-        capture_output=True, text=True, cwd=cwd,
-    )
+def _detect_pr_number(cwd: str | None = None, *, repo: str = "", branch: str = "") -> int | None:
+    """Try to detect PR number from current branch or explicit branch name."""
+    if repo and branch:
+        result = subprocess.run(
+            ["gh", "pr", "list", "--repo", repo, "--head", branch,
+             "--json", "number", "--jq", ".[0].number"],
+            capture_output=True, text=True,
+        )
+    else:
+        result = subprocess.run(
+            ["gh", "pr", "view", "--json", "number", "-q", ".number"],
+            capture_output=True, text=True, cwd=cwd,
+        )
     if result.returncode != 0:
         return None
     try:
@@ -221,6 +229,7 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
 def main():
     parser = argparse.ArgumentParser(description="CI failure status")
     parser.add_argument("--pr", help="PR number or URL")
+    parser.add_argument("--branch", help="Branch name (overrides git detection)")
     parser.add_argument("--run", type=int, help="Specific run ID")
     parser.add_argument("--repo-dir", "--repo", "--worktree",
                         help="Git worktree directory")
@@ -228,7 +237,7 @@ def main():
 
     cwd = args.repo_dir or None
     repo = detect_repo(cwd)
-    branch = _current_branch(cwd)
+    branch = args.branch or _current_branch(cwd)
     pr_number = None
 
     if args.pr:
@@ -238,6 +247,8 @@ def main():
         except ValueError:
             _err(f"--pr: invalid value: {args.pr!r}")
             sys.exit(1)
+    elif args.branch:
+        pr_number = _detect_pr_number(repo=repo, branch=args.branch)
     else:
         pr_number = _detect_pr_number(cwd)
 
@@ -276,8 +287,13 @@ def main():
     run_state = _parse_run(repo, primary_run_data)
 
     # Load and sync state
-    toplevel = Path(args.repo_dir) if args.repo_dir else _git_toplevel()
-    prior_state = ci.load_state(toplevel)
+    if args.repo_dir:
+        toplevel = Path(args.repo_dir)
+    elif args.branch:
+        toplevel = None
+    else:
+        toplevel = _git_toplevel()
+    prior_state = ci.load_state(toplevel) if toplevel else None
     if prior_state is None:
         prior_state = ci.empty_state(repo, branch, pr_number)
 
@@ -286,7 +302,8 @@ def main():
     progression = ci.compute_progression(run_state.failures, prior_failures)
 
     state = ci.sync_state(prior_state, run_state)
-    ci.save_state(toplevel, state)
+    if toplevel:
+        ci.save_state(toplevel, state)
 
     # Dashboard to stderr
     dashboard = ci.render_dashboard(run_state, progression)

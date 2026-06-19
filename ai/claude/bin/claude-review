@@ -1067,6 +1067,12 @@ _run_self_review() {
     fi
   fi
 
+  if [[ "$is_branch" == "true" ]]; then
+    local resolved
+    resolved=$(resolve-branch "$pr_input" 2>/dev/null) || true
+    [[ -z "$resolved" ]] || pr_input="$resolved"
+  fi
+
   local wt_path
   if [[ -n "$repo_dir" ]]; then
     wt_path=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || {

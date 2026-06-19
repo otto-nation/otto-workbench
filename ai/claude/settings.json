@@ -145,6 +145,7 @@
       "Bash(bash:*)",
       "Bash(pip3:*)",
       "Bash(gofmt:*)",
+      "Bash(ci-check:*)",
       "Bash(bin/local/*:*)",
       "Bash(git/bin/local/*:*)",
       "Bash(* --help)",

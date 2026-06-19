@@ -121,12 +121,12 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 **Trigger:** Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h.
 **Skip:** Do not use for project-specific context (use context instead) or memory consolidation (use dream instead).
 
-### `/pr-comments [<pr_number>]`
+### `/pr-comments [<pr_number_or_branch>]`
 
 Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or claude-review instead); self-review before PR creation (use self-review-fix instead).
 
 ```
-/pr-comments [<pr_number>]
+/pr-comments [<pr_number_or_branch>]
 ```
 **Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
 **Skip:** Do not use for initial code review requests (use code-review or claude-review instead); do not use for self-review before PR creation (use self-review-fix instead).

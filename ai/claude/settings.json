@@ -165,7 +165,8 @@
       "Read(//private/tmp/**)",
       "Write(//private/tmp/**)",
       "Edit(//private/tmp/**)",
-      "Read(//opt/homebrew/**)"
+      "Read(//opt/homebrew/**)",
+      "Read(/Users/isaacg/.git-hooks/**)"
     ],
     "deny": [
       "Bash(git reset:*)",

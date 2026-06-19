@@ -63,19 +63,23 @@ def _detect_pr_number(cwd: str | None = None) -> int | None:
         return None
 
 
-def _fetch_latest_run_id(repo: str, branch: str) -> int | None:
-    """Fetch the latest workflow run ID for a branch."""
+def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
+    """Fetch all workflow run IDs for the latest commit on a branch."""
     result = subprocess.run(
         ["gh", "run", "list", "--repo", repo, "--branch", branch,
-         "--limit", "1", "--json", "databaseId", "-q", ".[0].databaseId"],
+         "--limit", "20", "--json", "databaseId,headSha"],
         capture_output=True, text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return None
+        return []
     try:
-        return int(result.stdout.strip())
-    except ValueError:
-        return None
+        runs = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not runs:
+        return []
+    latest_sha = runs[0]["headSha"]
+    return [r["databaseId"] for r in runs if r["headSha"] == latest_sha]
 
 
 def _fetch_run_data(repo: str, run_id: int) -> dict | None:
@@ -190,15 +194,17 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         kind = ci.classify_job(job_name, annotation_texts)
 
         if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.INFRA):
-            annotations, annotation_texts = _log_fallback_annotations(repo, run_data["databaseId"])
+            source_run_id = job.get("_source_run_id", run_data["databaseId"])
+            annotations, annotation_texts = _log_fallback_annotations(repo, source_run_id)
             kind = ci.classify_job(job_name, annotation_texts) if annotation_texts else kind
 
         items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
 
         if items:
             job_key = job_name.lower().replace(" ", "-").replace("/", "-")
+            prior_items = failures[job_key].items if job_key in failures else ()
             failures[job_key] = ci.FailureGroup(
-                job=job_name, kind=kind, items=tuple(items),
+                job=job_name, kind=kind, items=prior_items + tuple(items),
             )
 
     return ci.RunState(
@@ -235,23 +241,39 @@ def main():
     else:
         pr_number = _detect_pr_number(cwd)
 
-    # Determine run ID
+    # Determine run IDs
     if args.run:
-        run_id = args.run
+        run_ids = [args.run]
     else:
-        run_id = _fetch_latest_run_id(repo, branch)
-        if run_id is None:
+        run_ids = _fetch_latest_run_ids(repo, branch)
+        if not run_ids:
             _err(f"No workflow runs found for branch '{branch}'")
             sys.exit(1)
 
-    # Fetch run data
-    run_data = _fetch_run_data(repo, run_id)
-    if run_data is None:
-        _err(f"Failed to fetch run {run_id}")
+    # Fetch all runs and merge their jobs into a single run data
+    primary_run_data = None
+    all_jobs = []
+    for rid in run_ids:
+        rd = _fetch_run_data(repo, rid)
+        if rd is None:
+            continue
+        if primary_run_data is None:
+            primary_run_data = rd
+        if rd.get("conclusion") not in ("success", None):
+            primary_run_data["conclusion"] = "failure"
+        jobs = rd.get("jobs", [])
+        for job in jobs:
+            job["_source_run_id"] = rid
+        all_jobs.extend(jobs)
+
+    if primary_run_data is None:
+        _err("Failed to fetch run data")
         sys.exit(1)
 
+    primary_run_data["jobs"] = all_jobs
+
     # Parse into typed state
-    run_state = _parse_run(repo, run_data)
+    run_state = _parse_run(repo, primary_run_data)
 
     # Load and sync state
     toplevel = Path(args.repo_dir) if args.repo_dir else _git_toplevel()

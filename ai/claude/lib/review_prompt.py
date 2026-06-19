@@ -85,6 +85,15 @@ PR branch checked out at: {wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API."""
 
 
+def _build_omitted_guidance(preflight: "PreflightData | None") -> str:
+    if not preflight or not preflight.omitted_files:
+        return ""
+    return (
+        ' First, read all files listed under "Files not pre-collected"'
+        " in a single parallel batch."
+    )
+
+
 def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
     if not holistic_content:
         return ""
@@ -390,6 +399,7 @@ def _prompt_self_review(job, common, extra):
         "prior_section": prior_section,
         "review_file": job.review_file,
         "generator_version": common["generator_version"],
+        "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }
     return sections, kwargs, ""
@@ -461,6 +471,7 @@ def _prompt_single(job, common, extra):
         "prior_section": prior_section,
         "review_file": job.review_file,
         "generator_version": common["generator_version"],
+        "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }
     return sections, kwargs, ""
@@ -489,6 +500,7 @@ def _prompt_holistic(job, common, extra):
         "issue_section": common["issue_section"],
         "env_section": common["env_section"],
         "holistic_output": extra["holistic_output"],
+        "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }
     return sections, kwargs, ""
@@ -536,6 +548,7 @@ def _prompt_group(job, common, extra):
         "env_section": common["env_section"],
         "group_output": extra["group_output"],
         "prior_section": prior_section,
+        "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }
     return sections, kwargs, str(extra["group_idx"])
@@ -605,6 +618,7 @@ def _prompt_angles(job, common, extra):
         "env_section": common["env_section"],
         "angles_output": extra["angles_output"],
         "wt_path": job.wt_path,
+        "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }
     return sections, kwargs, ""
@@ -653,6 +667,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
         "env_section": _build_env_section(job.wt_path, preflight=job.preflight),
         "issue_section": _build_issue_section(job.issue_link, job.issue_context),
         "delta_section": _build_delta_section(job.preflight),
+        "omitted_guidance": _build_omitted_guidance(job.preflight),
         "max_turns": max_turns,
     }
 

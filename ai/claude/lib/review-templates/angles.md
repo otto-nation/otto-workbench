@@ -61,6 +61,6 @@ Classify findings by severity:
 Omit empty severity sections entirely.
 
 ## Turn budget
-You have ${max_turns} turns. Write your findings file FIRST based on the pre-collected diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit.
+You have ${max_turns} turns.${omitted_guidance} Write your findings file FIRST based on the diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit.
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.

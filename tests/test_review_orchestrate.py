@@ -1572,11 +1572,25 @@ class TestIsRetryable:
 
 
 class TestRetryTurns:
-    def test_max_turns_gets_doubled(self, ro):
-        assert ro._retry_turns("agent hit max turns (16)") == ro.RETRY_MAX_TURNS_GROUP
+    def _job_no_omitted(self, ro, tmp_path):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="1",
+            pr=ro.PRMetadata(title="t", body="", head="f", base="main",
+                             head_sha="abc", additions=1, deletions=0,
+                             changed_files=1, files=[]),
+            ctx=ro.PRContext(),
+            wt_path=str(tmp_path), review_file=str(tmp_path / "r.md"),
+            session_log=str(tmp_path / "s.jsonl"),
+            reviews_dir=str(tmp_path), mode=ro.MODE_PR,
+        )
 
-    def test_other_reason_gets_default(self, ro):
-        assert ro._retry_turns("no session log found") == ro.DEFAULT_MAX_TURNS_GROUP
+    def test_max_turns_gets_doubled(self, ro, tmp_path):
+        job = self._job_no_omitted(ro, tmp_path)
+        assert ro._retry_turns("agent hit max turns (16)", job) == ro.RETRY_MAX_TURNS_GROUP
+
+    def test_other_reason_gets_default(self, ro, tmp_path):
+        job = self._job_no_omitted(ro, tmp_path)
+        assert ro._retry_turns("no session log found", job) == ro.DEFAULT_MAX_TURNS_GROUP
 
 
 class TestRetryFailedGroups:

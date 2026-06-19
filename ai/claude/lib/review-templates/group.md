@@ -25,5 +25,5 @@ Must-fix and should-fix findings must include an evidence block — a blockquote
 Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
 
 ## Turn budget
-You have ${max_turns} turns. Write your findings file FIRST based on the pre-collected diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.
+You have ${max_turns} turns.${omitted_guidance} Write your findings file FIRST based on the diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.
 ${prior_section}

@@ -68,6 +68,12 @@ jobs:
           config-file: .github/.release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
+      - name: Backfill stale releases
+        if: steps.release.outputs.releases_created != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/backfill-releases.sh
+
       - name: Release summary
         if: steps.release.outputs.releases_created
         run: |

@@ -154,6 +154,9 @@ step_claude_settings() {
   local template
   template=$(cat "$CLAUDE_SETTINGS_SRC")
 
+  # Strip repo bookkeeping key before injecting into user settings
+  template=$(jq 'del(._generated_permissions)' <<< "$template")
+
   # Merge user override settings into the template before applying
   if [[ -f "$USER_SETTINGS_SRC" ]]; then
     template=$(jq -n --argjson base "$template" --argjson user "$(cat "$USER_SETTINGS_SRC")" \

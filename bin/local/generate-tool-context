@@ -591,3 +591,31 @@ if [[ -d "$AI_DIR" ]];          then _readme_lifecycle      | _splice_readme "$A
 if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
                                      _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
                                      _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"
+
+# ── Project settings permissions ─────────────────────────────────────────────
+
+CLAUDE_SETTINGS_SRC="${CLAUDE_SETTINGS_SRC:-"$REPO_ROOT/ai/claude/settings.json"}"
+
+_sync_project_permissions() {
+  [[ -f "$CLAUDE_SETTINGS_SRC" ]] || return 0
+
+  local -a registry_perms=()
+  collect_registry_permissions registry_perms "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+  [[ ${#registry_perms[@]} -gt 0 ]] || return 0
+
+  local perms_json
+  perms_json=$(printf '%s\n' "${registry_perms[@]}" | jq -Rn '[inputs] | sort')
+
+  local result
+  result=$(jq --argjson rp "$perms_json" '
+    (._generated_permissions // []) as $prev |
+    [.permissions.allow[] | select(. as $x | $prev | index($x) == null)] as $manual |
+    .permissions.allow = ($manual + $rp | unique) |
+    ._generated_permissions = $rp
+  ' "$CLAUDE_SETTINGS_SRC")
+
+  printf '%s\n' "$result" > "$CLAUDE_SETTINGS_SRC"
+  _gen_success "Synced project permissions"
+}
+
+_sync_project_permissions

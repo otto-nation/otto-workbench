@@ -75,6 +75,7 @@ tools:
     usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"
 
   - name: ci-check
+    allow: true
     context: none
     description: "Fetch CI run data, classify failures, and output status dashboard"
     when_to_use: "Called by the ci-failures skill to fetch and classify GitHub Actions failures; not invoked directly"

@@ -17,11 +17,20 @@ Run with `/ci-failures`, `/ci-failures <pr_number>`, or `/ci-failures <run_id>`.
 
 ---
 
+## Arguments
+
+- `pr_number_or_run_id` (optional): PR number or GitHub Actions run ID to diagnose.
+  Defaults to auto-detection from the current branch.
+
+---
+
 ## Steps
 
 ### 1. Fetch status and display dashboard
 
-Run the CI check script to fetch the latest run, classify failures, and display status:
+Run the CI check script to fetch the latest run, classify failures, and display status.
+
+Use the skill argument as the PR number or run ID if provided; otherwise omit for auto-detection:
 
 ```bash
 ci-check [--pr <number>] [--run <run_id>] [--repo-dir <path>] 2>&1

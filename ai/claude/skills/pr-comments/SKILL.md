@@ -2,7 +2,7 @@
 name: pr-comments
 description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or claude-review instead); self-review before PR creation (use self-review-fix instead)."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
-invocation: "/pr-comments [<pr_number>]"
+invocation: "/pr-comments [<pr_number_or_branch>]"
 trigger: "Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments."
 skip: "Do not use for initial code review requests (use code-review or claude-review instead); do not use for self-review before PR creation (use self-review-fix instead)."
 ---
@@ -13,24 +13,49 @@ Responds to review comments on a PR with full lifecycle tracking. Fetches thread
 
 Tracks multi-round review cycles: knows what's been addressed, what the reviewer acknowledged, what they pushed back on, and what's still open.
 
-Run with `/pr-comments` or `/pr-comments <pr_number>`.
+Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
 ---
 
 ## Arguments
 
-- `pr_number` (optional): PR number or URL to address comments on. Defaults to
-  auto-detection from the current branch.
+- `pr_number_or_branch` (optional): PR number, URL, or branch name to address
+  comments on. Defaults to auto-detection from the current branch.
+  - Numeric values are treated as PR numbers
+  - Values containing `/` are treated as branch names
 
 ---
 
 ## Steps
 
-### 1. Fetch status and display dashboard
+### 1. Resolve the argument
+
+If a skill argument was provided that looks like a branch name (contains `/` or
+is not purely numeric), resolve it first:
+
+```bash
+resolve-branch "<argument>"
+```
+
+This tries exact match, worktree directory match, separator normalization
+(`-` → `/`), and fuzzy search — in that order.
+- **Success (exit 0)**: use the stdout output as the resolved branch name, then
+  look up the PR number:
+  ```bash
+  gh pr list --head "<resolved_branch>" --json number --limit 1
+  ```
+  Extract the `number` from the JSON output. If no PR is found, error and stop.
+- **Multiple matches (exit 1)**: candidates are listed on stderr — show them
+  and ask the user to pick
+- **No matches (exit 1)**: error and stop
+
+Purely numeric arguments skip resolution — they are PR numbers.
+
+### 2. Fetch status and display dashboard
 
 Run the status script to fetch all threads, compute lifecycle states, and display the dashboard.
 
-Use the skill argument as the PR number if provided; otherwise omit it for auto-detection:
+Use the resolved PR number if available; otherwise omit it for auto-detection:
 
 ```bash
 claude-review threads [<pr_number>] [--repo-dir <path>]
@@ -56,7 +81,7 @@ Parse the JSON report from stdout. If there are no threads in `new`, `contested`
 
 If a specific reviewer was mentioned (e.g., "address Gemini's comments"), filter the threads to that reviewer.
 
-### 2. Classify threads needing action
+### 3. Classify threads needing action
 
 From the JSON report, present threads that need action, grouped in priority order:
 
@@ -93,7 +118,7 @@ Proceed with this classification? (y/n)
 
 Also classify any **issue-level comments** from the `issue_comments` array in the JSON report. These are general PR discussion comments (not inline code threads). They don't have lifecycle states — classify them the same way as threads (suggestion, question, acknowledgment, conflicting) and include them in the classification table.
 
-### 3. Verify actionable suggestions
+### 4. Verify actionable suggestions
 
 For each suggestion classified as actionable:
 
@@ -112,7 +137,7 @@ Mark each suggestion as:
 - **invalid** — suggestion is incorrect (with specific reason: "utility does not exist", "wrong signature", "would break callers at X:N")
 - **needs-discussion** — ambiguous or requires design input
 
-### 4. Apply valid fixes
+### 5. Apply valid fixes
 
 For each `valid` suggestion:
 1. Edit the file to address the comment
@@ -126,7 +151,7 @@ git push
 
 Group all fixes into a single commit. Do not create separate commits per comment.
 
-### 5. Reply to each comment
+### 6. Reply to each comment
 
 Reply inline to every addressed comment. Commit and push before replying so replies reference the fix.
 
@@ -171,7 +196,7 @@ REPLY_BODY
 
 **Question answered / Conflicting:** Same heredoc pattern.
 
-### 6. Resolve verified threads
+### 7. Resolve verified threads
 
 After replying, resolve threads that have been verified (reviewer acknowledged your fix):
 
@@ -181,7 +206,7 @@ claude-review threads [<pr_url_or_number>] --resolve-verified [--repo-dir <path>
 
 This auto-resolves verified threads on GitHub via GraphQL mutation. Only threads where the reviewer explicitly acknowledged the fix are resolved — never contested or ambiguous threads.
 
-### 7. Emit feedback signals
+### 8. Emit feedback signals
 
 After processing all comments, print a structured summary:
 
@@ -198,7 +223,7 @@ After processing all comments, print a structured summary:
 
 This summary appears in the session transcript and is picked up by `/dream` for review quality tracking.
 
-### 8. Report
+### 9. Report
 
 Print:
 - Number of fixes applied
@@ -232,7 +257,7 @@ new → addressed → verified → resolved
 
 ## Constraints
 
-- NEVER apply fixes without user confirmation of the classification (Step 2)
+- NEVER apply fixes without user confirmation of the classification (Step 3)
 - NEVER reply to comments without user confirmation
 - NEVER auto-resolve contested or ambiguous threads — only verified ones
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans — verify all suggestions against source code

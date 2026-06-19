@@ -17,14 +17,23 @@ Run with `/pr-comments` or `/pr-comments <pr_number>`.
 
 ---
 
+## Arguments
+
+- `pr_number` (optional): PR number or URL to address comments on. Defaults to
+  auto-detection from the current branch.
+
+---
+
 ## Steps
 
 ### 1. Fetch status and display dashboard
 
-Run the status script to fetch all threads, compute lifecycle states, and display the dashboard:
+Run the status script to fetch all threads, compute lifecycle states, and display the dashboard.
+
+Use the skill argument as the PR number if provided; otherwise omit it for auto-detection:
 
 ```bash
-claude-review threads [<pr_url_or_number>] [--repo-dir <path>]
+claude-review threads [<pr_number>] [--repo-dir <path>]
 ```
 
 The script outputs:

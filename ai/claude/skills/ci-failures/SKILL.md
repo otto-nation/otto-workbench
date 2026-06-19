@@ -2,7 +2,7 @@
 name: ci-failures
 description: "Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or claude-review instead); addressing PR review comments (use pr-comments instead)."
 source: otto-workbench/ai/claude/skills/ci-failures/SKILL.md
-invocation: "/ci-failures [<pr_number_or_run_id>]"
+invocation: "/ci-failures [<pr_number_or_run_id_or_branch>]"
 trigger: "Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red."
 skip: "Do not use for code review (use code-review or claude-review instead); do not use for addressing PR review comments (use pr-comments instead)."
 ---
@@ -13,40 +13,62 @@ Diagnoses and fixes GitHub Actions failures on PR branches with full lifecycle
 tracking. Fetches run data, classifies failures by kind, diagnoses root causes,
 applies fixes, pushes, and tracks progression across workflow runs.
 
-Run with `/ci-failures`, `/ci-failures <pr_number>`, or `/ci-failures <run_id>`.
+Run with `/ci-failures`, `/ci-failures <pr_number>`, `/ci-failures <run_id>`,
+or `/ci-failures <branch_name>`.
 
 ---
 
 ## Arguments
 
-- `pr_number_or_run_id` (optional): PR number or GitHub Actions run ID to diagnose.
-  Defaults to auto-detection from the current branch.
+- `pr_number_or_run_id_or_branch` (optional): PR number, GitHub Actions run ID, or
+  branch name to diagnose. Defaults to auto-detection from the current branch.
+  - Numeric values are treated as PR numbers (small) or run IDs (large)
+  - Values containing `/` are treated as branch names
 
 ---
 
 ## Steps
 
-### 1. Fetch status and display dashboard
+### 1. Resolve the argument
+
+If a skill argument was provided that looks like a branch name (contains `/` or
+is not purely numeric), resolve it first:
+
+```bash
+resolve-branch "<argument>"
+```
+
+This tries exact match, worktree directory match, separator normalization
+(`-` → `/`), and fuzzy search — in that order.
+- **Success (exit 0)**: use the stdout output as the resolved branch name
+- **Multiple matches (exit 1)**: candidates are listed on stderr — show them
+  and ask the user to pick
+- **No matches (exit 1)**: error and stop
+
+Purely numeric arguments skip resolution — they are PR numbers or run IDs.
+
+### 2. Fetch status and display dashboard
 
 Run the CI check script to fetch the latest run, classify failures, and display status.
 
-Use the skill argument as the PR number or run ID if provided; otherwise omit for auto-detection:
+Route the resolved argument to the correct `ci-check` flag:
 
-```bash
-ci-check [--pr <number>] [--run <run_id>] [--repo-dir <path>] 2>&1
-```
+- **Branch name**: `ci-check --branch <resolved_name> 2>&1`
+- **PR number** (small integer): `ci-check --pr <number> 2>&1`
+- **Run ID** (large integer): `ci-check --run <run_id> 2>&1`
+- **No argument**: `ci-check [--repo-dir <path>] 2>&1`
+
+When CWD is inside a worktree, pass `--repo-dir <path>` so the script can find state files and resolve the repo. When using `--branch`, `--repo-dir` is optional — the script resolves the repo from the bare repo's remote URL.
 
 The script outputs:
 - **stderr:** Human-readable dashboard (run number, commit, failure counts by kind, progression)
 - **stdout:** Structured JSON report with all failures, classifications, and progression markers
 
-**Bare repo handling:** If CWD is a bare repo, use `wt switch <branch> --no-cd --format json --no-hooks` to find the worktree path, then pass it via `--repo-dir`.
-
-**Invocation rules:** Run the command as a single simple statement. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
+**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — the scripts handle all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
 If all checks pass (conclusion is "success" and no failures), report that CI is green and stop.
 
-### 2. Classify and group failures
+### 3. Classify and group failures
 
 From the JSON report, present failures grouped by kind in priority order:
 
@@ -70,7 +92,7 @@ Proceed with this classification? Override any kinds?
 
 Allow the user to override classifications (e.g. "that test failure is flaky").
 
-### 3. Diagnose
+### 4. Diagnose
 
 For each non-infra, non-flaky failure group:
 
@@ -85,7 +107,7 @@ Present diagnosis per group. User confirms before fixing.
 For persisting/regressed failures, include context from prior attempts:
 > "Previously diagnosed as X, fix Y was applied at commit Z — still failing. The prior fix may have been incomplete or targeted the wrong root cause."
 
-### 4. Apply fixes and push
+### 5. Apply fixes and push
 
 For each confirmed diagnosis:
 1. Edit the files to address the failure
@@ -99,7 +121,7 @@ git push
 
 Group all fixes into a single commit. The state file is updated automatically on the next `ci-check` invocation.
 
-### 5. Monitor (on re-invocation)
+### 6. Monitor (on re-invocation)
 
 When re-invoked after a push:
 1. Fetch the new run triggered by the push
@@ -114,9 +136,9 @@ Persisting: 1 (pytest test_validate — was diagnosed as X, fix Y applied)
 New: 1 (bats test_cleanup)
 ```
 
-Re-enter Step 3 for persisting failures with context of what was already tried.
+Re-enter Step 4 for persisting failures with context of what was already tried.
 
-### 6. Report
+### 7. Report
 
 Print:
 - Number of fixes applied

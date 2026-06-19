@@ -1064,6 +1064,11 @@ _run_self_review() {
       is_pr="true"
     else
       is_branch="true"
+      local resolved
+      resolved=$(resolve-branch "$pr_input" 2>/dev/null) || true
+      if [[ -n "$resolved" ]]; then
+        pr_input="$resolved"
+      fi
     fi
   fi
 

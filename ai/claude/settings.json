@@ -22,6 +22,10 @@
           {
             "type": "command",
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ \\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\\} ]]; then echo 'BLOCKED: Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See git-operations.md.' >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*) ]]; then rel=\"${BASH_REMATCH[1]}\"; echo \"BLOCKED: Use relative path '$rel' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree.\" >&2; exit 2; fi"
           }
         ]
       },

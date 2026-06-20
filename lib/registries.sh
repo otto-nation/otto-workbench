@@ -4,7 +4,31 @@
 # Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries,
 #          ai/claude/steps.sh
 #
-# Functions:
+# ── Tool Entry Interface ─────────────────────────────────────────────────
+#
+# Required fields:
+#   name          string          Tool or command name
+#   description   string          One-line description
+#   when_to_use   string          When the AI should reach for this tool
+#   allow         bool|str|str[]  Bash permission for Claude Code settings.json:
+#                   false              → no permission (internal/indirect tools)
+#                   true               → Bash(name:*)
+#                   "cmd"              → Bash(cmd:*)  (CLI differs from registry name)
+#                   ["Bash(cmd:*)"]    → verbatim patterns (granular subcommand control)
+#   context       enum            AI context visibility:
+#                   always    → full entry in tools.generated.md
+#                   reference → compact one-liner
+#                   none      → omitted from AI context
+#
+# Optional fields:
+#   usage         string          Example invocations (shown in tools.generated.md)
+#   docs          string          URL to external documentation
+#   brew_name     string          Brewfile formula name when it differs from tool name
+#   commands      object[]        Subcommand definitions (otto-workbench only)
+#   auth          object          Auth block with env_var, setup_url, prefix
+#
+# ── Functions ─────────────────────────────────────────────────────────────
+#
 #   is_installed NAME             — returns 0 if NAME is in PATH
 #   collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 #                                 — populates array with deduplicated registry paths
@@ -20,6 +44,10 @@
 #                                 — calls CALLBACK name env_var setup_url prefix
 #                                   for each tool with an auth block in FILE
 #                                   (respects install_check: skips uninstalled tools)
+
+# Known tool entry fields — used by validate-registries to reject unknown keys
+# shellcheck disable=SC2034
+KNOWN_TOOL_FIELDS="name description when_to_use allow context usage docs brew_name commands auth"
 
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
@@ -196,13 +224,7 @@ _collect_tool_allow() {
 
 # collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with Claude Code Bash permission
-# patterns derived from tools that declare an allow field in their registry.
-#
-# allow field semantics:
-#   true           → Bash(name:*)
-#   "cmd"          → Bash(cmd:*)   (CLI name differs from registry name)
-#   ["Bash(…):*"]  → verbatim      (granular subcommand patterns)
-#   false / absent → skipped
+# patterns derived from tools' allow field. See Tool Entry Interface above.
 collect_registry_permissions() {
   local _perms_var=$1
   local -n __perms_out=$1

@@ -9,6 +9,8 @@ meta:
 
 tools:
   - name: serena-mcp
+    allow: false
+    context: always
     description: "Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence"
     when_to_use: "Enabling Serena LSP-based code intelligence in a specific project"
     usage: "serena-mcp init  |  serena-mcp status"

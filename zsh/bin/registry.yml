@@ -9,6 +9,7 @@ meta:
 
 tools:
   - name: aliases
+    allow: false
     context: none
     description: "Lists all custom shell aliases and functions with optional keyword filtering"
     when_to_use: "Discovering available aliases; answering 'what shortcut exists for X?'"

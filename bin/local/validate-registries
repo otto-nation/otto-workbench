@@ -2,7 +2,8 @@
 # Validate tool registries against schema and cross-check with their source files.
 #
 # Checks performed per registry:
-#   - Required fields present: name, description, when_to_use, allow
+#   - Required fields present: name, description, permission, visibility
+#     (when_to_use + usage required when visibility: full; forbidden otherwise)
 #   - No unknown fields (see KNOWN_TOOL_FIELDS in lib/registries.sh)
 #   - No duplicate tool names
 #   - Cross-file check based on meta.validation:
@@ -60,19 +61,32 @@ _fail() {
 # _check_required_fields FILE INDEX
 _check_required_fields() {
   local file="$1" i="$2"
-  local name description when_to_use context
+  local name description visibility
   name=$(yq ".tools[$i].name // \"\"" "$file")
   description=$(yq ".tools[$i].description // \"\"" "$file")
-  when_to_use=$(yq ".tools[$i].when_to_use // \"\"" "$file")
-  context=$(yq ".tools[$i].context // \"\"" "$file")
+  visibility=$(yq ".tools[$i].visibility // \"\"" "$file")
 
-  [[ -n "$name" && "$name" != "null" ]]             || _fail "$(basename "$file") [$i]: missing required field: name"
-  [[ -n "$description" && "$description" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: description"
-  [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use"
-  if [[ -z "$context" || "$context" == "null" ]]; then
-    _fail "$(basename "$file") entry '$name': missing required field: context (use always, reference, or none)"
-  elif [[ "$context" != "always" && "$context" != "reference" && "$context" != "none" ]]; then
-    _fail "$(basename "$file") entry '$name': invalid context value '$context' (must be always|reference|none)"
+  [[ -n "$name" && "$name" != "null" ]]               || _fail "$(basename "$file") [$i]: missing required field: name"
+  [[ -n "$description" && "$description" != "null" ]]  || _fail "$(basename "$file") entry '$name': missing required field: description"
+  if [[ -z "$visibility" || "$visibility" == "null" ]]; then
+    _fail "$(basename "$file") entry '$name': missing required field: visibility (use full, brief, or hidden)"
+  elif [[ "$visibility" != "full" && "$visibility" != "brief" && "$visibility" != "hidden" ]]; then
+    _fail "$(basename "$file") entry '$name': invalid visibility value '$visibility' (must be full|brief|hidden)"
+  fi
+
+  local when_to_use usage
+  when_to_use=$(yq ".tools[$i].when_to_use // \"\"" "$file")
+  usage=$(yq ".tools[$i].usage // \"\"" "$file")
+  local has_wtu has_usage
+  has_wtu=$(yq ".tools[$i] | has(\"when_to_use\")" "$file")
+  has_usage=$(yq ".tools[$i] | has(\"usage\")" "$file")
+
+  if [[ "$visibility" == "full" ]]; then
+    [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use (required when visibility: full)"
+    [[ -n "$usage" && "$usage" != "null" ]]             || _fail "$(basename "$file") entry '$name': missing required field: usage (required when visibility: full)"
+  else
+    [[ "$has_wtu" != "true" ]]   || _fail "$(basename "$file") entry '$name': field 'when_to_use' is not allowed when visibility: $visibility"
+    [[ "$has_usage" != "true" ]] || _fail "$(basename "$file") entry '$name': field 'usage' is not allowed when visibility: $visibility"
   fi
 }
 
@@ -88,15 +102,15 @@ _check_no_duplicates() {
   fi
 }
 
-# _check_allow_seq FILE INDEX NAME
-_check_allow_seq() {
+# _check_permission_seq FILE INDEX NAME
+_check_permission_seq() {
   local file="$1" i="$2" name="$3"
   local j arr_len entry
-  arr_len=$(yq ".tools[$i].allow | length" "$file")
-  [[ "$arr_len" -gt 0 ]] || _fail "$(basename "$file") entry '$name': allow array must not be empty"
+  arr_len=$(yq ".tools[$i].permission | length" "$file")
+  [[ "$arr_len" -gt 0 ]] || _fail "$(basename "$file") entry '$name': permission array must not be empty"
   for (( j=0; j<arr_len; j++ )); do
-    entry=$(yq ".tools[$i].allow[$j]" "$file")
-    [[ "$entry" =~ ^Bash\(.+\)$ ]] || _fail "$(basename "$file") entry '$name': allow array entry '$entry' must match Bash(...) pattern"
+    entry=$(yq ".tools[$i].permission[$j]" "$file")
+    [[ "$entry" =~ ^Bash\(.+\)$ ]] || _fail "$(basename "$file") entry '$name': permission array entry '$entry' must match Bash(...) pattern"
   done
 }
 
@@ -117,35 +131,34 @@ _check_unknown_fields() {
   done < <(yq ".tools[$i] | keys | .[]" "$file")
 }
 
-# _check_allow_field FILE INDEX
-_check_allow_field() {
+# _check_permission_field FILE INDEX
+_check_permission_field() {
   local file="$1" i="$2"
-  local has_allow
-  has_allow=$(yq ".tools[$i] | has(\"allow\")" "$file")
-  if [[ "$has_allow" != "true" ]]; then
+  local has_perm
+  has_perm=$(yq ".tools[$i] | has(\"permission\")" "$file")
+  if [[ "$has_perm" != "true" ]]; then
     local name
     name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
-    _fail "$(basename "$file") entry '$name': missing required field: allow (use false for internal tools)"
+    _fail "$(basename "$file") entry '$name': missing required field: permission (use false for internal tools)"
     return 0
   fi
 
-  local name allow_tag
+  local name perm_tag
   name=$(yq ".tools[$i].name" "$file")
-  allow_tag=$(yq ".tools[$i].allow | tag" "$file")
+  perm_tag=$(yq ".tools[$i].permission | tag" "$file")
 
-  case "$allow_tag" in
-    # true and false both valid — runtime generates permission only for true
+  case "$perm_tag" in
     '!!bool') ;;
     '!!str')
-      local allow_str
-      allow_str=$(yq ".tools[$i].allow" "$file")
-      [[ -n "$allow_str" ]] || _fail "$(basename "$file") entry '$name': allow string must be non-empty"
+      local perm_str
+      perm_str=$(yq ".tools[$i].permission" "$file")
+      [[ -n "$perm_str" ]] || _fail "$(basename "$file") entry '$name': permission string must be non-empty"
       ;;
     '!!seq')
-      _check_allow_seq "$file" "$i" "$name"
+      _check_permission_seq "$file" "$i" "$name"
       ;;
     *)
-      _fail "$(basename "$file") entry '$name': allow must be boolean, string, or array of strings (got $allow_tag)"
+      _fail "$(basename "$file") entry '$name': permission must be boolean, string, or array of strings (got $perm_tag)"
       ;;
   esac
 }
@@ -159,7 +172,7 @@ _validate_schema() {
   count=$(yq '.tools | length' "$file")
   while [[ "$i" -lt "$count" ]]; do
     _check_required_fields "$file" "$i"
-    _check_allow_field "$file" "$i"
+    _check_permission_field "$file" "$i"
     _check_unknown_fields "$file" "$i"
     i=$(( i + 1 ))
   done

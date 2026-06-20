@@ -9,97 +9,88 @@ meta:
 
 tools:
   - name: claude-review
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. For multiple PRs, dispatch separate Agent subagents — do not background with &"
     usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review threads [<pr_url_or_number>]"
 
   - name: claude-rules
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Manages local Claude Code rule additions not tracked in the workbench"
     when_to_use: "Adding machine-specific or project-specific Claude instructions"
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
   - name: review-rebuild
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Rebuild review.md from group finding files — recovers from synthesis formatting drift"
-    when_to_use: "Called internally by claude-review rebuild; not invoked directly"
 
   - name: review-threads
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
-    when_to_use: "Called internally by claude-review threads; not invoked directly"
 
   - name: review-thread-triage
-    allow: true
-    context: none
+    permission: true
+    visibility: hidden
     description: "Classify and verify PR review threads using AI for non-interactive triage"
-    when_to_use: "Non-interactive PR thread classification — pass --pr or --branch to triage review comments"
 
   - name: review-orchestrate
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging"
-    when_to_use: "Called internally by claude-review; not invoked directly"
 
   - name: review-post
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Deterministic posting of review findings to GitHub as a PENDING PR review"
-    when_to_use: "Called internally by claude-review post; not invoked directly"
 
   - name: validate-review-positions
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Validates review finding positions against a PR diff to ensure comment placement accuracy"
-    when_to_use: "Called internally by claude-review; not invoked directly"
 
   - name: build-claude-review-tarball
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Package claude-review into a self-contained tarball for Homebrew distribution"
-    when_to_use: "Called by release workflow to build the claude-review distributable; not invoked directly"
 
   - name: dream-scan
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Scan session transcripts and memory state for dream consolidation"
     when_to_use: "Called by the dream skill to replace Phases 1+2 (Orient + Gather Signal); outputs a structured markdown report"
     usage: "dream-scan --days 7  |  dream-scan --days 30 --home /path/to/home"
 
   - name: dream-verify
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Verify dream memory file integrity across all projects"
     when_to_use: "Called by the dream skill to replace Phase 4 verification; checks line counts, broken refs, relative dates, duplicate names"
     usage: "dream-verify"
 
   - name: promote-scan
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Scan memories and workbench artifacts for promotion evaluation"
     when_to_use: "Called by the promote skill to replace Phase 1 (Orient); outputs a structured markdown report of all memories and existing workbench artifacts"
     usage: "promote-scan  |  promote-scan --workbench /path/to/workbench"
 
   - name: retro-scan
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Scan PR review comments and cross-reference against coding rules"
     when_to_use: "Called by the retro skill to replace Phase 1 (Orient); fetches PR comments from all registered repos and outputs a structured markdown report"
     usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"
 
   - name: ci-check
-    allow: true
-    context: none
+    permission: true
+    visibility: hidden
     description: "Fetch CI run data, classify failures, and output status dashboard"
-    when_to_use: "Called by the ci-failures skill to fetch and classify GitHub Actions failures; not invoked directly"
 
   - name: run-auto-task
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Run a Claude Code skill as a headless background session with output logging"
-    when_to_use: "Called by Stop hooks to run dream/promote/retro skills after session exit; not invoked directly"

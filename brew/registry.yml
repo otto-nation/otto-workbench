@@ -10,8 +10,7 @@ meta:
 
 tools:
   - name: docker
-    context: always
-    allow:
+    permission:
       - "Bash(docker build:*)"
       - "Bash(docker compose:*)"
       - "Bash(docker cp:*)"
@@ -27,30 +26,30 @@ tools:
       - "Bash(docker tag:*)"
       - "Bash(docker version:*)"
       - "Bash(docker volume:*)"
+    visibility: full
     description: "Docker CLI — build, run, and manage containers against any backend runtime"
     when_to_use: "Running container commands; works with Colima, OrbStack, or any Docker-compatible runtime"
     usage: "docker run  |  docker build  |  docker compose up  |  docker ps"
     docs: "https://docs.docker.com/engine/reference/commandline/cli/"
 
   - name: jq
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "JSON processor for querying, filtering, and transforming JSON data"
     when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"
     usage: "jq '.field' file.json  |  echo '{}' | jq '.key'"
     docs: "https://jqlang.github.io/jq/manual/"
 
   - name: yq
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "YAML/JSON/TOML processor — like jq but for YAML"
     when_to_use: "Reading or modifying YAML files (Taskfile.yml, docker-compose.yml, k8s manifests)"
     usage: "yq '.key' file.yaml  |  yq -i '.key = \"value\"' file.yaml"
     docs: "https://mikefarah.gitbook.io/yq/"
 
   - name: gh
-    context: always
-    allow:
+    permission:
       - "Bash(gh pr:*)"
       - "Bash(gh issue:*)"
       - "Bash(gh run:*)"
@@ -67,87 +66,75 @@ tools:
       - "Bash(gh label:*)"
       - "Bash(gh milestone:*)"
       - "Bash(gh api:*)" # broad — needed for review workflows and scripted API calls
+    visibility: full
     description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
     when_to_use: "Creating/viewing PRs, checking CI status, managing issues, cloning repos, viewing runs"
     usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"
     docs: "https://cli.github.com/manual/"
 
   - name: go-task
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
-    when_to_use: "Running defined dev workflows: commits, PRs, brew management"
-    usage: "task commit  |  task pr:create  |  task --global <cmd>"
     docs: "https://taskfile.dev"
 
   - name: shellcheck
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "Static analysis tool for shell scripts — catches bugs and style issues"
     when_to_use: "Before committing any .sh file; run automatically in pre-push and CI"
     usage: "shellcheck script.sh"
     docs: "https://www.shellcheck.net/"
 
   - name: bats-core
-    allow: "bats"
-    context: always
+    permission: "bats"
+    visibility: full
     description: "Bash Automated Testing System — unit testing framework for shell scripts"
     when_to_use: "Writing or running tests for bash scripts in this repo"
     usage: "bats tests/  |  bats tests/foo.bats"
     docs: "https://bats-core.readthedocs.io/"
 
   - name: parallel
-    allow: false
-    context: none
-    description: "GNU parallel — run shell commands in parallel across multiple cores"
+    permission: false
+    visibility: hidden
+    description: "GNU parallel — run shell commands in parallel (required by bats --jobs for parallel test execution)"
     brew_name: "parallel"
-    when_to_use: "Required by bats --jobs for parallel test execution in pre-push hook"
     docs: "https://www.gnu.org/software/parallel/"
 
   - name: tree
-    allow: true
-    context: reference
+    permission: true
+    visibility: brief
     description: "Recursive directory listing tool — visualizes folder structure as a tree"
-    when_to_use: "Quickly inspecting directory structure; understanding project layout at a glance"
-    usage: "tree  |  tree -L 2  |  tree src/"
     docs: "https://oldmanprogrammer.net/source.php?dir=projects/tree"
 
   - name: delta
-    allow: false
-    context: none
-    description: "Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers"
-    when_to_use: "Automatically used for all git diff, show, and log output via core.pager in gitconfig"
-    usage: "git diff  |  git show  |  git log -p"
+    permission: false
+    visibility: hidden
+    description: "Syntax-highlighting pager for git diffs — automatically used for all git diff output via core.pager"
     docs: "https://dandavison.github.io/delta/"
 
   - name: pipx
-    allow: true
-    context: none
+    permission: true
+    visibility: hidden
     description: "Install and run Python CLI tools in isolated environments"
-    when_to_use: "Installing Python-based CLI tools globally (e.g. Serena, pre-commit)"
-    usage: "pipx install <tool>  |  pipx run <tool>"
     docs: "https://pipx.pypa.io/"
 
   - name: uv
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Fast Python package and project manager (Rust-based pip/venv replacement)"
-    when_to_use: "Installing Python tools, managing venvs, running Python scripts without installing"
-    usage: "uv pip install <pkg>  |  uvx <tool>"
     docs: "https://docs.astral.sh/uv/"
 
   - name: worktrunk
-    allow: "wt"
-    context: always
+    permission: "wt"
+    visibility: full
     description: "Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration"
     when_to_use: "Managing parallel git worktrees for concurrent feature development or isolating Claude Code agents in separate worktrees"
     usage: "wt switch -c feat/auth  |  wt list  |  wt merge  |  wt remove feat/auth"
     docs: "https://worktrunk.dev"
 
   - name: gitleaks
-    allow: false
-    context: reference
+    permission: false
+    visibility: brief
     description: "Secret scanner — detects committed credentials, tokens, and keys"
-    when_to_use: "Automatically on every commit and push via git hooks; run manually to audit history"
-    usage: "gitleaks protect --staged  |  gitleaks detect"
     docs: "https://github.com/gitleaks/gitleaks"

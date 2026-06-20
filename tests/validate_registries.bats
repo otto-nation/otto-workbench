@@ -45,10 +45,11 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A test tool"
     when_to_use: "When testing"
+    usage: "mytool --help"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 }
@@ -63,15 +64,17 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
   - name: othertool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Another script"
     when_to_use: "When needed"
+    usage: "othertool --help"
 EOF
 }
 
@@ -85,10 +88,11 @@ meta:
 
 tools:
   - name: "Git aliases"
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Git shortcuts"
     when_to_use: "Always"
+    usage: "gs"
 EOF
   printf '# Git aliases Configuration\nalias gs="git status"\n' \
     > "$TMPDIR/zsh/config.d/aliases-git.zsh"
@@ -104,10 +108,11 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A work tool"
     when_to_use: "When working"
+    usage: "mytool --help"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 }
@@ -133,9 +138,10 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     when_to_use: "When testing"
+    usage: "mytool --help"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
@@ -154,9 +160,10 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A tool"
+    usage: "mytool --help"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
@@ -175,15 +182,17 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "First"
     when_to_use: "Always"
+    usage: "mytool --help"
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Second"
     when_to_use: "Always"
+    usage: "mytool --help"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
@@ -204,10 +213,11 @@ meta:
 
 tools:
   - name: missing-formula
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Not in Brewfile"
     when_to_use: "Never"
+    usage: "missing-formula --help"
 EOF
   printf 'brew "something-else"\n' > "$TMPDIR/brew/Brewfile"
 
@@ -226,10 +236,11 @@ meta:
 
 tools:
   - name: mycask
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A cask"
     when_to_use: "For GUI tools"
+    usage: "mycask --help"
 EOF
   printf 'cask "mycask"\n' > "$TMPDIR/brew/Brewfile"
 
@@ -247,11 +258,12 @@ meta:
 
 tools:
   - name: mvn
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     brew_name: maven
     description: "Maven build tool"
     when_to_use: "Building Maven projects"
+    usage: "mvn --help"
 EOF
   printf 'brew "maven"\n' > "$TMPDIR/brew/Brewfile"
 
@@ -269,10 +281,11 @@ meta:
 
 tools:
   - name: no-such-script
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Missing"
     when_to_use: "Never"
+    usage: "no-such-script --help"
 EOF
 
   run "$VALIDATOR"
@@ -290,10 +303,11 @@ meta:
 
 tools:
   - name: "Nomatch aliases"
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Nothing matches"
     when_to_use: "Never"
+    usage: "nomatch --help"
 EOF
   # No matching comment in any zsh file
 
@@ -340,10 +354,11 @@ meta:
 
 tools:
   - name: missing-work-tool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "Not in Brewfile"
     when_to_use: "Never"
+    usage: "missing-work-tool --help"
 EOF
   printf 'brew "something-else"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 
@@ -362,11 +377,12 @@ meta:
 
 tools:
   - name: kubectl
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     brew_name: kubernetes-cli
     description: "Kubernetes CLI"
     when_to_use: "Managing clusters"
+    usage: "kubectl --help"
 EOF
   printf 'brew "kubernetes-cli"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 
@@ -515,9 +531,9 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-# ── Allow field validation ────────────────────────────────────────────────────
+# ── Permission field validation ───────────────────────────────────────────────
 
-@test "passes with allow: true" {
+@test "passes with permission: true" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -526,17 +542,18 @@ meta:
 
 tools:
   - name: mytool
-    allow: true
-    context: always
+    permission: true
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
-@test "passes with allow: false" {
+@test "passes with permission: false" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -545,17 +562,18 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
-@test "passes with allow: string" {
+@test "passes with permission: string" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -564,17 +582,18 @@ meta:
 
 tools:
   - name: mytool
-    allow: "mt"
-    context: always
+    permission: "mt"
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
-@test "fails with allow: empty string" {
+@test "fails with permission: empty string" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -583,18 +602,19 @@ meta:
 
 tools:
   - name: mytool
-    allow: ""
-    context: always
+    permission: ""
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"allow string must be non-empty"* ]]
+  [[ "$output" == *"permission string must be non-empty"* ]]
 }
 
-@test "passes with allow: array of Bash patterns" {
+@test "passes with permission: array of Bash patterns" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -603,19 +623,20 @@ meta:
 
 tools:
   - name: mytool
-    allow:
+    permission:
       - "Bash(mt sub:*)"
       - "Bash(mt other:*)"
-    context: always
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -eq 0 ]
 }
 
-@test "fails with allow: integer (invalid type)" {
+@test "fails with permission: integer (invalid type)" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -624,18 +645,19 @@ meta:
 
 tools:
   - name: mytool
-    allow: 42
-    context: always
+    permission: 42
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"allow must be boolean, string, or array"* ]]
+  [[ "$output" == *"permission must be boolean, string, or array"* ]]
 }
 
-@test "fails when allow is missing" {
+@test "fails when permission is missing" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -644,17 +666,18 @@ meta:
 
 tools:
   - name: mytool
-    context: always
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"missing required field: allow"* ]]
+  [[ "$output" == *"missing required field: permission"* ]]
 }
 
-@test "fails when context is missing" {
+@test "fails when visibility is missing" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -663,14 +686,115 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
+    permission: false
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool --help"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: visibility"* ]]
+}
+
+@test "fails when visibility: brief entry has when_to_use" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
     description: "A script"
     when_to_use: "When needed"
 EOF
 
   run "$VALIDATOR"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"missing required field: context"* ]]
+  [[ "$output" == *"field 'when_to_use' is not allowed"* ]]
+}
+
+@test "fails when visibility: brief entry has usage" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
+    description: "A script"
+    usage: "mytool --help"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'usage' is not allowed"* ]]
+}
+
+@test "fails when visibility: hidden entry has when_to_use" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'when_to_use' is not allowed"* ]]
+}
+
+@test "fails when visibility: hidden entry has usage" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "A script"
+    usage: "mytool --help"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'usage' is not allowed"* ]]
+}
+
+@test "fails when visibility: full entry is missing usage" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: usage"* ]]
 }
 
 @test "fails with unknown field" {
@@ -682,10 +806,11 @@ meta:
 
 tools:
   - name: mytool
-    allow: false
-    context: always
+    permission: false
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
     bogus_field: "unexpected"
 EOF
 
@@ -694,7 +819,7 @@ EOF
   [[ "$output" == *"unknown field 'bogus_field'"* ]]
 }
 
-@test "fails with allow array entry not matching Bash pattern" {
+@test "fails with permission array entry not matching Bash pattern" {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
@@ -703,11 +828,12 @@ meta:
 
 tools:
   - name: mytool
-    allow:
+    permission:
       - "not-a-bash-pattern"
-    context: always
+    visibility: full
     description: "A script"
     when_to_use: "When needed"
+    usage: "mytool --help"
 EOF
 
   run "$VALIDATOR"

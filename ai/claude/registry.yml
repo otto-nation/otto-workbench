@@ -34,6 +34,12 @@ tools:
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
     when_to_use: "Called internally by claude-review threads; not invoked directly"
 
+  - name: review-thread-triage
+    allow: true
+    context: none
+    description: "Classify and verify PR review threads using AI for non-interactive triage"
+    when_to_use: "Non-interactive PR thread classification — pass --pr or --branch to triage review comments"
+
   - name: review-orchestrate
     allow: false
     context: none

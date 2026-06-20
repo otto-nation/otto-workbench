@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: review-thread-triage --pr <number> --repo-dir <path>" >&2
+  exit 1
+}
+
+pr_number=""
+repo_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pr) pr_number="$2"; shift 2 ;;
+    --repo-dir) repo_dir="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+if [[ -z "$pr_number" || -z "$repo_dir" ]]; then
+  usage
+fi
+
+threads_json=$(review-threads --pr "$pr_number" --repo-dir "$repo_dir" 2>/dev/null)
+
+thread_count=$(printf '%s' "$threads_json" | jq '[.threads[] | select(.state != "resolved")] | length')
+
+if [[ "$thread_count" -eq 0 ]]; then
+  echo '{"threads":[],"stats":{"total":0,"actionable":0,"questions":0,"approvals":0,"conflicting":0,"valid":0,"invalid":0}}'
+  exit 0
+fi
+
+non_resolved=$(printf '%s' "$threads_json" | jq '[.threads[] | select(.state != "resolved")]')
+
+code_context=""
+while IFS=$'\t' read -r file line; do
+  if [[ -z "$file" || "$file" == "null" ]]; then
+    continue
+  fi
+  filepath="$repo_dir/$file"
+  if [[ ! -f "$filepath" ]]; then
+    continue
+  fi
+  start=$((line > 10 ? line - 10 : 1))
+  end=$((line + 10))
+  snippet=$(sed -n "${start},${end}p" "$filepath" 2>/dev/null || true)
+  if [[ -n "$snippet" ]]; then
+    code_context="${code_context}
+--- ${file}:${start}-${end} ---
+${snippet}
+---
+"
+  fi
+done < <(printf '%s' "$non_resolved" | jq -r '.[] | [.file // "null", .line // 0] | @tsv')
+
+prompt="You are a code review triage assistant. Analyze these PR review threads and classify each one.
+
+For each thread, provide:
+1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
+2. verification (only for actionable_suggestion): one of 'valid', 'invalid', 'needs_discussion'
+3. reasoning: one sentence explaining your classification/verification
+4. summary: one-line summary of the thread
+
+Thread data:
+${non_resolved}
+
+${code_context:+Code context for referenced files:
+${code_context}}
+
+Return JSON matching this exact schema:
+{
+  \"threads\": [
+    {
+      \"id\": \"thread_id from input\",
+      \"state\": \"state from input\",
+      \"classification\": \"actionable_suggestion|question|approval|conflicting\",
+      \"verification\": \"valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)\",
+      \"reasoning\": \"brief explanation\",
+      \"file\": \"file from input\",
+      \"line\": line_from_input,
+      \"reviewer\": \"reviewer from input\",
+      \"summary\": \"one-line summary\"
+    }
+  ],
+  \"stats\": {
+    \"total\": count,
+    \"actionable\": count,
+    \"questions\": count,
+    \"approvals\": count,
+    \"conflicting\": count,
+    \"valid\": count,
+    \"invalid\": count
+  }
+}
+
+IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."
+
+result=$(printf '%s' "$prompt" | claude -p 2>/dev/null)
+
+printf '%s\n' "$result"

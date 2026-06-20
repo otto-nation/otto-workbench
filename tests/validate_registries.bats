@@ -884,6 +884,178 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# ── Commands field validation ─────────────────────────────────────────────────
+
+@test "passes with valid commands field" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool sub1 | mytool sub2"
+    commands:
+      - name: sub1
+        description: "First subcommand"
+      - name: sub2
+        description: "Second subcommand"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "passes with optional fields in commands entry" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool sub1"
+    commands:
+      - name: sub1
+        description: "First subcommand"
+        scope: "All"
+        when: "Always"
+        detail: "Detailed explanation"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails when commands entry is missing name" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool sub1"
+    commands:
+      - description: "No name field"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: name"* ]]
+}
+
+@test "fails when commands entry is missing description" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool sub1"
+    commands:
+      - name: sub1
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: description"* ]]
+}
+
+@test "fails when commands entry has unknown field" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool sub1"
+    commands:
+      - name: sub1
+        description: "First subcommand"
+        bogus: "unexpected"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown field 'bogus'"* ]]
+}
+
+@test "fails when commands has duplicate command names" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+    usage: "mytool sub1"
+    commands:
+      - name: sub1
+        description: "First"
+      - name: sub1
+        description: "Duplicate"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"duplicate command name: sub1"* ]]
+}
+
+@test "fails when commands on visibility: brief entry" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: true
+    visibility: brief
+    description: "A script"
+    commands:
+      - name: sub1
+        description: "First"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'commands' is not allowed"* ]]
+}
+
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds and warns when registries are missing" {

@@ -343,6 +343,45 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# ── Commands rendering ────────────────────────────────────────────────────────
+
+@test "renders subcommands for tool with commands field" {
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    description: "A tool with subcommands"
+    when_to_use: "When testing"
+    usage: "mytool sub1 | mytool sub2"
+    commands:
+      - name: sub1
+        description: "First subcommand"
+      - name: sub2
+        description: "Second subcommand"
+EOF
+
+  bash "$GENERATOR"
+  grep -q "Subcommands" "$TOOL_CONTEXT_OUTPUT"
+  grep -q '`sub1` — First subcommand' "$TOOL_CONTEXT_OUTPUT"
+  grep -q '`sub2` — Second subcommand' "$TOOL_CONTEXT_OUTPUT"
+}
+
+@test "omits subcommands section when commands field is absent" {
+  _write_registry "$BREW_REGISTRY"
+
+  bash "$GENERATOR"
+  run grep "Subcommands" "$TOOL_CONTEXT_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+# ── Output format ────────────────────────────────────────────────────────────
+
 @test "output file has no frontmatter" {
   _write_registry "$BREW_REGISTRY"
 

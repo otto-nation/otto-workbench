@@ -163,6 +163,54 @@ _check_permission_field() {
   esac
 }
 
+# _check_commands_field FILE INDEX
+_check_commands_field() {
+  local file="$1" i="$2"
+  local has_commands
+  has_commands=$(yq ".tools[$i] | has(\"commands\")" "$file")
+  [[ "$has_commands" == "true" ]] || return 0
+
+  local name visibility
+  name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
+  visibility=$(yq ".tools[$i].visibility // \"\"" "$file")
+
+  if [[ "$visibility" != "full" ]]; then
+    _fail "$(basename "$file") entry '$name': field 'commands' is not allowed when visibility: $visibility"
+    return 0
+  fi
+
+  local cmd_count j
+  cmd_count=$(yq ".tools[$i].commands | length" "$file")
+
+  local dupes
+  dupes=$(yq ".tools[$i].commands[].name" "$file" | sort | uniq -d)
+  if [[ -n "$dupes" ]]; then
+    while IFS= read -r dup; do
+      _fail "$(basename "$file") entry '$name': duplicate command name: $dup"
+    done <<< "$dupes"
+  fi
+
+  for (( j=0; j<cmd_count; j++ )); do
+    local cmd_name cmd_desc
+    cmd_name=$(yq ".tools[$i].commands[$j].name // \"\"" "$file")
+    cmd_desc=$(yq ".tools[$i].commands[$j].description // \"\"" "$file")
+
+    [[ -n "$cmd_name" && "$cmd_name" != "null" ]] || _fail "$(basename "$file") entry '$name' commands[$j]: missing required field: name"
+    [[ -n "$cmd_desc" && "$cmd_desc" != "null" ]] || _fail "$(basename "$file") entry '$name' command '$cmd_name': missing required field: description"
+
+    local key
+    while IFS= read -r key; do
+      local known=false field
+      for field in $KNOWN_COMMAND_FIELDS; do
+        if [[ "$key" == "$field" ]]; then known=true; break; fi
+      done
+      if ! $known; then
+        _fail "$(basename "$file") entry '$name' command '$cmd_name': unknown field '$key'"
+      fi
+    done < <(yq ".tools[$i].commands[$j] | keys | .[]" "$file")
+  done
+}
+
 # _validate_schema FILE
 # Runs required-field, allow-field, and duplicate checks for every entry in FILE.
 _validate_schema() {
@@ -174,6 +222,7 @@ _validate_schema() {
     _check_required_fields "$file" "$i"
     _check_permission_field "$file" "$i"
     _check_unknown_fields "$file" "$i"
+    _check_commands_field "$file" "$i"
     i=$(( i + 1 ))
   done
   _check_no_duplicates "$file"

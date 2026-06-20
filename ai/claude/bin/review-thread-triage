@@ -2,8 +2,13 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: review-thread-triage --pr <number> --repo-dir <path>" >&2
-  exit "${1:-1}"
+  local exit_code="${1:-1}"
+  if [[ "$exit_code" -eq 0 ]]; then
+    echo "Usage: review-thread-triage --pr <number> --repo-dir <path>"
+  else
+    echo "Usage: review-thread-triage --pr <number> --repo-dir <path>" >&2
+  fi
+  exit "$exit_code"
 }
 
 pr_number=""
@@ -22,7 +27,7 @@ if [[ -z "$pr_number" || -z "$repo_dir" ]]; then
   usage
 fi
 
-threads_json=$(review-threads --pr "$pr_number" --repo-dir "$repo_dir" 2>/dev/null)
+threads_json=$(review-threads --pr "$pr_number" --repo-dir "$repo_dir")
 
 thread_count=$(printf '%s' "$threads_json" | jq '[.threads[] | select(.state != "resolved")] | length')
 
@@ -96,6 +101,14 @@ Return JSON matching this exact schema:
 
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."
 
-result=$(printf '%s' "$prompt" | claude -p 2>/dev/null)
+if ! result=$(printf '%s' "$prompt" | claude -p); then
+  echo "review-thread-triage: claude -p failed" >&2
+  exit 1
+fi
+
+if ! printf '%s' "$result" | jq . > /dev/null 2>&1; then
+  echo "review-thread-triage: claude returned non-JSON output" >&2
+  exit 1
+fi
 
 printf '%s\n' "$result"

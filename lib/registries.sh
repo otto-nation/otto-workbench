@@ -6,22 +6,24 @@
 #
 # ── Tool Entry Interface ─────────────────────────────────────────────────
 #
-# Required fields:
+# Always required:
 #   name          string          Tool or command name
 #   description   string          One-line description
-#   when_to_use   string          When the AI should reach for this tool
-#   allow         bool|str|str[]  Bash permission for Claude Code settings.json:
+#   permission    bool|str|str[]  Bash permission for Claude Code settings.json:
 #                   false              → no permission (internal/indirect tools)
 #                   true               → Bash(name:*)
 #                   "cmd"              → Bash(cmd:*)  (CLI differs from registry name)
 #                   ["Bash(cmd:*)"]    → verbatim patterns (granular subcommand control)
-#   context       enum            AI context visibility:
-#                   always    → full entry in tools.generated.md
-#                   reference → compact one-liner
-#                   none      → omitted from AI context
+#   visibility    enum            AI context visibility + rendering style:
+#                   full   → full entry in tools.generated.md (heading, description, when_to_use, usage)
+#                   brief  → compact one-liner (name + description)
+#                   hidden → omitted from AI context
 #
-# Optional fields:
-#   usage         string          Example invocations (shown in tools.generated.md)
+# Required when visibility: full (forbidden otherwise):
+#   when_to_use   string          When the AI should reach for this tool
+#   usage         string          Example invocations
+#
+# Optional:
 #   docs          string          URL to external documentation
 #   brew_name     string          Brewfile formula name when it differs from tool name
 #   commands      object[]        Subcommand definitions (otto-workbench only)
@@ -47,7 +49,7 @@
 
 # Known tool entry fields — used by validate-registries to reject unknown keys
 # shellcheck disable=SC2034
-KNOWN_TOOL_FIELDS="name description when_to_use allow context usage docs brew_name commands auth"
+KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs brew_name commands auth"
 
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
@@ -190,32 +192,32 @@ iter_registry_auth() {
   done
 }
 
-# _collect_tool_allow ARRAY_REF FILE INDEX
-_collect_tool_allow() {
+# _collect_tool_permission ARRAY_REF FILE INDEX
+_collect_tool_permission() {
   local -n __tool_perms=$1
   local file="$2" i="$3"
-  local allow_tag allow_val name
+  local perm_tag perm_val name
 
-  allow_tag=$(yq ".tools[$i].allow | tag" "$file")
+  perm_tag=$(yq ".tools[$i].permission | tag" "$file")
 
-  case "$allow_tag" in
+  case "$perm_tag" in
     '!!null') return 0 ;;
     '!!bool')
-      allow_val=$(yq ".tools[$i].allow" "$file")
-      [[ "$allow_val" == "true" ]] || return 0
+      perm_val=$(yq ".tools[$i].permission" "$file")
+      [[ "$perm_val" == "true" ]] || return 0
       name=$(yq ".tools[$i].name" "$file")
       __tool_perms+=("Bash($name:*)")
       ;;
     '!!str')
-      allow_val=$(yq ".tools[$i].allow" "$file")
-      [[ -n "$allow_val" ]] || return 0
-      __tool_perms+=("Bash($allow_val:*)")
+      perm_val=$(yq ".tools[$i].permission" "$file")
+      [[ -n "$perm_val" ]] || return 0
+      __tool_perms+=("Bash($perm_val:*)")
       ;;
     '!!seq')
       local j arr_len entry
-      arr_len=$(yq ".tools[$i].allow | length" "$file")
+      arr_len=$(yq ".tools[$i].permission | length" "$file")
       for (( j=0; j<arr_len; j++ )); do
-        entry=$(yq ".tools[$i].allow[$j]" "$file")
+        entry=$(yq ".tools[$i].permission[$j]" "$file")
         __tool_perms+=("$entry")
       done
       ;;
@@ -224,7 +226,7 @@ _collect_tool_allow() {
 
 # collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with Claude Code Bash permission
-# patterns derived from tools' allow field. See Tool Entry Interface above.
+# patterns derived from tools' permission field. See Tool Entry Interface above.
 collect_registry_permissions() {
   local _perms_var=$1
   local -n __perms_out=$1
@@ -242,7 +244,7 @@ collect_registry_permissions() {
     [[ "$count" -gt 0 ]] || continue
 
     for (( i=0; i<count; i++ )); do
-      _collect_tool_allow "$_perms_var" "$file" "$i"
+      _collect_tool_permission "$_perms_var" "$file" "$i"
     done
   done
 }

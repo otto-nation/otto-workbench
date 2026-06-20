@@ -20,10 +20,10 @@
 #     validation:    brewfile          # brewfile | bindir | zsh-comments | none
 #     source:        brew/Brewfile     # relative path used by validate-registries
 #
-# Each tool entry supports a `context` field controlling AI visibility:
-#   context: always     — full entry (default if omitted)
-#   context: reference  — compact one-liner
-#   context: none       — omitted from AI context
+# Each tool entry has a `visibility` field controlling AI rendering:
+#   visibility: full   — full entry (heading, description, when_to_use, usage)
+#   visibility: brief  — compact one-liner
+#   visibility: hidden — omitted from AI context
 #
 # Environment overrides (for tests):
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
@@ -180,23 +180,23 @@ _iter_tools() {
   done
 }
 
-# _iter_tools_by_context FILE CONTEXT CALLBACK [FILTER]
-# Like _iter_tools but only calls CALLBACK for tools matching CONTEXT (always|reference|none).
-_iter_tools_by_context() {
-  local file="$1" target_context="$2" cb="$3" filter="${4:-}"
+# _iter_tools_by_visibility FILE VISIBILITY CALLBACK [FILTER]
+# Like _iter_tools but only calls CALLBACK for tools matching VISIBILITY (full|brief|hidden).
+_iter_tools_by_visibility() {
+  local file="$1" target_vis="$2" cb="$3" filter="${4:-}"
   [[ -f "$file" ]] || return 0
   local count i
   count=$(yq '.tools | length' "$file")
   for (( i=0; i<count; i++ )); do
-    local name context
+    local name vis
     name=$(yq ".tools[$i].name" "$file")
-    context=$(yq ".tools[$i].context // \"always\"" "$file")
-    [[ "$context" == "$target_context" ]] || continue
+    vis=$(yq ".tools[$i].visibility" "$file")
+    [[ "$vis" == "$target_vis" ]] || continue
     if [[ -n "$filter" ]] && ! "$filter" "$name"; then continue; fi
     "$cb" \
       "$name" \
       "$(yq ".tools[$i].description"   "$file")" \
-      "$(yq ".tools[$i].when_to_use"   "$file")" \
+      "$(yq ".tools[$i].when_to_use // \"\""   "$file")" \
       "$(yq ".tools[$i].usage // \"\""  "$file")" \
       "$(yq ".tools[$i].docs  // \"\""  "$file")"
   done
@@ -209,6 +209,9 @@ _tool_md_entry() {
   printf '\n### %s\n' "$name"
   printf '%s\n' "$description"
   printf -- '- **When to use**: %s\n' "$when_to_use"
+  if [[ -z "$usage" || "$usage" == "null" ]]; then
+    warn "generate-tool-context: '$name' has visibility: full but no usage field" >&2
+  fi
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   if [[ -n "$usage" && "$usage" != "null" ]]; then printf -- '- **Usage**: `%s`\n' "$usage"; fi
 }
@@ -219,7 +222,7 @@ _tool_ref_entry() {
 }
 
 # _render_registry FILE
-# Reads meta.section and meta.install_check from FILE, then renders tools by context tier.
+# Reads meta.section and meta.install_check from FILE, then renders tools by visibility tier.
 # Skips the section entirely if no tools pass the filter.
 _render_registry() {
   local file="$1"
@@ -233,15 +236,15 @@ _render_registry() {
   install_check=$(yq '.meta.install_check // false' "$file")
   [[ "$install_check" == "true" ]] && filter="is_installed"
 
-  local always_content ref_content
-  always_content=$(_iter_tools_by_context "$file" "always" _tool_md_entry "$filter")
-  ref_content=$(_iter_tools_by_context "$file" "reference" _tool_ref_entry "$filter")
+  local full_content brief_content
+  full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry "$filter")
+  brief_content=$(_iter_tools_by_visibility "$file" "brief" _tool_ref_entry "$filter")
 
-  [[ -n "$always_content" || -n "$ref_content" ]] || return 0
+  [[ -n "$full_content" || -n "$brief_content" ]] || return 0
 
   printf '\n## %s\n' "$section"
-  [[ -n "$always_content" ]] && printf '%s\n' "$always_content"
-  [[ -n "$ref_content" ]] && printf '%s\n' "$ref_content"
+  [[ -n "$full_content" ]] && printf '%s\n' "$full_content"
+  [[ -n "$brief_content" ]] && printf '%s\n' "$brief_content"
   return 0
 }
 

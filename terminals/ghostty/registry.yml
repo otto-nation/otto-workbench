@@ -9,8 +9,6 @@ meta:
 
 tools:
   - name: ghostty-terminfo-push
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH"
-    when_to_use: "When connecting to a new remote server and seeing 'Error opening terminal: xterm-ghostty'"
-    usage: "ghostty-terminfo-push <host>"

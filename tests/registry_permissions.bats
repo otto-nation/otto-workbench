@@ -2,6 +2,20 @@
 # Tests for collect_registry_permissions — extracts Bash(...) permission
 # patterns from registry allow fields.
 
+setup_file() {
+  load 'test_helper'
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+  # shellcheck source=/dev/null
+  source "$repo_root/lib/registries.sh"
+
+  # Collect real-registry permissions once for tests that scan REPO_ROOT
+  local -a perms=()
+  collect_registry_permissions perms "$repo_root"
+  printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/real_perms.list"
+}
+
 setup() {
   load 'test_helper'
   common_setup
@@ -190,7 +204,7 @@ tools:
 
 @test "real registries produce expected permissions" {
   local -a perms=()
-  collect_registry_permissions perms "$REPO_ROOT"
+  mapfile -t perms < "$BATS_FILE_TMPDIR/real_perms.list"
 
   # Spot-check a few expected entries
   local found_task=0 found_wt=0 found_bats=0 found_gh_pr=0
@@ -210,7 +224,7 @@ tools:
 
 @test "dangerous tools do not have broad Bash wildcard" {
   local -a perms=()
-  collect_registry_permissions perms "$REPO_ROOT"
+  mapfile -t perms < "$BATS_FILE_TMPDIR/real_perms.list"
 
   for p in "${perms[@]}"; do
     [[ "$p" != "Bash(docker:*)" ]] || { echo "docker should use scoped subcommands, not broad wildcard"; return 1; }

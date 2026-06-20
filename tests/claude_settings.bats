@@ -3,14 +3,25 @@
 # The template contains static permissions (shell builtins, filesystem ops).
 # Tool permissions (gh, go, etc.) are derived from registry allow fields.
 
+setup_file() {
+  load 'test_helper'
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+  # shellcheck source=/dev/null
+  source "$repo_root/lib/registries.sh"
+
+  # Collect registry permissions once for all tests
+  local -a perms=()
+  collect_registry_permissions perms "$repo_root"
+  printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/registry_perms.list"
+}
+
 setup() {
   load 'test_helper'
   common_setup
   SETTINGS="$REPO_ROOT/ai/claude/settings.json"
   BREW_REGISTRY="$REPO_ROOT/brew/registry.yml"
-
-  # shellcheck source=/dev/null
-  source "$REPO_ROOT/lib/registries.sh"
 }
 
 teardown() {
@@ -38,7 +49,7 @@ teardown() {
 
 @test "registry-derived permissions are tracked in _generated_permissions" {
   local -a registry_perms=()
-  collect_registry_permissions registry_perms "$REPO_ROOT"
+  mapfile -t registry_perms < "$BATS_FILE_TMPDIR/registry_perms.list"
   [ "${#registry_perms[@]}" -gt 0 ]
   for perm in "${registry_perms[@]}"; do
     run jq -e --arg p "$perm" '._generated_permissions | index($p) != null' "$SETTINGS"
@@ -57,7 +68,7 @@ teardown() {
 
 @test "gh registry entry does not contain broad Bash(gh:*) wildcard" {
   local -a perms=()
-  collect_registry_permissions perms "$REPO_ROOT"
+  mapfile -t perms < "$BATS_FILE_TMPDIR/registry_perms.list"
   for p in "${perms[@]}"; do
     [[ "$p" != "Bash(gh:*)" ]] || { echo "broad gh wildcard found"; return 1; }
   done

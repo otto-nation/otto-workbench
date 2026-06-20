@@ -69,6 +69,7 @@ tools:
     docs: "https://cli.github.com/manual/"
 
   - name: go-task
+    allow: false
     context: none
     description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
     when_to_use: "Running defined dev workflows: commits, PRs, brew management"
@@ -90,6 +91,7 @@ tools:
     docs: "https://bats-core.readthedocs.io/"
 
   - name: parallel
+    allow: false
     context: none
     description: "GNU parallel — run shell commands in parallel across multiple cores"
     brew_name: "parallel"
@@ -105,6 +107,7 @@ tools:
     docs: "https://oldmanprogrammer.net/source.php?dir=projects/tree"
 
   - name: delta
+    allow: false
     context: none
     description: "Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers"
     when_to_use: "Automatically used for all git diff, show, and log output via core.pager in gitconfig"
@@ -120,6 +123,7 @@ tools:
     docs: "https://pipx.pypa.io/"
 
   - name: uv
+    allow: false
     context: none
     description: "Fast Python package and project manager (Rust-based pip/venv replacement)"
     when_to_use: "Installing Python tools, managing venvs, running Python scripts without installing"
@@ -134,6 +138,7 @@ tools:
     docs: "https://worktrunk.dev"
 
   - name: gitleaks
+    allow: false
     context: reference
     description: "Secret scanner — detects committed credentials, tokens, and keys"
     when_to_use: "Automatically on every commit and push via git hooks; run manually to audit history"

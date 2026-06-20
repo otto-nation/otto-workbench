@@ -10,6 +10,7 @@ meta:
 
 tools:
   - name: tfenv
+    allow: false
     context: reference
     description: "Terraform version manager — install and switch between Terraform versions"
     when_to_use: "Switching Terraform versions per project; installing a specific Terraform version"
@@ -17,6 +18,7 @@ tools:
     docs: "https://github.com/tfutils/tfenv"
 
   - name: terraform-docs
+    allow: false
     context: reference
     description: "Generate documentation from Terraform module inputs and outputs"
     when_to_use: "Auto-generating or updating README documentation for Terraform modules"

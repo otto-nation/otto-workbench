@@ -19,6 +19,7 @@ tools:
     docs: "https://docs.gradle.org/"
 
   - name: mvn
+    allow: false
     context: reference
     brew_name: maven
     description: "Apache Maven — build and dependency management for Java projects"

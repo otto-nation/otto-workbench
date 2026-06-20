@@ -45,6 +45,7 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
     description: "A test tool"
     when_to_use: "When testing"
 EOF
@@ -61,9 +62,11 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
     description: "A script"
     when_to_use: "When needed"
   - name: othertool
+    allow: false
     description: "Another script"
     when_to_use: "When needed"
 EOF
@@ -79,6 +82,7 @@ meta:
 
 tools:
   - name: "Git aliases"
+    allow: false
     description: "Git shortcuts"
     when_to_use: "Always"
 EOF
@@ -96,6 +100,7 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
     description: "A work tool"
     when_to_use: "When working"
 EOF
@@ -123,6 +128,7 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
     when_to_use: "When testing"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
@@ -142,6 +148,7 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
     description: "A tool"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
@@ -161,9 +168,11 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
     description: "First"
     when_to_use: "Always"
   - name: mytool
+    allow: false
     description: "Second"
     when_to_use: "Always"
 EOF
@@ -186,6 +195,7 @@ meta:
 
 tools:
   - name: missing-formula
+    allow: false
     description: "Not in Brewfile"
     when_to_use: "Never"
 EOF
@@ -206,6 +216,7 @@ meta:
 
 tools:
   - name: mycask
+    allow: false
     description: "A cask"
     when_to_use: "For GUI tools"
 EOF
@@ -225,6 +236,7 @@ meta:
 
 tools:
   - name: mvn
+    allow: false
     brew_name: maven
     description: "Maven build tool"
     when_to_use: "Building Maven projects"
@@ -245,6 +257,7 @@ meta:
 
 tools:
   - name: no-such-script
+    allow: false
     description: "Missing"
     when_to_use: "Never"
 EOF
@@ -264,6 +277,7 @@ meta:
 
 tools:
   - name: "Nomatch aliases"
+    allow: false
     description: "Nothing matches"
     when_to_use: "Never"
 EOF
@@ -312,6 +326,7 @@ meta:
 
 tools:
   - name: missing-work-tool
+    allow: false
     description: "Not in Brewfile"
     when_to_use: "Never"
 EOF
@@ -332,6 +347,7 @@ meta:
 
 tools:
   - name: kubectl
+    allow: false
     brew_name: kubernetes-cli
     description: "Kubernetes CLI"
     when_to_use: "Managing clusters"
@@ -595,6 +611,44 @@ EOF
   run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"allow must be boolean, string, or array"* ]]
+}
+
+@test "fails when allow is missing" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: allow"* ]]
+}
+
+@test "fails with unknown field" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: false
+    description: "A script"
+    when_to_use: "When needed"
+    bogus_field: "unexpected"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown field 'bogus_field'"* ]]
 }
 
 @test "fails with allow array entry not matching Bash pattern" {

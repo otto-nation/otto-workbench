@@ -91,12 +91,14 @@ tools:
     usage: "validate-nesting [--quiet] [--max-depth N] [file...]"
 
   - name: gcloud-reauth
+    allow: false
     context: reference
     description: "Check GCP application-default credentials and re-login if expired, with self-managed launchd agent"
     when_to_use: "Before running commands that need GCP credentials, or when auth errors appear"
     usage: "gcloud-reauth  |  gcloud-reauth install  |  gcloud-reauth status  |  gcloud-reauth uninstall"
 
   - name: get-secret
+    allow: false
     context: reference
     description: "Interactively retrieves a secret from AWS Secrets Manager by listing and selecting"
     when_to_use: "Fetching credentials or config values stored in Secrets Manager"

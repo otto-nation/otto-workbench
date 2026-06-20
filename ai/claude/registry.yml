@@ -21,31 +21,37 @@ tools:
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
   - name: review-rebuild
+    allow: false
     context: none
     description: "Rebuild review.md from group finding files — recovers from synthesis formatting drift"
     when_to_use: "Called internally by claude-review rebuild; not invoked directly"
 
   - name: review-threads
+    allow: false
     context: none
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
     when_to_use: "Called internally by claude-review threads; not invoked directly"
 
   - name: review-orchestrate
+    allow: false
     context: none
     description: "Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging"
     when_to_use: "Called internally by claude-review; not invoked directly"
 
   - name: review-post
+    allow: false
     context: none
     description: "Deterministic posting of review findings to GitHub as a PENDING PR review"
     when_to_use: "Called internally by claude-review post; not invoked directly"
 
   - name: validate-review-positions
+    allow: false
     context: none
     description: "Validates review finding positions against a PR diff to ensure comment placement accuracy"
     when_to_use: "Called internally by claude-review; not invoked directly"
 
   - name: build-claude-review-tarball
+    allow: false
     context: none
     description: "Package claude-review into a self-contained tarball for Homebrew distribution"
     when_to_use: "Called by release workflow to build the claude-review distributable; not invoked directly"
@@ -81,6 +87,7 @@ tools:
     when_to_use: "Called by the ci-failures skill to fetch and classify GitHub Actions failures; not invoked directly"
 
   - name: run-auto-task
+    allow: false
     context: none
     description: "Run a Claude Code skill as a headless background session with output logging"
     when_to_use: "Called by Stop hooks to run dream/promote/retro skills after session exit; not invoked directly"

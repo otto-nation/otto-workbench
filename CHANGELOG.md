@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.28.0](https://github.com/otto-nation/otto-workbench/compare/v1.27.0...v1.28.0) (2026-06-20)
+
+
+### Features
+
+* add review-thread-triage script for non-interactive PR thread classification ([#291](https://github.com/otto-nation/otto-workbench/issues/291)) ([073c0e5](https://github.com/otto-nation/otto-workbench/commit/073c0e5579ec3f6bc7f1fa6a0a182b91fb686def))
+* **ci-check:** add --branch flag; use resolve-branch in skills ([#285](https://github.com/otto-nation/otto-workbench/issues/285)) ([10e3705](https://github.com/otto-nation/otto-workbench/commit/10e37056480bdb2bbbe770895542d69f1e742bd1))
+* **ci-failures:** add CI failure analysis skill and ci-check CLI ([#280](https://github.com/otto-nation/otto-workbench/issues/280)) ([365d021](https://github.com/otto-nation/otto-workbench/commit/365d021bdf5ef0d42c25dc8a8f2b207614c06ddc))
+* **hooks:** block brace expansion via PreToolUse hook ([#281](https://github.com/otto-nation/otto-workbench/issues/281)) ([3230133](https://github.com/otto-nation/otto-workbench/commit/3230133e4b94d1693a9255933e6c731ad5402665))
+* **skills,permissions:** add Arguments sections; auto-sync permissions from registries ([#282](https://github.com/otto-nation/otto-workbench/issues/282)) ([51061d5](https://github.com/otto-nation/otto-workbench/commit/51061d5b003d357d623c9be02d07d59e15280a70))
+
+
+### Bug Fixes
+
+* allow bin/local/ scripts without permission prompts ([#277](https://github.com/otto-nation/otto-workbench/issues/277)) ([9640fec](https://github.com/otto-nation/otto-workbench/commit/9640fec7e706fe22335590ee4969df8d95ffc1f4))
+* **claude-review:** scale max_turns when density filter omits files ([#289](https://github.com/otto-nation/otto-workbench/issues/289)) ([263d79b](https://github.com/otto-nation/otto-workbench/commit/263d79be275a8c1041b73545d676663063de4ad5))
+* **pr-comments:** use resolve-branch for branch name arguments ([#290](https://github.com/otto-nation/otto-workbench/issues/290)) ([68f79db](https://github.com/otto-nation/otto-workbench/commit/68f79dba89d2978fbed57118bcba92868d6b866c))
+* **release:** add backfill recovery; separate PRs per component ([#286](https://github.com/otto-nation/otto-workbench/issues/286)) ([d5cea29](https://github.com/otto-nation/otto-workbench/commit/d5cea29f85529afea322e22d39f678e9ef212eac))
+* **sdd:** route all SDD artifacts to ignore/sdd/ instead of .git/ ([#279](https://github.com/otto-nation/otto-workbench/issues/279)) ([c460e68](https://github.com/otto-nation/otto-workbench/commit/c460e688132bbf9428df839c18afabab17414133))
+* **tests:** isolate safety checks from concurrent worktrees ([#275](https://github.com/otto-nation/otto-workbench/issues/275)) ([2894e8d](https://github.com/otto-nation/otto-workbench/commit/2894e8da43c685e7c3c8cc5038f8c8e0acd7a7ad))
+* **wt-cleanup:** add open-PR guard; fix integrated detection ([#276](https://github.com/otto-nation/otto-workbench/issues/276)) ([d7d7d14](https://github.com/otto-nation/otto-workbench/commit/d7d7d14ba63f0ad8f53e5acaf7e574a39dd765b6))
+
+
+### Code Refactoring
+
+* **registries:** define tool entry interface; require allow and context ([#292](https://github.com/otto-nation/otto-workbench/issues/292)) ([57f17f6](https://github.com/otto-nation/otto-workbench/commit/57f17f6e1f29854d318ccfd083197f4e42caa04f))
+
 ## [1.27.0](https://github.com/otto-nation/otto-workbench/compare/v1.26.0...v1.27.0) (2026-06-17)
 
 

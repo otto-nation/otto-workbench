@@ -21,6 +21,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
 | `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
 | `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
+| `review-thread-triage` | Classify and verify PR review threads using AI for non-interactive triage |
 | `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |

@@ -85,6 +85,24 @@ jobs:
             echo "  claude-review: ${{ steps.release.outputs['ai/claude--tag_name'] }}"
           fi
 
+      # With separate-pull-requests, each package gets its own release PR but
+      # they share .release-please-manifest.json. When one merges, the other
+      # conflicts on the manifest. Release Please won't rebuild the surviving
+      # PR unless new conventional commits land, so we merge main into it here.
+      - name: Update remaining release PRs
+        if: steps.release.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr list --label "autorelease: pending" --json number,headRefOid \
+            --jq '.[] | [.number, .headRefOid] | @tsv' | while read -r pr sha; do
+            echo "Updating PR #${pr} branch with latest main..."
+            gh api "repos/${{ github.repository }}/pulls/${pr}/update-branch" \
+              -X PUT -f expected_head_sha="$sha" \
+              --silent && echo "  ✓ PR #${pr} updated" \
+              || echo "  ⚠ Could not update PR #${pr} (may already be up to date)"
+          done
+
   # ---------------------------------------------------------------------------
   # Package otto-workbench: tarballs (workbench + claude-config) + Homebrew
   # ---------------------------------------------------------------------------

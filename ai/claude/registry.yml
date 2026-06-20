@@ -35,6 +35,7 @@ tools:
     when_to_use: "Called internally by claude-review threads; not invoked directly"
 
   - name: review-thread-triage
+    allow: false
     context: none
     description: "Classify and verify PR review threads using AI for non-interactive triage"
     when_to_use: "Called internally by DevHub triage runner; not invoked directly"

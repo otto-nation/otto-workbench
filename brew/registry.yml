@@ -10,6 +10,7 @@ meta:
 
 tools:
   - name: docker
+    context: always
     allow:
       - "Bash(docker build:*)"
       - "Bash(docker compose:*)"
@@ -33,6 +34,7 @@ tools:
 
   - name: jq
     allow: true
+    context: always
     description: "JSON processor for querying, filtering, and transforming JSON data"
     when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"
     usage: "jq '.field' file.json  |  echo '{}' | jq '.key'"
@@ -40,12 +42,14 @@ tools:
 
   - name: yq
     allow: true
+    context: always
     description: "YAML/JSON/TOML processor — like jq but for YAML"
     when_to_use: "Reading or modifying YAML files (Taskfile.yml, docker-compose.yml, k8s manifests)"
     usage: "yq '.key' file.yaml  |  yq -i '.key = \"value\"' file.yaml"
     docs: "https://mikefarah.gitbook.io/yq/"
 
   - name: gh
+    context: always
     allow:
       - "Bash(gh pr:*)"
       - "Bash(gh issue:*)"
@@ -69,6 +73,7 @@ tools:
     docs: "https://cli.github.com/manual/"
 
   - name: go-task
+    allow: false
     context: none
     description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
     when_to_use: "Running defined dev workflows: commits, PRs, brew management"
@@ -77,6 +82,7 @@ tools:
 
   - name: shellcheck
     allow: true
+    context: always
     description: "Static analysis tool for shell scripts — catches bugs and style issues"
     when_to_use: "Before committing any .sh file; run automatically in pre-push and CI"
     usage: "shellcheck script.sh"
@@ -84,12 +90,14 @@ tools:
 
   - name: bats-core
     allow: "bats"
+    context: always
     description: "Bash Automated Testing System — unit testing framework for shell scripts"
     when_to_use: "Writing or running tests for bash scripts in this repo"
     usage: "bats tests/  |  bats tests/foo.bats"
     docs: "https://bats-core.readthedocs.io/"
 
   - name: parallel
+    allow: false
     context: none
     description: "GNU parallel — run shell commands in parallel across multiple cores"
     brew_name: "parallel"
@@ -105,6 +113,7 @@ tools:
     docs: "https://oldmanprogrammer.net/source.php?dir=projects/tree"
 
   - name: delta
+    allow: false
     context: none
     description: "Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers"
     when_to_use: "Automatically used for all git diff, show, and log output via core.pager in gitconfig"
@@ -120,6 +129,7 @@ tools:
     docs: "https://pipx.pypa.io/"
 
   - name: uv
+    allow: false
     context: none
     description: "Fast Python package and project manager (Rust-based pip/venv replacement)"
     when_to_use: "Installing Python tools, managing venvs, running Python scripts without installing"
@@ -128,12 +138,14 @@ tools:
 
   - name: worktrunk
     allow: "wt"
+    context: always
     description: "Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration"
     when_to_use: "Managing parallel git worktrees for concurrent feature development or isolating Claude Code agents in separate worktrees"
     usage: "wt switch -c feat/auth  |  wt list  |  wt merge  |  wt remove feat/auth"
     docs: "https://worktrunk.dev"
 
   - name: gitleaks
+    allow: false
     context: reference
     description: "Secret scanner — detects committed credentials, tokens, and keys"
     when_to_use: "Automatically on every commit and push via git hooks; run manually to audit history"

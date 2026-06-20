@@ -45,6 +45,8 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
+    context: always
     description: "A test tool"
     when_to_use: "When testing"
 EOF
@@ -61,9 +63,13 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
+    context: always
     description: "A script"
     when_to_use: "When needed"
   - name: othertool
+    allow: false
+    context: always
     description: "Another script"
     when_to_use: "When needed"
 EOF
@@ -79,6 +85,8 @@ meta:
 
 tools:
   - name: "Git aliases"
+    allow: false
+    context: always
     description: "Git shortcuts"
     when_to_use: "Always"
 EOF
@@ -96,6 +104,8 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
+    context: always
     description: "A work tool"
     when_to_use: "When working"
 EOF
@@ -123,6 +133,8 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
+    context: always
     when_to_use: "When testing"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
@@ -142,6 +154,8 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
+    context: always
     description: "A tool"
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
@@ -161,9 +175,13 @@ meta:
 
 tools:
   - name: mytool
+    allow: false
+    context: always
     description: "First"
     when_to_use: "Always"
   - name: mytool
+    allow: false
+    context: always
     description: "Second"
     when_to_use: "Always"
 EOF
@@ -186,6 +204,8 @@ meta:
 
 tools:
   - name: missing-formula
+    allow: false
+    context: always
     description: "Not in Brewfile"
     when_to_use: "Never"
 EOF
@@ -206,6 +226,8 @@ meta:
 
 tools:
   - name: mycask
+    allow: false
+    context: always
     description: "A cask"
     when_to_use: "For GUI tools"
 EOF
@@ -225,6 +247,8 @@ meta:
 
 tools:
   - name: mvn
+    allow: false
+    context: always
     brew_name: maven
     description: "Maven build tool"
     when_to_use: "Building Maven projects"
@@ -245,6 +269,8 @@ meta:
 
 tools:
   - name: no-such-script
+    allow: false
+    context: always
     description: "Missing"
     when_to_use: "Never"
 EOF
@@ -264,6 +290,8 @@ meta:
 
 tools:
   - name: "Nomatch aliases"
+    allow: false
+    context: always
     description: "Nothing matches"
     when_to_use: "Never"
 EOF
@@ -312,6 +340,8 @@ meta:
 
 tools:
   - name: missing-work-tool
+    allow: false
+    context: always
     description: "Not in Brewfile"
     when_to_use: "Never"
 EOF
@@ -332,6 +362,8 @@ meta:
 
 tools:
   - name: kubectl
+    allow: false
+    context: always
     brew_name: kubernetes-cli
     description: "Kubernetes CLI"
     when_to_use: "Managing clusters"
@@ -495,6 +527,7 @@ meta:
 tools:
   - name: mytool
     allow: true
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF
@@ -513,6 +546,7 @@ meta:
 tools:
   - name: mytool
     allow: false
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF
@@ -531,6 +565,7 @@ meta:
 tools:
   - name: mytool
     allow: "mt"
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF
@@ -549,6 +584,7 @@ meta:
 tools:
   - name: mytool
     allow: ""
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF
@@ -570,6 +606,7 @@ tools:
     allow:
       - "Bash(mt sub:*)"
       - "Bash(mt other:*)"
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF
@@ -588,6 +625,7 @@ meta:
 tools:
   - name: mytool
     allow: 42
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF
@@ -595,6 +633,65 @@ EOF
   run "$VALIDATOR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"allow must be boolean, string, or array"* ]]
+}
+
+@test "fails when allow is missing" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    context: always
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: allow"* ]]
+}
+
+@test "fails when context is missing" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: false
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: context"* ]]
+}
+
+@test "fails with unknown field" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    allow: false
+    context: always
+    description: "A script"
+    when_to_use: "When needed"
+    bogus_field: "unexpected"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown field 'bogus_field'"* ]]
 }
 
 @test "fails with allow array entry not matching Bash pattern" {
@@ -608,6 +705,7 @@ tools:
   - name: mytool
     allow:
       - "not-a-bash-pattern"
+    context: always
     description: "A script"
     when_to_use: "When needed"
 EOF

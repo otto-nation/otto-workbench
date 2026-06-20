@@ -10,6 +10,7 @@ meta:
 
 tools:
   - name: starship
+    allow: false
     context: none
     description: "Fast, cross-shell prompt — shows git status, language versions, and context at a glance"
     when_to_use: "Always active in shell; configured via ~/.config/starship.toml (symlinked from workbench)"
@@ -17,6 +18,7 @@ tools:
     docs: "https://starship.rs"
 
   - name: fzf
+    allow: false
     context: none
     description: "Fuzzy finder — interactive search for files, history, and command output"
     when_to_use: "Interactively filtering lists; integrates with shell history (ctrl-r), git, vim, and other tools"
@@ -24,6 +26,7 @@ tools:
     docs: "https://github.com/junegunn/fzf"
 
   - name: zoxide
+    allow: false
     context: none
     description: "Smarter cd — learns frequently-visited directories and jumps to them by partial name"
     when_to_use: "Navigating to frequently-used directories faster than cd"
@@ -31,6 +34,7 @@ tools:
     docs: "https://github.com/ajeetdsouza/zoxide"
 
   - name: zsh-history-substring-search
+    allow: false
     context: none
     description: "History search filtered by what you've typed — press up/down to cycle through matches"
     when_to_use: "Always active in shell; type partial command then up/down arrow to find matching history"
@@ -38,6 +42,7 @@ tools:
     docs: "https://github.com/zsh-users/zsh-history-substring-search"
 
   - name: zsh-completions
+    allow: false
     context: none
     description: "Additional completion definitions for zsh — extends tab-completion for many tools"
     when_to_use: "Always active in shell; enhances tab-completion for tools not covered by default zsh"
@@ -45,6 +50,7 @@ tools:
     docs: "https://github.com/zsh-users/zsh-completions"
 
   - name: zsh-syntax-highlighting
+    allow: false
     context: none
     description: "Fish-style syntax highlighting for zsh — highlights valid commands green, errors red"
     when_to_use: "Always active in shell; visual feedback before executing commands"

@@ -69,6 +69,28 @@ def _parse_ci_json(stdout: str) -> dict | None:
         return None
 
 
+def _parse_review_summary(output: str) -> dict | None:
+    """Extract REVIEW_SUMMARY:{json} from claude-review output."""
+    for line in output.splitlines():
+        if line.startswith("REVIEW_SUMMARY:"):
+            try:
+                return json.loads(line[len("REVIEW_SUMMARY:"):])
+            except (json.JSONDecodeError, TypeError):
+                return None
+    return None
+
+
+def _is_pr_target(target: str | None) -> bool:
+    """Check if target looks like a PR URL or number (not a branch name)."""
+    if not target:
+        return False
+    if target.isdigit():
+        return True
+    if "github.com" in target and "/pull/" in target:
+        return True
+    return False
+
+
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
@@ -205,32 +227,180 @@ def cmd_ci(args, ctx: pr_context.ResolvedContext) -> int:
 
 def cmd_review(args, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review, update unified state."""
-    print("pr review: not yet implemented", file=sys.stderr)
-    return 1
+    review_args = [str(BIN_DIR / "claude-review")]
+
+    is_self = args.self_review or not _is_pr_target(args.target)
+
+    if is_self:
+        review_args.append("--self")
+        if args.fix:
+            review_args.append("--fix")
+        if args.target:
+            review_args.append(args.target)
+    else:
+        review_args.append(args.target)
+
+    if args.auto_post:
+        review_args.append("--post")
+    if args.no_post:
+        review_args.append("--no-post")
+    if args.submit:
+        review_args.append("--submit")
+    if args.force:
+        review_args.append("--force")
+    if args.no_holistic:
+        review_args.append("--no-holistic")
+    if args.skip_user_verification:
+        review_args.append("--skip-user-verification")
+    if args.issue:
+        review_args += ["--issue", args.issue]
+    if args.model:
+        review_args += ["--model", args.model]
+    if args.max_cost is not None:
+        review_args += ["--max-cost", str(args.max_cost)]
+    if args.max_parallel != 4:
+        review_args += ["--max-parallel", str(args.max_parallel)]
+
+    # Always request JSON summary to update state
+    review_args.append("--json-summary")
+
+    if ctx.worktree_root:
+        review_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(review_args, capture_output=True, text=True)
+
+    # stderr contains all human-readable output (claude-review redirects
+    # stdout to stderr when --json-summary is set)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+    # stdout contains only REVIEW_SUMMARY:{json}
+    summary_data = _parse_review_summary(result.stdout)
+    if summary_data:
+        findings = summary_data.get("findings", {})
+        finding_counts = {
+            k: v for k, v in findings.items()
+            if k != "total" and isinstance(v, int) and v > 0
+        }
+        state = _load_or_init(ctx)
+        pr_state.update_review(state, pr_state.ReviewSummary(
+            review_file=summary_data.get("review_file", ""),
+            review_type="self" if is_self else "pr",
+            head_sha=summary_data.get("head_sha", ""),
+            finding_counts=finding_counts,
+            verdict=summary_data.get("verdict", ""),
+            cost_usd=summary_data.get("cost_usd", 0.0),
+            updated_at=_now_iso(),
+        ))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    # Pass JSON summary through to stdout
+    if result.stdout:
+        print(result.stdout, end="")
+
+    return result.returncode
 
 
 def cmd_comments(args, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to review-threads, update unified state."""
-    print("pr comments: not yet implemented", file=sys.stderr)
-    return 1
+    threads_args = [str(BIN_DIR / "review-threads")]
+    if ctx.pr_number:
+        threads_args += ["--pr", str(ctx.pr_number)]
+    if args.resolve_verified:
+        threads_args.append("--resolve-verified")
+    threads_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(threads_args, capture_output=True, text=True)
+
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+    report = _parse_ci_json(result.stdout)
+    if report:
+        threads = report.get("threads", [])
+        state_counts: dict[str, int] = Counter()
+        for t in threads:
+            state_counts[t.get("state", "new")] += 1
+
+        blocking = []
+        for v in report.get("verdicts", []):
+            if v.get("state") == "CHANGES_REQUESTED":
+                blocking.append(v.get("author", {}).get("login", "unknown"))
+        has_approvals = any(
+            v.get("state") == "APPROVED" for v in report.get("verdicts", [])
+        )
+
+        state = _load_or_init(ctx)
+        pr_state.update_comments(state, pr_state.CommentsSummary(
+            total_threads=len(threads),
+            by_state=dict(state_counts),
+            blocking_reviewers=blocking,
+            has_approvals=has_approvals,
+            updated_at=_now_iso(),
+        ))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    if result.stdout:
+        print(result.stdout, end="")
+
+    return result.returncode
 
 
 def cmd_fix(args, ctx: pr_context.ResolvedContext) -> int:
     """Run fix passes for CI, review, and comments."""
-    print("pr fix: not yet implemented", file=sys.stderr)
-    return 1
+    state = pr_state.load_state(ctx.worktree_root)
+    if not state:
+        print("No state yet. Run pr ci, pr review, or pr comments first.", file=sys.stderr)
+        return 1
+
+    exit_code = 0
+
+    # 1. Review fix (has a script-level --fix via claude-review)
+    if state.review.updated_at and sum(state.review.finding_counts.values()) > 0:
+        print("## Fixing review findings...", file=sys.stderr)
+        review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
+        review_args += ["--repo-dir", str(ctx.worktree_root)]
+        r = subprocess.run(review_args)
+        if r.returncode != 0:
+            exit_code = 1
+
+    # 2. CI and comments don't have script-level fix passes yet — report
+    if state.ci.updated_at and state.ci.failure_count > 0:
+        infra_count = state.ci.failure_kinds.get("infra", 0) + state.ci.failure_kinds.get("flaky", 0)
+        fixable = state.ci.failure_count - infra_count
+        if fixable > 0:
+            print(f"\n## CI: {fixable} fixable failure(s) — run pr ci --fix", file=sys.stderr)
+
+    actionable = state.comments.by_state.get("new", 0) + state.comments.by_state.get("contested", 0)
+    if state.comments.updated_at and actionable > 0:
+        print(f"\n## Comments: {actionable} actionable thread(s) — run pr comments --fix", file=sys.stderr)
+
+    return exit_code
 
 
 def cmd_post(args, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review post."""
-    print("pr post: not yet implemented", file=sys.stderr)
-    return 1
+    target = getattr(args, "target", None)
+    if not target and ctx.pr_number:
+        target = str(ctx.pr_number)
+    if not target:
+        print("pr post: requires a PR number or URL", file=sys.stderr)
+        return 1
+
+    post_args = [str(BIN_DIR / "claude-review"), "post", target]
+    if args.submit:
+        post_args.append("--submit")
+    if ctx.worktree_root:
+        post_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(post_args)
+    return result.returncode
 
 
 def cmd_gc(args, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review gc."""
-    print("pr gc: not yet implemented", file=sys.stderr)
-    return 1
+    result = subprocess.run([str(BIN_DIR / "claude-review"), "gc"])
+    return result.returncode
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────

@@ -1,0 +1,136 @@
+"""Tests for pr CLI helper functions."""
+
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
+LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+# Import the extensionless pr script via importlib
+_pr_path = str(BIN_DIR / "pr")
+_loader = importlib.machinery.SourceFileLoader("pr_cli", _pr_path)
+_spec = importlib.util.spec_from_loader("pr_cli", _loader, origin=_pr_path)
+pr_cli = importlib.util.module_from_spec(_spec)
+pr_cli.__file__ = _pr_path
+_spec.loader.exec_module(pr_cli)
+
+
+# ── _parse_ci_json ──────────────────────────────────────────────────────────
+
+
+def test_parse_ci_json_valid():
+    stdout = '{"conclusion": "failure", "failures": []}'
+    result = pr_cli._parse_ci_json(stdout)
+    assert result == {"conclusion": "failure", "failures": []}
+
+
+def test_parse_ci_json_with_dashboard_prefix():
+    stdout = 'Dashboard text\nMore text\n{"conclusion": "success"}'
+    result = pr_cli._parse_ci_json(stdout)
+    assert result["conclusion"] == "success"
+
+
+def test_parse_ci_json_no_json():
+    assert pr_cli._parse_ci_json("no json here") is None
+
+
+def test_parse_ci_json_empty():
+    assert pr_cli._parse_ci_json("") is None
+
+
+# ── _parse_review_summary ──────────────────────────────────────────────────
+
+
+def test_parse_review_summary_valid():
+    output = 'REVIEW_SUMMARY:{"repo":"owner/repo","verdict":"approve","findings":{"M":0,"S":1,"total":1}}'
+    result = pr_cli._parse_review_summary(output)
+    assert result["verdict"] == "approve"
+    assert result["findings"]["S"] == 1
+
+
+def test_parse_review_summary_multiline():
+    output = "Some output\nMore output\nREVIEW_SUMMARY:{\"verdict\":\"changes_requested\"}\nTrailing"
+    result = pr_cli._parse_review_summary(output)
+    assert result["verdict"] == "changes_requested"
+
+
+def test_parse_review_summary_missing():
+    assert pr_cli._parse_review_summary("no summary here") is None
+
+
+def test_parse_review_summary_invalid_json():
+    assert pr_cli._parse_review_summary("REVIEW_SUMMARY:{invalid}") is None
+
+
+# ── _is_pr_target ──────────────────────────────────────────────────────────
+
+
+def test_is_pr_target_number():
+    assert pr_cli._is_pr_target("42") is True
+
+
+def test_is_pr_target_url():
+    assert pr_cli._is_pr_target("https://github.com/owner/repo/pull/123") is True
+
+
+def test_is_pr_target_branch():
+    assert pr_cli._is_pr_target("isaac/feat/foo") is False
+
+
+def test_is_pr_target_none():
+    assert pr_cli._is_pr_target(None) is False
+
+
+def test_is_pr_target_empty():
+    assert pr_cli._is_pr_target("") is False
+
+
+# ── _merge_readiness ────────────────────────────────────────────────────────
+
+
+def test_merge_readiness_all_green():
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_ci(state, pr_state.CISummary(conclusion="success", updated_at="t"))
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        finding_counts={"S": 1}, verdict="approve", updated_at="t",
+    ))
+    pr_state.update_comments(state, pr_state.CommentsSummary(
+        blocking_reviewers=[], updated_at="t",
+    ))
+    result = pr_cli._merge_readiness(state)
+    assert "ready" in result.lower()
+
+
+def test_merge_readiness_ci_failing():
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_ci(state, pr_state.CISummary(conclusion="failure", updated_at="t"))
+    pr_state.update_review(state, pr_state.ReviewSummary(updated_at="t"))
+    pr_state.update_comments(state, pr_state.CommentsSummary(updated_at="t"))
+    result = pr_cli._merge_readiness(state)
+    assert "CI failing" in result
+
+
+def test_merge_readiness_must_fix():
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_ci(state, pr_state.CISummary(conclusion="success", updated_at="t"))
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        finding_counts={"M": 2}, updated_at="t",
+    ))
+    pr_state.update_comments(state, pr_state.CommentsSummary(updated_at="t"))
+    result = pr_cli._merge_readiness(state)
+    assert "must-fix" in result
+
+
+def test_merge_readiness_not_checked():
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    result = pr_cli._merge_readiness(state)
+    assert "not checked" in result

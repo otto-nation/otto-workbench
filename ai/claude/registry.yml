@@ -30,6 +30,11 @@ tools:
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
     when_to_use: "Called internally by claude-review threads; not invoked directly"
 
+  - name: review-thread-triage
+    context: none
+    description: "Classify and verify PR review threads using AI for non-interactive triage"
+    when_to_use: "Called internally by DevHub triage runner; not invoked directly"
+
   - name: review-orchestrate
     context: none
     description: "Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging"

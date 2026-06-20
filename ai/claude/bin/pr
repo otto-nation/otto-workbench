@@ -1,0 +1,499 @@
+#!/usr/bin/env python3
+"""Unified PR lifecycle CLI.
+
+Subcommands:
+  pr status      Show CI, review, and comment status
+  pr ci          Fetch and display CI failures
+  pr review      Run code review (self or others)
+  pr comments    Fetch and address review threads
+  pr fix         Fix everything fixable (CI + review + comments)
+  pr post        Post an existing review to GitHub
+  pr gc          Clean up stale review artifacts
+
+Usage:
+  pr                              # defaults to status
+  pr status                       # unified dashboard
+  pr ci [--fix]                   # CI failure status
+  pr review [target] [--fix]      # self-review or review others
+  pr comments [--fix]             # PR review thread status
+  pr fix                          # fix all fixable issues
+  pr post [target]                # post existing review
+  pr gc                           # clean up stale artifacts
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+BIN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN_DIR.parent / "lib"))
+
+import pr_context
+import pr_state
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
+    """Load existing state or create a fresh one from resolved context."""
+    state = pr_state.load_state(ctx.worktree_root)
+    if state is not None:
+        pr_state.update_identity(state, ctx.head_sha, ctx.pr_number)
+        return state
+    return pr_state.new_state(
+        repo=ctx.repo,
+        branch=ctx.branch,
+        pr_number=ctx.pr_number,
+        head_sha=ctx.head_sha,
+        worktree_root=str(ctx.worktree_root),
+    )
+
+
+def _parse_ci_json(stdout: str) -> dict | None:
+    """Extract JSON object from ci-check stdout (may have dashboard text before it)."""
+    brace = stdout.find("{")
+    if brace < 0:
+        return None
+    try:
+        return json.loads(stdout[brace:])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _parse_review_summary(output: str) -> dict | None:
+    """Extract REVIEW_SUMMARY:{json} from claude-review output."""
+    prefix = "REVIEW_SUMMARY:"
+    lines = [l for l in output.splitlines() if l.startswith(prefix)]
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[0][len(prefix):])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _is_pr_target(target: str | None) -> bool:
+    """Check if target looks like a PR URL or number (not a branch name)."""
+    if not target:
+        return False
+    if target.isdigit():
+        return True
+    if "github.com" in target and "/pull/" in target:
+        return True
+    return False
+
+
+# ── Subcommands ─────────────────────────────────────────────────────────────
+
+
+def _render_ci_section(ci: pr_state.CISummary) -> list[str]:
+    if not ci.updated_at:
+        return ["**CI**: not checked yet"]
+    icon = "green" if ci.conclusion == "success" else "red"
+    lines = [f"**CI** ({icon}): {ci.conclusion} — {ci.failure_count} failure(s)"]
+    for kind, count in sorted(ci.failure_kinds.items()):
+        lines.append(f"  {kind}: {count}")
+    if ci.last_run_number:
+        lines.append(f"  run #{ci.last_run_number}")
+    return lines
+
+
+def _render_review_section(rev: pr_state.ReviewSummary) -> list[str]:
+    if not rev.updated_at:
+        return ["**Review**: not run yet"]
+    lines = [f"**Review** ({rev.review_type}): {rev.verdict}"]
+    if rev.finding_counts:
+        parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
+        lines.append(f"  findings: {', '.join(parts)}")
+    if rev.cost_usd:
+        lines.append(f"  cost: ${rev.cost_usd:.2f}")
+    return lines
+
+
+def _render_comments_section(c: pr_state.CommentsSummary) -> list[str]:
+    if not c.updated_at:
+        return ["**Comments**: not checked yet"]
+    lines = [f"**Comments**: {c.total_threads} thread(s)"]
+    if c.by_state:
+        parts = [f"{s}: {ct}" for s, ct in sorted(c.by_state.items())]
+        lines.append(f"  {', '.join(parts)}")
+    if c.blocking_reviewers:
+        lines.append(f"  blocking: {', '.join(c.blocking_reviewers)}")
+    return lines
+
+
+def cmd_status(args, ctx: pr_context.ResolvedContext) -> int:
+    """Render unified status dashboard from cached state."""
+    state = pr_state.load_state(ctx.worktree_root)
+
+    pr_label = f"#{state.identity.pr_number}" if state and state.identity.pr_number else "(no PR)"
+    branch = state.identity.branch if state else ctx.branch
+    repo = state.identity.repo if state else ctx.repo
+
+    lines = [f"## PR Status — {repo} {pr_label} ({branch})", ""]
+
+    if not state:
+        lines.append("No status data yet. Run: pr ci, pr review, or pr comments")
+        print("\n".join(lines), file=sys.stderr)
+        return 0
+
+    lines += _render_ci_section(state.ci)
+    lines.append("")
+    lines += _render_review_section(state.review)
+    lines.append("")
+    lines += _render_comments_section(state.comments)
+    lines.append("")
+    lines.append(_merge_readiness(state))
+
+    print("\n".join(lines), file=sys.stderr)
+
+    json.dump(pr_state.state_to_dict(state), sys.stdout, indent=2)
+    print()
+    return 0
+
+
+def _merge_readiness(state: pr_state.PRState) -> str:
+    ci_green = state.ci.conclusion == "success" if state.ci.updated_at else None
+    has_must_fix = state.review.finding_counts.get("M", 0) > 0 if state.review.updated_at else None
+    has_blockers = bool(state.comments.blocking_reviewers) if state.comments.updated_at else None
+
+    if ci_green is True and has_must_fix is False and has_blockers is False:
+        return "**Merge readiness**: ready"
+    issues = []
+    if ci_green is False:
+        issues.append("CI failing")
+    if has_must_fix is True:
+        issues.append("must-fix findings")
+    if has_blockers is True:
+        issues.append("blocking reviewers")
+    if ci_green is None or has_must_fix is None or has_blockers is None:
+        unchecked = []
+        if ci_green is None:
+            unchecked.append("CI")
+        if has_must_fix is None:
+            unchecked.append("review")
+        if has_blockers is None:
+            unchecked.append("comments")
+        issues.append(f"not checked: {', '.join(unchecked)}")
+    return f"**Merge readiness**: blocked — {'; '.join(issues)}" if issues else "**Merge readiness**: ready"
+
+
+def cmd_ci(args, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to ci-check, update unified state."""
+    ci_args = [str(BIN_DIR / "ci-check")]
+    if ctx.branch:
+        ci_args += ["--branch", ctx.branch]
+    if args.pr or ctx.pr_number:
+        ci_args += ["--pr", str(args.pr or ctx.pr_number)]
+    if hasattr(args, "run") and args.run:
+        ci_args += ["--run", str(args.run)]
+    ci_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(ci_args, capture_output=True, text=True)
+
+    # Pass dashboard through
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+    # Parse JSON and update state
+    report = _parse_ci_json(result.stdout)
+    if report:
+        kind_counts: dict[str, int] = Counter()
+        for f in report.get("failures", []):
+            kind_counts[f.get("kind", "unknown")] += 1
+
+        state = _load_or_init(ctx)
+        pr_state.update_ci(state, pr_state.CISummary(
+            last_run_id=report.get("run_id"),
+            last_run_number=report.get("run_number"),
+            conclusion=report.get("conclusion", ""),
+            failure_count=len(report.get("failures", [])),
+            failure_kinds=dict(kind_counts),
+            updated_at=_now_iso(),
+        ))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    # Pass JSON through
+    if result.stdout:
+        print(result.stdout, end="")
+
+    return result.returncode
+
+
+def cmd_review(args, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to claude-review, update unified state."""
+    review_args = [str(BIN_DIR / "claude-review")]
+
+    is_self = args.self_review or not _is_pr_target(args.target)
+
+    if is_self:
+        review_args.append("--self")
+        if args.fix:
+            review_args.append("--fix")
+        if args.target:
+            review_args.append(args.target)
+    else:
+        review_args.append(args.target)
+
+    if args.auto_post:
+        review_args.append("--post")
+    if args.no_post:
+        review_args.append("--no-post")
+    if args.submit:
+        review_args.append("--submit")
+    if args.force:
+        review_args.append("--force")
+    if args.no_holistic:
+        review_args.append("--no-holistic")
+    if args.skip_user_verification:
+        review_args.append("--skip-user-verification")
+    if args.issue:
+        review_args += ["--issue", args.issue]
+    if args.model:
+        review_args += ["--model", args.model]
+    if args.max_cost is not None:
+        review_args += ["--max-cost", str(args.max_cost)]
+    if args.max_parallel != 4:
+        review_args += ["--max-parallel", str(args.max_parallel)]
+
+    # Always request JSON summary to update state
+    review_args.append("--json-summary")
+
+    if ctx.worktree_root:
+        review_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(review_args, capture_output=True, text=True)
+
+    # stderr contains all human-readable output (claude-review redirects
+    # stdout to stderr when --json-summary is set)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+    # stdout contains only REVIEW_SUMMARY:{json}
+    summary_data = _parse_review_summary(result.stdout)
+    if summary_data:
+        findings = summary_data.get("findings", {})
+        finding_counts = {
+            k: v for k, v in findings.items()
+            if k != "total" and isinstance(v, int) and v > 0
+        }
+        state = _load_or_init(ctx)
+        pr_state.update_review(state, pr_state.ReviewSummary(
+            review_file=summary_data.get("review_file", ""),
+            review_type="self" if is_self else "pr",
+            head_sha=summary_data.get("head_sha", ""),
+            finding_counts=finding_counts,
+            verdict=summary_data.get("verdict", ""),
+            cost_usd=summary_data.get("cost_usd", 0.0),
+            updated_at=_now_iso(),
+        ))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    # Pass JSON summary through to stdout
+    if result.stdout:
+        print(result.stdout, end="")
+
+    return result.returncode
+
+
+def _build_comments_summary(report: dict) -> pr_state.CommentsSummary:
+    """Build a CommentsSummary from review-threads JSON report."""
+    threads = report.get("threads", [])
+    state_counts: dict[str, int] = Counter()
+    for t in threads:
+        state_counts[t.get("state", "new")] += 1
+
+    verdicts = report.get("verdicts", [])
+    blocking = [
+        v.get("author", {}).get("login", "unknown")
+        for v in verdicts if v.get("state") == "CHANGES_REQUESTED"
+    ]
+    has_approvals = any(v.get("state") == "APPROVED" for v in verdicts)
+
+    return pr_state.CommentsSummary(
+        total_threads=len(threads),
+        by_state=dict(state_counts),
+        blocking_reviewers=blocking,
+        has_approvals=has_approvals,
+        updated_at=_now_iso(),
+    )
+
+
+def cmd_comments(args, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to review-threads, update unified state."""
+    threads_args = [str(BIN_DIR / "review-threads")]
+    if ctx.pr_number:
+        threads_args += ["--pr", str(ctx.pr_number)]
+    if args.resolve_verified:
+        threads_args.append("--resolve-verified")
+    threads_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(threads_args, capture_output=True, text=True)
+
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+    report = _parse_ci_json(result.stdout)
+    if report:
+        state = _load_or_init(ctx)
+        pr_state.update_comments(state, _build_comments_summary(report))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    if result.stdout:
+        print(result.stdout, end="")
+
+    return result.returncode
+
+
+def cmd_fix(args, ctx: pr_context.ResolvedContext) -> int:
+    """Run fix passes for CI, review, and comments."""
+    state = pr_state.load_state(ctx.worktree_root)
+    if not state:
+        print("No state yet. Run pr ci, pr review, or pr comments first.", file=sys.stderr)
+        return 1
+
+    exit_code = 0
+
+    # 1. Review fix (has a script-level --fix via claude-review)
+    if state.review.updated_at and sum(state.review.finding_counts.values()) > 0:
+        print("## Fixing review findings...", file=sys.stderr)
+        review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
+        review_args += ["--repo-dir", str(ctx.worktree_root)]
+        r = subprocess.run(review_args)
+        if r.returncode != 0:
+            exit_code = 1
+
+    # 2. CI and comments don't have script-level fix passes yet — report
+    if state.ci.updated_at and state.ci.failure_count > 0:
+        infra_count = state.ci.failure_kinds.get("infra", 0) + state.ci.failure_kinds.get("flaky", 0)
+        fixable = state.ci.failure_count - infra_count
+        if fixable > 0:
+            print(f"\n## CI: {fixable} fixable failure(s) — run pr ci --fix", file=sys.stderr)
+
+    actionable = state.comments.by_state.get("new", 0) + state.comments.by_state.get("contested", 0)
+    if state.comments.updated_at and actionable > 0:
+        print(f"\n## Comments: {actionable} actionable thread(s) — run pr comments --fix", file=sys.stderr)
+
+    return exit_code
+
+
+def cmd_post(args, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to claude-review post."""
+    target = getattr(args, "target", None)
+    if not target and ctx.pr_number:
+        target = str(ctx.pr_number)
+    if not target:
+        print("pr post: requires a PR number or URL", file=sys.stderr)
+        return 1
+
+    post_args = [str(BIN_DIR / "claude-review"), "post", target]
+    if args.submit:
+        post_args.append("--submit")
+    if ctx.worktree_root:
+        post_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    result = subprocess.run(post_args)
+    return result.returncode
+
+
+def cmd_gc(args, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to claude-review gc."""
+    result = subprocess.run([str(BIN_DIR / "claude-review"), "gc"])
+    return result.returncode
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="pr",
+        description="PR lifecycle management",
+    )
+    parser.add_argument("--repo-dir", "--repo", "--worktree",
+                        dest="repo_dir",
+                        help="Git worktree directory")
+    parser.add_argument("--branch", help="Branch name")
+    parser.add_argument("--pr", help="PR number or URL")
+
+    sub = parser.add_subparsers(dest="command")
+
+    # pr status
+    sub.add_parser("status", help="Show CI, review, and comment status")
+
+    # pr ci
+    ci_p = sub.add_parser("ci", help="CI failure status")
+    ci_p.add_argument("--run", type=int, help="Specific run ID")
+    ci_p.add_argument("--fix", action="store_true",
+                      help="Fix CI failures")
+
+    # pr review
+    review_p = sub.add_parser("review", help="Run code review")
+    review_p.add_argument("target", nargs="?",
+                          help="PR URL/number (review others) or branch (self)")
+    review_p.add_argument("--self", dest="self_review", action="store_true")
+    review_p.add_argument("--fix", action="store_true")
+    review_p.add_argument("--post", dest="auto_post", action="store_true")
+    review_p.add_argument("--submit", action="store_true")
+    review_p.add_argument("--no-post", action="store_true")
+    review_p.add_argument("--issue", default="")
+    review_p.add_argument("--model", default="")
+    review_p.add_argument("--max-cost", type=float)
+    review_p.add_argument("--max-parallel", type=int, default=4)
+    review_p.add_argument("--no-holistic", action="store_true")
+    review_p.add_argument("--force", action="store_true")
+    review_p.add_argument("--skip-user-verification", action="store_true")
+    review_p.add_argument("--json-summary", action="store_true")
+
+    # pr comments
+    comments_p = sub.add_parser("comments", help="PR review thread status")
+    comments_p.add_argument("--resolve-verified", action="store_true")
+    comments_p.add_argument("--fix", action="store_true",
+                            help="Fix actionable comments")
+
+    # pr fix
+    sub.add_parser("fix", help="Fix CI + review + comments")
+
+    # pr post
+    post_p = sub.add_parser("post", help="Post existing review to GitHub")
+    post_p.add_argument("target", nargs="?", help="PR URL/number")
+    post_p.add_argument("--submit", action="store_true")
+
+    # pr gc
+    sub.add_parser("gc", help="Clean up stale review artifacts")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        args.command = "status"
+
+    ctx = pr_context.resolve(
+        pr=getattr(args, "pr", None),
+        branch=getattr(args, "branch", None),
+        repo_dir=getattr(args, "repo_dir", None),
+    )
+
+    dispatch = {
+        "status": cmd_status,
+        "ci": cmd_ci,
+        "review": cmd_review,
+        "comments": cmd_comments,
+        "fix": cmd_fix,
+        "post": cmd_post,
+        "gc": cmd_gc,
+    }
+
+    sys.exit(dispatch[args.command](args, ctx))
+
+
+if __name__ == "__main__":
+    main()

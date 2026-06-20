@@ -46,6 +46,7 @@
 #                                   (respects install_check: skips uninstalled tools)
 
 # Known tool entry fields — used by validate-registries to reject unknown keys
+# shellcheck disable=SC2034
 KNOWN_TOOL_FIELDS="name description when_to_use allow context usage docs brew_name commands auth"
 
 # is_installed NAME — returns 0 if NAME is found in PATH

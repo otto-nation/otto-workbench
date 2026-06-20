@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.22.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.21.0...claude-review-v1.22.0) (2026-06-20)
+
+
+### Features
+
+* add review-thread-triage script for non-interactive PR thread classification ([#291](https://github.com/otto-nation/otto-workbench/issues/291)) ([073c0e5](https://github.com/otto-nation/otto-workbench/commit/073c0e5579ec3f6bc7f1fa6a0a182b91fb686def))
+* **ci-check:** add --branch flag; use resolve-branch in skills ([#285](https://github.com/otto-nation/otto-workbench/issues/285)) ([10e3705](https://github.com/otto-nation/otto-workbench/commit/10e37056480bdb2bbbe770895542d69f1e742bd1))
+* **ci-failures:** add CI failure analysis skill and ci-check CLI ([#280](https://github.com/otto-nation/otto-workbench/issues/280)) ([365d021](https://github.com/otto-nation/otto-workbench/commit/365d021bdf5ef0d42c25dc8a8f2b207614c06ddc))
+* **hooks:** block absolute bin/local/ paths via PreToolUse hook ([#283](https://github.com/otto-nation/otto-workbench/issues/283)) ([e263175](https://github.com/otto-nation/otto-workbench/commit/e2631755145dfbb617db4573b24622a8a00b1b24))
+* **hooks:** block brace expansion via PreToolUse hook ([#281](https://github.com/otto-nation/otto-workbench/issues/281)) ([3230133](https://github.com/otto-nation/otto-workbench/commit/3230133e4b94d1693a9255933e6c731ad5402665))
+* **hooks:** block compound cd commands via PreToolUse hook ([#278](https://github.com/otto-nation/otto-workbench/issues/278)) ([e044d8a](https://github.com/otto-nation/otto-workbench/commit/e044d8aabe7403ddcf05d34900ab70c60aa919f6))
+* **skills,permissions:** add Arguments sections; auto-sync permissions from registries ([#282](https://github.com/otto-nation/otto-workbench/issues/282)) ([51061d5](https://github.com/otto-nation/otto-workbench/commit/51061d5b003d357d623c9be02d07d59e15280a70))
+
+
+### Bug Fixes
+
+* allow bin/local/ scripts without permission prompts ([#277](https://github.com/otto-nation/otto-workbench/issues/277)) ([9640fec](https://github.com/otto-nation/otto-workbench/commit/9640fec7e706fe22335590ee4969df8d95ffc1f4))
+* **anatomy:** support bare repo worktree layouts ([#274](https://github.com/otto-nation/otto-workbench/issues/274)) ([ddc7df5](https://github.com/otto-nation/otto-workbench/commit/ddc7df556d712fc6ac0710c314ac997c75819277))
+* **ci-check:** fetch all workflow runs for latest commit ([#284](https://github.com/otto-nation/otto-workbench/issues/284)) ([1e9b149](https://github.com/otto-nation/otto-workbench/commit/1e9b14974b32ca05da3fb7fe81f24695c5fdb5aa))
+* **claude-review:** scale max_turns when density filter omits files ([#289](https://github.com/otto-nation/otto-workbench/issues/289)) ([263d79b](https://github.com/otto-nation/otto-workbench/commit/263d79be275a8c1041b73545d676663063de4ad5))
+* **pr-comments:** use resolve-branch for branch name arguments ([#290](https://github.com/otto-nation/otto-workbench/issues/290)) ([68f79db](https://github.com/otto-nation/otto-workbench/commit/68f79dba89d2978fbed57118bcba92868d6b866c))
+
+
+### Code Refactoring
+
+* **registries:** define tool entry interface; require allow and context ([#292](https://github.com/otto-nation/otto-workbench/issues/292)) ([57f17f6](https://github.com/otto-nation/otto-workbench/commit/57f17f6e1f29854d318ccfd083197f4e42caa04f))
+
 ## [1.21.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.20.0...claude-review-v1.21.0) (2026-06-17)
 
 

@@ -9,6 +9,7 @@ meta:
 
 tools:
   - name: generate-changelog
+    allow: false
     context: none
     description: "Generates a changelog from conventional commits grouped by type"
     when_to_use: "Reviewing recent changes; understanding what landed since a given date"

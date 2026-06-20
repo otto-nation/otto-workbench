@@ -2,7 +2,8 @@
 # Validate tool registries against schema and cross-check with their source files.
 #
 # Checks performed per registry:
-#   - Required fields present: name, description, when_to_use
+#   - Required fields present: name, description, when_to_use, allow
+#   - No unknown fields (see KNOWN_TOOL_FIELDS in lib/registries.sh)
 #   - No duplicate tool names
 #   - Cross-file check based on meta.validation:
 #       brewfile      — every tool name (or brew_name override) exists in meta.source Brewfile
@@ -63,12 +64,14 @@ _check_required_fields() {
   name=$(yq ".tools[$i].name // \"\"" "$file")
   description=$(yq ".tools[$i].description // \"\"" "$file")
   when_to_use=$(yq ".tools[$i].when_to_use // \"\"" "$file")
-  context=$(yq ".tools[$i].context // \"always\"" "$file")
+  context=$(yq ".tools[$i].context // \"\"" "$file")
 
   [[ -n "$name" && "$name" != "null" ]]             || _fail "$(basename "$file") [$i]: missing required field: name"
   [[ -n "$description" && "$description" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: description"
   [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use"
-  if [[ "$context" != "always" && "$context" != "reference" && "$context" != "none" ]]; then
+  if [[ -z "$context" || "$context" == "null" ]]; then
+    _fail "$(basename "$file") entry '$name': missing required field: context (use always, reference, or none)"
+  elif [[ "$context" != "always" && "$context" != "reference" && "$context" != "none" ]]; then
     _fail "$(basename "$file") entry '$name': invalid context value '$context' (must be always|reference|none)"
   fi
 }
@@ -97,12 +100,34 @@ _check_allow_seq() {
   done
 }
 
+# _check_unknown_fields FILE INDEX
+_check_unknown_fields() {
+  local file="$1" i="$2"
+  local name
+  name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
+  local key
+  while IFS= read -r key; do
+    local known=false field
+    for field in $KNOWN_TOOL_FIELDS; do
+      if [[ "$key" == "$field" ]]; then known=true; break; fi
+    done
+    if ! $known; then
+      _fail "$(basename "$file") entry '$name': unknown field '$key'"
+    fi
+  done < <(yq ".tools[$i] | keys | .[]" "$file")
+}
+
 # _check_allow_field FILE INDEX
 _check_allow_field() {
   local file="$1" i="$2"
   local has_allow
   has_allow=$(yq ".tools[$i] | has(\"allow\")" "$file")
-  [[ "$has_allow" == "true" ]] || return 0
+  if [[ "$has_allow" != "true" ]]; then
+    local name
+    name=$(yq ".tools[$i].name // \"[$i]\"" "$file")
+    _fail "$(basename "$file") entry '$name': missing required field: allow (use false for internal tools)"
+    return 0
+  fi
 
   local name allow_tag
   name=$(yq ".tools[$i].name" "$file")
@@ -135,6 +160,7 @@ _validate_schema() {
   while [[ "$i" -lt "$count" ]]; do
     _check_required_fields "$file" "$i"
     _check_allow_field "$file" "$i"
+    _check_unknown_fields "$file" "$i"
     i=$(( i + 1 ))
   done
   _check_no_duplicates "$file"

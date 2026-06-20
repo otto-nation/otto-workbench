@@ -11,6 +11,8 @@ meta:
 
 tools:
   - name: aws
+    allow: false
+    context: always
     brew_name: awscli
     description: "AWS CLI — manage AWS resources, services, and credentials from the terminal"
     when_to_use: "Interacting with AWS services (S3, EC2, Lambda, Secrets Manager, etc.); managing IAM and credentials"
@@ -18,6 +20,7 @@ tools:
     docs: "https://docs.aws.amazon.com/cli/"
 
   - name: aws-sso-util
+    allow: false
     context: reference
     description: "Utilities for AWS SSO — simplifies login and credential management for SSO-based AWS accounts"
     when_to_use: "Logging in via AWS SSO; configuring SSO profiles; refreshing SSO credentials"

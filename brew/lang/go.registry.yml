@@ -11,6 +11,7 @@ meta:
 tools:
   - name: go
     allow: true
+    context: always
     description: "Go programming language toolchain — compiler, formatter, and standard tooling"
     when_to_use: "Building, running, or testing Go projects"
     usage: "go build ./...  |  go test ./...  |  go run main.go  |  go fmt ./..."
@@ -18,6 +19,7 @@ tools:
 
   - name: golangci-lint
     allow: true
+    context: always
     description: "Fast Go linter runner — aggregates and runs many linters in one pass"
     when_to_use: "Linting Go code before committing; enforcing code quality in CI"
     usage: "golangci-lint run  |  golangci-lint run ./...  |  golangci-lint run --fix"

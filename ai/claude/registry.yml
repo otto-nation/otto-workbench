@@ -10,12 +10,14 @@ meta:
 tools:
   - name: claude-review
     allow: true
+    context: always
     description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. For multiple PRs, dispatch separate Agent subagents — do not background with &"
     usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review threads [<pr_url_or_number>]"
 
   - name: claude-rules
     allow: true
+    context: always
     description: "Manages local Claude Code rule additions not tracked in the workbench"
     when_to_use: "Adding machine-specific or project-specific Claude instructions"
     usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
@@ -58,24 +60,28 @@ tools:
 
   - name: dream-scan
     allow: true
+    context: always
     description: "Scan session transcripts and memory state for dream consolidation"
     when_to_use: "Called by the dream skill to replace Phases 1+2 (Orient + Gather Signal); outputs a structured markdown report"
     usage: "dream-scan --days 7  |  dream-scan --days 30 --home /path/to/home"
 
   - name: dream-verify
     allow: true
+    context: always
     description: "Verify dream memory file integrity across all projects"
     when_to_use: "Called by the dream skill to replace Phase 4 verification; checks line counts, broken refs, relative dates, duplicate names"
     usage: "dream-verify"
 
   - name: promote-scan
     allow: true
+    context: always
     description: "Scan memories and workbench artifacts for promotion evaluation"
     when_to_use: "Called by the promote skill to replace Phase 1 (Orient); outputs a structured markdown report of all memories and existing workbench artifacts"
     usage: "promote-scan  |  promote-scan --workbench /path/to/workbench"
 
   - name: retro-scan
     allow: true
+    context: always
     description: "Scan PR review comments and cross-reference against coding rules"
     when_to_use: "Called by the retro skill to replace Phase 1 (Orient); fetches PR comments from all registered repos and outputs a structured markdown report"
     usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"

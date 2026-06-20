@@ -15,12 +15,12 @@
 #                   true               → Bash(name:*)
 #                   "cmd"              → Bash(cmd:*)  (CLI differs from registry name)
 #                   ["Bash(cmd:*)"]    → verbatim patterns (granular subcommand control)
-#
-# Optional fields:
-#   context       enum            AI context visibility (default: "always")
+#   context       enum            AI context visibility:
 #                   always    → full entry in tools.generated.md
 #                   reference → compact one-liner
 #                   none      → omitted from AI context
+#
+# Optional fields:
 #   usage         string          Example invocations (shown in tools.generated.md)
 #   docs          string          URL to external documentation
 #   brew_name     string          Brewfile formula name when it differs from tool name

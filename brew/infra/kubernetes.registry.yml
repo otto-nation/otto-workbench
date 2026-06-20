@@ -27,6 +27,7 @@ tools:
 
   - name: kubectl
     allow: true
+    context: always
     brew_name: kubernetes-cli
     description: "Kubernetes CLI — manage clusters, deployments, pods, and services"
     when_to_use: "Inspecting or modifying Kubernetes resources; debugging pods; applying manifests"

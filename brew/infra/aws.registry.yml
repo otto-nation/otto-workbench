@@ -12,6 +12,7 @@ meta:
 tools:
   - name: aws
     allow: false
+    context: always
     brew_name: awscli
     description: "AWS CLI — manage AWS resources, services, and credentials from the terminal"
     when_to_use: "Interacting with AWS services (S3, EC2, Lambda, Secrets Manager, etc.); managing IAM and credentials"

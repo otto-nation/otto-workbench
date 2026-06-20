@@ -11,6 +11,7 @@ meta:
 tools:
   - name: jira
     allow: false
+    context: always
     brew_name: "ankitpokhrel/jira-cli/jira-cli"
     description: "Jira CLI (ankitpokhrel/jira-cli) — manage Jira tickets from the terminal"
     when_to_use: "Viewing, moving, or commenting on Jira tickets; checking ticket status; assigning issues"
@@ -19,6 +20,7 @@ tools:
 
   - name: linear
     allow: true
+    context: always
     brew_name: "schpet/tap/linear"
     description: "Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal"
     when_to_use: "Listing, creating, or starting Linear issues; git-aware issue tracking"

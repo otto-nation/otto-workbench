@@ -10,6 +10,7 @@ meta:
 
 tools:
   - name: docker
+    context: always
     allow:
       - "Bash(docker build:*)"
       - "Bash(docker compose:*)"
@@ -33,6 +34,7 @@ tools:
 
   - name: jq
     allow: true
+    context: always
     description: "JSON processor for querying, filtering, and transforming JSON data"
     when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"
     usage: "jq '.field' file.json  |  echo '{}' | jq '.key'"
@@ -40,12 +42,14 @@ tools:
 
   - name: yq
     allow: true
+    context: always
     description: "YAML/JSON/TOML processor — like jq but for YAML"
     when_to_use: "Reading or modifying YAML files (Taskfile.yml, docker-compose.yml, k8s manifests)"
     usage: "yq '.key' file.yaml  |  yq -i '.key = \"value\"' file.yaml"
     docs: "https://mikefarah.gitbook.io/yq/"
 
   - name: gh
+    context: always
     allow:
       - "Bash(gh pr:*)"
       - "Bash(gh issue:*)"
@@ -78,6 +82,7 @@ tools:
 
   - name: shellcheck
     allow: true
+    context: always
     description: "Static analysis tool for shell scripts — catches bugs and style issues"
     when_to_use: "Before committing any .sh file; run automatically in pre-push and CI"
     usage: "shellcheck script.sh"
@@ -85,6 +90,7 @@ tools:
 
   - name: bats-core
     allow: "bats"
+    context: always
     description: "Bash Automated Testing System — unit testing framework for shell scripts"
     when_to_use: "Writing or running tests for bash scripts in this repo"
     usage: "bats tests/  |  bats tests/foo.bats"
@@ -132,6 +138,7 @@ tools:
 
   - name: worktrunk
     allow: "wt"
+    context: always
     description: "Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration"
     when_to_use: "Managing parallel git worktrees for concurrent feature development or isolating Claude Code agents in separate worktrees"
     usage: "wt switch -c feat/auth  |  wt list  |  wt merge  |  wt remove feat/auth"

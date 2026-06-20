@@ -5,6 +5,25 @@
 
 bats_require_minimum_version 1.5.0
 
+setup_file() {
+  load 'test_helper'
+  local repo_root
+  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+  # Discover scripts once for all tests in this file
+  local f shebang
+  while IFS= read -r f; do
+    [[ -x "$f" ]] || continue
+    [[ "$f" == */migrations/* ]] && continue
+    [[ "$f" == */steps.sh ]] && continue
+    [[ "$(basename "$f")" == "otto-workbench-autoupdate" ]] && continue
+    shebang=$(head -1 "$f" 2>/dev/null)
+    [[ "$shebang" == "#!/usr/bin/env bash" ]] || continue
+    printf '%s\n' "$f"
+  done < <(find "$repo_root" -type f -path '*/bin/*' \
+    ! -path '*/__pycache__/*' ! -name '*.pyc' | sort) > "$BATS_FILE_TMPDIR/scripts.list"
+}
+
 setup() {
   load 'test_helper'
   common_setup
@@ -14,27 +33,9 @@ teardown() {
   common_teardown
 }
 
-# Collect all bash bin scripts, excluding non-user-invocable files.
+# Read cached script list (populated by setup_file)
 _discover_scripts() {
-  local scripts=()
-  local f shebang
-
-  while IFS= read -r f; do
-    [[ -x "$f" ]] || continue
-
-    # Skip non-user-invocable scripts
-    [[ "$f" == */migrations/* ]] && continue
-    [[ "$f" == */steps.sh ]] && continue
-    [[ "$(basename "$f")" == "otto-workbench-autoupdate" ]] && continue
-
-    shebang=$(head -1 "$f" 2>/dev/null)
-    [[ "$shebang" == "#!/usr/bin/env bash" ]] || continue
-
-    scripts+=("$f")
-  done < <(find "$REPO_ROOT" -type f -path '*/bin/*' \
-    ! -path '*/__pycache__/*' ! -name '*.pyc' | sort)
-
-  printf '%s\n' "${scripts[@]}"
+  cat "$BATS_FILE_TMPDIR/scripts.list"
 }
 
 # ─── Shebang ─────────────────────────────────────────────────────────────────
@@ -77,15 +78,19 @@ _discover_scripts() {
 
 # ─── Help flags ──────────────────────────────────────────────────────────────
 
-@test "all bash bin scripts produce help with -h" {
+@test "all bash bin scripts produce help and exit 0 with -h" {
   local failures=()
 
   while IFS= read -r f; do
-    local name output
+    local name output rc
     name=$(basename "$f")
-    output=$("$f" -h 2>&1) || true
+    rc=0
+    output=$("$f" -h 2>&1) || rc=$?
     if [[ -z "$output" ]]; then
       failures+=("$name: -h produced no output")
+    fi
+    if [[ $rc -ne 0 ]]; then
+      failures+=("$name: -h exit $rc")
     fi
   done < <(_discover_scripts)
 
@@ -201,22 +206,3 @@ _check_commands_for_file() {
   fi
 }
 
-@test "all bash bin scripts exit 0 on -h" {
-  local failures=()
-
-  while IFS= read -r f; do
-    local name rc
-    name=$(basename "$f")
-    rc=0
-    "$f" -h &>/dev/null || rc=$?
-    if [[ $rc -ne 0 ]]; then
-      failures+=("$name: exit $rc")
-    fi
-  done < <(_discover_scripts)
-
-  if (( ${#failures[@]} > 0 )); then
-    printf 'Scripts with non-zero exit on -h:\n'
-    printf '  %s\n' "${failures[@]}"
-    return 1
-  fi
-}

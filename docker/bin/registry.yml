@@ -9,8 +9,6 @@ meta:
 
 tools:
   - name: cleanup-testcontainers
-    allow: false
-    context: none
+    permission: false
+    visibility: hidden
     description: "Stops and removes stale Testcontainers Docker resources left by test runs"
-    when_to_use: "After test runs that left orphaned containers; when freeing Docker resources"
-    usage: "cleanup-testcontainers"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for collect_registry_permissions — extracts Bash(...) permission
-# patterns from registry allow fields.
+# patterns from registry permission fields.
 
 setup_file() {
   load 'test_helper'
@@ -36,18 +36,19 @@ _write_registry() {
   printf '%s\n' "$content" > "$dir/registry.yml"
 }
 
-# ── allow: true ──────────────────────────────────────────────────────────────
+# ── permission: true ──────────────────────────────────────────────────────────
 
-@test "allow: true generates Bash(name:*) from tool name" {
+@test "permission: true generates Bash(name:*) from tool name" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
   install_check: false
   validation: none
 tools:
   - name: mytool
-    allow: true
+    permission: true
     description: "A tool"
-    when_to_use: "Testing"'
+    when_to_use: "Testing"
+    usage: "mytool --help"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
@@ -55,27 +56,28 @@ tools:
   [[ "${perms[0]}" == "Bash(mytool:*)" ]]
 }
 
-# ── allow: false ─────────────────────────────────────────────────────────────
+# ── permission: false ─────────────────────────────────────────────────────────
 
-@test "allow: false generates nothing" {
+@test "permission: false generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
   install_check: false
   validation: none
 tools:
   - name: mytool
-    allow: false
+    permission: false
     description: "A tool"
-    when_to_use: "Testing"'
+    when_to_use: "Testing"
+    usage: "mytool --help"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
   [[ "${#perms[@]}" -eq 0 ]]
 }
 
-# ── allow omitted ────────────────────────────────────────────────────────────
+# ── permission omitted ────────────────────────────────────────────────────────
 
-@test "omitted allow generates nothing" {
+@test "omitted permission generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
   install_check: false
@@ -83,25 +85,27 @@ tools:
 tools:
   - name: mytool
     description: "A tool"
-    when_to_use: "Testing"'
+    when_to_use: "Testing"
+    usage: "mytool --help"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
   [[ "${#perms[@]}" -eq 0 ]]
 }
 
-# ── allow: "cmd" (string) ───────────────────────────────────────────────────
+# ── permission: "cmd" (string) ───────────────────────────────────────────────
 
-@test "allow: string generates Bash(cmd:*) with the string value" {
+@test "permission: string generates Bash(cmd:*) with the string value" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
   install_check: false
   validation: none
 tools:
   - name: bats-core
-    allow: "bats"
+    permission: "bats"
     description: "Testing framework"
-    when_to_use: "Testing"'
+    when_to_use: "Testing"
+    usage: "bats tests/"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
@@ -109,20 +113,21 @@ tools:
   [[ "${perms[0]}" == "Bash(bats:*)" ]]
 }
 
-# ── allow: [array] ──────────────────────────────────────────────────────────
+# ── permission: [array] ──────────────────────────────────────────────────────
 
-@test "allow: array uses verbatim entries" {
+@test "permission: array uses verbatim entries" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
   install_check: false
   validation: none
 tools:
   - name: gh
-    allow:
+    permission:
       - "Bash(gh pr:*)"
       - "Bash(gh issue:*)"
     description: "GitHub CLI"
-    when_to_use: "GitHub"'
+    when_to_use: "GitHub"
+    usage: "gh pr create"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
@@ -140,12 +145,14 @@ tools:
   validation: none
 tools:
   - name: tool-a
-    allow: true
+    permission: true
     description: "Tool A"
     when_to_use: "Always"
+    usage: "tool-a --help"
   - name: tool-b
-    description: "Tool B (no allow)"
-    when_to_use: "Never"'
+    description: "Tool B (no permission)"
+    when_to_use: "Never"
+    usage: "tool-b --help"'
 
   _write_registry "$TMPDIR/comp2" 'meta:
   section: Second
@@ -153,9 +160,10 @@ tools:
   validation: none
 tools:
   - name: tool-c
-    allow: "tc"
+    permission: "tc"
     description: "Tool C"
-    when_to_use: "Sometimes"'
+    when_to_use: "Sometimes"
+    usage: "tc --help"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"
@@ -171,18 +179,19 @@ tools:
   [[ "$found_tc" -eq 1 ]]
 }
 
-# ── Empty registries ────────────────────────────────────────────────────────
+# ── permission: "" (empty string) ──────────────────────────────────────────
 
-@test "allow: empty string generates nothing" {
+@test "permission: empty string generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
   install_check: false
   validation: none
 tools:
   - name: mytool
-    allow: ""
+    permission: ""
     description: "A tool"
-    when_to_use: "Testing"'
+    when_to_use: "Testing"
+    usage: "mytool --help"'
 
   local -a perms=()
   collect_registry_permissions perms "$TMPDIR"

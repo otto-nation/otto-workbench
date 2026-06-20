@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Validates Claude Code settings.json template and registry-derived permissions.
 # The template contains static permissions (shell builtins, filesystem ops).
-# Tool permissions (gh, go, etc.) are derived from registry allow fields.
+# Tool permissions (gh, go, etc.) are derived from registry permission fields.
 
 setup_file() {
   load 'test_helper'
@@ -64,7 +64,7 @@ teardown() {
   [ "$count" -eq 0 ]
 }
 
-# ── gh allow-list via registry ───────────────────────────────────────────────
+# ── gh permission-list via registry ───────────────────────────────────────────────
 
 @test "gh registry entry does not contain broad Bash(gh:*) wildcard" {
   local -a perms=()
@@ -74,43 +74,43 @@ teardown() {
   done
 }
 
-@test "gh registry allow includes gh pr operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh pr:*)")' "$BREW_REGISTRY"
+@test "gh registry permission includes gh pr operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh pr:*)")' "$BREW_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
-@test "gh registry allow includes gh issue operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh issue:*)")' "$BREW_REGISTRY"
+@test "gh registry permission includes gh issue operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh issue:*)")' "$BREW_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
-@test "gh registry allow includes gh run operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh run:*)")' "$BREW_REGISTRY"
+@test "gh registry permission includes gh run operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh run:*)")' "$BREW_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
-@test "gh registry allow includes gh auth status (read-only check)" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh auth status:*)")' "$BREW_REGISTRY"
+@test "gh registry permission includes gh auth status (read-only check)" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh auth status:*)")' "$BREW_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
-@test "gh registry allow includes gh api for review comment workflows" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(. == "Bash(gh api:*)")' "$BREW_REGISTRY"
+@test "gh registry permission includes gh api for review comment workflows" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh api:*)")' "$BREW_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
-@test "gh registry allow does not permit gh secret management" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(test("gh secret"))' "$BREW_REGISTRY"
+@test "gh registry permission does not permit gh secret management" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh secret"))' "$BREW_REGISTRY"
   [ "$status" -ne 0 ]
 }
 
-@test "gh registry allow does not permit gh auth login or token" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(test("gh auth (login|logout|token|refresh)"))' "$BREW_REGISTRY"
+@test "gh registry permission does not permit gh auth login or token" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh auth (login|logout|token|refresh)"))' "$BREW_REGISTRY"
   [ "$status" -ne 0 ]
 }
 
-@test "gh registry allow does not permit destructive gh repo operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .allow[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$BREW_REGISTRY"
+@test "gh registry permission does not permit destructive gh repo operations" {
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$BREW_REGISTRY"
   [ "$status" -ne 0 ]
 }
 

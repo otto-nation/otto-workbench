@@ -10,20 +10,18 @@ meta:
 
 tools:
   - name: gradle
-    context: always
-    allow:
+    permission:
       - "Bash(gradle:*)"
       - "Bash(./gradlew:*)"
+    visibility: full
     description: "Gradle build tool — build, test, and publish JVM projects"
     when_to_use: "Building, testing, or running Gradle-based projects when no wrapper (gradlew) is present"
     usage: "gradle build  |  gradle test  |  gradle dependencies"
     docs: "https://docs.gradle.org/"
 
   - name: mvn
-    allow: false
-    context: reference
+    permission: false
+    visibility: brief
     brew_name: maven
     description: "Apache Maven — build and dependency management for Java projects"
-    when_to_use: "Building, testing, or packaging Maven-based projects"
-    usage: "mvn clean install  |  mvn test  |  mvn dependency:tree"
     docs: "https://maven.apache.org/guides/"

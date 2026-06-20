@@ -47,6 +47,8 @@ meta:
 
 tools:
   - name: mytool
+    permission: false
+    visibility: full
     description: "A test tool"
     when_to_use: "When testing"
     usage: "mytool --flag"
@@ -54,7 +56,7 @@ tools:
 EOF
 }
 
-# _write_minimal_registry FILE — writes a registry with no optional fields
+# _write_minimal_registry FILE — writes a registry with minimal required fields
 _write_minimal_registry() {
   local file="$1"
   cat > "$file" << 'EOF'
@@ -65,8 +67,11 @@ meta:
 
 tools:
   - name: minimal
+    permission: false
+    visibility: full
     description: "No optional fields"
     when_to_use: "Always"
+    usage: "minimal --help"
 EOF
 }
 
@@ -81,14 +86,17 @@ meta:
 
 tools:
   - name: $tool_name
+    permission: false
+    visibility: full
     description: "An install-checked tool"
     when_to_use: "When installed"
+    usage: "$tool_name --help"
 EOF
 }
 
-# _write_context_registry FILE SECTION — writes a registry with tools at different context tiers
-_write_context_registry() {
-  local file="$1" section="${2:-Context Tools}"
+# _write_visibility_registry FILE SECTION — writes a registry with tools at different visibility tiers
+_write_visibility_registry() {
+  local file="$1" section="${2:-Visibility Tools}"
   cat > "$file" << EOF
 meta:
   section: "$section"
@@ -97,17 +105,19 @@ meta:
 
 tools:
   - name: full-tool
-    description: "A full context tool"
+    permission: false
+    visibility: full
+    description: "A full visibility tool"
     when_to_use: "Always available"
     usage: "full-tool --run"
   - name: ref-tool
-    context: reference
-    description: "A reference-only tool"
-    when_to_use: "Sometimes"
+    permission: false
+    visibility: brief
+    description: "A brief-only tool"
   - name: hidden-tool
-    context: none
+    permission: false
+    visibility: hidden
     description: "A hidden tool"
-    when_to_use: "Never shown"
 EOF
 }
 
@@ -189,8 +199,19 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "omits usage line when usage is absent" {
-  _write_minimal_registry "$BREW_REGISTRY"
+@test "omits usage line for visibility: brief entry" {
+  cat > "$BREW_REGISTRY" << 'EOF'
+meta:
+  section: "Tools"
+  install_check: false
+  validation: none
+
+tools:
+  - name: brief-tool
+    permission: false
+    visibility: brief
+    description: "A brief tool"
+EOF
 
   bash "$GENERATOR"
   run grep "Usage" "$TOOL_CONTEXT_OUTPUT"
@@ -265,11 +286,17 @@ meta:
 
 tools:
   - name: tool-a
+    permission: false
+    visibility: full
     description: "First tool"
     when_to_use: "First"
+    usage: "tool-a --help"
   - name: tool-b
+    permission: false
+    visibility: full
     description: "Second tool"
     when_to_use: "Second"
+    usage: "tool-b --help"
 EOF
 
   bash "$GENERATOR"
@@ -277,18 +304,18 @@ EOF
   grep -q "### tool-b" "$TOOL_CONTEXT_OUTPUT"
 }
 
-# ── Context tiers ────────────────────────────────────────────────────────────
+# ── Visibility tiers ─────────────────────────────────────────────────────────
 
-@test "context: always renders full entry" {
-  _write_context_registry "$BREW_REGISTRY"
+@test "visibility: full renders full entry" {
+  _write_visibility_registry "$BREW_REGISTRY"
 
   bash "$GENERATOR"
   grep -q "### full-tool" "$TOOL_CONTEXT_OUTPUT"
   grep -q "When to use" "$TOOL_CONTEXT_OUTPUT"
 }
 
-@test "context: reference renders one-liner" {
-  _write_context_registry "$BREW_REGISTRY"
+@test "visibility: brief renders one-liner" {
+  _write_visibility_registry "$BREW_REGISTRY"
 
   bash "$GENERATOR"
   grep -q '^\- \*\*ref-tool\*\*' "$TOOL_CONTEXT_OUTPUT"
@@ -296,8 +323,8 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "context: none omits tool entirely" {
-  _write_context_registry "$BREW_REGISTRY"
+@test "visibility: hidden omits tool entirely" {
+  _write_visibility_registry "$BREW_REGISTRY"
 
   bash "$GENERATOR"
   run grep "hidden-tool" "$TOOL_CONTEXT_OUTPUT"

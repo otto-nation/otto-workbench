@@ -71,13 +71,14 @@ def _parse_ci_json(stdout: str) -> dict | None:
 
 def _parse_review_summary(output: str) -> dict | None:
     """Extract REVIEW_SUMMARY:{json} from claude-review output."""
-    for line in output.splitlines():
-        if line.startswith("REVIEW_SUMMARY:"):
-            try:
-                return json.loads(line[len("REVIEW_SUMMARY:"):])
-            except (json.JSONDecodeError, TypeError):
-                return None
-    return None
+    prefix = "REVIEW_SUMMARY:"
+    lines = [l for l in output.splitlines() if l.startswith(prefix)]
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[0][len(prefix):])
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def _is_pr_target(target: str | None) -> bool:
@@ -92,6 +93,42 @@ def _is_pr_target(target: str | None) -> bool:
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
+
+
+def _render_ci_section(ci: pr_state.CISummary) -> list[str]:
+    if not ci.updated_at:
+        return ["**CI**: not checked yet"]
+    icon = "green" if ci.conclusion == "success" else "red"
+    lines = [f"**CI** ({icon}): {ci.conclusion} — {ci.failure_count} failure(s)"]
+    for kind, count in sorted(ci.failure_kinds.items()):
+        lines.append(f"  {kind}: {count}")
+    if ci.last_run_number:
+        lines.append(f"  run #{ci.last_run_number}")
+    return lines
+
+
+def _render_review_section(rev: pr_state.ReviewSummary) -> list[str]:
+    if not rev.updated_at:
+        return ["**Review**: not run yet"]
+    lines = [f"**Review** ({rev.review_type}): {rev.verdict}"]
+    if rev.finding_counts:
+        parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
+        lines.append(f"  findings: {', '.join(parts)}")
+    if rev.cost_usd:
+        lines.append(f"  cost: ${rev.cost_usd:.2f}")
+    return lines
+
+
+def _render_comments_section(c: pr_state.CommentsSummary) -> list[str]:
+    if not c.updated_at:
+        return ["**Comments**: not checked yet"]
+    lines = [f"**Comments**: {c.total_threads} thread(s)"]
+    if c.by_state:
+        parts = [f"{s}: {ct}" for s, ct in sorted(c.by_state.items())]
+        lines.append(f"  {', '.join(parts)}")
+    if c.blocking_reviewers:
+        lines.append(f"  blocking: {', '.join(c.blocking_reviewers)}")
+    return lines
 
 
 def cmd_status(args, ctx: pr_context.ResolvedContext) -> int:
@@ -109,49 +146,16 @@ def cmd_status(args, ctx: pr_context.ResolvedContext) -> int:
         print("\n".join(lines), file=sys.stderr)
         return 0
 
-    # CI section
-    if state.ci.updated_at:
-        icon = "green" if state.ci.conclusion == "success" else "red"
-        lines.append(f"**CI** ({icon}): {state.ci.conclusion} — {state.ci.failure_count} failure(s)")
-        if state.ci.failure_kinds:
-            for kind, count in sorted(state.ci.failure_kinds.items()):
-                lines.append(f"  {kind}: {count}")
-        if state.ci.last_run_number:
-            lines.append(f"  run #{state.ci.last_run_number}")
-    else:
-        lines.append("**CI**: not checked yet")
+    lines += _render_ci_section(state.ci)
     lines.append("")
-
-    # Review section
-    if state.review.updated_at:
-        lines.append(f"**Review** ({state.review.review_type}): {state.review.verdict}")
-        if state.review.finding_counts:
-            parts = [f"{sev}: {count}" for sev, count in sorted(state.review.finding_counts.items())]
-            lines.append(f"  findings: {', '.join(parts)}")
-        if state.review.cost_usd:
-            lines.append(f"  cost: ${state.review.cost_usd:.2f}")
-    else:
-        lines.append("**Review**: not run yet")
+    lines += _render_review_section(state.review)
     lines.append("")
-
-    # Comments section
-    if state.comments.updated_at:
-        lines.append(f"**Comments**: {state.comments.total_threads} thread(s)")
-        if state.comments.by_state:
-            parts = [f"{s}: {c}" for s, c in sorted(state.comments.by_state.items())]
-            lines.append(f"  {', '.join(parts)}")
-        if state.comments.blocking_reviewers:
-            lines.append(f"  blocking: {', '.join(state.comments.blocking_reviewers)}")
-    else:
-        lines.append("**Comments**: not checked yet")
+    lines += _render_comments_section(state.comments)
     lines.append("")
-
-    # Merge readiness
     lines.append(_merge_readiness(state))
 
     print("\n".join(lines), file=sys.stderr)
 
-    # JSON to stdout
     json.dump(pr_state.state_to_dict(state), sys.stdout, indent=2)
     print()
     return 0
@@ -301,6 +305,29 @@ def cmd_review(args, ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
+def _build_comments_summary(report: dict) -> pr_state.CommentsSummary:
+    """Build a CommentsSummary from review-threads JSON report."""
+    threads = report.get("threads", [])
+    state_counts: dict[str, int] = Counter()
+    for t in threads:
+        state_counts[t.get("state", "new")] += 1
+
+    verdicts = report.get("verdicts", [])
+    blocking = [
+        v.get("author", {}).get("login", "unknown")
+        for v in verdicts if v.get("state") == "CHANGES_REQUESTED"
+    ]
+    has_approvals = any(v.get("state") == "APPROVED" for v in verdicts)
+
+    return pr_state.CommentsSummary(
+        total_threads=len(threads),
+        by_state=dict(state_counts),
+        blocking_reviewers=blocking,
+        has_approvals=has_approvals,
+        updated_at=_now_iso(),
+    )
+
+
 def cmd_comments(args, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to review-threads, update unified state."""
     threads_args = [str(BIN_DIR / "review-threads")]
@@ -317,27 +344,8 @@ def cmd_comments(args, ctx: pr_context.ResolvedContext) -> int:
 
     report = _parse_ci_json(result.stdout)
     if report:
-        threads = report.get("threads", [])
-        state_counts: dict[str, int] = Counter()
-        for t in threads:
-            state_counts[t.get("state", "new")] += 1
-
-        blocking = []
-        for v in report.get("verdicts", []):
-            if v.get("state") == "CHANGES_REQUESTED":
-                blocking.append(v.get("author", {}).get("login", "unknown"))
-        has_approvals = any(
-            v.get("state") == "APPROVED" for v in report.get("verdicts", [])
-        )
-
         state = _load_or_init(ctx)
-        pr_state.update_comments(state, pr_state.CommentsSummary(
-            total_threads=len(threads),
-            by_state=dict(state_counts),
-            blocking_reviewers=blocking,
-            has_approvals=has_approvals,
-            updated_at=_now_iso(),
-        ))
+        pr_state.update_comments(state, _build_comments_summary(report))
         pr_state.save_state(ctx.worktree_root, state)
 
     if result.stdout:

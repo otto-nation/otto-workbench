@@ -179,7 +179,7 @@ tools:
   [[ "$found_tc" -eq 1 ]]
 }
 
-# ── Empty registries ────────────────────────────────────────────────────────
+# ── permission: "" (empty string) ──────────────────────────────────────────
 
 @test "permission: empty string generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:

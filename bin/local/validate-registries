@@ -2,7 +2,8 @@
 # Validate tool registries against schema and cross-check with their source files.
 #
 # Checks performed per registry:
-#   - Required fields present: name, description, when_to_use, allow
+#   - Required fields present: name, description, permission, visibility
+#     (when_to_use + usage required when visibility: full; forbidden otherwise)
 #   - No unknown fields (see KNOWN_TOOL_FIELDS in lib/registries.sh)
 #   - No duplicate tool names
 #   - Cross-file check based on meta.validation:

@@ -210,6 +210,7 @@ _tool_md_entry() {
   printf '%s\n' "$description"
   printf -- '- **When to use**: %s\n' "$when_to_use"
   if [[ -z "$usage" || "$usage" == "null" ]]; then
+    # >&2 needed: warn() writes to stdout; without redirect it leaks into $(_iter_tools_by_visibility ...)
     warn "generate-tool-context: '$name' has visibility: full but no usage field" >&2
   fi
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
@@ -252,7 +253,7 @@ _tool_registries=()
 collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
 
 # Single always-loaded file — no frontmatter, available in every Claude session.
-# Tools with context: none are omitted; context: reference renders as one-liners.
+# Tools with visibility: hidden are omitted; visibility: brief renders as one-liners.
 {
   printf '# Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'

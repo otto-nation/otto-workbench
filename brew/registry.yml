@@ -10,7 +10,6 @@ meta:
 
 tools:
   - name: docker
-    visibility: full
     permission:
       - "Bash(docker build:*)"
       - "Bash(docker compose:*)"
@@ -27,6 +26,7 @@ tools:
       - "Bash(docker tag:*)"
       - "Bash(docker version:*)"
       - "Bash(docker volume:*)"
+    visibility: full
     description: "Docker CLI — build, run, and manage containers against any backend runtime"
     when_to_use: "Running container commands; works with Colima, OrbStack, or any Docker-compatible runtime"
     usage: "docker run  |  docker build  |  docker compose up  |  docker ps"
@@ -49,7 +49,6 @@ tools:
     docs: "https://mikefarah.gitbook.io/yq/"
 
   - name: gh
-    visibility: full
     permission:
       - "Bash(gh pr:*)"
       - "Bash(gh issue:*)"
@@ -67,6 +66,7 @@ tools:
       - "Bash(gh label:*)"
       - "Bash(gh milestone:*)"
       - "Bash(gh api:*)" # broad — needed for review workflows and scripted API calls
+    visibility: full
     description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
     when_to_use: "Creating/viewing PRs, checking CI status, managing issues, cloning repos, viewing runs"
     usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"
@@ -97,7 +97,7 @@ tools:
   - name: parallel
     permission: false
     visibility: hidden
-    description: "GNU parallel — run shell commands in parallel across multiple cores"
+    description: "GNU parallel — run shell commands in parallel (required by bats --jobs for parallel test execution)"
     brew_name: "parallel"
     docs: "https://www.gnu.org/software/parallel/"
 
@@ -110,7 +110,7 @@ tools:
   - name: delta
     permission: false
     visibility: hidden
-    description: "Syntax-highlighting pager for git diffs — word-level diff highlighting with line numbers"
+    description: "Syntax-highlighting pager for git diffs — automatically used for all git diff output via core.pager"
     docs: "https://dandavison.github.io/delta/"
 
   - name: pipx

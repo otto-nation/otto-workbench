@@ -15,9 +15,9 @@ Subcommands:
 Usage:
   pr                              # defaults to status
   pr status                       # unified dashboard
-  pr ci [--fix]                   # CI failure status
+  pr ci [ci-check flags...]        # CI failure status
   pr review [target] [--fix]      # self-review or review others
-  pr comments [--fix]             # PR review thread status
+  pr comments [flags...]          # PR review thread status
   pr triage                       # classify review threads
   pr repair [target]              # repair broken review artifacts
   pr fix                          # fix all fixable issues
@@ -95,18 +95,6 @@ def _is_pr_target(target: str | None) -> bool:
         return True
     return False
 
-
-def _check_passthrough_help(tool_path: str, extra: list[str]) -> bool:
-    """If --help or -h is in extra, print downstream tool help and return True."""
-    if "--help" not in extra and "-h" not in extra:
-        return False
-    result = subprocess.run(
-        [tool_path, "--help"],
-        capture_output=True, text=True,
-    )
-    output = result.stdout or result.stderr or "(help not available)"
-    print(output, file=sys.stderr, end="")
-    return True
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
@@ -216,9 +204,6 @@ def _merge_readiness(state: pr_state.PRState) -> str:
 def cmd_ci(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to ci-check, update unified state."""
     tool = str(BIN_DIR / "ci-check")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     ci_args = [tool]
     if ctx.branch:
         ci_args += ["--branch", ctx.branch]
@@ -263,9 +248,6 @@ def cmd_ci(args, extra, ctx: pr_context.ResolvedContext) -> int:
 def cmd_review(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review, update unified state."""
     tool = str(BIN_DIR / "claude-review")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     review_args = [tool]
 
     is_self = args.self_review or not _is_pr_target(args.target)
@@ -353,9 +335,6 @@ def _build_comments_summary(report: dict) -> pr_state.CommentsSummary:
 def cmd_comments(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to review-threads, update unified state."""
     tool = str(BIN_DIR / "review-threads")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     threads_args = [tool]
     if ctx.pr_number:
         threads_args += ["--pr", str(ctx.pr_number)]
@@ -396,9 +375,6 @@ def _build_triage_summary(report: dict) -> pr_state.TriageSummary:
 def cmd_triage(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to review-thread-triage, update unified state."""
     tool = str(BIN_DIR / "review-thread-triage")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     triage_args = [tool]
     if ctx.pr_number:
         triage_args += ["--pr", str(ctx.pr_number)]
@@ -426,9 +402,6 @@ def cmd_triage(args, extra, ctx: pr_context.ResolvedContext) -> int:
 def cmd_repair(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Repair broken review artifacts via summary or rebuild."""
     tool = str(BIN_DIR / "claude-review")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     target = getattr(args, "target", None)
     if not target and ctx.pr_number:
         target = str(ctx.pr_number)
@@ -546,9 +519,6 @@ def cmd_fix(args, extra, ctx: pr_context.ResolvedContext) -> int:
 def cmd_post(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review post."""
     tool = str(BIN_DIR / "claude-review")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     target = getattr(args, "target", None)
     if not target and ctx.pr_number:
         target = str(ctx.pr_number)
@@ -570,9 +540,6 @@ def cmd_post(args, extra, ctx: pr_context.ResolvedContext) -> int:
 def cmd_gc(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review gc."""
     tool = str(BIN_DIR / "claude-review")
-    if _check_passthrough_help(tool, extra):
-        return 0
-
     gc_args = [tool, "gc"]
     gc_args += extra
 

@@ -93,9 +93,13 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
+        # resolve-branch exited non-zero or returned nothing — use hint as-is
+        # rather than silently discarding the user's explicit --branch value
+        print(f"resolve-branch: could not resolve {hint!r}, using as-is", file=sys.stderr)
+        return hint
     except FileNotFoundError:
-        pass
-    return _current_branch(cwd)
+        # resolve-branch script not installed — fall back to current branch
+        return _current_branch(cwd)
 
 
 def _git_toplevel(cwd: str | None = None) -> Path:

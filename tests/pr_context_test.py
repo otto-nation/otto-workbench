@@ -1,6 +1,5 @@
 """Tests for pr_context library."""
 
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -64,10 +63,10 @@ def test_resolve_branch_falls_back_on_missing_script(mock_current, mock_run):
 
 @patch("pr_context.subprocess.run")
 @patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_falls_back_on_failure(mock_current, mock_run):
+def test_resolve_branch_returns_hint_on_failure(mock_current, mock_run):
     mock_run.return_value = MagicMock(returncode=1, stdout="")
-    assert _resolve_branch("bad-hint") == "fallback-branch"
-    mock_current.assert_called_once_with(None)
+    assert _resolve_branch("bad-hint") == "bad-hint"
+    mock_current.assert_not_called()
 
 
 @patch("pr_context.subprocess.run")

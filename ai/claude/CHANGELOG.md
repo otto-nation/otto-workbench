@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.23.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.22.0...claude-review-v1.23.0) (2026-06-20)
+
+
+### Features
+
+* add unified pr CLI with state framework ([#298](https://github.com/otto-nation/otto-workbench/issues/298)) ([8e90905](https://github.com/otto-nation/otto-workbench/commit/8e90905f48f6a2c523cc7eeb5edea3a4ad6022c0))
+
+
+### Code Refactoring
+
+* **registries:** rename allow→permission, context→visibility; enforce conditional fields ([#296](https://github.com/otto-nation/otto-workbench/issues/296)) ([4718b3d](https://github.com/otto-nation/otto-workbench/commit/4718b3d29005429229ed0c85770a123c2bab9a4d))
+
 ## [1.22.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.21.0...claude-review-v1.22.0) (2026-06-20)
 
 

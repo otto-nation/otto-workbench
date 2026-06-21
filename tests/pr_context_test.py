@@ -1,14 +1,16 @@
 """Tests for pr_context library."""
 
+import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_context import _parse_pr_input, ResolvedContext
+from pr_context import _parse_pr_input, _resolve_branch, ResolvedContext
 
 
 # ── PR input parsing ────────────────────────────────────────────────────────
@@ -48,3 +50,27 @@ def test_resolved_context_fields():
     assert ctx.branch == "feat/auth"
     assert ctx.pr_number is None
     assert ctx.head_sha == "def"
+
+
+# ── Branch resolution ──────────────────────────────────────────────────────
+
+
+@patch("pr_context.subprocess.run", side_effect=FileNotFoundError)
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_falls_back_on_missing_script(mock_current, mock_run):
+    assert _resolve_branch("some-hint") == "fallback-branch"
+    mock_current.assert_called_once_with(None)
+
+
+@patch("pr_context.subprocess.run")
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_falls_back_on_failure(mock_current, mock_run):
+    mock_run.return_value = MagicMock(returncode=1, stdout="")
+    assert _resolve_branch("bad-hint") == "fallback-branch"
+    mock_current.assert_called_once_with(None)
+
+
+@patch("pr_context.subprocess.run")
+def test_resolve_branch_returns_stdout(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout="isaac/feat/resolved_branch\n")
+    assert _resolve_branch("resolved") == "isaac/feat/resolved_branch"

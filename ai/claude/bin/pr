@@ -6,6 +6,8 @@ Subcommands:
   pr ci          Fetch and display CI failures
   pr review      Run code review (self or others)
   pr comments    Fetch and address review threads
+  pr triage      Classify and verify review threads
+  pr repair      Repair broken review artifacts
   pr fix         Fix everything fixable (CI + review + comments)
   pr post        Post an existing review to GitHub
   pr gc          Clean up stale review artifacts
@@ -16,6 +18,8 @@ Usage:
   pr ci [--fix]                   # CI failure status
   pr review [target] [--fix]      # self-review or review others
   pr comments [--fix]             # PR review thread status
+  pr triage                       # classify review threads
+  pr repair [target]              # repair broken review artifacts
   pr fix                          # fix all fixable issues
   pr post [target]                # post existing review
   pr gc                           # clean up stale artifacts
@@ -92,6 +96,19 @@ def _is_pr_target(target: str | None) -> bool:
     return False
 
 
+def _check_passthrough_help(tool_path: str, extra: list[str]) -> bool:
+    """If --help or -h is in extra, print downstream tool help and return True."""
+    if "--help" not in extra and "-h" not in extra:
+        return False
+    result = subprocess.run(
+        [tool_path, "--help"],
+        capture_output=True, text=True,
+    )
+    output = result.stdout or result.stderr or "(help not available)"
+    print(output, file=sys.stderr, end="")
+    return True
+
+
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
@@ -131,7 +148,14 @@ def _render_comments_section(c: pr_state.CommentsSummary) -> list[str]:
     return lines
 
 
-def cmd_status(args, ctx: pr_context.ResolvedContext) -> int:
+def _render_triage_section(t: pr_state.TriageSummary) -> list[str]:
+    if not t.updated_at:
+        return ["**Triage**: not run yet"]
+    lines = [f"**Triage**: {t.total} threads — {t.actionable} actionable ({t.valid} valid), {t.questions} questions"]
+    return lines
+
+
+def cmd_status(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Render unified status dashboard from cached state."""
     state = pr_state.load_state(ctx.worktree_root)
 
@@ -151,6 +175,8 @@ def cmd_status(args, ctx: pr_context.ResolvedContext) -> int:
     lines += _render_review_section(state.review)
     lines.append("")
     lines += _render_comments_section(state.comments)
+    lines.append("")
+    lines += _render_triage_section(state.triage)
     lines.append("")
     lines.append(_merge_readiness(state))
 
@@ -187,9 +213,13 @@ def _merge_readiness(state: pr_state.PRState) -> str:
     return f"**Merge readiness**: blocked — {'; '.join(issues)}" if issues else "**Merge readiness**: ready"
 
 
-def cmd_ci(args, ctx: pr_context.ResolvedContext) -> int:
+def cmd_ci(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to ci-check, update unified state."""
-    ci_args = [str(BIN_DIR / "ci-check")]
+    tool = str(BIN_DIR / "ci-check")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
+    ci_args = [tool]
     if ctx.branch:
         ci_args += ["--branch", ctx.branch]
     if args.pr or ctx.pr_number:
@@ -197,6 +227,7 @@ def cmd_ci(args, ctx: pr_context.ResolvedContext) -> int:
     if hasattr(args, "run") and args.run:
         ci_args += ["--run", str(args.run)]
     ci_args += ["--repo-dir", str(ctx.worktree_root)]
+    ci_args += extra
 
     result = subprocess.run(ci_args, capture_output=True, text=True)
 
@@ -229,9 +260,13 @@ def cmd_ci(args, ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
-def cmd_review(args, ctx: pr_context.ResolvedContext) -> int:
+def cmd_review(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review, update unified state."""
-    review_args = [str(BIN_DIR / "claude-review")]
+    tool = str(BIN_DIR / "claude-review")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
+    review_args = [tool]
 
     is_self = args.self_review or not _is_pr_target(args.target)
 
@@ -242,34 +277,21 @@ def cmd_review(args, ctx: pr_context.ResolvedContext) -> int:
         if args.target:
             review_args.append(args.target)
     else:
-        review_args.append(args.target)
+        if args.target:
+            review_args.append(args.target)
 
     if args.auto_post:
         review_args.append("--post")
     if args.no_post:
         review_args.append("--no-post")
-    if args.submit:
-        review_args.append("--submit")
-    if args.force:
-        review_args.append("--force")
-    if args.no_holistic:
-        review_args.append("--no-holistic")
-    if args.skip_user_verification:
-        review_args.append("--skip-user-verification")
-    if args.issue:
-        review_args += ["--issue", args.issue]
-    if args.model:
-        review_args += ["--model", args.model]
-    if args.max_cost is not None:
-        review_args += ["--max-cost", str(args.max_cost)]
-    if args.max_parallel != 4:
-        review_args += ["--max-parallel", str(args.max_parallel)]
 
     # Always request JSON summary to update state
     review_args.append("--json-summary")
 
     if ctx.worktree_root:
         review_args += ["--repo-dir", str(ctx.worktree_root)]
+
+    review_args += extra
 
     result = subprocess.run(review_args, capture_output=True, text=True)
 
@@ -328,14 +350,19 @@ def _build_comments_summary(report: dict) -> pr_state.CommentsSummary:
     )
 
 
-def cmd_comments(args, ctx: pr_context.ResolvedContext) -> int:
+def cmd_comments(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to review-threads, update unified state."""
-    threads_args = [str(BIN_DIR / "review-threads")]
+    tool = str(BIN_DIR / "review-threads")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
+    threads_args = [tool]
     if ctx.pr_number:
         threads_args += ["--pr", str(ctx.pr_number)]
     if args.resolve_verified:
         threads_args.append("--resolve-verified")
     threads_args += ["--repo-dir", str(ctx.worktree_root)]
+    threads_args += extra
 
     result = subprocess.run(threads_args, capture_output=True, text=True)
 
@@ -354,7 +381,136 @@ def cmd_comments(args, ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
-def cmd_fix(args, ctx: pr_context.ResolvedContext) -> int:
+def _build_triage_summary(report: dict) -> pr_state.TriageSummary:
+    """Build a TriageSummary from review-thread-triage JSON report."""
+    stats = report.get("stats", {})
+    return pr_state.TriageSummary(
+        total=stats.get("total", 0),
+        actionable=stats.get("actionable", 0),
+        valid=stats.get("valid", 0),
+        questions=stats.get("questions", 0),
+        updated_at=_now_iso(),
+    )
+
+
+def cmd_triage(args, extra, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to review-thread-triage, update unified state."""
+    tool = str(BIN_DIR / "review-thread-triage")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
+    triage_args = [tool]
+    if ctx.pr_number:
+        triage_args += ["--pr", str(ctx.pr_number)]
+    if ctx.worktree_root:
+        triage_args += ["--repo-dir", str(ctx.worktree_root)]
+    triage_args += extra
+
+    result = subprocess.run(triage_args, capture_output=True, text=True)
+
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+    report = _parse_ci_json(result.stdout)
+    if report:
+        state = _load_or_init(ctx)
+        pr_state.update_triage(state, _build_triage_summary(report))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    if result.stdout:
+        print(result.stdout, end="")
+
+    return result.returncode
+
+
+def cmd_repair(args, extra, ctx: pr_context.ResolvedContext) -> int:
+    """Repair broken review artifacts via summary or rebuild."""
+    tool = str(BIN_DIR / "claude-review")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
+    target = getattr(args, "target", None)
+    if not target and ctx.pr_number:
+        target = str(ctx.pr_number)
+
+    # Step 1: try claude-review summary
+    summary_args = [tool, "summary"]
+    if target:
+        summary_args.append(target)
+    if ctx.worktree_root:
+        summary_args += ["--repo-dir", str(ctx.worktree_root)]
+    summary_args += extra
+
+    result = subprocess.run(summary_args, capture_output=True, text=True)
+
+    if result.returncode == 0:
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        if result.stdout:
+            print(result.stdout, end="")
+
+        # Update review state from summary output
+        summary_data = _parse_review_summary(result.stdout)
+        if summary_data:
+            findings = summary_data.get("findings", {})
+            finding_counts = {
+                k: v for k, v in findings.items()
+                if k != "total" and isinstance(v, int) and v > 0
+            }
+            state = _load_or_init(ctx)
+            pr_state.update_review(state, pr_state.ReviewSummary(
+                review_file=summary_data.get("review_file", ""),
+                review_type=state.review.review_type or "pr",
+                head_sha=summary_data.get("head_sha", ""),
+                finding_counts=finding_counts,
+                verdict=summary_data.get("verdict", ""),
+                cost_usd=summary_data.get("cost_usd", 0.0),
+                updated_at=_now_iso(),
+            ))
+            pr_state.save_state(ctx.worktree_root, state)
+
+        return 0
+
+    # Step 2: summary failed — try claude-review rebuild
+    print("summary failed, trying rebuild...", file=sys.stderr)
+    rebuild_args = [tool, "rebuild", "--json-summary"]
+    if target:
+        rebuild_args.append(target)
+    if ctx.worktree_root:
+        rebuild_args += ["--repo-dir", str(ctx.worktree_root)]
+    rebuild_args += extra
+
+    result = subprocess.run(rebuild_args, capture_output=True, text=True)
+
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.stdout:
+        print(result.stdout, end="")
+
+    if result.returncode == 0:
+        summary_data = _parse_review_summary(result.stdout)
+        if summary_data:
+            findings = summary_data.get("findings", {})
+            finding_counts = {
+                k: v for k, v in findings.items()
+                if k != "total" and isinstance(v, int) and v > 0
+            }
+            state = _load_or_init(ctx)
+            pr_state.update_review(state, pr_state.ReviewSummary(
+                review_file=summary_data.get("review_file", ""),
+                review_type=state.review.review_type or "pr",
+                head_sha=summary_data.get("head_sha", ""),
+                finding_counts=finding_counts,
+                verdict=summary_data.get("verdict", ""),
+                cost_usd=summary_data.get("cost_usd", 0.0),
+                updated_at=_now_iso(),
+            ))
+            pr_state.save_state(ctx.worktree_root, state)
+
+    return result.returncode
+
+
+def cmd_fix(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Run fix passes for CI, review, and comments."""
     state = pr_state.load_state(ctx.worktree_root)
     if not state:
@@ -368,6 +524,7 @@ def cmd_fix(args, ctx: pr_context.ResolvedContext) -> int:
         print("## Fixing review findings...", file=sys.stderr)
         review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
         review_args += ["--repo-dir", str(ctx.worktree_root)]
+        review_args += extra
         r = subprocess.run(review_args)
         if r.returncode != 0:
             exit_code = 1
@@ -386,8 +543,12 @@ def cmd_fix(args, ctx: pr_context.ResolvedContext) -> int:
     return exit_code
 
 
-def cmd_post(args, ctx: pr_context.ResolvedContext) -> int:
+def cmd_post(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review post."""
+    tool = str(BIN_DIR / "claude-review")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
     target = getattr(args, "target", None)
     if not target and ctx.pr_number:
         target = str(ctx.pr_number)
@@ -395,23 +556,34 @@ def cmd_post(args, ctx: pr_context.ResolvedContext) -> int:
         print("pr post: requires a PR number or URL", file=sys.stderr)
         return 1
 
-    post_args = [str(BIN_DIR / "claude-review"), "post", target]
+    post_args = [tool, "post", target]
     if args.submit:
         post_args.append("--submit")
     if ctx.worktree_root:
         post_args += ["--repo-dir", str(ctx.worktree_root)]
+    post_args += extra
 
     result = subprocess.run(post_args)
     return result.returncode
 
 
-def cmd_gc(args, ctx: pr_context.ResolvedContext) -> int:
+def cmd_gc(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review gc."""
-    result = subprocess.run([str(BIN_DIR / "claude-review"), "gc"])
+    tool = str(BIN_DIR / "claude-review")
+    if _check_passthrough_help(tool, extra):
+        return 0
+
+    gc_args = [tool, "gc"]
+    gc_args += extra
+
+    result = subprocess.run(gc_args)
     return result.returncode
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
+
+
+_PASSTHROUGH_EPILOG = "Additional flags are passed through to {tool}. Run `{tool} --help` for the full list."
 
 
 def main():
@@ -431,47 +603,48 @@ def main():
     sub.add_parser("status", help="Show CI, review, and comment status")
 
     # pr ci
-    ci_p = sub.add_parser("ci", help="CI failure status")
+    ci_p = sub.add_parser("ci", help="CI failure status",
+                          epilog=_PASSTHROUGH_EPILOG.format(tool="ci-check"))
     ci_p.add_argument("--run", type=int, help="Specific run ID")
-    ci_p.add_argument("--fix", action="store_true",
-                      help="Fix CI failures")
 
     # pr review
-    review_p = sub.add_parser("review", help="Run code review")
+    review_p = sub.add_parser("review", help="Run code review",
+                              epilog=_PASSTHROUGH_EPILOG.format(tool="claude-review"))
     review_p.add_argument("target", nargs="?",
                           help="PR URL/number (review others) or branch (self)")
     review_p.add_argument("--self", dest="self_review", action="store_true")
     review_p.add_argument("--fix", action="store_true")
     review_p.add_argument("--post", dest="auto_post", action="store_true")
-    review_p.add_argument("--submit", action="store_true")
     review_p.add_argument("--no-post", action="store_true")
-    review_p.add_argument("--issue", default="")
-    review_p.add_argument("--model", default="")
-    review_p.add_argument("--max-cost", type=float)
-    review_p.add_argument("--max-parallel", type=int, default=4)
-    review_p.add_argument("--no-holistic", action="store_true")
-    review_p.add_argument("--force", action="store_true")
-    review_p.add_argument("--skip-user-verification", action="store_true")
-    review_p.add_argument("--json-summary", action="store_true")
 
     # pr comments
-    comments_p = sub.add_parser("comments", help="PR review thread status")
+    comments_p = sub.add_parser("comments", help="PR review thread status",
+                                epilog=_PASSTHROUGH_EPILOG.format(tool="review-threads"))
     comments_p.add_argument("--resolve-verified", action="store_true")
-    comments_p.add_argument("--fix", action="store_true",
-                            help="Fix actionable comments")
+
+    # pr triage
+    sub.add_parser("triage", help="Classify and verify review threads",
+                   epilog=_PASSTHROUGH_EPILOG.format(tool="review-thread-triage"))
+
+    # pr repair
+    repair_p = sub.add_parser("repair", help="Repair broken review artifacts",
+                              epilog=_PASSTHROUGH_EPILOG.format(tool="claude-review"))
+    repair_p.add_argument("target", nargs="?", help="PR URL/number")
 
     # pr fix
     sub.add_parser("fix", help="Fix CI + review + comments")
 
     # pr post
-    post_p = sub.add_parser("post", help="Post existing review to GitHub")
+    post_p = sub.add_parser("post", help="Post existing review to GitHub",
+                            epilog=_PASSTHROUGH_EPILOG.format(tool="claude-review"))
     post_p.add_argument("target", nargs="?", help="PR URL/number")
     post_p.add_argument("--submit", action="store_true")
 
     # pr gc
-    sub.add_parser("gc", help="Clean up stale review artifacts")
+    sub.add_parser("gc", help="Clean up stale review artifacts",
+                   epilog=_PASSTHROUGH_EPILOG.format(tool="claude-review"))
 
-    args = parser.parse_args()
+    args, extra = parser.parse_known_args()
 
     if not args.command:
         args.command = "status"
@@ -487,12 +660,14 @@ def main():
         "ci": cmd_ci,
         "review": cmd_review,
         "comments": cmd_comments,
+        "triage": cmd_triage,
+        "repair": cmd_repair,
         "fix": cmd_fix,
         "post": cmd_post,
         "gc": cmd_gc,
     }
 
-    sys.exit(dispatch[args.command](args, ctx))
+    sys.exit(dispatch[args.command](args, extra, ctx))
 
 
 if __name__ == "__main__":

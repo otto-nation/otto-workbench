@@ -134,3 +134,48 @@ def test_merge_readiness_not_checked():
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     result = pr_cli._merge_readiness(state)
     assert "not checked" in result
+
+
+# ── _build_triage_summary ──────────────────────────────────────────────────
+
+
+def test_build_triage_summary():
+    report = {"stats": {"total": 5, "actionable": 2, "valid": 1, "questions": 1}}
+    result = pr_cli._build_triage_summary(report)
+    assert result.total == 5
+    assert result.actionable == 2
+    assert result.valid == 1
+    assert result.questions == 1
+    assert result.updated_at  # should be set
+
+
+def test_build_triage_summary_empty():
+    result = pr_cli._build_triage_summary({})
+    assert result.total == 0
+    assert result.actionable == 0
+    assert result.valid == 0
+    assert result.questions == 0
+    assert result.updated_at
+
+
+# ── _render_triage_section ─────────────────────────────────────────────────
+
+
+def test_render_triage_section_not_run():
+    import pr_state
+    t = pr_state.TriageSummary()
+    result = pr_cli._render_triage_section(t)
+    assert result == ["**Triage**: not run yet"]
+
+
+def test_render_triage_section_with_data():
+    import pr_state
+    t = pr_state.TriageSummary(
+        total=5, actionable=2, valid=1, questions=1, updated_at="2024-01-01T00:00:00Z",
+    )
+    result = pr_cli._render_triage_section(t)
+    assert len(result) == 1
+    assert "5 threads" in result[0]
+    assert "2 actionable" in result[0]
+    assert "1 valid" in result[0]
+    assert "1 questions" in result[0]

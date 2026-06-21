@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.29.0](https://github.com/otto-nation/otto-workbench/compare/v1.28.0...v1.29.0) (2026-06-21)
+
+
+### Features
+
+* add unified pr CLI with state framework ([#298](https://github.com/otto-nation/otto-workbench/issues/298)) ([8e90905](https://github.com/otto-nation/otto-workbench/commit/8e90905f48f6a2c523cc7eeb5edea3a4ad6022c0))
+
+
+### Bug Fixes
+
+* **release:** update remaining release PRs after a release merges ([#293](https://github.com/otto-nation/otto-workbench/issues/293)) ([43a9b77](https://github.com/otto-nation/otto-workbench/commit/43a9b775479868d5cf179005a273185f480f8e77))
+
+
+### Performance Improvements
+
+* **tests:** cache expensive setup work in setup_file ([#295](https://github.com/otto-nation/otto-workbench/issues/295)) ([1d07ec8](https://github.com/otto-nation/otto-workbench/commit/1d07ec8ba5035c784581a2a5e93698597777c75c))
+
+
+### Code Refactoring
+
+* **registries:** rename allow→permission, context→visibility; enforce conditional fields ([#296](https://github.com/otto-nation/otto-workbench/issues/296)) ([4718b3d](https://github.com/otto-nation/otto-workbench/commit/4718b3d29005429229ed0c85770a123c2bab9a4d))
+
 ## [1.28.0](https://github.com/otto-nation/otto-workbench/compare/v1.27.0...v1.28.0) (2026-06-20)
 
 

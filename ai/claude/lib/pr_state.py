@@ -10,6 +10,7 @@ State file: ``<worktree>/ignore/pr/state.json``
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -339,3 +340,62 @@ def update_triage(state: PRState, summary: TriageSummary) -> None:
 def update_rebase(state: PRState, summary: RebaseSummary) -> None:
     """Replace rebase summary."""
     state.rebase = summary
+
+
+# ── Convenience ────────────────────────────────────────────────────────────
+
+
+def load_or_init(
+    *,
+    worktree_root: Path,
+    repo: str,
+    branch: str,
+    pr_number: int | None = None,
+    head_sha: str,
+) -> PRState:
+    """Load existing state or create a fresh one, updating identity."""
+    state = load_state(worktree_root)
+    if state is not None:
+        update_identity(state, head_sha, pr_number)
+        return state
+    return new_state(
+        repo=repo,
+        branch=branch,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        worktree_root=str(worktree_root),
+    )
+
+
+_DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
+    "ci": (_ci_from_dict, update_ci),
+    "review": (_review_from_dict, update_review),
+    "comments": (_comments_from_dict, update_comments),
+    "triage": (_triage_from_dict, update_triage),
+    "rebase": (_rebase_from_dict, update_rebase),
+}
+
+
+def apply_state_update(
+    *,
+    worktree_root: Path,
+    repo: str,
+    branch: str,
+    pr_number: int | None = None,
+    head_sha: str,
+    domain: str,
+    data: dict,
+) -> None:
+    """Load-or-init state, apply a domain update from a dict, and save."""
+    if domain not in _DOMAIN_DESERIALIZERS:
+        raise ValueError(f"Unknown state domain: {domain!r}")
+    from_dict, updater = _DOMAIN_DESERIALIZERS[domain]
+    state = load_or_init(
+        worktree_root=worktree_root,
+        repo=repo,
+        branch=branch,
+        pr_number=pr_number,
+        head_sha=head_sha,
+    )
+    updater(state, from_dict(data))
+    save_state(worktree_root, state)

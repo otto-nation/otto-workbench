@@ -401,6 +401,11 @@ def main():
         print(usage, file=sys.stderr)
         sys.exit(0)
 
+    entry = _COMMANDS[args.command]
+    if {"-h", "--help"} & set(extra) and "script" in entry:
+        cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", []) + ["--help"]
+        sys.exit(subprocess.run(cmd).returncode)
+
     ctx = pr_context.resolve(
         pr=getattr(args, "pr", None),
         branch=getattr(args, "branch", None),

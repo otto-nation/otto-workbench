@@ -1,30 +1,26 @@
 #!/usr/bin/env python3
 """Unified PR lifecycle CLI.
 
-Subcommands:
-  pr status      Show CI, review, and comment status
-  pr ci          Fetch and display CI failures
-  pr review      Run code review (self or others)
-  pr comments    Fetch and address review threads
-  pr triage      Classify and verify review threads
-  pr repair      Repair broken review artifacts
-  pr fix         Fix everything fixable (CI + review + comments)
-  pr post        Post an existing review to GitHub
-  pr gc          Clean up stale review artifacts
-  pr rebase      Rebase onto origin/main with AI conflict resolution
+Thin dispatch layer — each subcommand delegates to an external script.
+Structured JSON on stdout, status messages on stderr.
 
-Usage:
-  pr                              # defaults to status
-  pr status                       # unified dashboard
-  pr ci [ci-check flags...]        # CI failure status
-  pr review [target] [--fix]      # self-review or review others
-  pr comments [flags...]          # PR review thread status
-  pr triage                       # classify review threads
-  pr repair [target]              # repair broken review artifacts
-  pr fix                          # fix all fixable issues
-  pr post [target]                # post existing review
-  pr gc                           # clean up stale artifacts
-  pr rebase [--fix] [--push] [--abort]  # rebase onto origin/main
+Subcommands:
+  pr status                             Show unified dashboard from cached state
+  pr ci [--run N] [ci-check flags...]   Fetch CI failures (exit 0=green, 1=red)
+  pr review [target] [--self] [--fix]   Run code review (exit 0=approve, 1=changes)
+      [--post] [--no-post]
+  pr comments [--resolve-verified]      Fetch PR review threads
+  pr triage                             Classify and verify review threads
+  pr repair [target]                    Repair broken review artifacts
+  pr fix                                Fix all fixable (review, CI, comments)
+  pr post [target] [--submit]           Post existing review to GitHub
+  pr gc                                 Clean up stale review artifacts
+  pr rebase [--fix] [--push] [--abort]  Rebase onto origin/main (exit 3=conflicts)
+
+Global flags:
+  --repo-dir PATH    Git worktree directory
+  --branch NAME      Branch name
+  --pr NUMBER/URL    PR number or URL
 """
 
 import argparse
@@ -32,7 +28,6 @@ import json
 import subprocess
 import sys
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
@@ -46,7 +41,7 @@ import pr_state
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return pr_state.now_iso()
 
 
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
@@ -563,262 +558,18 @@ def cmd_gc(args, extra, ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
-def _git_dir(cwd: str) -> Path:
-    """Return the .git directory path for the repo."""
-    git_dir = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-    return Path(git_dir) if Path(git_dir).is_absolute() else Path(cwd) / git_dir
-
-
-def _detect_rebase_in_progress(cwd: str) -> bool:
-    """Check if a rebase is currently in progress."""
-    git_path = _git_dir(cwd)
-    return (git_path / "rebase-merge").is_dir() or (git_path / "rebase-apply").is_dir()
-
-
-def _detect_conflicts(cwd: str) -> list[str]:
-    """Return list of conflicted file paths."""
-    r = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=U"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    return [f for f in r.stdout.strip().splitlines() if f]
-
-
-def _rebase_head_info(cwd: str) -> tuple[str, str]:
-    """Return (short SHA, subject) of the commit being rebased."""
-    sha = subprocess.run(
-        ["git", "rev-parse", "--short", "REBASE_HEAD"],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-    subject = subprocess.run(
-        ["git", "log", "-1", "--format=%s", "REBASE_HEAD"],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-    return sha, subject
-
-
-_PICK_COMMANDS = {
-    "pick", "p", "reword", "r", "edit", "e",
-    "squash", "s", "fixup", "f", "drop", "d",
-}
-
-
-def _remaining_rebase_commits(cwd: str) -> int:
-    """Count remaining commits in the rebase todo."""
-    git_path = _git_dir(cwd)
-    # rebase-merge style (standard interactive/non-interactive rebase)
-    todo = git_path / "rebase-merge" / "git-rebase-todo"
-    if todo.exists():
-        return sum(
-            1 for line in todo.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-            and line.split()[0] in _PICK_COMMANDS
-        )
-    # rebase-apply style (git am, older interactive format)
-    next_file = git_path / "rebase-apply" / "next"
-    last_file = git_path / "rebase-apply" / "last"
-    if next_file.exists() and last_file.exists():
-        try:
-            return int(last_file.read_text().strip()) - int(next_file.read_text().strip())
-        except ValueError:
-            return 0
-    return 0
-
-
 def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
-    """AI-assisted rebase onto origin/main with force-push."""
-    cwd = str(ctx.worktree_root)
-
-    # Handle --abort
+    """Delegate to pr-rebase."""
+    rebase_args = [str(BIN_DIR / "pr-rebase"), "--repo-dir", str(ctx.worktree_root)]
     if args.abort:
-        print("Aborting rebase...", file=sys.stderr)
-        r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
-        if r.returncode == 0:
-            state = _load_or_init(ctx)
-            pr_state.update_rebase(state, pr_state.RebaseSummary())
-            pr_state.save_state(ctx.worktree_root, state)
-            print("Rebase aborted.", file=sys.stderr)
-        return r.returncode
-
-    # Handle --push
+        rebase_args.append("--abort")
     if args.push:
-        if _detect_rebase_in_progress(cwd):
-            print("Cannot push — rebase still in progress.", file=sys.stderr)
-            return 1
-        print("Force-pushing...", file=sys.stderr)
-        r = subprocess.run(
-            ["git", "push", "--force-with-lease"],
-            cwd=cwd,
-        )
-        if r.returncode != 0:
-            return r.returncode
-        state = _load_or_init(ctx)
-        target_base = state.rebase.target_base or subprocess.run(
-            ["git", "rev-parse", "origin/main"],
-            capture_output=True, text=True, cwd=cwd,
-        ).stdout.strip()
-        commits_replayed = state.rebase.commits_replayed
-        if not commits_replayed:
-            count_out = subprocess.run(
-                ["git", "rev-list", "--count", "origin/main..HEAD"],
-                capture_output=True, text=True, cwd=cwd,
-            ).stdout.strip()
-            commits_replayed = int(count_out) if count_out.isdigit() else 0
-        pr_state.update_rebase(state, pr_state.RebaseSummary(
-            target_base=target_base,
-            commits_replayed=commits_replayed,
-            conflicts_resolved=state.rebase.conflicts_resolved,
-            files_resolved=state.rebase.files_resolved,
-            force_pushed=True,
-            updated_at=_now_iso(),
-        ))
-        pr_state.save_state(ctx.worktree_root, state)
-        print("Force-pushed successfully.", file=sys.stderr)
-        return 0
-
-    # Pre-flight: not on main
-    branch = ctx.branch
-    if branch in ("main", "master"):
-        print("Cannot rebase — currently on protected branch.", file=sys.stderr)
-        return 1
-
-    # Check for in-progress rebase
-    resuming = _detect_rebase_in_progress(cwd)
-
-    if resuming:
-        print("Detected in-progress rebase — resuming...", file=sys.stderr)
-        conflicts = _detect_conflicts(cwd)
-        if conflicts:
-            sha, subject = _rebase_head_info(cwd)
-            remaining = _remaining_rebase_commits(cwd)
-            report = {
-                "status": "conflicts_resuming",
-                "files": conflicts,
-                "rebase_head": sha,
-                "rebase_head_subject": subject,
-                "remaining_commits": remaining,
-            }
-            json.dump(report, sys.stdout, indent=2)
-            print()
-            return 3
-        # In-progress but no conflicts — try continuing
-        r = subprocess.run(
-            ["git", "-c", "core.editor=true", "rebase", "--continue"],
-            cwd=cwd,
-        )
-        if r.returncode == 0:
-            return _rebase_success(args, ctx, cwd)
-        # Continue hit more conflicts
-        conflicts = _detect_conflicts(cwd)
-        if conflicts:
-            sha, subject = _rebase_head_info(cwd)
-            remaining = _remaining_rebase_commits(cwd)
-            report = {
-                "status": "conflicts",
-                "files": conflicts,
-                "rebase_head": sha,
-                "rebase_head_subject": subject,
-                "remaining_commits": remaining,
-            }
-            json.dump(report, sys.stdout, indent=2)
-            print()
-            return 3
-        return r.returncode
-
-    # Pre-flight: clean working tree
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if status.stdout.strip():
-        print("Cannot rebase — working tree has uncommitted changes.", file=sys.stderr)
-        return 1
-
-    # Fetch
-    print("Fetching origin...", file=sys.stderr)
-    fetch = subprocess.run(["git", "fetch", "origin"], cwd=cwd)
-    if fetch.returncode != 0:
-        print("Warning: fetch failed — rebasing against potentially stale origin/main.", file=sys.stderr)
-
-    # Run rebase
-    print("Rebasing onto origin/main...", file=sys.stderr)
-    r = subprocess.run(["git", "rebase", "origin/main"], cwd=cwd)
-
-    if r.returncode == 0:
-        return _rebase_success(args, ctx, cwd)
-
-    # Conflicts
-    conflicts = _detect_conflicts(cwd)
-    if conflicts:
-        sha, subject = _rebase_head_info(cwd)
-        remaining = _remaining_rebase_commits(cwd)
-        report = {
-            "status": "conflicts",
-            "files": conflicts,
-            "rebase_head": sha,
-            "rebase_head_subject": subject,
-            "remaining_commits": remaining,
-        }
-        json.dump(report, sys.stdout, indent=2)
-        print()
-        return 3
-
-    return r.returncode
-
-
-def _rebase_success(args, ctx: pr_context.ResolvedContext, cwd: str) -> int:
-    """Handle clean rebase completion — update state and force-push."""
-    # Count commits replayed
-    commits_ahead = subprocess.run(
-        ["git", "rev-list", "--count", "origin/main..HEAD"],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-
-    state = _load_or_init(ctx)
-
+        rebase_args.append("--push")
     if args.fix:
-        # Autonomous mode: force-push immediately
-        print("Rebase clean — force-pushing...", file=sys.stderr)
-        r = subprocess.run(
-            ["git", "push", "--force-with-lease"],
-            cwd=cwd,
-        )
-        pr_state.update_rebase(state, pr_state.RebaseSummary(
-            target_base="origin/main",
-            commits_replayed=int(commits_ahead) if commits_ahead.isdigit() else 0,
-            conflicts_resolved=0,
-            files_resolved=[],
-            force_pushed=r.returncode == 0,
-            updated_at=_now_iso(),
-        ))
-        pr_state.save_state(ctx.worktree_root, state)
-        if r.returncode == 0:
-            print("Rebase complete — force-pushed.", file=sys.stderr)
-        else:
-            print("Rebase complete, but force-push failed.", file=sys.stderr)
-        return r.returncode
-    else:
-        # Default mode: report success, let skill/user trigger --push
-        pr_state.update_rebase(state, pr_state.RebaseSummary(
-            target_base="origin/main",
-            commits_replayed=int(commits_ahead) if commits_ahead.isdigit() else 0,
-            conflicts_resolved=0,
-            files_resolved=[],
-            force_pushed=False,
-            updated_at=_now_iso(),
-        ))
-        pr_state.save_state(ctx.worktree_root, state)
-        report = {
-            "status": "clean",
-            "commits_replayed": int(commits_ahead) if commits_ahead.isdigit() else 0,
-        }
-        json.dump(report, sys.stdout, indent=2)
-        print()
-        print("Rebase clean — run `pr rebase --push` to force-push.", file=sys.stderr)
-        return 0
+        rebase_args.append("--fix")
+    rebase_args += extra
+    result = subprocess.run(rebase_args)
+    return result.returncode
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -893,10 +644,6 @@ def main():
                           help="Force-push after successful rebase")
     rebase_p.add_argument("--abort", action="store_true",
                           help="Abort in-progress rebase")
-    rebase_p.add_argument("--repo-dir", "--repo", "--worktree",
-                          dest="repo_dir",
-                          help="Git worktree directory")
-
     args, extra = parser.parse_known_args()
 
     if not args.command:

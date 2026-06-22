@@ -19,6 +19,11 @@ STATE_DIR = "ignore/pr"
 STATE_FILE = "state.json"
 
 
+def now_iso() -> str:
+    """UTC ISO timestamp for state updates."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ── Dataclasses ─────────────────────────────────────────────────────────────
 
 

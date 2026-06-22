@@ -200,8 +200,8 @@ def test_render_rebase_section_with_data():
     )
     result = pr_cli._render_rebase_section(r)
     assert len(result) >= 1
-    assert "2 file(s)" in result[0] or "2" in result[0]
-    assert "3 commit(s)" in result[0] or "3" in result[0]
+    assert "2 file(s)" in result[0]
+    assert "3 commit(s)" in result[0]
     assert "force-pushed" in result[0]
 
 
@@ -214,7 +214,7 @@ def test_render_rebase_section_no_conflicts():
     )
     result = pr_cli._render_rebase_section(r)
     assert len(result) >= 1
-    assert "clean" in result[0].lower() or "0" in result[0]
+    assert "clean" in result[0].lower()
 
 
 def test_render_rebase_section_not_pushed():

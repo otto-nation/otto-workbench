@@ -600,14 +600,32 @@ def _rebase_head_info(cwd: str) -> tuple[str, str]:
     return sha, subject
 
 
+_PICK_COMMANDS = {
+    "pick", "p", "reword", "r", "edit", "e",
+    "squash", "s", "fixup", "f", "drop", "d",
+}
+
+
 def _remaining_rebase_commits(cwd: str) -> int:
     """Count remaining commits in the rebase todo."""
     git_path = _git_dir(cwd)
+    # rebase-merge style (standard interactive/non-interactive rebase)
     todo = git_path / "rebase-merge" / "git-rebase-todo"
-    if not todo.exists():
-        return 0
-    return sum(1 for line in todo.read_text().splitlines()
-               if line.strip() and not line.startswith("#"))
+    if todo.exists():
+        return sum(
+            1 for line in todo.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+            and line.split()[0] in _PICK_COMMANDS
+        )
+    # rebase-apply style (git am, older interactive format)
+    next_file = git_path / "rebase-apply" / "next"
+    last_file = git_path / "rebase-apply" / "last"
+    if next_file.exists() and last_file.exists():
+        try:
+            return int(last_file.read_text().strip()) - int(next_file.read_text().strip())
+        except ValueError:
+            return 0
+    return 0
 
 
 def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
@@ -637,9 +655,24 @@ def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
         )
         if r.returncode == 0:
             state = _load_or_init(ctx)
+            # Populate target_base and commits_replayed if missing (conflict-path rebase
+            # never called _rebase_success, so these fields are not yet in state).
+            target_base = state.rebase.target_base
+            commits_replayed = state.rebase.commits_replayed
+            if not target_base:
+                target_base = subprocess.run(
+                    ["git", "rev-parse", "origin/main"],
+                    capture_output=True, text=True, cwd=cwd,
+                ).stdout.strip()
+            if not commits_replayed:
+                count_out = subprocess.run(
+                    ["git", "rev-list", "--count", "origin/main..HEAD"],
+                    capture_output=True, text=True, cwd=cwd,
+                ).stdout.strip()
+                commits_replayed = int(count_out) if count_out.isdigit() else 0
             pr_state.update_rebase(state, pr_state.RebaseSummary(
-                target_base=state.rebase.target_base,
-                commits_replayed=state.rebase.commits_replayed,
+                target_base=target_base,
+                commits_replayed=commits_replayed,
                 conflicts_resolved=state.rebase.conflicts_resolved,
                 files_resolved=state.rebase.files_resolved,
                 force_pushed=True,
@@ -767,6 +800,8 @@ def _rebase_success(args, ctx: pr_context.ResolvedContext, cwd: str) -> int:
         pr_state.save_state(ctx.worktree_root, state)
         if r.returncode == 0:
             print("Rebase complete — force-pushed.", file=sys.stderr)
+        else:
+            print("Rebase complete, but force-push failed.", file=sys.stderr)
         return r.returncode
     else:
         # Default mode: report success, let skill/user trigger --push
@@ -861,6 +896,9 @@ def main():
                           help="Force-push after successful rebase")
     rebase_p.add_argument("--abort", action="store_true",
                           help="Abort in-progress rebase")
+    rebase_p.add_argument("--repo-dir", "--repo", "--worktree",
+                          dest="repo_dir",
+                          help="Git worktree directory")
 
     args, extra = parser.parse_known_args()
 

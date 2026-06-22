@@ -19,9 +19,9 @@ Run with `/pr-rebase` or `/pr-rebase --fix`.
 
 ## Arguments
 
-- `--fix` (optional): Fully autonomous mode — resolve all conflicts and
-  force-push without waiting for confirmation. Without this flag, the skill
-  prints a summary and waits for confirmation before force-pushing.
+- `--fix` (optional): Skip confirmation prompts — resolve all conflicts and
+  run `pr rebase --push` without waiting for user confirmation. Without this
+  flag, the skill prints a summary and waits for confirmation before pushing.
 
 ---
 
@@ -32,19 +32,24 @@ Run with `/pr-rebase` or `/pr-rebase --fix`.
 Run the rebase script:
 
 ```bash
-pr rebase [--fix] --repo-dir <worktree_root> 2>&1
+pr rebase --repo-dir <worktree_root>
 ```
 
-Capture both stderr (human-readable status) and stdout (JSON report). Check
-the exit code.
+Check the exit code. JSON output is on stdout; status messages are on stderr.
 
 ### 2. Handle exit code 0 — clean rebase
 
 The rebase completed with no conflicts.
 
-- **`--fix` mode**: Script already force-pushed. Report success and stop.
-- **Default mode**: Parse the JSON from stdout. Report success and the number
-  of commits replayed. Ask the user to confirm force-push, then run:
+Parse the JSON from stdout. Report success and the number of commits replayed.
+
+- **Default mode**: Ask the user to confirm force-push, then run:
+
+```bash
+pr rebase --push --repo-dir <worktree_root>
+```
+
+- **`--fix` mode**: Run immediately without asking:
 
 ```bash
 pr rebase --push --repo-dir <worktree_root>
@@ -68,7 +73,8 @@ Parse the JSON from stdout. It contains:
 
 Or `"status": "conflicts_resuming"` if resuming an interrupted rebase.
 
-Report which commit is being applied and how many files have conflicts.
+Report which commit is being applied, how many files have conflicts, and how
+many commits remain to replay after this one (`remaining_commits`).
 Proceed to step 4.
 
 ### 4. Resolve each conflicted file
@@ -146,7 +152,7 @@ Resolved X files across Y commits.
 pr rebase --push --repo-dir <worktree_root>
 ```
 
-- **`--fix` mode**: Show the summary table. Force-push immediately:
+- **`--fix` mode**: Show the summary table. Run immediately without asking:
 
 ```bash
 pr rebase --push --repo-dir <worktree_root>

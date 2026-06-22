@@ -271,13 +271,13 @@ def test_update_triage_replaces():
 
 
 def test_rebase_summary_defaults():
-    ci = RebaseSummary()
-    assert ci.target_base == ""
-    assert ci.commits_replayed == 0
-    assert ci.conflicts_resolved == 0
-    assert ci.files_resolved == []
-    assert ci.force_pushed is False
-    assert ci.updated_at == ""
+    rb = RebaseSummary()
+    assert rb.target_base == ""
+    assert rb.commits_replayed == 0
+    assert rb.conflicts_resolved == 0
+    assert rb.files_resolved == []
+    assert rb.force_pushed is False
+    assert rb.updated_at == ""
 
 
 def test_pr_state_has_rebase_field():

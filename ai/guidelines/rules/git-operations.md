@@ -82,7 +82,7 @@
 
 ## Branch Completion
 
-- Never present a menu of completion options ("What would you like to do? 1. Merge 2. PR 3. Keep 4. Discard") — always create a PR via `task --global pr:create` directly when implementation is complete
+- Never present a menu of completion options ("What would you like to do? 1. Merge 2. PR 3. Keep 4. Discard") — always create a PR via `task --global pr:create -- --no-issue --draft` when implementation is complete (see PR Creation section for the full invocation)
 - When the user states a specific next step ("merge this", "push it", "just keep it"), execute that action directly
 - Never re-ask after the user has already chosen — if a chosen action fails, debug the failure, don't fall back to an options menu
 

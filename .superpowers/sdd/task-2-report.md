@@ -52,3 +52,27 @@ pytest tests/pr_cli_test.py tests/pr_state_test.py -v
 ### Concerns
 
 None.
+
+---
+
+## Review Findings Fix Report
+
+**Status:** FIXED
+
+**Commit:** `f06443b` fix(pr rebase): improve code quality and consistency
+
+### Findings Resolved
+
+1. **Important — Direct attribute mutation in --push handler:** Replaced direct mutations with `pr_state.update_rebase()` call, constructing a new `RebaseSummary` that carries forward existing fields.
+
+2. **Minor — Duplicated git-dir resolution:** Extracted `_git_dir(cwd: str) -> Path` helper function to eliminate identical 3-line resolution code in both `_detect_rebase_in_progress()` and `_remaining_rebase_commits()`.
+
+3. **Minor — Unchecked fetch result:** Added return code check on `git fetch origin` with warning message to stderr when fetch fails.
+
+### Test Results
+
+All 52 tests pass:
+```
+pytest tests/pr_cli_test.py tests/pr_state_test.py -v
+============================= 52 passed in 0.04s ==============================
+```

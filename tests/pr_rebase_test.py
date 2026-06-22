@@ -2,7 +2,6 @@
 
 import importlib.util
 import importlib.machinery
-import os
 import subprocess
 import sys
 import tempfile
@@ -28,14 +27,8 @@ _spec.loader.exec_module(pr_rebase_cli)
 
 
 def _make_git_repo(tmpdir: str) -> str:
-    """Create a minimal git repo and return its path."""
-    env = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test",
-           "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test"}
-    subprocess.run(["git", "init", tmpdir], capture_output=True, check=True, env=env)
-    subprocess.run(
-        ["git", "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "init"],
-        capture_output=True, cwd=tmpdir, check=True, env=env,
-    )
+    """Create a minimal git repo (init only, no commits needed)."""
+    subprocess.run(["git", "init", "-q", tmpdir], capture_output=True, check=True)
     return tmpdir
 
 

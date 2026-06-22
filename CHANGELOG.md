@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.32.2](https://github.com/otto-nation/otto-workbench/compare/v1.32.1...v1.32.2) (2026-06-22)
+
+
+### Bug Fixes
+
+* **pr:** pass --help through to delegated scripts ([#325](https://github.com/otto-nation/otto-workbench/issues/325)) ([7be1293](https://github.com/otto-nation/otto-workbench/commit/7be12936d546b1341adf193f14b0140dcebd0daf))
+* **pr:** skip context resolution for help passthrough ([#328](https://github.com/otto-nation/otto-workbench/issues/328)) ([fc9a629](https://github.com/otto-nation/otto-workbench/commit/fc9a629def94e60e99972ecb2a5fcadb82188f4f))
+* **review:** count fix-pass results from checkboxes instead of magic comment ([#329](https://github.com/otto-nation/otto-workbench/issues/329)) ([f8477c4](https://github.com/otto-nation/otto-workbench/commit/f8477c4a06831783ecea25d49eed06fe4b65ebb5))
+
 ## [1.32.1](https://github.com/otto-nation/otto-workbench/compare/v1.32.0...v1.32.1) (2026-06-22)
 
 

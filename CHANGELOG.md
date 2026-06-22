@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.30.1](https://github.com/otto-nation/otto-workbench/compare/v1.30.0...v1.30.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **release:** auto-resolve manifest conflicts when updating release PRs ([#304](https://github.com/otto-nation/otto-workbench/issues/304)) ([47cd942](https://github.com/otto-nation/otto-workbench/commit/47cd942a55ac28044ad493403338736245ba09f1))
+* **tests:** remove snapshot-and-compare safety check from test helper ([#302](https://github.com/otto-nation/otto-workbench/issues/302)) ([1fcf655](https://github.com/otto-nation/otto-workbench/commit/1fcf6558ea6c2f58655c8f4d2c70901dd7039ca4))
+
 ## [1.30.0](https://github.com/otto-nation/otto-workbench/compare/v1.29.0...v1.30.0) (2026-06-22)
 
 

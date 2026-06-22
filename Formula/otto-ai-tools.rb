@@ -13,13 +13,12 @@ class OttoAiTools < Formula
 
   def install
     libexec.install Dir["*"]
-    bin.install_symlink libexec/"bin/claude-review"
     bin.install_symlink libexec/"bin/pr"
   end
 
   def caveats
     <<~EOS
-      claude-review requires the Claude Code CLI:
+      Requires the Claude Code CLI:
         npm install -g @anthropic-ai/claude-code
 
       The reviewer agent definition is installed at:
@@ -32,6 +31,6 @@ class OttoAiTools < Formula
   end
 
   test do
-    assert_match "claude-review", shell_output("#{bin}/claude-review --help 2>&1")
+    assert_match "pr", shell_output("#{bin}/pr --help 2>&1")
   end
 end

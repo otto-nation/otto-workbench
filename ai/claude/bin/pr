@@ -563,13 +563,18 @@ def cmd_gc(args, extra, ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
-def _detect_rebase_in_progress(cwd: str) -> bool:
-    """Check if a rebase is currently in progress."""
+def _git_dir(cwd: str) -> Path:
+    """Return the .git directory path for the repo."""
     git_dir = subprocess.run(
         ["git", "rev-parse", "--git-dir"],
         capture_output=True, text=True, cwd=cwd,
     ).stdout.strip()
-    git_path = Path(git_dir) if Path(git_dir).is_absolute() else Path(cwd) / git_dir
+    return Path(git_dir) if Path(git_dir).is_absolute() else Path(cwd) / git_dir
+
+
+def _detect_rebase_in_progress(cwd: str) -> bool:
+    """Check if a rebase is currently in progress."""
+    git_path = _git_dir(cwd)
     return (git_path / "rebase-merge").is_dir() or (git_path / "rebase-apply").is_dir()
 
 
@@ -597,11 +602,7 @@ def _rebase_head_info(cwd: str) -> tuple[str, str]:
 
 def _remaining_rebase_commits(cwd: str) -> int:
     """Count remaining commits in the rebase todo."""
-    git_dir = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-    git_path = Path(git_dir) if Path(git_dir).is_absolute() else Path(cwd) / git_dir
+    git_path = _git_dir(cwd)
     todo = git_path / "rebase-merge" / "git-rebase-todo"
     if not todo.exists():
         return 0
@@ -636,8 +637,14 @@ def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
         )
         if r.returncode == 0:
             state = _load_or_init(ctx)
-            state.rebase.force_pushed = True
-            state.rebase.updated_at = _now_iso()
+            pr_state.update_rebase(state, pr_state.RebaseSummary(
+                target_base=state.rebase.target_base,
+                commits_replayed=state.rebase.commits_replayed,
+                conflicts_resolved=state.rebase.conflicts_resolved,
+                files_resolved=state.rebase.files_resolved,
+                force_pushed=True,
+                updated_at=_now_iso(),
+            ))
             pr_state.save_state(ctx.worktree_root, state)
             print("Force-pushed successfully.", file=sys.stderr)
         return r.returncode
@@ -702,7 +709,9 @@ def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
 
     # Fetch
     print("Fetching origin...", file=sys.stderr)
-    subprocess.run(["git", "fetch", "origin"], cwd=cwd)
+    fetch = subprocess.run(["git", "fetch", "origin"], cwd=cwd)
+    if fetch.returncode != 0:
+        print("Warning: fetch failed — rebasing against potentially stale origin/main.", file=sys.stderr)
 
     # Run rebase
     print("Rebasing onto origin/main...", file=sys.stderr)

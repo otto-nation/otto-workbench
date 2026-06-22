@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 """Unified PR lifecycle CLI.
 
-Subcommands:
-  pr status      Show CI, review, and comment status
-  pr ci          Fetch and display CI failures
-  pr review      Run code review (self or others)
-  pr comments    Fetch and address review threads
-  pr triage      Classify and verify review threads
-  pr repair      Repair broken review artifacts
-  pr fix         Fix everything fixable (CI + review + comments)
-  pr post        Post an existing review to GitHub
-  pr gc          Clean up stale review artifacts
+Thin dispatch layer — each subcommand delegates to an external script.
+Structured JSON on stdout, status messages on stderr.
 
-Usage:
-  pr                              # defaults to status
-  pr status                       # unified dashboard
-  pr ci [ci-check flags...]        # CI failure status
-  pr review [target] [--fix]      # self-review or review others
-  pr comments [flags...]          # PR review thread status
-  pr triage                       # classify review threads
-  pr repair [target]              # repair broken review artifacts
-  pr fix                          # fix all fixable issues
-  pr post [target]                # post existing review
-  pr gc                           # clean up stale artifacts
+Subcommands:
+  pr status                             Show unified dashboard from cached state
+  pr ci [--run N] [ci-check flags...]   Fetch CI failures (exit 0=green, 1=red)
+  pr review [target] [--self] [--fix]   Run code review (exit 0=approve, 1=changes)
+      [--post] [--no-post]
+  pr comments [--resolve-verified]      Fetch PR review threads
+  pr triage                             Classify and verify review threads
+  pr repair [target]                    Repair broken review artifacts
+  pr fix                                Fix all fixable (review, CI, comments)
+  pr post [target] [--submit]           Post existing review to GitHub
+  pr gc                                 Clean up stale review artifacts
+  pr rebase [--fix] [--push] [--abort]  Rebase onto origin/main (exit 3=conflicts)
+
+Global flags:
+  --repo-dir PATH    Git worktree directory
+  --branch NAME      Branch name
+  --pr NUMBER/URL    PR number or URL
 """
 
 import argparse
@@ -30,7 +28,6 @@ import json
 import subprocess
 import sys
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
@@ -44,7 +41,7 @@ import pr_state
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return pr_state.now_iso()
 
 
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
@@ -143,6 +140,18 @@ def _render_triage_section(t: pr_state.TriageSummary) -> list[str]:
     return lines
 
 
+def _render_rebase_section(r: pr_state.RebaseSummary) -> list[str]:
+    if not r.updated_at:
+        return ["**Rebase**: not run yet"]
+    if r.conflicts_resolved == 0:
+        desc = f"clean rebase — {r.commits_replayed} commit(s) replayed"
+    else:
+        desc = f"resolved {r.conflicts_resolved} file(s) across {r.commits_replayed} commit(s)"
+    if r.force_pushed:
+        desc += ", force-pushed"
+    return [f"**Rebase**: {desc}"]
+
+
 def cmd_status(args, extra, ctx: pr_context.ResolvedContext) -> int:
     """Render unified status dashboard from cached state."""
     state = pr_state.load_state(ctx.worktree_root)
@@ -165,6 +174,8 @@ def cmd_status(args, extra, ctx: pr_context.ResolvedContext) -> int:
     lines += _render_comments_section(state.comments)
     lines.append("")
     lines += _render_triage_section(state.triage)
+    lines.append("")
+    lines += _render_rebase_section(state.rebase)
     lines.append("")
     lines.append(_merge_readiness(state))
 
@@ -547,6 +558,20 @@ def cmd_gc(args, extra, ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
+def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
+    """Delegate to pr-rebase."""
+    rebase_args = [str(BIN_DIR / "pr-rebase"), "--repo-dir", str(ctx.worktree_root)]
+    if args.abort:
+        rebase_args.append("--abort")
+    if args.push:
+        rebase_args.append("--push")
+    if args.fix:
+        rebase_args.append("--fix")
+    rebase_args += extra
+    result = subprocess.run(rebase_args)
+    return result.returncode
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -611,6 +636,14 @@ def main():
     sub.add_parser("gc", help="Clean up stale review artifacts",
                    epilog=_PASSTHROUGH_EPILOG.format(tool="claude-review"))
 
+    # pr rebase
+    rebase_p = sub.add_parser("rebase", help="Rebase onto origin/main with AI conflict resolution")
+    rebase_p.add_argument("--fix", action="store_true",
+                          help="Autonomous mode — resolve conflicts and force-push without confirmation")
+    rebase_p.add_argument("--push", action="store_true",
+                          help="Force-push after successful rebase")
+    rebase_p.add_argument("--abort", action="store_true",
+                          help="Abort in-progress rebase")
     args, extra = parser.parse_known_args()
 
     if not args.command:
@@ -632,6 +665,7 @@ def main():
         "fix": cmd_fix,
         "post": cmd_post,
         "gc": cmd_gc,
+        "rebase": cmd_rebase,
     }
 
     sys.exit(dispatch[args.command](args, extra, ctx))

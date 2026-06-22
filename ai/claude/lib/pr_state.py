@@ -19,6 +19,11 @@ STATE_DIR = "ignore/pr"
 STATE_FILE = "state.json"
 
 
+def now_iso() -> str:
+    """UTC ISO timestamp for state updates."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ── Dataclasses ─────────────────────────────────────────────────────────────
 
 
@@ -76,6 +81,17 @@ class TriageSummary:
 
 
 @dataclass
+class RebaseSummary:
+    """Snapshot written by ``pr rebase``."""
+    target_base: str = ""
+    commits_replayed: int = 0
+    conflicts_resolved: int = 0
+    files_resolved: list[str] = field(default_factory=list)
+    force_pushed: bool = False
+    updated_at: str = ""
+
+
+@dataclass
 class PRState:
     """Unified PR state — envelope over domain summaries."""
     identity: PRIdentity
@@ -83,6 +99,7 @@ class PRState:
     review: ReviewSummary = field(default_factory=ReviewSummary)
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
+    rebase: RebaseSummary = field(default_factory=RebaseSummary)
     created_at: str = ""
     updated_at: str = ""
 
@@ -196,6 +213,28 @@ def _triage_from_dict(d: dict) -> TriageSummary:
     )
 
 
+def _rebase_to_dict(r: RebaseSummary) -> dict:
+    return {
+        "target_base": r.target_base,
+        "commits_replayed": r.commits_replayed,
+        "conflicts_resolved": r.conflicts_resolved,
+        "files_resolved": r.files_resolved,
+        "force_pushed": r.force_pushed,
+        "updated_at": r.updated_at,
+    }
+
+
+def _rebase_from_dict(d: dict) -> RebaseSummary:
+    return RebaseSummary(
+        target_base=d.get("target_base", ""),
+        commits_replayed=d.get("commits_replayed", 0),
+        conflicts_resolved=d.get("conflicts_resolved", 0),
+        files_resolved=d.get("files_resolved", []),
+        force_pushed=d.get("force_pushed", False),
+        updated_at=d.get("updated_at", ""),
+    )
+
+
 def state_to_dict(state: PRState) -> dict:
     return {
         "identity": _identity_to_dict(state.identity),
@@ -203,6 +242,7 @@ def state_to_dict(state: PRState) -> dict:
         "review": _review_to_dict(state.review),
         "comments": _comments_to_dict(state.comments),
         "triage": _triage_to_dict(state.triage),
+        "rebase": _rebase_to_dict(state.rebase),
         "created_at": state.created_at,
         "updated_at": state.updated_at,
     }
@@ -215,6 +255,7 @@ def state_from_dict(d: dict) -> PRState:
         review=_review_from_dict(d.get("review", {})),
         comments=_comments_from_dict(d.get("comments", {})),
         triage=_triage_from_dict(d.get("triage", {})),
+        rebase=_rebase_from_dict(d.get("rebase", {})),
         created_at=d.get("created_at", ""),
         updated_at=d.get("updated_at", ""),
     )
@@ -293,3 +334,8 @@ def update_comments(state: PRState, summary: CommentsSummary) -> None:
 def update_triage(state: PRState, summary: TriageSummary) -> None:
     """Replace triage summary."""
     state.triage = summary
+
+
+def update_rebase(state: PRState, summary: RebaseSummary) -> None:
+    """Replace rebase summary."""
+    state.rebase = summary

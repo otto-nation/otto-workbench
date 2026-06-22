@@ -90,7 +90,12 @@ tools:
     visibility: full
     description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix]  |  pr comments  |  pr triage  |  pr repair  |  pr fix  |  pr post"
+    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix]  |  pr comments  |  pr triage  |  pr repair  |  pr fix  |  pr post  |  pr rebase [--fix] [--push] [--abort]"
+
+  - name: pr-rebase
+    permission: false
+    visibility: hidden
+    description: "Rebase current branch onto origin/main with conflict detection and force-push"
 
   - name: ci-check
     permission: true

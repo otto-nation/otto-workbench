@@ -11,9 +11,10 @@ if str(LIB_DIR) not in sys.path:
 
 from pr_state import (
     PRIdentity, CISummary, ReviewSummary, CommentsSummary, TriageSummary,
+    RebaseSummary,
     PRState, load_state, save_state, new_state, update_identity, update_ci,
-    update_review, update_comments, update_triage, state_to_dict,
-    state_from_dict,
+    update_review, update_comments, update_triage, update_rebase,
+    state_to_dict, state_from_dict,
 )
 
 
@@ -267,3 +268,70 @@ def test_update_triage_replaces():
     assert state.triage.total == 10
     assert state.triage.actionable == 4
     assert state.triage.valid == 3
+
+
+def test_rebase_summary_defaults():
+    rb = RebaseSummary()
+    assert rb.target_base == ""
+    assert rb.commits_replayed == 0
+    assert rb.conflicts_resolved == 0
+    assert rb.files_resolved == []
+    assert rb.force_pushed is False
+    assert rb.updated_at == ""
+
+
+def test_pr_state_has_rebase_field():
+    ident = PRIdentity(
+        repo="r", branch="b", pr_number=None,
+        head_sha="", worktree_root="",
+    )
+    state = PRState(identity=ident)
+    assert state.rebase.target_base == ""
+    assert state.rebase.force_pushed is False
+
+
+def test_update_rebase_replaces():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_rebase(state, RebaseSummary(
+        target_base="origin/main", commits_replayed=3,
+        conflicts_resolved=2, files_resolved=["a.py", "b.py"],
+        force_pushed=True, updated_at="t1",
+    ))
+    assert state.rebase.target_base == "origin/main"
+    assert state.rebase.commits_replayed == 3
+    assert state.rebase.conflicts_resolved == 2
+    assert state.rebase.files_resolved == ["a.py", "b.py"]
+    assert state.rebase.force_pushed is True
+
+
+def test_state_roundtrip_with_rebase_data():
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    update_rebase(state, RebaseSummary(
+        target_base="origin/main", commits_replayed=5,
+        conflicts_resolved=2, files_resolved=["x.py"],
+        force_pushed=True, updated_at="2026-06-20T00:00:00+00:00",
+    ))
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+    assert restored.rebase.target_base == "origin/main"
+    assert restored.rebase.commits_replayed == 5
+    assert restored.rebase.conflicts_resolved == 2
+    assert restored.rebase.files_resolved == ["x.py"]
+    assert restored.rebase.force_pushed is True
+
+
+def test_save_preserves_rebase_data():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        update_rebase(state, RebaseSummary(
+            target_base="origin/main", commits_replayed=3,
+            conflicts_resolved=1, files_resolved=["f.py"],
+            force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
+        ))
+        save_state(root, state)
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.rebase.target_base == "origin/main"
+        assert loaded.rebase.commits_replayed == 3
+        assert loaded.rebase.files_resolved == ["f.py"]

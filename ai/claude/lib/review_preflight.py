@@ -20,7 +20,7 @@ from review_common import (
     _info, _run, _warn,
 )
 from review_dedup import _get_bot_login
-from review_findings import FINDING_ID_RE
+from review_findings import BOLD_FINDING_ID_RE
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -760,9 +760,6 @@ THREAD_CONTESTED = "contested"
 THREAD_REPLIED = "replied"
 THREAD_UNREPLIED = "unreplied"
 
-_POSTED_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
-
-
 def _classify_thread_for_rereview(
     comments: list[dict], is_resolved: bool, bot_login: str,
 ) -> tuple[str, list[dict]]:
@@ -798,7 +795,7 @@ def _classify_thread_for_rereview(
 
 def _match_thread_to_finding(root_body: str) -> str:
     """Extract finding ID (e.g. 'M1') from a bot-posted review comment body."""
-    m = _POSTED_FINDING_ID_RE.search(root_body)
+    m = BOLD_FINDING_ID_RE.search(root_body)
     return m.group(1) if m else ""
 
 
@@ -818,7 +815,7 @@ def fetch_reply_threads(repo: str, pr_number: str, bot_login: str = "") -> dict:
     owner, name = repo.split("/", 1)
     try:
         raw_threads = fetch_threads(owner, name, int(pr_number))
-    except (ValueError, TypeError):
+    except Exception:
         return {"threads": [], "summary": {}}
 
     if not raw_threads:

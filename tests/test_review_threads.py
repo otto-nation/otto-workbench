@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -91,7 +89,7 @@ class TestClassifyThreadForRereview:
         state, _ = _classify_thread_for_rereview(comments, False, "bot-user")
         assert state == THREAD_ACKNOWLEDGED
 
-    def test_multiple_replies_uses_last(self):
+    def test_state_uses_last_reply(self):
         comments = _make_comments(
             ("bot", "Issue"),
             ("alice", "Done"),
@@ -111,6 +109,7 @@ class TestClassifyThreadForRereview:
         state, replies = _classify_thread_for_rereview(comments, False, "bot")
         assert state == THREAD_ACKNOWLEDGED
         assert len(replies) == 2
+        assert replies[0]["body"] == "Why?"
         assert replies[1]["body"] == "Done"
 
 
@@ -138,7 +137,8 @@ class TestMatchThreadToFinding:
 
 class TestFetchReplyThreads:
     def test_empty_when_no_bot_login(self):
-        with patch("review_preflight._get_bot_login", return_value=""):
+        with patch("review_preflight._get_bot_login", return_value=""), \
+             patch("review_preflight.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
         assert result == {"threads": [], "summary": {}}
 
@@ -248,6 +248,26 @@ class TestBuildReplyThreadsSection:
         assert "### Resolved" in section
         assert "> @" not in section
 
+    def test_unreplied_threads(self):
+        data = {"threads": [
+            {"state": THREAD_UNREPLIED, "finding_id": "M2", "path": "c.py",
+             "line": 1, "root_body": "issue", "replies": []},
+        ]}
+        section = _build_reply_threads_section(data)
+        assert "### No reply" in section
+        assert "[M2]" in section
+
+    def test_replied_threads_include_text(self):
+        data = {"threads": [
+            {"state": THREAD_REPLIED, "finding_id": "S1", "path": "d.py",
+             "line": 3, "root_body": "issue", "replies": [
+                 {"author": "bob", "body": "Let me look into this"},
+             ]},
+        ]}
+        section = _build_reply_threads_section(data)
+        assert "### Author replied" in section
+        assert "@bob: Let me look into this" in section
+
 
 # ── _annotate_with_thread_state ──────────────────────────────────────────────
 
@@ -356,6 +376,9 @@ class TestFormatReviewComments:
     def test_empty(self):
         assert _format_review_comments("[]") == "_None._"
 
+    def test_invalid_json(self):
+        assert _format_review_comments("not json") == "_None._"
+
     def test_standalone_root_no_replies(self):
         data = json.dumps([
             {"id": 1, "path": "a.py", "line": 5, "body": "check this",
@@ -377,3 +400,6 @@ class TestFormatGeneralComments:
 
     def test_empty(self):
         assert _format_general_comments("[]") == "_None._"
+
+    def test_invalid_json(self):
+        assert _format_general_comments("not json") == "_None._"

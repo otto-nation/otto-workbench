@@ -22,7 +22,7 @@ from review_common import (
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path, _warn,
 )
-from review_findings import annotate_prior_with_stable_ids
+from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
 from review_preflight import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
     PRContext, PRMetadata, PreflightData, ReviewJob,
@@ -148,18 +148,19 @@ def _build_reviews_section(ctx: PRContext) -> str:
     )
 
 
+_THREAD_STATE_ORDER = [
+    (THREAD_CONTESTED, "Contested — re-evaluate in light of the author's explanation"),
+    (THREAD_REPLIED, "Author replied — review the response"),
+    (THREAD_ACKNOWLEDGED, "Acknowledged — verify the fix exists in the diff"),
+    (THREAD_RESOLVED, "Resolved on GitHub — drop from this review"),
+    (THREAD_UNREPLIED, "No reply — carry forward as before"),
+]
+
+
 def _build_reply_threads_section(reply_threads: dict) -> str:
     threads = reply_threads.get("threads", [])
     if not threads:
         return ""
-
-    _STATE_ORDER = [
-        (THREAD_CONTESTED, "Contested — re-evaluate in light of the author's explanation"),
-        (THREAD_REPLIED, "Author replied — review the response"),
-        (THREAD_ACKNOWLEDGED, "Acknowledged — verify the fix exists in the diff"),
-        (THREAD_RESOLVED, "Resolved on GitHub — drop from this review"),
-        (THREAD_UNREPLIED, "No reply — carry forward as before"),
-    ]
 
     grouped: dict[str, list[dict]] = {}
     for t in threads:
@@ -172,7 +173,7 @@ def _build_reply_threads_section(reply_threads: dict) -> str:
         "Use this to decide whether to carry forward, drop, or re-evaluate each finding.",
         "",
     ]
-    for state, heading in _STATE_ORDER:
+    for state, heading in _THREAD_STATE_ORDER:
         items = grouped.get(state, [])
         if not items:
             continue
@@ -356,9 +357,6 @@ _STATE_LABELS = {
     THREAD_REPLIED: "[REPLIED]",
 }
 
-_PRIOR_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
-
-
 def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
     threads = reply_threads.get("threads", [])
     if not threads:
@@ -373,7 +371,7 @@ def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
     lines = review_text.split("\n")
     result = []
     for line in lines:
-        m = _PRIOR_FINDING_ID_RE.search(line)
+        m = BOLD_FINDING_ID_RE.search(line)
         if m and m.group(1) in id_to_state:
             label = id_to_state[m.group(1)]
             line = f"{line}  {label}"
@@ -552,7 +550,13 @@ def _prompt_self_review(job, common, extra):
     ))
     prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     preflight = _build_preflight_section(job)
-    sections = {"pr_header": common["pr_header"], "preflight_data": preflight, "delta_section": common["delta_section"], "prior_section": prior_section, "reply_threads": common["reply_threads"]}
+    sections = {
+        "pr_header": common["pr_header"],
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
+    }
     kwargs = {
         "branch_name": extra.get("branch_name", job.pr.head),
         "repo": job.repo,

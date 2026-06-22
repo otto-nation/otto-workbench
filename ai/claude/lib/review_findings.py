@@ -51,6 +51,8 @@ class Finding:
     skip_reason: str = ""
 
 
+BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
+
 # ── Finding parsing ──────────────────────────────────────────────────────────
 
 FINDING_ID_RE = re.compile(

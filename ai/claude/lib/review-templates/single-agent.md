@@ -17,3 +17,4 @@ Must-fix and should-fix findings must include an evidence block — a blockquote
 You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write the review file FIRST based on the diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.
 ${issue_section}
 ${prior_section}
+${reply_threads}

@@ -17,6 +17,7 @@ Usage:
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -35,7 +36,7 @@ from review_common import (  # noqa: E402
 from review_preflight import (  # noqa: E402
     DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL,
     MULTI_PHASE_FILE_THRESHOLD, MULTI_PHASE_LINE_THRESHOLD,
-    ReviewJob, collect_preflight_data,
+    ReviewJob, collect_preflight_data, fetch_reply_threads,
 )
 from review_pipeline import (  # noqa: E402
     _fetch_metadata, run_fix_pass, run_multi_phase, run_single_agent,
@@ -121,7 +122,14 @@ def main():
     )
 
     _info("Collecting file data...")
-    job.preflight = collect_preflight_data(job)
+    if prior_review and args.pr:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pf_future = pool.submit(collect_preflight_data, job)
+            rt_future = pool.submit(fetch_reply_threads, repo, args.pr)
+            job.preflight = pf_future.result()
+            job.reply_threads = rt_future.result()
+    else:
+        job.preflight = collect_preflight_data(job)
 
     is_large = (
         pr.total_lines > MULTI_PHASE_LINE_THRESHOLD

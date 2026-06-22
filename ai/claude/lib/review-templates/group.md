@@ -27,3 +27,4 @@ Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write your findings file FIRST based on the diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.
 ${prior_section}
+${reply_threads}

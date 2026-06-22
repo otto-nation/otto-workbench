@@ -21,7 +21,7 @@
           },
           {
             "type": "command",
-            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ \\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\\} ]]; then echo 'BLOCKED: Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See git-operations.md.' >&2; exit 2; fi"
+            "command": "command=$(jq -r '.tool_input.command // empty'); stripped=$(printf '%s' \"$command\" | sed \"s/'[^']*'//g\"); if [[ \"$stripped\" =~ \\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\\} ]]; then echo 'BLOCKED: Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See git-operations.md.' >&2; exit 2; fi"
           },
           {
             "type": "command",

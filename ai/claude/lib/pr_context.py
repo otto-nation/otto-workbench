@@ -12,6 +12,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / "resolve-branch"
+
 
 @dataclass(frozen=True)
 class ResolvedContext:
@@ -46,7 +48,7 @@ def resolve(
         pr_number = _parse_pr_input(pr)
         branch_name = _branch_from_pr(repo, pr_number) or _current_branch(cwd)
     elif branch:
-        branch_name = branch
+        branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
     else:
         branch_name = _current_branch(cwd)
@@ -81,6 +83,23 @@ def _current_branch(cwd: str | None = None) -> str:
         print("Cannot determine current branch", file=sys.stderr)
         sys.exit(1)
     return r.stdout.strip()
+
+
+def _resolve_branch(hint: str, cwd: str | None = None) -> str:
+    try:
+        r = subprocess.run(
+            [str(RESOLVE_BRANCH), hint],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+        # resolve-branch exited non-zero or returned nothing — use hint as-is
+        # rather than silently discarding the user's explicit --branch value
+        print(f"resolve-branch: could not resolve {hint!r}, using as-is", file=sys.stderr)
+        return hint
+    except FileNotFoundError:
+        # resolve-branch script not installed — fall back to current branch
+        return _current_branch(cwd)
 
 
 def _git_toplevel(cwd: str | None = None) -> Path:

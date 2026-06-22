@@ -18,11 +18,13 @@ BUILD_SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "build-claude-review-tarbal
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 
+BIN_EXCLUDE = {"build-claude-review-tarball", "_version.py"}
+
 PACKAGED_BINARIES = sorted(
     p for p in BIN_DIR.iterdir()
     if p.is_file()
     and p.stat().st_mode & 0o111
-    and (p.name.startswith("review-") or p.name.startswith("validate-review-"))
+    and p.name not in BIN_EXCLUDE
 )
 
 
@@ -80,14 +82,17 @@ class TestTarballCompleteness:
         )
 
     @pytest.mark.parametrize("binary", PACKAGED_BINARIES, ids=lambda p: p.name)
-    def test_binary_matched_by_glob(self, binary):
-        """Each review-*/validate-review-* binary must be matched by the
-        build script's glob patterns."""
+    def test_binary_not_excluded(self, binary):
+        """Each executable in bin/ must not be in the BIN_EXCLUDE list."""
         content = BUILD_SCRIPT.read_text()
-        has_glob = "review-*" in content or "validate-review-*" in content
-        has_explicit = binary.name in content
-        assert has_glob or has_explicit, (
-            f"{binary.name} is not matched by any glob or explicit cp in the build script"
+        assert 'BIN_EXCLUDE=' in content, (
+            "Build script must define BIN_EXCLUDE for dynamic discovery"
+        )
+        exclude_match = re.search(r'BIN_EXCLUDE="([^"]*)"', content)
+        assert exclude_match, "Could not parse BIN_EXCLUDE from build script"
+        excludes = set(exclude_match.group(1).split("|"))
+        assert binary.name not in excludes, (
+            f"{binary.name} is in BIN_EXCLUDE and will not be packaged"
         )
 
     def test_tarball_copies_review_templates(self):

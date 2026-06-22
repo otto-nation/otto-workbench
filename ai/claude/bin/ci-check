@@ -120,6 +120,17 @@ def _fetch_annotations(repo: str, job_id: int) -> list[dict]:
         return []
 
 
+def _fetch_job_logs(repo: str, job_id: int) -> str:
+    """Fetch logs for a single job via API. Smaller and faster than per-run."""
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
 def _fetch_failed_logs(repo: str, run_id: int) -> str:
     """Fetch logs for failed steps. Returns raw log text."""
     result = subprocess.run(
@@ -142,14 +153,6 @@ def _build_failure_id(annotation: dict, job_name: str) -> str:
     message = annotation.get("message", "")
     return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
 
-
-def _log_fallback_annotations(repo: str, run_id: int) -> tuple[list[dict], list[str]]:
-    """Fetch failed logs and convert to synthetic annotations."""
-    log_text = _fetch_failed_logs(repo, run_id)
-    if not log_text:
-        return [], []
-    annotations = [{"message": log_text[-2000:], "path": "", "start_line": 0, "title": ""}]
-    return annotations, [a["message"] for a in annotations]
 
 
 def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.FailureItem]:
@@ -201,10 +204,17 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         annotation_texts = [a.get("message", "") for a in annotations]
         kind = ci.classify_job(job_name, annotation_texts)
 
-        if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.INFRA):
-            source_run_id = job.get("_source_run_id", run_data["databaseId"])
-            annotations, annotation_texts = _log_fallback_annotations(repo, source_run_id)
-            kind = ci.classify_job(job_name, annotation_texts) if annotation_texts else kind
+        if not annotations and job_id:
+            log_text = _fetch_job_logs(repo, job_id)
+            if not log_text:
+                source_run_id = job.get("_source_run_id", run_data["databaseId"])
+                log_text = _fetch_failed_logs(repo, source_run_id)
+            if log_text:
+                context = ci.extract_failure_context(log_text, kind)
+                if context:
+                    annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
+                    annotation_texts = [context]
+                    kind = ci.classify_job(job_name, annotation_texts)
 
         items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
 

@@ -20,12 +20,6 @@ For each unchecked finding (`- [ ]`) in the review above:
 - Fix findings in severity order: Must fix first, then Should fix, then Nit, then Idioms
 - For each fix, make the minimal correct change — do not refactor surrounding code
 - If a finding is ambiguous or requires a design choice, skip it (leave unchecked)
-- After all fixes, append a summary comment on its own line at the very end of
-  the review file, separated by a blank line from the last finding:
-  ```
-  <!-- fix-pass: N fixed, M skipped -->
-  ```
-  Do not place it inline within a finding's text.
 
 ## Review file location
 ${review_file}

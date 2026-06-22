@@ -9,12 +9,15 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pytest
+
 from pr_state import (
     PRIdentity, CISummary, ReviewSummary, CommentsSummary, TriageSummary,
     RebaseSummary,
     PRState, load_state, save_state, new_state, update_identity, update_ci,
     update_review, update_comments, update_triage, update_rebase,
     state_to_dict, state_from_dict,
+    load_or_init, apply_state_update,
 )
 
 
@@ -335,3 +338,89 @@ def test_save_preserves_rebase_data():
         assert loaded.rebase.target_base == "origin/main"
         assert loaded.rebase.commits_replayed == 3
         assert loaded.rebase.files_resolved == ["f.py"]
+
+
+# ── load_or_init ───────────────────────────────────────────────────────────
+
+
+def test_load_or_init_creates_new_state():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = load_or_init(
+            worktree_root=root, repo="owner/repo", branch="feat",
+            pr_number=42, head_sha="abc123",
+        )
+        assert state.identity.repo == "owner/repo"
+        assert state.identity.pr_number == 42
+        assert state.identity.head_sha == "abc123"
+
+
+def test_load_or_init_loads_existing_and_updates_identity():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=1, head_sha="old", worktree_root=tmp)
+        update_ci(state, CISummary(conclusion="failure", failure_count=3, updated_at="t"))
+        save_state(root, state)
+
+        loaded = load_or_init(
+            worktree_root=root, repo="owner/repo", branch="feat",
+            pr_number=2, head_sha="new",
+        )
+        assert loaded.identity.head_sha == "new"
+        assert loaded.identity.pr_number == 2
+        assert loaded.ci.failure_count == 3
+
+
+# ── apply_state_update ─────────────────────────────────────────────────────
+
+
+def test_apply_state_update_ci():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        apply_state_update(
+            worktree_root=root, repo="owner/repo", branch="feat",
+            pr_number=1, head_sha="abc", domain="ci",
+            data={"conclusion": "failure", "failure_count": 2, "failure_kinds": {"lint": 2}, "updated_at": "t"},
+        )
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.ci.conclusion == "failure"
+        assert loaded.ci.failure_count == 2
+
+
+def test_apply_state_update_review():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        apply_state_update(
+            worktree_root=root, repo="owner/repo", branch="feat",
+            pr_number=1, head_sha="abc", domain="review",
+            data={"verdict": "approve", "finding_counts": {"S": 1}, "cost_usd": 0.5, "updated_at": "t"},
+        )
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.review.verdict == "approve"
+        assert loaded.review.cost_usd == 0.5
+
+
+def test_apply_state_update_triage():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        apply_state_update(
+            worktree_root=root, repo="owner/repo", branch="feat",
+            pr_number=1, head_sha="abc", domain="triage",
+            data={"total": 5, "actionable": 2, "valid": 1, "questions": 1, "updated_at": "t"},
+        )
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.triage.total == 5
+        assert loaded.triage.actionable == 2
+
+
+def test_apply_state_update_unknown_domain():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        with pytest.raises(ValueError, match="Unknown state domain"):
+            apply_state_update(
+                worktree_root=root, repo="r", branch="b",
+                head_sha="a", domain="bogus", data={},
+            )

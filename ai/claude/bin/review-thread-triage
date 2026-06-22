@@ -157,3 +157,18 @@ if ! printf '%s' "$result" | jq . > /dev/null 2>&1; then
 fi
 
 printf '%s\n' "$result"
+
+# Update unified PR state (best-effort)
+if [[ -n "$repo_dir" ]]; then
+  if _triage_state=$(printf '%s' "$result" | jq -c '{
+    total: (.stats.total // 0),
+    actionable: (.stats.actionable // 0),
+    valid: (.stats.valid // 0),
+    questions: (.stats.questions // 0),
+    updated_at: (now | todate)
+  }' 2>/dev/null); then
+    printf '%s' "$_triage_state" \
+      | "$(dirname "$_SELF")/pr-state-update" --domain triage --repo-dir "$repo_dir" 2>/dev/null \
+      || true
+  fi
+fi

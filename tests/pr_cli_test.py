@@ -20,29 +20,6 @@ pr_cli.__file__ = _pr_path
 _spec.loader.exec_module(pr_cli)
 
 
-# ── _parse_ci_json ──────────────────────────────────────────────────────────
-
-
-def test_parse_ci_json_valid():
-    stdout = '{"conclusion": "failure", "failures": []}'
-    result = pr_cli._parse_ci_json(stdout)
-    assert result == {"conclusion": "failure", "failures": []}
-
-
-def test_parse_ci_json_with_dashboard_prefix():
-    stdout = 'Dashboard text\nMore text\n{"conclusion": "success"}'
-    result = pr_cli._parse_ci_json(stdout)
-    assert result["conclusion"] == "success"
-
-
-def test_parse_ci_json_no_json():
-    assert pr_cli._parse_ci_json("no json here") is None
-
-
-def test_parse_ci_json_empty():
-    assert pr_cli._parse_ci_json("") is None
-
-
 # ── _parse_review_summary ──────────────────────────────────────────────────
 
 
@@ -134,28 +111,6 @@ def test_merge_readiness_not_checked():
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     result = pr_cli._merge_readiness(state)
     assert "not checked" in result
-
-
-# ── _build_triage_summary ──────────────────────────────────────────────────
-
-
-def test_build_triage_summary():
-    report = {"stats": {"total": 5, "actionable": 2, "valid": 1, "questions": 1}}
-    result = pr_cli._build_triage_summary(report)
-    assert result.total == 5
-    assert result.actionable == 2
-    assert result.valid == 1
-    assert result.questions == 1
-    assert result.updated_at  # should be set
-
-
-def test_build_triage_summary_empty():
-    result = pr_cli._build_triage_summary({})
-    assert result.total == 0
-    assert result.actionable == 0
-    assert result.valid == 0
-    assert result.questions == 0
-    assert result.updated_at
 
 
 # ── _render_triage_section ─────────────────────────────────────────────────

@@ -97,6 +97,11 @@ tools:
     visibility: hidden
     description: "Rebase current branch onto origin/main with conflict detection and force-push"
 
+  - name: pr-state-update
+    permission: false
+    visibility: hidden
+    description: "CLI helper for updating unified PR state from stdin JSON"
+
   - name: ci-check
     permission: true
     visibility: hidden

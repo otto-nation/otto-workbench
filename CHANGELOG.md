@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.31.0](https://github.com/otto-nation/otto-workbench/compare/v1.30.1...v1.31.0) (2026-06-22)
+
+
+### Features
+
+* **ai:** add headroom token compression as AI sub-tool ([#307](https://github.com/otto-nation/otto-workbench/issues/307)) ([c282a31](https://github.com/otto-nation/otto-workbench/commit/c282a317d03a1ab1393d0f8d18ab05c7dc738fdd))
+* **claude-review:** wire reply threads into re-review prompts ([#309](https://github.com/otto-nation/otto-workbench/issues/309)) ([9d20ea8](https://github.com/otto-nation/otto-workbench/commit/9d20ea893908c98e46d244471d7dc799900537c4))
+
+
+### Bug Fixes
+
+* add .superpowers to gitignore ([#315](https://github.com/otto-nation/otto-workbench/issues/315)) ([e4d2646](https://github.com/otto-nation/otto-workbench/commit/e4d2646c6327b9ded399d98823df71d26e505d15))
+* discover all bin scripts dynamically in tarball build ([#312](https://github.com/otto-nation/otto-workbench/issues/312)) ([3f379f6](https://github.com/otto-nation/otto-workbench/commit/3f379f68d5db22cebe18b034b1a07edf1ae40bcf))
+
+
+### Code Refactoring
+
+* rename claude-review tarball to otto-ai-tools ([#314](https://github.com/otto-nation/otto-workbench/issues/314)) ([c4ed937](https://github.com/otto-nation/otto-workbench/commit/c4ed937648add4e4f4b418b4aaae70d77f637c4b))
+
 ## [1.30.1](https://github.com/otto-nation/otto-workbench/compare/v1.30.0...v1.30.1) (2026-06-22)
 
 

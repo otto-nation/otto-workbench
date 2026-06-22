@@ -32,3 +32,4 @@ You have ${max_turns} turns total. Your FIRST action must be the Write tool to c
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}
+${reply_threads}

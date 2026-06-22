@@ -30,6 +30,10 @@
           {
             "type": "command",
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *\"-exec \"* || \"$command\" == *\"-exec\\\"\"* ]]; then echo 'BLOCKED: find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.' >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *'$('* ]]; then echo 'BLOCKED: Command substitution $(...) triggers an unsuppressible permission prompt. Run the inner command first, then use the result in the next call. See bash-tool.md.' >&2; exit 2; fi"
           }
         ]
       },

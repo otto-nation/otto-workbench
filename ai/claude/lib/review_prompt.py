@@ -22,10 +22,12 @@ from review_common import (
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path, _warn,
 )
-from review_findings import annotate_prior_with_stable_ids
+from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
 from review_preflight import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
     PRContext, PRMetadata, PreflightData, ReviewJob,
+    THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
+    THREAD_RESOLVED, THREAD_UNREPLIED,
     format_preflight_data,
 )
 
@@ -53,19 +55,144 @@ def _build_pr_header(pr: PRMetadata, ctx: PRContext) -> str:
     return "\n".join(lines)
 
 
+MAX_REVIEW_BODY_LEN = 200
+
+
+def _format_reviews(raw_json: str) -> str:
+    try:
+        reviews = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return "_None._"
+    if not reviews:
+        return "_None._"
+    lines = []
+    for r in reviews:
+        user = r.get("user", "?")
+        state = r.get("state", "?")
+        body = (r.get("body") or "").replace("\n", " ").strip()
+        if len(body) > MAX_REVIEW_BODY_LEN:
+            body = body[:MAX_REVIEW_BODY_LEN] + "..."
+        entry = f"- @{user}: **{state}**"
+        if body:
+            entry += f" — {body}"
+        lines.append(entry)
+    return "\n".join(lines)
+
+
+def _format_review_comments(raw_json: str) -> str:
+    try:
+        comments = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return "_None._"
+    if not comments:
+        return "_None._"
+
+    threads: dict[int, list[dict]] = {}
+    roots: list[dict] = []
+    for c in comments:
+        reply_to = c.get("in_reply_to_id")
+        if reply_to:
+            threads.setdefault(reply_to, []).append(c)
+        else:
+            roots.append(c)
+
+    lines = []
+    for root in roots:
+        cid = root.get("id", 0)
+        path = root.get("path", "")
+        line_num = root.get("line", "")
+        user = root.get("user", "?")
+        body = (root.get("body") or "").replace("\n", " ").strip()
+        if len(body) > MAX_REVIEW_BODY_LEN:
+            body = body[:MAX_REVIEW_BODY_LEN] + "..."
+        loc = f"`{path}:{line_num}`" if path else "(general)"
+        lines.append(f"- {loc} @{user}: {body}")
+        for reply in threads.get(cid, []):
+            ruser = reply.get("user", "?")
+            rbody = (reply.get("body") or "").replace("\n", " ").strip()
+            if len(rbody) > MAX_REVIEW_BODY_LEN:
+                rbody = rbody[:MAX_REVIEW_BODY_LEN] + "..."
+            lines.append(f"  - @{ruser}: {rbody}")
+
+    return "\n".join(lines)
+
+
+def _format_general_comments(raw_json: str) -> str:
+    try:
+        comments = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return "_None._"
+    if not comments:
+        return "_None._"
+    lines = []
+    for c in comments:
+        user = c.get("user", "?")
+        body = (c.get("body") or "").replace("\n", " ").strip()
+        if len(body) > MAX_REVIEW_BODY_LEN:
+            body = body[:MAX_REVIEW_BODY_LEN] + "..."
+        lines.append(f"- @{user}: {body}")
+    return "\n".join(lines)
+
+
 def _build_reviews_section(ctx: PRContext) -> str:
-    return f"""
-## Existing reviews and comments
-Skip these — do NOT re-fetch from the GitHub API. This data is current as of script invocation.
+    return (
+        "\n## Existing reviews and comments\n"
+        "Skip these — do NOT re-fetch from the GitHub API. "
+        "This data is current as of script invocation.\n\n"
+        "### Submitted reviews\n"
+        f"{_format_reviews(ctx.reviews)}\n\n"
+        "### Inline review comments\n"
+        f"{_format_review_comments(ctx.review_comments)}\n\n"
+        "### General PR comments\n"
+        f"{_format_general_comments(ctx.comments)}"
+    )
 
-### Submitted reviews
-{ctx.reviews}
 
-### Inline review comments
-{ctx.review_comments}
+_THREAD_STATE_ORDER = [
+    (THREAD_CONTESTED, "Contested — re-evaluate in light of the author's explanation"),
+    (THREAD_REPLIED, "Author replied — review the response"),
+    (THREAD_ACKNOWLEDGED, "Acknowledged — verify the fix exists in the diff"),
+    (THREAD_RESOLVED, "Resolved on GitHub — drop from this review"),
+    (THREAD_UNREPLIED, "No reply — carry forward as before"),
+]
 
-### General PR comments
-{ctx.comments}"""
+
+def _build_reply_threads_section(reply_threads: dict) -> str:
+    threads = reply_threads.get("threads", [])
+    if not threads:
+        return ""
+
+    grouped: dict[str, list[dict]] = {}
+    for t in threads:
+        grouped.setdefault(t["state"], []).append(t)
+
+    parts = [
+        "## Reply thread context",
+        "",
+        "The PR author has replied to some of your prior review comments.",
+        "Use this to decide whether to carry forward, drop, or re-evaluate each finding.",
+        "",
+    ]
+    for state, heading in _THREAD_STATE_ORDER:
+        items = grouped.get(state, [])
+        if not items:
+            continue
+        parts.append(f"### {heading}")
+        parts.append("")
+        for t in items:
+            fid = t.get("finding_id", "")
+            loc = t.get("path", "")
+            if t.get("line"):
+                loc += f":{t['line']}"
+            label = f"[{fid}] " if fid else ""
+            parts.append(f"- {label}`{loc}`" if loc else f"- {label}(general comment)")
+            if state in (THREAD_CONTESTED, THREAD_REPLIED):
+                for r in t.get("replies", []):
+                    body = r.get("body", "").replace("\n", " ")[:200]
+                    parts.append(f"  > @{r.get('author', '?')}: {body}")
+        parts.append("")
+
+    return "\n".join(parts)
 
 
 def _build_env_section(wt_path: str, preflight: PreflightData | None = None) -> str:
@@ -223,7 +350,41 @@ def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
     return "\n".join(parts).strip()
 
 
-def _build_prior_section(prior_review: str, context: str = "", file_filter: list[str] | None = None) -> str:
+_STATE_LABELS = {
+    THREAD_CONTESTED: "[CONTESTED]",
+    THREAD_ACKNOWLEDGED: "[ACKNOWLEDGED]",
+    THREAD_RESOLVED: "[RESOLVED]",
+    THREAD_REPLIED: "[REPLIED]",
+}
+
+def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
+    threads = reply_threads.get("threads", [])
+    if not threads:
+        return review_text
+    id_to_state = {}
+    for t in threads:
+        fid = t.get("finding_id", "")
+        if fid and t["state"] in _STATE_LABELS:
+            id_to_state[fid] = _STATE_LABELS[t["state"]]
+    if not id_to_state:
+        return review_text
+    lines = review_text.split("\n")
+    result = []
+    for line in lines:
+        m = BOLD_FINDING_ID_RE.search(line)
+        if m and m.group(1) in id_to_state:
+            label = id_to_state[m.group(1)]
+            line = f"{line}  {label}"
+        result.append(line)
+    return "\n".join(result)
+
+
+def _build_prior_section(
+    prior_review: str,
+    context: str = "",
+    file_filter: list[str] | None = None,
+    reply_threads: dict | None = None,
+) -> str:
     if not prior_review:
         return ""
     review_text = annotate_prior_with_stable_ids(prior_review)
@@ -231,6 +392,8 @@ def _build_prior_section(prior_review: str, context: str = "", file_filter: list
         review_text = _scope_prior_review(review_text, file_filter)
         if not review_text:
             return ""
+    if reply_threads:
+        review_text = _annotate_with_thread_state(review_text, reply_threads)
     default = (
         "This is a re-review. Each prior finding has a stable ID (<!-- sid:XXXXXXXX -->).\n"
         "For each prior finding:\n"
@@ -385,9 +548,15 @@ def _prompt_self_review(job, common, extra):
         "- If the issue is still present, carry it forward\n"
         "- Add any new findings from changes since the last review"
     ))
-    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     preflight = _build_preflight_section(job)
-    sections = {"pr_header": common["pr_header"], "preflight_data": preflight, "delta_section": common["delta_section"], "prior_section": prior_section}
+    sections = {
+        "pr_header": common["pr_header"],
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
+    }
     kwargs = {
         "branch_name": extra.get("branch_name", job.pr.head),
         "repo": job.repo,
@@ -397,6 +566,7 @@ def _prompt_self_review(job, common, extra):
         "env_section": common["env_section"],
         "issue_section": common["issue_section"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
         "review_file": job.review_file,
         "generator_version": common["generator_version"],
         "omitted_guidance": common["omitted_guidance"],
@@ -411,13 +581,14 @@ def _prompt_self_synthesis(job, common, extra):
     prior_ctx = _incremental_prior_ctx(job,
         "Omit prior findings that have been fixed. Carry forward open ones.",
     )
-    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     sections = {
         "pr_header": common["pr_header"],
         "holistic_content": holistic_content,
         "merged_content": merged_content,
         "delta_section": common["delta_section"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
     }
     diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
     preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
@@ -436,6 +607,7 @@ def _prompt_self_synthesis(job, common, extra):
         "wt_path": job.wt_path,
         "today": common["today"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
         "generator_version": common["generator_version"],
         "max_turns": common["max_turns"],
     }
@@ -450,7 +622,7 @@ def _prompt_single(job, common, extra):
         "- If the issue is still present, carry it forward\n"
         "- Add any new findings from changes since the last review"
     ))
-    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     preflight = _build_preflight_section(job)
     sections = {
         "pr_header": common["pr_header"],
@@ -458,6 +630,7 @@ def _prompt_single(job, common, extra):
         "delta_section": common["delta_section"],
         "reviews_section": common["reviews_section"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
     }
     kwargs = {
         "pr_number": job.pr_number,
@@ -469,6 +642,7 @@ def _prompt_single(job, common, extra):
         "env_section": common["env_section"],
         "issue_section": common["issue_section"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
         "review_file": job.review_file,
         "generator_version": common["generator_version"],
         "omitted_guidance": common["omitted_guidance"],
@@ -516,6 +690,7 @@ def _prompt_group(job, common, extra):
     prior_section = _build_prior_section(
         job.prior_review, prior_ctx,
         file_filter=group_files or None,
+        reply_threads=job.reply_threads,
     )
     holistic_block = _build_holistic_block(
         extra.get("holistic_content", ""), job.pr.changed_files,
@@ -527,6 +702,7 @@ def _prompt_group(job, common, extra):
         "env_section": common["env_section"],
         "delta_section": common["delta_section"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
     }
     diff_budget = _compute_diff_budget(job, sections, file_filter=group_files or None)
     group_preflight = _build_preflight_section(
@@ -548,6 +724,7 @@ def _prompt_group(job, common, extra):
         "env_section": common["env_section"],
         "group_output": extra["group_output"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
         "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }
@@ -560,7 +737,7 @@ def _prompt_synthesis(job, common, extra):
     prior_ctx = _incremental_prior_ctx(job,
         "Include a ## Resolved section noting which prior findings were fixed.",
     )
-    prior_section = _build_prior_section(job.prior_review, prior_ctx)
+    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     sections = {
         "pr_header": common["pr_header"],
         "holistic_content": holistic_content,
@@ -568,6 +745,7 @@ def _prompt_synthesis(job, common, extra):
         "delta_section": common["delta_section"],
         "reviews_section": common["reviews_section"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
     }
     diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
     preflight = _build_preflight_section(
@@ -590,6 +768,7 @@ def _prompt_synthesis(job, common, extra):
         "wt_path": job.wt_path,
         "today": common["today"],
         "prior_section": prior_section,
+        "reply_threads": common["reply_threads"],
         "generator_version": common["generator_version"],
         "max_turns": common["max_turns"],
     }
@@ -659,11 +838,13 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     if handler is None:
         raise ValueError(f"Unknown template: {template_name}")
 
+    reply_threads_section = _build_reply_threads_section(job.reply_threads)
     common = {
         "today": date.today().isoformat(),
         "generator_version": job.generator_version,
         "pr_header": _build_pr_header(job.pr, job.ctx),
         "reviews_section": _build_reviews_section(job.ctx),
+        "reply_threads": reply_threads_section,
         "env_section": _build_env_section(job.wt_path, preflight=job.preflight),
         "issue_section": _build_issue_section(job.issue_link, job.issue_context),
         "delta_section": _build_delta_section(job.preflight),

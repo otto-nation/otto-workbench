@@ -10,6 +10,7 @@ State file: ``<worktree>/ignore/pr/state.json``
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -366,7 +367,7 @@ def load_or_init(
     )
 
 
-_DOMAIN_DESERIALIZERS: dict[str, tuple[callable, callable]] = {
+_DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
     "ci": (_ci_from_dict, update_ci),
     "review": (_review_from_dict, update_review),
     "comments": (_comments_from_dict, update_comments),

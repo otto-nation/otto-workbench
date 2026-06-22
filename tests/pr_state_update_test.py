@@ -5,8 +5,6 @@ The core state logic is covered by pr_state_test.py (apply_state_update).
 """
 
 import importlib.util
-import json
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -37,7 +35,6 @@ def test_invalid_domain_rejected(capsys):
 
 
 def test_valid_domains_accepted():
-    """All registered domains are accepted by argparse choices."""
+    """Argparse choices match registered domains exactly."""
     import pr_state
-    for domain in pr_state._DOMAIN_DESERIALIZERS:
-        assert domain in ("ci", "review", "comments", "triage", "rebase")
+    assert set(pr_state._DOMAIN_DESERIALIZERS.keys()) == {"ci", "review", "comments", "triage", "rebase"}

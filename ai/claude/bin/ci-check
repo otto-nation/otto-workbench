@@ -265,8 +265,8 @@ def _update_pr_state(toplevel, repo, branch, pr_number, run_state, report):
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(toplevel, st)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"ci-check: state update failed: {exc}", file=sys.stderr)
 
 
 def main():

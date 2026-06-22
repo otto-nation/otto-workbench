@@ -39,10 +39,6 @@ import pr_state
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _now_iso() -> str:
-    return pr_state.now_iso()
-
-
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     """Load existing state or create a fresh one from resolved context."""
     return pr_state.load_or_init(
@@ -304,7 +300,7 @@ def cmd_repair(args, extra, ctx: pr_context.ResolvedContext) -> int:
                 finding_counts=finding_counts,
                 verdict=summary_data.get("verdict", ""),
                 cost_usd=summary_data.get("cost_usd", 0.0),
-                updated_at=_now_iso(),
+                updated_at=pr_state.now_iso(),
             ))
             pr_state.save_state(ctx.worktree_root, state)
 
@@ -342,7 +338,7 @@ def cmd_repair(args, extra, ctx: pr_context.ResolvedContext) -> int:
                 finding_counts=finding_counts,
                 verdict=summary_data.get("verdict", ""),
                 cost_usd=summary_data.get("cost_usd", 0.0),
-                updated_at=_now_iso(),
+                updated_at=pr_state.now_iso(),
             ))
             pr_state.save_state(ctx.worktree_root, state)
 
@@ -572,7 +568,11 @@ def main():
 
     args, extra = parser.parse_known_args()
 
-    if args.help or not args.command:
+    if args.help:
+        print(_USAGE)
+        sys.exit(0)
+
+    if not args.command:
         print(_USAGE, file=sys.stderr)
         sys.exit(0)
 

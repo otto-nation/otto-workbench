@@ -104,7 +104,8 @@ messages on stderr.
   `_to_dict`/`_from_dict` serializers
 - Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
 - Scripts own their state updates — Python scripts import `pr_state` directly,
-  bash scripts pipe JSON to `pr-state-update --domain <name> --repo-dir <path>`
+  bash scripts pipe JSON to `pr-state-update --domain <name> --repo-dir <path>`.
+  Exception: `pr repair` remains wrapper-owned (claude-review summary lacks a state hook)
 - `pr_state.load_or_init()` provides DRY state loading across all scripts
 - `pr_state.apply_state_update()` provides generic dict-based updates for the CLI helper
 

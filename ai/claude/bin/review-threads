@@ -98,8 +98,16 @@ def main():
     owner, repo_name = repo.split("/", 1)
     my_login = _my_login()
 
-    # State file
+    # State file and git context
     toplevel = Path(args.repo_dir) if args.repo_dir else _git_toplevel()
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True, text=True, cwd=str(toplevel),
+    ).stdout.strip()
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, cwd=str(toplevel),
+    ).stdout.strip()
     state_path = toplevel / "ignore" / "pr-comments" / "state.json"
 
     # Load prior state
@@ -167,14 +175,6 @@ def main():
         has_approvals = any(
             v.get("state") == "APPROVED" for v in report.get("verdicts", [])
         )
-        head_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, cwd=str(toplevel),
-        ).stdout.strip()
-        branch = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, cwd=str(toplevel),
-        ).stdout.strip()
         st = pr_state.load_or_init(
             worktree_root=toplevel, repo=repo, branch=branch,
             pr_number=pr_number, head_sha=head_sha,
@@ -187,8 +187,8 @@ def main():
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(toplevel, st)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"review-threads: state update failed: {exc}", file=sys.stderr)
 
     json.dump(report, sys.stdout, indent=2)
     print()

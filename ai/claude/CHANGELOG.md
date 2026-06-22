@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.24.0...claude-review-v1.25.0) (2026-06-22)
+
+
+### Features
+
+* **ai:** add headroom token compression as AI sub-tool ([#307](https://github.com/otto-nation/otto-workbench/issues/307)) ([c282a31](https://github.com/otto-nation/otto-workbench/commit/c282a317d03a1ab1393d0f8d18ab05c7dc738fdd))
+* **ai:** allow claude CLI and plugin script permissions ([#308](https://github.com/otto-nation/otto-workbench/issues/308)) ([32a4204](https://github.com/otto-nation/otto-workbench/commit/32a42040a2d110082d45521b1eb4e236ab17b828))
+* **claude-review:** wire reply threads into re-review prompts ([#309](https://github.com/otto-nation/otto-workbench/issues/309)) ([9d20ea8](https://github.com/otto-nation/otto-workbench/commit/9d20ea893908c98e46d244471d7dc799900537c4))
+
+
+### Bug Fixes
+
+* discover all bin scripts dynamically in tarball build ([#312](https://github.com/otto-nation/otto-workbench/issues/312)) ([3f379f6](https://github.com/otto-nation/otto-workbench/commit/3f379f68d5db22cebe18b034b1a07edf1ae40bcf))
+
 ## [1.24.0](https://github.com/otto-nation/otto-workbench/compare/claude-review-v1.23.0...claude-review-v1.24.0) (2026-06-22)
 
 

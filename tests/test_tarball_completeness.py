@@ -1,8 +1,8 @@
-"""Verify build-claude-review-tarball packages every file the binaries need.
+"""Verify build-otto-ai-tools-tarball packages every file the binaries need.
 
-The tarball is a self-contained distribution of claude-review for Homebrew.
+The tarball is a self-contained distribution of otto-ai-tools.
 If a Python binary imports a module that the tarball build script doesn't
-copy into lib/, the Homebrew install will crash on import.
+copy into lib/, installs will crash on import.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "build-claude-review-tarball"
+BUILD_SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "build-otto-ai-tools-tarball"
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 
-BIN_EXCLUDE = {"build-claude-review-tarball", "_version.py"}
+BIN_EXCLUDE = {"build-otto-ai-tools-tarball", "_version.py"}
 
 PACKAGED_BINARIES = sorted(
     p for p in BIN_DIR.iterdir()

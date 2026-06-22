@@ -52,10 +52,10 @@ tools:
     visibility: hidden
     description: "Validates review finding positions against a PR diff to ensure comment placement accuracy"
 
-  - name: build-claude-review-tarball
+  - name: build-otto-ai-tools-tarball
     permission: false
     visibility: hidden
-    description: "Package claude-review into a self-contained tarball for Homebrew distribution"
+    description: "Package otto-ai-tools into a self-contained tarball for distribution"
 
   - name: dream-scan
     permission: true

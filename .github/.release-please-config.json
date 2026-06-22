@@ -72,7 +72,7 @@
     },
     "ai/claude": {
       "_comment": "changelog-sections is intentionally duplicated from root — release-please requires per-package config and does not support shared sections",
-      "package-name": "claude-review",
+      "package-name": "otto-ai-tools",
       "include-component-in-tag": true,
       "changelog-sections": [
         {

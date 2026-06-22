@@ -25,7 +25,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
-| `build-claude-review-tarball` | Package claude-review into a self-contained tarball for Homebrew distribution |
+| `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
 | `dream-scan` | Scan session transcripts and memory state for dream consolidation |
 | `dream-verify` | Verify dream memory file integrity across all projects |
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |

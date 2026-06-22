@@ -187,6 +187,22 @@ def _fallback_item(job_name: str) -> ci.FailureItem:
     )
 
 
+def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> tuple[list[dict], list[str], ci.FailureKind]:
+    """Fetch job logs and extract failure context as synthetic annotations."""
+    job_id = job.get("databaseId", 0)
+    log_text = _fetch_job_logs(repo, job_id) if job_id else ""
+    if not log_text:
+        source_run_id = job.get("_source_run_id", run_data["databaseId"])
+        log_text = _fetch_failed_logs(repo, source_run_id)
+    if not log_text:
+        return [], [], kind
+    context = ci.extract_failure_context(log_text, kind)
+    if not context:
+        return [], [], kind
+    annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
+    return annotations, [context], ci.classify_job(job.get("name", "unknown"), [context])
+
+
 def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
     jobs = run_data.get("jobs", [])
@@ -204,17 +220,8 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         annotation_texts = [a.get("message", "") for a in annotations]
         kind = ci.classify_job(job_name, annotation_texts)
 
-        if not annotations and job_id:
-            log_text = _fetch_job_logs(repo, job_id)
-            if not log_text:
-                source_run_id = job.get("_source_run_id", run_data["databaseId"])
-                log_text = _fetch_failed_logs(repo, source_run_id)
-            if log_text:
-                context = ci.extract_failure_context(log_text, kind)
-                if context:
-                    annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
-                    annotation_texts = [context]
-                    kind = ci.classify_job(job_name, annotation_texts)
+        if not annotations:
+            annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
 
         items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
 

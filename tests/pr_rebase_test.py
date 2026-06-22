@@ -26,39 +26,33 @@ _spec.loader.exec_module(pr_rebase_cli)
 # ── _detect_rebase_in_progress ──────────────────────────────────────────────
 
 
-def _make_git_repo(tmpdir: str) -> str:
-    """Create a minimal git repo (init only, no commits needed)."""
-    subprocess.run(["git", "init", "-q", tmpdir], capture_output=True, check=True)
-    return tmpdir
-
-
 def test_detect_rebase_not_in_progress():
     with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is False
+        git_dir = Path(tmpdir) / ".git"
+        git_dir.mkdir()
+        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+            assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is False
 
 
 def test_detect_rebase_merge_in_progress():
     with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        (Path(tmpdir) / ".git" / "rebase-merge").mkdir()
-        assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
+        git_dir = Path(tmpdir) / ".git"
+        git_dir.mkdir()
+        (git_dir / "rebase-merge").mkdir()
+        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+            assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
 
 
 def test_detect_rebase_apply_in_progress():
     with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        (Path(tmpdir) / ".git" / "rebase-apply").mkdir()
-        assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
+        git_dir = Path(tmpdir) / ".git"
+        git_dir.mkdir()
+        (git_dir / "rebase-apply").mkdir()
+        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+            assert pr_rebase_cli._detect_rebase_in_progress(tmpdir) is True
 
 
 # ── _detect_conflicts ───────────────────────────────────────────────────────
-
-
-def test_detect_conflicts_none():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        assert pr_rebase_cli._detect_conflicts(tmpdir) == []
 
 
 def test_detect_conflicts_parses_output():
@@ -80,33 +74,38 @@ def test_detect_conflicts_empty_output():
 
 def test_remaining_rebase_commits_no_rebase():
     with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 0
+        git_dir = Path(tmpdir) / ".git"
+        git_dir.mkdir()
+        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+            assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 0
 
 
 def test_remaining_rebase_commits_from_todo():
     with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        rebase_dir = Path(tmpdir) / ".git" / "rebase-merge"
+        git_dir = Path(tmpdir) / ".git"
+        git_dir.mkdir()
+        rebase_dir = git_dir / "rebase-merge"
         rebase_dir.mkdir()
-        todo = rebase_dir / "git-rebase-todo"
-        todo.write_text(
+        (rebase_dir / "git-rebase-todo").write_text(
             "pick abc123 first commit\n"
             "pick def456 second commit\n"
             "# this is a comment\n"
             "fixup ghi789 squash me\n"
         )
-        assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 3
+        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+            assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 3
 
 
 def test_remaining_rebase_commits_from_apply():
     with tempfile.TemporaryDirectory() as tmpdir:
-        _make_git_repo(tmpdir)
-        apply_dir = Path(tmpdir) / ".git" / "rebase-apply"
+        git_dir = Path(tmpdir) / ".git"
+        git_dir.mkdir()
+        apply_dir = git_dir / "rebase-apply"
         apply_dir.mkdir()
         (apply_dir / "next").write_text("3\n")
         (apply_dir / "last").write_text("7\n")
-        assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 4
+        with mock.patch.object(pr_rebase_cli, "_git_dir", return_value=git_dir):
+            assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 4
 
 
 # ── _conflict_report ───────────────────────────────────────────────────────

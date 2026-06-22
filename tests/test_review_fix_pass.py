@@ -1,0 +1,96 @@
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib")
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
+
+import review_pipeline
+
+
+class TestCountUnchecked:
+    def test_counts_unchecked_findings(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** some must-fix finding\n"
+            "- [x] **[M2]** already fixed\n"
+            "## Should fix\n"
+            "- [ ] **[S1]** some should-fix\n"
+        )
+        assert review_pipeline._count_unchecked(str(review)) == 2
+
+    def test_all_checked(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "- [x] **[M1]** fixed\n"
+            "- [x] **[S1]** fixed\n"
+        )
+        assert review_pipeline._count_unchecked(str(review)) == 0
+
+    def test_none_checked(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "- [ ] **[M1]** finding one\n"
+            "- [ ] **[S1]** finding two\n"
+            "- [ ] **[N1]** finding three\n"
+        )
+        assert review_pipeline._count_unchecked(str(review)) == 3
+
+    def test_missing_file(self):
+        assert review_pipeline._count_unchecked("/nonexistent/review.md") == 0
+
+    def test_ignores_non_finding_checkboxes(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "- [ ] **[M1]** real finding\n"
+            "Some text with - [ ] inline is not a finding\n"
+            "  - [ ] indented checkbox is not a finding\n"
+        )
+        assert review_pipeline._count_unchecked(str(review)) == 1
+
+
+class TestCommitFixes:
+    def _make_job(self, tmp_path):
+        job = MagicMock()
+        job.wt_path = str(tmp_path / "worktree")
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    @patch("review_pipeline.subprocess.run")
+    def test_no_diff_returns_early(self, mock_run, tmp_path):
+        job = self._make_job(tmp_path)
+        mock_run.return_value = MagicMock(returncode=0)
+        review_pipeline._commit_fixes(job, fixed=3, skipped=1)
+        assert mock_run.call_count == 1
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        review_pipeline._commit_fixes(job, fixed=3, skipped=1)
+        commit_call = mock_run.call_args_list[2]
+        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        assert "3 fixed, 1 skipped" in msg
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_zero_fixed_omits_count_from_message(self, mock_run, mock_push, tmp_path):
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        review_pipeline._commit_fixes(job, fixed=0, skipped=2)
+        commit_call = mock_run.call_args_list[2]
+        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        assert msg == "fix: self-review findings"

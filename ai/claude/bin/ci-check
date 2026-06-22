@@ -243,6 +243,32 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     )
 
 
+def _update_pr_state(toplevel, repo, branch, pr_number, run_state, report):
+    """Best-effort update of unified PR state."""
+    if not toplevel:
+        return
+    try:
+        kind_counts: dict[str, int] = {}
+        for f in report.get("failures", []):
+            k = f.get("kind", "unknown")
+            kind_counts[k] = kind_counts.get(k, 0) + 1
+        st = pr_state.load_or_init(
+            worktree_root=toplevel, repo=repo, branch=branch,
+            pr_number=pr_number, head_sha=run_state.head_sha,
+        )
+        pr_state.update_ci(st, pr_state.CISummary(
+            last_run_id=run_state.run_id,
+            last_run_number=run_state.run_number,
+            conclusion=run_state.conclusion,
+            failure_count=len(report.get("failures", [])),
+            failure_kinds=kind_counts,
+            updated_at=pr_state.now_iso(),
+        ))
+        pr_state.save_state(toplevel, st)
+    except Exception:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="CI failure status")
     parser.add_argument("--pr", help="PR number or URL")
@@ -362,28 +388,7 @@ def main():
             if item_id not in current_item_ids
         ]
 
-    # Update unified PR state (best-effort)
-    if toplevel:
-        try:
-            kind_counts: dict[str, int] = {}
-            for f in report.get("failures", []):
-                k = f.get("kind", "unknown")
-                kind_counts[k] = kind_counts.get(k, 0) + 1
-            st = pr_state.load_or_init(
-                worktree_root=toplevel, repo=repo, branch=branch,
-                pr_number=pr_number, head_sha=run_state.head_sha,
-            )
-            pr_state.update_ci(st, pr_state.CISummary(
-                last_run_id=run_state.run_id,
-                last_run_number=run_state.run_number,
-                conclusion=run_state.conclusion,
-                failure_count=len(report.get("failures", [])),
-                failure_kinds=kind_counts,
-                updated_at=pr_state.now_iso(),
-            ))
-            pr_state.save_state(toplevel, st)
-        except Exception:
-            pass
+    _update_pr_state(toplevel, repo, branch, pr_number, run_state, report)
 
     json.dump(report, sys.stdout, indent=2)
     print()

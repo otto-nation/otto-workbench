@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Package claude-review into a self-contained tarball for Homebrew distribution.
+# Package otto-ai-tools into a self-contained tarball for distribution.
 #
-# Usage: build-claude-review-tarball [VERSION]
+# Usage: build-otto-ai-tools-tarball [VERSION]
 #
 # If VERSION is omitted, reads from .github/.release-please-manifest.json.
 #
-# Produces: claude-review-<version>.tar.gz in the current directory.
-# The tarball contains a claude-review-<version>/ directory with:
+# Produces: otto-ai-tools-<version>.tar.gz in the current directory.
+# The tarball contains an otto-ai-tools-<version>/ directory with:
 #   bin/          — all executable scripts (dynamically discovered)
 #   lib/          — bash modules, Python modules, review-templates/, ui.sh facade
 #   agents/       — agent definitions
@@ -27,13 +27,13 @@ _CLAUDE_DIR="$(dirname "$SCRIPT_DIR")"
 
 MANIFEST_KEY="ai/claude"
 
-# Bash modules from lib/ that claude-review needs at runtime.
+# Bash modules from lib/ that the tarball scripts need at runtime.
 # The full ui.sh sources the entire workbench framework; the tarball facade
-# sources only these. claude-review does not use constants.sh.
+# sources only these.
 BASH_MODULES=(output.sh prompts.sh)
 
 # Files excluded from bin/ discovery (this script + support files)
-BIN_EXCLUDE="build-claude-review-tarball|_version.py"
+BIN_EXCLUDE="build-otto-ai-tools-tarball|_version.py"
 
 # Minimum expected file counts — catches silent glob failures
 MIN_BIN_SCRIPTS=5
@@ -44,8 +44,8 @@ MIN_AGENTS=1
 # ─── Version ─────────────────────────────────────────────────────────────
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  echo "Usage: build-claude-review-tarball [VERSION]"
-  echo "Package claude-review into a self-contained tarball."
+  echo "Usage: build-otto-ai-tools-tarball [VERSION]"
+  echo "Package otto-ai-tools into a self-contained tarball."
   echo "If VERSION is omitted, reads from .release-please-manifest.json."
   exit 0
 fi
@@ -64,14 +64,14 @@ if [[ -z "$VERSION" ]]; then
   fi
 fi
 
-echo "Building claude-review tarball v${VERSION}"
+echo "Building otto-ai-tools tarball v${VERSION}"
 
 # ─── Staging ──────────────────────────────────────────────────────────────
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
 
-DEST="$STAGING/claude-review-${VERSION}"
+DEST="$STAGING/otto-ai-tools-${VERSION}"
 mkdir -p "$DEST/bin" "$DEST/lib/review-templates" "$DEST/agents"
 
 # ─── Copy files ───────────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ for py in "$_CLAUDE_DIR/lib/"*.py; do
   cp "$py" "$DEST/lib/"
 done
 
-# Library files — bash modules required by claude-review
+# Library files — bash modules required at runtime
 for sh in "${BASH_MODULES[@]}"; do
   cp "$WORKBENCH_ROOT/lib/$sh" "$DEST/lib/"
 done
@@ -119,7 +119,7 @@ echo "$VERSION" > "$DEST/VERSION"
 
 {
   echo '#!/usr/bin/env bash'
-  # Constants that claude-review references (subset of lib/constants.sh)
+  # Constants that packaged scripts reference (subset of lib/constants.sh)
   # shellcheck disable=SC2016
   echo 'CLAUDE_DIR="$HOME/.claude"'
   # shellcheck disable=SC2016
@@ -194,8 +194,8 @@ fi
 
 # ─── Build tarball ────────────────────────────────────────────────────────
 
-TARBALL="claude-review-${VERSION}.tar.gz"
-tar -czf "$TARBALL" -C "$STAGING" "claude-review-${VERSION}"
+TARBALL="otto-ai-tools-${VERSION}.tar.gz"
+tar -czf "$TARBALL" -C "$STAGING" "otto-ai-tools-${VERSION}"
 
 # ─── Verify tarball ──────────────────────────────────────────────────────
 

@@ -74,13 +74,13 @@ messages on stderr.
 
 | Subcommand | Script | State updated by |
 |------------|--------|------------------|
-| `pr ci` | `ci-check` | `pr` wrapper (parses JSON) |
-| `pr review` | `claude-review` | `pr` wrapper (parses REVIEW_SUMMARY) |
-| `pr comments` | `review-threads` | `pr` wrapper (parses JSON) |
-| `pr triage` | `review-thread-triage` | `pr` wrapper (parses JSON) |
+| `pr ci` | `ci-check` | script (updates state directly) |
+| `pr review` | `claude-review` | script (updates state directly) |
+| `pr comments` | `review-threads` | script (updates state directly) |
+| `pr triage` | `review-thread-triage` | script (via `pr-state-update` CLI) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
 | `pr repair` | `claude-review` (summary/rebuild) | `pr` wrapper |
-| `pr post` | `claude-review` (post) | none |
+| `pr post` | `claude-review` (post) | script (via `pr-state-update` CLI) |
 | `pr gc` | `claude-review` (gc) | none |
 | `pr fix` | `claude-review` (--fix) | none |
 | `pr status` | none (reads cached state) | none |
@@ -103,8 +103,11 @@ messages on stderr.
 - Each domain has a dataclass (e.g., `CISummary`, `RebaseSummary`) with
   `_to_dict`/`_from_dict` serializers
 - Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
-- Two ownership patterns exist: wrapper-owned (pr parses output and updates
-  state) and script-owned (script imports `pr_state` and updates directly)
+- Scripts own their state updates — Python scripts import `pr_state` directly,
+  bash scripts pipe JSON to `pr-state-update --domain <name> --repo-dir <path>`.
+  Exception: `pr repair` remains wrapper-owned (claude-review summary lacks a state hook)
+- `pr_state.load_or_init()` provides DRY state loading across all scripts
+- `pr_state.apply_state_update()` provides generic dict-based updates for the CLI helper
 
 ## Output
 

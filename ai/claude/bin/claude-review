@@ -448,6 +448,26 @@ _json_summary() {
   return 0
 }
 
+_update_pr_state() {
+  local repo="$1" pr_number="$2" review_file="$3" repo_dir="$4" review_type="${5:-}"
+  [[ -n "$repo_dir" && -f "${review_file:-}" ]] || return 0
+  local summary_line
+  summary_line=$(_json_summary "$repo" "$pr_number" "$review_file" 2>/dev/null) || return 0
+  local json
+  json=$(echo "$summary_line" | sed 's/^REVIEW_SUMMARY://')
+  printf '%s' "$json" | jq -c '{
+    review_file: .review_file,
+    review_type: (.review_type // "'"$review_type"'"),
+    head_sha: (.head_sha // ""),
+    finding_counts: (.findings | to_entries | map(select(.key != "total" and (.value | type) == "number" and .value > 0)) | from_entries),
+    verdict: .verdict,
+    cost_usd: .cost_usd,
+    updated_at: (now | todate)
+  }' 2>/dev/null \
+  | "$(dirname "$_SELF")/pr-state-update" --domain review --repo-dir "$repo_dir" 2>/dev/null \
+  || true
+}
+
 _load_issue_provider() {
   local -n __provider=$1
   local -n __provider_opts=$2
@@ -1178,6 +1198,8 @@ _run_self_review() {
   [[ -n "$pr_number" ]] && pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
   _print_summary "$review_file" "$session_log" "$pr_url" "" "$branch_name"
 
+  _update_pr_state "$repo" "${pr_number:-}" "$review_file" "$wt_path" "self"
+
   # Emit JSON summary before worktree cleanup so review file is still readable
   if [[ -n "${_json_stdout:-}" ]]; then
     _json_summary "$repo" "$pr_number" "$review_file" >&"$_json_stdout"
@@ -1392,24 +1414,26 @@ main() {
     post)
       local post_input="${positional[1]:-}"
       [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
-      local post_pr_number post_repo
+      local post_pr_number post_repo post_review_file
       _extract_pr_number post_pr_number "$post_input"
       _extract_repo post_repo "$post_input"
+      _review_file post_review_file "$post_repo" "$post_pr_number"
       cmd_post "$post_repo" "$post_pr_number" "$auto_submit"
+      _update_pr_state "$post_repo" "$post_pr_number" "$post_review_file" "$repo_dir" "pr"
       if [[ "$json_summary" == "true" ]]; then
-        local post_review_file
-        _review_file post_review_file "$post_repo" "$post_pr_number"
         _json_summary "$post_repo" "$post_pr_number" "$post_review_file" >&"$_json_stdout"
         exec {_json_stdout}>&-
       fi
       ;;
     rebuild)
-      cmd_rebuild "${positional[1]:-}"
+      local rebuild_input="${positional[1]:-}"
+      local rebuild_pr_number rebuild_repo rebuild_review_file
+      _extract_pr_number rebuild_pr_number "$rebuild_input"
+      _extract_repo rebuild_repo "$rebuild_input"
+      _review_file rebuild_review_file "$rebuild_repo" "$rebuild_pr_number"
+      cmd_rebuild "$rebuild_input"
+      _update_pr_state "$rebuild_repo" "$rebuild_pr_number" "$rebuild_review_file" "$repo_dir" "pr"
       if [[ "$json_summary" == "true" ]]; then
-        local rebuild_pr_number rebuild_repo rebuild_review_file
-        _extract_pr_number rebuild_pr_number "${positional[1]:-}"
-        _extract_repo rebuild_repo "${positional[1]:-}"
-        _review_file rebuild_review_file "$rebuild_repo" "$rebuild_pr_number"
         _json_summary "$rebuild_repo" "$rebuild_pr_number" "$rebuild_review_file" >&"$_json_stdout"
         exec {_json_stdout}>&-
       fi
@@ -1425,12 +1449,13 @@ main() {
       exit 1
       ;;
     *)
+      local rev_pr_number rev_repo rev_review_file
+      _extract_pr_number rev_pr_number "$command"
+      _extract_repo rev_repo "$command"
+      _review_file rev_review_file "$rev_repo" "$rev_pr_number"
       _run_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$auto_submit" "$repo_dir"
+      _update_pr_state "$rev_repo" "$rev_pr_number" "$rev_review_file" "$repo_dir" "pr"
       if [[ "$json_summary" == "true" ]]; then
-        local rev_pr_number rev_repo rev_review_file
-        _extract_pr_number rev_pr_number "$command"
-        _extract_repo rev_repo "$command"
-        _review_file rev_review_file "$rev_repo" "$rev_pr_number"
         _json_summary "$rev_repo" "$rev_pr_number" "$rev_review_file" >&"$_json_stdout"
         exec {_json_stdout}>&-
       fi

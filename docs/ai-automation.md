@@ -139,7 +139,7 @@ AI-assisted rebase onto origin/main with conflict resolution and force push. TRI
 /pr-rebase [--fix]
 ```
 **Trigger:** Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase.
-**Skip:** Do not use for simple git pull --rebase with no conflicts; do not use for commit rewording (use task commit:reword instead).
+**Skip:** Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead).
 
 ### `/promote`
 

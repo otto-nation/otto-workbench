@@ -299,6 +299,8 @@ def main():
     parser.add_argument("--repo-dir", "--repo", "--worktree",
                         dest="repo_dir",
                         help="Git worktree directory")
+    parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
+    parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
     parser.add_argument("--fix", action="store_true",
                         help="Autonomous mode — rebase and force-push without confirmation")
     parser.add_argument("--push", action="store_true",
@@ -308,7 +310,9 @@ def main():
 
     args = parser.parse_args()
 
-    ctx = pr_context.resolve(repo_dir=args.repo_dir)
+    ctx = pr_context.resolve(
+        repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
+    )
     cwd = str(ctx.worktree_root)
 
     if args.abort:

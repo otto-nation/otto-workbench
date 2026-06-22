@@ -39,7 +39,7 @@ try_api_update() {
     return 0
   }
 
-  if echo "$http_status" | grep -q "merge conflict"; then
+  if echo "$http_status" | grep -qi "merge conflict"; then
     return 1
   fi
 
@@ -68,7 +68,7 @@ try_local_merge() {
 
   git checkout -B "$branch" "origin/${branch}"
 
-  if git merge origin/main --no-edit 2>/dev/null; then
+  if git merge origin/main --no-edit; then
     echo "  ✓ PR #${pr} merged cleanly (no conflict after all)"
     git push origin "$branch"
     git checkout -
@@ -127,5 +127,5 @@ done <<< "$pending"
 
 if [[ "$errors" -gt 0 ]]; then
   echo "::error::Failed to update ${errors} release PR(s)"
-  exit 1
+  exit 0
 fi

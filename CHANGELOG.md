@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.32.0](https://github.com/otto-nation/otto-workbench/compare/v1.31.0...v1.32.0) (2026-06-22)
+
+
+### Features
+
+* **pr:** add rebase subcommand with AI-assisted conflict resolution ([#313](https://github.com/otto-nation/otto-workbench/issues/313)) ([368acb1](https://github.com/otto-nation/otto-workbench/commit/368acb1697483f275ac31235270c459289ace886))
+
+
+### Bug Fixes
+
+* add PreToolUse hook to block command substitution in Bash tool ([#319](https://github.com/otto-nation/otto-workbench/issues/319)) ([743915d](https://github.com/otto-nation/otto-workbench/commit/743915d3d254f5e2495dc01e4b0d961100067cd6))
+* **ci:** improve failure diagnosis with per-job log extraction ([#320](https://github.com/otto-nation/otto-workbench/issues/320)) ([2390f1a](https://github.com/otto-nation/otto-workbench/commit/2390f1a530a867fcff5aa49a07fdacb7ac9b165d))
+
+
+### Code Refactoring
+
+* move Bash tool permission patterns from git-operations to bash-tool ([#321](https://github.com/otto-nation/otto-workbench/issues/321)) ([787c895](https://github.com/otto-nation/otto-workbench/commit/787c89542b9c7a0d2901fde4569b8159081dc821))
+
 ## [1.31.0](https://github.com/otto-nation/otto-workbench/compare/v1.30.1...v1.31.0) (2026-06-22)
 
 

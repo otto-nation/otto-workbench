@@ -64,6 +64,48 @@ Review artifacts live in `~/.config/workbench/reviews/{repo}-{pr_or_branch}/`:
 - Large files with small diffs are automatically skipped by the density filter (`FILE_CONTENT_DENSITY_THRESHOLD`)
 - Budget constants: `MAX_PROMPT_BYTES` (480KB), `TEMPLATE_OVERHEAD_BYTES` (20KB), `FILE_CONTENT_MIN_SIZE` (5KB)
 
+## pr CLI Development
+
+The `pr` script (`ai/claude/bin/pr`) is a thin dispatch layer. Each subcommand
+delegates to an external script via `subprocess.run()`. JSON on stdout, status
+messages on stderr.
+
+### Delegation map
+
+| Subcommand | Script | State updated by |
+|------------|--------|------------------|
+| `pr ci` | `ci-check` | `pr` wrapper (parses JSON) |
+| `pr review` | `claude-review` | `pr` wrapper (parses REVIEW_SUMMARY) |
+| `pr comments` | `review-threads` | `pr` wrapper (parses JSON) |
+| `pr triage` | `review-thread-triage` | `pr` wrapper (parses JSON) |
+| `pr rebase` | `pr-rebase` | script (updates state directly) |
+| `pr repair` | `claude-review` (summary/rebuild) | `pr` wrapper |
+| `pr post` | `claude-review` (post) | none |
+| `pr gc` | `claude-review` (gc) | none |
+| `pr fix` | `claude-review` (--fix) | none |
+| `pr status` | none (reads cached state) | none |
+
+### Adding a new subcommand
+
+1. Create the external script in `ai/claude/bin/`
+2. Add argparse subparser in `pr`
+3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
+4. If the subcommand has persistent state: add a dataclass to `pr_state.py`
+   with `_to_dict`/`_from_dict` serializers and an `update_<name>()` function
+5. Add `_render_<name>_section()` to `pr` for the `cmd_status` dashboard
+6. Register in `ai/claude/registry.yml`
+7. Add tests in `tests/`
+
+### State management
+
+- State file: `<worktree>/ignore/pr/state.json`
+- Lib module: `ai/claude/lib/pr_state.py`
+- Each domain has a dataclass (e.g., `CISummary`, `RebaseSummary`) with
+  `_to_dict`/`_from_dict` serializers
+- Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
+- Two ownership patterns exist: wrapper-owned (pr parses output and updates
+  state) and script-owned (script imports `pr_state` and updates directly)
+
 ## Output
 
 - Do not summarize changes at the end of a response — the diff speaks for itself

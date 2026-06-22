@@ -31,7 +31,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, ci-failures, context, dream, machine, pr-comments, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, ci-failures, context, dream, machine, pr-comments, pr-rebase, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -130,6 +130,16 @@ Analyze and address PR review comments with lifecycle tracking: fetch, classify,
 ```
 **Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
 **Skip:** Do not use for initial code review requests (use code-review or claude-review instead); do not use for self-review before PR creation (use self-review-fix instead).
+
+### `/pr-rebase [--fix]`
+
+AI-assisted rebase onto origin/main with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead).
+
+```
+/pr-rebase [--fix]
+```
+**Trigger:** Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase.
+**Skip:** Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead).
 
 ### `/promote`
 

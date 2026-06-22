@@ -179,3 +179,50 @@ def test_render_triage_section_with_data():
     assert "2 actionable" in result[0]
     assert "1 valid" in result[0]
     assert "1 questions" in result[0]
+
+
+# ── _render_rebase_section ────────────────────────────────────────────────
+
+
+def test_render_rebase_section_not_run():
+    import pr_state
+    r = pr_state.RebaseSummary()
+    result = pr_cli._render_rebase_section(r)
+    assert result == ["**Rebase**: not run yet"]
+
+
+def test_render_rebase_section_with_data():
+    import pr_state
+    r = pr_state.RebaseSummary(
+        target_base="origin/main", commits_replayed=3,
+        conflicts_resolved=2, files_resolved=["a.py", "b.py"],
+        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+    )
+    result = pr_cli._render_rebase_section(r)
+    assert len(result) >= 1
+    assert "2 file(s)" in result[0]
+    assert "3 commit(s)" in result[0]
+    assert "force-pushed" in result[0]
+
+
+def test_render_rebase_section_no_conflicts():
+    import pr_state
+    r = pr_state.RebaseSummary(
+        target_base="origin/main", commits_replayed=5,
+        conflicts_resolved=0, files_resolved=[],
+        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+    )
+    result = pr_cli._render_rebase_section(r)
+    assert len(result) >= 1
+    assert "clean" in result[0].lower()
+
+
+def test_render_rebase_section_not_pushed():
+    import pr_state
+    r = pr_state.RebaseSummary(
+        target_base="origin/main", commits_replayed=3,
+        conflicts_resolved=1, files_resolved=["a.py"],
+        force_pushed=False, updated_at="2026-06-20T00:00:00Z",
+    )
+    result = pr_cli._render_rebase_section(r)
+    assert "force-pushed" not in result[0]

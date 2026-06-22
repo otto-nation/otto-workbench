@@ -125,7 +125,7 @@ _FAILURE_MARKERS: list[tuple[re.Pattern, FailureKind | None]] = [
     (re.compile(r"^--- FAIL:", re.MULTILINE), FailureKind.TEST),
     (re.compile(r"^FAIL\t", re.MULTILINE), FailureKind.TEST),
     (re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
-    (re.compile(r"AssertionError|AssertionError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
+    (re.compile(r"AssertionError|AssertError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
     (re.compile(r"^error:", re.MULTILINE | re.IGNORECASE), FailureKind.BUILD),
     (re.compile(r"^fatal:", re.MULTILINE | re.IGNORECASE), FailureKind.BUILD),
 ]

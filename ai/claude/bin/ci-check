@@ -154,7 +154,6 @@ def _build_failure_id(annotation: dict, job_name: str) -> str:
     return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
 
 
-
 def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.FailureItem]:
     """Convert raw annotations to FailureItems, skipping notices."""
     items: list[ci.FailureItem] = []

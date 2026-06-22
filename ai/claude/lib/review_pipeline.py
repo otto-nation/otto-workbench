@@ -335,7 +335,17 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     return angles_content, angles_output, angles_log
 
 
-def _commit_fixes(job: ReviewJob):
+def _count_unchecked(review_file: str) -> int:
+    """Count unchecked finding checkboxes in a review file."""
+    if not Path(review_file).exists():
+        return 0
+    return sum(
+        1 for line in Path(review_file).read_text().splitlines()
+        if re.match(r"^- \[ \] ", line)
+    )
+
+
+def _commit_fixes(job: ReviewJob, fixed: int, skipped: int):
     """Commit source-file fixes applied by the fix-pass agent."""
     result = subprocess.run(
         ["git", "-C", job.wt_path, "diff", "--quiet"],
@@ -343,15 +353,6 @@ def _commit_fixes(job: ReviewJob):
     )
     if result.returncode == 0:
         return
-
-    fixed, skipped = 0, 0
-    if Path(job.review_file).exists():
-        content = Path(job.review_file).read_text()
-        match = re.search(
-            r"<!-- fix-pass: (\d+) fixed, (\d+) skipped -->", content,
-        )
-        if match:
-            fixed, skipped = int(match.group(1)), int(match.group(2))
 
     subprocess.run(
         ["git", "-C", job.wt_path, "add", "-u"],
@@ -404,11 +405,14 @@ def run_fix_pass(job: ReviewJob):
         TEMPLATE_FIX, job, max_turns=DEFAULT_MAX_TURNS_FIX,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX)
+    before = _count_unchecked(job.review_file)
     _info("Fix pass — applying review findings...")
     print()
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_FIX)
     print()
-    _commit_fixes(job)
+    after = _count_unchecked(job.review_file)
+    fixed = before - after
+    _commit_fixes(job, fixed=fixed, skipped=after)
 
 
 def _check_serial_abort(

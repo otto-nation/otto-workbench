@@ -10,9 +10,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from pr_state import (
-    PRIdentity, CISummary, ReviewSummary, CommentsSummary, PRState,
-    load_state, save_state, new_state, update_identity, update_ci,
-    update_review, update_comments, state_to_dict, state_from_dict,
+    PRIdentity, CISummary, ReviewSummary, CommentsSummary, TriageSummary,
+    PRState, load_state, save_state, new_state, update_identity, update_ci,
+    update_review, update_comments, update_triage, state_to_dict,
+    state_from_dict,
 )
 
 
@@ -51,6 +52,15 @@ def test_comments_summary_defaults():
     assert c.has_approvals is False
 
 
+def test_triage_summary_defaults():
+    t = TriageSummary()
+    assert t.total == 0
+    assert t.actionable == 0
+    assert t.valid == 0
+    assert t.questions == 0
+    assert t.updated_at == ""
+
+
 def test_pr_state_defaults():
     ident = PRIdentity(
         repo="r", branch="b", pr_number=None,
@@ -60,6 +70,7 @@ def test_pr_state_defaults():
     assert state.ci.failure_count == 0
     assert state.review.verdict == ""
     assert state.comments.total_threads == 0
+    assert state.triage.total == 0
 
 
 # ── new_state ───────────────────────────────────────────────────────────────
@@ -89,6 +100,7 @@ def test_state_to_dict_and_back_empty():
     assert restored.ci.failure_count == 0
     assert restored.review.verdict == ""
     assert restored.comments.total_threads == 0
+    assert restored.triage.total == 0
 
 
 def test_state_roundtrip_with_data():
@@ -127,6 +139,23 @@ def test_state_roundtrip_with_data():
     assert restored.comments.by_state == {"new": 2, "addressed": 3}
     assert restored.comments.blocking_reviewers == ["alice"]
     assert restored.comments.has_approvals is True
+
+
+def test_state_roundtrip_with_triage_data():
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    update_triage(state, TriageSummary(
+        total=10, actionable=4, valid=3, questions=2,
+        updated_at="2026-06-20T00:00:00+00:00",
+    ))
+
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+
+    assert restored.triage.total == 10
+    assert restored.triage.actionable == 4
+    assert restored.triage.valid == 3
+    assert restored.triage.questions == 2
+    assert restored.triage.updated_at == "2026-06-20T00:00:00+00:00"
 
 
 # ── File I/O ────────────────────────────────────────────────────────────────
@@ -175,6 +204,24 @@ def test_save_preserves_ci_data():
         assert loaded.ci.failure_kinds == {"lint": 2}
 
 
+def test_save_preserves_triage_data():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        update_triage(state, TriageSummary(
+            total=8, actionable=3, valid=2, questions=1,
+            updated_at="2026-06-20T00:00:00+00:00",
+        ))
+        save_state(root, state)
+
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.triage.total == 8
+        assert loaded.triage.actionable == 3
+        assert loaded.triage.valid == 2
+        assert loaded.triage.questions == 1
+
+
 # ── Updaters ────────────────────────────────────────────────────────────────
 
 
@@ -210,3 +257,13 @@ def test_update_comments_replaces():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     update_comments(state, CommentsSummary(total_threads=3, updated_at="t1"))
     assert state.comments.total_threads == 3
+
+
+def test_update_triage_replaces():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_triage(state, TriageSummary(total=5, actionable=2, updated_at="t1"))
+    assert state.triage.total == 5
+    update_triage(state, TriageSummary(total=10, actionable=4, valid=3, updated_at="t2"))
+    assert state.triage.total == 10
+    assert state.triage.actionable == 4
+    assert state.triage.valid == 3

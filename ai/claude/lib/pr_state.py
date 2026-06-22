@@ -66,12 +66,23 @@ class CommentsSummary:
 
 
 @dataclass
+class TriageSummary:
+    """Snapshot written by ``pr triage``."""
+    total: int = 0
+    actionable: int = 0
+    valid: int = 0
+    questions: int = 0
+    updated_at: str = ""
+
+
+@dataclass
 class PRState:
     """Unified PR state — envelope over domain summaries."""
     identity: PRIdentity
     ci: CISummary = field(default_factory=CISummary)
     review: ReviewSummary = field(default_factory=ReviewSummary)
     comments: CommentsSummary = field(default_factory=CommentsSummary)
+    triage: TriageSummary = field(default_factory=TriageSummary)
     created_at: str = ""
     updated_at: str = ""
 
@@ -165,12 +176,33 @@ def _comments_from_dict(d: dict) -> CommentsSummary:
     )
 
 
+def _triage_to_dict(t: TriageSummary) -> dict:
+    return {
+        "total": t.total,
+        "actionable": t.actionable,
+        "valid": t.valid,
+        "questions": t.questions,
+        "updated_at": t.updated_at,
+    }
+
+
+def _triage_from_dict(d: dict) -> TriageSummary:
+    return TriageSummary(
+        total=d.get("total", 0),
+        actionable=d.get("actionable", 0),
+        valid=d.get("valid", 0),
+        questions=d.get("questions", 0),
+        updated_at=d.get("updated_at", ""),
+    )
+
+
 def state_to_dict(state: PRState) -> dict:
     return {
         "identity": _identity_to_dict(state.identity),
         "ci": _ci_to_dict(state.ci),
         "review": _review_to_dict(state.review),
         "comments": _comments_to_dict(state.comments),
+        "triage": _triage_to_dict(state.triage),
         "created_at": state.created_at,
         "updated_at": state.updated_at,
     }
@@ -182,6 +214,7 @@ def state_from_dict(d: dict) -> PRState:
         ci=_ci_from_dict(d.get("ci", {})),
         review=_review_from_dict(d.get("review", {})),
         comments=_comments_from_dict(d.get("comments", {})),
+        triage=_triage_from_dict(d.get("triage", {})),
         created_at=d.get("created_at", ""),
         updated_at=d.get("updated_at", ""),
     )
@@ -255,3 +288,8 @@ def update_review(state: PRState, summary: ReviewSummary) -> None:
 def update_comments(state: PRState, summary: CommentsSummary) -> None:
     """Replace comments summary."""
     state.comments = summary
+
+
+def update_triage(state: PRState, summary: TriageSummary) -> None:
+    """Replace triage summary."""
+    state.triage = summary

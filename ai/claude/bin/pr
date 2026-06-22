@@ -491,14 +491,14 @@ def main():
 
     # pr ci
     ci_p = sub.add_parser("ci", help="CI failure status",
-                          description="Fetch and display CI failures for the current PR.\n\nDelegates to ci-check. Exit 0 = green, exit 1 = failures found.",
+                          add_help=False,
                           epilog=_sub_epilog("ci-check"),
                           formatter_class=fmt)
     ci_p.add_argument("--run", type=int, help="Specific workflow run ID (default: latest)")
 
     # pr review
     review_p = sub.add_parser("review", help="Run code review",
-                              description="Run AI code review on a PR or the current branch.\n\nWithout --self, reviews a PR (pass number/URL as target).\nWith --self, reviews uncommitted changes for pre-merge checks.",
+                              add_help=False,
                               epilog=_sub_epilog("claude-review"),
                               formatter_class=fmt)
     review_p.add_argument("target", nargs="?",
@@ -514,7 +514,7 @@ def main():
 
     # pr comments
     comments_p = sub.add_parser("comments", help="PR review thread status",
-                                description="Fetch and display PR review threads.\n\nShows thread counts by state (new, resolved, contested) and blocking reviewers.",
+                                add_help=False,
                                 epilog=_sub_epilog("review-threads"),
                                 formatter_class=fmt)
     comments_p.add_argument("--resolve-verified", action="store_true",
@@ -522,13 +522,13 @@ def main():
 
     # pr triage
     sub.add_parser("triage", help="Classify and verify review threads",
-                   description="Classify review threads as actionable, valid, or questions.\n\nDelegates to review-thread-triage.",
+                   add_help=False,
                    epilog=_sub_epilog("review-thread-triage"),
                    formatter_class=fmt)
 
     # pr repair
     repair_p = sub.add_parser("repair", help="Repair broken review artifacts",
-                              description="Repair broken or incomplete review artifacts.\n\nTries summary first, falls back to full rebuild if needed.",
+                              add_help=False,
                               epilog=_sub_epilog("claude-review"),
                               formatter_class=fmt)
     repair_p.add_argument("target", nargs="?", help="PR URL/number")
@@ -541,7 +541,7 @@ def main():
 
     # pr post
     post_p = sub.add_parser("post", help="Post existing review to GitHub",
-                            description="Post a previously generated review as PR comments.\n\nRequires a review file from a prior pr review run.",
+                            add_help=False,
                             epilog=_sub_epilog("claude-review"),
                             formatter_class=fmt)
     post_p.add_argument("target", nargs="?", help="PR URL/number")
@@ -550,13 +550,13 @@ def main():
 
     # pr gc
     sub.add_parser("gc", help="Clean up stale review artifacts",
-                   description="Remove stale review artifacts from ~/.config/workbench/reviews/.",
+                   add_help=False,
                    epilog=_sub_epilog("claude-review"),
                    formatter_class=fmt)
 
     # pr rebase
     rebase_p = sub.add_parser("rebase", help="Rebase onto origin/main with AI conflict resolution",
-                              description="Rebase the current branch onto origin/main.\n\nUses AI to resolve merge conflicts. Exit 0 = clean, exit 3 = unresolved conflicts.",
+                              add_help=False,
                               epilog=_GLOBAL_FLAGS_EPILOG,
                               formatter_class=fmt)
     rebase_p.add_argument("--fix", action="store_true",

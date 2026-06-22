@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/otto-nation/otto-workbench/compare/v1.32.0...v1.32.1) (2026-06-22)
+
+
+### Code Refactoring
+
+* **pr:** migrate to script-owned state; improve CLI output ([#322](https://github.com/otto-nation/otto-workbench/issues/322)) ([a169747](https://github.com/otto-nation/otto-workbench/commit/a16974741e0e8e3abcdecee1de7a09682c3ffd37))
+
 ## [1.32.0](https://github.com/otto-nation/otto-workbench/compare/v1.31.0...v1.32.0) (2026-06-22)
 
 

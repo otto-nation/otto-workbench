@@ -7,7 +7,7 @@
 #
 # Produces: claude-review-<version>.tar.gz in the current directory.
 # The tarball contains a claude-review-<version>/ directory with:
-#   bin/          — claude-review + all review-*/validate-review-* scripts
+#   bin/          — all executable scripts (dynamically discovered)
 #   lib/          — bash modules, Python modules, review-templates/, ui.sh facade
 #   agents/       — agent definitions
 #   VERSION       — version string
@@ -32,7 +32,11 @@ MANIFEST_KEY="ai/claude"
 # sources only these. claude-review does not use constants.sh.
 BASH_MODULES=(output.sh prompts.sh)
 
+# Files excluded from bin/ discovery (this script + support files)
+BIN_EXCLUDE="build-claude-review-tarball|_version.py"
+
 # Minimum expected file counts — catches silent glob failures
+MIN_BIN_SCRIPTS=5
 MIN_PYTHON_MODULES=5
 MIN_REVIEW_TEMPLATES=4
 MIN_AGENTS=1
@@ -72,11 +76,19 @@ mkdir -p "$DEST/bin" "$DEST/lib/review-templates" "$DEST/agents"
 
 # ─── Copy files ───────────────────────────────────────────────────────────
 
-# Binaries — claude-review plus all review-*/validate-review-* scripts
-cp "$SCRIPT_DIR/claude-review" "$DEST/bin/"
-for bin in "$SCRIPT_DIR"/review-* "$SCRIPT_DIR"/validate-review-*; do
+# Binaries — all executable scripts, excluding build tooling and support files
+bin_count=0
+for bin in "$SCRIPT_DIR"/*; do
+  [[ -f "$bin" && -x "$bin" ]] || continue
+  name="$(basename "$bin")"
+  echo "$name" | grep -qE "^($BIN_EXCLUDE)$" && continue
   cp "$bin" "$DEST/bin/"
+  bin_count=$((bin_count + 1))
 done
+if (( bin_count < MIN_BIN_SCRIPTS )); then
+  echo "ERROR: found $bin_count bin scripts, expected >= $MIN_BIN_SCRIPTS" >&2
+  exit 1
+fi
 
 # Library files — all Python modules
 for py in "$_CLAUDE_DIR/lib/"*.py; do
@@ -197,10 +209,15 @@ for entry in "bin/claude-review" "lib/ui.sh" "VERSION"; do
   fi
 done
 
+bin_tarball_count=$(echo "$contents" | grep -c 'bin/' || true)
 py_count=$(echo "$contents" | grep -c '\.py$' || true)
 agent_count=$(echo "$contents" | grep -c 'agents/.*\.md$' || true)
 tpl_count=$(echo "$contents" | grep -c 'review-templates/.*\.md$' || true)
 
+if (( bin_tarball_count < MIN_BIN_SCRIPTS )); then
+  echo "ERROR: tarball has $bin_tarball_count bin scripts, expected >= $MIN_BIN_SCRIPTS" >&2
+  failed=true
+fi
 if (( py_count < MIN_PYTHON_MODULES )); then
   echo "ERROR: tarball has $py_count Python modules, expected >= $MIN_PYTHON_MODULES" >&2
   failed=true

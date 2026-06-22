@@ -26,6 +26,10 @@
           {
             "type": "command",
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*) ]]; then rel=\"${BASH_REMATCH[1]}\"; echo \"BLOCKED: Use relative path '$rel' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree.\" >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *\"-exec \"* || \"$command\" == *\"-exec\\\"\"* ]]; then echo 'BLOCKED: find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.' >&2; exit 2; fi"
           }
         ]
       },
@@ -91,6 +95,7 @@
       "Bash(* --help *)",
       "Bash(* --help)",
       "Bash(./gradlew:*)",
+      "Bash(/Users/isaacg/.claude/plugins/cache/claude-plugins-official/**:*)",
       "Bash([:*)",
       "Bash([[:*)",
       "Bash(awk:*)",
@@ -106,6 +111,7 @@
       "Bash(ci-check:*)",
       "Bash(claude-review:*)",
       "Bash(claude-rules:*)",
+      "Bash(claude:*)",
       "Bash(command:*)",
       "Bash(cp:*)",
       "Bash(curl:*)",

@@ -20,6 +20,8 @@ _spec = importlib.util.spec_from_loader("pr_cli", _loader, origin=_pr_path)
 pr_cli = importlib.util.module_from_spec(_spec)
 pr_cli.__file__ = _pr_path
 _spec.loader.exec_module(pr_cli)
+# Register so @patch("pr_cli.subprocess.run") can resolve the module
+sys.modules.setdefault("pr_cli", pr_cli)
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -195,6 +197,7 @@ def test_commands_registry_exists():
 
 
 def test_commands_registry_has_all_subcommands():
+    # Keep this set in sync with _COMMANDS in ai/claude/bin/pr
     expected = {"status", "ci", "review", "comments", "triage",
                 "fix", "rebase", "repair", "post", "gc"}
     assert set(pr_cli._COMMANDS.keys()) == expected
@@ -206,11 +209,18 @@ def test_commands_registry_entries_have_help():
         assert isinstance(entry["help"], str)
 
 
-def test_delegating_commands_have_script():
-    delegating = {"ci", "review", "comments", "triage", "rebase",
+def test_commands_with_script_key():
+    """Commands backed by an external script carry a 'script' key."""
+    has_script = {"ci", "review", "comments", "triage", "rebase",
                   "repair", "post", "gc"}
-    for name in delegating:
+    for name in has_script:
         assert "script" in pr_cli._COMMANDS[name], f"{name} missing 'script'"
+
+
+def test_custom_handlers_are_registered():
+    """_CUSTOM contains the expected non-pure-delegate commands."""
+    expected_custom = {"status", "review", "fix", "repair", "post"}
+    assert set(pr_cli._CUSTOM.keys()) == expected_custom
 
 
 def test_internal_commands_have_no_script():
@@ -236,7 +246,7 @@ def _make_ctx(**overrides):
     return pr_context.ResolvedContext(**defaults)
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_run_delegate_builds_command(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -250,7 +260,7 @@ def test_run_delegate_builds_command(mock_run):
     assert "99" in cmd
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_run_delegate_includes_prefix(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -261,7 +271,7 @@ def test_run_delegate_includes_prefix(mock_run):
     assert cmd[1] == "gc"
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_run_delegate_passes_argv_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -273,7 +283,7 @@ def test_run_delegate_passes_argv_through(mock_run):
     assert "--unknown-future-flag" in cmd
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_run_delegate_returns_exit_code(mock_run):
     mock_run.return_value = MagicMock(returncode=3)
     ctx = _make_ctx()
@@ -285,7 +295,7 @@ def test_run_delegate_returns_exit_code(mock_run):
 # ── cmd_review auto-self ──────────────────────────────────────────────────
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_review_injects_self_when_no_target(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -294,7 +304,7 @@ def test_cmd_review_injects_self_when_no_target(mock_run):
     assert "--self" in cmd
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_review_no_self_when_pr_number(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -304,7 +314,7 @@ def test_cmd_review_no_self_when_pr_number(mock_run):
     assert self_count == 0
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_review_no_self_when_pr_url(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -313,7 +323,7 @@ def test_cmd_review_no_self_when_pr_url(mock_run):
     assert "--self" not in cmd
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_review_no_double_self(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -322,7 +332,7 @@ def test_cmd_review_no_double_self(mock_run):
     assert cmd.count("--self") == 1
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_review_passes_flags_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -335,7 +345,7 @@ def test_cmd_review_passes_flags_through(mock_run):
 # ── cmd_post PR fallback ─────────────────────────────────────────────────
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_post_injects_pr_number_when_no_target(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(pr_number=42)
@@ -344,23 +354,154 @@ def test_cmd_post_injects_pr_number_when_no_target(mock_run):
     assert "42" in cmd
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_post_no_inject_when_target_given(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(pr_number=42)
     pr_cli.cmd_post(["99"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "99" in cmd
-    # 42 should not appear as an extra positional
-    positionals = [a for a in cmd if not a.startswith("-") and a != "post"
-                   and not a.endswith("claude-review")]
-    assert "42" not in positionals
+    # 42 must not appear as a standalone positional target; only allowed as --pr value
+    for i, a in enumerate(cmd):
+        if a == "42":
+            assert i > 0 and cmd[i - 1] == "--pr", f"'42' appears as positional at index {i}"
 
 
-@patch("subprocess.run")
+@patch("pr_cli.subprocess.run")
 def test_cmd_post_passes_flags_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(pr_number=42)
     pr_cli.cmd_post(["99", "--submit"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--submit" in cmd
+
+
+# ── _run_delegate branch/pr injection ────────────────────────────────────────
+
+
+@patch("pr_cli.subprocess.run")
+def test_run_delegate_injects_branch_and_pr(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    entry = {"script": "review-thread-triage", "help": "x"}
+    pr_cli._run_delegate(entry, [], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert "--branch" in cmd
+    assert cmd[cmd.index("--branch") + 1] == "feat/my-feature"
+    assert "--pr" in cmd
+    assert cmd[cmd.index("--pr") + 1] == "99"
+
+
+@patch("pr_cli.subprocess.run")
+def test_run_delegate_omits_branch_when_none(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(branch="", pr_number=None)
+    entry = {"script": "ci-check", "help": "x"}
+    pr_cli._run_delegate(entry, [], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert "--branch" not in cmd
+    assert "--pr" not in cmd
+
+
+# ── cmd_repair ──────────────────────────────────────────────────────────────
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_repair_summary_succeeds(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    ctx = _make_ctx(pr_number=42)
+    rc = pr_cli.cmd_repair([], ctx)
+    assert rc == 0
+    assert mock_run.call_count == 1
+    cmd = mock_run.call_args[0][0]
+    assert "summary" in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_repair_falls_back_to_rebuild(mock_run):
+    mock_run.side_effect = [
+        MagicMock(returncode=1, stdout="", stderr="summary error"),
+        MagicMock(returncode=0, stdout="", stderr=""),
+    ]
+    ctx = _make_ctx(pr_number=42)
+    rc = pr_cli.cmd_repair([], ctx)
+    assert rc == 0
+    assert mock_run.call_count == 2
+    rebuild_cmd = mock_run.call_args_list[1][0][0]
+    assert "rebuild" in rebuild_cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_repair_both_fail(mock_run):
+    mock_run.side_effect = [
+        MagicMock(returncode=1, stdout="", stderr=""),
+        MagicMock(returncode=2, stdout="", stderr=""),
+    ]
+    ctx = _make_ctx(pr_number=42)
+    rc = pr_cli.cmd_repair([], ctx)
+    assert rc == 2
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_repair_uses_argv_target(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    ctx = _make_ctx(pr_number=None)
+    rc = pr_cli.cmd_repair(["99"], ctx)
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert "99" in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_repair_uses_ctx_pr_when_no_argv_target(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    ctx = _make_ctx(pr_number=55)
+    rc = pr_cli.cmd_repair([], ctx)
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert "55" in cmd
+
+
+# ── cmd_fix ─────────────────────────────────────────────────────────────────
+
+
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_no_state_returns_error(mock_load):
+    mock_load.return_value = None
+    ctx = _make_ctx()
+    rc = pr_cli.cmd_fix([], ctx)
+    assert rc == 1
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        finding_counts={"M": 1}, verdict="changes_requested", updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx()
+    rc = pr_cli.cmd_fix([], ctx)
+    assert rc == 0
+    assert mock_run.called
+    cmd = mock_run.call_args[0][0]
+    assert "--self" in cmd
+    assert "--fix" in cmd
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        finding_counts={}, verdict="approve", updated_at="t",
+    ))
+    mock_load.return_value = state
+    ctx = _make_ctx()
+    rc = pr_cli.cmd_fix([], ctx)
+    assert rc == 0
+    assert not mock_run.called

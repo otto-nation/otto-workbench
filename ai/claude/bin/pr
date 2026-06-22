@@ -33,6 +33,7 @@ _COMMANDS = {
     "triage":   {"help": "Classify and verify review threads",    "script": "review-thread-triage"},
     "fix":      {"help": "Fix CI + review + comments"},
     "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase"},
+    # "script" key used only so add_help=False on the subparser; dispatch goes through cmd_repair
     "repair":   {"help": "Repair broken review artifacts",        "script": "claude-review"},
     "post":     {"help": "Post existing review to GitHub",        "script": "claude-review", "prefix": ["post"]},
     "gc":       {"help": "Clean up stale review artifacts",       "script": "claude-review", "prefix": ["gc"]},
@@ -44,11 +45,22 @@ def _run_delegate(entry: dict, argv: list[str],
     """Build and run a backing-script command with context injection."""
     cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
     cmd += ["--repo-dir", str(ctx.worktree_root)]
+    if ctx.branch:
+        cmd += ["--branch", ctx.branch]
+    if ctx.pr_number:
+        cmd += ["--pr", str(ctx.pr_number)]
     cmd += list(argv)
     return subprocess.run(cmd).returncode
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Split argv into (positionals, flags)."""
+    positionals = [a for a in argv if not a.startswith("-")]
+    flags = [a for a in argv if a.startswith("-")]
+    return positionals, flags
 
 
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
@@ -231,7 +243,7 @@ def _merge_readiness(state: pr_state.PRState) -> str:
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review with auto-self detection."""
     has_self = "--self" in argv
-    positionals = [a for a in argv if not a.startswith("-")]
+    positionals, _ = _split_argv(argv)
     has_pr_target = any(_is_pr_target(p) for p in positionals)
     inject = ["--self"] if not has_self and not has_pr_target else []
     return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx)
@@ -240,12 +252,10 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 def cmd_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Repair broken review artifacts via summary or rebuild."""
     tool = str(BIN_DIR / "claude-review")
-    positionals = [a for a in argv if not a.startswith("-")]
+    positionals, extra = _split_argv(argv)
     target = next((p for p in positionals if _is_pr_target(p)), None)
     if not target and ctx.pr_number:
         target = str(ctx.pr_number)
-
-    extra = [a for a in argv if a.startswith("-")]
 
     # Step 1: try claude-review summary
     summary_args = [tool, "summary"]
@@ -321,7 +331,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 
 def cmd_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Delegate to claude-review post, injecting PR number if no target."""
-    positionals = [a for a in argv if not a.startswith("-")]
+    positionals, _ = _split_argv(argv)
     has_target = any(_is_pr_target(p) for p in positionals)
     inject = [str(ctx.pr_number)] if not has_target and ctx.pr_number else []
     return _run_delegate(_COMMANDS["post"], inject + list(argv), ctx)
@@ -400,11 +410,10 @@ def main():
     handler = _CUSTOM.get(args.command)
     if handler:
         sys.exit(handler(extra, ctx))
-    elif "script" in _COMMANDS[args.command]:
-        sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx))
     else:
-        print(f"pr: unknown command: {args.command}", file=sys.stderr)
-        sys.exit(1)
+        assert "script" in _COMMANDS[args.command], \
+            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
+        sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx))
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
-class ClaudeReview < Formula
-  desc "AI-powered code review tool for GitHub pull requests"
+class OttoAiTools < Formula
+  desc "AI-powered code review and PR lifecycle tools"
   homepage "https://github.com/otto-nation/otto-workbench"
   version "1.0.0"
   license "MIT"
 
-  url "https://github.com/otto-nation/otto-workbench/releases/download/claude-review-v1.0.0/claude-review-1.0.0.tar.gz"
+  url "https://github.com/otto-nation/otto-workbench/releases/download/otto-ai-tools-v1.0.0/otto-ai-tools-1.0.0.tar.gz"
   sha256 "PLACEHOLDER"
 
   depends_on "bash"
@@ -14,6 +14,7 @@ class ClaudeReview < Formula
   def install
     libexec.install Dir["*"]
     bin.install_symlink libexec/"bin/claude-review"
+    bin.install_symlink libexec/"bin/pr"
   end
 
   def caveats

@@ -467,6 +467,15 @@ def _sub_epilog(tool: str | None = None) -> str:
     return "\n".join(parts)
 
 
+def _delegates_to(tool: str) -> dict:
+    """Common kwargs for subparsers that delegate to an external script."""
+    return dict(
+        add_help=False,
+        epilog=_sub_epilog(tool),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="pr",
@@ -491,16 +500,12 @@ def main():
 
     # pr ci
     ci_p = sub.add_parser("ci", help="CI failure status",
-                          add_help=False,
-                          epilog=_sub_epilog("ci-check"),
-                          formatter_class=fmt)
+                          **_delegates_to("ci-check"))
     ci_p.add_argument("--run", type=int, help="Specific workflow run ID (default: latest)")
 
     # pr review
     review_p = sub.add_parser("review", help="Run code review",
-                              add_help=False,
-                              epilog=_sub_epilog("claude-review"),
-                              formatter_class=fmt)
+                              **_delegates_to("claude-review"))
     review_p.add_argument("target", nargs="?",
                           help="PR URL/number (review others) or branch (self)")
     review_p.add_argument("--self", dest="self_review", action="store_true",
@@ -514,23 +519,17 @@ def main():
 
     # pr comments
     comments_p = sub.add_parser("comments", help="PR review thread status",
-                                add_help=False,
-                                epilog=_sub_epilog("review-threads"),
-                                formatter_class=fmt)
+                                **_delegates_to("review-threads"))
     comments_p.add_argument("--resolve-verified", action="store_true",
                             help="Auto-resolve threads verified as fixed")
 
     # pr triage
     sub.add_parser("triage", help="Classify and verify review threads",
-                   add_help=False,
-                   epilog=_sub_epilog("review-thread-triage"),
-                   formatter_class=fmt)
+                   **_delegates_to("review-thread-triage"))
 
     # pr repair
     repair_p = sub.add_parser("repair", help="Repair broken review artifacts",
-                              add_help=False,
-                              epilog=_sub_epilog("claude-review"),
-                              formatter_class=fmt)
+                              **_delegates_to("claude-review"))
     repair_p.add_argument("target", nargs="?", help="PR URL/number")
 
     # pr fix
@@ -541,24 +540,18 @@ def main():
 
     # pr post
     post_p = sub.add_parser("post", help="Post existing review to GitHub",
-                            add_help=False,
-                            epilog=_sub_epilog("claude-review"),
-                            formatter_class=fmt)
+                            **_delegates_to("claude-review"))
     post_p.add_argument("target", nargs="?", help="PR URL/number")
     post_p.add_argument("--submit", action="store_true",
                         help="Submit as a formal GitHub review (not just comments)")
 
     # pr gc
     sub.add_parser("gc", help="Clean up stale review artifacts",
-                   add_help=False,
-                   epilog=_sub_epilog("claude-review"),
-                   formatter_class=fmt)
+                   **_delegates_to("claude-review"))
 
     # pr rebase
     rebase_p = sub.add_parser("rebase", help="Rebase onto origin/main with AI conflict resolution",
-                              add_help=False,
-                              epilog=_GLOBAL_FLAGS_EPILOG,
-                              formatter_class=fmt)
+                              **_delegates_to("pr-rebase"))
     rebase_p.add_argument("--fix", action="store_true",
                           help="Autonomous mode — resolve conflicts and force-push without confirmation")
     rebase_p.add_argument("--push", action="store_true",

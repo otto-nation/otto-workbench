@@ -653,34 +653,31 @@ def cmd_rebase(args, extra, ctx: pr_context.ResolvedContext) -> int:
             ["git", "push", "--force-with-lease"],
             cwd=cwd,
         )
-        if r.returncode == 0:
-            state = _load_or_init(ctx)
-            # Populate target_base and commits_replayed if missing (conflict-path rebase
-            # never called _rebase_success, so these fields are not yet in state).
-            target_base = state.rebase.target_base
-            commits_replayed = state.rebase.commits_replayed
-            if not target_base:
-                target_base = subprocess.run(
-                    ["git", "rev-parse", "origin/main"],
-                    capture_output=True, text=True, cwd=cwd,
-                ).stdout.strip()
-            if not commits_replayed:
-                count_out = subprocess.run(
-                    ["git", "rev-list", "--count", "origin/main..HEAD"],
-                    capture_output=True, text=True, cwd=cwd,
-                ).stdout.strip()
-                commits_replayed = int(count_out) if count_out.isdigit() else 0
-            pr_state.update_rebase(state, pr_state.RebaseSummary(
-                target_base=target_base,
-                commits_replayed=commits_replayed,
-                conflicts_resolved=state.rebase.conflicts_resolved,
-                files_resolved=state.rebase.files_resolved,
-                force_pushed=True,
-                updated_at=_now_iso(),
-            ))
-            pr_state.save_state(ctx.worktree_root, state)
-            print("Force-pushed successfully.", file=sys.stderr)
-        return r.returncode
+        if r.returncode != 0:
+            return r.returncode
+        state = _load_or_init(ctx)
+        target_base = state.rebase.target_base or subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            capture_output=True, text=True, cwd=cwd,
+        ).stdout.strip()
+        commits_replayed = state.rebase.commits_replayed
+        if not commits_replayed:
+            count_out = subprocess.run(
+                ["git", "rev-list", "--count", "origin/main..HEAD"],
+                capture_output=True, text=True, cwd=cwd,
+            ).stdout.strip()
+            commits_replayed = int(count_out) if count_out.isdigit() else 0
+        pr_state.update_rebase(state, pr_state.RebaseSummary(
+            target_base=target_base,
+            commits_replayed=commits_replayed,
+            conflicts_resolved=state.rebase.conflicts_resolved,
+            files_resolved=state.rebase.files_resolved,
+            force_pushed=True,
+            updated_at=_now_iso(),
+        ))
+        pr_state.save_state(ctx.worktree_root, state)
+        print("Force-pushed successfully.", file=sys.stderr)
+        return 0
 
     # Pre-flight: not on main
     branch = ctx.branch

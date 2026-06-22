@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.3](https://github.com/otto-nation/otto-workbench/compare/v1.32.2...v1.32.3) (2026-06-22)
+
+
+### Bug Fixes
+
+* **pr:** parse global flags regardless of position after subcommand ([#330](https://github.com/otto-nation/otto-workbench/issues/330)) ([50c5198](https://github.com/otto-nation/otto-workbench/commit/50c51989ca8627d77f2dccf28a5e2497015bf67d))
+
 ## [1.32.2](https://github.com/otto-nation/otto-workbench/compare/v1.32.1...v1.32.2) (2026-06-22)
 
 

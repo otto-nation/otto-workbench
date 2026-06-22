@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.0](https://github.com/otto-nation/otto-workbench/compare/v1.29.0...v1.30.0) (2026-06-22)
+
+
+### Features
+
+* **pr:** passthrough architecture; resolve-branch; triage and repair subcommands ([#299](https://github.com/otto-nation/otto-workbench/issues/299)) ([e956361](https://github.com/otto-nation/otto-workbench/commit/e9563619f6eace7b4031560fe77abf5d6e1dc06f))
+
 ## [1.29.0](https://github.com/otto-nation/otto-workbench/compare/v1.28.0...v1.29.0) (2026-06-21)
 
 

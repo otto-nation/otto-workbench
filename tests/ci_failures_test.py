@@ -12,7 +12,8 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     CIState, empty_state, load_state, save_state, state_to_dict, state_from_dict,
-    compute_progression, sync_state, render_dashboard,
+    compute_progression, sync_state, render_dashboard, extract_failure_context,
+    _MAX_CONTEXT_CHARS,
 )
 
 
@@ -334,3 +335,90 @@ def test_render_dashboard_mixed_progression():
     assert "1 new" in dashboard.lower()
     assert "1 persisting" in dashboard.lower()
     assert "1 regressed" in dashboard.lower()
+
+
+# ── Log Extraction Tests ─────────────────────────────────────────────────
+
+def test_extract_failure_context_empty():
+    assert extract_failure_context("", FailureKind.TEST) == ""
+
+
+def test_extract_failure_context_go_test():
+    log = "\n".join([
+        "2026-06-22T17:22:01Z === RUN   TestFoo",
+        "2026-06-22T17:22:01Z     foo_test.go:42: expected 1, got 2",
+        "2026-06-22T17:22:01Z --- FAIL: TestFoo (0.01s)",
+        "2026-06-22T17:22:01Z FAIL\tsvc-foo/pkg\t0.015s",
+        "2026-06-22T17:22:01Z FAIL",
+    ])
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "--- FAIL: TestFoo" in result
+    assert "expected 1, got 2" in result
+
+
+def test_extract_failure_context_pytest():
+    log = "\n".join([
+        "collected 5 items",
+        "tests/test_auth.py::test_login PASSED",
+        "tests/test_auth.py::test_validate FAILED",
+        "AssertionError: assert 'invalid' == 'valid'",
+        "1 failed, 1 passed",
+    ])
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "FAILED" in result
+    assert "AssertionError" in result
+
+
+def test_extract_failure_context_build_error():
+    log = "\n".join([
+        "Step 1/5 : FROM golang:1.21",
+        "Step 2/5 : COPY . .",
+        "Step 3/5 : RUN go build ./...",
+        "error: undefined: SomeFunction",
+        "error: build failed",
+    ])
+    result = extract_failure_context(log, FailureKind.BUILD)
+    assert "undefined: SomeFunction" in result
+
+
+def test_extract_failure_context_infra_timeout():
+    log = "\n".join([
+        "Pulling docker image...",
+        "Waiting for cache restore...",
+        "The job running on runner timed out after 360 minutes",
+        "Post job cleanup...",
+    ])
+    result = extract_failure_context(log, FailureKind.INFRA)
+    assert "timed out" in result
+
+
+def test_extract_failure_context_strips_timestamps():
+    log = "2026-06-22T17:22:01.8039480Z --- FAIL: TestFoo (0.01s)\n"
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert result.startswith("--- FAIL:")
+    assert "2026-06-22T" not in result
+
+
+def test_extract_failure_context_falls_back_to_tail():
+    lines = [f"line {i}" for i in range(200)]
+    log = "\n".join(lines)
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "line 199" in result
+    assert "line 120" in result
+    assert "line 0" not in result
+
+
+def test_extract_failure_context_truncates_large_output():
+    log = "x" * (_MAX_CONTEXT_CHARS + 1000)
+    result = extract_failure_context(log, FailureKind.BUILD)
+    assert len(result) <= _MAX_CONTEXT_CHARS
+
+
+def test_extract_failure_context_go_fail_tab():
+    log = "\n".join([
+        "ok  \tsvc-foo/pkg/a\t0.5s",
+        "FAIL\tsvc-foo/pkg/b\t0.3s",
+        "ok  \tsvc-foo/pkg/c\t0.1s",
+    ])
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "FAIL\tsvc-foo/pkg/b" in result

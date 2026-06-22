@@ -36,6 +36,8 @@ class Outcome(Enum):
 
 STATE_DIR = "ignore/ci-failures"
 STATE_FILE = "state.json"
+_MAX_CONTEXT_CHARS = 4000
+_CONTEXT_LINES = 80
 
 JOB_PATTERNS: list[tuple[re.Pattern, FailureKind]] = [
     (re.compile(r"shellcheck|eslint|flake8|pylint|yamllint|lint|stylelint|rubocop", re.IGNORECASE), FailureKind.LINT),
@@ -113,6 +115,91 @@ def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
             return kind
 
     return FailureKind.BUILD
+
+
+# ── Log extraction ────────────────────────────────────────────────────────
+
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
+
+_FAILURE_MARKERS: list[tuple[re.Pattern, FailureKind | None]] = [
+    (re.compile(r"^--- FAIL:", re.MULTILINE), FailureKind.TEST),
+    (re.compile(r"^FAIL\t", re.MULTILINE), FailureKind.TEST),
+    (re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
+    (re.compile(r"AssertionError|AssertError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
+    (re.compile(r"^error:", re.MULTILINE | re.IGNORECASE), FailureKind.BUILD),
+    (re.compile(r"^fatal:", re.MULTILINE | re.IGNORECASE), FailureKind.BUILD),
+]
+
+
+def _strip_timestamps(text: str) -> str:
+    """Remove GitHub Actions timestamp prefixes from log lines."""
+    return "\n".join(
+        _TIMESTAMP_RE.sub("", line) for line in text.splitlines()
+    )
+
+
+def extract_failure_context(log_text: str, kind: FailureKind) -> str:
+    """Extract the relevant failure section from raw job logs.
+
+    Returns a truncated string with the failure context, or the last
+    _CONTEXT_LINES lines if no markers are found.
+    """
+    if not log_text:
+        return ""
+
+    clean = _strip_timestamps(log_text)
+    lines = clean.splitlines()
+
+    if kind == FailureKind.TEST:
+        context = _extract_test_context(lines)
+        if context:
+            return context[:_MAX_CONTEXT_CHARS]
+
+    if kind == FailureKind.BUILD:
+        context = _extract_build_context(lines)
+        if context:
+            return context[:_MAX_CONTEXT_CHARS]
+
+    for marker, _ in _FAILURE_MARKERS:
+        context = _extract_around_marker(lines, marker)
+        if context:
+            return context[:_MAX_CONTEXT_CHARS]
+
+    tail = "\n".join(lines[-_CONTEXT_LINES:])
+    return tail[:_MAX_CONTEXT_CHARS]
+
+
+def _extract_test_context(lines: list[str]) -> str:
+    """Extract test failure output — captures from first failure marker to summary."""
+    fail_indices = []
+    for i, line in enumerate(lines):
+        if re.match(r"--- FAIL:", line) or re.match(r"FAIL\t", line):
+            fail_indices.append(i)
+        elif "FAILED" in line.upper() and ("assert" in line.lower() or "error" in line.lower()):
+            fail_indices.append(i)
+
+    if not fail_indices:
+        return ""
+
+    start = max(0, fail_indices[0] - 5)
+    end = min(len(lines), fail_indices[-1] + 20)
+    return "\n".join(lines[start:end])
+
+
+def _extract_build_context(lines: list[str]) -> str:
+    """Extract build error output — captures lines around error/fatal markers."""
+    error_re = re.compile(r"^(error|fatal):", re.IGNORECASE)
+    return _extract_around_marker(lines, error_re)
+
+
+def _extract_around_marker(lines: list[str], marker: re.Pattern) -> str:
+    """Extract context around the first line matching marker."""
+    for i, line in enumerate(lines):
+        if marker.search(line):
+            start = max(0, i - 10)
+            end = min(len(lines), i + 30)
+            return "\n".join(lines[start:end])
+    return ""
 
 
 # ── State factories ────────────────────────────────────────────────────────

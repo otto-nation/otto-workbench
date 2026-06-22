@@ -248,6 +248,43 @@ def _run_main(*argv):
 
 
 @patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_global_flags_after_subcommand(mock_resolve, mock_run):
+    """Global flags like --repo-dir work after the subcommand name."""
+    mock_resolve.return_value = _make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("rebase", "--repo-dir", "/some/path")
+    mock_resolve.assert_called_once()
+    call_kwargs = mock_resolve.call_args[1]
+    assert call_kwargs["repo_dir"] == "/some/path"
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_global_flags_before_subcommand(mock_resolve, mock_run):
+    """Global flags also work before the subcommand name."""
+    mock_resolve.return_value = _make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("--repo-dir", "/some/path", "rebase")
+    mock_resolve.assert_called_once()
+    call_kwargs = mock_resolve.call_args[1]
+    assert call_kwargs["repo_dir"] == "/some/path"
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_run):
+    """--repo-dir after subcommand doesn't swallow subcommand-specific flags."""
+    mock_resolve.return_value = _make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("rebase", "--fix", "--repo-dir", "/some/path")
+    mock_resolve.assert_called_once()
+    assert mock_resolve.call_args[1]["repo_dir"] == "/some/path"
+    cmd = mock_run.call_args[0][0]
+    assert "--fix" in cmd
+
+
+@patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_flag_skips_context_resolution(mock_resolve, mock_run):
     mock_run.return_value = MagicMock(returncode=0)

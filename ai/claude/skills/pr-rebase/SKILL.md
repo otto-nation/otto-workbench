@@ -164,6 +164,8 @@ Report the result.
 
 ## Constraints
 
+- Always call `pr rebase` (the dispatcher, two words), never `pr-rebase` (the
+  backing script) — the dispatcher handles context resolution and routing
 - Never run raw `git push --force-with-lease` — always use `pr rebase --push`
 - During rebase conflict resolution, use only Bash for all file writes and git
   staging commands (`git add`, `git rebase --continue`)

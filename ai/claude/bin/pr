@@ -372,24 +372,31 @@ Run 'pr <command> -h' for details on a specific command."""
 
 
 def main():
+    # Two-pass parse: extract global flags first, then route the subcommand.
+    # Argparse subparsers swallow flags after the subcommand name, so
+    # `pr rebase --repo-dir /path` would lose --repo-dir without this.
+    _global = argparse.ArgumentParser(add_help=False)
+    _global.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
+    _global.add_argument("--branch")
+    _global.add_argument("--pr")
+    global_args, remaining = _global.parse_known_args()
+
     parser = argparse.ArgumentParser(
         prog="pr",
         description="PR lifecycle management",
         add_help=False,
     )
     parser.add_argument("-h", "--help", action="store_true", dest="help")
-    parser.add_argument("--repo-dir", "--repo", "--worktree",
-                        dest="repo_dir",
-                        help="Git worktree directory")
-    parser.add_argument("--branch", help="Branch name")
-    parser.add_argument("--pr", help="PR number or URL")
 
     sub = parser.add_subparsers(dest="command")
     for name, entry in _COMMANDS.items():
         sub.add_parser(name, help=entry["help"],
                        add_help="script" not in entry)
 
-    args, extra = parser.parse_known_args()
+    args, extra = parser.parse_known_args(remaining)
+    args.repo_dir = global_args.repo_dir
+    args.branch = global_args.branch
+    args.pr = global_args.pr
 
     usage = _build_usage()
 

@@ -234,6 +234,52 @@ def test_sub_command_prefix():
     assert pr_cli._COMMANDS["post"].get("prefix") == ["post"]
 
 
+# ── help passthrough ─────────────────────────────────────────────────────
+
+
+def _run_main(*argv):
+    """Run pr_cli.main() with the given argv, catching SystemExit."""
+    with patch("sys.argv", ["pr"] + list(argv)):
+        try:
+            pr_cli.main()
+        except SystemExit as e:
+            return e.code
+    return None
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
+def test_help_flag_skips_context_resolution(mock_resolve, mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    rc = _run_main("ci", "--help")
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/ci-check")
+    assert "--help" in cmd
+    mock_resolve.assert_not_called()
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
+def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    rc = _run_main("ci", "-h")
+    assert rc == 0
+    mock_resolve.assert_not_called()
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
+def test_help_passthrough_includes_prefix(mock_resolve, mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    rc = _run_main("gc", "--help")
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/claude-review")
+    assert cmd[1] == "gc"
+    assert cmd[2] == "--help"
+
+
 # ── _run_delegate ─────────────────────────────────────────────────────────
 
 

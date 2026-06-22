@@ -472,6 +472,7 @@ EOF
   title "AI sync"
   echo
   sync_claude
+  sync_headroom
   echo
   success "AI sync complete!"
 }

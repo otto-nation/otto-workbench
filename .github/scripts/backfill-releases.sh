@@ -89,9 +89,9 @@ while IFS= read -r pr; do
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
   try_backfill "$root_version" "v${root_version}" "v${root_version}" "$root_version" "$merge_sha"
 
-  cr_version=$(grep -oE '<details><summary>claude-review: [0-9]+\.[0-9]+\.[0-9]+</summary>' "$BODY_FILE" \
+  cr_version=$(grep -oE '<details><summary>otto-ai-tools: [0-9]+\.[0-9]+\.[0-9]+</summary>' "$BODY_FILE" \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
-  try_backfill "$cr_version" "claude-review-v${cr_version}" "claude-review: v${cr_version}" "claude-review: $cr_version" "$merge_sha"
+  try_backfill "$cr_version" "otto-ai-tools-v${cr_version}" "otto-ai-tools: v${cr_version}" "otto-ai-tools: $cr_version" "$merge_sha"
 
   if [[ "$pr_ok" == true ]]; then
     gh pr edit "$pr_num" --repo "$REPO" \

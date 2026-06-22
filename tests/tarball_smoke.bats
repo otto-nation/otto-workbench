@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Smoke tests for the claude-review tarball — verifies the build script produces
+# Smoke tests for the otto-ai-tools tarball — verifies the build script produces
 # a valid, self-contained distribution with patched paths and importable modules.
 
 bats_require_minimum_version 1.5.0
@@ -12,7 +12,7 @@ setup_file() {
   # Build the tarball once for all tests
   TARBALL_DIR="$BATS_FILE_TMPDIR/tarball_build"
   mkdir -p "$TARBALL_DIR"
-  run bash -c "cd '$TARBALL_DIR' && '$REPO_ROOT/ai/claude/bin/build-claude-review-tarball' '$TEST_VERSION'"
+  run bash -c "cd '$TARBALL_DIR' && '$REPO_ROOT/ai/claude/bin/build-otto-ai-tools-tarball' '$TEST_VERSION'"
   if [[ "$status" -ne 0 ]]; then
     echo "Tarball build failed: $output" >&2
     return 1
@@ -21,8 +21,8 @@ setup_file() {
   # Extract into a known location
   EXTRACT_DIR="$BATS_FILE_TMPDIR/extracted"
   mkdir -p "$EXTRACT_DIR"
-  tar -xzf "$TARBALL_DIR/claude-review-${TEST_VERSION}.tar.gz" -C "$EXTRACT_DIR"
-  TARBALL_ROOT="$EXTRACT_DIR/claude-review-${TEST_VERSION}"
+  tar -xzf "$TARBALL_DIR/otto-ai-tools-${TEST_VERSION}.tar.gz" -C "$EXTRACT_DIR"
+  TARBALL_ROOT="$EXTRACT_DIR/otto-ai-tools-${TEST_VERSION}"
   export TARBALL_DIR EXTRACT_DIR TARBALL_ROOT TEST_VERSION
 }
 

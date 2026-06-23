@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.26.6](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.5...otto-ai-tools-v1.26.6) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ci-check:** deduplicate re-runs per workflow ([#347](https://github.com/otto-nation/otto-workbench/issues/347)) ([9368e6a](https://github.com/otto-nation/otto-workbench/commit/9368e6a791c3597a154b1e09aa8495adaae6fd51))
+* **skill:** use Write tool for pr-rebase conflict resolution ([#343](https://github.com/otto-nation/otto-workbench/issues/343)) ([a1a4d87](https://github.com/otto-nation/otto-workbench/commit/a1a4d872c70d935218cd397fa800ac0bd3e65cf1))
+
+
+### Code Refactoring
+
+* **claude-review:** eliminate duplicate resolution; use pr_context.resolve() everywhere ([#345](https://github.com/otto-nation/otto-workbench/issues/345)) ([1146332](https://github.com/otto-nation/otto-workbench/commit/1146332f84316b4947a2e1d7300796c3f55b432c))
+
 ## [1.26.5](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.4...otto-ai-tools-v1.26.5) (2026-06-23)
 
 

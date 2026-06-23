@@ -44,7 +44,8 @@ def _run_delegate(entry: dict, argv: list[str],
                   ctx: pr_context.ResolvedContext) -> int:
     """Build and run a backing-script command with context injection."""
     cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
-    cmd += ["--repo-dir", str(ctx.worktree_root)]
+    if ctx.worktree_root:
+        cmd += ["--repo-dir", str(ctx.worktree_root)]
     if ctx.branch:
         cmd += ["--branch", ctx.branch]
     if ctx.pr_number:

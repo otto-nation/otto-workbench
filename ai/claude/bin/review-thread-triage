@@ -58,6 +58,7 @@ rt_args=()
 [[ -n "$repo_dir" ]] && rt_args+=(--repo-dir "$repo_dir")
 
 threads_json=$(review-threads "${rt_args[@]}")
+# Backfill pr_number when only --branch was given (review-threads resolves it)
 pr_number=$(printf '%s' "$threads_json" | jq -r '.pr_number // empty' 2>/dev/null) || true
 
 thread_count=$(printf '%s' "$threads_json" | jq '[.threads[] | select(.state != "resolved")] | length')

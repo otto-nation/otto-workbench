@@ -104,8 +104,7 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
         print(f"resolve-branch: could not resolve {hint!r}, using as-is", file=sys.stderr)
         return hint
     except FileNotFoundError:
-        # resolve-branch script not installed — fall back to current branch
-        return _current_branch(cwd)
+        return hint if hint else _current_branch(cwd)
 
 
 def _git_toplevel(cwd: str | None = None) -> Path | None:

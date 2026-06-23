@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Rebase current branch onto origin/main with conflict detection.
+"""Rebase current branch onto origin/main with conflict detection and AI resolution.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
+With --fix, automatically resolves merge conflicts using claude -p.
 Outputs structured JSON on stdout and status messages on stderr.
 Updates PR state in <worktree>/ignore/pr/state.json.
 
@@ -12,7 +13,7 @@ Exit codes:
 
 Usage:
   pr-rebase                           # start or resume rebase
-  pr-rebase --fix                     # rebase and force-push without confirmation
+  pr-rebase --fix                     # resolve conflicts, rebase, and force-push
   pr-rebase --push                    # force-push after completed rebase
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --repo-dir <path>         # specify worktree directory
@@ -20,6 +21,7 @@ Usage:
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -119,6 +121,191 @@ def _commits_ahead(cwd: str) -> int:
     return int(out) if out.isdigit() else 0
 
 
+# ── Conflict resolution ────────────────────────────────────────────────────
+
+_RESOLVE_BEGIN = "<<<RESOLVED>>>"
+_RESOLVE_END = "<<<END_RESOLVED>>>"
+
+_CONFLICT_MARKER_HEADS = ("<<<<<<< ", "=======", ">>>>>>> ")
+
+
+def _is_binary(path: Path) -> bool:
+    """Check if a file is binary by looking for null bytes in the first 8KB."""
+    try:
+        chunk = path.read_bytes()[:8192]
+        return b"\x00" in chunk
+    except OSError:
+        return False
+
+
+def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -> str:
+    """Build a prompt for claude -p to resolve a merge conflict."""
+    return (
+        "You are resolving a merge conflict during a git rebase onto origin/main.\n"
+        "\n"
+        f"File: {filepath}\n"
+        f"Commit being applied: {sha} — {subject}\n"
+        "\n"
+        "In a rebase, conflict markers mean:\n"
+        "- <<<<<<< HEAD = the base side (origin/main or previously rebased commits)\n"
+        "- ======= separates the two sides\n"
+        f"- >>>>>>> {sha} = the branch's changes being replayed\n"
+        "\n"
+        "Merge both sides, preserving the intent of both. If both sides add "
+        "non-overlapping content, keep both. If they modify the same lines, "
+        "combine them sensibly.\n"
+        "\n"
+        f"Output the resolved file between {_RESOLVE_BEGIN} and {_RESOLVE_END} markers.\n"
+        "No explanation, no markdown fencing, no commentary outside the markers.\n"
+        "\n"
+        f"{_RESOLVE_BEGIN}\n"
+        "(your resolved content here)\n"
+        f"{_RESOLVE_END}\n"
+        "\n"
+        "--- FILE CONTENT WITH CONFLICT MARKERS ---\n"
+        f"{content}"
+    )
+
+
+def _parse_resolved_content(stdout: str) -> str | None:
+    """Extract resolved file content from claude -p output."""
+    begin = stdout.find(_RESOLVE_BEGIN)
+    end = stdout.find(_RESOLVE_END)
+    if begin != -1 and end != -1 and end > begin:
+        resolved = stdout[begin + len(_RESOLVE_BEGIN):end]
+        if resolved.startswith("\n"):
+            resolved = resolved[1:]
+        if resolved.endswith("\n"):
+            resolved = resolved[:-1]
+        # Final newline for POSIX compliance
+        return resolved + "\n"
+
+    # Fallback: use raw stdout if it contains no conflict markers
+    for marker in _CONFLICT_MARKER_HEADS:
+        if marker in stdout:
+            return None
+    return stdout if stdout.strip() else None
+
+
+def _resolve_file_conflicts(
+    conflicts: list[str], cwd: str, sha: str, subject: str,
+) -> list[str] | None:
+    """Resolve conflicted files using claude -p. Returns resolved paths or None on failure."""
+    resolved = []
+    go_dirs: set[str] = set()
+
+    for filepath in conflicts:
+        full_path = Path(cwd) / filepath
+
+        if _is_binary(full_path):
+            print(f"  Cannot resolve binary file: {filepath}", file=sys.stderr)
+            return None
+
+        # go.sum: accept theirs and regenerate after
+        if filepath.endswith("go.sum"):
+            subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
+            subprocess.run(["git", "add", filepath], cwd=cwd)
+            go_dirs.add(str(full_path.parent))
+            resolved.append(filepath)
+            print(f"  Accepted theirs: {filepath} (will regenerate)", file=sys.stderr)
+            continue
+
+        try:
+            content = full_path.read_text()
+        except OSError as e:
+            print(f"  Cannot read {filepath}: {e}", file=sys.stderr)
+            return None
+
+        prompt = _build_resolve_prompt(filepath, content, sha, subject)
+        result = subprocess.run(
+            ["claude", "-p", "--bare"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"  claude -p failed for {filepath} (exit {result.returncode})", file=sys.stderr)
+            return None
+
+        resolved_content = _parse_resolved_content(result.stdout)
+        if resolved_content is None:
+            print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
+            return None
+
+        full_path.write_text(resolved_content)
+        subprocess.run(["git", "add", filepath], cwd=cwd)
+        resolved.append(filepath)
+        print(f"  Resolved: {filepath}", file=sys.stderr)
+
+        if filepath.endswith("go.mod"):
+            go_dirs.add(str(full_path.parent))
+
+    # Regenerate go.sum for any directories with resolved go.mod/go.sum
+    for go_dir in go_dirs:
+        print(f"  Running go mod tidy in {Path(go_dir).name}/...", file=sys.stderr)
+        r = subprocess.run(
+            ["go", "mod", "tidy"],
+            cwd=go_dir,
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            print(f"  Warning: go mod tidy failed: {r.stderr.strip()}", file=sys.stderr)
+        go_sum = Path(go_dir) / "go.sum"
+        if go_sum.exists():
+            subprocess.run(["git", "add", "go.sum"], cwd=go_dir)
+
+    return resolved
+
+
+def _resolve_and_continue(cwd: str) -> tuple[list[str], int] | None:
+    """AI-assisted conflict resolution loop.
+
+    Returns (files_resolved, commits_with_conflicts) on success, or None on failure.
+    """
+    if not shutil.which("claude"):
+        return None
+
+    all_resolved: list[str] = []
+    commits_conflicted = 0
+
+    while True:
+        conflicts = _detect_conflicts(cwd)
+        if not conflicts:
+            break
+
+        commits_conflicted += 1
+        sha, subject = _rebase_head_info(cwd)
+        remaining = _remaining_rebase_commits(cwd)
+        print(
+            f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
+            f"({remaining} commits remaining)...",
+            file=sys.stderr,
+        )
+
+        resolved = _resolve_file_conflicts(conflicts, cwd, sha, subject)
+        if resolved is None:
+            return None
+        all_resolved.extend(resolved)
+
+        r = subprocess.run(
+            ["git", "-c", "core.editor=true", "rebase", "--continue"],
+            cwd=cwd,
+        )
+        if r.returncode == 0:
+            if not _detect_rebase_in_progress(cwd):
+                break
+            continue
+
+        # Continue failed — check for new conflicts on the next commit
+        new_conflicts = _detect_conflicts(cwd)
+        if not new_conflicts:
+            print(f"rebase --continue failed (exit {r.returncode})", file=sys.stderr)
+            return None
+        # Loop again with new conflicts
+
+    return all_resolved, commits_conflicted
+
+
 # ── State helpers ───────────────────────────────────────────────────────────
 
 
@@ -192,6 +379,13 @@ def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
     conflicts = _detect_conflicts(cwd)
     if conflicts:
+        if fix:
+            result = _resolve_and_continue(cwd)
+            if result is None:
+                print("AI conflict resolution failed — aborting rebase.", file=sys.stderr)
+                subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+                return 1
+            return _rebase_success(cwd, ctx, fix, resolved=result)
         report = _conflict_report(cwd, status="conflicts_resuming")
         json.dump(report, sys.stdout, indent=2)
         print()
@@ -206,6 +400,13 @@ def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
     conflicts = _detect_conflicts(cwd)
     if conflicts:
+        if fix:
+            result = _resolve_and_continue(cwd)
+            if result is None:
+                print("AI conflict resolution failed — aborting rebase.", file=sys.stderr)
+                subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+                return 1
+            return _rebase_success(cwd, ctx, fix, resolved=result)
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
         print()
@@ -241,6 +442,13 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
     conflicts = _detect_conflicts(cwd)
     if conflicts:
+        if fix:
+            result = _resolve_and_continue(cwd)
+            if result is None:
+                print("AI conflict resolution failed — aborting rebase.", file=sys.stderr)
+                subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+                return 1
+            return _rebase_success(cwd, ctx, fix, resolved=result)
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
         print()
@@ -249,39 +457,62 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     return r.returncode
 
 
-def _rebase_success(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
-    """Handle clean rebase completion — update state and optionally force-push."""
+def _rebase_success(
+    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    resolved: tuple[list[str], int] | None = None,
+) -> int:
+    """Handle rebase completion — update state and optionally force-push."""
     commits = _commits_ahead(cwd)
     state = _load_or_init(ctx)
+    files_resolved = resolved[0] if resolved else []
+    conflicts_resolved = resolved[1] if resolved else 0
 
     if fix:
-        print("Rebase clean — force-pushing...", file=sys.stderr)
+        label = "Rebase complete" if not resolved else (
+            f"Rebase complete — resolved {len(files_resolved)} file(s) "
+            f"across {conflicts_resolved} commit(s)"
+        )
+        print(f"{label} — force-pushing...", file=sys.stderr)
         r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
         pr_state.update_rebase(state, pr_state.RebaseSummary(
             target_base="origin/main",
             commits_replayed=commits,
-            conflicts_resolved=0,
-            files_resolved=[],
+            conflicts_resolved=conflicts_resolved,
+            files_resolved=files_resolved,
             force_pushed=r.returncode == 0,
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(ctx.worktree_root, state)
+        report = {
+            "status": "clean",
+            "commits_replayed": commits,
+            "conflicts_resolved": conflicts_resolved,
+            "files_resolved": files_resolved,
+            "force_pushed": r.returncode == 0,
+        }
+        json.dump(report, sys.stdout, indent=2)
+        print()
         if r.returncode == 0:
-            print("Rebase complete — force-pushed.", file=sys.stderr)
+            print("Force-pushed.", file=sys.stderr)
         else:
-            print("Rebase complete, but force-push failed.", file=sys.stderr)
+            print("Force-push failed.", file=sys.stderr)
         return r.returncode
 
     pr_state.update_rebase(state, pr_state.RebaseSummary(
         target_base="origin/main",
         commits_replayed=commits,
-        conflicts_resolved=0,
-        files_resolved=[],
+        conflicts_resolved=conflicts_resolved,
+        files_resolved=files_resolved,
         force_pushed=False,
         updated_at=pr_state.now_iso(),
     ))
     pr_state.save_state(ctx.worktree_root, state)
-    report = {"status": "clean", "commits_replayed": commits}
+    report = {
+        "status": "clean",
+        "commits_replayed": commits,
+        "conflicts_resolved": conflicts_resolved,
+        "files_resolved": files_resolved,
+    }
     json.dump(report, sys.stdout, indent=2)
     print()
     print("Rebase clean — run `pr rebase --push` to force-push.", file=sys.stderr)
@@ -302,7 +533,7 @@ def main():
     parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
     parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
     parser.add_argument("--fix", action="store_true",
-                        help="Autonomous mode — rebase and force-push without confirmation")
+                        help="Autonomous mode — resolve conflicts with AI, rebase, and force-push")
     parser.add_argument("--push", action="store_true",
                         help="Force-push after successful rebase")
     parser.add_argument("--abort", action="store_true",

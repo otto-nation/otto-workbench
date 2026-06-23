@@ -9,9 +9,9 @@ skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for
 
 # PR Rebase
 
-Rebases the current feature branch onto origin/main with AI-assisted conflict
-resolution. Resolves merge conflicts by reading both sides and producing a
-merged resolution, then force-pushes the result.
+Rebases the current feature branch onto origin/main. The `pr rebase` script
+handles everything: fetch, rebase, AI-assisted conflict resolution (via
+`claude -p`), and force-push.
 
 Run with `/pr-rebase` or `/pr-rebase --fix`.
 
@@ -19,47 +19,55 @@ Run with `/pr-rebase` or `/pr-rebase --fix`.
 
 ## Arguments
 
-- `--fix` (optional): Skip confirmation prompts — resolve all conflicts and
-  run `pr rebase --push` without waiting for user confirmation. Without this
-  flag, the skill prints a summary and waits for confirmation before pushing.
+- `--fix` (optional): Fully autonomous — resolve all conflicts with AI and
+  force-push without user confirmation. Without this flag, conflicts are
+  reported and the user decides whether to proceed.
 
 ---
 
 ## Steps
 
-### 1. Invoke pr rebase
+### 1. Run pr rebase
 
-Run the rebase script:
+- **Default mode**:
 
 ```bash
 pr rebase --repo-dir <worktree_root>
 ```
 
-Check the exit code. JSON output is on stdout; status messages are on stderr.
+- **`--fix` mode**:
 
-### 2. Handle exit code 0 — clean rebase
+```bash
+pr rebase --fix --repo-dir <worktree_root>
+```
 
-The rebase completed with no conflicts.
+JSON output is on stdout; status messages are on stderr.
 
-Parse the JSON from stdout. Report success and the number of commits replayed.
+### 2. Handle the result
 
-- **Default mode**: Ask the user to confirm force-push, then run:
+**Exit 0 — success.** Parse the JSON output:
+
+```json
+{
+  "status": "clean",
+  "commits_replayed": 22,
+  "conflicts_resolved": 3,
+  "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
+  "force_pushed": true
+}
+```
+
+Report commits replayed and any conflicts resolved.
+
+- **Default mode**: The script did not push. Ask the user to confirm, then:
 
 ```bash
 pr rebase --push --repo-dir <worktree_root>
 ```
 
-- **`--fix` mode**: Run immediately without asking:
+- **`--fix` mode**: The script already pushed (`force_pushed` in JSON). Done.
 
-```bash
-pr rebase --push --repo-dir <worktree_root>
-```
-
-Done.
-
-### 3. Handle exit code 3 — conflicts
-
-Parse the JSON from stdout. It contains:
+**Exit 3 — conflicts detected (default mode only).** Parse the JSON:
 
 ```json
 {
@@ -71,104 +79,20 @@ Parse the JSON from stdout. It contains:
 }
 ```
 
-Or `"status": "conflicts_resuming"` if resuming an interrupted rebase.
-
-Report which commit is being applied, how many files have conflicts, and how
-many commits remain to replay after this one (`remaining_commits`).
-Proceed to step 4.
-
-### 4. Resolve each conflicted file
-
-For each file in the `files` array:
-
-1. Read the file — it contains conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
-2. Understand both sides:
-   - In rebase context: the markers labeled `HEAD` are the rebased base
-     (origin/main side), and the markers labeled with the commit SHA are the
-     branch's changes
-3. Resolve by merging the intent of both sides — not just picking one
-4. Write the resolved file using the Write tool — it is safe during a paused
-   rebase (git does not lock working tree files during conflict resolution,
-   and Write does not touch the git index)
-5. Stage the resolved file:
+Report what was found. Ask the user if they want AI resolution. If yes:
 
 ```bash
-git add path/to/file
+pr rebase --fix --repo-dir <worktree_root>
 ```
 
-**Special cases:**
-- **Binary files**: Do not attempt resolution. Report the file name to the user
-  and skip it. The user must resolve binary conflicts manually.
-- **Delete/modify conflicts** (file deleted on one side, modified on the other):
-  Report both sides to the user. Ask which to keep — `git add <file>` to keep
-  the modified version, or `git rm <file>` to accept the deletion.
+This resumes the in-progress rebase with AI conflict resolution and force-pushes.
 
-### 5. Continue the rebase
-
-After resolving all conflicted files for the current commit:
-
-```bash
-git -c core.editor=true rebase --continue
-```
-
-The `core.editor=true` accepts the existing commit message without opening an
-editor.
-
-**Check the result:**
-- If exit 0 and no more rebase in progress: proceed to step 6
-- If more conflicts (check `git diff --name-only --diff-filter=U`): loop back
-  to step 4 with the new set of conflicted files
-- If the continue fails for another reason: run `pr rebase --abort` and report
-  the error
-
-### 6. Print summary
-
-Track the cumulative resolution work across all commits and print:
-
-```
-## Rebase Summary — N commits replayed
-
-| Commit | Conflicts | Files Resolved |
-|--------|-----------|----------------|
-| abc123 fix: auth | 2 | src/auth.py, tests/test_auth.py |
-| def456 feat: api | 1 | src/api.py |
-| ghi789 chore: deps | 0 | (clean) |
-
-Resolved X files across Y commits.
-```
-
-### 7. Force-push
-
-- **Default mode**: Show the summary table. Ask the user to confirm. On
-  confirmation, run:
-
-```bash
-pr rebase --push --repo-dir <worktree_root>
-```
-
-- **`--fix` mode**: Show the summary table. Run immediately without asking:
-
-```bash
-pr rebase --push --repo-dir <worktree_root>
-```
-
-Report the result.
+**Exit 1 — error.** Report the error from stderr.
 
 ---
 
 ## Constraints
 
-- Always call `pr rebase` (the dispatcher, two words), never `pr-rebase` (the
-  backing script) — the dispatcher handles context resolution and routing
+- Always call `pr rebase` (the dispatcher, two words), never `pr-rebase`
+  (the backing script) — the dispatcher handles context resolution and routing
 - Never run raw `git push --force-with-lease` — always use `pr rebase --push`
-- Use the Write tool for writing resolved file content during conflict
-  resolution — heredoc writes via Bash (`cat > file << 'EOF'`) trigger
-  unsuppressible permission prompts
-- Do not use the Edit tool during active rebase — conflict markers make
-  exact-match replacements fragile
-- Use Bash only for git commands during rebase (`git add`, `git -c
-  core.editor=true rebase --continue`)
-- Never use compound commands (`;`, `&&`, `||`) in a single Bash call —
-  they cannot be statically analyzed for permissions. Use separate tool calls
-- If the rebase becomes unrecoverable (repeated failures on --continue), abort
-  with `pr rebase --abort` and report what went wrong

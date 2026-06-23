@@ -97,6 +97,11 @@ tools:
     visibility: hidden
     description: "Rebase current branch onto origin/main with conflict detection and force-push"
 
+  - name: pr-context-resolve
+    permission: false
+    visibility: hidden
+    description: "CLI entry point for pr_context.resolve() — outputs JSON for bash script consumption"
+
   - name: pr-state-update
     permission: false
     visibility: hidden

@@ -56,8 +56,15 @@ def test_resolved_context_fields():
 
 @patch("pr_context.subprocess.run", side_effect=FileNotFoundError)
 @patch("pr_context._current_branch", return_value="fallback-branch")
-def test_resolve_branch_falls_back_on_missing_script(mock_current, mock_run):
-    assert _resolve_branch("some-hint") == "fallback-branch"
+def test_resolve_branch_uses_hint_on_missing_script(mock_current, mock_run):
+    assert _resolve_branch("some-hint") == "some-hint"
+    mock_current.assert_not_called()
+
+
+@patch("pr_context.subprocess.run", side_effect=FileNotFoundError)
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_falls_back_on_missing_script_no_hint(mock_current, mock_run):
+    assert _resolve_branch("") == "fallback-branch"
     mock_current.assert_called_once_with(None)
 
 

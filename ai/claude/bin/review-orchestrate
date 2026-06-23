@@ -74,8 +74,9 @@ def main():
     parser = argparse.ArgumentParser(description="Review orchestration for claude-review")
     parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
     parser.add_argument("--review-file", required=True, help="Output review file path")
-    parser.add_argument("--repo-dir", "--repo", "--worktree",
+    parser.add_argument("--repo-dir", "--worktree",
                         required=True, help="Worktree path")
+    parser.add_argument("--repo", default="", help="Repository name (owner/repo)")
     parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
     parser.add_argument("--session-log", help="Session log path")
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
@@ -101,7 +102,7 @@ def main():
         print("error: --pr is required in pr mode", file=sys.stderr)
         sys.exit(1)
 
-    repo = detect_repo(cwd=args.repo_dir)
+    repo = args.repo or detect_repo(cwd=args.repo_dir)
 
     session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 

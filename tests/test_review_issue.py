@@ -9,7 +9,10 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_issue import load_issue_provider, extract_issue_id, fetch_issue_context
+from review_issue import (
+    IssueContext, IssueProvider, load_issue_provider, extract_issue_id,
+    fetch_issue_context,
+)
 
 
 # ── extract_issue_id: ported from bats ─────────────────────────────────────
@@ -75,9 +78,9 @@ def test_jira_falls_back_to_pr_body():
 
 def test_load_issue_provider_no_config_returns_linear():
     with patch("os.path.isfile", return_value=False):
-        provider, opts = load_issue_provider("/nonexistent")
-    assert provider == "linear"
-    assert opts == {}
+        result = load_issue_provider("/nonexistent")
+    assert result.name == "linear"
+    assert result.options == {}
 
 
 def test_load_issue_provider_reads_wt_path_config(tmp_path):
@@ -98,10 +101,10 @@ def test_load_issue_provider_reads_wt_path_config(tmp_path):
         return r
 
     with patch("subprocess.run", side_effect=fake_run):
-        provider, opts = load_issue_provider(str(tmp_path))
+        result = load_issue_provider(str(tmp_path))
 
-    assert provider == "jira"
-    assert opts["jira_url"] == "https://jira.example.com"
+    assert result.name == "jira"
+    assert result.options["jira_url"] == "https://jira.example.com"
 
 
 def test_load_issue_provider_falls_back_to_workbench_config(tmp_path):
@@ -122,9 +125,9 @@ def test_load_issue_provider_falls_back_to_workbench_config(tmp_path):
 
     with patch("subprocess.run", side_effect=fake_run), \
          patch.dict("os.environ", {"WORKBENCH_STATE_DIR": workbench_dir}):
-        provider, opts = load_issue_provider(wt_path)
+        result = load_issue_provider(wt_path)
 
-    assert provider == "github"
+    assert result.name == "github"
 
 
 def test_load_issue_provider_yq_failure_falls_back_to_regex(tmp_path):
@@ -136,10 +139,10 @@ def test_load_issue_provider_yq_failure_falls_back_to_regex(tmp_path):
         raise FileNotFoundError("yq not found")
 
     with patch("subprocess.run", side_effect=fake_run):
-        provider, opts = load_issue_provider(str(tmp_path))
+        result = load_issue_provider(str(tmp_path))
 
-    assert provider == "jira"
-    assert opts == {}
+    assert result.name == "jira"
+    assert result.options == {}
 
 
 # ── fetch_issue_context ────────────────────────────────────────────────────
@@ -151,10 +154,10 @@ def test_fetch_issue_context_linear(capsys):
     mock_result.stdout = '{"id":"ABC-123","title":"Fix bug"}'
 
     with patch("subprocess.run", return_value=mock_result):
-        link, context = fetch_issue_context("linear", "ABC-123")
+        result = fetch_issue_context("linear", "ABC-123")
 
-    assert link == ""
-    assert context == '{"id":"ABC-123","title":"Fix bug"}'
+    assert result.link == ""
+    assert result.context == '{"id":"ABC-123","title":"Fix bug"}'
     captured = capsys.readouterr()
     assert "Found Linear issue: ABC-123" in captured.err
 
@@ -165,40 +168,40 @@ def test_fetch_issue_context_github(capsys):
     mock_result.stdout = '{"title":"Bug report","body":"desc"}'
 
     with patch("subprocess.run", return_value=mock_result):
-        link, context = fetch_issue_context("github", "42", repo="owner/repo")
+        result = fetch_issue_context("github", "42", repo="owner/repo")
 
-    assert link == "https://github.com/owner/repo/issues/42"
-    assert context == '{"title":"Bug report","body":"desc"}'
+    assert result.link == "https://github.com/owner/repo/issues/42"
+    assert result.context == '{"title":"Bug report","body":"desc"}'
     captured = capsys.readouterr()
     assert "Found GitHub issue: #42" in captured.err
 
 
 def test_fetch_issue_context_jira(capsys):
     opts = {"jira_url": "https://jira.example.com"}
-    link, context = fetch_issue_context("jira", "PROJ-42", opts=opts)
+    result = fetch_issue_context("jira", "PROJ-42", opts=opts)
 
-    assert link == "https://jira.example.com/browse/PROJ-42"
-    assert context == ""
+    assert result.link == "https://jira.example.com/browse/PROJ-42"
+    assert result.context == ""
     captured = capsys.readouterr()
     assert "Found Jira issue: PROJ-42" in captured.err
 
 
 def test_fetch_issue_context_none_returns_empty():
-    link, context = fetch_issue_context("none", "ABC-123")
-    assert link == ""
-    assert context == ""
+    result = fetch_issue_context("none", "ABC-123")
+    assert result.link == ""
+    assert result.context == ""
 
 
 def test_fetch_issue_context_empty_issue_id_returns_empty():
-    link, context = fetch_issue_context("linear", "")
-    assert link == ""
-    assert context == ""
+    result = fetch_issue_context("linear", "")
+    assert result.link == ""
+    assert result.context == ""
 
 
 def test_fetch_issue_context_none_issue_id_returns_empty():
-    link, context = fetch_issue_context("linear", None)
-    assert link == ""
-    assert context == ""
+    result = fetch_issue_context("linear", None)
+    assert result.link == ""
+    assert result.context == ""
 
 
 def test_fetch_issue_context_linear_subprocess_failure(capsys):
@@ -207,10 +210,10 @@ def test_fetch_issue_context_linear_subprocess_failure(capsys):
     mock_result.stdout = ""
 
     with patch("subprocess.run", return_value=mock_result):
-        link, context = fetch_issue_context("linear", "ABC-123")
+        result = fetch_issue_context("linear", "ABC-123")
 
-    assert link == ""
-    assert context == ""
+    assert result.link == ""
+    assert result.context == ""
 
 
 def test_fetch_issue_context_github_subprocess_failure(capsys):
@@ -219,7 +222,7 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
     mock_result.stdout = ""
 
     with patch("subprocess.run", return_value=mock_result):
-        link, context = fetch_issue_context("github", "42", repo="owner/repo")
+        result = fetch_issue_context("github", "42", repo="owner/repo")
 
-    assert link == "https://github.com/owner/repo/issues/42"
-    assert context == ""
+    assert result.link == "https://github.com/owner/repo/issues/42"
+    assert result.context == ""

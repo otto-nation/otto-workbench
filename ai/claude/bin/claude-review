@@ -24,7 +24,11 @@ except ImportError:
     def version_string(name):
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
-from review_common import ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET, ANSI_WARN, detect_repo
+from review_common import (
+    ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET, ANSI_WARN,
+    ReviewMeta, SessionUsage, detect_repo, parse_session_log,
+    review_meta_from_dict,
+)
 import review_issue
 import review_worktree
 
@@ -206,46 +210,15 @@ def _display_review(path: Path) -> None:
     print()
 
 
-def _parse_session_log(path: str) -> tuple[float, int, int]:
-    cost = 0.0
-    tokens = 0
-    duration_ms = 0
-    try:
-        lines = Path(path).read_text().splitlines()
-    except OSError:
-        return cost, tokens, duration_ms
-    for line in lines:
-        if '"type":"result"' not in line and '"type": "result"' not in line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if rec.get("type") != "result":
-            continue
-        cost += rec.get("total_cost_usd", 0) or 0
-        usage = rec.get("usage", {})
-        tokens += (usage.get("input_tokens", 0) or 0)
-        tokens += (usage.get("output_tokens", 0) or 0)
-        tokens += (usage.get("cache_read_input_tokens", 0) or 0)
-        tokens += (usage.get("cache_creation_input_tokens", 0) or 0)
-        duration_ms += rec.get("duration_ms", 0) or 0
-    return cost, tokens, duration_ms
-
-
 def _format_usage(*log_paths: str) -> str:
     logs = [p for p in log_paths if p and os.path.isfile(p)]
     if not logs:
         return ""
 
-    cost = 0.0
-    tokens = 0
-    duration_ms = 0
-    for log_path in logs:
-        c, t, d = _parse_session_log(log_path)
-        cost += c
-        tokens += t
-        duration_ms += d
+    usages = [parse_session_log(p) for p in logs]
+    cost = sum(u.cost for u in usages)
+    tokens = sum(u.total_tokens for u in usages)
+    duration_ms = sum(u.duration_ms for u in usages)
 
     if cost == 0.0 and tokens == 0 and duration_ms == 0:
         return ""
@@ -299,53 +272,35 @@ def _count_severity(file: Path, prefix: str) -> int:
     return len(re.findall(pattern, text, re.MULTILINE))
 
 
-def _parse_session_log_detail(path: str) -> dict:
-    result = {"cost": 0.0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "duration_ms": 0}
-    try:
-        lines = Path(path).read_text().splitlines()
-    except OSError:
-        return result
-    for line in lines:
-        if '"type":"result"' not in line and '"type": "result"' not in line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if rec.get("type") != "result":
-            continue
-        result["cost"] += rec.get("total_cost_usd", 0) or 0
-        usage = rec.get("usage", {})
-        result["input"] += usage.get("input_tokens", 0) or 0
-        result["output"] += usage.get("output_tokens", 0) or 0
-        result["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
-        result["cache_write"] += usage.get("cache_creation_input_tokens", 0) or 0
-        result["duration_ms"] += rec.get("duration_ms", 0) or 0
-    return result
 
-
-def _read_review_meta(review_dir: Path) -> dict:
+def _read_review_meta(review_dir: Path) -> ReviewMeta:
     meta_file = review_dir / FILENAME_META
     if not meta_file.is_file():
-        return {}
+        return ReviewMeta()
     try:
-        return json.loads(meta_file.read_text())
+        return review_meta_from_dict(json.loads(meta_file.read_text()))
     except (json.JSONDecodeError, OSError):
-        return {}
+        return ReviewMeta()
 
 
-def _aggregate_session_usage(review_dir: Path | None) -> dict:
-    usage = {"cost": 0.0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "duration_ms": 0}
+def _aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     if not review_dir:
-        return usage
-    log_paths = [str(review_dir / n) for n in (FILENAME_SESSION, FILENAME_POST_SESSION)]
-    for log_path in log_paths:
-        if not os.path.isfile(log_path):
-            continue
-        detail = _parse_session_log_detail(log_path)
-        for k in usage:
-            usage[k] += detail[k]
-    return usage
+        return SessionUsage()
+    usages = [
+        parse_session_log(str(review_dir / n))
+        for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
+        if os.path.isfile(str(review_dir / n))
+    ]
+    if not usages:
+        return SessionUsage()
+    return SessionUsage(
+        cost=sum(u.cost for u in usages),
+        input_tokens=sum(u.input_tokens for u in usages),
+        output_tokens=sum(u.output_tokens for u in usages),
+        cache_read_tokens=sum(u.cache_read_tokens for u in usages),
+        cache_write_tokens=sum(u.cache_write_tokens for u in usages),
+        duration_ms=sum(u.duration_ms for u in usages),
+    )
 
 
 def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
@@ -370,25 +325,25 @@ def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
         except OSError:
             pass
 
-    meta = _read_review_meta(review_dir) if review_dir else {}
+    meta = _read_review_meta(review_dir) if review_dir else ReviewMeta()
 
     summary = {
         "repo": repo,
         "pr_number": int(pr_number) if pr_number else None,
-        "head_sha": meta.get("head_sha") or None,
-        "head_ref": meta.get("head_ref") or None,
-        "base_ref": meta.get("base_ref") or None,
-        "review_type": meta.get("review_type") or None,
+        "head_sha": meta.head_sha or None,
+        "head_ref": meta.head_ref or None,
+        "base_ref": meta.base_ref or None,
+        "review_type": meta.review_type or None,
         "review_file": review_file,
         "review_content": review_content,
         "findings": {**counts, "total": total},
         "verdict": verdict,
-        "cost_usd": usage["cost"],
-        "input_tokens": usage["input"],
-        "output_tokens": usage["output"],
-        "cache_read_tokens": usage["cache_read"],
-        "cache_write_tokens": usage["cache_write"],
-        "duration_ms": usage["duration_ms"],
+        "cost_usd": usage.cost,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "cache_write_tokens": usage.cache_write_tokens,
+        "duration_ms": usage.duration_ms,
     }
     return f"REVIEW_SUMMARY:{json.dumps(summary)}"
 
@@ -396,37 +351,45 @@ def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
 def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str, review_type: str = "") -> None:
     if not repo_dir or not review_file or not os.path.isfile(review_file):
         return
-    try:
-        summary_line = _json_summary(repo, pr_number, review_file)
-    except Exception:
-        return
 
-    raw_json = summary_line.removeprefix("REVIEW_SUMMARY:")
-    try:
-        data = json.loads(raw_json)
-    except (json.JSONDecodeError, TypeError):
-        return
+    review_path = Path(review_file)
+    review_dir = review_path.parent
 
     finding_counts = {}
-    for k, v in data.get("findings", {}).items():
-        if k != "total" and isinstance(v, (int, float)) and v > 0:
-            finding_counts[k] = v
+    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
+        c = _count_severity(review_path, prefix)
+        if c > 0:
+            finding_counts[key] = c
 
-    state_payload = {
-        "review_file": data.get("review_file", ""),
-        "review_type": data.get("review_type") or review_type,
-        "head_sha": data.get("head_sha", ""),
-        "finding_counts": finding_counts,
-        "verdict": data.get("verdict", ""),
-        "cost_usd": data.get("cost_usd", 0),
-        "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
+    must_count = finding_counts.get("must_fix", 0)
+    verdict = "changes_requested" if must_count > 0 else "approve"
+    meta = _read_review_meta(review_dir)
+    usage = _aggregate_session_usage(review_dir)
+
+    summary = pr_state.ReviewSummary(
+        review_file=review_file,
+        review_type=meta.review_type or review_type,
+        head_sha=meta.head_sha,
+        finding_counts=finding_counts,
+        verdict=verdict,
+        cost_usd=usage.cost,
+        updated_at=pr_state.now_iso(),
+    )
 
     try:
-        subprocess.run(
-            [str(BIN_DIR / "pr-state-update"), "--domain", "review", "--repo-dir", repo_dir],
-            input=json.dumps(state_payload),
-            capture_output=True, text=True,
+        ctx = pr_context.resolve(repo_dir=repo_dir)
+    except SystemExit:
+        return
+
+    try:
+        pr_state.apply_state_update(
+            worktree_root=ctx.worktree_root,
+            repo=ctx.repo,
+            branch=ctx.branch,
+            pr_number=ctx.pr_number,
+            head_sha=ctx.head_sha,
+            domain="review",
+            data=pr_state._review_to_dict(summary),
         )
     except Exception:
         pass
@@ -888,11 +851,13 @@ def _run_review(args) -> None:
     issue_context = ""
     detected_link = ""
     if not issue_link:
-        provider, provider_opts = review_issue.load_issue_provider()
-        issue_id = review_issue.extract_issue_id(provider, pr_head, pr_body)
-        detected_link, issue_context = review_issue.fetch_issue_context(
-            provider, issue_id, repo, provider_opts,
+        provider_info = review_issue.load_issue_provider()
+        issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
+        issue_result = review_issue.fetch_issue_context(
+            provider_info.name, issue_id, repo, provider_info.options,
         )
+        detected_link = issue_result.link
+        issue_context = issue_result.context
         if detected_link:
             issue_link = detected_link
 
@@ -970,11 +935,13 @@ def _run_self_review_body(
 
     issue_context = ""
     if not issue_link:
-        provider, provider_opts = review_issue.load_issue_provider(wt_path)
-        issue_id = review_issue.extract_issue_id(provider, branch_name)
-        detected_link, issue_context = review_issue.fetch_issue_context(
-            provider, issue_id, repo, provider_opts,
+        provider_info = review_issue.load_issue_provider(wt_path)
+        issue_id = review_issue.extract_issue_id(provider_info.name, branch_name)
+        issue_result = review_issue.fetch_issue_context(
+            provider_info.name, issue_id, repo, provider_info.options,
         )
+        detected_link = issue_result.link
+        issue_context = issue_result.context
         if detected_link:
             issue_link = detected_link
 
@@ -1252,21 +1219,15 @@ def _prune_merged_reviews() -> None:
         if checked >= PRUNE_MAX_FILES:
             break
 
-        try:
-            meta = json.loads(meta_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-
-        repo = meta.get("repo", "")
-        pr_number = meta.get("pr_number")
-        if not repo or not pr_number:
+        meta = _read_review_meta(meta_file.parent)
+        if not meta.repo or not meta.pr_number:
             continue
 
         checked += 1
 
         try:
             r = subprocess.run(
-                ["gh", "pr", "view", str(pr_number), "--repo", repo,
+                ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
                  "--json", "state", "--jq", ".state"],
                 capture_output=True, text=True,
             )
@@ -1277,7 +1238,7 @@ def _prune_merged_reviews() -> None:
         if state in ("MERGED", "CLOSED"):
             review_dir = meta_file.parent
             shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"Pruned {repo}#{pr_number} ({state})")
+            _info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
             pruned += 1
 
     if pruned > 0:

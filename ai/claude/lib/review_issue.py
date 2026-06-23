@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
@@ -14,7 +15,19 @@ _GITHUB_BASE_URL = "https://github.com"
 _PROVIDER_DEFAULT = "linear"
 
 
-def load_issue_provider(wt_path: str | None = None) -> tuple[str, dict]:
+@dataclass(frozen=True)
+class IssueProvider:
+    name: str = _PROVIDER_DEFAULT
+    options: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class IssueContext:
+    link: str = ""
+    context: str = ""
+
+
+def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
     config_file = ""
     if wt_path and os.path.isfile(os.path.join(wt_path, ".claude", "review.yml")):
         config_file = os.path.join(wt_path, ".claude", "review.yml")
@@ -27,7 +40,7 @@ def load_issue_provider(wt_path: str | None = None) -> tuple[str, dict]:
             config_file = candidate
 
     if not config_file:
-        return _PROVIDER_DEFAULT, {}
+        return IssueProvider()
 
     provider = _PROVIDER_DEFAULT
     opts: dict = {}
@@ -60,7 +73,7 @@ def load_issue_provider(wt_path: str | None = None) -> tuple[str, dict]:
     if not provider:
         provider = _PROVIDER_DEFAULT
 
-    return provider, opts
+    return IssueProvider(name=provider, options=opts)
 
 
 def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | None:
@@ -89,9 +102,9 @@ def fetch_issue_context(
     issue_id: str | None,
     repo: str = "",
     opts: dict | None = None,
-) -> tuple[str, str]:
+) -> IssueContext:
     if not issue_id:
-        return "", ""
+        return IssueContext()
 
     if provider == "linear":
         try:
@@ -101,10 +114,10 @@ def fetch_issue_context(
             )
             if r.returncode == 0 and r.stdout.strip():
                 print(f"✓ Found Linear issue: {issue_id}", file=sys.stderr)
-                return "", r.stdout.strip()
+                return IssueContext(context=r.stdout.strip())
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
-        return "", ""
+        return IssueContext()
 
     if provider == "github":
         link = f"{_GITHUB_BASE_URL}/{repo}/issues/{issue_id}"
@@ -115,10 +128,10 @@ def fetch_issue_context(
             )
             if r.returncode == 0 and r.stdout.strip():
                 print(f"✓ Found GitHub issue: #{issue_id}", file=sys.stderr)
-                return link, r.stdout.strip()
+                return IssueContext(link=link, context=r.stdout.strip())
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
-        return link, ""
+        return IssueContext(link=link)
 
     if provider == "jira":
         link = ""
@@ -126,6 +139,6 @@ def fetch_issue_context(
         if jira_url:
             link = f"{jira_url}/browse/{issue_id}"
         print(f"✓ Found Jira issue: {issue_id}", file=sys.stderr)
-        return link, ""
+        return IssueContext(link=link)
 
-    return "", ""
+    return IssueContext()

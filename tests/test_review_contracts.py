@@ -111,6 +111,30 @@ class TestTemplateFileConsistency:
         )
 
 
+# ── 1b. TestReviewMeta ───────────────────────────────────────────────────────
+
+
+class TestReviewMeta:
+    """review_meta_from_dict handles edge cases correctly."""
+
+    def test_empty_string_pr_number_returns_none(self):
+        """Empty-string pr_number from meta.json must not crash with ValueError on int("")."""
+        meta = review_common.review_meta_from_dict({"pr_number": ""})
+        assert meta.pr_number is None
+
+    def test_valid_pr_number_as_string(self):
+        meta = review_common.review_meta_from_dict({"pr_number": "42"})
+        assert meta.pr_number == 42
+
+    def test_missing_pr_number_returns_none(self):
+        meta = review_common.review_meta_from_dict({})
+        assert meta.pr_number is None
+
+    def test_none_pr_number_returns_none(self):
+        meta = review_common.review_meta_from_dict({"pr_number": None})
+        assert meta.pr_number is None
+
+
 # ── 2. TestSeverityConsistency ───────────────────────────────────────────────
 
 

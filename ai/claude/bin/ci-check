@@ -31,10 +31,15 @@ def _err(msg: str) -> None:
 
 
 def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
-    """Fetch all workflow run IDs for the latest commit on a branch."""
+    """Fetch workflow run IDs for the latest commit, one per workflow.
+
+    When a workflow is re-run, both the original and re-run share the same
+    SHA.  gh run list returns newest first, so we deduplicate by workflow
+    name to keep only the most recent run of each workflow.
+    """
     result = subprocess.run(
         ["gh", "run", "list", "--repo", repo, "--branch", branch,
-         "--limit", "20", "--json", "databaseId,headSha"],
+         "--limit", "20", "--json", "databaseId,headSha,workflowName"],
         capture_output=True, text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -46,7 +51,17 @@ def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
     if not runs:
         return []
     latest_sha = runs[0]["headSha"]
-    return [r["databaseId"] for r in runs if r["headSha"] == latest_sha]
+    seen_workflows: set[str] = set()
+    ids: list[int] = []
+    for r in runs:
+        if r["headSha"] != latest_sha:
+            continue
+        wf = r.get("workflowName", "")
+        if wf in seen_workflows:
+            continue
+        seen_workflows.add(wf)
+        ids.append(r["databaseId"])
+    return ids
 
 
 def _fetch_run_data(repo: str, run_id: int) -> dict | None:

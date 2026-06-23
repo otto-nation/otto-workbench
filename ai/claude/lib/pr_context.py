@@ -40,10 +40,10 @@ def resolve(
 
     Raises ValueError if both pr and branch are given.
     """
-    if pr and branch:
+    if pr is not None and branch is not None:
         raise ValueError("--pr and --branch are mutually exclusive")
 
-    cwd = repo_dir or None
+    cwd = repo_dir
 
     worktree_root = _git_toplevel(cwd)
     if worktree_root is None and not pr and not branch:

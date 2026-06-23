@@ -39,3 +39,4 @@ def test_branch_only_resolves(mock_pr, mock_resolve, mock_sha, mock_repo, mock_t
     ctx = pr_context.resolve(branch="baz")
     assert ctx.pr_number == 99
     assert ctx.branch == "feat/baz"
+    assert ctx.repo == "owner/repo"

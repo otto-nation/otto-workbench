@@ -84,10 +84,6 @@
           },
           {
             "type": "command",
-            "command": "wt-cleanup --quiet || true"
-          },
-          {
-            "type": "command",
             "command": "find $HOME/.claude/logs -name '*.log' -mtime +7 -delete 2>/dev/null || true"
           }
         ]

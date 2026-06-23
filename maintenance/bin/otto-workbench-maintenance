@@ -37,6 +37,12 @@ remote_main=$(git -C "$MAIN_WORKTREE" rev-parse origin/main)
 
 if [[ "$local_main" == "$remote_main" ]]; then
   log "Already up-to-date (${local_main:0:7})"
+  log "Cleaning stale worktrees"
+  if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
+    log "Worktree cleanup complete"
+  else
+    log "WARNING: worktree cleanup failed (non-fatal)"
+  fi
   date '+%s' > "$LAST_RUN_FILE"
   exit 0
 fi

@@ -11,14 +11,20 @@ migration_20260623_autoupdate_to_maintenance() {
   local old_state="$state_dir/autoupdate.last"
   local new_state="$state_dir/maintenance.last"
 
-  # Preserve the interval from the old agent before removing it
+  # Track whether the old agent was running before we remove it
+  local was_running=false
   local interval=""
+  if launchctl list "$old_label" >/dev/null 2>&1; then
+    was_running=true
+  fi
+
+  # Preserve the interval from the old agent before removing it
   if [[ -f "$old_plist" ]]; then
     interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$old_plist" 2>/dev/null || true)
   fi
 
   # Unload and remove the old agent
-  if launchctl list "$old_label" >/dev/null 2>&1; then
+  if [[ "$was_running" == true ]]; then
     info "Unloading old autoupdate agent..."
     launchctl unload "$old_plist" 2>/dev/null || true
   fi
@@ -33,10 +39,12 @@ migration_20260623_autoupdate_to_maintenance() {
     info "Renamed autoupdate.last → maintenance.last"
   fi
 
-  # Start the new maintenance agent with the preserved interval (or default)
-  if [[ -n "$interval" ]]; then
-    "$WORKBENCH_DIR/bin/otto-workbench" maintenance start "$interval"
-  else
-    "$WORKBENCH_DIR/bin/otto-workbench" maintenance start
+  # Only start the new agent if the old one was running
+  if [[ "$was_running" == true ]]; then
+    if [[ -n "$interval" ]]; then
+      "$WORKBENCH_DIR/bin/otto-workbench" maintenance start "$interval"
+    else
+      "$WORKBENCH_DIR/bin/otto-workbench" maintenance start
+    fi
   fi
 }

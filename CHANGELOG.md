@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.32.4](https://github.com/otto-nation/otto-workbench/compare/v1.32.3...v1.32.4) (2026-06-23)
+
+
+### Bug Fixes
+
+* **cli:** enforce --repo and --pr/--branch flag conventions ([#339](https://github.com/otto-nation/otto-workbench/issues/339)) ([9d4bc89](https://github.com/otto-nation/otto-workbench/commit/9d4bc89ea43db26291fc9e2876fd392ed3d25a21))
+* **release:** rename Homebrew formula from claude-review to otto-ai-tools ([#333](https://github.com/otto-nation/otto-workbench/issues/333)) ([15bd23f](https://github.com/otto-nation/otto-workbench/commit/15bd23f26a3ecbed91feabe40191cdd5f42928cd))
+* **review-threads:** add --branch flag with resolve-branch support ([#335](https://github.com/otto-nation/otto-workbench/issues/335)) ([2a4b680](https://github.com/otto-nation/otto-workbench/commit/2a4b6806afb286837a7d542a676b11df2862bda6))
+
+
+### Code Refactoring
+
+* **claude-review:** convert from bash to Python ([#338](https://github.com/otto-nation/otto-workbench/issues/338)) ([36d3926](https://github.com/otto-nation/otto-workbench/commit/36d392659889b3a44a5d1ca4601bc32193ecc662))
+
 ## [1.32.3](https://github.com/otto-nation/otto-workbench/compare/v1.32.2...v1.32.3) (2026-06-22)
 
 

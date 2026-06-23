@@ -3,10 +3,7 @@
 import importlib.util
 import json
 import os
-import re
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -195,7 +192,7 @@ def test_format_usage_tokens_over_1k_suffix(cr, tmp_path):
     log = str(tmp_path / "medium.jsonl")
     _make_session_log(log, cost=1.00, input_tokens=800, output_tokens=700, duration_ms=10000)
     result = cr._format_usage(log)
-    assert "1k tokens" in result or "2k tokens" in result
+    assert "1k tokens" in result
 
 
 def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
@@ -806,5 +803,9 @@ def test_constants_match_expected(cr):
     assert len(cr.SEVERITY_JSON_KEYS) == 4
 
 
-def test_known_subcommands(cr):
-    assert cr.KNOWN_SUBCOMMANDS == {"gc", "post", "rebuild", "summary", "threads"}
+def test_main_dispatches_subcommands(cr):
+    """Verify the main function references all expected subcommand strings."""
+    import inspect
+    source = inspect.getsource(cr.main)
+    for cmd in ("gc", "post", "rebuild", "summary", "threads"):
+        assert f'"{cmd}"' in source

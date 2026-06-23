@@ -6,6 +6,7 @@ Both scripts import from here instead of defining their own constants.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -152,6 +153,86 @@ def detect_repo(cwd: str | None = None) -> str:
 
 def _derive_path(review_file: str, filename: str) -> str:
     return str(Path(review_file).parent / filename)
+
+
+# ── Review metadata ──────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ReviewMeta:
+    repo: str = ""
+    pr_number: int | None = None
+    head_sha: str = ""
+    head_ref: str = ""
+    base_ref: str = ""
+    review_type: str = ""
+
+
+def review_meta_from_dict(d: dict) -> ReviewMeta:
+    pr_number = d.get("pr_number")
+    return ReviewMeta(
+        repo=d.get("repo", ""),
+        pr_number=int(pr_number) if pr_number is not None else None,
+        head_sha=d.get("head_sha", ""),
+        head_ref=d.get("head_ref", ""),
+        base_ref=d.get("base_ref", ""),
+        review_type=d.get("review_type", ""),
+    )
+
+
+# ── Session usage ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SessionUsage:
+    cost: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    duration_ms: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
+
+
+def parse_session_log(path: str) -> SessionUsage:
+    """Parse a session JSONL log file and return aggregated usage."""
+    cost = 0.0
+    input_tokens = 0
+    output_tokens = 0
+    cache_read = 0
+    cache_write = 0
+    duration_ms = 0
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return SessionUsage()
+    for line in lines:
+        if '"type":"result"' not in line and '"type": "result"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") != "result":
+            continue
+        cost += rec.get("total_cost_usd", 0) or 0
+        usage = rec.get("usage", {})
+        input_tokens += usage.get("input_tokens", 0) or 0
+        output_tokens += usage.get("output_tokens", 0) or 0
+        cache_read += usage.get("cache_read_input_tokens", 0) or 0
+        cache_write += usage.get("cache_creation_input_tokens", 0) or 0
+        duration_ms += rec.get("duration_ms", 0) or 0
+    return SessionUsage(
+        cost=cost,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        duration_ms=duration_ms,
+    )
 
 
 # ── Subprocess ───────────────────────────────────────────────────────────────

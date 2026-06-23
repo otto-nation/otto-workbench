@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Scheduled auto-updater for otto-workbench.
-# Called by launchd — pulls latest changes and runs sync.
+# Scheduled maintenance for otto-workbench.
+# Called by launchd — pulls latest changes, runs sync, and cleans stale worktrees.
 #
 # Exit codes:
 #   0  Success (updated or already up-to-date)
@@ -10,7 +10,7 @@ set -e
 
 WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/workbench"
-LAST_RUN_FILE="$STATE_DIR/autoupdate.last"
+LAST_RUN_FILE="$STATE_DIR/maintenance.last"
 
 mkdir -p "$STATE_DIR"
 
@@ -37,6 +37,12 @@ remote_main=$(git -C "$MAIN_WORKTREE" rev-parse origin/main)
 
 if [[ "$local_main" == "$remote_main" ]]; then
   log "Already up-to-date (${local_main:0:7})"
+  log "Cleaning stale worktrees"
+  if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
+    log "Worktree cleanup complete"
+  else
+    log "WARNING: worktree cleanup failed (non-fatal)"
+  fi
   date '+%s' > "$LAST_RUN_FILE"
   exit 0
 fi
@@ -57,5 +63,12 @@ else
   exit 1
 fi
 
+log "Cleaning stale worktrees"
+if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
+  log "Worktree cleanup complete"
+else
+  log "WARNING: worktree cleanup failed (non-fatal)"
+fi
+
 date '+%s' > "$LAST_RUN_FILE"
-log "Update complete"
+log "Maintenance complete"

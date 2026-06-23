@@ -16,7 +16,7 @@ setup_file() {
     [[ -x "$f" ]] || continue
     [[ "$f" == */migrations/* ]] && continue
     [[ "$f" == */steps.sh ]] && continue
-    [[ "$(basename "$f")" == "otto-workbench-autoupdate" ]] && continue
+    [[ "$(basename "$f")" == "otto-workbench-maintenance" ]] && continue
     shebang=$(head -1 "$f" 2>/dev/null)
     [[ "$shebang" == "#!/usr/bin/env bash" ]] || continue
     printf '%s\n' "$f"

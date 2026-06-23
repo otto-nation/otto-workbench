@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Post-install summary for the autoupdate component.
-# Sourced by install.sh after all components run — defines print_autoupdate_summary().
+# Post-install summary for the maintenance component.
+# Sourced by install.sh after all components run — defines print_maintenance_summary().
 
-print_autoupdate_summary() {
-  local _label="com.otto-workbench.autoupdate"
+print_maintenance_summary() {
+  local _label="com.otto-workbench.maintenance"
 
-  summary_section "Autoupdate"
+  summary_section "Maintenance"
 
   if launchctl list "$_label" >/dev/null 2>&1; then
     local _plist="$HOME/Library/LaunchAgents/${_label}.plist"
@@ -19,6 +19,6 @@ print_autoupdate_summary() {
     fi
     summary_ok "running ${DIM}(every $_fmt)${NC}"
   else
-    summary_warn "not running — start with: ${DIM}otto-workbench autoupdate start${NC}"
+    summary_warn "not running — start with: ${DIM}otto-workbench maintenance start${NC}"
   fi
 }

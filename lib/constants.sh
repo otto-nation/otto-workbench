@@ -82,8 +82,8 @@ INSTALL_COMPONENTS_FILE="$WORKBENCH_DIR/install.components"
 BREW_SRC_DIR="$WORKBENCH_DIR/brew"
 BREWFILE="$WORKBENCH_DIR/brew/Brewfile"
 
-# ─── Workbench source — autoupdate ───────────────────────────────────────────
-AUTOUPDATE_SRC_DIR="$WORKBENCH_DIR/autoupdate"
+# ─── Workbench source — maintenance ──────────────────────────────────────────
+MAINTENANCE_SRC_DIR="$WORKBENCH_DIR/maintenance"
 
 # ─── Workbench source — docker ────────────────────────────────────────────────
 DOCKER_SRC_DIR="$WORKBENCH_DIR/docker"

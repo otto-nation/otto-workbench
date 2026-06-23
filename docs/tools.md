@@ -32,6 +32,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
+| `pr-context-resolve` | CLI entry point for pr_context.resolve() — outputs JSON for bash script consumption |
 | `pr-state-update` | CLI helper for updating unified PR state from stdin JSON |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |

@@ -22,54 +22,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import ci_failures as ci
+import pr_context
 import pr_state
-from review_common import detect_repo
 
 
 def _err(msg: str) -> None:
     print(f"✗ {msg}", file=sys.stderr)
-
-
-def _git_toplevel() -> Path:
-    """Get the git toplevel directory."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        _err("Not in a git repository")
-        sys.exit(1)
-    return Path(result.stdout.strip())
-
-
-def _current_branch(cwd: str | None = None) -> str:
-    """Get the current branch name."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    return result.stdout.strip()
-
-
-def _detect_pr_number(cwd: str | None = None, *, repo: str = "", branch: str = "") -> int | None:
-    """Try to detect PR number from current branch or explicit branch name."""
-    if repo and branch:
-        result = subprocess.run(
-            ["gh", "pr", "list", "--repo", repo, "--head", branch,
-             "--json", "number", "--jq", ".[0].number"],
-            capture_output=True, text=True,
-        )
-    else:
-        result = subprocess.run(
-            ["gh", "pr", "view", "--json", "number", "-q", ".number"],
-            capture_output=True, text=True, cwd=cwd,
-        )
-    if result.returncode != 0:
-        return None
-    try:
-        return int(result.stdout.strip())
-    except ValueError:
-        return None
 
 
 def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
@@ -278,22 +236,12 @@ def main():
                         help="Git worktree directory")
     args = parser.parse_args()
 
-    cwd = args.repo_dir or None
-    repo = detect_repo(cwd)
-    branch = args.branch or _current_branch(cwd)
-    pr_number = None
-
-    if args.pr:
-        pr_input = args.pr.split("/")[-1] if "/" in args.pr else args.pr
-        try:
-            pr_number = int(pr_input)
-        except ValueError:
-            _err(f"--pr: invalid value: {args.pr!r}")
-            sys.exit(1)
-    elif args.branch:
-        pr_number = _detect_pr_number(repo=repo, branch=args.branch)
-    else:
-        pr_number = _detect_pr_number(cwd)
+    ctx = pr_context.resolve(
+        pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+    )
+    repo = ctx.repo
+    branch = ctx.branch
+    pr_number = ctx.pr_number
 
     # Determine run IDs
     if args.run:
@@ -330,12 +278,7 @@ def main():
     run_state = _parse_run(repo, primary_run_data)
 
     # Load and sync state
-    if args.repo_dir:
-        toplevel = Path(args.repo_dir)
-    elif args.branch:
-        toplevel = None
-    else:
-        toplevel = _git_toplevel()
+    toplevel = ctx.worktree_root
     prior_state = ci.load_state(toplevel) if toplevel else None
     if prior_state is None:
         prior_state = ci.empty_state(repo, branch, pr_number)

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Validate CLI flag conventions across ai/claude/bin/ scripts.
+#
+# Checks:
+#   1. No --repo alias on --repo-dir (confuses slug vs directory semantics)
+#   2. No standalone --repo flag meaning slug (except allowlisted internal scripts)
+#   3. Scripts accepting both --pr and --branch must use pr_context.resolve()
+#      for runtime enforcement (warn if add_mutually_exclusive_group is missing)
+#
+# Usage: bin/local/validate-cli-flags [--quiet]
+# Exit code: 0 if all checks pass, 1 if any fail.
+
+set -e
+
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate CLI flag conventions across ai/claude/bin/ scripts.
+
+Options:
+  --quiet     Suppress per-check output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+ERRORS=0
+WARNINGS=0
+CHECKS=0
+SCRIPTS_CHECKED=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); echo -e "  ${RED}✗${NC} $*" >&2; }
+_warn() { CHECKS=$(( CHECKS + 1 )); WARNINGS=$(( WARNINGS + 1 )); $QUIET || echo -e "  ${YELLOW}!${NC} $*"; }
+
+BIN_DIR="$_SCRIPT_ROOT/ai/claude/bin"
+
+# Internal scripts allowed to use --repo as slug (not user-facing)
+REPO_SLUG_ALLOWLIST="review-orchestrate"
+
+# Scripts with known --repo alias violations pending replacement
+# claude-review: being rewritten in Python on isaac-refactor-claude_review_to_python
+REPO_ALIAS_ALLOWLIST="claude-review"
+
+# ── Check Python scripts ────────────────────────────────────────────────────
+
+for script in "$BIN_DIR"/*; do
+  [[ -f "$script" ]] || continue
+
+  name="$(basename "$script")"
+  # Only check Python scripts (have add_argument calls)
+  grep -q 'add_argument' "$script" 2>/dev/null || continue
+
+  SCRIPTS_CHECKED=$(( SCRIPTS_CHECKED + 1 ))
+
+  # Check 1: --repo alias on --repo-dir
+  # Pattern: add_argument("--repo-dir", "--repo", ...)
+  if grep -qE 'add_argument\(.*"--repo-dir".*"--repo"' "$script" 2>/dev/null; then
+    _fail "$name: --repo used as alias for --repo-dir (use --repo-dir/--worktree only)"
+  else
+    _pass "$name: no --repo alias on --repo-dir"
+  fi
+
+  # Check 2: standalone --repo flag (meaning slug)
+  # Look for add_argument("--repo", ...) where --repo is NOT alongside --repo-dir
+  if grep -qE 'add_argument\("--repo"' "$script" 2>/dev/null; then
+    if echo "$REPO_SLUG_ALLOWLIST" | grep -qw "$name"; then
+      _pass "$name: --repo slug flag (allowlisted internal script)"
+    else
+      _fail "$name: standalone --repo flag (repo slug should be derived from --repo-dir or context)"
+    fi
+  fi
+
+  # Check 3: --pr + --branch without mutual exclusivity
+  has_pr=false
+  has_branch=false
+  grep -qE 'add_argument\("--pr"' "$script" 2>/dev/null && has_pr=true
+  grep -qE 'add_argument\("--branch"' "$script" 2>/dev/null && has_branch=true
+
+  if $has_pr && $has_branch; then
+    if grep -q 'mutually_exclusive' "$script" 2>/dev/null; then
+      _pass "$name: --pr/--branch mutual exclusivity enforced at argparse level"
+    elif grep -q 'pr_context' "$script" 2>/dev/null; then
+      _pass "$name: --pr/--branch resolved via pr_context (runtime exclusivity)"
+    else
+      _fail "$name: accepts --pr and --branch without mutual exclusivity enforcement"
+    fi
+  fi
+done
+
+# ── Check bash scripts ──────────────────────────────────────────────────────
+
+for script in "$BIN_DIR"/*; do
+  [[ -f "$script" ]] || continue
+  name="$(basename "$script")"
+
+  # Only check bash scripts with case-style flag parsing
+  head -1 "$script" | grep -q 'bash' || continue
+  grep -q 'add_argument' "$script" 2>/dev/null && continue  # already checked as Python
+
+  SCRIPTS_CHECKED=$(( SCRIPTS_CHECKED + 1 ))
+
+  # Check --repo alias in bash case patterns (either ordering)
+  # Matches: --repo-dir|--repo, --repo|--repo-dir, or --repo|--repo-dir|--worktree
+  if grep -qE '\-\-repo-dir.*\-\-repo[^-]|\-\-repo[^-].*\-\-repo-dir' "$script" 2>/dev/null; then
+    if echo "$REPO_ALIAS_ALLOWLIST" | grep -qw "$name"; then
+      _pass "$name: --repo alias on --repo-dir (allowlisted, pending replacement)"
+    else
+      _fail "$name: --repo used as alias for --repo-dir in case pattern"
+    fi
+  else
+    _pass "$name: no --repo alias on --repo-dir"
+  fi
+done
+
+# ── Summary ─────────────────────────────────────────────────────────────────
+
+echo
+if (( SCRIPTS_CHECKED == 0 )); then
+  echo -e "  ${DIM}no CLI scripts found${NC}"
+  exit 0
+elif (( ERRORS == 0 )); then
+  msg="$CHECKS checks passed ($SCRIPTS_CHECKED scripts)"
+  [[ $WARNINGS -gt 0 ]] && msg="$msg, $WARNINGS warning(s)"
+  success "$msg"
+  exit 0
+else
+  err "$ERRORS of $CHECKS checks failed ($SCRIPTS_CHECKED scripts)"
+  exit 1
+fi

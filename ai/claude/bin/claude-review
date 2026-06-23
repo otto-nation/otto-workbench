@@ -1255,9 +1255,14 @@ cmd_post() {
   local repo="$1"
   local pr_number="$2"
   local submit="${3:-false}"
+  local review_file_override="${4:-}"
 
   local review_file
-  _review_file review_file "$repo" "$pr_number"
+  if [[ -n "$review_file_override" ]]; then
+    review_file="$review_file_override"
+  else
+    _review_file review_file "$repo" "$pr_number"
+  fi
 
   if [[ ! -f "$review_file" ]]; then
     err "No review file found: $review_file"
@@ -1270,6 +1275,7 @@ cmd_post() {
 
   "$(dirname "$_SELF")/review-post" \
     --pr "$pr_number" \
+    --repo "$repo" \
     --review-file "$review_file" \
     "${submit_flag[@]}"
 }
@@ -1349,6 +1355,9 @@ main() {
   local model=""
   local json_summary="false"
   local repo_dir=""
+  local pr_flag=""
+  local branch_flag=""
+  local review_file_flag=""
   local positional=()
 
   while [[ $# -gt 0 ]]; do
@@ -1368,6 +1377,9 @@ main() {
       --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
       --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
       --repo|--repo-dir|--worktree) repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "$1 requires a value"; exit 1; }; shift 2 ;;
+      --pr)            pr_flag="${2:-}"; [[ -n "$pr_flag" ]] || { err "--pr requires a value"; exit 1; }; shift 2 ;;
+      --branch)        branch_flag="${2:-}"; [[ -n "$branch_flag" ]] || { err "--branch requires a value"; exit 1; }; shift 2 ;;
+      --review-file)   review_file_flag="${2:-}"; [[ -n "$review_file_flag" ]] || { err "--review-file requires a value"; exit 1; }; shift 2 ;;
       -V|--version)    print_version "claude-review"; exit 0 ;;
       -h|--help)       usage; exit 0 ;;
       *)               positional+=("$1"); shift ;;
@@ -1414,12 +1426,31 @@ main() {
       ;;
     post)
       local post_input="${positional[1]:-}"
-      [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
-      local post_pr_number post_repo post_review_file
-      _extract_pr_number post_pr_number "$post_input"
-      _extract_repo post_repo "$post_input"
-      _review_file post_review_file "$post_repo" "$post_pr_number"
-      cmd_post "$post_repo" "$post_pr_number" "$auto_submit"
+      local post_pr_number="" post_repo="" post_review_file=""
+      if [[ -n "$pr_flag" ]]; then
+        post_pr_number="$pr_flag"
+      elif [[ -n "$post_input" ]]; then
+        _extract_pr_number post_pr_number "$post_input"
+      else
+        err "Usage: claude-review post <pr_url_or_number>"
+        exit 1
+      fi
+      if [[ -n "$post_input" ]]; then
+        _extract_repo post_repo "$post_input"
+      elif [[ -n "$repo_dir" ]]; then
+        post_repo=$(cd "$repo_dir" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+          err "Cannot determine repository from --repo-dir"
+          exit 1
+        }
+      else
+        _extract_repo post_repo ""
+      fi
+      if [[ -n "$review_file_flag" ]]; then
+        post_review_file="$review_file_flag"
+      else
+        _review_file post_review_file "$post_repo" "$post_pr_number"
+      fi
+      cmd_post "$post_repo" "$post_pr_number" "$auto_submit" "$review_file_flag"
       _update_pr_state "$post_repo" "$post_pr_number" "$post_review_file" "$repo_dir" "pr"
       if [[ "$json_summary" == "true" ]]; then
         _json_summary "$post_repo" "$post_pr_number" "$post_review_file" >&"$_json_stdout"

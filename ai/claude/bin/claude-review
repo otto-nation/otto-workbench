@@ -1,1569 +1,1369 @@
-#!/usr/bin/env bash
-# Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
-#
-# Usage: claude-review [options] <pr_url_or_number>
-#        claude-review --self [<pr_url_or_number | branch_name>]
-#        claude-review <command> [args]
-#
-# Commands:
-#   <pr_url_or_number>   Run headless review, display results, prompt to post
-#   gc                   Clean up stale review artifacts
-#   post <pr_url_or_number>  Post an existing review file headlessly via poster agent
-#
-# Options:
-#   --no-post                  Skip all interactive prompts; run review and exit
-#   --post                     Run review then post automatically (fully headless)
-#   --issue <link>             Attach an issue link for reviewer context
-#   --self                     Self-review mode: review your own code
-#   --fix                      Apply fixes for review findings (requires --self)
-#   --skip-user-verification   Skip ownership check in self-review mode
-#
-# When calling from Claude Code:
-#   Run each review in a foreground Bash call (not backgrounded with &).
-#   To review multiple PRs in parallel, use the Agent tool to dispatch
-#   separate subagents — each runs one `claude-review --no-post <N>` call.
+#!/usr/bin/env python3
+"""Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support."""
 
-set -Eeo pipefail
+from __future__ import annotations
 
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-# shellcheck source=/dev/null
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"  # @tarball-patch: ui-source
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
 
-_on_err() {
-  local rc=$?
-  (( rc == 130 )) && return 0
-  err "Unexpected failure at line $1 in ${3}(): $2"
-}
-trap '_on_err $LINENO "$BASH_COMMAND" "${FUNCNAME[0]:-main}"' ERR
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-_on_int() {
-  echo "" >&2
-  info "Interrupted"
-  exit 130
-}
-trap '_on_int' INT
-
-# ─── Constants ───────────────────────────────────────────────────────────────
-
-_WORKBENCH_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"  # @tarball-patch: workbench-root
-
-# @tarball-patch-start: generator-version
-_generator_version() {
-  print_version "claude-review" | tail -1
-}
-# @tarball-patch-end: generator-version
-
-REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
-LEGACY_REVIEWS_DIR="$CLAUDE_DIR/reviews"
-
-REVIEW_EXT=".md"
-
-FILENAME_PRIOR="prior${REVIEW_EXT}"
-FILENAME_SESSION="session.jsonl"
-FILENAME_POST_SESSION="post.jsonl"
-FILENAME_META="meta.json"
-FILENAME_PIPELINE_STATE="pipeline.json"
-
-ARCHIVE_KEEP_COUNT=3
-GC_STALE_DAYS=7
-DEFAULT_MAX_PARALLEL=4
-
-ISSUE_PATTERN_JIRA_LINEAR='[A-Z]+-[0-9]+'
-ISSUE_PROVIDER_DEFAULT="linear"
-
-PR_URL_PATTERN='/pull/([0-9]+)'
-PR_NUMBER_PATTERN='^[0-9]+$'
-GITHUB_REPO_PATTERN='github\.com/([^/]+/[^/]+)'
-
-GITHUB_BASE_URL="https://github.com"
-
-WORKTREE_FALLBACK_DIR=".worktrees"
-
-# shellcheck disable=SC2034  # used by commands_usage() via nameref
-COMMANDS=(
-  "gc"                            "Clean up stale review artifacts"
-  "post <pr_url_or_number>"       "Post an existing review file via poster agent"
-  "rebuild <pr_url_or_number>"    "Rebuild review.md from group finding files"
-  "summary <pr_url_or_number>"    "Regenerate JSON summary from disk artifacts"
-  "threads [<pr_url_or_number>]"  "Show thread lifecycle status for a PR"
+import pr_context
+import pr_state
+try:
+    from _version import version_string
+except ImportError:
+    def version_string(name):
+        vf = Path(__file__).resolve().parent.parent / "VERSION"
+        return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
+from review_common import (
+    ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET, ANSI_WARN,
+    ReviewMeta, SessionUsage, detect_repo, parse_session_log,
+    review_meta_from_dict,
 )
+import review_issue
+import review_worktree
 
-ARCHIVE_TIMESTAMP_FMT="%Y%m%d-%H%M%S"
+BIN_DIR = Path(__file__).resolve().parent
+REVIEWS_DIR = Path(os.environ.get("WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"))) / "reviews"
+LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
 
-# Severity definitions: parallel arrays map prefix → JSON key.
-# Order determines JSON field order in --json-summary output.
-SEVERITY_PREFIXES=(M S N I)
-SEVERITY_JSON_KEYS=(must_fix should_fix nit idiom)
+REVIEW_EXT = ".md"
+FILENAME_PRIOR = f"prior{REVIEW_EXT}"
+FILENAME_SESSION = "session.jsonl"
+FILENAME_POST_SESSION = "post.jsonl"
+FILENAME_META = "meta.json"
+FILENAME_PIPELINE_STATE = "pipeline.json"
 
-ORCHESTRATE_BIN="review-orchestrate"
+ARCHIVE_KEEP_COUNT = 3
+GC_STALE_DAYS = 7
+DEFAULT_MAX_PARALLEL = 4
+GITHUB_BASE_URL = "https://github.com"
+PRUNE_MAX_FILES = 10
 
-mkdir -p "$REVIEWS_DIR"
+SEVERITY_PREFIXES = ["M", "S", "N", "I"]
+SEVERITY_JSON_KEYS = ["must_fix", "should_fix", "nit", "idiom"]
+ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
-# Migrate reviews from legacy location
-if [[ -d "$LEGACY_REVIEWS_DIR" ]]; then
-  mv "$LEGACY_REVIEWS_DIR"/*.md "$REVIEWS_DIR/" 2>/dev/null || true
-  mv "$LEGACY_REVIEWS_DIR"/*.jsonl "$REVIEWS_DIR/" 2>/dev/null || true
-fi
+PR_URL_RE = re.compile(r"/pull/(\d+)")
+PR_NUMBER_RE = re.compile(r"^\d+$")
+GITHUB_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)")
+SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
-# Migrate flat review files to per-review folder layout
-_migrate_flat_reviews() {
-  local migrated=0
-  for flat_review in "$REVIEWS_DIR"/*"${REVIEW_EXT}"; do
-    [[ -f "$flat_review" ]] || continue
-    local base="${flat_review%"${REVIEW_EXT}"}"
-    local dir_name
-    dir_name="$(basename "$base")"
-    local review_dir="${REVIEWS_DIR}/${dir_name}"
 
-    [[ -d "$review_dir" ]] && continue
+def _info(msg: str) -> None:
+    print(f"{ANSI_INFO} {msg}", file=sys.stderr, flush=True)
 
-    mkdir -p "$review_dir"
-    mv "$flat_review" "${review_dir}/review${REVIEW_EXT}"
 
-    # Move associated flat files into the folder
-    for suffix in .session.jsonl .meta.json .post.jsonl .pipeline.json .prior.md; do
-      local flat_file="${base}${suffix}"
-      [[ -f "$flat_file" ]] || continue
-      local new_name="${suffix#.}"
-      mv "$flat_file" "${review_dir}/${new_name}"
-    done
+def _warn(msg: str) -> None:
+    print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
 
-    # Move group/holistic intermediates
-    for intermediate in "${base}".group-*.md "${base}".group-*.jsonl "${base}".holistic.md "${base}".holistic.jsonl "${base}".synthesis.jsonl; do
-      [[ -f "$intermediate" ]] || continue
-      local fname
-      fname="$(basename "$intermediate")"
-      fname="${fname#"${dir_name}."}"
-      mv "$intermediate" "${review_dir}/${fname}"
-    done
 
-    # Move timestamped archives
-    for archive in "${base}".2*.md "${base}".session.2*.jsonl "${base}".post.2*.jsonl; do
-      [[ -f "$archive" ]] || continue
-      mkdir -p "${review_dir}/archives"
-      local fname
-      fname="$(basename "$archive")"
-      fname="${fname#"${dir_name}."}"
-      mv "$archive" "${review_dir}/archives/${fname}"
-    done
+def _err(msg: str) -> None:
+    print(f"{ANSI_ERR} {msg}", file=sys.stderr, flush=True)
 
-    migrated=$((migrated + 1))
-  done
-  if [[ "$migrated" -gt 0 ]]; then
-    info "Migrated ${migrated} reviews to folder layout"
-  fi
-}
 
-_migrate_flat_reviews
+# ── Startup migrations ──────────────────────────────────────────────────────
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+def _migrate_legacy_reviews() -> None:
+    if not LEGACY_REVIEWS_DIR.is_dir():
+        return
+    files = [f for p in ("*.md", "*.jsonl") for f in LEGACY_REVIEWS_DIR.glob(p)]
+    for f in files:
+        dest = REVIEWS_DIR / f.name
+        if not dest.exists():
+            shutil.move(str(f), str(dest))
 
-_repo_from_remote() {
-  local -n __out=$1
-  local dir="$2"
-  local remote_url
-  remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null) || true
-  if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/[:space:]]+) ]]; then
-    __out="${BASH_REMATCH[1]}"
-    __out="${__out%.git}"
-  fi
-}
 
-_is_pr_ref() {
-  local input="$1"
-  [[ "$input" =~ $PR_URL_PATTERN || "$input" =~ $PR_NUMBER_PATTERN ]]
-}
+def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
+    review_dir = REVIEWS_DIR / dir_name
+    review_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(flat_review), str(review_dir / f"review{REVIEW_EXT}"))
 
-_self_review_wt_path() {
-  local dir="${1:-}"
-  if [[ -n "$dir" ]]; then
-    git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true
-  else
-    git rev-parse --show-toplevel 2>/dev/null || true
-  fi
-}
-
-_self_review_repo() {
-  local -n __out=$1
-  local dir="$2" wt_path="$3" pr_input="$4"
-  if [[ -n "$dir" && -z "$pr_input" ]]; then
-    _repo_from_remote __out "${wt_path:-.}"
-  else
-    _extract_repo __out "${pr_input:-local}"
-  fi
-}
-
-_resolve_bare_repo_worktree() {
-  local branch="${1:-}"
-  local wt_line wt_dir
-
-  if [[ -n "$branch" ]]; then
-    wt_line=$(git worktree list 2>/dev/null | grep -F "[$branch]") || true
-    if [[ -n "$wt_line" ]]; then
-      wt_dir=$(echo "$wt_line" | awk '{print $1}')
-      echo "$wt_dir"
-      return 0
-    fi
-  fi
-
-  # Fall back to the default branch worktree
-  local default_branch
-  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
-  [[ -n "$default_branch" ]] || default_branch="main"
-
-  wt_line=$(git worktree list 2>/dev/null | grep -F "[$default_branch]") || true
-  if [[ -n "$wt_line" ]]; then
-    wt_dir=$(echo "$wt_line" | awk '{print $1}')
-    echo "$wt_dir"
-    return 0
-  fi
-
-  err "Bare repository — no worktree found for ${branch:-$default_branch}. Pass --repo-dir to specify a worktree"
-  exit 1
-}
-
-_extract_pr_number() {
-  local -n __out=$1
-  local input="$2"
-  if [[ "$input" =~ $PR_URL_PATTERN ]]; then
-    __out="${BASH_REMATCH[1]}"
-  elif [[ "$input" =~ $PR_NUMBER_PATTERN ]]; then
-    __out="$input"
-  else
-    err "Cannot extract PR number from: $input"
-    exit 1
-  fi
-}
-
-_extract_repo() {
-  local -n __out=$1
-  local input="$2"
-  if [[ "$input" =~ $GITHUB_REPO_PATTERN ]]; then
-    __out="${BASH_REMATCH[1]}"
-  else
-    __out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
-      err "Cannot determine repository from: $input"
-      exit 1
+    suffix_map = {
+        ".session.jsonl": "session.jsonl",
+        ".meta.json": "meta.json",
+        ".post.jsonl": "post.jsonl",
+        ".pipeline.json": "pipeline.json",
+        ".prior.md": "prior.md",
     }
-  fi
-}
+    for suffix, new_name in suffix_map.items():
+        flat_file = REVIEWS_DIR / f"{dir_name}{suffix}"
+        if flat_file.is_file():
+            shutil.move(str(flat_file), str(review_dir / new_name))
 
-_review_file() {
-  local -n __out=$1
-  local repo_name="${2##*/}"
-  local pr_number="$3"
-  __out="${REVIEWS_DIR}/${repo_name}-${pr_number}/review${REVIEW_EXT}"
-}
+    intermediate_patterns = (
+        f"{dir_name}.group-*.md", f"{dir_name}.group-*.jsonl",
+        f"{dir_name}.holistic.md", f"{dir_name}.holistic.jsonl",
+        f"{dir_name}.synthesis.jsonl",
+    )
+    intermediates = [f for p in intermediate_patterns for f in REVIEWS_DIR.glob(p)]
+    for intermediate in intermediates:
+        fname = intermediate.name.removeprefix(f"{dir_name}.")
+        shutil.move(str(intermediate), str(review_dir / fname))
 
-_display_review() {
-  local file="$1"
-  echo
-  title "Review"
-  echo
-  cat "$file"
-  echo
-}
+    archive_dir = review_dir / "archives"
+    archive_patterns = (f"{dir_name}.2*.md", f"{dir_name}.session.2*.jsonl", f"{dir_name}.post.2*.jsonl")
+    archives = [f for p in archive_patterns for f in REVIEWS_DIR.glob(p)]
+    for archive in archives:
+        archive_dir.mkdir(exist_ok=True)
+        fname = archive.name.removeprefix(f"{dir_name}.")
+        shutil.move(str(archive), str(archive_dir / fname))
 
-_format_usage() {
-  local logs=()
-  local f
-  for f in "$@"; do
-    if [[ -f "$f" ]]; then logs+=("$f"); fi
-  done
-  [[ ${#logs[@]} -gt 0 ]] || return 0
 
-  local raw
-  raw=$(grep -h '"type":"result"' "${logs[@]}" 2>/dev/null) || return 0
-  [[ -n "$raw" ]] || return 0
+def _migrate_flat_reviews() -> None:
+    migrated = 0
+    for flat_review in REVIEWS_DIR.glob(f"*{REVIEW_EXT}"):
+        if not flat_review.is_file():
+            continue
+        dir_name = flat_review.stem
+        review_dir = REVIEWS_DIR / dir_name
+        if review_dir.is_dir():
+            continue
+        _migrate_one_flat_review(flat_review, dir_name)
+        migrated += 1
 
-  local cost tokens duration_ms
-  read -r cost tokens duration_ms <<< "$(echo "$raw" | jq -rs '
-    {
-      cost: (map(.total_cost_usd // 0) | add),
-      tokens: (map((.usage.input_tokens // 0) + (.usage.output_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)) | add),
-      duration_ms: (map(.duration_ms // 0) | add)
-    } | [.cost, .tokens, .duration_ms] | @tsv
-  ' 2>/dev/null)" || return 0
+    if migrated > 0:
+        _info(f"Migrated {migrated} reviews to folder layout")
 
-  local tokens_fmt
-  if (( tokens >= 1000000 )); then
-    tokens_fmt="$(echo "$tokens" | awk '{printf "%.1fM", $1/1000000}')"
-  elif (( tokens >= 1000 )); then
-    tokens_fmt="$(echo "$tokens" | awk '{printf "%.0fk", $1/1000}')"
-  else
-    tokens_fmt="$tokens"
-  fi
 
-  local duration_s=$(( duration_ms / 1000 ))
-  local mins=$(( duration_s / 60 ))
-  local secs=$(( duration_s % 60 ))
-  local duration_fmt
-  if (( mins > 0 )); then
-    duration_fmt="${mins}m ${secs}s"
-  else
-    duration_fmt="${secs}s"
-  fi
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-  local cost_fmt
-  cost_fmt=$(printf '$%.2f' "$cost")
+def _confirm(prompt: str) -> bool:
+    try:
+        is_tty = sys.stdin.isatty()
+    except (EOFError, OSError):
+        return True
+    if is_tty:
+        try:
+            answer = input(f"{prompt} [Y/n] ")
+        except (EOFError, OSError):
+            return True
+        return answer.lower() in ("", "y", "yes")
+    try:
+        with open("/dev/tty") as tty:
+            print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
+            answer = tty.readline().strip()
+    except (EOFError, OSError):
+        return True
+    return answer.lower() in ("", "y", "yes")
 
-  echo -e "  Usage:           ${cost_fmt} · ${tokens_fmt} tokens · ${duration_fmt}"
-}
 
-_print_summary() {
-  local review_file="$1"
-  local session_log="$2"
-  local pr_url="${3:-}"
-  local post_session_log="${4:-}"
-  local branch_name="${5:-}"
+def _prompt_optional(prompt: str) -> str:
+    try:
+        if sys.stdin.isatty():
+            return input(prompt)
+        with open("/dev/tty") as tty:
+            print(prompt, end="", flush=True, file=sys.stderr)
+            return tty.readline().strip()
+    except (EOFError, OSError):
+        return ""
 
-  echo
-  title "Summary"
-  echo -e "  Review:          ${review_file}"
-  echo -e "  Session log:     ${session_log}"
-  [[ -n "$post_session_log" && -f "$post_session_log" ]] && \
-    echo -e "  Post session:    ${post_session_log}"
-  if [[ -n "$pr_url" ]]; then
-    echo -e "  PR:              ${pr_url}"
-  elif [[ -n "$branch_name" ]]; then
-    echo -e "  Branch:          ${branch_name}"
-  fi
-  _format_usage "$session_log" "$post_session_log"
-  echo
-}
 
-_count_severity() {
-  local -n __out=$1
-  local file="$2" prefix="$3"
-  if [[ ! -f "$file" ]]; then
-    __out=0
-    return 0
-  fi
-  __out=$(grep -cE "^\s*- (\[ \] )?\*\*\[${prefix}[0-9]+\]\*\*" "$file" 2>/dev/null) || __out=0
-  return 0
-}
+def _is_pr_ref(s: str) -> bool:
+    return bool(PR_URL_RE.search(s) or PR_NUMBER_RE.match(s))
 
-_json_summary() {
-  local repo="$1"
-  local pr_number="$2"
-  local review_file="$3"
 
-  local total=0 must_count=0
-  local jq_args=(
-    --arg repo "$repo"
-    --arg pr "${pr_number:-}"
-    --arg review_file "${review_file:-}"
-  )
-  local keys_expr=""
+def _extract_pr_number(pr_input: str) -> str:
+    m = PR_URL_RE.search(pr_input)
+    if m:
+        return m.group(1)
+    if PR_NUMBER_RE.match(pr_input):
+        return pr_input
+    _err(f"Cannot extract PR number from: {pr_input}")
+    sys.exit(1)
 
-  local i
-  for i in "${!SEVERITY_PREFIXES[@]}"; do
-    local prefix="${SEVERITY_PREFIXES[$i]}"
-    local key="${SEVERITY_JSON_KEYS[$i]}"
-    local count
-    _count_severity count "$review_file" "$prefix"
-    total=$(( total + count ))
-    jq_args+=(--argjson "$key" "$count")
-    keys_expr+="${key}: \$${key}, "
-    if [[ "$prefix" == "M" ]]; then must_count=$count; fi
-  done
 
-  local verdict="approve"
-  if (( must_count > 0 )); then verdict="changes_requested"; fi
+def _extract_repo(pr_input: str) -> str:
+    m = GITHUB_REPO_RE.search(pr_input)
+    if m:
+        repo = m.group(1)
+        return repo.removesuffix(".git")
+    r = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip()
+    _err(f"Cannot determine repository from: {pr_input}")
+    sys.exit(1)
 
-  # Extract cost/token/duration from session logs
-  local cost_usd=0 input_tokens=0 output_tokens=0
-  local cache_read_tokens=0 cache_write_tokens=0 duration_ms=0
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-  local session_log="${review_dir}/${FILENAME_SESSION}"
-  local post_session_log="${review_dir}/${FILENAME_POST_SESSION}"
-  local logs=()
-  [[ -f "$session_log" ]] && logs+=("$session_log")
-  [[ -f "$post_session_log" ]] && logs+=("$post_session_log")
-  if [[ ${#logs[@]} -gt 0 ]]; then
-    local raw
-    raw=$(grep -h '"type":"result"' "${logs[@]}" 2>/dev/null) || true
-    if [[ -n "$raw" ]]; then
-      read -r cost_usd input_tokens output_tokens cache_read_tokens cache_write_tokens duration_ms <<< "$(echo "$raw" | jq -rs '
-        {
-          cost: (map(.total_cost_usd // 0) | add),
-          input: (map(.usage.input_tokens // 0) | add),
-          output: (map(.usage.output_tokens // 0) | add),
-          cache_read: (map(.usage.cache_read_input_tokens // 0) | add),
-          cache_write: (map(.usage.cache_creation_input_tokens // 0) | add),
-          duration: (map(.duration_ms // 0) | add)
-        } | [.cost, .input, .output, .cache_read, .cache_write, .duration] | @tsv
-      ' 2>/dev/null)" || true
-    fi
-  fi
 
-  local review_content_raw=""
-  if [[ -f "$review_file" ]]; then
-    review_content_raw=$(cat "$review_file" 2>/dev/null) || true
-  fi
+def _review_file(repo: str, pr_number: str) -> Path:
+    repo_name = repo.split("/")[-1]
+    return REVIEWS_DIR / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
-  local head_sha="" head_ref="" base_ref="" review_type=""
-  local meta_file="${review_dir}/${FILENAME_META}"
-  if [[ -f "$meta_file" ]]; then
-    read -r head_sha head_ref base_ref review_type <<< "$(jq -r '[.head_sha // "", .head_ref // "", .base_ref // "", .review_type // ""] | @tsv' "$meta_file" 2>/dev/null)" || true
-  fi
 
-  jq_args+=(
-    --argjson total "$total" --arg verdict "$verdict"
-    --argjson cost_usd "${cost_usd:-0}"
-    --argjson input_tokens "${input_tokens:-0}"
-    --argjson output_tokens "${output_tokens:-0}"
-    --argjson cache_read_tokens "${cache_read_tokens:-0}"
-    --argjson cache_write_tokens "${cache_write_tokens:-0}"
-    --argjson duration_ms "${duration_ms:-0}"
-    --arg review_content "$review_content_raw"
-    --arg head_sha "${head_sha:-}"
-    --arg head_ref "${head_ref:-}"
-    --arg base_ref "${base_ref:-}"
-    --arg review_type "${review_type:-}"
-  )
+def _display_review(path: Path) -> None:
+    print()
+    print("\033[1m─── Review ───\033[0m", file=sys.stderr)
+    print()
+    print(path.read_text())
+    print()
 
-  local json
-  json=$(jq -cn "${jq_args[@]}" \
-    "{
-      repo: \$repo,
-      pr_number: (if \$pr == \"\" then null else (\$pr | tonumber) end),
-      head_sha: (if \$head_sha == \"\" then null else \$head_sha end),
-      head_ref: (if \$head_ref == \"\" then null else \$head_ref end),
-      base_ref: (if \$base_ref == \"\" then null else \$base_ref end),
-      review_type: (if \$review_type == \"\" then null else \$review_type end),
-      review_file: \$review_file,
-      review_content: (if \$review_content == \"\" then null else \$review_content end),
-      findings: { ${keys_expr}total: \$total },
-      verdict: \$verdict,
-      cost_usd: \$cost_usd,
-      input_tokens: \$input_tokens,
-      output_tokens: \$output_tokens,
-      cache_read_tokens: \$cache_read_tokens,
-      cache_write_tokens: \$cache_write_tokens,
-      duration_ms: \$duration_ms
-    }")
-  echo "REVIEW_SUMMARY:${json}"
-  return 0
-}
 
-_update_pr_state() {
-  local repo="$1" pr_number="$2" review_file="$3" repo_dir="$4" review_type="${5:-}"
-  [[ -n "$repo_dir" && -f "${review_file:-}" ]] || return 0
-  local summary_line
-  summary_line=$(_json_summary "$repo" "$pr_number" "$review_file" 2>/dev/null) || return 0
-  local json
-  json=$(echo "$summary_line" | sed 's/^REVIEW_SUMMARY://')
-  printf '%s' "$json" | jq -c '{
-    review_file: .review_file,
-    review_type: (.review_type // "'"$review_type"'"),
-    head_sha: (.head_sha // ""),
-    finding_counts: (.findings | to_entries | map(select(.key != "total" and (.value | type) == "number" and .value > 0)) | from_entries),
-    verdict: .verdict,
-    cost_usd: .cost_usd,
-    updated_at: (now | todate)
-  }' 2>/dev/null \
-  | "$(dirname "$_SELF")/pr-state-update" --domain review --repo-dir "$repo_dir" 2>/dev/null \
-  || true
-}
+def _format_usage(*log_paths: str) -> str:
+    logs = [p for p in log_paths if p and os.path.isfile(p)]
+    if not logs:
+        return ""
 
-_load_issue_provider() {
-  local -n __provider=$1
-  local -n __provider_opts=$2
-  local wt_path="${3:-}"
+    usages = [parse_session_log(p) for p in logs]
+    cost = sum(u.cost for u in usages)
+    tokens = sum(u.total_tokens for u in usages)
+    duration_ms = sum(u.duration_ms for u in usages)
 
-  __provider="$ISSUE_PROVIDER_DEFAULT"
-  __provider_opts=""
+    if cost == 0.0 and tokens == 0 and duration_ms == 0:
+        return ""
 
-  local config_file=""
-  if [[ -n "$wt_path" && -f "${wt_path}/.claude/review.yml" ]]; then
-    config_file="${wt_path}/.claude/review.yml"
-  elif [[ -f "$WORKBENCH_STATE_DIR/review.yml" ]]; then
-    config_file="$WORKBENCH_STATE_DIR/review.yml"
-  fi
-  [[ -n "$config_file" ]] || return 0
+    if tokens >= 1_000_000:
+        tokens_fmt = f"{tokens / 1_000_000:.1f}M"
+    elif tokens >= 1000:
+        tokens_fmt = f"{tokens // 1000}k"
+    else:
+        tokens_fmt = str(tokens)
 
-  if command -v yq &>/dev/null; then
-    __provider=$(yq -r '.issue_tracker.provider // "linear"' "$config_file" 2>/dev/null) || true
-    __provider_opts=$(yq -r '.issue_tracker // {}' "$config_file" 2>/dev/null) || true
-  else
-    __provider=$(grep -E '^\s*provider:' "$config_file" 2>/dev/null | head -1 | sed 's/.*provider:\s*//' | tr -d ' "'"'" || true)
-  fi
-  [[ -n "$__provider" ]] || __provider="$ISSUE_PROVIDER_DEFAULT"
-}
+    duration_s = duration_ms // 1000
+    mins, secs = divmod(duration_s, 60)
+    duration_fmt = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+    cost_fmt = f"${cost:.2f}"
 
-_extract_issue_id() {
-  local -n __id=$1
-  local provider="$2"
-  local branch_name="$3"
-  local pr_body="${4:-}"
+    return f"  Usage:           {cost_fmt} · {tokens_fmt} tokens · {duration_fmt}"
 
-  __id=""
-  case "$provider" in
-    linear|jira)
-      __id=$(echo "$branch_name" | grep -oE "$ISSUE_PATTERN_JIRA_LINEAR" | head -1 || true)
-      if [[ -z "$__id" && -n "$pr_body" ]]; then
-        __id=$(echo "$pr_body" | grep -oE "$ISSUE_PATTERN_JIRA_LINEAR" | head -1 || true)
-      fi
-      ;;
-    github)
-      if [[ -n "$pr_body" ]]; then
-        local match
-        match=$(echo "$pr_body" | grep -oiE '(closes|fixes|resolves)\s+#[0-9]+' | head -1 || true)
-        __id=$(echo "$match" | grep -oE '[0-9]+' || true)
-      fi
-      ;;
-    none) ;;
-  esac
-}
 
-_fetch_issue_context() {
-  local -n __link=$1
-  local -n __context=$2
-  local provider="$3"
-  local issue_id="$4"
-  local repo="${5:-}"
-  local provider_opts="${6:-}"
+def _print_summary(
+    review_file: str,
+    session_log: str,
+    pr_url: str = "",
+    post_session_log: str = "",
+    branch_name: str = "",
+) -> None:
+    print(file=sys.stderr)
+    print("\033[1m─── Summary ───\033[0m", file=sys.stderr)
+    print(f"  Review:          {review_file}", file=sys.stderr)
+    print(f"  Session log:     {session_log}", file=sys.stderr)
+    if post_session_log and os.path.isfile(post_session_log):
+        print(f"  Post session:    {post_session_log}", file=sys.stderr)
+    if pr_url:
+        print(f"  PR:              {pr_url}", file=sys.stderr)
+    elif branch_name:
+        print(f"  Branch:          {branch_name}", file=sys.stderr)
+    usage_line = _format_usage(session_log, post_session_log)
+    if usage_line:
+        print(usage_line, file=sys.stderr)
+    print(file=sys.stderr)
 
-  __link=""
-  __context=""
-  [[ -n "$issue_id" ]] || return 0
 
-  case "$provider" in
-    linear)
-      if command -v linear &>/dev/null; then
-        __context=$(linear issue view "$issue_id" --json --no-comments 2>/dev/null) || true
-        if [[ -n "$__context" ]]; then echo "✓ Found Linear issue: $issue_id"; fi
-      fi
-      ;;
-    github)
-      __link="${GITHUB_BASE_URL}/${repo}/issues/${issue_id}"
-      if command -v gh &>/dev/null; then
-        __context=$(gh issue view "$issue_id" --repo "$repo" --json title,body,comments 2>/dev/null) || true
-        if [[ -n "$__context" ]]; then echo "✓ Found GitHub issue: #${issue_id}"; fi
-      fi
-      ;;
-    jira)
-      local jira_url=""
-      if command -v yq &>/dev/null && [[ -n "$provider_opts" ]]; then
-        jira_url=$(echo "$provider_opts" | yq -r '.jira_url // empty' 2>/dev/null) || true
-      fi
-      if [[ -n "$jira_url" ]]; then
-        __link="${jira_url}/browse/${issue_id}"
-      fi
-      echo "✓ Found Jira issue: $issue_id"
-      ;;
-  esac
-}
+def _count_severity(file: Path, prefix: str) -> int:
+    if not file.is_file():
+        return 0
+    try:
+        text = file.read_text()
+    except OSError:
+        return 0
+    pattern = SEVERITY_COUNT_RE_FMT.format(re.escape(prefix))
+    return len(re.findall(pattern, text, re.MULTILINE))
 
-_archive_review() {
-  local -n __prior_path=$1
-  local review_file="$2"
-  local session_log="$3"
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-  local archive_dir="${review_dir}/archives"
-  local ts
 
-  __prior_path=""
-  if [[ -f "$review_file" ]]; then
-    __prior_path="${review_dir}/${FILENAME_PRIOR}"
-    cp "$review_file" "$__prior_path"
 
-    mkdir -p "$archive_dir"
-    ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
-    mv "$review_file" "${archive_dir}/${ts}${REVIEW_EXT}"
-    info "Archived prior review to archives/${ts}${REVIEW_EXT}"
-  fi
+def _read_review_meta(review_dir: Path) -> ReviewMeta:
+    meta_file = review_dir / FILENAME_META
+    if not meta_file.is_file():
+        return ReviewMeta()
+    try:
+        return review_meta_from_dict(json.loads(meta_file.read_text()))
+    except (json.JSONDecodeError, OSError):
+        return ReviewMeta()
 
-  if [[ -f "$session_log" ]]; then
-    mkdir -p "$archive_dir"
-    ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
-    mv "$session_log" "${archive_dir}/${ts}.session.jsonl"
-  fi
 
-  local post_log="${review_dir}/${FILENAME_POST_SESSION}"
-  if [[ -f "$post_log" ]]; then
-    mkdir -p "$archive_dir"
-    ts=$(date +"$ARCHIVE_TIMESTAMP_FMT")
-    mv "$post_log" "${archive_dir}/${ts}.post.jsonl"
-  fi
+def _aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
+    if not review_dir:
+        return SessionUsage()
+    usages = [
+        parse_session_log(str(review_dir / n))
+        for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
+        if os.path.isfile(str(review_dir / n))
+    ]
+    if not usages:
+        return SessionUsage()
+    return SessionUsage(
+        cost=sum(u.cost for u in usages),
+        input_tokens=sum(u.input_tokens for u in usages),
+        output_tokens=sum(u.output_tokens for u in usages),
+        cache_read_tokens=sum(u.cache_read_tokens for u in usages),
+        cache_write_tokens=sum(u.cache_write_tokens for u in usages),
+        duration_ms=sum(u.duration_ms for u in usages),
+    )
 
-  # Prune old archives
-  local _old_archive
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${review_dir}/archives/"2*"${REVIEW_EXT}" 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
-    rm -f "$_old_archive"
-  done
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${review_dir}/archives/"2*.session.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
-    rm -f "$_old_archive"
-  done
-  # shellcheck disable=SC2012
-  for _old_archive in $(ls -1t "${review_dir}/archives/"2*.post.jsonl 2>/dev/null | tail -n +$((ARCHIVE_KEEP_COUNT + 1)) || true); do
-    rm -f "$_old_archive"
-  done
-}
 
-_setup_review_worktree() {
-  local -n __wt_path=$1
-  local repo="$2"
-  local pr_number="$3"
-  local pr_head="$4"
-  local repo_dir="${5:-}"
+def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
+    counts = {}
+    total = 0
+    review_path = Path(review_file) if review_file else None
+    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
+        c = _count_severity(review_path, prefix) if review_path else 0
+        counts[key] = c
+        total += c
 
-  local repo_root=""
-  _find_repo_root repo_root "$repo" "$repo_dir"
-  if [[ -z "$repo_root" ]]; then
-    err "Cannot find local clone of ${repo}. Clone it first and re-run from within the repo."
-    exit 1
-  fi
+    must_count = counts.get("must_fix", 0)
+    verdict = "changes_requested" if must_count > 0 else "approve"
 
-  # Shallow clones break merge-base resolution — unshallow before worktree setup
-  if [[ "$(git -C "$repo_root" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
-    info "Unshallowing repository..."
-    git -C "$repo_root" fetch --unshallow 2>/dev/null || true
-  fi
+    review_dir = Path(review_file).parent if review_file else None
+    usage = _aggregate_session_usage(review_dir)
 
-  info "Setting up worktree for PR #${pr_number}..."
-  local wt_json wt_fallback="false"
-  wt_json=$(wt switch "pr:${pr_number}" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
-  __wt_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
+    review_content = None
+    if review_path and review_path.is_file():
+        try:
+            review_content = review_path.read_text()
+        except OSError:
+            pass
 
-  if [[ -z "$__wt_path" ]]; then
-    info "Branch deleted, fetching via PR ref..."
-    git -C "$repo_root" fetch origin "pull/${pr_number}/head" 2>/dev/null || {
-      err "Failed to fetch PR #${pr_number} ref"
-      exit 1
+    meta = _read_review_meta(review_dir) if review_dir else ReviewMeta()
+
+    summary = {
+        "repo": repo,
+        "pr_number": int(pr_number) if pr_number else None,
+        "head_sha": meta.head_sha or None,
+        "head_ref": meta.head_ref or None,
+        "base_ref": meta.base_ref or None,
+        "review_type": meta.review_type or None,
+        "review_file": review_file,
+        "review_content": review_content,
+        "findings": {**counts, "total": total},
+        "verdict": verdict,
+        "cost_usd": usage.cost,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "cache_write_tokens": usage.cache_write_tokens,
+        "duration_ms": usage.duration_ms,
     }
-    __wt_path="${repo_root}/${WORKTREE_FALLBACK_DIR}/pr-${pr_number}-review"
-    git -C "$repo_root" worktree remove --force "$__wt_path" 2>/dev/null || true
-    git -C "$repo_root" worktree add --detach "$__wt_path" FETCH_HEAD 2>/dev/null || {
-      err "Failed to create worktree for PR #${pr_number}"
-      exit 1
-    }
-    wt_fallback="true"
-    local pr_head_sha
-    pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
-    info "Created detached worktree at ${pr_head_sha:0:7}"
-  else
-    git -C "$__wt_path" fetch origin "$pr_head" 2>/dev/null || true
-    git -C "$__wt_path" reset --hard "origin/$pr_head" 2>/dev/null || true
-  fi
-
-  if [[ "$wt_fallback" == "true" ]]; then
-    trap 'git -C "$repo_root" worktree remove --force "$__wt_path" 2>/dev/null || true' EXIT
-  else
-    trap 'wt remove "$pr_head" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true' EXIT
-  fi
-}
-
-usage() {
-  cat <<EOF
-Usage: claude-review [options] <pr_url_or_number>
-       claude-review --self [<pr_url_or_number | branch_name>]
-       claude-review <command> [args]
-
-Commands:
-  <pr_url_or_number>       Run review (default)
-$(commands_usage)
-
-Options:
-  --no-post                  Skip all interactive prompts; run review and exit
-  --post                     Run review then post automatically (leaves review PENDING)
-  --submit                   Submit the review (use with --post for fully headless)
-  --issue <link>             Attach an issue link for reviewer context
-  --max-parallel <N>         Max concurrent group reviews (default: ${DEFAULT_MAX_PARALLEL})
-  --max-cost <USD>           Max total review cost in USD (default: 20)
-  --model <name>             Override model for all agents (e.g. sonnet, opus)
-  --no-holistic              Skip holistic phase in multi-phase reviews
-  --self                     Self-review: review your own code (accepts PR number, branch name, or none for current branch)
-  --fix                      Apply fixes for review findings (requires --self)
-  --skip-user-verification   Skip ownership check in --self mode
-  --force                    Skip pending review and stale review warnings
-  --repo-dir <path>          Path to local repo or worktree (skips auto-detection; aliases: --repo, --worktree)
-  --resolve-verified         Resolve all verified threads (use with 'threads' command)
-  --json-summary             Suppress human output; emit JSON summary to stdout
-EOF
-}
-
-_check_pending_review() {
-  local repo="$1"
-  local pr_number="$2"
-  local force="$3"
-
-  [[ "$force" == "true" ]] && return 0
-
-  local gh_user
-  gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
-
-  local pending_json
-  pending_json=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
-    --jq "[.[] | select(.user.login == \"${gh_user}\" and .state == \"PENDING\")] | first // empty" 2>/dev/null) || true
-
-  if [[ -n "$pending_json" && "$pending_json" != "null" ]]; then
-    local pending_id comment_count
-    pending_id=$(echo "$pending_json" | jq -r '.id') || true
-    comment_count=$(gh api "repos/${repo}/pulls/${pr_number}/reviews/${pending_id}/comments" \
-      --jq 'length' 2>/dev/null) || true
-
-    warn "PENDING review exists with ${comment_count:-0} comments (not yet submitted)"
-    if confirm "Delete the pending review before re-reviewing?"; then
-      gh api "repos/${repo}/pulls/${pr_number}/reviews/${pending_id}" --method DELETE >/dev/null 2>&1 || true
-      info "Deleted pending review"
-    else
-      info "Keeping pending review — new review will replace it at post time"
-    fi
-  fi
-}
-
-_check_stale_review() {
-  local repo="$1"
-  local pr_number="$2"
-  local review_file="$3"
-  local force="$4"
-
-  [[ "$force" == "true" ]] && return 0
-  [[ -f "$review_file" ]] || return 0
-
-  local review_sha
-  review_sha=$(grep -oP '<!-- head_sha: \K[a-f0-9]+' "$review_file" 2>/dev/null | head -1) || true
-  [[ -n "$review_sha" ]] || return 0
-
-  local pr_head_sha
-  pr_head_sha=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid' 2>/dev/null) || true
-  [[ -n "$pr_head_sha" ]] || return 0
-
-  if [[ "$review_sha" == "$pr_head_sha" ]]; then
-    warn "No new commits since the last review (HEAD ${pr_head_sha:0:7})"
-    confirm "Re-review anyway?" || exit 0
-  else
-    info "Incremental review: new commits since last review (${review_sha:0:7}..${pr_head_sha:0:7})"
-  fi
-}
-
-_append_orchestrate_flags() {
-  local -n __args=$1
-  local no_holistic="$2"
-  local max_cost="$3"
-  local model="$4"
-  __args+=(--generator-version "$(_generator_version)")
-  [[ "$no_holistic" == "true" ]] && __args+=(--no-holistic)
-  [[ -n "$max_cost" ]] && __args+=(--max-cost "$max_cost")
-  [[ -n "$model" ]] && __args+=(--model "$model")
-  return 0
-}
-
-_run_orchestrate() {
-  "$(dirname "$_SELF")/${ORCHESTRATE_BIN}" "$@"
-}
-
-_resolve_prior_review() {
-  local -n __prior=$1
-  local review_file="$2"
-  local session_log="$3"
-  local resume="$4"
-
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-
-  __prior=""
-
-  # Pipeline state exists — orchestrator handles resume/recovery internally
-  if [[ "$resume" == "true" ]]; then
-    if [[ -f "${review_dir}/${FILENAME_PRIOR}" ]]; then
-      __prior="${review_dir}/${FILENAME_PRIOR}"
-    fi
-    return
-  fi
-
-  _archive_review __prior "$review_file" "$session_log"
-}
-
-_cleanup_prior_review() {
-  local review_file="$1"
-  local prior_review_path="$2"
-
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-  local pipeline_state="${review_dir}/${FILENAME_PIPELINE_STATE}"
-  if [[ ! -f "$pipeline_state" ]]; then
-    rm -f "$prior_review_path" 2>/dev/null
-  fi
-}
-
-# ─── Commands ─────────────────────────────────────────────────────────────────
-
-_run_review() {
-  local pr_input="$1"
-  local no_post="${2:-false}"
-  local issue_link="${3:-}"
-  local auto_post="${4:-false}"
-  local max_parallel="${5:-$DEFAULT_MAX_PARALLEL}"
-  local force="${6:-false}"
-  local no_holistic="${7:-false}"
-  local max_cost="${8:-}"
-  local model="${9:-}"
-  local auto_submit="${10:-false}"
-  local repo_dir="${11:-}"
-
-  # Headless modes skip interactive prompts
-  if [[ "$no_post" == "true" || "$auto_post" == "true" ]]; then
-    force="true"
-  fi
-
-  _prune_merged_reviews
-
-  local pr_number
-  _extract_pr_number pr_number "$pr_input"
-
-  local repo
-  _extract_repo repo "$pr_input"
-
-  local review_file
-  _review_file review_file "$repo" "$pr_number"
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-  mkdir -p "$review_dir"
-
-  # ── Issue detection: auto-detect from branch/PR body before prompting ──
-  local pr_meta
-  pr_meta=$(gh pr view "$pr_number" --repo "$repo" --json headRefName,body 2>/dev/null) || true
-  local pr_head pr_body
-  pr_head=$(echo "$pr_meta" | jq -r '.headRefName // empty' 2>/dev/null) || true
-  pr_body=$(echo "$pr_meta" | jq -r '.body // empty' 2>/dev/null) || true
-
-  local issue_context="" detected_link=""
-  if [[ -z "$issue_link" ]]; then
-    local provider="" provider_opts=""
-    _load_issue_provider provider provider_opts ""
-
-    local issue_id=""
-    _extract_issue_id issue_id "$provider" "$pr_head" "$pr_body"
-    _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
-    if [[ -n "$detected_link" ]]; then issue_link="$detected_link"; fi
-
-    if [[ "$no_post" != "true" && "$auto_post" != "true" && -z "$issue_link" && -z "$issue_context" ]]; then
-      read -rp "Issue link (optional, Enter to skip): " issue_link
-    fi
-  fi
-
-  local pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
-
-  # ── Auto-detect incomplete pipeline (skip stale check if resuming) ──
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-  local has_pipeline_state="false"
-  if [[ -f "${review_dir}/${FILENAME_PIPELINE_STATE}" ]]; then
-    has_pipeline_state="true"
-  fi
-
-  # ── Pre-flight checks ──
-  [[ "$has_pipeline_state" != "true" ]] && _check_stale_review "$repo" "$pr_number" "$review_file" "$force"
-  _check_pending_review "$repo" "$pr_number" "$force"
-
-  # ── Worktree setup ──
-  local wt_path
-  _setup_review_worktree wt_path "$repo" "$pr_number" "$pr_head" "$repo_dir"
-
-  local session_log="${review_dir}/${FILENAME_SESSION}"
-
-  local prior_review_path=""
-  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$has_pipeline_state"
-
-  # ── Run orchestrator ──
-  local orchestrate_args=(
-    --pr "$pr_number"
-    --repo "$repo"
-    --review-file "$review_file"
-    --repo-dir "$wt_path"
-    --reviews-dir "$REVIEWS_DIR"
-    --session-log "$session_log"
-  )
-  [[ -n "$prior_review_path" && -f "$prior_review_path" ]] && orchestrate_args+=(--prior-review "$prior_review_path")
-  [[ -n "$issue_link" ]] && orchestrate_args+=(--issue "$issue_link")
-  [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
-  orchestrate_args+=(--max-parallel "$max_parallel")
-  _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
-
-  if ! _run_orchestrate "${orchestrate_args[@]}"; then
-    err "Review orchestration failed"
-    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
-    exit 1
-  fi
-
-  if [[ ! -f "$review_file" ]]; then
-    err "Review orchestration completed but produced no review file"
-    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
-    exit 1
-  fi
-
-  _cleanup_prior_review "$review_file" "$prior_review_path"
-
-  _display_review "$review_file"
-
-  if [[ "$no_post" == "true" ]]; then
-    _print_summary "$review_file" "$session_log" "$pr_url"
-    echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
-    return
-  fi
-
-  if [[ "$auto_post" == "true" ]]; then
-    cmd_post "$repo" "$pr_number" "$auto_submit"
-    local post_session_log="${review_dir}/${FILENAME_POST_SESSION}"
-    _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
-    return
-  fi
-
-  if ! confirm "Satisfied with the review?"; then
-    _print_summary "$review_file" "$session_log" "$pr_url"
-    echo -e "  ${DIM}Edit the file, then run: claude-review post ${pr_number}${NC}"
-    exit 0
-  fi
-
-  if ! confirm "Post review to GitHub?"; then
-    _print_summary "$review_file" "$session_log" "$pr_url"
-    echo -e "  ${DIM}To post later: claude-review post ${pr_number}${NC}"
-    return
-  fi
-
-  cmd_post "$repo" "$pr_number" "false"
-  local post_session_log="${review_dir}/${FILENAME_POST_SESSION}"
-
-  if confirm "Submit review now?"; then
-    _submit_pending_review "$repo" "$pr_number" "$review_file"
-  fi
-
-  _print_summary "$review_file" "$session_log" "$pr_url" "$post_session_log"
-}
-
-_verify_pr_ownership() {
-  local pr_number="$1"
-  local repo="$2"
-  local pr_author gh_user
-  pr_author=$(gh pr view "$pr_number" --repo "$repo" --json author --jq '.author.login' 2>/dev/null) || true
-  gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
-  [[ -z "$pr_author" || -z "$gh_user" || "$pr_author" == "$gh_user" ]] && return 0
-  warn "PR #${pr_number} is owned by ${pr_author}, not ${gh_user}"
-  confirm "Continue with self-review?" || exit 0
-}
-
-_find_repo_root() {
-  local -n __out=$1
-  local repo="$2"
-  local explicit_dir="${3:-}"
-  local repo_name="${repo##*/}"
-
-  # Explicit path from --repo-dir
-  if [[ -n "$explicit_dir" ]]; then
-    if [[ -d "$explicit_dir" ]]; then
-      __out="$explicit_dir"
-      return 0
-    fi
-    return 1
-  fi
-
-  local git_toplevel
-  git_toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || true
-  if [[ -n "$git_toplevel" ]]; then
-    if [[ "$(basename "$git_toplevel")" == "$repo_name" ]]; then
-      __out="$git_toplevel"
-      return 0
-    fi
-    # Bare-repo worktree layout: toplevel is <repo>/<branch>, check parent
-    local parent_dir
-    parent_dir="$(dirname "$git_toplevel")"
-    if [[ "$(basename "$parent_dir")" == "$repo_name" ]]; then
-      __out="$parent_dir"
-      return 0
-    fi
-  fi
-
-  __out=$(gh repo view "$repo" --json name --jq '.name' 2>/dev/null | xargs -I{} find "$HOME/git" -maxdepth 2 -name "{}" -type d 2>/dev/null | head -1) || true
-}
-
-_switch_to_pr_branch() {
-  local -n __wt_path=$1
-  local -n __wt_cleanup=$2
-  local pr_number="$3"
-  local repo="$4"
-
-  local pr_head
-  pr_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName' 2>/dev/null) || true
-  [[ -n "$pr_head" ]] || return 0
-
-  local current_branch
-  current_branch=$(git -C "$__wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
-  [[ "$current_branch" != "$pr_head" ]] || return 0
-
-  local repo_root=""
-  _find_repo_root repo_root "$repo"
-  [[ -n "$repo_root" ]] || return 0
-
-  info "Switching to branch ${pr_head}..."
-  local wt_json switched_path
-  wt_json=$(wt switch "$pr_head" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
-  switched_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
-  if [[ -n "$switched_path" ]]; then
-    __wt_path="$switched_path"
-    __wt_cleanup="$pr_head"
-    return 0
-  fi
-
-  # Fallback: git-native worktree when wt is unavailable
-  local sanitized_branch="${pr_head//\//-}"
-  local fallback_dir="${repo_root}/self-review-${sanitized_branch}"
-
-  git -C "$repo_root" fetch origin "+refs/heads/${pr_head}:refs/remotes/origin/${pr_head}" 2>/dev/null || true
-
-  if [[ -d "$fallback_dir" ]]; then
-    git -C "$repo_root" worktree remove "$fallback_dir" --force 2>/dev/null || true
-  fi
-  git -C "$repo_root" worktree add --detach "$fallback_dir" "origin/${pr_head}" 2>/dev/null || true
-
-  if [[ -d "$fallback_dir" ]]; then
-    __wt_path="$fallback_dir"
-    __wt_cleanup="$fallback_dir"
-  fi
-}
-
-_switch_to_branch() {
-  local -n __wt_path=$1
-  local -n __wt_cleanup=$2
-  local branch="$3"
-  local repo="$4"
-
-  local repo_root=""
-  _find_repo_root repo_root "$repo"
-  [[ -n "$repo_root" ]] || return 0
-
-  info "Switching to branch ${branch}..."
-  local wt_json switched_path
-  wt_json=$(wt switch "$branch" --no-cd --no-hooks --format json -y -C "$repo_root" 2>/dev/null | grep '^{') || true
-  switched_path=$(echo "$wt_json" | jq -r '.path // empty' 2>/dev/null) || true
-  if [[ -n "$switched_path" ]]; then
-    __wt_path="$switched_path"
-    __wt_cleanup="$branch"
-    return 0
-  fi
-
-  local sanitized_branch="${branch//\//-}"
-  local fallback_dir="${repo_root}/self-review-${sanitized_branch}"
-
-  git -C "$repo_root" fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null || true
-
-  if [[ -d "$fallback_dir" ]]; then
-    git -C "$repo_root" worktree remove "$fallback_dir" --force 2>/dev/null || true
-  fi
-  git -C "$repo_root" worktree add --detach "$fallback_dir" "origin/${branch}" 2>/dev/null || true
-
-  if [[ -d "$fallback_dir" ]]; then
-    __wt_path="$fallback_dir"
-    __wt_cleanup="$fallback_dir"
-  fi
-}
-
-_run_self_review() {
-  local pr_input="${1:-}"
-  local issue_link="${2:-}"
-  local max_parallel="${3:-$DEFAULT_MAX_PARALLEL}"
-  local skip_user_verification="${4:-false}"
-  local force="${5:-false}"
-  local no_holistic="${6:-false}"
-  local max_cost="${7:-}"
-  local model="${8:-}"
-  local repo_dir="${9:-}"
-  local fix_pass="${10:-false}"
-
-  _prune_merged_reviews
-
-  # Classify positional argument: PR ref, branch name, or empty
-  local is_pr="false" is_branch="false"
-  if [[ -n "$pr_input" ]]; then
-    if _is_pr_ref "$pr_input"; then
-      is_pr="true"
-    else
-      is_branch="true"
-    fi
-  fi
-
-  if [[ "$is_branch" == "true" ]]; then
-    local resolved resolve_dir="${repo_dir:-.}"
-    resolved=$(cd "$resolve_dir" && resolve-branch "$pr_input" 2>/dev/null) || true
-    [[ -z "$resolved" ]] || pr_input="$resolved"
-  fi
-
-  local wt_path
-  if [[ -n "$repo_dir" ]]; then
-    wt_path=$(git -C "$repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
-      err "Not a git repository: $repo_dir"
-      exit 1
-    }
-  else
-    wt_path=$(git rev-parse --show-toplevel 2>/dev/null) || {
-      if [[ "$(git rev-parse --is-bare-repository 2>/dev/null)" == "true" ]]; then
-        wt_path=$(_resolve_bare_repo_worktree "$pr_input")
-      else
-        err "Not in a git repository — pass --repo-dir to specify the repo"
-        exit 1
-      fi
-    }
-  fi
-
-  local repo=""
-  if [[ "$is_branch" == "true" || (-n "$repo_dir" && -z "$pr_input") ]]; then
-    _repo_from_remote repo "$wt_path"
-    [[ -n "$repo" ]] || { err "Cannot determine repository from remote URL"; exit 1; }
-  else
-    _extract_repo repo "${pr_input:-local}"
-  fi
-
-  local pr_number=""
-  local wt_cleanup=""
-
-  if [[ "$is_pr" == "true" ]]; then
-    _extract_pr_number pr_number "$pr_input"
-    [[ "$skip_user_verification" == "true" ]] || _verify_pr_ownership "$pr_number" "$repo"
-    _switch_to_pr_branch wt_path wt_cleanup "$pr_number" "$repo"
-  elif [[ "$is_branch" == "true" ]]; then
-    _switch_to_branch wt_path wt_cleanup "$pr_input" "$repo"
-  fi
-
-  # ── Review file in centralized reviews directory ──
-  local repo_name="${repo##*/}"
-  local branch_name
-  branch_name=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
-  local branch_sanitized="${branch_name//\//-}"
-  local self_review_dir="${REVIEWS_DIR}/${repo_name}-self-${branch_sanitized}"
-  mkdir -p "$self_review_dir"
-  local review_file="${self_review_dir}/review${REVIEW_EXT}"
-
-  local session_log="${self_review_dir}/${FILENAME_SESSION}"
-
-  # ── Auto-detect incomplete pipeline (skip archive if resuming) ──
-  local has_pipeline_state="false"
-  if [[ -f "${self_review_dir}/${FILENAME_PIPELINE_STATE}" ]]; then
-    has_pipeline_state="true"
-  fi
-
-  local prior_review_path=""
-  _resolve_prior_review prior_review_path "$review_file" "$session_log" "$has_pipeline_state"
-
-  local issue_context=""
-  if [[ -z "$issue_link" ]]; then
-    local provider="" provider_opts=""
-    _load_issue_provider provider provider_opts "$wt_path"
-
-    local issue_id=""
-    _extract_issue_id issue_id "$provider" "$branch_name"
-    local detected_link=""
-    _fetch_issue_context detected_link issue_context "$provider" "$issue_id" "$repo" "$provider_opts"
-    if [[ -n "$detected_link" ]]; then issue_link="$detected_link"; fi
-  fi
-
-  # ── Run orchestrator ──
-  local orchestrate_args=(
-    --repo "$repo"
-    --review-file "$review_file"
-    --repo-dir "$wt_path"
-    --reviews-dir "$REVIEWS_DIR"
-    --session-log "$session_log"
-    --mode self
-  )
-  [[ -n "$pr_number" ]] && orchestrate_args+=(--pr "$pr_number")
-  [[ -n "$prior_review_path" && -f "$prior_review_path" ]] && orchestrate_args+=(--prior-review "$prior_review_path")
-  [[ -n "$issue_link" ]] && orchestrate_args+=(--issue "$issue_link")
-  [[ -n "$issue_context" ]] && orchestrate_args+=(--issue-context "$issue_context")
-  orchestrate_args+=(--max-parallel "$max_parallel")
-  [[ "$fix_pass" == "true" ]] && orchestrate_args+=(--fix)
-  _append_orchestrate_flags orchestrate_args "$no_holistic" "$max_cost" "$model"
-
-  if ! _run_orchestrate "${orchestrate_args[@]}"; then
-    err "Review orchestration failed"
-    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
-    exit 1
-  fi
-
-  if [[ ! -f "$review_file" ]]; then
-    err "Review orchestration completed but produced no review file"
-    [[ -f "$session_log" ]] && echo -e "  Session log: ${session_log}" >&2
-    exit 1
-  fi
-
-  _cleanup_prior_review "$review_file" "$prior_review_path"
-
-  _display_review "$review_file"
-
-  local pr_url=""
-  [[ -n "$pr_number" ]] && pr_url="${GITHUB_BASE_URL}/${repo}/pull/${pr_number}"
-  _print_summary "$review_file" "$session_log" "$pr_url" "" "$branch_name"
-
-  _update_pr_state "$repo" "${pr_number:-}" "$review_file" "$wt_path" "self"
-
-  # Emit JSON summary before worktree cleanup so review file is still readable
-  if [[ -n "${_json_stdout:-}" ]]; then
-    _json_summary "$repo" "$pr_number" "$review_file" >&"$_json_stdout"
-  fi
-
-  # Clean up worktree if we created one
-  if [[ -n "$wt_cleanup" ]]; then
-    if [[ -d "$wt_cleanup" ]]; then
-      # Git-native worktree — remove by path
-      git worktree remove "$wt_cleanup" --force 2>/dev/null || true
-    else
-      # wt-managed worktree — remove by branch name
-      local repo_root
-      repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || true
-      wt remove "$wt_cleanup" --no-hooks --force -y -C "$repo_root" 2>/dev/null || true
-    fi
-  fi
-}
-
-_submit_pending_review() {
-  local repo="$1"
-  local pr_number="$2"
-  local review_file="$3"
-
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-  local post_file="${review_dir}/${FILENAME_POST_SESSION}"
-  if [[ ! -f "$post_file" ]]; then
-    err "No post tracking file found: $post_file"
-    return 1
-  fi
-
-  local review_id
-  review_id=$(jq -r '.review_id' "$post_file" 2>/dev/null) || true
-  if [[ -z "$review_id" || "$review_id" == "null" ]]; then
-    err "Could not read review_id from $post_file"
-    return 1
-  fi
-
-  info "Submitting review #${review_id}..."
-  gh api "repos/${repo}/pulls/${pr_number}/reviews/${review_id}/events" \
-    --method POST -f event=COMMENT >/dev/null 2>&1 \
-    && info "Review #${review_id} submitted" \
-    || warn "Failed to submit review #${review_id}"
-
-  local tmp
-  tmp=$(jq '.submitted = true' "$post_file") && echo "$tmp" > "$post_file"
-}
-
-
-cmd_post() {
-  local repo="$1"
-  local pr_number="$2"
-  local submit="${3:-false}"
-
-  local review_file
-  _review_file review_file "$repo" "$pr_number"
-
-  if [[ ! -f "$review_file" ]]; then
-    err "No review file found: $review_file"
-    echo -e "  ${DIM}Run: claude-review ${pr_number}${NC}"
-    exit 1
-  fi
-
-  local submit_flag=()
-  [[ "$submit" == "true" ]] && submit_flag=(--submit)
-
-  "$(dirname "$_SELF")/review-post" \
-    --pr "$pr_number" \
-    --review-file "$review_file" \
-    "${submit_flag[@]}"
-}
-
-
-cmd_threads() {
-  local pr_input="${1:-}"
-  local resolve_verified="$2"
-  local repo_dir="$3"
-
-  local threads_args=()
-
-  if [[ -n "$pr_input" ]]; then
-    local pr_number
-    _extract_pr_number pr_number "$pr_input"
-    threads_args+=(--pr "$pr_number")
-  fi
-
-  [[ "$resolve_verified" == "true" ]] && threads_args+=(--resolve-verified)
-  [[ -n "$repo_dir" ]] && threads_args+=(--repo-dir "$repo_dir")
-
-  "$(dirname "$_SELF")/review-threads" "${threads_args[@]}"
-}
-
-cmd_rebuild() {
-  local pr_input="${1:-}"
-  [[ -n "$pr_input" ]] || { err "Usage: claude-review rebuild <pr_url_or_number>"; exit 1; }
-
-  local pr_number pr_repo review_file
-  _extract_pr_number pr_number "$pr_input"
-  _extract_repo pr_repo "$pr_input"
-  _review_file review_file "$pr_repo" "$pr_number"
-
-  local review_dir
-  review_dir="$(dirname "$review_file")"
-
-  if [[ ! -d "$review_dir" ]]; then
-    err "No review directory found: $review_dir"
-    exit 1
-  fi
-
-  "$(dirname "$_SELF")/review-rebuild" --review-dir "$review_dir" --pr "$pr_number"
-}
-
-cmd_summary() {
-  local pr_input="${1:-}"
-  [[ -n "$pr_input" ]] || { err "Usage: claude-review summary <pr_url_or_number>"; exit 1; }
-
-  local pr_number pr_repo review_file
-  _extract_pr_number pr_number "$pr_input"
-  _extract_repo pr_repo "$pr_input"
-  _review_file review_file "$pr_repo" "$pr_number"
-
-  if [[ ! -f "$review_file" ]]; then
-    err "No review file found: $review_file"
-    exit 1
-  fi
-
-  _json_summary "$pr_repo" "$pr_number" "$review_file"
-}
-
-# ─── Main ─────────────────────────────────────────────────────────────────────
-
-main() {
-  local no_post="false"
-  local auto_post="false"
-  local auto_submit="false"
-  local self_review="false"
-  local fix_pass="false"
-  local skip_user_verification="false"
-  local force="false"
-  local no_holistic="false"
-  local resolve_verified="false"
-  local issue_link=""
-  local max_parallel="$DEFAULT_MAX_PARALLEL"
-  local max_cost=""
-  local model=""
-  local json_summary="false"
-  local repo_dir=""
-  local positional=()
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --no-post)       no_post="true"; shift ;;
-      --post)          auto_post="true"; shift ;;
-      --submit)        auto_submit="true"; shift ;;
-      --self)          self_review="true"; shift ;;
-      --fix)           fix_pass="true"; shift ;;
-      --skip-user-verification) skip_user_verification="true"; shift ;;
-      --force)         force="true"; shift ;;
-      --no-holistic)   no_holistic="true"; shift ;;
-      --resolve-verified) resolve_verified="true"; shift ;;
-      --json-summary)  json_summary="true"; shift ;;
-      --issue)         issue_link="${2:-}"; [[ -n "$issue_link" ]] || { err "--issue requires a value"; exit 1; }; shift 2 ;;
-      --max-parallel)  max_parallel="${2:-}"; [[ -n "$max_parallel" ]] || { err "--max-parallel requires a value"; exit 1; }; shift 2 ;;
-      --max-cost)     max_cost="${2:-}"; [[ -n "$max_cost" ]] || { err "--max-cost requires a value"; exit 1; }; shift 2 ;;
-      --model)        model="${2:-}"; [[ -n "$model" ]] || { err "--model requires a value"; exit 1; }; shift 2 ;;
-      --repo|--repo-dir|--worktree) repo_dir="${2:-}"; [[ -n "$repo_dir" ]] || { err "$1 requires a value"; exit 1; }; shift 2 ;;
-      -V|--version)    print_version "claude-review"; exit 0 ;;
-      -h|--help)       usage; exit 0 ;;
-      *)               positional+=("$1"); shift ;;
-    esac
-  done
-
-  # When --json-summary is set, redirect stdout to stderr so all human-readable
-  # output (info, warn, subprocess progress) goes to stderr. JSON is emitted
-  # to the saved original stdout fd at the end.
-  local _json_stdout=""
-  if [[ "$json_summary" == "true" ]]; then
-    exec {_json_stdout}>&1
-    exec 1>&2
-  fi
-
-  # Fall back to REPO_DIR env var when --repo-dir not specified
-  if [[ -z "$repo_dir" && -n "${REPO_DIR:-}" ]]; then
-    repo_dir="$REPO_DIR"
-  fi
-
-  if [[ "$fix_pass" == "true" && "$self_review" != "true" ]]; then
-    err "--fix requires --self"
-    exit 1
-  fi
-
-  if [[ "$self_review" == "true" ]]; then
-    _run_self_review "${positional[0]:-}" "$issue_link" "$max_parallel" "$skip_user_verification" "$force" "$no_holistic" "$max_cost" "$model" "$repo_dir" "$fix_pass"
-    if [[ -n "$_json_stdout" ]]; then
-      exec {_json_stdout}>&-
-    fi
-    return
-  fi
-
-  if [[ "$no_post" == "true" && "$auto_post" == "true" ]]; then
-    err "--no-post and --post are mutually exclusive"
-    exit 1
-  fi
-
-  local command="${positional[0]:-}"
-
-  case "$command" in
-    gc)
-      cmd_gc
-      ;;
-    post)
-      local post_input="${positional[1]:-}"
-      [[ -n "$post_input" ]] || { err "Usage: claude-review post <pr_url_or_number>"; exit 1; }
-      local post_pr_number post_repo post_review_file
-      _extract_pr_number post_pr_number "$post_input"
-      _extract_repo post_repo "$post_input"
-      _review_file post_review_file "$post_repo" "$post_pr_number"
-      cmd_post "$post_repo" "$post_pr_number" "$auto_submit"
-      _update_pr_state "$post_repo" "$post_pr_number" "$post_review_file" "$repo_dir" "pr"
-      if [[ "$json_summary" == "true" ]]; then
-        _json_summary "$post_repo" "$post_pr_number" "$post_review_file" >&"$_json_stdout"
-        exec {_json_stdout}>&-
-      fi
-      ;;
-    rebuild)
-      local rebuild_input="${positional[1]:-}"
-      local rebuild_pr_number rebuild_repo rebuild_review_file
-      _extract_pr_number rebuild_pr_number "$rebuild_input"
-      _extract_repo rebuild_repo "$rebuild_input"
-      _review_file rebuild_review_file "$rebuild_repo" "$rebuild_pr_number"
-      cmd_rebuild "$rebuild_input"
-      _update_pr_state "$rebuild_repo" "$rebuild_pr_number" "$rebuild_review_file" "$repo_dir" "pr"
-      if [[ "$json_summary" == "true" ]]; then
-        _json_summary "$rebuild_repo" "$rebuild_pr_number" "$rebuild_review_file" >&"$_json_stdout"
-        exec {_json_stdout}>&-
-      fi
-      ;;
-    summary)
-      cmd_summary "${positional[1]:-}"
-      ;;
-    threads)
-      cmd_threads "${positional[1]:-}" "$resolve_verified" "$repo_dir"
-      ;;
-    "")
-      usage
-      exit 1
-      ;;
-    *)
-      local rev_pr_number rev_repo rev_review_file
-      _extract_pr_number rev_pr_number "$command"
-      _extract_repo rev_repo "$command"
-      _review_file rev_review_file "$rev_repo" "$rev_pr_number"
-      _run_review "$command" "$no_post" "$issue_link" "$auto_post" "$max_parallel" "$force" "$no_holistic" "$max_cost" "$model" "$auto_submit" "$repo_dir"
-      _update_pr_state "$rev_repo" "$rev_pr_number" "$rev_review_file" "$repo_dir" "pr"
-      if [[ "$json_summary" == "true" ]]; then
-        _json_summary "$rev_repo" "$rev_pr_number" "$rev_review_file" >&"$_json_stdout"
-        exec {_json_stdout}>&-
-      fi
-      ;;
-  esac
-}
-
-_gc_dir_is_all_stale() {
-  local dir="$1"
-  local has_stale="false" has_recent="false"
-  local _f
-  while IFS= read -r -d '' _f; do
-    has_stale="true"
-    break
-  done < <(find "$dir" -type f -mtime +${GC_STALE_DAYS} -print0 2>/dev/null)
-  [[ "$has_stale" == "true" ]] || return 1
-
-  while IFS= read -r -d '' _f; do
-    has_recent="true"
-    break
-  done < <(find "$dir" -type f -not -mtime +${GC_STALE_DAYS} -print0 2>/dev/null)
-  [[ "$has_recent" == "false" ]]
-}
-
-_gc_clean_intermediates() {
-  local -n __count=$1
-  local review_dir="$2"
-  local intermediate
-  for intermediate in "${review_dir}"group-*.md "${review_dir}"group-*.jsonl \
-                      "${review_dir}"holistic.md "${review_dir}"holistic.jsonl \
-                      "${review_dir}"synthesis.jsonl; do
-    [[ -f "$intermediate" ]] || continue
-    # Keep recent intermediates for debugging
-    [[ -n "$(find "$intermediate" -mtime +${GC_STALE_DAYS} -print 2>/dev/null)" ]] || continue
-    rm -f "$intermediate"
-    __count=$((__count + 1))
-  done
-}
-
-cmd_gc() {
-  local cleaned=0
-
-  for review_dir in "$REVIEWS_DIR"/*/; do
-    [[ -d "$review_dir" ]] || continue
-
-    local has_review="false"
-    [[ -f "${review_dir}review${REVIEW_EXT}" ]] && has_review="true"
-
-    # No review file and all files stale — remove entire directory
-    if [[ "$has_review" == "false" ]] && _gc_dir_is_all_stale "$review_dir"; then
-      rm -rf "$review_dir"
-      info "GC: removed orphaned $(basename "${review_dir%/}")"
-      cleaned=$((cleaned + 1))
-      continue
-    fi
-
-    # Completed review (no pipeline) — remove intermediates older than GC_STALE_DAYS
-    local has_pipeline="false"
-    [[ -f "${review_dir}${FILENAME_PIPELINE_STATE}" ]] && has_pipeline="true"
-
-    if [[ "$has_review" == "true" && "$has_pipeline" == "false" ]]; then
-      _gc_clean_intermediates cleaned "$review_dir"
-    fi
-  done
-
-  if [[ "$cleaned" -gt 0 ]]; then
-    info "GC: cleaned ${cleaned} items"
-  else
-    info "GC: nothing to clean"
-  fi
-}
-
-PRUNE_MAX_FILES=10
-
-_prune_merged_reviews() {
-  local pruned=0 checked=0
-
-  for meta_file in "$REVIEWS_DIR"/*/"${FILENAME_META}"; do
-    [[ -f "$meta_file" ]] || continue
-    (( checked >= PRUNE_MAX_FILES )) && break
-
-    local repo pr_number
-    read -r repo pr_number <<< "$(jq -r '[.repo // "", .pr_number // ""] | @tsv' "$meta_file" 2>/dev/null)" || continue
-
-    if [[ -z "$repo" || -z "$pr_number" ]]; then
-      continue
-    fi
-
-    checked=$((checked + 1))
-
-    local state
-    state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq .state 2>/dev/null) || state=""
-
-    if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
-      local review_dir
-      review_dir="$(dirname "$meta_file")"
-      rm -rf "$review_dir"
-      info "Pruned ${repo}#${pr_number} (${state})"
-      pruned=$((pruned + 1))
-    fi
-  done
-
-  if [[ "$pruned" -gt 0 ]]; then
-    info "Pruned ${pruned} merged/closed PRs"
-  fi
-}
-
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  main "$@"
-fi
+    return f"REVIEW_SUMMARY:{json.dumps(summary)}"
+
+
+def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str, review_type: str = "") -> None:
+    if not repo_dir or not review_file or not os.path.isfile(review_file):
+        return
+
+    review_path = Path(review_file)
+    review_dir = review_path.parent
+
+    finding_counts = {}
+    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
+        c = _count_severity(review_path, prefix)
+        if c > 0:
+            finding_counts[key] = c
+
+    must_count = finding_counts.get("must_fix", 0)
+    verdict = "changes_requested" if must_count > 0 else "approve"
+    meta = _read_review_meta(review_dir)
+    usage = _aggregate_session_usage(review_dir)
+
+    summary = pr_state.ReviewSummary(
+        review_file=review_file,
+        review_type=meta.review_type or review_type,
+        head_sha=meta.head_sha,
+        finding_counts=finding_counts,
+        verdict=verdict,
+        cost_usd=usage.cost,
+        updated_at=pr_state.now_iso(),
+    )
+
+    try:
+        ctx = pr_context.resolve(repo_dir=repo_dir)
+    except SystemExit:
+        return
+
+    try:
+        pr_state.apply_state_update(
+            worktree_root=ctx.worktree_root,
+            repo=ctx.repo,
+            branch=ctx.branch,
+            pr_number=ctx.pr_number,
+            head_sha=ctx.head_sha,
+            domain="review",
+            data=pr_state._review_to_dict(summary),
+        )
+    except Exception:
+        pass
+
+
+def _archive_review(review_file: Path, session_log: str) -> str:
+    review_dir = review_file.parent
+    archive_dir = review_dir / "archives"
+    prior_path = ""
+
+    if review_file.is_file():
+        prior_path = str(review_dir / FILENAME_PRIOR)
+        shutil.copy2(str(review_file), prior_path)
+
+        archive_dir.mkdir(exist_ok=True)
+        ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
+        shutil.move(str(review_file), str(archive_dir / f"{ts}{REVIEW_EXT}"))
+        _info(f"Archived prior review to archives/{ts}{REVIEW_EXT}")
+
+    if os.path.isfile(session_log):
+        archive_dir.mkdir(exist_ok=True)
+        ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
+        shutil.move(session_log, str(archive_dir / f"{ts}.session.jsonl"))
+
+    post_log = str(review_dir / FILENAME_POST_SESSION)
+    if os.path.isfile(post_log):
+        archive_dir.mkdir(exist_ok=True)
+        ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
+        shutil.move(post_log, str(archive_dir / f"{ts}.post.jsonl"))
+
+    # Prune old archives
+    for suffix in (REVIEW_EXT, ".session.jsonl", ".post.jsonl"):
+        pattern = f"2*{suffix}"
+        archives = sorted(archive_dir.glob(pattern), reverse=True) if archive_dir.is_dir() else []
+        for old in archives[ARCHIVE_KEEP_COUNT:]:
+            old.unlink(missing_ok=True)
+
+    return prior_path
+
+
+def _resolve_prior_review(review_file: Path, session_log: str, resume: bool) -> str:
+    review_dir = review_file.parent
+    if resume:
+        prior = review_dir / FILENAME_PRIOR
+        if prior.is_file():
+            return str(prior)
+        return ""
+    return _archive_review(review_file, session_log)
+
+
+def _cleanup_prior_review(review_file: Path, prior_path: str) -> None:
+    if not prior_path:
+        return
+    review_dir = review_file.parent
+    pipeline_state = review_dir / FILENAME_PIPELINE_STATE
+    if not pipeline_state.is_file():
+        try:
+            os.unlink(prior_path)
+        except OSError:
+            pass
+
+
+def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
+    if force:
+        return
+
+    gh_user = ""
+    try:
+        r = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True,
+        )
+        gh_user = r.stdout.strip()
+    except Exception:
+        pass
+
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
+             "--jq", f'[.[] | select(.user.login == "{gh_user}" and .state == "PENDING")] | first // empty'],
+            capture_output=True, text=True,
+        )
+        pending_json = r.stdout.strip()
+    except Exception:
+        pending_json = ""
+
+    if not pending_json or pending_json == "null":
+        return
+
+    try:
+        pending = json.loads(pending_json)
+        pending_id = pending.get("id")
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    comment_count = "0"
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments",
+             "--jq", "length"],
+            capture_output=True, text=True,
+        )
+        comment_count = r.stdout.strip() or "0"
+    except Exception:
+        pass
+
+    _warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
+    if not _confirm("Delete the pending review before re-reviewing?"):
+        _info("Keeping pending review — new review will replace it at post time")
+        return
+
+    try:
+        subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}",
+             "--method", "DELETE"],
+            capture_output=True, text=True,
+        )
+        _info("Deleted pending review")
+    except Exception:
+        pass
+
+
+def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool) -> None:
+    if force:
+        return
+    if not review_file.is_file():
+        return
+
+    try:
+        text = review_file.read_text()
+    except OSError:
+        return
+    m = re.search(r"<!-- head_sha: ([a-f0-9]+) -->", text)
+    review_sha = m.group(1) if m else ""
+    if not review_sha:
+        return
+
+    pr_head_sha = ""
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", pr_number, "--repo", repo,
+             "--json", "headRefOid", "--jq", ".headRefOid"],
+            capture_output=True, text=True,
+        )
+        pr_head_sha = r.stdout.strip()
+    except Exception:
+        pass
+    if not pr_head_sha:
+        return
+
+    if review_sha == pr_head_sha:
+        _warn(f"No new commits since the last review (HEAD {pr_head_sha[:7]})")
+        if not _confirm("Re-review anyway?"):
+            sys.exit(0)
+    else:
+        _info(f"Incremental review: new commits since last review ({review_sha[:7]}..{pr_head_sha[:7]})")
+
+
+def _generator_version() -> str:
+    try:
+        ver = version_string("claude-review")
+        return ver.splitlines()[-1] if ver else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
+    review_dir = Path(review_file).parent
+    post_file = review_dir / FILENAME_POST_SESSION
+    if not post_file.is_file():
+        _err(f"No post tracking file found: {post_file}")
+        return
+
+    try:
+        data = json.loads(post_file.read_text())
+        review_id = data.get("review_id")
+    except (json.JSONDecodeError, OSError):
+        review_id = None
+
+    if not review_id:
+        _err(f"Could not read review_id from {post_file}")
+        return
+
+    _info(f"Submitting review #{review_id}...")
+    r = subprocess.run(
+        ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{review_id}/events",
+         "--method", "POST", "-f", "event=COMMENT"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        _info(f"Review #{review_id} submitted")
+    else:
+        _warn(f"Failed to submit review #{review_id}")
+
+    try:
+        data["submitted"] = True
+        post_file.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _verify_pr_ownership(pr_number: str, repo: str) -> None:
+    pr_author = ""
+    gh_user = ""
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", pr_number, "--repo", repo,
+             "--json", "author", "--jq", ".author.login"],
+            capture_output=True, text=True,
+        )
+        pr_author = r.stdout.strip()
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True,
+        )
+        gh_user = r.stdout.strip()
+    except Exception:
+        pass
+
+    if not pr_author or not gh_user or pr_author == gh_user:
+        return
+
+    _warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
+    if not _confirm("Continue with self-review?"):
+        sys.exit(0)
+
+
+def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
+    repo_name = repo.split("/")[-1]
+
+    if explicit_dir:
+        if os.path.isdir(explicit_dir):
+            return explicit_dir
+        return ""
+
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        git_toplevel = r.stdout.strip()
+    except Exception:
+        git_toplevel = ""
+
+    if git_toplevel:
+        if os.path.basename(git_toplevel) == repo_name:
+            return git_toplevel
+        parent_dir = os.path.dirname(git_toplevel)
+        if os.path.basename(parent_dir) == repo_name:
+            return parent_dir
+
+    try:
+        r = subprocess.run(
+            ["gh", "repo", "view", repo, "--json", "name", "--jq", ".name"],
+            capture_output=True, text=True,
+        )
+        name = r.stdout.strip()
+    except Exception:
+        name = ""
+    if not name:
+        return ""
+
+    home_git = os.path.expanduser("~/git")
+    try:
+        r2 = subprocess.run(
+            ["find", home_git, "-maxdepth", "2", "-name", name, "-type", "d"],
+            capture_output=True, text=True,
+        )
+        found = r2.stdout.strip().splitlines()
+    except Exception:
+        found = []
+    return found[0] if found else ""
+
+
+def _find_worktree_for_branch(branch: str) -> str:
+    try:
+        r = subprocess.run(
+            ["git", "worktree", "list"],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        return ""
+    for line in r.stdout.splitlines():
+        if f"[{branch}]" in line:
+            return line.split()[0]
+    return ""
+
+
+def _resolve_bare_repo_worktree(branch: str = "") -> str:
+    if branch:
+        path = _find_worktree_for_branch(branch)
+        if path:
+            return path
+
+    default_branch = "main"
+    try:
+        r = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True,
+        )
+        ref = r.stdout.strip()
+        if ref:
+            default_branch = ref.replace("refs/remotes/origin/", "")
+    except Exception:
+        pass
+
+    path = _find_worktree_for_branch(default_branch)
+    if path:
+        return path
+
+    _err(f"Bare repository — no worktree found for {branch or default_branch}. Pass --repo-dir to specify a worktree")
+    sys.exit(1)
+
+
+def _fail_orchestration(msg: str, session_log: str) -> None:
+    _err(msg)
+    if os.path.isfile(session_log):
+        print(f"  Session log: {session_log}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _build_orchestrate_args(
+    *,
+    pr_number: str, repo: str, review_file: Path, wt_path: str,
+    session_log: str, prior_review_path: str, issue_link: str,
+    issue_context: str, max_parallel: int, no_holistic: bool,
+    max_cost: float | None, model: str | None, mode: str = "",
+    fix_pass: bool = False,
+) -> list[str]:
+    args = [
+        str(BIN_DIR / "review-orchestrate"),
+        "--repo", repo,
+        "--review-file", str(review_file),
+        "--repo-dir", wt_path,
+        "--reviews-dir", str(REVIEWS_DIR),
+        "--session-log", session_log,
+    ]
+    if pr_number:
+        args += ["--pr", pr_number]
+    if mode:
+        args += ["--mode", mode]
+    if prior_review_path and os.path.isfile(prior_review_path):
+        args += ["--prior-review", prior_review_path]
+    if issue_link:
+        args += ["--issue", issue_link]
+    if issue_context:
+        args += ["--issue-context", issue_context]
+    args += ["--max-parallel", str(max_parallel)]
+    args += ["--generator-version", _generator_version()]
+    if fix_pass:
+        args.append("--fix")
+    if no_holistic:
+        args.append("--no-holistic")
+    if max_cost:
+        args += ["--max-cost", str(max_cost)]
+    if model:
+        args += ["--model", model]
+    return args
+
+
+def _run_review_body(
+    pr_number, repo, review_file, review_dir, wt_path,
+    session_log, prior_review_path, issue_link, issue_context,
+    max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+    auto_submit, pr_url,
+) -> None:
+    orchestrate_args = _build_orchestrate_args(
+        pr_number=pr_number, repo=repo, review_file=review_file,
+        wt_path=wt_path, session_log=session_log,
+        prior_review_path=prior_review_path, issue_link=issue_link,
+        issue_context=issue_context, max_parallel=max_parallel,
+        no_holistic=no_holistic, max_cost=max_cost, model=model,
+    )
+    rc = subprocess.run(orchestrate_args).returncode
+    if rc != 0:
+        _fail_orchestration("Review orchestration failed", session_log)
+    if not review_file.is_file():
+        _fail_orchestration("Review orchestration completed but produced no review file", session_log)
+
+    _cleanup_prior_review(review_file, prior_review_path)
+    _display_review(review_file)
+
+    if no_post:
+        _print_summary(str(review_file), session_log, pr_url)
+        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        return
+
+    if auto_post:
+        cmd_post(repo, pr_number, auto_submit)
+        post_session_log = str(review_dir / FILENAME_POST_SESSION)
+        _print_summary(str(review_file), session_log, pr_url, post_session_log)
+        return
+
+    if not _confirm("Satisfied with the review?"):
+        _print_summary(str(review_file), session_log, pr_url)
+        print(f"  {ANSI_DIM}Edit the file, then run: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        sys.exit(0)
+
+    if not _confirm("Post review to GitHub?"):
+        _print_summary(str(review_file), session_log, pr_url)
+        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        return
+
+    cmd_post(repo, pr_number, False)
+    post_session_log = str(review_dir / FILENAME_POST_SESSION)
+
+    if _confirm("Submit review now?"):
+        _submit_pending_review(repo, pr_number, str(review_file))
+
+    _print_summary(str(review_file), session_log, pr_url, post_session_log)
+
+
+# ── Main flows ───────────────────────────────────────────────────────────────
+
+def _run_review(args) -> None:
+    pr_input = args.positional[0] if args.positional else ""
+    no_post = args.no_post
+    auto_post = args.post
+    auto_submit = args.submit
+    issue_link = args.issue or ""
+    max_parallel = args.max_parallel
+    force = args.force
+    no_holistic = args.no_holistic
+    max_cost = args.max_cost
+    model = args.model
+    repo_dir = args.repo_dir or ""
+
+    if no_post or auto_post:
+        force = True
+
+    _prune_merged_reviews()
+
+    pr_number = _extract_pr_number(pr_input)
+    repo = _extract_repo(pr_input)
+
+    review_file = _review_file(repo, pr_number)
+    review_dir = review_file.parent
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    # Issue detection
+    pr_meta = {}
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", pr_number, "--repo", repo,
+             "--json", "headRefName,body"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            pr_meta = json.loads(r.stdout)
+    except Exception:
+        pass
+
+    pr_head = pr_meta.get("headRefName", "")
+    pr_body = pr_meta.get("body", "")
+
+    issue_context = ""
+    detected_link = ""
+    if not issue_link:
+        provider_info = review_issue.load_issue_provider()
+        issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
+        issue_result = review_issue.fetch_issue_context(
+            provider_info.name, issue_id, repo, provider_info.options,
+        )
+        detected_link = issue_result.link
+        issue_context = issue_result.context
+        if detected_link:
+            issue_link = detected_link
+
+        if not no_post and not auto_post and not issue_link and not issue_context:
+            issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
+
+    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
+
+    has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
+
+    if not has_pipeline_state:
+        _check_stale_review(repo, pr_number, review_file, force)
+    _check_pending_review(repo, pr_number, force)
+
+    # Worktree setup
+    repo_root = _find_repo_root(repo, repo_dir)
+    if not repo_root:
+        _err(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
+        sys.exit(1)
+
+    wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
+    wt_path = wt_result.path
+
+    session_log = str(review_dir / FILENAME_SESSION)
+    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+    try:
+        _run_review_body(
+            pr_number, repo, review_file, review_dir, wt_path,
+            session_log, prior_review_path, issue_link, issue_context,
+            max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+            auto_submit, pr_url,
+        )
+    finally:
+        review_worktree.cleanup_worktree(wt_result, repo_root)
+
+
+def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
+    original_repo_dir = repo_dir or ""
+    if not original_repo_dir:
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True,
+            )
+            original_repo_dir = r.stdout.strip()
+        except Exception:
+            pass
+    if original_repo_dir:
+        review_worktree.cleanup_worktree(wt_cleanup, original_repo_dir)
+
+
+def _run_self_review_body(
+    repo, pr_number, wt_path, issue_link, max_parallel,
+    no_holistic, max_cost, model, fix_pass, args,
+) -> None:
+    repo_name = repo.split("/")[-1]
+    try:
+        r = subprocess.run(
+            ["git", "-C", wt_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True,
+        )
+        branch_name = r.stdout.strip()
+    except Exception:
+        branch_name = ""
+
+    branch_sanitized = branch_name.replace("/", "-")
+    self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
+    self_review_dir.mkdir(parents=True, exist_ok=True)
+    review_file = self_review_dir / f"review{REVIEW_EXT}"
+    session_log = str(self_review_dir / FILENAME_SESSION)
+
+    has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
+    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+    issue_context = ""
+    if not issue_link:
+        provider_info = review_issue.load_issue_provider(wt_path)
+        issue_id = review_issue.extract_issue_id(provider_info.name, branch_name)
+        issue_result = review_issue.fetch_issue_context(
+            provider_info.name, issue_id, repo, provider_info.options,
+        )
+        detected_link = issue_result.link
+        issue_context = issue_result.context
+        if detected_link:
+            issue_link = detected_link
+
+    orchestrate_args = _build_orchestrate_args(
+        pr_number=pr_number, repo=repo, review_file=review_file,
+        wt_path=wt_path, session_log=session_log,
+        prior_review_path=prior_review_path, issue_link=issue_link,
+        issue_context=issue_context, max_parallel=max_parallel,
+        no_holistic=no_holistic, max_cost=max_cost, model=model,
+        mode="self", fix_pass=fix_pass,
+    )
+
+    rc = subprocess.run(orchestrate_args).returncode
+    if rc != 0:
+        _fail_orchestration("Review orchestration failed", session_log)
+    if not review_file.is_file():
+        _fail_orchestration("Review orchestration completed but produced no review file", session_log)
+
+    _cleanup_prior_review(review_file, prior_review_path)
+    _display_review(review_file)
+
+    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
+    _print_summary(str(review_file), session_log, pr_url, "", branch_name)
+
+    _update_pr_state(repo, pr_number, str(review_file), wt_path, "self")
+
+    json_stdout = getattr(args, "_json_stdout", None)
+    if json_stdout is not None:
+        summary = _json_summary(repo, pr_number, str(review_file))
+        os.write(json_stdout, (summary + "\n").encode())
+
+
+def _resolve_wt_path(repo_dir: str, pr_input: str) -> str:
+    if repo_dir:
+        try:
+            r = subprocess.run(
+                ["git", "-C", repo_dir, "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True,
+            )
+        except Exception:
+            _err(f"Not a git repository: {repo_dir}")
+            sys.exit(1)
+        if r.returncode != 0:
+            _err(f"Not a git repository: {repo_dir}")
+            sys.exit(1)
+        return r.stdout.strip()
+
+    r = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        return r.stdout.strip()
+
+    r2 = subprocess.run(
+        ["git", "rev-parse", "--is-bare-repository"],
+        capture_output=True, text=True,
+    )
+    if r2.stdout.strip() == "true":
+        return _resolve_bare_repo_worktree(pr_input)
+
+    _err("Not in a git repository — pass --repo-dir to specify the repo")
+    sys.exit(1)
+
+
+def _resolve_branch_input(pr_input: str, repo_dir: str) -> str:
+    resolve_dir = repo_dir or "."
+    try:
+        r = subprocess.run(
+            ["resolve-branch", pr_input],
+            capture_output=True, text=True, cwd=resolve_dir,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return pr_input
+
+
+def _run_self_review(args) -> None:
+    pr_input = args.positional[0] if args.positional else ""
+    issue_link = args.issue or ""
+    max_parallel = args.max_parallel
+    skip_user_verification = args.skip_user_verification
+    force = args.force
+    no_holistic = args.no_holistic
+    max_cost = args.max_cost
+    model = args.model
+    repo_dir = args.repo_dir or ""
+    fix_pass = args.fix
+
+    _prune_merged_reviews()
+
+    is_pr = False
+    is_branch = False
+    if pr_input:
+        if _is_pr_ref(pr_input):
+            is_pr = True
+        else:
+            is_branch = True
+
+    if is_branch:
+        pr_input = _resolve_branch_input(pr_input, repo_dir)
+
+    wt_path = _resolve_wt_path(repo_dir, pr_input)
+
+    if is_branch or (repo_dir and not pr_input):
+        r = subprocess.run(
+            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            capture_output=True, text=True, cwd=wt_path,
+        )
+        repo = r.stdout.strip()
+        if not repo:
+            _err("Cannot determine repository from remote URL")
+            sys.exit(1)
+    else:
+        repo = _extract_repo(pr_input or "local")
+
+    pr_number = ""
+    wt_cleanup: review_worktree.WorktreeResult | None = None
+
+    if is_pr:
+        pr_number = _extract_pr_number(pr_input)
+        if not skip_user_verification:
+            _verify_pr_ownership(pr_number, repo)
+        wt_cleanup = review_worktree.switch_to_pr_branch(pr_number, repo, wt_path)
+        if wt_cleanup:
+            wt_path = wt_cleanup.path
+    elif is_branch:
+        wt_cleanup = review_worktree.switch_to_branch(pr_input, wt_path)
+        if wt_cleanup:
+            wt_path = wt_cleanup.path
+
+    try:
+        _run_self_review_body(
+            repo, pr_number, wt_path, issue_link, max_parallel,
+            no_holistic, max_cost, model, fix_pass, args,
+        )
+    finally:
+        if wt_cleanup:
+            _cleanup_self_review_worktree(wt_cleanup, repo_dir)
+
+
+# ── Subcommands ──────────────────────────────────────────────────────────────
+
+def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
+    review_file = _review_file(repo, pr_number)
+    if not review_file.is_file():
+        _err(f"No review file found: {review_file}")
+        print(f"  {ANSI_DIM}Run: claude-review {pr_number}{ANSI_RESET}", file=sys.stderr)
+        sys.exit(1)
+
+    post_args = [
+        str(BIN_DIR / "review-post"),
+        "--pr", pr_number,
+        "--review-file", str(review_file),
+    ]
+    if submit:
+        post_args.append("--submit")
+
+    subprocess.run(post_args, check=False)
+
+
+def cmd_threads(args) -> None:
+    pr_input = args.positional[1] if len(args.positional) > 1 else ""
+    threads_args = [str(BIN_DIR / "review-threads")]
+
+    if pr_input:
+        pr_number = _extract_pr_number(pr_input)
+        threads_args += ["--pr", pr_number]
+
+    if args.resolve_verified:
+        threads_args.append("--resolve-verified")
+    if args.repo_dir:
+        threads_args += ["--repo-dir", args.repo_dir]
+
+    subprocess.run(threads_args, check=False)
+
+
+def cmd_rebuild(args) -> None:
+    pr_input = args.positional[1] if len(args.positional) > 1 else ""
+    if not pr_input:
+        _err("Usage: claude-review rebuild <pr_url_or_number>")
+        sys.exit(1)
+
+    pr_number = _extract_pr_number(pr_input)
+    pr_repo = _extract_repo(pr_input)
+    review_file = _review_file(pr_repo, pr_number)
+    review_dir = review_file.parent
+
+    if not review_dir.is_dir():
+        _err(f"No review directory found: {review_dir}")
+        sys.exit(1)
+
+    subprocess.run(
+        [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_number],
+        check=False,
+    )
+
+
+def cmd_summary(args) -> None:
+    pr_input = args.positional[1] if len(args.positional) > 1 else ""
+    if not pr_input:
+        _err("Usage: claude-review summary <pr_url_or_number>")
+        sys.exit(1)
+
+    pr_number = _extract_pr_number(pr_input)
+    pr_repo = _extract_repo(pr_input)
+    review_file = _review_file(pr_repo, pr_number)
+
+    if not review_file.is_file():
+        _err(f"No review file found: {review_file}")
+        sys.exit(1)
+
+    print(_json_summary(pr_repo, pr_number, str(review_file)))
+
+
+def cmd_gc() -> None:
+    cleaned = 0
+    for review_dir in REVIEWS_DIR.iterdir():
+        if not review_dir.is_dir():
+            continue
+
+        has_review = (review_dir / f"review{REVIEW_EXT}").is_file()
+
+        if not has_review and _gc_dir_is_all_stale(review_dir):
+            shutil.rmtree(review_dir, ignore_errors=True)
+            _info(f"GC: removed orphaned {review_dir.name}")
+            cleaned += 1
+            continue
+
+        has_pipeline = (review_dir / FILENAME_PIPELINE_STATE).is_file()
+        if has_review and not has_pipeline:
+            cleaned += _gc_clean_intermediates(review_dir)
+
+    if cleaned > 0:
+        _info(f"GC: cleaned {cleaned} items")
+    else:
+        _info("GC: nothing to clean")
+
+
+def _gc_dir_is_all_stale(d: Path) -> bool:
+    try:
+        files = [f for f in d.rglob("*") if f.is_file()]
+    except OSError:
+        return False
+    if not files:
+        return False
+    now = datetime.now().timestamp()
+    return all((now - f.stat().st_mtime) / 86400 > GC_STALE_DAYS for f in files)
+
+
+def _gc_clean_intermediates(review_dir: Path) -> int:
+    count = 0
+    patterns = [
+        "group-*.md", "group-*.jsonl",
+        "holistic.md", "holistic.jsonl",
+        "synthesis.jsonl",
+    ]
+    files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
+    now = datetime.now().timestamp()
+    for f in files:
+        age_days = (now - f.stat().st_mtime) / 86400
+        if age_days > GC_STALE_DAYS:
+            f.unlink(missing_ok=True)
+            count += 1
+    return count
+
+
+def _prune_merged_reviews() -> None:
+    pruned = 0
+    checked = 0
+
+    for meta_file in REVIEWS_DIR.glob(f"*/{FILENAME_META}"):
+        if checked >= PRUNE_MAX_FILES:
+            break
+
+        meta = _read_review_meta(meta_file.parent)
+        if not meta.repo or not meta.pr_number:
+            continue
+
+        checked += 1
+
+        try:
+            r = subprocess.run(
+                ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
+                 "--json", "state", "--jq", ".state"],
+                capture_output=True, text=True,
+            )
+            state = r.stdout.strip()
+        except Exception:
+            state = ""
+
+        if state in ("MERGED", "CLOSED"):
+            review_dir = meta_file.parent
+            shutil.rmtree(review_dir, ignore_errors=True)
+            _info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
+            pruned += 1
+
+    if pruned > 0:
+        _info(f"Pruned {pruned} merged/closed PRs")
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    signal.signal(signal.SIGINT, lambda *_: (print("", file=sys.stderr), _info("Interrupted"), sys.exit(130)))
+
+    parser = argparse.ArgumentParser(
+        prog="claude-review",
+        description="Run Claude's reviewer agent on a PR",
+        add_help=True,
+    )
+    parser.add_argument("--no-post", action="store_true")
+    parser.add_argument("--post", action="store_true")
+    parser.add_argument("--submit", action="store_true")
+    parser.add_argument("--self", action="store_true", dest="self_review")
+    parser.add_argument("--fix", action="store_true")
+    parser.add_argument("--skip-user-verification", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--no-holistic", action="store_true")
+    parser.add_argument("--resolve-verified", action="store_true")
+    parser.add_argument("--json-summary", action="store_true")
+    parser.add_argument("--issue")
+    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
+    parser.add_argument("--max-cost", type=float)
+    parser.add_argument("--model")
+    parser.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
+    parser.add_argument("--branch")
+    parser.add_argument("--pr")
+    parser.add_argument("-V", "--version", action="store_true")
+    parser.add_argument("args", nargs="*")
+
+    parsed = parser.parse_args()
+
+    if parsed.version:
+        print(version_string("claude-review"))
+        sys.exit(0)
+
+    # JSON summary: save real stdout, redirect stdout to stderr
+    _json_stdout_fd = None
+    if parsed.json_summary:
+        _json_stdout_fd = os.dup(sys.stdout.fileno())
+        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+        sys.stdout = os.fdopen(sys.stdout.fileno(), "w", closefd=False)
+
+    if not parsed.repo_dir and os.environ.get("REPO_DIR"):
+        parsed.repo_dir = os.environ["REPO_DIR"]
+
+    # Flatten positional args, incorporating --pr and --branch from dispatcher
+    parsed.positional = list(parsed.args)
+    if parsed.pr and not parsed.positional:
+        parsed.positional = [parsed.pr]
+
+    # Startup migrations
+    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_reviews()
+    _migrate_flat_reviews()
+
+    if parsed.fix and not parsed.self_review:
+        _err("--fix requires --self")
+        sys.exit(1)
+
+    if parsed.self_review:
+        parsed._json_stdout = _json_stdout_fd
+        _run_self_review(parsed)
+        if _json_stdout_fd is not None:
+            os.close(_json_stdout_fd)
+        return
+
+    if parsed.no_post and parsed.post:
+        _err("--no-post and --post are mutually exclusive")
+        sys.exit(1)
+
+    command = parsed.positional[0] if parsed.positional else ""
+
+    if command == "gc":
+        cmd_gc()
+    elif command == "post":
+        post_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
+        if not post_input:
+            _err("Usage: claude-review post <pr_url_or_number>")
+            sys.exit(1)
+        post_pr_number = _extract_pr_number(post_input)
+        post_repo = _extract_repo(post_input)
+        post_review_file = _review_file(post_repo, post_pr_number)
+        cmd_post(post_repo, post_pr_number, parsed.submit)
+        _update_pr_state(post_repo, post_pr_number, str(post_review_file), parsed.repo_dir or "", "pr")
+        if _json_stdout_fd is not None:
+            summary = _json_summary(post_repo, post_pr_number, str(post_review_file))
+            os.write(_json_stdout_fd, (summary + "\n").encode())
+            os.close(_json_stdout_fd)
+    elif command == "rebuild":
+        rebuild_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
+        rebuild_pr_number = _extract_pr_number(rebuild_input) if rebuild_input else ""
+        rebuild_repo = _extract_repo(rebuild_input) if rebuild_input else ""
+        rebuild_review_file = _review_file(rebuild_repo, rebuild_pr_number) if rebuild_repo else Path()
+        cmd_rebuild(parsed)
+        _update_pr_state(rebuild_repo, rebuild_pr_number, str(rebuild_review_file), parsed.repo_dir or "", "pr")
+        if _json_stdout_fd is not None:
+            summary = _json_summary(rebuild_repo, rebuild_pr_number, str(rebuild_review_file))
+            os.write(_json_stdout_fd, (summary + "\n").encode())
+            os.close(_json_stdout_fd)
+    elif command == "summary":
+        cmd_summary(parsed)
+    elif command == "threads":
+        cmd_threads(parsed)
+    elif not command:
+        parser.print_help()
+        sys.exit(1)
+    else:
+        # Default: treat as PR number/URL
+        rev_pr_number = _extract_pr_number(command)
+        rev_repo = _extract_repo(command)
+        rev_review_file = _review_file(rev_repo, rev_pr_number)
+        _run_review(parsed)
+        _update_pr_state(rev_repo, rev_pr_number, str(rev_review_file), parsed.repo_dir or "", "pr")
+        if _json_stdout_fd is not None:
+            summary = _json_summary(rev_repo, rev_pr_number, str(rev_review_file))
+            os.write(_json_stdout_fd, (summary + "\n").encode())
+            os.close(_json_stdout_fd)
+
+
+if __name__ == "__main__":
+    main()

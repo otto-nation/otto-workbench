@@ -182,17 +182,14 @@ def _extract_pr_number(pr_input: str) -> str:
     sys.exit(1)
 
 
-def _extract_repo(pr_input: str, repo_dir: str | None = None) -> str:
+def _extract_repo(pr_input: str) -> str:
     m = GITHUB_REPO_RE.search(pr_input)
     if m:
         repo = m.group(1)
         return repo.removesuffix(".git")
-    kwargs: dict = {"capture_output": True, "text": True}
-    if repo_dir:
-        kwargs["cwd"] = repo_dir
     r = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        **kwargs,
+        capture_output=True, text=True,
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip()
@@ -1323,47 +1320,53 @@ def main() -> None:
 
     if command == "gc":
         cmd_gc()
-    elif command == "post":
-        post_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not post_input:
-            _err("Usage: claude-review post <pr_url_or_number>")
+    elif command in ("post", "rebuild", "summary", "threads"):
+        sub_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
+        if command in ("post", "rebuild") and not sub_input:
+            _err(f"Usage: claude-review {command} <pr_url_or_number>")
             sys.exit(1)
-        post_pr_number = _extract_pr_number(post_input)
-        post_repo = _extract_repo(post_input, parsed.repo_dir)
-        post_review_file = _review_file(post_repo, post_pr_number)
-        cmd_post(post_repo, post_pr_number, parsed.submit)
-        _update_pr_state(post_repo, post_pr_number, str(post_review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = _json_summary(post_repo, post_pr_number, str(post_review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
-    elif command == "rebuild":
-        rebuild_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        rebuild_pr_number = _extract_pr_number(rebuild_input) if rebuild_input else ""
-        rebuild_repo = _extract_repo(rebuild_input, parsed.repo_dir) if rebuild_input else ""
-        rebuild_review_file = _review_file(rebuild_repo, rebuild_pr_number) if rebuild_repo else Path()
-        cmd_rebuild(parsed)
-        _update_pr_state(rebuild_repo, rebuild_pr_number, str(rebuild_review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = _json_summary(rebuild_repo, rebuild_pr_number, str(rebuild_review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
-    elif command == "summary":
-        cmd_summary(parsed)
-    elif command == "threads":
-        cmd_threads(parsed)
+
+        ctx = pr_context.resolve(
+            pr=sub_input or parsed.pr,
+            repo_dir=parsed.repo_dir,
+        )
+        pr_num = str(ctx.pr_number) if ctx.pr_number else ""
+
+        if command == "post":
+            review_file = _review_file(ctx.repo, pr_num)
+            cmd_post(ctx.repo, pr_num, parsed.submit)
+            _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+            if _json_stdout_fd is not None:
+                summary = _json_summary(ctx.repo, pr_num, str(review_file))
+                os.write(_json_stdout_fd, (summary + "\n").encode())
+                os.close(_json_stdout_fd)
+        elif command == "rebuild":
+            review_file = _review_file(ctx.repo, pr_num)
+            cmd_rebuild(parsed)
+            _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+            if _json_stdout_fd is not None:
+                summary = _json_summary(ctx.repo, pr_num, str(review_file))
+                os.write(_json_stdout_fd, (summary + "\n").encode())
+                os.close(_json_stdout_fd)
+        elif command == "summary":
+            cmd_summary(parsed)
+        elif command == "threads":
+            cmd_threads(parsed)
     elif not command:
         parser.print_help()
         sys.exit(1)
     else:
         # Default: treat as PR number/URL
-        rev_pr_number = _extract_pr_number(command)
-        rev_repo = _extract_repo(command, parsed.repo_dir)
-        rev_review_file = _review_file(rev_repo, rev_pr_number)
+        ctx = pr_context.resolve(
+            pr=command,
+            repo_dir=parsed.repo_dir,
+        )
+        rev_pr_number = str(ctx.pr_number) if ctx.pr_number else _extract_pr_number(command)
+        rev_review_file = _review_file(ctx.repo, rev_pr_number)
         _run_review(parsed)
-        _update_pr_state(rev_repo, rev_pr_number, str(rev_review_file), parsed.repo_dir or "", "pr")
+        _update_pr_state(ctx.repo, rev_pr_number, str(rev_review_file), parsed.repo_dir or "", "pr")
         if _json_stdout_fd is not None:
-            summary = _json_summary(rev_repo, rev_pr_number, str(rev_review_file))
+            summary = _json_summary(ctx.repo, rev_pr_number, str(rev_review_file))
             os.write(_json_stdout_fd, (summary + "\n").encode())
             os.close(_json_stdout_fd)
 

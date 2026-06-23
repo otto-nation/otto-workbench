@@ -212,25 +212,25 @@ def test_commands_registry_entries_have_help():
 
 def test_commands_with_script_key():
     """Commands backed by an external script carry a 'script' key."""
-    has_script = {"ci", "review", "comments", "rebase", "gc"}
+    has_script = {"ci", "review", "comments", "rebase"}
     for name in has_script:
         assert "script" in pr_cli._COMMANDS[name], f"{name} missing 'script'"
 
 
 def test_custom_handlers_are_registered():
     """_CUSTOM contains the expected non-pure-delegate commands."""
-    expected_custom = {"status", "review", "comments", "fix"}
+    expected_custom = {"status", "review", "comments", "fix", "gc"}
     assert set(pr_cli._CUSTOM.keys()) == expected_custom
 
 
 def test_internal_commands_have_no_script():
-    internal = {"status", "fix"}
+    internal = {"status", "fix", "gc"}
     for name in internal:
         assert "script" not in pr_cli._COMMANDS[name], f"{name} should not have 'script'"
 
 
 def test_sub_command_prefix():
-    assert pr_cli._COMMANDS["gc"].get("prefix") == ["gc"]
+    assert pr_cli._COMMANDS["gc"].get("prefix") is None
 
 
 # ── help passthrough ─────────────────────────────────────────────────────
@@ -303,17 +303,6 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
     assert rc == 0
     mock_resolve.assert_not_called()
 
-
-@patch("pr_cli.subprocess.run")
-@patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
-def test_help_passthrough_includes_prefix(mock_resolve, mock_run):
-    mock_run.return_value = MagicMock(returncode=0)
-    rc = _run_main("gc", "--help")
-    assert rc == 0
-    cmd = mock_run.call_args[0][0]
-    assert cmd[0].endswith("/claude-review")
-    assert cmd[1] == "gc"
-    assert cmd[2] == "--help"
 
 
 # ── _run_delegate ─────────────────────────────────────────────────────────

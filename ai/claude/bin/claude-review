@@ -33,6 +33,7 @@ from review_common import (
     detect_repo, json_summary, parse_session_log, read_review_meta,
     review_file_path, review_meta_from_dict,
 )
+import review_gc
 import review_issue
 import review_worktree
 
@@ -42,10 +43,8 @@ LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.cl
 FILENAME_PRIOR = f"prior{REVIEW_EXT}"
 
 ARCHIVE_KEEP_COUNT = 3
-GC_STALE_DAYS = 7
 DEFAULT_MAX_PARALLEL = 4
 GITHUB_BASE_URL = "https://github.com"
-PRUNE_MAX_FILES = 10
 
 ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
@@ -700,7 +699,7 @@ def _run_review(args) -> None:
     if no_post or auto_post:
         force = True
 
-    _prune_merged_reviews()
+    review_gc.prune_merged_reviews()
 
     ctx = pr_context.resolve(pr=pr_input or None, repo_dir=repo_dir or None)
     pr_number = str(ctx.pr_number)
@@ -911,7 +910,7 @@ def _run_self_review(args) -> None:
     repo_dir = args.repo_dir or ""
     fix_pass = args.fix
 
-    _prune_merged_reviews()
+    review_gc.prune_merged_reviews()
 
     is_pr = False
     is_branch = False
@@ -1019,89 +1018,11 @@ def cmd_summary(ctx: pr_context.ResolvedContext) -> None:
 
 
 def cmd_gc() -> None:
-    cleaned = 0
-    for review_dir in REVIEWS_DIR.iterdir():
-        if not review_dir.is_dir():
-            continue
-
-        has_review = (review_dir / f"review{REVIEW_EXT}").is_file()
-
-        if not has_review and _gc_dir_is_all_stale(review_dir):
-            shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"GC: removed orphaned {review_dir.name}")
-            cleaned += 1
-            continue
-
-        has_pipeline = (review_dir / FILENAME_PIPELINE_STATE).is_file()
-        if has_review and not has_pipeline:
-            cleaned += _gc_clean_intermediates(review_dir)
-
+    cleaned = review_gc.gc_reviews()
     if cleaned > 0:
         _info(f"GC: cleaned {cleaned} items")
     else:
         _info("GC: nothing to clean")
-
-
-def _gc_dir_is_all_stale(d: Path) -> bool:
-    try:
-        files = [f for f in d.rglob("*") if f.is_file()]
-    except OSError:
-        return False
-    if not files:
-        return False
-    now = datetime.now().timestamp()
-    return all((now - f.stat().st_mtime) / 86400 > GC_STALE_DAYS for f in files)
-
-
-def _gc_clean_intermediates(review_dir: Path) -> int:
-    count = 0
-    patterns = [
-        "group-*.md", "group-*.jsonl",
-        "holistic.md", "holistic.jsonl",
-        "synthesis.jsonl",
-    ]
-    files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
-    now = datetime.now().timestamp()
-    for f in files:
-        age_days = (now - f.stat().st_mtime) / 86400
-        if age_days > GC_STALE_DAYS:
-            f.unlink(missing_ok=True)
-            count += 1
-    return count
-
-
-def _prune_merged_reviews() -> None:
-    pruned = 0
-    checked = 0
-
-    for meta_file in REVIEWS_DIR.glob(f"*/{FILENAME_META}"):
-        if checked >= PRUNE_MAX_FILES:
-            break
-
-        meta = read_review_meta(meta_file.parent)
-        if not meta.repo or not meta.pr_number:
-            continue
-
-        checked += 1
-
-        try:
-            r = subprocess.run(
-                ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
-                 "--json", "state", "--jq", ".state"],
-                capture_output=True, text=True,
-            )
-            state = r.stdout.strip()
-        except Exception:
-            state = ""
-
-        if state in ("MERGED", "CLOSED"):
-            review_dir = meta_file.parent
-            shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
-            pruned += 1
-
-    if pruned > 0:
-        _info(f"Pruned {pruned} merged/closed PRs")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

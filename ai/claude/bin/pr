@@ -17,7 +17,8 @@ sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 
 import pr_context
 import pr_state
-from review_common import json_summary, review_file_path, ANSI_DIM, ANSI_ERR, ANSI_RESET
+import review_gc
+from review_common import json_summary, review_file_path, ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET
 
 
 # ── Command registry ────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ _COMMANDS = {
     "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads"},
     "fix":      {"help": "Fix CI + review + comments"},
     "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase"},
-    "gc":       {"help": "Clean up stale review artifacts",       "script": "claude-review", "prefix": ["gc"]},
+    "gc":       {"help": "Clean up stale PR artifacts"},
 }
 
 
@@ -398,6 +399,44 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
+def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+    """Clean up stale PR artifacts across all domains."""
+    total = 0
+
+    cleaned = review_gc.gc_reviews()
+    total += cleaned
+
+    pruned = review_gc.prune_merged_reviews()
+    total += pruned
+
+    state_dir = ctx.worktree_root / pr_state.STATE_DIR if ctx.worktree_root else None
+    if state_dir and state_dir.is_dir():
+        state_file = state_dir / pr_state.STATE_FILE
+        if state_file.is_file():
+            state = pr_state.load_state(ctx.worktree_root)
+            if state and state.identity.pr_number:
+                try:
+                    r = subprocess.run(
+                        ["gh", "pr", "view", str(state.identity.pr_number),
+                         "--repo", state.identity.repo,
+                         "--json", "state", "--jq", ".state"],
+                        capture_output=True, text=True,
+                    )
+                    pr_st = r.stdout.strip()
+                except Exception:
+                    pr_st = ""
+                if pr_st in ("MERGED", "CLOSED"):
+                    import shutil
+                    shutil.rmtree(state_dir, ignore_errors=True)
+                    print(f"{ANSI_INFO} GC: removed stale pr state ({pr_st})", file=sys.stderr)
+                    total += 1
+
+    if total > 0:
+        print(f"{ANSI_INFO} GC: cleaned {total} item(s) total", file=sys.stderr)
+    else:
+        print(f"{ANSI_INFO} GC: nothing to clean", file=sys.stderr)
+    return 0
+
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
@@ -407,6 +446,7 @@ _CUSTOM = {
     "review":   cmd_review,
     "comments": cmd_comments,
     "fix":      cmd_fix,
+    "gc":       cmd_gc,
 }
 
 

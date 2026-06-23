@@ -15,6 +15,7 @@ LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from review_common import count_severity, json_summary, review_file_path
+import review_gc
 
 
 @pytest.fixture(scope="session")
@@ -37,6 +38,9 @@ def reviews_dir(tmp_path, cr, monkeypatch):
     d = tmp_path / "reviews"
     d.mkdir()
     monkeypatch.setattr(cr, "REVIEWS_DIR", d)
+    import review_common
+    monkeypatch.setattr(review_common, "REVIEWS_DIR", d)
+    monkeypatch.setattr(review_gc, "REVIEWS_DIR", d)
     return d
 
 
@@ -589,10 +593,10 @@ def test_gc_preserves_active_pipeline(cr, reviews_dir):
     assert (d / "group-1.jsonl").exists()
 
 
-# ── _prune_merged_reviews ────────────────────────────────────────────────────
+# ── prune_merged_reviews ─────────────────────────────────────────────────────
 
 
-@patch("claude_review.subprocess.run")
+@patch("review_gc.subprocess.run")
 def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-42"
     d.mkdir()
@@ -613,12 +617,12 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
         return m
 
     mock_run.side_effect = side_effect
-    cr._prune_merged_reviews()
+    review_gc.prune_merged_reviews(reviews_dir)
 
     assert not d.exists()
 
 
-@patch("claude_review.subprocess.run")
+@patch("review_gc.subprocess.run")
 def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-99"
     d.mkdir()
@@ -638,7 +642,7 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
         return m
 
     mock_run.side_effect = side_effect
-    cr._prune_merged_reviews()
+    review_gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists()
     assert (d / "review.md").exists()
@@ -695,7 +699,7 @@ def test_argparse_json_summary_not_positional(cr):
     assert parsed.args == ["42"]
 
 
-# ── _gc_dir_is_all_stale ─────────────────────────────────────────────────────
+# ── gc_dir_is_all_stale ──────────────────────────────────────────────────────
 
 
 def test_gc_dir_all_stale(cr, tmp_path):
@@ -704,7 +708,7 @@ def test_gc_dir_all_stale(cr, tmp_path):
     f = d / "old.jsonl"
     f.write_text("{}")
     os.utime(str(f), (1622505600, 1622505600))
-    assert cr._gc_dir_is_all_stale(d) is True
+    assert review_gc.gc_dir_is_all_stale(d) is True
 
 
 def test_gc_dir_has_recent_files(cr, tmp_path):
@@ -714,16 +718,16 @@ def test_gc_dir_has_recent_files(cr, tmp_path):
     old.write_text("{}")
     os.utime(str(old), (1622505600, 1622505600))
     (d / "new.jsonl").write_text("{}")
-    assert cr._gc_dir_is_all_stale(d) is False
+    assert review_gc.gc_dir_is_all_stale(d) is False
 
 
 def test_gc_dir_empty(cr, tmp_path):
     d = tmp_path / "empty-dir"
     d.mkdir()
-    assert cr._gc_dir_is_all_stale(d) is False
+    assert review_gc.gc_dir_is_all_stale(d) is False
 
 
-# ── _gc_clean_intermediates ───────────────────────────────────────────────────
+# ── gc_clean_intermediates ───────────────────────────────────────────────────
 
 
 def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
@@ -735,7 +739,7 @@ def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
         os.utime(str(f), (1622505600, 1622505600))
     (d / "meta.json").write_text("{}")
 
-    count = cr._gc_clean_intermediates(d)
+    count = review_gc.gc_clean_intermediates(d)
     assert count == 3
     assert not (d / "group-1.md").exists()
     assert (d / "meta.json").exists()
@@ -747,7 +751,7 @@ def test_gc_clean_intermediates_preserves_recent(cr, tmp_path):
     for name in ("group-1.md", "holistic.jsonl"):
         (d / name).write_text("{}")
 
-    count = cr._gc_clean_intermediates(d)
+    count = review_gc.gc_clean_intermediates(d)
     assert count == 0
     assert (d / "group-1.md").exists()
 
@@ -766,9 +770,9 @@ def test_generator_version_returns_string(cr):
 
 def test_constants_match_expected(cr):
     assert cr.ARCHIVE_KEEP_COUNT == 3
-    assert cr.GC_STALE_DAYS == 7
     assert cr.DEFAULT_MAX_PARALLEL == 4
-    assert cr.PRUNE_MAX_FILES == 10
+    assert review_gc.GC_STALE_DAYS == 7
+    assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4
     assert len(cr.SEVERITY_JSON_KEYS) == 4
 

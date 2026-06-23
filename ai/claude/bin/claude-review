@@ -26,36 +26,30 @@ except ImportError:
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
 from review_common import (
     ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET, ANSI_WARN,
-    ReviewMeta, SessionUsage, detect_repo, parse_session_log,
-    review_meta_from_dict,
+    FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
+    FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
+    SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
+    ReviewMeta, SessionUsage, aggregate_session_usage, count_severity,
+    detect_repo, json_summary, parse_session_log, read_review_meta,
+    review_file_path, review_meta_from_dict,
 )
+import review_gc
 import review_issue
 import review_worktree
 
 BIN_DIR = Path(__file__).resolve().parent
-REVIEWS_DIR = Path(os.environ.get("WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"))) / "reviews"
 LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
 
-REVIEW_EXT = ".md"
 FILENAME_PRIOR = f"prior{REVIEW_EXT}"
-FILENAME_SESSION = "session.jsonl"
-FILENAME_POST_SESSION = "post.jsonl"
-FILENAME_META = "meta.json"
-FILENAME_PIPELINE_STATE = "pipeline.json"
 
 ARCHIVE_KEEP_COUNT = 3
-GC_STALE_DAYS = 7
 DEFAULT_MAX_PARALLEL = 4
 GITHUB_BASE_URL = "https://github.com"
-PRUNE_MAX_FILES = 10
 
-SEVERITY_PREFIXES = ["M", "S", "N", "I"]
-SEVERITY_JSON_KEYS = ["must_fix", "should_fix", "nit", "idiom"]
 ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
 PR_URL_RE = re.compile(r"/pull/(\d+)")
 PR_NUMBER_RE = re.compile(r"^\d+$")
-SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
 def _info(msg: str) -> None:
@@ -171,9 +165,16 @@ def _is_pr_ref(s: str) -> bool:
     return bool(PR_URL_RE.search(s) or PR_NUMBER_RE.match(s))
 
 
-def _review_file(repo: str, pr_number: str) -> Path:
-    repo_name = repo.split("/")[-1]
-    return REVIEWS_DIR / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
+def _post_review(repo: str, pr_number: str, review_file: str, submit: bool) -> None:
+    """Post a review to GitHub via review-post."""
+    post_args = [
+        str(BIN_DIR / "review-post"),
+        "--pr", pr_number,
+        "--review-file", review_file,
+    ]
+    if submit:
+        post_args.append("--submit")
+    subprocess.run(post_args, check=False)
 
 
 def _display_review(path: Path) -> None:
@@ -235,93 +236,6 @@ def _print_summary(
     print(file=sys.stderr)
 
 
-def _count_severity(file: Path, prefix: str) -> int:
-    if not file.is_file():
-        return 0
-    try:
-        text = file.read_text()
-    except OSError:
-        return 0
-    pattern = SEVERITY_COUNT_RE_FMT.format(re.escape(prefix))
-    return len(re.findall(pattern, text, re.MULTILINE))
-
-
-
-def _read_review_meta(review_dir: Path) -> ReviewMeta:
-    meta_file = review_dir / FILENAME_META
-    if not meta_file.is_file():
-        return ReviewMeta()
-    try:
-        return review_meta_from_dict(json.loads(meta_file.read_text()))
-    except (json.JSONDecodeError, OSError):
-        return ReviewMeta()
-
-
-def _aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
-    if not review_dir:
-        return SessionUsage()
-    usages = [
-        parse_session_log(str(review_dir / n))
-        for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
-        if os.path.isfile(str(review_dir / n))
-    ]
-    if not usages:
-        return SessionUsage()
-    return SessionUsage(
-        cost=sum(u.cost for u in usages),
-        input_tokens=sum(u.input_tokens for u in usages),
-        output_tokens=sum(u.output_tokens for u in usages),
-        cache_read_tokens=sum(u.cache_read_tokens for u in usages),
-        cache_write_tokens=sum(u.cache_write_tokens for u in usages),
-        duration_ms=sum(u.duration_ms for u in usages),
-    )
-
-
-def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
-    counts = {}
-    total = 0
-    review_path = Path(review_file) if review_file else None
-    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
-        c = _count_severity(review_path, prefix) if review_path else 0
-        counts[key] = c
-        total += c
-
-    must_count = counts.get("must_fix", 0)
-    verdict = "changes_requested" if must_count > 0 else "approve"
-
-    review_dir = Path(review_file).parent if review_file else None
-    usage = _aggregate_session_usage(review_dir)
-
-    review_content = None
-    if review_path and review_path.is_file():
-        try:
-            review_content = review_path.read_text()
-        except OSError:
-            pass
-
-    meta = _read_review_meta(review_dir) if review_dir else ReviewMeta()
-
-    summary = {
-        "repo": repo,
-        "pr_number": int(pr_number) if pr_number else None,
-        "head_sha": meta.head_sha or None,
-        "head_ref": meta.head_ref or None,
-        "base_ref": meta.base_ref or None,
-        "review_type": meta.review_type or None,
-        "review_file": review_file,
-        "review_content": review_content,
-        "findings": {**counts, "total": total},
-        "verdict": verdict,
-        "cost_usd": usage.cost,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "cache_read_tokens": usage.cache_read_tokens,
-        "cache_write_tokens": usage.cache_write_tokens,
-        "duration_ms": usage.duration_ms,
-    }
-    return f"REVIEW_SUMMARY:{json.dumps(summary)}"
-
-
 def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str, review_type: str = "") -> None:
     if not repo_dir or not review_file or not os.path.isfile(review_file):
         return
@@ -331,14 +245,14 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
 
     finding_counts = {}
     for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
-        c = _count_severity(review_path, prefix)
+        c = count_severity(review_path, prefix)
         if c > 0:
             finding_counts[key] = c
 
     must_count = finding_counts.get("must_fix", 0)
     verdict = "changes_requested" if must_count > 0 else "approve"
-    meta = _read_review_meta(review_dir)
-    usage = _aggregate_session_usage(review_dir)
+    meta = read_review_meta(review_dir)
+    usage = aggregate_session_usage(review_dir)
 
     summary = pr_state.ReviewSummary(
         review_file=review_file,
@@ -751,26 +665,26 @@ def _run_review_body(
 
     if no_post:
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        print(f"  {ANSI_DIM}To post later: pr review --post{ANSI_RESET}", file=sys.stderr)
         return
 
     if auto_post:
-        cmd_post(repo, pr_number, auto_submit)
+        _post_review(repo, pr_number, str(review_file), auto_submit)
         post_session_log = str(review_dir / FILENAME_POST_SESSION)
         _print_summary(str(review_file), session_log, pr_url, post_session_log)
         return
 
     if not _confirm("Satisfied with the review?"):
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}Edit the file, then run: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        print(f"  {ANSI_DIM}Edit the file, then run: pr review --post{ANSI_RESET}", file=sys.stderr)
         sys.exit(0)
 
     if not _confirm("Post review to GitHub?"):
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        print(f"  {ANSI_DIM}To post later: pr review --post{ANSI_RESET}", file=sys.stderr)
         return
 
-    cmd_post(repo, pr_number, False)
+    _post_review(repo, pr_number, str(review_file), False)
     post_session_log = str(review_dir / FILENAME_POST_SESSION)
 
     if _confirm("Submit review now?"):
@@ -797,13 +711,13 @@ def _run_review(args) -> None:
     if no_post or auto_post:
         force = True
 
-    _prune_merged_reviews()
+    review_gc.prune_merged_reviews()
 
     ctx = pr_context.resolve(pr=pr_input or None, repo_dir=repo_dir or None)
     pr_number = str(ctx.pr_number)
     repo = ctx.repo
 
-    review_file = _review_file(repo, pr_number)
+    review_file = review_file_path(repo, pr_number)
     review_dir = review_file.parent
     review_dir.mkdir(parents=True, exist_ok=True)
 
@@ -945,7 +859,7 @@ def _run_self_review_body(
 
     json_stdout = getattr(args, "_json_stdout", None)
     if json_stdout is not None:
-        summary = _json_summary(repo, pr_number, str(review_file))
+        summary = json_summary(repo, pr_number, str(review_file))
         os.write(json_stdout, (summary + "\n").encode())
 
 
@@ -1008,7 +922,7 @@ def _run_self_review(args) -> None:
     repo_dir = args.repo_dir or ""
     fix_pass = args.fix
 
-    _prune_merged_reviews()
+    review_gc.prune_merged_reviews()
 
     is_pr = False
     is_branch = False
@@ -1054,153 +968,6 @@ def _run_self_review(args) -> None:
             _cleanup_self_review_worktree(wt_cleanup, repo_dir)
 
 
-# ── Subcommands ──────────────────────────────────────────────────────────────
-
-def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
-    review_file = _review_file(repo, pr_number)
-    if not review_file.is_file():
-        _err(f"No review file found: {review_file}")
-        print(f"  {ANSI_DIM}Run: claude-review {pr_number}{ANSI_RESET}", file=sys.stderr)
-        sys.exit(1)
-
-    post_args = [
-        str(BIN_DIR / "review-post"),
-        "--pr", pr_number,
-        "--review-file", str(review_file),
-    ]
-    if submit:
-        post_args.append("--submit")
-
-    subprocess.run(post_args, check=False)
-
-
-def cmd_threads(args) -> None:
-    pr_input = args.positional[1] if len(args.positional) > 1 else ""
-    threads_args = [str(BIN_DIR / "review-threads")]
-
-    if pr_input:
-        threads_args += ["--pr", pr_input]
-
-    if args.resolve_verified:
-        threads_args.append("--resolve-verified")
-    if args.repo_dir:
-        threads_args += ["--repo-dir", args.repo_dir]
-
-    subprocess.run(threads_args, check=False)
-
-
-def cmd_rebuild(ctx: pr_context.ResolvedContext) -> None:
-    pr_num = str(ctx.pr_number)
-    review_file = _review_file(ctx.repo, pr_num)
-    review_dir = review_file.parent
-
-    if not review_dir.is_dir():
-        _err(f"No review directory found: {review_dir}")
-        sys.exit(1)
-
-    subprocess.run(
-        [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num],
-        check=False,
-    )
-
-
-def cmd_summary(ctx: pr_context.ResolvedContext) -> None:
-    pr_num = str(ctx.pr_number)
-    review_file = _review_file(ctx.repo, pr_num)
-
-    if not review_file.is_file():
-        _err(f"No review file found: {review_file}")
-        sys.exit(1)
-
-    print(_json_summary(ctx.repo, pr_num, str(review_file)))
-
-
-def cmd_gc() -> None:
-    cleaned = 0
-    for review_dir in REVIEWS_DIR.iterdir():
-        if not review_dir.is_dir():
-            continue
-
-        has_review = (review_dir / f"review{REVIEW_EXT}").is_file()
-
-        if not has_review and _gc_dir_is_all_stale(review_dir):
-            shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"GC: removed orphaned {review_dir.name}")
-            cleaned += 1
-            continue
-
-        has_pipeline = (review_dir / FILENAME_PIPELINE_STATE).is_file()
-        if has_review and not has_pipeline:
-            cleaned += _gc_clean_intermediates(review_dir)
-
-    if cleaned > 0:
-        _info(f"GC: cleaned {cleaned} items")
-    else:
-        _info("GC: nothing to clean")
-
-
-def _gc_dir_is_all_stale(d: Path) -> bool:
-    try:
-        files = [f for f in d.rglob("*") if f.is_file()]
-    except OSError:
-        return False
-    if not files:
-        return False
-    now = datetime.now().timestamp()
-    return all((now - f.stat().st_mtime) / 86400 > GC_STALE_DAYS for f in files)
-
-
-def _gc_clean_intermediates(review_dir: Path) -> int:
-    count = 0
-    patterns = [
-        "group-*.md", "group-*.jsonl",
-        "holistic.md", "holistic.jsonl",
-        "synthesis.jsonl",
-    ]
-    files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
-    now = datetime.now().timestamp()
-    for f in files:
-        age_days = (now - f.stat().st_mtime) / 86400
-        if age_days > GC_STALE_DAYS:
-            f.unlink(missing_ok=True)
-            count += 1
-    return count
-
-
-def _prune_merged_reviews() -> None:
-    pruned = 0
-    checked = 0
-
-    for meta_file in REVIEWS_DIR.glob(f"*/{FILENAME_META}"):
-        if checked >= PRUNE_MAX_FILES:
-            break
-
-        meta = _read_review_meta(meta_file.parent)
-        if not meta.repo or not meta.pr_number:
-            continue
-
-        checked += 1
-
-        try:
-            r = subprocess.run(
-                ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
-                 "--json", "state", "--jq", ".state"],
-                capture_output=True, text=True,
-            )
-            state = r.stdout.strip()
-        except Exception:
-            state = ""
-
-        if state in ("MERGED", "CLOSED"):
-            review_dir = meta_file.parent
-            shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
-            pruned += 1
-
-    if pruned > 0:
-        _info(f"Pruned {pruned} merged/closed PRs")
-
-
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1219,7 +986,6 @@ def main() -> None:
     parser.add_argument("--skip-user-verification", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-holistic", action="store_true")
-    parser.add_argument("--resolve-verified", action="store_true")
     parser.add_argument("--json-summary", action="store_true")
     parser.add_argument("--issue")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
@@ -1273,60 +1039,25 @@ def main() -> None:
         sys.exit(1)
 
     command = parsed.positional[0] if parsed.positional else ""
-
-    if command == "gc":
-        cmd_gc()
-    elif command == "post":
-        post_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not post_input:
-            _err("Usage: claude-review post <pr_url_or_number>")
-            sys.exit(1)
-        ctx = pr_context.resolve(pr=post_input, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number)
-        review_file = _review_file(ctx.repo, pr_num)
-        cmd_post(ctx.repo, pr_num, parsed.submit)
-        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = _json_summary(ctx.repo, pr_num, str(review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
-    elif command == "rebuild":
-        rebuild_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not rebuild_input:
-            _err("Usage: claude-review rebuild <pr_url_or_number>")
-            sys.exit(1)
-        ctx = pr_context.resolve(pr=rebuild_input, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number)
-        review_file = _review_file(ctx.repo, pr_num)
-        cmd_rebuild(ctx)
-        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = _json_summary(ctx.repo, pr_num, str(review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
-    elif command == "summary":
-        sub_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not sub_input:
-            _err("Usage: claude-review summary <pr_url_or_number>")
-            sys.exit(1)
-        ctx = pr_context.resolve(pr=sub_input, repo_dir=parsed.repo_dir)
-        cmd_summary(ctx)
-    elif command == "threads":
-        cmd_threads(parsed)
-    elif not command:
+    if not command:
         parser.print_help()
         sys.exit(1)
-    else:
-        # Default: treat as PR number/URL
-        ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number)
-        review_file = _review_file(ctx.repo, pr_num)
-        _run_review(parsed)
-        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = _json_summary(ctx.repo, pr_num, str(review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
+
+    _REMOVED = {"gc": "pr gc", "post": "pr review --post", "rebuild": "pr review --repair",
+                "summary": "pr review --summary", "threads": "pr comments"}
+    if command in _REMOVED:
+        _err(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
+        sys.exit(1)
+
+    ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
+    pr_num = str(ctx.pr_number)
+    review_file = review_file_path(ctx.repo, pr_num)
+    _run_review(parsed)
+    _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+    if _json_stdout_fd is not None:
+        summary = json_summary(ctx.repo, pr_num, str(review_file))
+        os.write(_json_stdout_fd, (summary + "\n").encode())
+        os.close(_json_stdout_fd)
 
 
 if __name__ == "__main__":

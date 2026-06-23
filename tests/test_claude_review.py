@@ -11,6 +11,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
+LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
+from review_common import count_severity, json_summary, review_file_path
+import review_gc
 
 
 @pytest.fixture(scope="session")
@@ -33,6 +38,9 @@ def reviews_dir(tmp_path, cr, monkeypatch):
     d = tmp_path / "reviews"
     d.mkdir()
     monkeypatch.setattr(cr, "REVIEWS_DIR", d)
+    import review_common
+    monkeypatch.setattr(review_common, "REVIEWS_DIR", d)
+    monkeypatch.setattr(review_gc, "REVIEWS_DIR", d)
     return d
 
 
@@ -72,21 +80,21 @@ def test_is_pr_ref_empty(cr):
     assert cr._is_pr_ref("") is False
 
 
-# ── _review_file ──────────────────────────────────────────────────────────────
+# ── review_file_path ─────────────────────────────────────────────────────────
 
 
 def test_review_file_basic(cr, reviews_dir):
-    result = cr._review_file("org/my-repo", "42")
+    result = review_file_path("org/my-repo", "42")
     assert result == reviews_dir / "my-repo-42" / "review.md"
 
 
 def test_review_file_repo_with_hyphens(cr, reviews_dir):
-    result = cr._review_file("org/my-cool-repo", "1")
+    result = review_file_path("org/my-cool-repo", "1")
     assert result == reviews_dir / "my-cool-repo-1" / "review.md"
 
 
 def test_review_file_deep_nested_repo(cr, reviews_dir):
-    result = cr._review_file("deep/nested/repo", "7")
+    result = review_file_path("deep/nested/repo", "7")
     assert result == reviews_dir / "repo-7" / "review.md"
 
 
@@ -196,7 +204,7 @@ def test_format_usage_includes_cache_tokens(cr, tmp_path):
     assert "8k tokens" in result
 
 
-# ── _count_severity ───────────────────────────────────────────────────────────
+# ── count_severity ────────────────────────────────────────────────────────────
 
 
 def test_count_severity_must_fix(cr, tmp_path):
@@ -208,7 +216,7 @@ def test_count_severity_must_fix(cr, tmp_path):
         "## Should fix\n"
         "- **[S1]** path:3 — description\n"
     )
-    assert cr._count_severity(review, "M") == 2
+    assert count_severity(review, "M") == 2
 
 
 def test_count_severity_excludes_strikethrough(cr, tmp_path):
@@ -218,7 +226,7 @@ def test_count_severity_excludes_strikethrough(cr, tmp_path):
         "- **[M1]** path:1 — active\n"
         "- ~~**[M2]** path:2 — resolved~~\n"
     )
-    assert cr._count_severity(review, "M") == 1
+    assert count_severity(review, "M") == 1
 
 
 def test_count_severity_checkbox_findings(cr, tmp_path):
@@ -228,20 +236,20 @@ def test_count_severity_checkbox_findings(cr, tmp_path):
         "- [ ] **[M1]** path:1 — with checkbox\n"
         "- **[M2]** path:2 — without checkbox\n"
     )
-    assert cr._count_severity(review, "M") == 2
+    assert count_severity(review, "M") == 2
 
 
 def test_count_severity_missing_file(cr, tmp_path):
-    assert cr._count_severity(tmp_path / "nonexistent.md", "M") == 0
+    assert count_severity(tmp_path / "nonexistent.md", "M") == 0
 
 
 def test_count_severity_empty_file(cr, tmp_path):
     review = tmp_path / "empty.md"
     review.write_text("")
-    assert cr._count_severity(review, "M") == 0
+    assert count_severity(review, "M") == 0
 
 
-# ── _json_summary ─────────────────────────────────────────────────────────────
+# ── json_summary ──────────────────────────────────────────────────────────────
 
 
 def test_json_summary_with_findings(cr, tmp_path):
@@ -252,7 +260,7 @@ def test_json_summary_with_findings(cr, tmp_path):
         "## Nit\n- **[N1]** path:4 — style\n"
         "## Idioms\n- **[I1]** path:5 — idiom\n- **[I2]** path:6 — idiom\n"
     )
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     assert result.startswith("REVIEW_SUMMARY:")
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["repo"] == "org/repo"
@@ -271,7 +279,7 @@ def test_json_summary_approve_no_must_fix(cr, tmp_path):
         "## Should fix\n- **[S1]** path:1 — improvement\n"
         "## Nit\n- **[N1]** path:2 — style\n"
     )
-    result = cr._json_summary("org/repo", "10", str(review))
+    result = json_summary("org/repo", "10", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == "approve"
     assert data["findings"]["total"] == 2
@@ -289,7 +297,7 @@ def test_json_summary_includes_metadata(cr, tmp_path):
         "base_ref": "main",
         "review_type": "full",
     }))
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["head_sha"] == "abc123def456"
     assert data["head_ref"] == "feat/my-branch"
@@ -300,7 +308,7 @@ def test_json_summary_includes_metadata(cr, tmp_path):
 def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Should fix\n- **[S1]** path:1 — improvement\n")
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["head_sha"] is None
     assert data["head_ref"] is None
@@ -309,7 +317,7 @@ def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):
 
 
 def test_json_summary_missing_review_file(cr, tmp_path):
-    result = cr._json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
+    result = json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["findings"]["total"] == 0
     assert data["verdict"] == "approve"
@@ -318,7 +326,7 @@ def test_json_summary_missing_review_file(cr, tmp_path):
 def test_json_summary_self_review_no_pr(cr, tmp_path):
     review = tmp_path / "self-review.md"
     review.write_text("## Must fix\n- **[M1]** path:1 — bug\n")
-    result = cr._json_summary("org/repo", "", str(review))
+    result = json_summary("org/repo", "", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["pr_number"] is None
     assert data["verdict"] == "changes_requested"
@@ -333,7 +341,7 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
         str(review_dir / "session.jsonl"),
         cost=5.25, input_tokens=1000, output_tokens=2000, duration_ms=90000,
     )
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["cost_usd"] == pytest.approx(5.25)
     assert data["input_tokens"] == 1000
@@ -513,7 +521,7 @@ def test_cleanup_prior_empty_path_is_noop(cr, tmp_path):
     cr._cleanup_prior_review(review_file, "")
 
 
-# ── cmd_gc ────────────────────────────────────────────────────────────────────
+# ── gc_reviews ─────────────────────────────────────────────────────────────────
 
 
 def test_gc_removes_orphaned_stale_dirs(cr, reviews_dir):
@@ -529,7 +537,7 @@ def test_gc_removes_orphaned_stale_dirs(cr, reviews_dir):
     (has_review / "review.md").write_text("## Review")
     (has_review / "pipeline.json").write_text("{}")
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert not orphan.exists()
     assert has_review.exists()
@@ -544,7 +552,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
         p.write_text("{}")
         os.utime(str(p), (1622505600, 1622505600))
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     assert not (d / "group-1.md").exists()
@@ -560,7 +568,7 @@ def test_gc_preserves_recent_intermediates(cr, reviews_dir):
     for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
         (d / f_name).write_text("{}")
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
@@ -573,16 +581,16 @@ def test_gc_preserves_active_pipeline(cr, reviews_dir):
     (d / "pipeline.json").write_text("{}")
     (d / "group-1.jsonl").write_text("{}")
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert d.exists()
     assert (d / "group-1.jsonl").exists()
 
 
-# ── _prune_merged_reviews ────────────────────────────────────────────────────
+# ── prune_merged_reviews ─────────────────────────────────────────────────────
 
 
-@patch("claude_review.subprocess.run")
+@patch("review_gc.subprocess.run")
 def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-42"
     d.mkdir()
@@ -603,12 +611,12 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
         return m
 
     mock_run.side_effect = side_effect
-    cr._prune_merged_reviews()
+    review_gc.prune_merged_reviews(reviews_dir)
 
     assert not d.exists()
 
 
-@patch("claude_review.subprocess.run")
+@patch("review_gc.subprocess.run")
 def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-99"
     d.mkdir()
@@ -628,7 +636,7 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
         return m
 
     mock_run.side_effect = side_effect
-    cr._prune_merged_reviews()
+    review_gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists()
     assert (d / "review.md").exists()
@@ -685,7 +693,7 @@ def test_argparse_json_summary_not_positional(cr):
     assert parsed.args == ["42"]
 
 
-# ── _gc_dir_is_all_stale ─────────────────────────────────────────────────────
+# ── gc_dir_is_all_stale ──────────────────────────────────────────────────────
 
 
 def test_gc_dir_all_stale(cr, tmp_path):
@@ -694,7 +702,7 @@ def test_gc_dir_all_stale(cr, tmp_path):
     f = d / "old.jsonl"
     f.write_text("{}")
     os.utime(str(f), (1622505600, 1622505600))
-    assert cr._gc_dir_is_all_stale(d) is True
+    assert review_gc.gc_dir_is_all_stale(d) is True
 
 
 def test_gc_dir_has_recent_files(cr, tmp_path):
@@ -704,16 +712,16 @@ def test_gc_dir_has_recent_files(cr, tmp_path):
     old.write_text("{}")
     os.utime(str(old), (1622505600, 1622505600))
     (d / "new.jsonl").write_text("{}")
-    assert cr._gc_dir_is_all_stale(d) is False
+    assert review_gc.gc_dir_is_all_stale(d) is False
 
 
 def test_gc_dir_empty(cr, tmp_path):
     d = tmp_path / "empty-dir"
     d.mkdir()
-    assert cr._gc_dir_is_all_stale(d) is False
+    assert review_gc.gc_dir_is_all_stale(d) is True
 
 
-# ── _gc_clean_intermediates ───────────────────────────────────────────────────
+# ── gc_clean_intermediates ───────────────────────────────────────────────────
 
 
 def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
@@ -725,7 +733,7 @@ def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
         os.utime(str(f), (1622505600, 1622505600))
     (d / "meta.json").write_text("{}")
 
-    count = cr._gc_clean_intermediates(d)
+    count = review_gc.gc_clean_intermediates(d)
     assert count == 3
     assert not (d / "group-1.md").exists()
     assert (d / "meta.json").exists()
@@ -737,7 +745,7 @@ def test_gc_clean_intermediates_preserves_recent(cr, tmp_path):
     for name in ("group-1.md", "holistic.jsonl"):
         (d / name).write_text("{}")
 
-    count = cr._gc_clean_intermediates(d)
+    count = review_gc.gc_clean_intermediates(d)
     assert count == 0
     assert (d / "group-1.md").exists()
 
@@ -756,16 +764,10 @@ def test_generator_version_returns_string(cr):
 
 def test_constants_match_expected(cr):
     assert cr.ARCHIVE_KEEP_COUNT == 3
-    assert cr.GC_STALE_DAYS == 7
     assert cr.DEFAULT_MAX_PARALLEL == 4
-    assert cr.PRUNE_MAX_FILES == 10
+    assert review_gc.GC_STALE_DAYS == 7
+    assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4
     assert len(cr.SEVERITY_JSON_KEYS) == 4
 
 
-def test_main_dispatches_subcommands(cr):
-    """Verify the main function references all expected subcommand strings."""
-    import inspect
-    source = inspect.getsource(cr.main)
-    for cmd in ("gc", "post", "rebuild", "summary", "threads"):
-        assert f'"{cmd}"' in source

@@ -6,7 +6,8 @@ Manages local state in <worktree>/ignore/pr-comments/state.json.
 
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
-  review-threads --resolve-verified
+  review-threads --triage
+  review-threads --resolve
 """
 
 import argparse
@@ -20,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import pr_comments as pc
 import pr_context
 import pr_state
+
+TRIAGE_CONTEXT_LINES = 10
 
 
 def _my_login() -> str:
@@ -45,11 +48,134 @@ def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
     return resolved
 
 
+def _gather_code_context(threads: list, repo_dir: Path) -> str:
+    """Read surrounding source lines for each thread's file location."""
+    snippets = []
+    for t in threads:
+        file_path = t.get("file")
+        line = t.get("line") or 0
+        if not file_path or line == 0:
+            continue
+        full_path = repo_dir / file_path
+        if not full_path.is_file():
+            continue
+        try:
+            lines = full_path.read_text().splitlines()
+        except OSError:
+            continue
+        start = max(0, line - 1 - TRIAGE_CONTEXT_LINES)
+        end = min(len(lines), line + TRIAGE_CONTEXT_LINES)
+        snippet = "\n".join(lines[start:end])
+        if snippet:
+            snippets.append(f"--- {file_path}:{start + 1}-{end} ---\n{snippet}\n---")
+    return "\n".join(snippets)
+
+
+def _build_triage_prompt(non_resolved: list, code_context: str) -> str:
+    """Build the AI classification prompt for thread triage."""
+    thread_json = json.dumps(non_resolved, indent=2)
+    context_block = ""
+    if code_context:
+        context_block = f"\nCode context for referenced files:\n{code_context}\n"
+
+    return f"""You are a code review triage assistant. Analyze these PR review threads and classify each one.
+
+For each thread, provide:
+1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
+2. verification (only for actionable_suggestion): one of 'valid', 'invalid', 'needs_discussion'
+3. reasoning: one sentence explaining your classification/verification
+4. summary: one-line summary of the thread
+
+Thread data:
+{thread_json}
+{context_block}
+Return JSON matching this exact schema:
+{{
+  "threads": [
+    {{
+      "id": "thread_id from input",
+      "state": "state from input",
+      "classification": "actionable_suggestion|question|approval|conflicting",
+      "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "reasoning": "brief explanation",
+      "file": "file from input",
+      "line": "line_from_input",
+      "reviewer": "reviewer from input",
+      "summary": "one-line summary"
+    }}
+  ],
+  "stats": {{
+    "total": "count",
+    "actionable": "count",
+    "questions": "count",
+    "approvals": "count",
+    "conflicting": "count",
+    "valid": "count",
+    "invalid": "count"
+  }}
+}}
+
+IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""
+
+
+def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> int:
+    """Classify non-resolved threads via AI and update triage state."""
+    non_resolved = [t for t in report["threads"] if t.get("state") != "resolved"]
+    if not non_resolved:
+        empty = {"threads": [], "stats": {
+            "total": 0, "actionable": 0, "questions": 0,
+            "approvals": 0, "conflicting": 0, "valid": 0, "invalid": 0,
+        }}
+        json.dump(empty, sys.stdout, indent=2)
+        print()
+        return 0
+
+    code_context = _gather_code_context(non_resolved, repo_dir)
+    prompt = _build_triage_prompt(non_resolved, code_context)
+
+    result = subprocess.run(
+        ["claude", "-p"],
+        input=prompt, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print("review-threads: claude -p failed", file=sys.stderr)
+        return 1
+
+    try:
+        triage_result = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        print("review-threads: claude returned non-JSON output", file=sys.stderr)
+        return 1
+
+    json.dump(triage_result, sys.stdout, indent=2)
+    print()
+
+    # Update triage state
+    try:
+        stats = triage_result.get("stats", {})
+        st = pr_state.load_or_init(**ctx_args)
+        pr_state.update_triage(st, pr_state.TriageSummary(
+            total=stats.get("total", 0),
+            actionable=stats.get("actionable", 0),
+            valid=stats.get("valid", 0),
+            questions=stats.get("questions", 0),
+            updated_at=pr_state.now_iso(),
+        ))
+        pr_state.save_state(ctx_args["worktree_root"], st)
+    except Exception as exc:
+        print(f"review-threads: triage state update failed: {exc}", file=sys.stderr)
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", help="PR number")
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
-    parser.add_argument("--resolve-verified", action="store_true",
+    parser.add_argument("--triage", action="store_true",
+                        help="Classify threads via AI and auto-resolve verified")
+    parser.add_argument("--resolve", "--resolve-verified", action="store_true",
+                        dest="resolve",
                         help="Resolve all verified threads on GitHub")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
@@ -84,8 +210,8 @@ def main():
     # Sync
     threads = pc.sync_threads(threads_raw, prior_threads, my_login)
 
-    # Resolve verified threads if requested
-    if args.resolve_verified:
+    # Resolve verified threads if requested (or as part of triage)
+    if args.resolve or args.triage:
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
             print(f"Resolved {resolved_count} verified threads", file=sys.stderr)
@@ -124,6 +250,10 @@ def main():
         })
 
     # Update unified PR state (best-effort)
+    ctx_args = dict(
+        worktree_root=toplevel, repo=repo, branch=branch,
+        pr_number=pr_number, head_sha=head_sha,
+    )
     try:
         thread_states: dict[str, int] = {}
         for t in report["threads"]:
@@ -137,10 +267,7 @@ def main():
         has_approvals = any(
             v.get("state") == "APPROVED" for v in report.get("verdicts", [])
         )
-        st = pr_state.load_or_init(
-            worktree_root=toplevel, repo=repo, branch=branch,
-            pr_number=pr_number, head_sha=head_sha,
-        )
+        st = pr_state.load_or_init(**ctx_args)
         pr_state.update_comments(st, pr_state.CommentsSummary(
             total_threads=len(report["threads"]),
             by_state=thread_states,
@@ -151,6 +278,10 @@ def main():
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         print(f"review-threads: state update failed: {exc}", file=sys.stderr)
+
+    # Triage mode: classify via AI after fetching
+    if args.triage:
+        sys.exit(_run_triage(report, toplevel, ctx_args))
 
     json.dump(report, sys.stdout, indent=2)
     print()

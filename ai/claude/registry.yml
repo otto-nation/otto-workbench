@@ -13,7 +13,7 @@ tools:
     visibility: full
     description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. For multiple PRs, dispatch separate Agent subagents — do not background with &"
-    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review threads [<pr_url_or_number>]"
+    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]"
 
   - name: claude-rules
     permission: true
@@ -33,9 +33,9 @@ tools:
     description: "Thread lifecycle status for PR review comments — dashboard and JSON report"
 
   - name: review-thread-triage
-    permission: true
+    permission: false
     visibility: hidden
-    description: "Classify and verify PR review threads using AI for non-interactive triage"
+    description: "Deprecated — redirects to review-threads --triage"
 
   - name: review-orchestrate
     permission: false
@@ -90,22 +90,12 @@ tools:
     visibility: full
     description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix]  |  pr comments  |  pr triage  |  pr repair  |  pr fix  |  pr post  |  pr rebase [--fix] [--push] [--abort]"
+    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary]  |  pr comments [--triage] [--resolve]  |  pr fix  |  pr rebase [--fix] [--push] [--abort]  |  pr gc"
 
   - name: pr-rebase
     permission: false
     visibility: hidden
     description: "Rebase current branch onto origin/main with conflict detection and force-push"
-
-  - name: pr-context-resolve
-    permission: false
-    visibility: hidden
-    description: "CLI entry point for pr_context.resolve() — outputs JSON for bash script consumption"
-
-  - name: pr-state-update
-    permission: false
-    visibility: hidden
-    description: "CLI helper for updating unified PR state from stdin JSON"
 
   - name: ci-check
     permission: true

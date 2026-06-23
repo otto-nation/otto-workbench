@@ -46,9 +46,12 @@ def _run_delegate(entry: dict, argv: list[str],
                   original_branch: str | None = None) -> int:
     """Build and run a backing-script command with context injection.
 
-    Only forwards the flag that was originally provided by the caller
-    (--pr OR --branch, never both) so the delegate's own
-    pr_context.resolve() doesn't hit the mutual-exclusivity check.
+    Forwards exactly one of --pr or --branch (never both) so the
+    delegate's pr_context.resolve() doesn't hit the mutual-exclusivity
+    check.  Priority: explicit --pr > explicit --branch > auto-detected
+    PR number > auto-detected branch.  PR number is preferred over branch
+    because it's a stable identifier that avoids a redundant gh API call
+    in the delegate.
     """
     cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
     if ctx.worktree_root:
@@ -57,9 +60,9 @@ def _run_delegate(entry: dict, argv: list[str],
         cmd += ["--pr", str(original_pr)]
     elif original_branch is not None:
         cmd += ["--branch", original_branch]
+    elif ctx.pr_number is not None:
+        cmd += ["--pr", str(ctx.pr_number)]
     elif ctx.branch:
-        # Neither was explicitly provided — forward branch only so the
-        # delegate doesn't hit pr_context's mutual-exclusivity check.
         cmd += ["--branch", ctx.branch]
     cmd += list(argv)
     return subprocess.run(cmd).returncode

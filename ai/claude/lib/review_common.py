@@ -172,6 +172,7 @@ def review_meta_from_dict(d: dict) -> ReviewMeta:
     pr_number = d.get("pr_number")
     return ReviewMeta(
         repo=d.get("repo", ""),
+        # Truthiness check intentionally treats "" and 0 as absent — no valid PR is #0
         pr_number=int(pr_number) if pr_number else None,
         head_sha=d.get("head_sha", ""),
         head_ref=d.get("head_ref", ""),

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -52,8 +53,6 @@ PR_URL_RE = re.compile(r"/pull/(\d+)")
 PR_NUMBER_RE = re.compile(r"^\d+$")
 GITHUB_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)")
 SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
-
-KNOWN_SUBCOMMANDS = {"gc", "post", "rebuild", "summary", "threads"}
 
 
 def _info(msg: str) -> None:
@@ -146,12 +145,11 @@ def _confirm(prompt: str) -> bool:
             return True
         return answer.lower() in ("", "y", "yes")
     try:
-        tty = open("/dev/tty")
+        with open("/dev/tty") as tty:
+            print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
+            answer = tty.readline().strip()
     except (EOFError, OSError):
         return True
-    print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
-    answer = tty.readline().strip()
-    tty.close()
     return answer.lower() in ("", "y", "yes")
 
 
@@ -159,11 +157,9 @@ def _prompt_optional(prompt: str) -> str:
     try:
         if sys.stdin.isatty():
             return input(prompt)
-        tty = open("/dev/tty")
-        print(prompt, end="", flush=True, file=sys.stderr)
-        answer = tty.readline().strip()
-        tty.close()
-        return answer
+        with open("/dev/tty") as tty:
+            print(prompt, end="", flush=True, file=sys.stderr)
+            return tty.readline().strip()
     except (EOFError, OSError):
         return ""
 
@@ -1292,8 +1288,6 @@ def _prune_merged_reviews() -> None:
 
 def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: (print("", file=sys.stderr), _info("Interrupted"), sys.exit(130)))
-
-    import argparse
 
     parser = argparse.ArgumentParser(
         prog="claude-review",

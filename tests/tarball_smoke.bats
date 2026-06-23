@@ -63,19 +63,20 @@ teardown() {
 
 @test "claude-review has Python shebang" {
   run head -1 "$TARBALL_ROOT/bin/claude-review"
+  [ "$status" -eq 0 ]
   [[ "$output" == *"python3"* ]]
 }
 
 # ── 5. --help ───────────────────────────────────────────────────────────────
 
-@test "patched claude-review --help exits 0" {
+@test "claude-review --help exits 0" {
   run "$TARBALL_ROOT/bin/claude-review" --help
   [ "$status" -eq 0 ]
 }
 
 # ── 6. --version ────────────────────────────────────────────────────────────
 
-@test "patched claude-review --version exits 0" {
+@test "claude-review --version exits 0" {
   run "$TARBALL_ROOT/bin/claude-review" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"claude-review"* ]]

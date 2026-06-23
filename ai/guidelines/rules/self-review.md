@@ -4,9 +4,9 @@
 
 Before creating a PR (via `task pr:create`, `gh pr create`, or any method):
 
-1. Run `claude-review --self` on the current branch
+1. Run `pr review --self` on the current branch
 2. Read the review file from `~/.config/workbench/reviews/` and present the findings summary
-3. Work through findings as the user directs (or run `claude-review --self --fix` to auto-fix)
+3. Work through findings as the user directs (or run `pr review --self --fix` to auto-fix)
 4. Only proceed to PR creation when the user is satisfied
 
 Skip if the user explicitly requests it ("skip the review", "just create the PR").

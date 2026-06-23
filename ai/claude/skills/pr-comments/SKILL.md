@@ -58,7 +58,7 @@ Run the status script to fetch all threads, compute lifecycle states, and displa
 Use the resolved PR number if available; otherwise omit it for auto-detection:
 
 ```bash
-claude-review threads [<pr_number>] [--repo-dir <path>]
+pr comments [<pr_number>] [--repo-dir <path>]
 ```
 
 The script outputs:
@@ -70,7 +70,7 @@ The script outputs:
 ```bash
 wt switch <branch> --no-cd --format json --no-hooks 2>/dev/null
 # Extract .path from JSON output, then:
-claude-review threads <number> --repo-dir <worktree_path> 2>&1
+pr comments <number> --repo-dir <worktree_path> 2>&1
 ```
 
 **Invocation rules:** Run the command as a single simple statement. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. Never use temp files, `<<<`, compound multi-statement commands, or run the script twice.
@@ -201,7 +201,7 @@ REPLY_BODY
 After replying, resolve threads that have been verified (reviewer acknowledged your fix):
 
 ```bash
-claude-review threads [<pr_url_or_number>] --resolve-verified [--repo-dir <path>]
+pr comments [<pr_url_or_number>] --resolve [--repo-dir <path>]
 ```
 
 This auto-resolves verified threads on GitHub via GraphQL mutation. Only threads where the reviewer explicitly acknowledged the fix are resolved — never contested or ambiguous threads.

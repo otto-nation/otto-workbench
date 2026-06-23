@@ -34,6 +34,11 @@ tools:
     visibility: brief
     description: "Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing"
 
+  - name: validate-cli-flags
+    permission: false
+    visibility: brief
+    description: "Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity"
+
   - name: generate-tool-context
     permission: false
     visibility: brief

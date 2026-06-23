@@ -377,7 +377,7 @@ def main():
     # Argparse subparsers swallow flags after the subcommand name, so
     # `pr rebase --repo-dir /path` would lose --repo-dir without this.
     _global = argparse.ArgumentParser(add_help=False)
-    _global.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
+    _global.add_argument("--repo-dir", "--worktree", dest="repo_dir")
     _global.add_argument("--branch")
     _global.add_argument("--pr")
     global_args, remaining = _global.parse_known_args()

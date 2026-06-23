@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--resolve-verified", action="store_true",
                         help="Resolve all verified threads on GitHub")
-    parser.add_argument("--repo-dir", "--repo", "--worktree",
+    parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
     args = parser.parse_args()
 

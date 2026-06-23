@@ -459,7 +459,7 @@ Usage: pr [global flags] <command> [flags]
 Commands:
 {cmd_lines}
 
-Global flags:
+Global flags (auto-detected from CWD when omitted):
   --repo-dir PATH    Git worktree directory
   --branch NAME      Branch name
   --pr NUM|URL       PR number or URL

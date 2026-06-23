@@ -56,9 +56,9 @@ Route the resolved argument to the correct `ci-check` flag:
 - **Branch name**: `ci-check --branch <resolved_name> 2>&1`
 - **PR number** (small integer): `ci-check --pr <number> 2>&1`
 - **Run ID** (large integer): `ci-check --run <run_id> 2>&1`
-- **No argument**: `ci-check [--repo-dir <path>] 2>&1`
+- **No argument**: `ci-check 2>&1`
 
-When CWD is inside a worktree, pass `--repo-dir <path>` so the script can find state files and resolve the repo. When using `--branch`, `--repo-dir` is optional — the script resolves the repo from the bare repo's remote URL.
+The script auto-detects the repo, branch, and worktree root from CWD. Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).
 
 The script outputs:
 - **stderr:** Human-readable dashboard (run number, commit, failure counts by kind, progression)

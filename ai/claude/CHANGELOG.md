@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.5](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.4...otto-ai-tools-v1.26.5) (2026-06-23)
+
+
+### Bug Fixes
+
+* **pr:** forward only the user's original --pr or --branch flag ([#340](https://github.com/otto-nation/otto-workbench/issues/340)) ([e38529a](https://github.com/otto-nation/otto-workbench/commit/e38529a7ab17d6f7e1df2924669bc37eeb001f7b))
+
 ## [1.26.4](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.3...otto-ai-tools-v1.26.4) (2026-06-23)
 
 

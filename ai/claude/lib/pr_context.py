@@ -37,7 +37,12 @@ def resolve(
     1. --pr given: derive branch and repo from the PR.
     2. --branch given: use directly, detect repo from remote.
     3. Neither: detect everything from current git state.
+
+    Raises ValueError if both pr and branch are given.
     """
+    if pr and branch:
+        raise ValueError("--pr and --branch are mutually exclusive")
+
     cwd = repo_dir or None
 
     worktree_root = _git_toplevel(cwd)

@@ -72,6 +72,38 @@ select_runtime() {
 
 echo -e "${BOLD}${BLUE}Docker setup${NC}\n"
 
+# ─── Linux: native Docker (no runtime selection) ────────────────────────────
+
+if [[ "$OSTYPE" != "darwin"* ]]; then
+  local_sock=""
+  if [[ -S /run/docker.sock ]]; then
+    local_sock="/run/docker.sock"
+  elif [[ -S /var/run/docker.sock ]]; then
+    local_sock="/var/run/docker.sock"
+  fi
+
+  if [[ -n "$local_sock" ]]; then
+    info "Native Docker socket: $local_sock"
+    mkdir -p "$DOCKER_RUN_DIR"
+    install_symlink "$local_sock" "$DOCKER_RUN_DIR/docker.sock"
+  else
+    warn "No Docker socket found at /run/docker.sock or /var/run/docker.sock"
+    echo -e "  ${DIM}Install Docker: sudo apt install docker.io${NC}"
+  fi
+
+  echo
+  info "Testcontainers"
+  install_symlink "$SCRIPT_DIR/testcontainers.properties" ~/.testcontainers.properties
+
+  state_set "docker.runtime" "native"
+
+  echo
+  success "Docker setup complete!"
+  exit 0
+fi
+
+# ─── macOS: runtime selection (Colima, OrbStack) ────────────────────────────
+
 # Detect existing runtime from the persisted aliases symlink
 _existing=""
 if [[ -L "$DOCKER_RUNTIME_ALIASES" ]]; then

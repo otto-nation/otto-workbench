@@ -15,6 +15,9 @@ fi
 # macOS: runs the official Homebrew installer. Linux: prints manual instructions.
 # No-op if brew is already installed. This is an install-time step — not called by sync.
 step_brew_install() {
+  # Homebrew is macOS-only — skip entirely on Linux.
+  [[ "$OSTYPE" == "darwin"* ]] || return 0
+
   if command -v brew >/dev/null 2>&1; then
     success "brew already installed"
     return
@@ -27,15 +30,11 @@ step_brew_install() {
     return
   fi
 
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    confirm "  Install Homebrew?" || return
+  confirm "  Install Homebrew?" || return
 
-    info "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    success "Homebrew installed"
-  else
-    err "Homebrew auto-install is macOS-only. See: https://brew.sh"
-  fi
+  info "Installing Homebrew..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  success "Homebrew installed"
 }
 
 # sync_brew — no-op. Brew packages are installed interactively via setup.sh;

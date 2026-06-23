@@ -182,6 +182,21 @@ _clone_workbench_repo() {
   git clone "$repo_url" "$WORKBENCH_REPO_DIR"
 }
 
+_check_linux_prerequisites() {
+  local -a missing=()
+  local cmd
+  for cmd in git zsh curl jq yq; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    warn "Missing prerequisites: ${missing[*]}"
+    echo -e "  ${DIM}Install with: sudo apt install ${missing[*]}${NC}"
+  else
+    success "Linux prerequisites satisfied"
+  fi
+}
+
 cmd_install() {
   # If running from Homebrew Cellar, clone the full repo and re-exec from there.
   if [[ "$WORKBENCH_DIR" == */Cellar/* ]]; then
@@ -207,7 +222,11 @@ cmd_install() {
   echo
 
   # ─── Bootstrap ──────────────────────────────────────────────────────────
-  step_brew_install
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    step_brew_install
+  else
+    _check_linux_prerequisites
+  fi
   echo
 
   # Resolve known components and validate targets (if any).

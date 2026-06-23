@@ -1090,8 +1090,8 @@ def _run_self_review(args) -> None:
 
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
-def cmd_post(repo: str, pr_number: str, submit: bool, review_file_override: str | None = None) -> None:
-    review_file = Path(review_file_override) if review_file_override else _review_file(repo, pr_number)
+def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
+    review_file = _review_file(repo, pr_number)
     if not review_file.is_file():
         _err(f"No review file found: {review_file}")
         print(f"  {ANSI_DIM}Run: claude-review {pr_number}{ANSI_RESET}", file=sys.stderr)
@@ -1275,7 +1275,6 @@ def main() -> None:
     parser.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
     parser.add_argument("--branch")
     parser.add_argument("--pr")
-    parser.add_argument("--review-file")
     parser.add_argument("-V", "--version", action="store_true")
     parser.add_argument("args", nargs="*")
 
@@ -1331,8 +1330,8 @@ def main() -> None:
             sys.exit(1)
         post_pr_number = _extract_pr_number(post_input)
         post_repo = _extract_repo(post_input, parsed.repo_dir)
-        post_review_file = Path(parsed.review_file) if parsed.review_file else _review_file(post_repo, post_pr_number)
-        cmd_post(post_repo, post_pr_number, parsed.submit, parsed.review_file)
+        post_review_file = _review_file(post_repo, post_pr_number)
+        cmd_post(post_repo, post_pr_number, parsed.submit)
         _update_pr_state(post_repo, post_pr_number, str(post_review_file), parsed.repo_dir or "", "pr")
         if _json_stdout_fd is not None:
             summary = _json_summary(post_repo, post_pr_number, str(post_review_file))

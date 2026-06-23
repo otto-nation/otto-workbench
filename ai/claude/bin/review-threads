@@ -5,7 +5,7 @@ Renders a human-readable dashboard to stderr and structured JSON to stdout.
 Manages local state in <worktree>/ignore/pr-comments/state.json.
 
 Usage:
-  review-threads [--pr NUMBER] [--repo-dir PATH]
+  review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --resolve-verified
 """
 
@@ -38,6 +38,30 @@ def _detect_pr(cwd: str | None = None) -> tuple[str, int]:
         print("Cannot determine repository from PR metadata", file=sys.stderr)
         sys.exit(1)
     return repo, data["number"]
+
+
+def _resolve_branch(hint: str) -> str:
+    """Resolve a fuzzy branch name via resolve-branch."""
+    result = subprocess.run(
+        ["resolve-branch", hint],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return hint
+
+
+def _pr_from_branch(repo: str, branch: str) -> int:
+    """Look up a PR number from a branch name."""
+    result = subprocess.run(
+        ["gh", "pr", "list", "--repo", repo, "--head", branch,
+         "--json", "number", "--jq", ".[0].number"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        print(f"No PR found for branch '{branch}'", file=sys.stderr)
+        sys.exit(1)
+    return int(result.stdout.strip())
 
 
 def _git_toplevel() -> Path:
@@ -78,6 +102,7 @@ def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
 def main():
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", help="PR number")
+    parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--resolve-verified", action="store_true",
                         help="Resolve all verified threads on GitHub")
     parser.add_argument("--repo-dir", "--repo", "--worktree",
@@ -92,6 +117,10 @@ def main():
         except ValueError:
             print(f"--pr: invalid integer value: {args.pr!r}", file=sys.stderr)
             sys.exit(1)
+    elif args.branch:
+        repo = _detect_repo(cwd)
+        resolved = _resolve_branch(args.branch)
+        pr_number = _pr_from_branch(repo, resolved)
     else:
         repo, pr_number = _detect_pr(cwd)
 
@@ -104,7 +133,7 @@ def main():
         ["git", "rev-parse", "HEAD"],
         capture_output=True, text=True, cwd=str(toplevel),
     ).stdout.strip()
-    branch = subprocess.run(
+    branch = args.branch or subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         capture_output=True, text=True, cwd=str(toplevel),
     ).stdout.strip()

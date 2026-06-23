@@ -21,7 +21,7 @@ class ResolvedContext:
     repo: str
     branch: str
     pr_number: int | None
-    worktree_root: Path
+    worktree_root: Path | None
     head_sha: str
 
 
@@ -41,12 +41,18 @@ def resolve(
     cwd = repo_dir or None
 
     worktree_root = _git_toplevel(cwd)
+    if worktree_root is None and not pr and not branch:
+        print("Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+
     repo = _detect_repo(cwd)
-    head_sha = _head_sha(cwd)
+    head_sha = _head_sha(cwd) if worktree_root else ""
 
     if pr:
         pr_number = _parse_pr_input(pr)
-        branch_name = _branch_from_pr(repo, pr_number) or _current_branch(cwd)
+        branch_name = _branch_from_pr(repo, pr_number)
+        if not branch_name:
+            branch_name = _current_branch(cwd) if worktree_root else ""
     elif branch:
         branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
@@ -102,14 +108,13 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
         return _current_branch(cwd)
 
 
-def _git_toplevel(cwd: str | None = None) -> Path:
+def _git_toplevel(cwd: str | None = None) -> Path | None:
     r = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0:
-        print("Not in a git repository", file=sys.stderr)
-        sys.exit(1)
+        return None
     return Path(r.stdout.strip())
 
 

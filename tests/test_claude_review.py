@@ -527,7 +527,7 @@ def test_cleanup_prior_empty_path_is_noop(cr, tmp_path):
     cr._cleanup_prior_review(review_file, "")
 
 
-# ── cmd_gc ────────────────────────────────────────────────────────────────────
+# ── gc_reviews ─────────────────────────────────────────────────────────────────
 
 
 def test_gc_removes_orphaned_stale_dirs(cr, reviews_dir):
@@ -543,7 +543,7 @@ def test_gc_removes_orphaned_stale_dirs(cr, reviews_dir):
     (has_review / "review.md").write_text("## Review")
     (has_review / "pipeline.json").write_text("{}")
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert not orphan.exists()
     assert has_review.exists()
@@ -558,7 +558,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
         p.write_text("{}")
         os.utime(str(p), (1622505600, 1622505600))
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     assert not (d / "group-1.md").exists()
@@ -574,7 +574,7 @@ def test_gc_preserves_recent_intermediates(cr, reviews_dir):
     for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
         (d / f_name).write_text("{}")
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
@@ -587,7 +587,7 @@ def test_gc_preserves_active_pipeline(cr, reviews_dir):
     (d / "pipeline.json").write_text("{}")
     (d / "group-1.jsonl").write_text("{}")
 
-    cr.cmd_gc()
+    review_gc.gc_reviews(reviews_dir)
 
     assert d.exists()
     assert (d / "group-1.jsonl").exists()
@@ -777,9 +777,3 @@ def test_constants_match_expected(cr):
     assert len(cr.SEVERITY_JSON_KEYS) == 4
 
 
-def test_main_dispatches_subcommands(cr):
-    """Verify the main function references all expected subcommand strings."""
-    import inspect
-    source = inspect.getsource(cr.main)
-    for cmd in ("gc", "post", "rebuild", "summary", "threads"):
-        assert f'"{cmd}"' in source

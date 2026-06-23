@@ -165,6 +165,18 @@ def _is_pr_ref(s: str) -> bool:
     return bool(PR_URL_RE.search(s) or PR_NUMBER_RE.match(s))
 
 
+def _post_review(repo: str, pr_number: str, review_file: str, submit: bool) -> None:
+    """Post a review to GitHub via review-post."""
+    post_args = [
+        str(BIN_DIR / "review-post"),
+        "--pr", pr_number,
+        "--review-file", review_file,
+    ]
+    if submit:
+        post_args.append("--submit")
+    subprocess.run(post_args, check=False)
+
+
 def _display_review(path: Path) -> None:
     print()
     print("\033[1m─── Review ───\033[0m", file=sys.stderr)
@@ -653,26 +665,26 @@ def _run_review_body(
 
     if no_post:
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        print(f"  {ANSI_DIM}To post later: pr review --post{ANSI_RESET}", file=sys.stderr)
         return
 
     if auto_post:
-        cmd_post(repo, pr_number, auto_submit)
+        _post_review(repo, pr_number, str(review_file), auto_submit)
         post_session_log = str(review_dir / FILENAME_POST_SESSION)
         _print_summary(str(review_file), session_log, pr_url, post_session_log)
         return
 
     if not _confirm("Satisfied with the review?"):
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}Edit the file, then run: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        print(f"  {ANSI_DIM}Edit the file, then run: pr review --post{ANSI_RESET}", file=sys.stderr)
         sys.exit(0)
 
     if not _confirm("Post review to GitHub?"):
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        print(f"  {ANSI_DIM}To post later: pr review --post{ANSI_RESET}", file=sys.stderr)
         return
 
-    cmd_post(repo, pr_number, False)
+    _post_review(repo, pr_number, str(review_file), False)
     post_session_log = str(review_dir / FILENAME_POST_SESSION)
 
     if _confirm("Submit review now?"):
@@ -956,75 +968,6 @@ def _run_self_review(args) -> None:
             _cleanup_self_review_worktree(wt_cleanup, repo_dir)
 
 
-# ── Subcommands ──────────────────────────────────────────────────────────────
-
-def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
-    review_file = review_file_path(repo, pr_number)
-    if not review_file.is_file():
-        _err(f"No review file found: {review_file}")
-        print(f"  {ANSI_DIM}Run: claude-review {pr_number}{ANSI_RESET}", file=sys.stderr)
-        sys.exit(1)
-
-    post_args = [
-        str(BIN_DIR / "review-post"),
-        "--pr", pr_number,
-        "--review-file", str(review_file),
-    ]
-    if submit:
-        post_args.append("--submit")
-
-    subprocess.run(post_args, check=False)
-
-
-def cmd_threads(args) -> None:
-    pr_input = args.positional[1] if len(args.positional) > 1 else ""
-    threads_args = [str(BIN_DIR / "review-threads")]
-
-    if pr_input:
-        threads_args += ["--pr", pr_input]
-
-    if args.resolve_verified:
-        threads_args.append("--resolve-verified")
-    if args.repo_dir:
-        threads_args += ["--repo-dir", args.repo_dir]
-
-    subprocess.run(threads_args, check=False)
-
-
-def cmd_rebuild(ctx: pr_context.ResolvedContext) -> None:
-    pr_num = str(ctx.pr_number)
-    review_file = review_file_path(ctx.repo, pr_num)
-    review_dir = review_file.parent
-
-    if not review_dir.is_dir():
-        _err(f"No review directory found: {review_dir}")
-        sys.exit(1)
-
-    subprocess.run(
-        [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num],
-        check=False,
-    )
-
-
-def cmd_summary(ctx: pr_context.ResolvedContext) -> None:
-    pr_num = str(ctx.pr_number)
-    review_file = review_file_path(ctx.repo, pr_num)
-
-    if not review_file.is_file():
-        _err(f"No review file found: {review_file}")
-        sys.exit(1)
-
-    print(json_summary(ctx.repo, pr_num, str(review_file)))
-
-
-def cmd_gc() -> None:
-    cleaned = review_gc.gc_reviews()
-    if cleaned > 0:
-        _info(f"GC: cleaned {cleaned} items")
-    else:
-        _info("GC: nothing to clean")
-
-
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1043,7 +986,6 @@ def main() -> None:
     parser.add_argument("--skip-user-verification", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-holistic", action="store_true")
-    parser.add_argument("--resolve-verified", action="store_true")
     parser.add_argument("--json-summary", action="store_true")
     parser.add_argument("--issue")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
@@ -1097,60 +1039,19 @@ def main() -> None:
         sys.exit(1)
 
     command = parsed.positional[0] if parsed.positional else ""
-
-    if command == "gc":
-        cmd_gc()
-    elif command == "post":
-        post_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not post_input:
-            _err("Usage: claude-review post <pr_url_or_number>")
-            sys.exit(1)
-        ctx = pr_context.resolve(pr=post_input, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number)
-        review_file = review_file_path(ctx.repo, pr_num)
-        cmd_post(ctx.repo, pr_num, parsed.submit)
-        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = json_summary(ctx.repo, pr_num, str(review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
-    elif command == "rebuild":
-        rebuild_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not rebuild_input:
-            _err("Usage: claude-review rebuild <pr_url_or_number>")
-            sys.exit(1)
-        ctx = pr_context.resolve(pr=rebuild_input, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number)
-        review_file = review_file_path(ctx.repo, pr_num)
-        cmd_rebuild(ctx)
-        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = json_summary(ctx.repo, pr_num, str(review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
-    elif command == "summary":
-        sub_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if not sub_input:
-            _err("Usage: claude-review summary <pr_url_or_number>")
-            sys.exit(1)
-        ctx = pr_context.resolve(pr=sub_input, repo_dir=parsed.repo_dir)
-        cmd_summary(ctx)
-    elif command == "threads":
-        cmd_threads(parsed)
-    elif not command:
+    if not command:
         parser.print_help()
         sys.exit(1)
-    else:
-        # Default: treat as PR number/URL
-        ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number)
-        review_file = review_file_path(ctx.repo, pr_num)
-        _run_review(parsed)
-        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-        if _json_stdout_fd is not None:
-            summary = json_summary(ctx.repo, pr_num, str(review_file))
-            os.write(_json_stdout_fd, (summary + "\n").encode())
-            os.close(_json_stdout_fd)
+
+    ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
+    pr_num = str(ctx.pr_number)
+    review_file = review_file_path(ctx.repo, pr_num)
+    _run_review(parsed)
+    _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+    if _json_stdout_fd is not None:
+        summary = json_summary(ctx.repo, pr_num, str(review_file))
+        os.write(_json_stdout_fd, (summary + "\n").encode())
+        os.close(_json_stdout_fd)
 
 
 if __name__ == "__main__":

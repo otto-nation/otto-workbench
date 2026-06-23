@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Validate CLI flag conventions across ai/claude/bin/ scripts.
+#
+# Checks:
+#   1. No --repo alias on --repo-dir (confuses slug vs directory semantics)
+#   2. No standalone --repo flag meaning slug (except allowlisted internal scripts)
+#   3. Scripts accepting both --pr and --branch must use pr_context.resolve()
+#      or pr-context-resolve for runtime enforcement
+#
+# Usage: bin/local/validate-cli-flags [--quiet]
+# Exit code: 0 if all checks pass, 1 if any fail.
+
+set -e
+
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate CLI flag conventions across ai/claude/bin/ scripts.
+
+Options:
+  --quiet     Suppress per-check output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+ERRORS=0
+CHECKS=0
+SCRIPTS_CHECKED=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); echo -e "  ${RED}✗${NC} $*" >&2; }
+
+BIN_DIR="$_SCRIPT_ROOT/ai/claude/bin"
+
+# Internal scripts allowed to use --repo as slug (not user-facing)
+REPO_SLUG_ALLOWLIST="review-orchestrate"
+
+# Scripts with known --repo alias violations pending replacement
+# claude-review: being rewritten in Python on isaac-refactor-claude_review_to_python
+REPO_ALIAS_ALLOWLIST="claude-review"
+
+_is_allowlisted() { echo "$1" | grep -qw "$2"; }
+
+# ── Per-script checks ──────────────────────────────────────────────────────
+
+_check_repo_alias_python() {
+  local name="$1" script="$2"
+  grep -qE 'add_argument\(.*"--repo-dir".*"--repo"' "$script" 2>/dev/null || { _pass "$name: no --repo alias on --repo-dir"; return; }
+  _fail "$name: --repo used as alias for --repo-dir (use --repo-dir/--worktree only)"
+}
+
+_check_repo_slug_python() {
+  local name="$1" script="$2"
+  grep -qE 'add_argument\("--repo"' "$script" 2>/dev/null || return 0
+  _is_allowlisted "$REPO_SLUG_ALLOWLIST" "$name" && { _pass "$name: --repo slug flag (allowlisted internal script)"; return; }
+  _fail "$name: standalone --repo flag (repo slug should be derived from --repo-dir or context)"
+}
+
+_check_exclusivity_python() {
+  local name="$1" script="$2"
+  grep -qE 'add_argument\("--pr"' "$script" 2>/dev/null || return 0
+  grep -qE 'add_argument\("--branch"' "$script" 2>/dev/null || return 0
+  grep -q 'mutually_exclusive' "$script" 2>/dev/null && { _pass "$name: --pr/--branch mutual exclusivity enforced at argparse level"; return; }
+  grep -q 'pr_context' "$script" 2>/dev/null && { _pass "$name: --pr/--branch resolved via pr_context (runtime exclusivity)"; return; }
+  _fail "$name: accepts --pr and --branch without mutual exclusivity enforcement"
+}
+
+_check_repo_alias_bash() {
+  local name="$1" script="$2"
+  grep -qE '\-\-repo-dir.*\-\-repo([^-]|$)|\-\-repo([^-]|$).*\-\-repo-dir' "$script" 2>/dev/null || { _pass "$name: no --repo alias on --repo-dir"; return; }
+  _is_allowlisted "$REPO_ALIAS_ALLOWLIST" "$name" && { _pass "$name: --repo alias on --repo-dir (allowlisted, pending replacement)"; return; }
+  _fail "$name: --repo used as alias for --repo-dir in case pattern"
+}
+
+_check_exclusivity_bash() {
+  local name="$1" script="$2"
+  grep -qE '\-\-pr\)|\-\-pr ' "$script" 2>/dev/null || return 0
+  grep -qE '\-\-branch\)|\-\-branch ' "$script" 2>/dev/null || return 0
+  grep -q 'pr-context-resolve\|pr_context' "$script" 2>/dev/null && { _pass "$name: --pr/--branch resolved via pr-context-resolve (runtime exclusivity)"; return; }
+  grep -qE 'mutually exclusive|"--pr and --branch"' "$script" 2>/dev/null && { _pass "$name: --pr/--branch mutual exclusivity enforced"; return; }
+  _fail "$name: accepts --pr and --branch without mutual exclusivity enforcement"
+}
+
+# ── Main loops ─────────────────────────────────────────────────────────────
+
+for script in "$BIN_DIR"/*; do
+  [[ -f "$script" ]] || continue
+  name="$(basename "$script")"
+  grep -q 'add_argument' "$script" 2>/dev/null || continue
+
+  SCRIPTS_CHECKED=$(( SCRIPTS_CHECKED + 1 ))
+  _check_repo_alias_python "$name" "$script"
+  _check_repo_slug_python "$name" "$script"
+  _check_exclusivity_python "$name" "$script"
+done
+
+for script in "$BIN_DIR"/*; do
+  [[ -f "$script" ]] || continue
+  name="$(basename "$script")"
+  head -1 "$script" | grep -q 'bash' || continue
+  grep -q 'add_argument' "$script" 2>/dev/null && continue
+
+  SCRIPTS_CHECKED=$(( SCRIPTS_CHECKED + 1 ))
+  _check_repo_alias_bash "$name" "$script"
+  _check_exclusivity_bash "$name" "$script"
+done
+
+# ── Summary ─────────────────────────────────────────────────────────────────
+
+echo
+if (( SCRIPTS_CHECKED == 0 )); then
+  echo -e "  ${DIM}no CLI scripts found${NC}"
+  exit 0
+elif (( ERRORS == 0 )); then
+  success "$CHECKS checks passed ($SCRIPTS_CHECKED scripts)"
+  exit 0
+else
+  err "$ERRORS of $CHECKS checks failed ($SCRIPTS_CHECKED scripts)"
+  exit 1
+fi

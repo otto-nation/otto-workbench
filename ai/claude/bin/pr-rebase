@@ -296,7 +296,7 @@ def main():
         prog="pr-rebase",
         description="Rebase onto origin/main with conflict detection and force-push",
     )
-    parser.add_argument("--repo-dir", "--repo", "--worktree",
+    parser.add_argument("--repo-dir", "--worktree",
                         dest="repo_dir",
                         help="Git worktree directory")
     parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")

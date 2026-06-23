@@ -232,7 +232,7 @@ def main():
     parser.add_argument("--pr", help="PR number or URL")
     parser.add_argument("--branch", help="Branch name (overrides git detection)")
     parser.add_argument("--run", type=int, help="Specific run ID")
-    parser.add_argument("--repo-dir", "--repo", "--worktree",
+    parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory")
     args = parser.parse_args()
 

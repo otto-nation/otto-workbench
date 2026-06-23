@@ -87,15 +87,9 @@ For each file in the `files` array:
      (origin/main side), and the markers labeled with the commit SHA are the
      branch's changes
 3. Resolve by merging the intent of both sides — not just picking one
-4. Write the resolved file using Bash (not Edit or Write tools — active
-   rebase makes the git index sensitive to tool-level file operations):
-
-```bash
-cat > path/to/file << 'RESOLVED_EOF'
-<resolved file contents — no conflict markers>
-RESOLVED_EOF
-```
-
+4. Write the resolved file using the Write tool — it is safe during a paused
+   rebase (git does not lock working tree files during conflict resolution,
+   and Write does not touch the git index)
 5. Stage the resolved file:
 
 ```bash
@@ -167,9 +161,14 @@ Report the result.
 - Always call `pr rebase` (the dispatcher, two words), never `pr-rebase` (the
   backing script) — the dispatcher handles context resolution and routing
 - Never run raw `git push --force-with-lease` — always use `pr rebase --push`
-- During rebase conflict resolution, use only Bash for all file writes and git
-  staging commands (`git add`, `git rebase --continue`)
-- Do not use the Edit or Write tools during active rebase — they can corrupt
-  git's index state
+- Use the Write tool for writing resolved file content during conflict
+  resolution — heredoc writes via Bash (`cat > file << 'EOF'`) trigger
+  unsuppressible permission prompts
+- Do not use the Edit tool during active rebase — conflict markers make
+  exact-match replacements fragile
+- Use Bash only for git commands during rebase (`git add`, `git -c
+  core.editor=true rebase --continue`)
+- Never use compound commands (`;`, `&&`, `||`) in a single Bash call —
+  they cannot be statically analyzed for permissions. Use separate tool calls
 - If the rebase becomes unrecoverable (repeated failures on --continue), abort
   with `pr rebase --abort` and report what went wrong

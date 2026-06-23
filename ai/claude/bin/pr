@@ -393,36 +393,38 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
+def _gc_stale_pr_state(worktree_root: Path | None) -> int:
+    """Remove pr state directory if the PR is merged or closed. Returns 1 if cleaned."""
+    if not worktree_root:
+        return 0
+    state_dir = worktree_root / pr_state.STATE_DIR
+    state_file = state_dir / pr_state.STATE_FILE
+    if not state_file.is_file():
+        return 0
+    state = pr_state.load_state(worktree_root)
+    if not state or not state.identity.pr_number:
+        return 0
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(state.identity.pr_number),
+             "--repo", state.identity.repo,
+             "--json", "state", "--jq", ".state"],
+            capture_output=True, text=True,
+        )
+        pr_st = r.stdout.strip()
+    except Exception:
+        pr_st = ""
+    if pr_st not in ("MERGED", "CLOSED"):
+        return 0
+    shutil.rmtree(state_dir, ignore_errors=True)
+    print(f"{ANSI_INFO} GC: removed stale pr state ({pr_st})", file=sys.stderr)
+    return 1
+
+
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
-    total = 0
-
-    cleaned = review_gc.gc_reviews()
-    total += cleaned
-
-    pruned = review_gc.prune_merged_reviews()
-    total += pruned
-
-    state_dir = ctx.worktree_root / pr_state.STATE_DIR if ctx.worktree_root else None
-    if state_dir and state_dir.is_dir():
-        state_file = state_dir / pr_state.STATE_FILE
-        if state_file.is_file():
-            state = pr_state.load_state(ctx.worktree_root)
-            if state and state.identity.pr_number:
-                try:
-                    r = subprocess.run(
-                        ["gh", "pr", "view", str(state.identity.pr_number),
-                         "--repo", state.identity.repo,
-                         "--json", "state", "--jq", ".state"],
-                        capture_output=True, text=True,
-                    )
-                    pr_st = r.stdout.strip()
-                except Exception:
-                    pr_st = ""
-                if pr_st in ("MERGED", "CLOSED"):
-                    shutil.rmtree(state_dir, ignore_errors=True)
-                    print(f"{ANSI_INFO} GC: removed stale pr state ({pr_st})", file=sys.stderr)
-                    total += 1
+    total = review_gc.gc_reviews() + review_gc.prune_merged_reviews()
+    total += _gc_stale_pr_state(ctx.worktree_root)
 
     if total > 0:
         print(f"{ANSI_INFO} GC: cleaned {total} item(s) total", file=sys.stderr)

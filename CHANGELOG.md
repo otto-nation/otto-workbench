@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.32.6](https://github.com/otto-nation/otto-workbench/compare/v1.32.5...v1.32.6) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ci-check:** deduplicate re-runs per workflow ([#347](https://github.com/otto-nation/otto-workbench/issues/347)) ([9368e6a](https://github.com/otto-nation/otto-workbench/commit/9368e6a791c3597a154b1e09aa8495adaae6fd51))
+
+
+### Code Refactoring
+
+* **claude-review:** eliminate duplicate resolution; use pr_context.resolve() everywhere ([#345](https://github.com/otto-nation/otto-workbench/issues/345)) ([1146332](https://github.com/otto-nation/otto-workbench/commit/1146332f84316b4947a2e1d7300796c3f55b432c))
+
 ## [1.32.5](https://github.com/otto-nation/otto-workbench/compare/v1.32.4...v1.32.5) (2026-06-23)
 
 

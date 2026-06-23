@@ -44,27 +44,6 @@ if [[ -z "$pr_number" && -z "$branch" ]]; then
   usage
 fi
 
-# Resolve branch to PR number
-if [[ -n "$branch" && -z "$pr_number" ]]; then
-  resolved=$(resolve-branch "$branch" 2>/dev/null) || true
-  [[ -n "$resolved" ]] && branch="$resolved"
-
-  cwd="${repo_dir:-.}"
-  repo=$(git -C "$cwd" remote get-url origin 2>/dev/null \
-    | sed -n 's|.*github\.com[:/]\(.*\)\.git$|\1|p; s|.*github\.com[:/]\(.*\)$|\1|p')
-  if [[ -z "$repo" ]]; then
-    err "Cannot determine repository from remote URL"
-    exit 1
-  fi
-
-  pr_json=$(gh pr list --repo "$repo" --head "$branch" --json number --limit 1 2>/dev/null) || true
-  pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null) || true
-  if [[ -z "$pr_number" ]]; then
-    err "No PR found for branch '$branch'"
-    exit 1
-  fi
-fi
-
 if [[ -z "$repo_dir" ]]; then
   repo_dir=$(git rev-parse --show-toplevel 2>/dev/null) || {
     err "Not in a git repository — pass --repo-dir to specify the repo"
@@ -72,7 +51,14 @@ if [[ -z "$repo_dir" ]]; then
   }
 fi
 
-threads_json=$(review-threads --pr "$pr_number" --repo-dir "$repo_dir")
+# Build review-threads arguments — let it handle context resolution via pr_context
+rt_args=()
+[[ -n "$pr_number" ]] && rt_args+=(--pr "$pr_number")
+[[ -n "$branch" ]] && rt_args+=(--branch "$branch")
+[[ -n "$repo_dir" ]] && rt_args+=(--repo-dir "$repo_dir")
+
+threads_json=$(review-threads "${rt_args[@]}")
+pr_number=$(printf '%s' "$threads_json" | jq -r '.pr_number // empty' 2>/dev/null) || true
 
 thread_count=$(printf '%s' "$threads_json" | jq '[.threads[] | select(.state != "resolved")] | length')
 

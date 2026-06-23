@@ -73,11 +73,47 @@ def _err(msg: str) -> None:
 def _migrate_legacy_reviews() -> None:
     if not LEGACY_REVIEWS_DIR.is_dir():
         return
-    for pattern in ("*.md", "*.jsonl"):
-        for f in LEGACY_REVIEWS_DIR.glob(pattern):
-            dest = REVIEWS_DIR / f.name
-            if not dest.exists():
-                shutil.move(str(f), str(dest))
+    files = [f for p in ("*.md", "*.jsonl") for f in LEGACY_REVIEWS_DIR.glob(p)]
+    for f in files:
+        dest = REVIEWS_DIR / f.name
+        if not dest.exists():
+            shutil.move(str(f), str(dest))
+
+
+def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
+    review_dir = REVIEWS_DIR / dir_name
+    review_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(flat_review), str(review_dir / f"review{REVIEW_EXT}"))
+
+    suffix_map = {
+        ".session.jsonl": "session.jsonl",
+        ".meta.json": "meta.json",
+        ".post.jsonl": "post.jsonl",
+        ".pipeline.json": "pipeline.json",
+        ".prior.md": "prior.md",
+    }
+    for suffix, new_name in suffix_map.items():
+        flat_file = REVIEWS_DIR / f"{dir_name}{suffix}"
+        if flat_file.is_file():
+            shutil.move(str(flat_file), str(review_dir / new_name))
+
+    intermediate_patterns = (
+        f"{dir_name}.group-*.md", f"{dir_name}.group-*.jsonl",
+        f"{dir_name}.holistic.md", f"{dir_name}.holistic.jsonl",
+        f"{dir_name}.synthesis.jsonl",
+    )
+    intermediates = [f for p in intermediate_patterns for f in REVIEWS_DIR.glob(p)]
+    for intermediate in intermediates:
+        fname = intermediate.name.removeprefix(f"{dir_name}.")
+        shutil.move(str(intermediate), str(review_dir / fname))
+
+    archive_dir = review_dir / "archives"
+    archive_patterns = (f"{dir_name}.2*.md", f"{dir_name}.session.2*.jsonl", f"{dir_name}.post.2*.jsonl")
+    archives = [f for p in archive_patterns for f in REVIEWS_DIR.glob(p)]
+    for archive in archives:
+        archive_dir.mkdir(exist_ok=True)
+        fname = archive.name.removeprefix(f"{dir_name}.")
+        shutil.move(str(archive), str(archive_dir / fname))
 
 
 def _migrate_flat_reviews() -> None:
@@ -89,39 +125,7 @@ def _migrate_flat_reviews() -> None:
         review_dir = REVIEWS_DIR / dir_name
         if review_dir.is_dir():
             continue
-
-        review_dir.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(flat_review), str(review_dir / f"review{REVIEW_EXT}"))
-
-        suffix_map = {
-            ".session.jsonl": "session.jsonl",
-            ".meta.json": "meta.json",
-            ".post.jsonl": "post.jsonl",
-            ".pipeline.json": "pipeline.json",
-            ".prior.md": "prior.md",
-        }
-        base = REVIEWS_DIR / dir_name
-        for suffix, new_name in suffix_map.items():
-            flat_file = base.parent / f"{dir_name}{suffix}"
-            if flat_file.is_file():
-                shutil.move(str(flat_file), str(review_dir / new_name))
-
-        for pattern in (
-            f"{dir_name}.group-*.md", f"{dir_name}.group-*.jsonl",
-            f"{dir_name}.holistic.md", f"{dir_name}.holistic.jsonl",
-            f"{dir_name}.synthesis.jsonl",
-        ):
-            for intermediate in REVIEWS_DIR.glob(pattern):
-                fname = intermediate.name.removeprefix(f"{dir_name}.")
-                shutil.move(str(intermediate), str(review_dir / fname))
-
-        archive_dir = review_dir / "archives"
-        for pattern in (f"{dir_name}.2*.md", f"{dir_name}.session.2*.jsonl", f"{dir_name}.post.2*.jsonl"):
-            for archive in REVIEWS_DIR.glob(pattern):
-                archive_dir.mkdir(exist_ok=True)
-                fname = archive.name.removeprefix(f"{dir_name}.")
-                shutil.move(str(archive), str(archive_dir / fname))
-
+        _migrate_one_flat_review(flat_review, dir_name)
         migrated += 1
 
     if migrated > 0:
@@ -132,15 +136,36 @@ def _migrate_flat_reviews() -> None:
 
 def _confirm(prompt: str) -> bool:
     try:
-        if sys.stdin.isatty():
-            answer = input(f"{prompt} [Y/n] ")
-        else:
-            with open("/dev/tty") as tty:
-                print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
-                answer = tty.readline().strip()
+        is_tty = sys.stdin.isatty()
     except (EOFError, OSError):
         return True
+    if is_tty:
+        try:
+            answer = input(f"{prompt} [Y/n] ")
+        except (EOFError, OSError):
+            return True
+        return answer.lower() in ("", "y", "yes")
+    try:
+        tty = open("/dev/tty")
+    except (EOFError, OSError):
+        return True
+    print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
+    answer = tty.readline().strip()
+    tty.close()
     return answer.lower() in ("", "y", "yes")
+
+
+def _prompt_optional(prompt: str) -> str:
+    try:
+        if sys.stdin.isatty():
+            return input(prompt)
+        tty = open("/dev/tty")
+        print(prompt, end="", flush=True, file=sys.stderr)
+        answer = tty.readline().strip()
+        tty.close()
+        return answer
+    except (EOFError, OSError):
+        return ""
 
 
 def _is_pr_ref(s: str) -> bool:
@@ -185,6 +210,33 @@ def _display_review(path: Path) -> None:
     print()
 
 
+def _parse_session_log(path: str) -> tuple[float, int, int]:
+    cost = 0.0
+    tokens = 0
+    duration_ms = 0
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return cost, tokens, duration_ms
+    for line in lines:
+        if '"type":"result"' not in line and '"type": "result"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") != "result":
+            continue
+        cost += rec.get("total_cost_usd", 0) or 0
+        usage = rec.get("usage", {})
+        tokens += (usage.get("input_tokens", 0) or 0)
+        tokens += (usage.get("output_tokens", 0) or 0)
+        tokens += (usage.get("cache_read_input_tokens", 0) or 0)
+        tokens += (usage.get("cache_creation_input_tokens", 0) or 0)
+        duration_ms += rec.get("duration_ms", 0) or 0
+    return cost, tokens, duration_ms
+
+
 def _format_usage(*log_paths: str) -> str:
     logs = [p for p in log_paths if p and os.path.isfile(p)]
     if not logs:
@@ -193,32 +245,13 @@ def _format_usage(*log_paths: str) -> str:
     cost = 0.0
     tokens = 0
     duration_ms = 0
-    found = False
-
     for log_path in logs:
-        try:
-            with open(log_path) as f:
-                for line in f:
-                    if '"type":"result"' not in line and '"type": "result"' not in line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if rec.get("type") != "result":
-                        continue
-                    found = True
-                    cost += rec.get("total_cost_usd", 0) or 0
-                    usage = rec.get("usage", {})
-                    tokens += (usage.get("input_tokens", 0) or 0)
-                    tokens += (usage.get("output_tokens", 0) or 0)
-                    tokens += (usage.get("cache_read_input_tokens", 0) or 0)
-                    tokens += (usage.get("cache_creation_input_tokens", 0) or 0)
-                    duration_ms += rec.get("duration_ms", 0) or 0
-        except OSError:
-            continue
+        c, t, d = _parse_session_log(log_path)
+        cost += c
+        tokens += t
+        duration_ms += d
 
-    if not found:
+    if cost == 0.0 and tokens == 0 and duration_ms == 0:
         return ""
 
     if tokens >= 1_000_000:
@@ -262,15 +295,61 @@ def _print_summary(
 def _count_severity(file: Path, prefix: str) -> int:
     if not file.is_file():
         return 0
-    pattern = re.compile(SEVERITY_COUNT_RE_FMT.format(re.escape(prefix)))
-    count = 0
     try:
-        for line in file.read_text().splitlines():
-            if pattern.match(line):
-                count += 1
+        text = file.read_text()
     except OSError:
-        pass
-    return count
+        return 0
+    pattern = SEVERITY_COUNT_RE_FMT.format(re.escape(prefix))
+    return len(re.findall(pattern, text, re.MULTILINE))
+
+
+def _parse_session_log_detail(path: str) -> dict:
+    result = {"cost": 0.0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "duration_ms": 0}
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return result
+    for line in lines:
+        if '"type":"result"' not in line and '"type": "result"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") != "result":
+            continue
+        result["cost"] += rec.get("total_cost_usd", 0) or 0
+        usage = rec.get("usage", {})
+        result["input"] += usage.get("input_tokens", 0) or 0
+        result["output"] += usage.get("output_tokens", 0) or 0
+        result["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
+        result["cache_write"] += usage.get("cache_creation_input_tokens", 0) or 0
+        result["duration_ms"] += rec.get("duration_ms", 0) or 0
+    return result
+
+
+def _read_review_meta(review_dir: Path) -> dict:
+    meta_file = review_dir / FILENAME_META
+    if not meta_file.is_file():
+        return {}
+    try:
+        return json.loads(meta_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _aggregate_session_usage(review_dir: Path | None) -> dict:
+    usage = {"cost": 0.0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "duration_ms": 0}
+    if not review_dir:
+        return usage
+    log_paths = [str(review_dir / n) for n in (FILENAME_SESSION, FILENAME_POST_SESSION)]
+    for log_path in log_paths:
+        if not os.path.isfile(log_path):
+            continue
+        detail = _parse_session_log_detail(log_path)
+        for k in usage:
+            usage[k] += detail[k]
+    return usage
 
 
 def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
@@ -286,39 +365,7 @@ def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
     verdict = "changes_requested" if must_count > 0 else "approve"
 
     review_dir = Path(review_file).parent if review_file else None
-    cost_usd = 0.0
-    input_tokens = 0
-    output_tokens = 0
-    cache_read_tokens = 0
-    cache_write_tokens = 0
-    duration_ms = 0
-
-    if review_dir:
-        session_log = str(review_dir / FILENAME_SESSION)
-        post_session_log = str(review_dir / FILENAME_POST_SESSION)
-        for log_path in (session_log, post_session_log):
-            if not os.path.isfile(log_path):
-                continue
-            try:
-                with open(log_path) as f:
-                    for line in f:
-                        if '"type":"result"' not in line and '"type": "result"' not in line:
-                            continue
-                        try:
-                            rec = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if rec.get("type") != "result":
-                            continue
-                        cost_usd += rec.get("total_cost_usd", 0) or 0
-                        usage = rec.get("usage", {})
-                        input_tokens += usage.get("input_tokens", 0) or 0
-                        output_tokens += usage.get("output_tokens", 0) or 0
-                        cache_read_tokens += usage.get("cache_read_input_tokens", 0) or 0
-                        cache_write_tokens += usage.get("cache_creation_input_tokens", 0) or 0
-                        duration_ms += rec.get("duration_ms", 0) or 0
-            except OSError:
-                pass
+    usage = _aggregate_session_usage(review_dir)
 
     review_content = None
     if review_path and review_path.is_file():
@@ -327,39 +374,25 @@ def _json_summary(repo: str, pr_number: str, review_file: str) -> str:
         except OSError:
             pass
 
-    head_sha = None
-    head_ref = None
-    base_ref = None
-    review_type = None
-    if review_dir:
-        meta_file = review_dir / FILENAME_META
-        if meta_file.is_file():
-            try:
-                meta = json.loads(meta_file.read_text())
-                head_sha = meta.get("head_sha") or None
-                head_ref = meta.get("head_ref") or None
-                base_ref = meta.get("base_ref") or None
-                review_type = meta.get("review_type") or None
-            except (json.JSONDecodeError, OSError):
-                pass
+    meta = _read_review_meta(review_dir) if review_dir else {}
 
     summary = {
         "repo": repo,
         "pr_number": int(pr_number) if pr_number else None,
-        "head_sha": head_sha,
-        "head_ref": head_ref,
-        "base_ref": base_ref,
-        "review_type": review_type,
+        "head_sha": meta.get("head_sha") or None,
+        "head_ref": meta.get("head_ref") or None,
+        "base_ref": meta.get("base_ref") or None,
+        "review_type": meta.get("review_type") or None,
         "review_file": review_file,
         "review_content": review_content,
         "findings": {**counts, "total": total},
         "verdict": verdict,
-        "cost_usd": cost_usd,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cache_read_tokens": cache_read_tokens,
-        "cache_write_tokens": cache_write_tokens,
-        "duration_ms": duration_ms,
+        "cost_usd": usage["cost"],
+        "input_tokens": usage["input"],
+        "output_tokens": usage["output"],
+        "cache_read_tokens": usage["cache_read"],
+        "cache_write_tokens": usage["cache_write"],
+        "duration_ms": usage["duration_ms"],
     }
     return f"REVIEW_SUMMARY:{json.dumps(summary)}"
 
@@ -484,37 +517,40 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
     except Exception:
         pending_json = ""
 
-    if pending_json and pending_json != "null":
-        try:
-            pending = json.loads(pending_json)
-            pending_id = pending.get("id")
-        except (json.JSONDecodeError, TypeError):
-            return
+    if not pending_json or pending_json == "null":
+        return
 
-        comment_count = "0"
-        try:
-            r = subprocess.run(
-                ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments",
-                 "--jq", "length"],
-                capture_output=True, text=True,
-            )
-            comment_count = r.stdout.strip() or "0"
-        except Exception:
-            pass
+    try:
+        pending = json.loads(pending_json)
+        pending_id = pending.get("id")
+    except (json.JSONDecodeError, TypeError):
+        return
 
-        _warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
-        if _confirm("Delete the pending review before re-reviewing?"):
-            try:
-                subprocess.run(
-                    ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}",
-                     "--method", "DELETE"],
-                    capture_output=True, text=True,
-                )
-                _info("Deleted pending review")
-            except Exception:
-                pass
-        else:
-            _info("Keeping pending review — new review will replace it at post time")
+    comment_count = "0"
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments",
+             "--jq", "length"],
+            capture_output=True, text=True,
+        )
+        comment_count = r.stdout.strip() or "0"
+    except Exception:
+        pass
+
+    _warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
+    if not _confirm("Delete the pending review before re-reviewing?"):
+        _info("Keeping pending review — new review will replace it at post time")
+        return
+
+    try:
+        subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}",
+             "--method", "DELETE"],
+            capture_output=True, text=True,
+        )
+        _info("Deleted pending review")
+    except Exception:
+        pass
 
 
 def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool) -> None:
@@ -523,15 +559,12 @@ def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: boo
     if not review_file.is_file():
         return
 
-    review_sha = ""
     try:
-        for line in review_file.read_text().splitlines():
-            m = re.search(r"<!-- head_sha: ([a-f0-9]+) -->", line)
-            if m:
-                review_sha = m.group(1)
-                break
+        text = review_file.read_text()
     except OSError:
-        pass
+        return
+    m = re.search(r"<!-- head_sha: ([a-f0-9]+) -->", text)
+    review_sha = m.group(1) if m else ""
     if not review_sha:
         return
 
@@ -658,33 +691,42 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
             capture_output=True, text=True,
         )
         name = r.stdout.strip()
-        if name:
-            home_git = os.path.expanduser("~/git")
-            r2 = subprocess.run(
-                ["find", home_git, "-maxdepth", "2", "-name", name, "-type", "d"],
-                capture_output=True, text=True,
-            )
-            found = r2.stdout.strip().splitlines()
-            if found:
-                return found[0]
     except Exception:
-        pass
+        name = ""
+    if not name:
+        return ""
 
+    home_git = os.path.expanduser("~/git")
+    try:
+        r2 = subprocess.run(
+            ["find", home_git, "-maxdepth", "2", "-name", name, "-type", "d"],
+            capture_output=True, text=True,
+        )
+        found = r2.stdout.strip().splitlines()
+    except Exception:
+        found = []
+    return found[0] if found else ""
+
+
+def _find_worktree_for_branch(branch: str) -> str:
+    try:
+        r = subprocess.run(
+            ["git", "worktree", "list"],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        return ""
+    for line in r.stdout.splitlines():
+        if f"[{branch}]" in line:
+            return line.split()[0]
     return ""
 
 
 def _resolve_bare_repo_worktree(branch: str = "") -> str:
     if branch:
-        try:
-            r = subprocess.run(
-                ["git", "worktree", "list"],
-                capture_output=True, text=True,
-            )
-            for line in r.stdout.splitlines():
-                if f"[{branch}]" in line:
-                    return line.split()[0]
-        except Exception:
-            pass
+        path = _find_worktree_for_branch(branch)
+        if path:
+            return path
 
     default_branch = "main"
     try:
@@ -698,19 +740,110 @@ def _resolve_bare_repo_worktree(branch: str = "") -> str:
     except Exception:
         pass
 
-    try:
-        r = subprocess.run(
-            ["git", "worktree", "list"],
-            capture_output=True, text=True,
-        )
-        for line in r.stdout.splitlines():
-            if f"[{default_branch}]" in line:
-                return line.split()[0]
-    except Exception:
-        pass
+    path = _find_worktree_for_branch(default_branch)
+    if path:
+        return path
 
     _err(f"Bare repository — no worktree found for {branch or default_branch}. Pass --repo-dir to specify a worktree")
     sys.exit(1)
+
+
+def _fail_orchestration(msg: str, session_log: str) -> None:
+    _err(msg)
+    if os.path.isfile(session_log):
+        print(f"  Session log: {session_log}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _build_orchestrate_args(
+    *,
+    pr_number: str, repo: str, review_file: Path, wt_path: str,
+    session_log: str, prior_review_path: str, issue_link: str,
+    issue_context: str, max_parallel: int, no_holistic: bool,
+    max_cost: float | None, model: str | None, mode: str = "",
+    fix_pass: bool = False,
+) -> list[str]:
+    args = [
+        str(BIN_DIR / "review-orchestrate"),
+        "--repo", repo,
+        "--review-file", str(review_file),
+        "--repo-dir", wt_path,
+        "--reviews-dir", str(REVIEWS_DIR),
+        "--session-log", session_log,
+    ]
+    if pr_number:
+        args += ["--pr", pr_number]
+    if mode:
+        args += ["--mode", mode]
+    if prior_review_path and os.path.isfile(prior_review_path):
+        args += ["--prior-review", prior_review_path]
+    if issue_link:
+        args += ["--issue", issue_link]
+    if issue_context:
+        args += ["--issue-context", issue_context]
+    args += ["--max-parallel", str(max_parallel)]
+    args += ["--generator-version", _generator_version()]
+    if fix_pass:
+        args.append("--fix")
+    if no_holistic:
+        args.append("--no-holistic")
+    if max_cost:
+        args += ["--max-cost", str(max_cost)]
+    if model:
+        args += ["--model", model]
+    return args
+
+
+def _run_review_body(
+    pr_number, repo, review_file, review_dir, wt_path,
+    session_log, prior_review_path, issue_link, issue_context,
+    max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+    auto_submit, pr_url,
+) -> None:
+    orchestrate_args = _build_orchestrate_args(
+        pr_number=pr_number, repo=repo, review_file=review_file,
+        wt_path=wt_path, session_log=session_log,
+        prior_review_path=prior_review_path, issue_link=issue_link,
+        issue_context=issue_context, max_parallel=max_parallel,
+        no_holistic=no_holistic, max_cost=max_cost, model=model,
+    )
+    rc = subprocess.run(orchestrate_args).returncode
+    if rc != 0:
+        _fail_orchestration("Review orchestration failed", session_log)
+    if not review_file.is_file():
+        _fail_orchestration("Review orchestration completed but produced no review file", session_log)
+
+    _cleanup_prior_review(review_file, prior_review_path)
+    _display_review(review_file)
+
+    if no_post:
+        _print_summary(str(review_file), session_log, pr_url)
+        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        return
+
+    if auto_post:
+        cmd_post(repo, pr_number, auto_submit)
+        post_session_log = str(review_dir / FILENAME_POST_SESSION)
+        _print_summary(str(review_file), session_log, pr_url, post_session_log)
+        return
+
+    if not _confirm("Satisfied with the review?"):
+        _print_summary(str(review_file), session_log, pr_url)
+        print(f"  {ANSI_DIM}Edit the file, then run: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        sys.exit(0)
+
+    if not _confirm("Post review to GitHub?"):
+        _print_summary(str(review_file), session_log, pr_url)
+        print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
+        return
+
+    cmd_post(repo, pr_number, False)
+    post_session_log = str(review_dir / FILENAME_POST_SESSION)
+
+    if _confirm("Submit review now?"):
+        _submit_pending_review(repo, pr_number, str(review_file))
+
+    _print_summary(str(review_file), session_log, pr_url, post_session_log)
 
 
 # ── Main flows ───────────────────────────────────────────────────────────────
@@ -768,15 +901,7 @@ def _run_review(args) -> None:
             issue_link = detected_link
 
         if not no_post and not auto_post and not issue_link and not issue_context:
-            try:
-                if sys.stdin.isatty():
-                    issue_link = input("Issue link (optional, Enter to skip): ")
-                else:
-                    with open("/dev/tty") as tty:
-                        print("Issue link (optional, Enter to skip): ", end="", flush=True, file=sys.stderr)
-                        issue_link = tty.readline().strip()
-            except (EOFError, OSError):
-                pass
+            issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
 
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
@@ -799,78 +924,138 @@ def _run_review(args) -> None:
     prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
 
     try:
-        # Build orchestrate args
-        orchestrate_args = [
-            str(BIN_DIR / "review-orchestrate"),
-            "--pr", pr_number,
-            "--repo", repo,
-            "--review-file", str(review_file),
-            "--repo-dir", wt_path,
-            "--reviews-dir", str(REVIEWS_DIR),
-            "--session-log", session_log,
-        ]
-        if prior_review_path and os.path.isfile(prior_review_path):
-            orchestrate_args += ["--prior-review", prior_review_path]
-        if issue_link:
-            orchestrate_args += ["--issue", issue_link]
-        if issue_context:
-            orchestrate_args += ["--issue-context", issue_context]
-        orchestrate_args += ["--max-parallel", str(max_parallel)]
-        orchestrate_args += ["--generator-version", _generator_version()]
-        if no_holistic:
-            orchestrate_args.append("--no-holistic")
-        if max_cost:
-            orchestrate_args += ["--max-cost", str(max_cost)]
-        if model:
-            orchestrate_args += ["--model", model]
-
-        rc = subprocess.run(orchestrate_args).returncode
-        if rc != 0:
-            _err("Review orchestration failed")
-            if os.path.isfile(session_log):
-                print(f"  Session log: {session_log}", file=sys.stderr)
-            sys.exit(1)
-
-        if not review_file.is_file():
-            _err("Review orchestration completed but produced no review file")
-            if os.path.isfile(session_log):
-                print(f"  Session log: {session_log}", file=sys.stderr)
-            sys.exit(1)
-
-        _cleanup_prior_review(review_file, prior_review_path)
-        _display_review(review_file)
-
-        if no_post:
-            _print_summary(str(review_file), session_log, pr_url)
-            print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
-            return
-
-        if auto_post:
-            cmd_post(repo, pr_number, auto_submit)
-            post_session_log = str(review_dir / FILENAME_POST_SESSION)
-            _print_summary(str(review_file), session_log, pr_url, post_session_log)
-            return
-
-        if not _confirm("Satisfied with the review?"):
-            _print_summary(str(review_file), session_log, pr_url)
-            print(f"  {ANSI_DIM}Edit the file, then run: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
-            sys.exit(0)
-
-        if not _confirm("Post review to GitHub?"):
-            _print_summary(str(review_file), session_log, pr_url)
-            print(f"  {ANSI_DIM}To post later: claude-review post {pr_number}{ANSI_RESET}", file=sys.stderr)
-            return
-
-        cmd_post(repo, pr_number, False)
-        post_session_log = str(review_dir / FILENAME_POST_SESSION)
-
-        if _confirm("Submit review now?"):
-            _submit_pending_review(repo, pr_number, str(review_file))
-
-        _print_summary(str(review_file), session_log, pr_url, post_session_log)
-
+        _run_review_body(
+            pr_number, repo, review_file, review_dir, wt_path,
+            session_log, prior_review_path, issue_link, issue_context,
+            max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+            auto_submit, pr_url,
+        )
     finally:
         review_worktree.cleanup_worktree(wt_result, repo_root)
+
+
+def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
+    original_repo_dir = repo_dir or ""
+    if not original_repo_dir:
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True,
+            )
+            original_repo_dir = r.stdout.strip()
+        except Exception:
+            pass
+    if original_repo_dir:
+        review_worktree.cleanup_worktree(wt_cleanup, original_repo_dir)
+
+
+def _run_self_review_body(
+    repo, pr_number, wt_path, issue_link, max_parallel,
+    no_holistic, max_cost, model, fix_pass, args,
+) -> None:
+    repo_name = repo.split("/")[-1]
+    try:
+        r = subprocess.run(
+            ["git", "-C", wt_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True,
+        )
+        branch_name = r.stdout.strip()
+    except Exception:
+        branch_name = ""
+
+    branch_sanitized = branch_name.replace("/", "-")
+    self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
+    self_review_dir.mkdir(parents=True, exist_ok=True)
+    review_file = self_review_dir / f"review{REVIEW_EXT}"
+    session_log = str(self_review_dir / FILENAME_SESSION)
+
+    has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
+    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+    issue_context = ""
+    if not issue_link:
+        provider, provider_opts = review_issue.load_issue_provider(wt_path)
+        issue_id = review_issue.extract_issue_id(provider, branch_name)
+        detected_link, issue_context = review_issue.fetch_issue_context(
+            provider, issue_id, repo, provider_opts,
+        )
+        if detected_link:
+            issue_link = detected_link
+
+    orchestrate_args = _build_orchestrate_args(
+        pr_number=pr_number, repo=repo, review_file=review_file,
+        wt_path=wt_path, session_log=session_log,
+        prior_review_path=prior_review_path, issue_link=issue_link,
+        issue_context=issue_context, max_parallel=max_parallel,
+        no_holistic=no_holistic, max_cost=max_cost, model=model,
+        mode="self", fix_pass=fix_pass,
+    )
+
+    rc = subprocess.run(orchestrate_args).returncode
+    if rc != 0:
+        _fail_orchestration("Review orchestration failed", session_log)
+    if not review_file.is_file():
+        _fail_orchestration("Review orchestration completed but produced no review file", session_log)
+
+    _cleanup_prior_review(review_file, prior_review_path)
+    _display_review(review_file)
+
+    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
+    _print_summary(str(review_file), session_log, pr_url, "", branch_name)
+
+    _update_pr_state(repo, pr_number, str(review_file), wt_path, "self")
+
+    json_stdout = getattr(args, "_json_stdout", None)
+    if json_stdout is not None:
+        summary = _json_summary(repo, pr_number, str(review_file))
+        os.write(json_stdout, (summary + "\n").encode())
+
+
+def _resolve_wt_path(repo_dir: str, pr_input: str) -> str:
+    if repo_dir:
+        try:
+            r = subprocess.run(
+                ["git", "-C", repo_dir, "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True,
+            )
+        except Exception:
+            _err(f"Not a git repository: {repo_dir}")
+            sys.exit(1)
+        if r.returncode != 0:
+            _err(f"Not a git repository: {repo_dir}")
+            sys.exit(1)
+        return r.stdout.strip()
+
+    r = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        return r.stdout.strip()
+
+    r2 = subprocess.run(
+        ["git", "rev-parse", "--is-bare-repository"],
+        capture_output=True, text=True,
+    )
+    if r2.stdout.strip() == "true":
+        return _resolve_bare_repo_worktree(pr_input)
+
+    _err("Not in a git repository — pass --repo-dir to specify the repo")
+    sys.exit(1)
+
+
+def _resolve_branch_input(pr_input: str, repo_dir: str) -> str:
+    resolve_dir = repo_dir or "."
+    try:
+        r = subprocess.run(
+            ["resolve-branch", pr_input],
+            capture_output=True, text=True, cwd=resolve_dir,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return pr_input
 
 
 def _run_self_review(args) -> None:
@@ -896,50 +1081,10 @@ def _run_self_review(args) -> None:
             is_branch = True
 
     if is_branch:
-        resolve_dir = repo_dir or "."
-        try:
-            r = subprocess.run(
-                ["resolve-branch", pr_input],
-                capture_output=True, text=True, cwd=resolve_dir,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                pr_input = r.stdout.strip()
-        except Exception:
-            pass
+        pr_input = _resolve_branch_input(pr_input, repo_dir)
 
-    # Determine wt_path
-    if repo_dir:
-        try:
-            r = subprocess.run(
-                ["git", "-C", repo_dir, "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                _err(f"Not a git repository: {repo_dir}")
-                sys.exit(1)
-            wt_path = r.stdout.strip()
-        except Exception:
-            _err(f"Not a git repository: {repo_dir}")
-            sys.exit(1)
-    else:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        if r.returncode == 0:
-            wt_path = r.stdout.strip()
-        else:
-            r2 = subprocess.run(
-                ["git", "rev-parse", "--is-bare-repository"],
-                capture_output=True, text=True,
-            )
-            if r2.stdout.strip() == "true":
-                wt_path = _resolve_bare_repo_worktree(pr_input)
-            else:
-                _err("Not in a git repository — pass --repo-dir to specify the repo")
-                sys.exit(1)
+    wt_path = _resolve_wt_path(repo_dir, pr_input)
 
-    # Determine repo
     if is_branch or (repo_dir and not pr_input):
         r = subprocess.run(
             ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
@@ -968,110 +1113,13 @@ def _run_self_review(args) -> None:
             wt_path = wt_cleanup.path
 
     try:
-        repo_name = repo.split("/")[-1]
-        try:
-            r = subprocess.run(
-                ["git", "-C", wt_path, "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True, text=True,
-            )
-            branch_name = r.stdout.strip()
-        except Exception:
-            branch_name = ""
-
-        branch_sanitized = branch_name.replace("/", "-")
-        self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
-        self_review_dir.mkdir(parents=True, exist_ok=True)
-        review_file = self_review_dir / f"review{REVIEW_EXT}"
-        session_log = str(self_review_dir / FILENAME_SESSION)
-
-        has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
-        prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
-
-        # Issue detection
-        issue_context = ""
-        if not issue_link:
-            provider, provider_opts = review_issue.load_issue_provider(wt_path)
-            issue_id = review_issue.extract_issue_id(provider, branch_name)
-            detected_link, issue_context = review_issue.fetch_issue_context(
-                provider, issue_id, repo, provider_opts,
-            )
-            if detected_link:
-                issue_link = detected_link
-
-        # Build orchestrate args
-        orchestrate_args = [
-            str(BIN_DIR / "review-orchestrate"),
-            "--repo", repo,
-            "--review-file", str(review_file),
-            "--repo-dir", wt_path,
-            "--reviews-dir", str(REVIEWS_DIR),
-            "--session-log", session_log,
-            "--mode", "self",
-        ]
-        if pr_number:
-            orchestrate_args += ["--pr", pr_number]
-        if prior_review_path and os.path.isfile(prior_review_path):
-            orchestrate_args += ["--prior-review", prior_review_path]
-        if issue_link:
-            orchestrate_args += ["--issue", issue_link]
-        if issue_context:
-            orchestrate_args += ["--issue-context", issue_context]
-        orchestrate_args += ["--max-parallel", str(max_parallel)]
-        if fix_pass:
-            orchestrate_args.append("--fix")
-        orchestrate_args += ["--generator-version", _generator_version()]
-        if no_holistic:
-            orchestrate_args.append("--no-holistic")
-        if max_cost:
-            orchestrate_args += ["--max-cost", str(max_cost)]
-        if model:
-            orchestrate_args += ["--model", model]
-
-        rc = subprocess.run(orchestrate_args).returncode
-        if rc != 0:
-            _err("Review orchestration failed")
-            if os.path.isfile(session_log):
-                print(f"  Session log: {session_log}", file=sys.stderr)
-            sys.exit(1)
-
-        if not review_file.is_file():
-            _err("Review orchestration completed but produced no review file")
-            if os.path.isfile(session_log):
-                print(f"  Session log: {session_log}", file=sys.stderr)
-            sys.exit(1)
-
-        _cleanup_prior_review(review_file, prior_review_path)
-        _display_review(review_file)
-
-        pr_url = ""
-        if pr_number:
-            pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
-        _print_summary(str(review_file), session_log, pr_url, "", branch_name)
-
-        _update_pr_state(repo, pr_number, str(review_file), wt_path, "self")
-
-        # Emit JSON summary before worktree cleanup so review file is still readable
-        json_stdout = getattr(args, "_json_stdout", None)
-        if json_stdout is not None:
-            summary = _json_summary(repo, pr_number, str(review_file))
-            os.write(json_stdout, (summary + "\n").encode())
-
+        _run_self_review_body(
+            repo, pr_number, wt_path, issue_link, max_parallel,
+            no_holistic, max_cost, model, fix_pass, args,
+        )
     finally:
-        # Clean up worktree if we created one
         if wt_cleanup:
-            # Determine the original repo root for cleanup
-            original_repo_dir = repo_dir or ""
-            if not original_repo_dir:
-                try:
-                    r = subprocess.run(
-                        ["git", "rev-parse", "--show-toplevel"],
-                        capture_output=True, text=True,
-                    )
-                    original_repo_dir = r.stdout.strip()
-                except Exception:
-                    pass
-            if original_repo_dir:
-                review_worktree.cleanup_worktree(wt_cleanup, original_repo_dir)
+            _cleanup_self_review_worktree(wt_cleanup, repo_dir)
 
 
 # ── Subcommands ──────────────────────────────────────────────────────────────
@@ -1173,21 +1221,14 @@ def cmd_gc() -> None:
 
 
 def _gc_dir_is_all_stale(d: Path) -> bool:
-    has_stale = False
-    has_recent = False
     try:
-        for f in d.rglob("*"):
-            if not f.is_file():
-                continue
-            age_days = (datetime.now().timestamp() - f.stat().st_mtime) / 86400
-            if age_days > GC_STALE_DAYS:
-                has_stale = True
-            else:
-                has_recent = True
-                break
+        files = [f for f in d.rglob("*") if f.is_file()]
     except OSError:
         return False
-    return has_stale and not has_recent
+    if not files:
+        return False
+    now = datetime.now().timestamp()
+    return all((now - f.stat().st_mtime) / 86400 > GC_STALE_DAYS for f in files)
 
 
 def _gc_clean_intermediates(review_dir: Path) -> int:
@@ -1197,14 +1238,13 @@ def _gc_clean_intermediates(review_dir: Path) -> int:
         "holistic.md", "holistic.jsonl",
         "synthesis.jsonl",
     ]
-    for pattern in patterns:
-        for f in review_dir.glob(pattern):
-            if not f.is_file():
-                continue
-            age_days = (datetime.now().timestamp() - f.stat().st_mtime) / 86400
-            if age_days > GC_STALE_DAYS:
-                f.unlink(missing_ok=True)
-                count += 1
+    files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
+    now = datetime.now().timestamp()
+    for f in files:
+        age_days = (now - f.stat().st_mtime) / 86400
+        if age_days > GC_STALE_DAYS:
+            f.unlink(missing_ok=True)
+            count += 1
     return count
 
 

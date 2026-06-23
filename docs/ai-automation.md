@@ -75,13 +75,13 @@ Generate or refresh a project file index (.claude/anatomy.md) with per-file desc
 
 ### `/ci-failures [<pr_number_or_run_id_or_branch>]`
 
-Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or claude-review instead); addressing PR review comments (use pr-comments instead).
+Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or pr review instead); addressing PR review comments (use pr-comments instead).
 
 ```
 /ci-failures [<pr_number_or_run_id_or_branch>]
 ```
 **Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
-**Skip:** Do not use for code review (use code-review or claude-review instead); do not use for addressing PR review comments (use pr-comments instead).
+**Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
 
 ### `/context`
 
@@ -123,13 +123,13 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 
 ### `/pr-comments [<pr_number_or_branch>]`
 
-Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or claude-review instead); self-review before PR creation (use self-review-fix instead).
+Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
 
 ```
 /pr-comments [<pr_number_or_branch>]
 ```
 **Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
-**Skip:** Do not use for initial code review requests (use code-review or claude-review instead); do not use for self-review before PR creation (use self-review-fix instead).
+**Skip:** Do not use for initial code review requests (use code-review or pr review instead); do not use for self-review before PR creation (use self-review-fix instead).
 
 ### `/pr-rebase [--fix]`
 
@@ -169,7 +169,7 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 
 ### `/self-review-fix [branch_name]`
 
-Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments).
+Run self-review and auto-fix findings. Wraps pr review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments).
 
 ```
 /self-review-fix [branch_name]

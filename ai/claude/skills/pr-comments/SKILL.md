@@ -1,10 +1,10 @@
 ---
 name: pr-comments
-description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or claude-review instead); self-review before PR creation (use self-review-fix instead)."
+description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead)."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 invocation: "/pr-comments [<pr_number_or_branch>]"
 trigger: "Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments."
-skip: "Do not use for initial code review requests (use code-review or claude-review instead); do not use for self-review before PR creation (use self-review-fix instead)."
+skip: "Do not use for initial code review requests (use code-review or pr review instead); do not use for self-review before PR creation (use self-review-fix instead)."
 ---
 
 # PR Comments
@@ -58,7 +58,7 @@ Run the status script to fetch all threads, compute lifecycle states, and displa
 Use the resolved PR number if available; otherwise omit it for auto-detection:
 
 ```bash
-claude-review threads [<pr_number>] [--repo-dir <path>]
+pr comments [<pr_number>] [--repo-dir <path>]
 ```
 
 The script outputs:
@@ -70,7 +70,7 @@ The script outputs:
 ```bash
 wt switch <branch> --no-cd --format json --no-hooks 2>/dev/null
 # Extract .path from JSON output, then:
-claude-review threads <number> --repo-dir <worktree_path> 2>&1
+pr comments <number> --repo-dir <worktree_path> 2>&1
 ```
 
 **Invocation rules:** Run the command as a single simple statement. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. Never use temp files, `<<<`, compound multi-statement commands, or run the script twice.
@@ -201,7 +201,7 @@ REPLY_BODY
 After replying, resolve threads that have been verified (reviewer acknowledged your fix):
 
 ```bash
-claude-review threads [<pr_url_or_number>] --resolve-verified [--repo-dir <path>]
+pr comments [<pr_url_or_number>] --resolve [--repo-dir <path>]
 ```
 
 This auto-resolves verified threads on GitHub via GraphQL mutation. Only threads where the reviewer explicitly acknowledged the fix are resolved — never contested or ambiguous threads.

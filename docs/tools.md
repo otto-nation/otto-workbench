@@ -21,7 +21,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `claude-rules` | Manages local Claude Code rule additions not tracked in the workbench |
 | `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
 | `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
-| `review-thread-triage` | Classify and verify PR review threads using AI for non-interactive triage |
+| `review-thread-triage` | Deprecated — redirects to review-threads --triage |
 | `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `validate-review-positions` | Validates review finding positions against a PR diff to ensure comment placement accuracy |
@@ -32,8 +32,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
-| `pr-context-resolve` | CLI entry point for pr_context.resolve() — outputs JSON for bash script consumption |
-| `pr-state-update` | CLI helper for updating unified PR state from stdin JSON |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |

@@ -1,6 +1,6 @@
 ---
 name: self-review-fix
-description: "Run self-review and auto-fix findings. Wraps claude-review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments)."
+description: "Run self-review and auto-fix findings. Wraps pr review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments)."
 source: otto-workbench/ai/claude/skills/self-review-fix/SKILL.md
 invocation: "/self-review-fix [branch_name]"
 trigger: "Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR."
@@ -25,7 +25,7 @@ Reviews a branch and automatically applies fixes for the findings.
 1. Resolve the branch name (validate it exists, fuzzy-match if needed)
 2. Check if a self-review already exists for the current repo and branch in
    `~/.config/workbench/reviews/`
-3. If no review, or the review is stale, run `claude-review --self --fix`
+3. If no review, or the review is stale, run `pr review --self --fix`
 4. Report what was fixed and what was skipped — never ask, never fix manually
 
 ---
@@ -80,21 +80,21 @@ git rev-parse <branch_name>
 - **SHA doesn't match**: The review is stale. Go to Step 3.
 - **No review file**: Go to Step 3.
 
-### Step 3: Run claude-review
+### Step 3: Run pr review
 
 ```bash
-claude-review --self --fix [<branch_name>]
+pr review --self --fix [<branch_name>]
 ```
 
 Run synchronously — do **not** background this command. Step 4 reads
 the completed review file; backgrounding produces stale results.
 
-Pass the resolved branch name. `claude-review` handles bare repos, worktree
+Pass the resolved branch name. `pr review` handles bare repos, worktree
 resolution, and fresh-vs-existing review detection internally.
 
 ### Step 4: Report results
 
-Fixes are automatically committed by `claude-review` — no manual commit needed.
+Fixes are automatically committed by `pr review` — no manual commit needed.
 
 Read the review file **after the command completes** and present:
 - Extract fixed/skipped counts from the `<!-- fix-pass: N fixed, M skipped -->`
@@ -103,7 +103,7 @@ Read the review file **after the command completes** and present:
 
 **Do not** ask "how would you like to proceed" or offer choices.
 **Do not** attempt to fix remaining findings manually via Edit tool —
-all fixing is done by `claude-review --self --fix`. The fix agent determines
+all fixing is done by `pr review --self --fix`. The fix agent determines
 what is auto-fixable; trust its judgment.
 
 ---

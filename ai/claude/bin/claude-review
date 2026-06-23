@@ -171,7 +171,6 @@ def _is_pr_ref(s: str) -> bool:
     return bool(PR_URL_RE.search(s) or PR_NUMBER_RE.match(s))
 
 
-
 def _review_file(repo: str, pr_number: str) -> Path:
     repo_name = repo.split("/")[-1]
     return REVIEWS_DIR / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"

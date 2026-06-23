@@ -304,7 +304,6 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
     mock_resolve.assert_not_called()
 
 
-
 # ── _run_delegate ─────────────────────────────────────────────────────────
 
 
@@ -450,7 +449,7 @@ def test_cmd_review_post_passes_submit(mock_run, tmp_path):
     assert "--submit" in cmd
 
 
-def test_cmd_review_post_fails_without_review_file(tmp_path, capsys):
+def test_cmd_review_post_fails_without_review_file(tmp_path):
     import review_common
     reviews_dir = tmp_path / "reviews"
     reviews_dir.mkdir()

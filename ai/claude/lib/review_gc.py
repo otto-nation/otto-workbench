@@ -31,7 +31,7 @@ def gc_dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
     except OSError:
         return False
     if not files:
-        return False
+        return True
     now = datetime.now().timestamp()
     return all((now - f.stat().st_mtime) / 86400 > stale_days for f in files)
 

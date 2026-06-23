@@ -106,7 +106,7 @@ messages on stderr.
 - Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - `pr_state.load_or_init()` provides DRY state loading across all scripts
-- `pr_state.apply_state_update()` provides generic dict-based updates for the CLI helper
+- `pr_state.apply_state_update()` provides generic dict-based state updates
 
 ## Output
 

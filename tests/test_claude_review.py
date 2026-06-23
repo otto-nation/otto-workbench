@@ -83,23 +83,17 @@ def test_is_pr_ref_empty(cr):
 # ── review_file_path ─────────────────────────────────────────────────────────
 
 
-def test_review_file_basic(cr, reviews_dir, monkeypatch):
-    import review_common
-    monkeypatch.setattr(review_common, "REVIEWS_DIR", reviews_dir)
+def test_review_file_basic(cr, reviews_dir):
     result = review_file_path("org/my-repo", "42")
     assert result == reviews_dir / "my-repo-42" / "review.md"
 
 
-def test_review_file_repo_with_hyphens(cr, reviews_dir, monkeypatch):
-    import review_common
-    monkeypatch.setattr(review_common, "REVIEWS_DIR", reviews_dir)
+def test_review_file_repo_with_hyphens(cr, reviews_dir):
     result = review_file_path("org/my-cool-repo", "1")
     assert result == reviews_dir / "my-cool-repo-1" / "review.md"
 
 
-def test_review_file_deep_nested_repo(cr, reviews_dir, monkeypatch):
-    import review_common
-    monkeypatch.setattr(review_common, "REVIEWS_DIR", reviews_dir)
+def test_review_file_deep_nested_repo(cr, reviews_dir):
     result = review_file_path("deep/nested/repo", "7")
     assert result == reviews_dir / "repo-7" / "review.md"
 
@@ -724,7 +718,7 @@ def test_gc_dir_has_recent_files(cr, tmp_path):
 def test_gc_dir_empty(cr, tmp_path):
     d = tmp_path / "empty-dir"
     d.mkdir()
-    assert review_gc.gc_dir_is_all_stale(d) is False
+    assert review_gc.gc_dir_is_all_stale(d) is True
 
 
 # ── gc_clean_intermediates ───────────────────────────────────────────────────

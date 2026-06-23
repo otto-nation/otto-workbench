@@ -8,6 +8,7 @@ registry.  Flags pass through to the backing script untouched; run
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -260,15 +261,11 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     flags = set(argv)
     mode_flags = flags & {"--post", "--repair", "--summary"}
     if len(mode_flags) > 1:
-        print(f"pr: --post, --repair, and --summary are mutually exclusive", file=sys.stderr)
+        print("pr: --post, --repair, and --summary are mutually exclusive", file=sys.stderr)
         return 1
 
     if "--post" in flags:
-        return _review_post(
-            [a for a in argv if a != "--post"], ctx,
-            original_pr=original_pr,
-            original_branch=original_branch,
-        )
+        return _review_post([a for a in argv if a != "--post"], ctx)
     if "--repair" in flags:
         return _review_repair(
             [a for a in argv if a != "--repair"], ctx,
@@ -287,9 +284,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, *,
-                 original_pr: str | None = None,
-                 original_branch: str | None = None) -> int:
+def _review_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Post an existing review directly to GitHub via review-post."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
@@ -356,7 +351,6 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 
     print(json_summary(ctx.repo, pr_num, str(review)))
     return 0
-
 
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -426,7 +420,6 @@ def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
                 except Exception:
                     pr_st = ""
                 if pr_st in ("MERGED", "CLOSED"):
-                    import shutil
                     shutil.rmtree(state_dir, ignore_errors=True)
                     print(f"{ANSI_INFO} GC: removed stale pr state ({pr_st})", file=sys.stderr)
                     total += 1

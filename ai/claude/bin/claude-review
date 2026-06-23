@@ -1043,6 +1043,12 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
+    _REMOVED = {"gc": "pr gc", "post": "pr review --post", "rebuild": "pr review --repair",
+                "summary": "pr review --summary", "threads": "pr comments"}
+    if command in _REMOVED:
+        _err(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
+        sys.exit(1)
+
     ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
     pr_num = str(ctx.pr_number)
     review_file = review_file_path(ctx.repo, pr_num)

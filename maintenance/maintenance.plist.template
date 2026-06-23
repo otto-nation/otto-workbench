@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.otto-workbench.autoupdate</string>
+	<string>com.otto-workbench.maintenance</string>
 	<key>Program</key>
-	<string>__WORKBENCH_DIR__/autoupdate/bin/otto-workbench-autoupdate</string>
+	<string>__WORKBENCH_DIR__/maintenance/bin/otto-workbench-maintenance</string>
 	<key>StartInterval</key>
 	<integer>__INTERVAL__</integer>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardOutPath</key>
-	<string>__LOG_DIR__/autoupdate.log</string>
+	<string>__LOG_DIR__/maintenance.log</string>
 	<key>StandardErrorPath</key>
-	<string>__LOG_DIR__/autoupdate.log</string>
+	<string>__LOG_DIR__/maintenance.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>

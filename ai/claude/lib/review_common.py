@@ -7,6 +7,7 @@ Both scripts import from here instead of defining their own constants.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -86,8 +87,19 @@ FILENAME_META = "meta.json"
 FILENAME_PIPELINE_STATE = "pipeline.json"
 FILENAME_PROMPT_STATS = "prompt-stats.json"
 
+FILENAME_POST_SESSION = "post.jsonl"
+REVIEW_EXT = ".md"
+
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
+
+REVIEWS_DIR = Path(os.environ.get(
+    "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"),
+)) / "reviews"
+
+SEVERITY_PREFIXES = ["M", "S", "N", "I"]
+SEVERITY_JSON_KEYS = ["must_fix", "should_fix", "nit", "idiom"]
+SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
 # ── Metadata format ──────────────────────────────────────────────────────────
@@ -243,3 +255,102 @@ def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
     if check and r.returncode != 0:
         return ""
     return r.stdout.strip()
+
+
+# ── Review file helpers ─────────────────────────────────────────────────────
+
+
+def review_file_path(repo: str, pr_number: str) -> Path:
+    """Return the expected path for a review file given repo and PR number."""
+    repo_name = repo.split("/")[-1]
+    return REVIEWS_DIR / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
+
+
+def read_review_meta(review_dir: Path) -> ReviewMeta:
+    """Read meta.json from a review directory."""
+    meta_file = review_dir / FILENAME_META
+    if not meta_file.is_file():
+        return ReviewMeta()
+    try:
+        return review_meta_from_dict(json.loads(meta_file.read_text()))
+    except (json.JSONDecodeError, OSError):
+        return ReviewMeta()
+
+
+def count_severity(file: Path, prefix: str) -> int:
+    """Count findings of a given severity prefix in a review file."""
+    if not file.is_file():
+        return 0
+    try:
+        text = file.read_text()
+    except OSError:
+        return 0
+    pattern = SEVERITY_COUNT_RE_FMT.format(re.escape(prefix))
+    return len(re.findall(pattern, text, re.MULTILINE))
+
+
+def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
+    """Aggregate usage from session and post-session logs."""
+    if not review_dir:
+        return SessionUsage()
+    usages = [
+        parse_session_log(str(review_dir / n))
+        for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
+        if (review_dir / n).is_file()
+    ]
+    if not usages:
+        return SessionUsage()
+    return SessionUsage(
+        cost=sum(u.cost for u in usages),
+        input_tokens=sum(u.input_tokens for u in usages),
+        output_tokens=sum(u.output_tokens for u in usages),
+        cache_read_tokens=sum(u.cache_read_tokens for u in usages),
+        cache_write_tokens=sum(u.cache_write_tokens for u in usages),
+        duration_ms=sum(u.duration_ms for u in usages),
+    )
+
+
+def json_summary(repo: str, pr_number: str, review_file: str) -> str:
+    """Build a REVIEW_SUMMARY:{json} string for a review."""
+    counts = {}
+    total = 0
+    review_path = Path(review_file) if review_file else None
+    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
+        c = count_severity(review_path, prefix) if review_path else 0
+        counts[key] = c
+        total += c
+
+    must_count = counts.get("must_fix", 0)
+    verdict = "changes_requested" if must_count > 0 else "approve"
+
+    review_dir = Path(review_file).parent if review_file else None
+    usage = aggregate_session_usage(review_dir)
+
+    review_content = None
+    if review_path and review_path.is_file():
+        try:
+            review_content = review_path.read_text()
+        except OSError:
+            pass
+
+    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
+
+    data = {
+        "repo": repo,
+        "pr_number": int(pr_number) if pr_number else None,
+        "head_sha": meta.head_sha or None,
+        "head_ref": meta.head_ref or None,
+        "base_ref": meta.base_ref or None,
+        "review_type": meta.review_type or None,
+        "review_file": review_file,
+        "review_content": review_content,
+        "findings": {**counts, "total": total},
+        "verdict": verdict,
+        "cost_usd": usage.cost,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "cache_write_tokens": usage.cache_write_tokens,
+        "duration_ms": usage.duration_ms,
+    }
+    return f"REVIEW_SUMMARY:{json.dumps(data)}"

@@ -17,6 +17,7 @@ sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 
 import pr_context
 import pr_state
+from review_common import json_summary, review_file_path, ANSI_DIM, ANSI_ERR, ANSI_RESET
 
 
 # ── Command registry ────────────────────────────────────────────────────────
@@ -29,13 +30,9 @@ _COMMANDS = {
     "status":   {"help": "Show CI, review, and comment status dashboard"},
     "ci":       {"help": "Check CI failures",                     "script": "ci-check"},
     "review":   {"help": "Run code review",                       "script": "claude-review"},
-    "comments": {"help": "Fetch PR review threads",               "script": "review-threads"},
-    "triage":   {"help": "Classify and verify review threads",    "script": "review-thread-triage"},
+    "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads"},
     "fix":      {"help": "Fix CI + review + comments"},
     "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase"},
-    # "script" key used only so add_help=False on the subparser; dispatch goes through cmd_repair
-    "repair":   {"help": "Repair broken review artifacts",        "script": "claude-review"},
-    "post":     {"help": "Post existing review to GitHub",        "script": "claude-review", "prefix": ["post"]},
     "gc":       {"help": "Clean up stale review artifacts",       "script": "claude-review", "prefix": ["gc"]},
 }
 
@@ -258,7 +255,28 @@ def _merge_readiness(state: pr_state.PRState) -> str:
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,
                original_branch: str | None = None) -> int:
-    """Delegate to claude-review with auto-self detection."""
+    """Delegate to claude-review, or handle --post/--repair/--summary locally."""
+    flags = set(argv)
+    mode_flags = flags & {"--post", "--repair", "--summary"}
+    if len(mode_flags) > 1:
+        print(f"pr: --post, --repair, and --summary are mutually exclusive", file=sys.stderr)
+        return 1
+
+    if "--post" in flags:
+        return _review_post(
+            [a for a in argv if a != "--post"], ctx,
+            original_pr=original_pr,
+            original_branch=original_branch,
+        )
+    if "--repair" in flags:
+        return _review_repair(
+            [a for a in argv if a != "--repair"], ctx,
+        )
+    if "--summary" in flags:
+        return _review_summary(
+            [a for a in argv if a != "--summary"], ctx,
+        )
+
     has_self = "--self" in argv
     positionals, _ = _split_argv(argv)
     has_pr_target = any(_is_pr_target(p) for p in positionals)
@@ -268,53 +286,76 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-def cmd_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, *,
+                 original_pr: str | None = None,
+                 original_branch: str | None = None) -> int:
+    """Post an existing review directly to GitHub via review-post."""
+    pr_num = str(ctx.pr_number) if ctx.pr_number else None
+    if not pr_num:
+        print(f"{ANSI_ERR} Cannot determine PR number", file=sys.stderr)
+        return 1
+
+    review = review_file_path(ctx.repo, pr_num)
+    if not review.is_file():
+        print(f"{ANSI_ERR} No review file found: {review}", file=sys.stderr)
+        print(f"  {ANSI_DIM}Run: pr review{ANSI_RESET}", file=sys.stderr)
+        return 1
+
+    cmd = [str(BIN_DIR / "review-post"), "--pr", pr_num, "--review-file", str(review)]
+    if "--submit" in argv:
+        cmd.append("--submit")
+        argv = [a for a in argv if a != "--submit"]
+    cmd += argv
+    return subprocess.run(cmd).returncode
+
+
+def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Repair broken review artifacts via summary or rebuild."""
-    tool = str(BIN_DIR / "claude-review")
-    positionals, extra = _split_argv(argv)
-    target = next((p for p in positionals if _is_pr_target(p)), None)
-    if not target and ctx.pr_number:
-        target = str(ctx.pr_number)
+    pr_num = str(ctx.pr_number) if ctx.pr_number else None
+    if not pr_num:
+        print(f"{ANSI_ERR} Cannot determine PR number", file=sys.stderr)
+        return 1
 
-    # Step 1: try claude-review summary
-    summary_args = [tool, "summary"]
-    if target:
-        summary_args.append(target)
-    if ctx.worktree_root:
-        summary_args += ["--repo-dir", str(ctx.worktree_root)]
-    summary_args += extra
-
-    result = subprocess.run(summary_args, capture_output=True, text=True)
-
-    if result.returncode == 0:
-        if result.stderr:
-            print(result.stderr, file=sys.stderr, end="")
-        if result.stdout:
-            print(result.stdout, end="")
-
-        _update_review_state_from_output(result.stdout, ctx)
+    review = review_file_path(ctx.repo, pr_num)
+    if review.is_file():
+        output = json_summary(ctx.repo, pr_num, str(review))
+        print(output)
+        _update_review_state_from_output(output, ctx)
         return 0
 
-    # Step 2: summary failed — try claude-review rebuild
-    print("summary failed, trying rebuild...", file=sys.stderr)
-    rebuild_args = [tool, "rebuild", "--json-summary"]
-    if target:
-        rebuild_args.append(target)
-    if ctx.worktree_root:
-        rebuild_args += ["--repo-dir", str(ctx.worktree_root)]
-    rebuild_args += extra
+    print("No review file found, trying rebuild...", file=sys.stderr)
+    review_dir = review.parent
+    if not review_dir.is_dir():
+        print(f"{ANSI_ERR} No review directory found: {review_dir}", file=sys.stderr)
+        return 1
 
-    result = subprocess.run(rebuild_args, capture_output=True, text=True)
-
+    cmd = [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num]
+    cmd += argv
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.stderr:
         print(result.stderr, file=sys.stderr, end="")
     if result.stdout:
         print(result.stdout, end="")
-
     if result.returncode == 0:
         _update_review_state_from_output(result.stdout, ctx)
-
     return result.returncode
+
+
+def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+    """Output JSON summary of an existing review."""
+    pr_num = str(ctx.pr_number) if ctx.pr_number else None
+    if not pr_num:
+        print(f"{ANSI_ERR} Cannot determine PR number", file=sys.stderr)
+        return 1
+
+    review = review_file_path(ctx.repo, pr_num)
+    if not review.is_file():
+        print(f"{ANSI_ERR} No review file found: {review}", file=sys.stderr)
+        return 1
+
+    print(json_summary(ctx.repo, pr_num, str(review)))
+    return 0
+
 
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -348,27 +389,24 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return exit_code
 
 
-def cmd_post(argv: list[str], ctx: pr_context.ResolvedContext, *,
-             original_pr: str | None = None,
-             original_branch: str | None = None) -> int:
-    """Delegate to claude-review post, injecting PR number if no target."""
-    positionals, _ = _split_argv(argv)
-    has_target = any(_is_pr_target(p) for p in positionals)
-    inject = [str(ctx.pr_number)] if not has_target and ctx.pr_number else []
-    return _run_delegate(_COMMANDS["post"], inject + list(argv), ctx,
+def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
+                 original_pr: str | None = None,
+                 original_branch: str | None = None) -> int:
+    """Delegate to review-threads, routing --triage and --resolve flags."""
+    return _run_delegate(_COMMANDS["comments"], list(argv), ctx,
                          original_pr=original_pr,
                          original_branch=original_branch)
+
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 # Custom handlers for commands that need more than passthrough.
 _CUSTOM = {
-    "status": cmd_status,
-    "review": cmd_review,
-    "fix":    cmd_fix,
-    "repair": cmd_repair,
-    "post":   cmd_post,
+    "status":   cmd_status,
+    "review":   cmd_review,
+    "comments": cmd_comments,
+    "fix":      cmd_fix,
 }
 
 

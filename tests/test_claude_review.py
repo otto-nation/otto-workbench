@@ -11,6 +11,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
+LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
+from review_common import count_severity, json_summary, review_file_path
 
 
 @pytest.fixture(scope="session")
@@ -72,21 +76,27 @@ def test_is_pr_ref_empty(cr):
     assert cr._is_pr_ref("") is False
 
 
-# ── _review_file ──────────────────────────────────────────────────────────────
+# ── review_file_path ─────────────────────────────────────────────────────────
 
 
-def test_review_file_basic(cr, reviews_dir):
-    result = cr._review_file("org/my-repo", "42")
+def test_review_file_basic(cr, reviews_dir, monkeypatch):
+    import review_common
+    monkeypatch.setattr(review_common, "REVIEWS_DIR", reviews_dir)
+    result = review_file_path("org/my-repo", "42")
     assert result == reviews_dir / "my-repo-42" / "review.md"
 
 
-def test_review_file_repo_with_hyphens(cr, reviews_dir):
-    result = cr._review_file("org/my-cool-repo", "1")
+def test_review_file_repo_with_hyphens(cr, reviews_dir, monkeypatch):
+    import review_common
+    monkeypatch.setattr(review_common, "REVIEWS_DIR", reviews_dir)
+    result = review_file_path("org/my-cool-repo", "1")
     assert result == reviews_dir / "my-cool-repo-1" / "review.md"
 
 
-def test_review_file_deep_nested_repo(cr, reviews_dir):
-    result = cr._review_file("deep/nested/repo", "7")
+def test_review_file_deep_nested_repo(cr, reviews_dir, monkeypatch):
+    import review_common
+    monkeypatch.setattr(review_common, "REVIEWS_DIR", reviews_dir)
+    result = review_file_path("deep/nested/repo", "7")
     assert result == reviews_dir / "repo-7" / "review.md"
 
 
@@ -196,7 +206,7 @@ def test_format_usage_includes_cache_tokens(cr, tmp_path):
     assert "8k tokens" in result
 
 
-# ── _count_severity ───────────────────────────────────────────────────────────
+# ── count_severity ────────────────────────────────────────────────────────────
 
 
 def test_count_severity_must_fix(cr, tmp_path):
@@ -208,7 +218,7 @@ def test_count_severity_must_fix(cr, tmp_path):
         "## Should fix\n"
         "- **[S1]** path:3 — description\n"
     )
-    assert cr._count_severity(review, "M") == 2
+    assert count_severity(review, "M") == 2
 
 
 def test_count_severity_excludes_strikethrough(cr, tmp_path):
@@ -218,7 +228,7 @@ def test_count_severity_excludes_strikethrough(cr, tmp_path):
         "- **[M1]** path:1 — active\n"
         "- ~~**[M2]** path:2 — resolved~~\n"
     )
-    assert cr._count_severity(review, "M") == 1
+    assert count_severity(review, "M") == 1
 
 
 def test_count_severity_checkbox_findings(cr, tmp_path):
@@ -228,20 +238,20 @@ def test_count_severity_checkbox_findings(cr, tmp_path):
         "- [ ] **[M1]** path:1 — with checkbox\n"
         "- **[M2]** path:2 — without checkbox\n"
     )
-    assert cr._count_severity(review, "M") == 2
+    assert count_severity(review, "M") == 2
 
 
 def test_count_severity_missing_file(cr, tmp_path):
-    assert cr._count_severity(tmp_path / "nonexistent.md", "M") == 0
+    assert count_severity(tmp_path / "nonexistent.md", "M") == 0
 
 
 def test_count_severity_empty_file(cr, tmp_path):
     review = tmp_path / "empty.md"
     review.write_text("")
-    assert cr._count_severity(review, "M") == 0
+    assert count_severity(review, "M") == 0
 
 
-# ── _json_summary ─────────────────────────────────────────────────────────────
+# ── json_summary ──────────────────────────────────────────────────────────────
 
 
 def test_json_summary_with_findings(cr, tmp_path):
@@ -252,7 +262,7 @@ def test_json_summary_with_findings(cr, tmp_path):
         "## Nit\n- **[N1]** path:4 — style\n"
         "## Idioms\n- **[I1]** path:5 — idiom\n- **[I2]** path:6 — idiom\n"
     )
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     assert result.startswith("REVIEW_SUMMARY:")
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["repo"] == "org/repo"
@@ -271,7 +281,7 @@ def test_json_summary_approve_no_must_fix(cr, tmp_path):
         "## Should fix\n- **[S1]** path:1 — improvement\n"
         "## Nit\n- **[N1]** path:2 — style\n"
     )
-    result = cr._json_summary("org/repo", "10", str(review))
+    result = json_summary("org/repo", "10", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["verdict"] == "approve"
     assert data["findings"]["total"] == 2
@@ -289,7 +299,7 @@ def test_json_summary_includes_metadata(cr, tmp_path):
         "base_ref": "main",
         "review_type": "full",
     }))
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["head_sha"] == "abc123def456"
     assert data["head_ref"] == "feat/my-branch"
@@ -300,7 +310,7 @@ def test_json_summary_includes_metadata(cr, tmp_path):
 def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Should fix\n- **[S1]** path:1 — improvement\n")
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["head_sha"] is None
     assert data["head_ref"] is None
@@ -309,7 +319,7 @@ def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):
 
 
 def test_json_summary_missing_review_file(cr, tmp_path):
-    result = cr._json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
+    result = json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["findings"]["total"] == 0
     assert data["verdict"] == "approve"
@@ -318,7 +328,7 @@ def test_json_summary_missing_review_file(cr, tmp_path):
 def test_json_summary_self_review_no_pr(cr, tmp_path):
     review = tmp_path / "self-review.md"
     review.write_text("## Must fix\n- **[M1]** path:1 — bug\n")
-    result = cr._json_summary("org/repo", "", str(review))
+    result = json_summary("org/repo", "", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["pr_number"] is None
     assert data["verdict"] == "changes_requested"
@@ -333,7 +343,7 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
         str(review_dir / "session.jsonl"),
         cost=5.25, input_tokens=1000, output_tokens=2000, duration_ms=90000,
     )
-    result = cr._json_summary("org/repo", "42", str(review))
+    result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["cost_usd"] == pytest.approx(5.25)
     assert data["input_tokens"] == 1000

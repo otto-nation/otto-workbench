@@ -1,6 +1,7 @@
 """Tests for pr CLI helper functions."""
 
 import importlib.util
+import json
 import subprocess
 import sys
 import types
@@ -198,8 +199,8 @@ def test_commands_registry_exists():
 
 def test_commands_registry_has_all_subcommands():
     # Keep this set in sync with _COMMANDS in ai/claude/bin/pr
-    expected = {"status", "ci", "review", "comments", "triage",
-                "fix", "rebase", "repair", "post", "gc"}
+    expected = {"status", "ci", "review", "comments",
+                "fix", "rebase", "gc"}
     assert set(pr_cli._COMMANDS.keys()) == expected
 
 
@@ -211,15 +212,14 @@ def test_commands_registry_entries_have_help():
 
 def test_commands_with_script_key():
     """Commands backed by an external script carry a 'script' key."""
-    has_script = {"ci", "review", "comments", "triage", "rebase",
-                  "repair", "post", "gc"}
+    has_script = {"ci", "review", "comments", "rebase", "gc"}
     for name in has_script:
         assert "script" in pr_cli._COMMANDS[name], f"{name} missing 'script'"
 
 
 def test_custom_handlers_are_registered():
     """_CUSTOM contains the expected non-pure-delegate commands."""
-    expected_custom = {"status", "review", "fix", "repair", "post"}
+    expected_custom = {"status", "review", "comments", "fix"}
     assert set(pr_cli._CUSTOM.keys()) == expected_custom
 
 
@@ -231,7 +231,6 @@ def test_internal_commands_have_no_script():
 
 def test_sub_command_prefix():
     assert pr_cli._COMMANDS["gc"].get("prefix") == ["gc"]
-    assert pr_cli._COMMANDS["post"].get("prefix") == ["post"]
 
 
 # ── help passthrough ─────────────────────────────────────────────────────
@@ -425,38 +424,51 @@ def test_cmd_review_passes_flags_through(mock_run):
     assert "--no-post" in cmd
 
 
-# ── cmd_post PR fallback ─────────────────────────────────────────────────
+# ── cmd_review --post ────────────────────────────────────────────────────
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_post_injects_pr_number_when_no_target(mock_run):
+def test_cmd_review_post_delegates_to_review_post(mock_run, tmp_path):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=42)
-    pr_cli.cmd_post([], ctx)
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir(parents=True)
+    (review_dir / "review.md").write_text("# Review")
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--post"], ctx)
+    assert rc == 0
     cmd = mock_run.call_args[0][0]
-    assert "42" in cmd
+    assert cmd[0].endswith("/review-post")
+    assert "--pr" in cmd
+    assert "--review-file" in cmd
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_post_no_inject_when_target_given(mock_run):
+def test_cmd_review_post_passes_submit(mock_run, tmp_path):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=42)
-    pr_cli.cmd_post(["99"], ctx)
-    cmd = mock_run.call_args[0][0]
-    assert "99" in cmd
-    # 42 must not appear as a standalone positional target; only allowed as --pr value
-    for i, a in enumerate(cmd):
-        if a == "42":
-            assert i > 0 and cmd[i - 1] == "--pr", f"'42' appears as positional at index {i}"
-
-
-@patch("pr_cli.subprocess.run")
-def test_cmd_post_passes_flags_through(mock_run):
-    mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=42)
-    pr_cli.cmd_post(["99", "--submit"], ctx)
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir(parents=True)
+    (review_dir / "review.md").write_text("# Review")
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--post", "--submit"], ctx)
+    assert rc == 0
     cmd = mock_run.call_args[0][0]
     assert "--submit" in cmd
+
+
+def test_cmd_review_post_fails_without_review_file(tmp_path, capsys):
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    reviews_dir.mkdir()
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--post"], ctx)
+    assert rc == 1
 
 
 # ── _run_delegate branch/pr injection ────────────────────────────────────────
@@ -493,7 +505,7 @@ def test_run_delegate_auto_detected_forwards_pr(mock_run):
     """When neither flag was given and ctx has a PR, forward --pr (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
-    entry = {"script": "review-thread-triage", "help": "x"}
+    entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
@@ -506,7 +518,7 @@ def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
     """When neither flag was given and ctx has no PR, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(branch="feat/my-feature", pr_number=None)
-    entry = {"script": "review-thread-triage", "help": "x"}
+    entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
@@ -564,63 +576,120 @@ def test_main_auto_detected_forwards_pr_only(mock_resolve, mock_run):
     assert "--branch" not in cmd
 
 
-# ── cmd_repair ──────────────────────────────────────────────────────────────
+# ── cmd_comments ────────────────────────────────────────────────────────────
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_repair_summary_succeeds(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    ctx = _make_ctx(pr_number=42)
-    rc = pr_cli.cmd_repair([], ctx)
-    assert rc == 0
-    assert mock_run.call_count == 1
+def test_cmd_comments_plain_delegates_to_review_threads(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx()
+    pr_cli.cmd_comments([], ctx)
     cmd = mock_run.call_args[0][0]
-    assert "summary" in cmd
+    assert cmd[0].endswith("/review-threads")
+    assert "--triage" not in cmd
+    assert "--resolve" not in cmd
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_repair_falls_back_to_rebuild(mock_run):
-    mock_run.side_effect = [
-        MagicMock(returncode=1, stdout="", stderr="summary error"),
-        MagicMock(returncode=0, stdout="", stderr=""),
-    ]
-    ctx = _make_ctx(pr_number=42)
-    rc = pr_cli.cmd_repair([], ctx)
+def test_cmd_comments_triage_passes_flag(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx()
+    pr_cli.cmd_comments(["--triage"], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/review-threads")
+    assert "--triage" in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_comments_resolve_passes_flag(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx()
+    pr_cli.cmd_comments(["--resolve"], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/review-threads")
+    assert "--resolve" in cmd
+
+
+# ── cmd_review --repair ────────────────────────────────────────────────────
+
+
+@patch("pr_cli._update_review_state_from_output")
+def test_cmd_review_repair_succeeds_with_review_file(mock_update, tmp_path):
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir(parents=True)
+    (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--repair"], ctx)
     assert rc == 0
-    assert mock_run.call_count == 2
-    rebuild_cmd = mock_run.call_args_list[1][0][0]
-    assert "rebuild" in rebuild_cmd
+    mock_update.assert_called_once()
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_repair_both_fail(mock_run):
-    mock_run.side_effect = [
-        MagicMock(returncode=1, stdout="", stderr=""),
-        MagicMock(returncode=2, stdout="", stderr=""),
-    ]
-    ctx = _make_ctx(pr_number=42)
-    rc = pr_cli.cmd_repair([], ctx)
-    assert rc == 2
-
-
-@patch("pr_cli.subprocess.run")
-def test_cmd_repair_uses_argv_target(mock_run):
+def test_cmd_review_repair_falls_back_to_rebuild(mock_run, tmp_path):
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir(parents=True)
     mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--repair"], ctx)
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/review-rebuild")
+
+
+def test_cmd_review_repair_no_pr_fails():
     ctx = _make_ctx(pr_number=None)
-    rc = pr_cli.cmd_repair(["99"], ctx)
-    assert rc == 0
-    cmd = mock_run.call_args[0][0]
-    assert "99" in cmd
+    rc = pr_cli.cmd_review(["--repair"], ctx)
+    assert rc == 1
 
 
-@patch("pr_cli.subprocess.run")
-def test_cmd_repair_uses_ctx_pr_when_no_argv_target(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    ctx = _make_ctx(pr_number=55)
-    rc = pr_cli.cmd_repair([], ctx)
+# ── cmd_review --summary ───────────────────────────────────────────────────
+
+
+def test_cmd_review_summary_outputs_json(tmp_path, capsys):
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir(parents=True)
+    (review_dir / "review.md").write_text("## Must fix\n- **[M1]** path:1 — bug\n")
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--summary"], ctx)
     assert rc == 0
-    cmd = mock_run.call_args[0][0]
-    assert "55" in cmd
+    out = capsys.readouterr().out
+    assert out.startswith("REVIEW_SUMMARY:")
+    data = json.loads(out.removeprefix("REVIEW_SUMMARY:"))
+    assert data["findings"]["must_fix"] == 1
+
+
+def test_cmd_review_summary_fails_without_review(tmp_path):
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    reviews_dir.mkdir()
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--summary"], ctx)
+    assert rc == 1
+
+
+# ── cmd_review mutual exclusivity ─────────────────────────────────────────
+
+
+def test_cmd_review_mutual_exclusivity():
+    ctx = _make_ctx()
+    rc = pr_cli.cmd_review(["--post", "--repair"], ctx)
+    assert rc == 1
+
+
+def test_cmd_review_mutual_exclusivity_three():
+    ctx = _make_ctx()
+    rc = pr_cli.cmd_review(["--post", "--repair", "--summary"], ctx)
+    assert rc == 1
 
 
 # ── cmd_fix ─────────────────────────────────────────────────────────────────

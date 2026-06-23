@@ -58,24 +58,18 @@ Run the status script to fetch all threads, compute lifecycle states, and displa
 Use the resolved PR number if available; otherwise omit it for auto-detection:
 
 ```bash
-pr comments [<pr_number>] [--repo-dir <path>]
+pr comments [<pr_number>]
 ```
+
+The script auto-detects the repo, branch, and worktree root from CWD. Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo — use `wt switch <branch> --no-cd --format json --no-hooks` to find the worktree path).
 
 The script outputs:
 - **stderr:** Human-readable status dashboard (reviewer verdicts, thread counts by state, merge blockers)
 - **stdout:** Structured JSON report with all threads, their lifecycle states, comments, and verdicts
 
-**Bare repo handling:** If CWD is a bare repo (`git rev-parse --is-bare-repository` returns `true`), the script cannot auto-detect the git toplevel. Use `wt switch <branch> --no-cd --format json --no-hooks` to find the worktree path, then pass it via `--repo-dir`:
-
-```bash
-wt switch <branch> --no-cd --format json --no-hooks 2>/dev/null
-# Extract .path from JSON output, then:
-pr comments <number> --repo-dir <worktree_path> 2>&1
-```
-
 **Invocation rules:** Run the command as a single simple statement. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. Never use temp files, `<<<`, compound multi-statement commands, or run the script twice.
 
-If the script fails (non-zero exit code), ask the user which PR to address and re-run with explicit PR number and `--repo-dir` flag.
+If the script fails (non-zero exit code), ask the user which PR to address and re-run with an explicit PR number.
 
 Parse the JSON report from stdout. If there are no threads in `new`, `contested`, or `ambiguous` state, and no unaddressed issue-level comments, report that nothing needs action and stop.
 
@@ -201,7 +195,7 @@ REPLY_BODY
 After replying, resolve threads that have been verified (reviewer acknowledged your fix):
 
 ```bash
-pr comments [<pr_url_or_number>] --resolve [--repo-dir <path>]
+pr comments [<pr_url_or_number>] --resolve
 ```
 
 This auto-resolves verified threads on GitHub via GraphQL mutation. Only threads where the reviewer explicitly acknowledged the fix are resolved — never contested or ambiguous threads.

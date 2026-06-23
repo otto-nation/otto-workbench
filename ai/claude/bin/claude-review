@@ -1320,53 +1320,50 @@ def main() -> None:
 
     if command == "gc":
         cmd_gc()
-    elif command in ("post", "rebuild", "summary", "threads"):
-        sub_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
-        if command in ("post", "rebuild") and not sub_input:
-            _err(f"Usage: claude-review {command} <pr_url_or_number>")
+    elif command == "post":
+        post_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
+        if not post_input:
+            _err("Usage: claude-review post <pr_url_or_number>")
             sys.exit(1)
-
-        ctx = pr_context.resolve(
-            pr=sub_input or parsed.pr,
-            repo_dir=parsed.repo_dir,
-        )
-        pr_num = str(ctx.pr_number) if ctx.pr_number else ""
-
-        if command == "post":
-            review_file = _review_file(ctx.repo, pr_num)
-            cmd_post(ctx.repo, pr_num, parsed.submit)
-            _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-            if _json_stdout_fd is not None:
-                summary = _json_summary(ctx.repo, pr_num, str(review_file))
-                os.write(_json_stdout_fd, (summary + "\n").encode())
-                os.close(_json_stdout_fd)
-        elif command == "rebuild":
-            review_file = _review_file(ctx.repo, pr_num)
-            cmd_rebuild(parsed)
-            _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
-            if _json_stdout_fd is not None:
-                summary = _json_summary(ctx.repo, pr_num, str(review_file))
-                os.write(_json_stdout_fd, (summary + "\n").encode())
-                os.close(_json_stdout_fd)
-        elif command == "summary":
-            cmd_summary(parsed)
-        elif command == "threads":
-            cmd_threads(parsed)
+        ctx = pr_context.resolve(pr=post_input, repo_dir=parsed.repo_dir)
+        pr_num = str(ctx.pr_number)
+        review_file = _review_file(ctx.repo, pr_num)
+        cmd_post(ctx.repo, pr_num, parsed.submit)
+        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+        if _json_stdout_fd is not None:
+            summary = _json_summary(ctx.repo, pr_num, str(review_file))
+            os.write(_json_stdout_fd, (summary + "\n").encode())
+            os.close(_json_stdout_fd)
+    elif command == "rebuild":
+        rebuild_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
+        if not rebuild_input:
+            _err("Usage: claude-review rebuild <pr_url_or_number>")
+            sys.exit(1)
+        ctx = pr_context.resolve(pr=rebuild_input, repo_dir=parsed.repo_dir)
+        pr_num = str(ctx.pr_number)
+        review_file = _review_file(ctx.repo, pr_num)
+        cmd_rebuild(parsed)
+        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+        if _json_stdout_fd is not None:
+            summary = _json_summary(ctx.repo, pr_num, str(review_file))
+            os.write(_json_stdout_fd, (summary + "\n").encode())
+            os.close(_json_stdout_fd)
+    elif command == "summary":
+        cmd_summary(parsed)
+    elif command == "threads":
+        cmd_threads(parsed)
     elif not command:
         parser.print_help()
         sys.exit(1)
     else:
         # Default: treat as PR number/URL
-        ctx = pr_context.resolve(
-            pr=command,
-            repo_dir=parsed.repo_dir,
-        )
-        rev_pr_number = str(ctx.pr_number) if ctx.pr_number else _extract_pr_number(command)
-        rev_review_file = _review_file(ctx.repo, rev_pr_number)
+        ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
+        pr_num = str(ctx.pr_number) if ctx.pr_number else _extract_pr_number(command)
+        review_file = _review_file(ctx.repo, pr_num)
         _run_review(parsed)
-        _update_pr_state(ctx.repo, rev_pr_number, str(rev_review_file), parsed.repo_dir or "", "pr")
+        _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
         if _json_stdout_fd is not None:
-            summary = _json_summary(ctx.repo, rev_pr_number, str(rev_review_file))
+            summary = _json_summary(ctx.repo, pr_num, str(review_file))
             os.write(_json_stdout_fd, (summary + "\n").encode())
             os.close(_json_stdout_fd)
 

@@ -134,64 +134,6 @@ echo "$VERSION" > "$DEST/VERSION"
   echo 'unset _ui_lib_dir'
 } > "$DEST/lib/ui.sh"
 
-# ─── Patch claude-review for standalone layout ────────────────────────────
-# Patches are anchored to @tarball-patch sentinel comments in claude-review.
-# This is robust against whitespace/expression changes in the source.
-#
-# In the monorepo, claude-review uses git rev-parse to find the repo root.
-# In the standalone tarball there's no git repo, so we use dirname chains
-# to resolve paths relative to the script's location.
-
-REVIEW="$DEST/bin/claude-review"
-
-# shellcheck source=/dev/null
-source "$WORKBENCH_ROOT/lib/output.sh"
-
-# Patch ui-source: replace git rev-parse with dirname chain
-# shellcheck disable=SC2016
-sed_i '/@tarball-patch: ui-source/c\
-. "$(dirname "$(cd "$(dirname "$_SELF")" && pwd)")/lib/ui.sh"  # @tarball-patch: ui-source' "$REVIEW"
-
-# Patch workbench-root: replace git rev-parse with dirname chain
-# shellcheck disable=SC2016
-sed_i '/@tarball-patch: workbench-root/c\
-_WORKBENCH_ROOT="$(dirname "$(cd "$(dirname "$_SELF")" && pwd)")"  # @tarball-patch: workbench-root' "$REVIEW"
-
-# Patch _generator_version to read VERSION file instead of release-please manifest
-# shellcheck disable=SC2016
-sed_i '/@tarball-patch-start: generator-version/,/@tarball-patch-end: generator-version/c\
-# @tarball-patch-start: generator-version\
-_generator_version() {\
-  local version\
-  version=$(cat "${_WORKBENCH_ROOT}/VERSION" 2>/dev/null || echo "unknown")\
-  echo "claude-review ${version}"\
-}\
-# @tarball-patch-end: generator-version' "$REVIEW"
-
-# ─── Verify patches ──────────────────────────────────────────────────────
-
-bash -n "$REVIEW"
-for _sentinel in 'ui-source' 'workbench-root'; do
-  if ! grep -q "@tarball-patch: $_sentinel" "$REVIEW"; then
-    echo "ERROR: $_sentinel sentinel line missing after patch" >&2
-    exit 1
-  fi
-  if grep "@tarball-patch: $_sentinel" "$REVIEW" | grep -qF 'rev-parse'; then
-    echo "ERROR: $_sentinel patch failed — rev-parse still present" >&2
-    exit 1
-  fi
-  if ! grep "@tarball-patch: $_sentinel" "$REVIEW" | grep -qF 'dirname'; then
-    echo "ERROR: $_sentinel patch failed — dirname replacement missing" >&2
-    exit 1
-  fi
-done
-# generator-version: verify patched body reads VERSION file, not print_version
-if sed -n '/@tarball-patch-start: generator-version/,/@tarball-patch-end: generator-version/p' "$REVIEW" \
-    | grep -qF 'print_version'; then
-  echo "ERROR: generator-version patch failed — old body still present" >&2
-  exit 1
-fi
-
 # ─── Build tarball ────────────────────────────────────────────────────────
 
 TARBALL="otto-ai-tools-${VERSION}.tar.gz"

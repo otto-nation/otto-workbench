@@ -41,15 +41,29 @@ _COMMANDS = {
 
 
 def _run_delegate(entry: dict, argv: list[str],
-                  ctx: pr_context.ResolvedContext) -> int:
-    """Build and run a backing-script command with context injection."""
+                  ctx: pr_context.ResolvedContext, *,
+                  original_pr: str | None = None,
+                  original_branch: str | None = None) -> int:
+    """Build and run a backing-script command with context injection.
+
+    Forwards exactly one of --pr or --branch (never both) so the
+    delegate's pr_context.resolve() doesn't hit the mutual-exclusivity
+    check.  Priority: explicit --pr > explicit --branch > auto-detected
+    PR number > auto-detected branch.  PR number is preferred over branch
+    because it's a stable identifier that avoids a redundant gh API call
+    in the delegate.
+    """
     cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
-    if ctx.branch:
-        cmd += ["--branch", ctx.branch]
-    if ctx.pr_number:
+    if original_pr is not None:
+        cmd += ["--pr", str(original_pr)]
+    elif original_branch is not None:
+        cmd += ["--branch", original_branch]
+    elif ctx.pr_number is not None:
         cmd += ["--pr", str(ctx.pr_number)]
+    elif ctx.branch:
+        cmd += ["--branch", ctx.branch]
     cmd += list(argv)
     return subprocess.run(cmd).returncode
 
@@ -181,7 +195,7 @@ def _render_rebase_section(r: pr_state.RebaseSummary) -> list[str]:
     return [f"**Rebase**: {desc}"]
 
 
-def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Render unified status dashboard from cached state."""
     state = pr_state.load_state(ctx.worktree_root)
 
@@ -241,16 +255,20 @@ def _merge_readiness(state: pr_state.PRState) -> str:
     return f"**Merge readiness**: blocked — {'; '.join(issues)}" if issues else "**Merge readiness**: ready"
 
 
-def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
+               original_pr: str | None = None,
+               original_branch: str | None = None) -> int:
     """Delegate to claude-review with auto-self detection."""
     has_self = "--self" in argv
     positionals, _ = _split_argv(argv)
     has_pr_target = any(_is_pr_target(p) for p in positionals)
     inject = ["--self"] if not has_self and not has_pr_target else []
-    return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx)
+    return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
+                         original_pr=original_pr,
+                         original_branch=original_branch)
 
 
-def cmd_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def cmd_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Repair broken review artifacts via summary or rebuild."""
     tool = str(BIN_DIR / "claude-review")
     positionals, extra = _split_argv(argv)
@@ -299,7 +317,7 @@ def cmd_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
-def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments."""
     state = pr_state.load_state(ctx.worktree_root)
     if not state:
@@ -330,12 +348,16 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     return exit_code
 
 
-def cmd_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def cmd_post(argv: list[str], ctx: pr_context.ResolvedContext, *,
+             original_pr: str | None = None,
+             original_branch: str | None = None) -> int:
     """Delegate to claude-review post, injecting PR number if no target."""
     positionals, _ = _split_argv(argv)
     has_target = any(_is_pr_target(p) for p in positionals)
     inject = [str(ctx.pr_number)] if not has_target and ctx.pr_number else []
-    return _run_delegate(_COMMANDS["post"], inject + list(argv), ctx)
+    return _run_delegate(_COMMANDS["post"], inject + list(argv), ctx,
+                         original_pr=original_pr,
+                         original_branch=original_branch)
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -414,19 +436,26 @@ def main():
         cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", []) + ["--help"]
         sys.exit(subprocess.run(cmd).returncode)
 
+    original_pr = getattr(args, "pr", None)
+    original_branch = getattr(args, "branch", None)
+
     ctx = pr_context.resolve(
-        pr=getattr(args, "pr", None),
-        branch=getattr(args, "branch", None),
+        pr=original_pr,
+        branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
     )
 
     handler = _CUSTOM.get(args.command)
     if handler:
-        sys.exit(handler(extra, ctx))
+        sys.exit(handler(extra, ctx,
+                         original_pr=original_pr,
+                         original_branch=original_branch))
     else:
         assert "script" in _COMMANDS[args.command], \
             f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
-        sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx))
+        sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx,
+                               original_pr=original_pr,
+                               original_branch=original_branch))
 
 
 if __name__ == "__main__":

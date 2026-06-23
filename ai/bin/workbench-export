@@ -18,6 +18,8 @@ export WORKBENCH_DIR="${WORKBENCH_DIR:-"$(cd "$SCRIPT_DIR/../.." && pwd)"}"
 source "$WORKBENCH_DIR/lib/ui.sh"
 # shellcheck source=../claude/steps.sh
 source "$WORKBENCH_DIR/ai/claude/steps.sh"
+# shellcheck source=../pi/steps.sh
+source "$WORKBENCH_DIR/ai/pi/steps.sh"
 
 version=""
 profile="server"
@@ -57,6 +59,7 @@ export_dir="$tmp_dir/$export_name"
 mkdir -p "$export_dir"
 
 sync_claude --export "$export_dir" --profile "$profile"
+_export_pi_config "$export_dir/pi"
 
 mkdir -p "$output_dir"
 tar czf "$output_dir/${export_name}.tar.gz" -C "$tmp_dir" "$export_name"

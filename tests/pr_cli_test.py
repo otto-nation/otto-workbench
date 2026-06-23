@@ -463,7 +463,34 @@ def test_cmd_post_passes_flags_through(mock_run):
 
 
 @patch("pr_cli.subprocess.run")
-def test_run_delegate_injects_branch_and_pr(mock_run):
+def test_run_delegate_forwards_only_original_pr(mock_run):
+    """When the user provided --pr, only --pr is forwarded (not --branch)."""
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    entry = {"script": "review-threads", "help": "x"}
+    pr_cli._run_delegate(entry, [], ctx, original_pr="99")
+    cmd = mock_run.call_args[0][0]
+    assert "--pr" in cmd
+    assert cmd[cmd.index("--pr") + 1] == "99"
+    assert "--branch" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_run_delegate_forwards_only_original_branch(mock_run):
+    """When the user provided --branch, only --branch is forwarded (not --pr)."""
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    entry = {"script": "review-threads", "help": "x"}
+    pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
+    cmd = mock_run.call_args[0][0]
+    assert "--branch" in cmd
+    assert cmd[cmd.index("--branch") + 1] == "feat/my-feature"
+    assert "--pr" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_run_delegate_auto_detected_forwards_branch_only(mock_run):
+    """When neither --pr nor --branch was given, forward branch only."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
     entry = {"script": "review-thread-triage", "help": "x"}
@@ -471,8 +498,7 @@ def test_run_delegate_injects_branch_and_pr(mock_run):
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
     assert cmd[cmd.index("--branch") + 1] == "feat/my-feature"
-    assert "--pr" in cmd
-    assert cmd[cmd.index("--pr") + 1] == "99"
+    assert "--pr" not in cmd
 
 
 @patch("pr_cli.subprocess.run")
@@ -484,6 +510,19 @@ def test_run_delegate_omits_branch_when_none(mock_run):
     cmd = mock_run.call_args[0][0]
     assert "--branch" not in cmd
     assert "--pr" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
+    """Regression: pr --pr 1927 comments must not pass both --branch and --pr."""
+    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=1927)
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("--pr", "1927", "--repo-dir", "/path", "comments")
+    cmd = mock_run.call_args[0][0]
+    assert "--pr" in cmd
+    assert cmd[cmd.index("--pr") + 1] == "1927"
+    assert "--branch" not in cmd
 
 
 # ── cmd_repair ──────────────────────────────────────────────────────────────

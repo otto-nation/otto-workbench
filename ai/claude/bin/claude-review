@@ -1087,7 +1087,8 @@ def _run_self_review(args) -> None:
 
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
-def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
+def cmd_post(repo: str, pr_number: str, submit: bool,
+             repo_dir: str = "") -> None:
     review_file = _review_file(repo, pr_number)
     if not review_file.is_file():
         _err(f"No review file found: {review_file}")
@@ -1099,6 +1100,8 @@ def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
         "--pr", pr_number,
         "--review-file", str(review_file),
     ]
+    if repo_dir:
+        post_args += ["--repo-dir", repo_dir]
     if submit:
         post_args.append("--submit")
 
@@ -1269,7 +1272,7 @@ def main() -> None:
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
     parser.add_argument("--max-cost", type=float)
     parser.add_argument("--model")
-    parser.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir")
     parser.add_argument("--branch")
     parser.add_argument("--pr")
     parser.add_argument("-V", "--version", action="store_true")
@@ -1328,7 +1331,7 @@ def main() -> None:
         post_pr_number = _extract_pr_number(post_input)
         post_repo = _extract_repo(post_input)
         post_review_file = _review_file(post_repo, post_pr_number)
-        cmd_post(post_repo, post_pr_number, parsed.submit)
+        cmd_post(post_repo, post_pr_number, parsed.submit, parsed.repo_dir or "")
         _update_pr_state(post_repo, post_pr_number, str(post_review_file), parsed.repo_dir or "", "pr")
         if _json_stdout_fd is not None:
             summary = _json_summary(post_repo, post_pr_number, str(post_review_file))

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.5](https://github.com/otto-nation/otto-workbench/compare/v1.32.4...v1.32.5) (2026-06-23)
+
+
+### Bug Fixes
+
+* **pr:** forward only the user's original --pr or --branch flag ([#340](https://github.com/otto-nation/otto-workbench/issues/340)) ([e38529a](https://github.com/otto-nation/otto-workbench/commit/e38529a7ab17d6f7e1df2924669bc37eeb001f7b))
+
 ## [1.32.4](https://github.com/otto-nation/otto-workbench/compare/v1.32.3...v1.32.4) (2026-06-23)
 
 

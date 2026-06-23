@@ -55,7 +55,6 @@ ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
 PR_URL_RE = re.compile(r"/pull/(\d+)")
 PR_NUMBER_RE = re.compile(r"^\d+$")
-GITHUB_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)")
 SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
@@ -171,30 +170,6 @@ def _prompt_optional(prompt: str) -> str:
 def _is_pr_ref(s: str) -> bool:
     return bool(PR_URL_RE.search(s) or PR_NUMBER_RE.match(s))
 
-
-def _extract_pr_number(pr_input: str) -> str:
-    m = PR_URL_RE.search(pr_input)
-    if m:
-        return m.group(1)
-    if PR_NUMBER_RE.match(pr_input):
-        return pr_input
-    _err(f"Cannot extract PR number from: {pr_input}")
-    sys.exit(1)
-
-
-def _extract_repo(pr_input: str) -> str:
-    m = GITHUB_REPO_RE.search(pr_input)
-    if m:
-        repo = m.group(1)
-        return repo.removesuffix(".git")
-    r = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0 and r.stdout.strip():
-        return r.stdout.strip()
-    _err(f"Cannot determine repository from: {pr_input}")
-    sys.exit(1)
 
 
 def _review_file(repo: str, pr_number: str) -> Path:
@@ -825,8 +800,9 @@ def _run_review(args) -> None:
 
     _prune_merged_reviews()
 
-    pr_number = _extract_pr_number(pr_input)
-    repo = _extract_repo(pr_input)
+    ctx = pr_context.resolve(pr=pr_input or None, repo_dir=repo_dir or None)
+    pr_number = str(ctx.pr_number)
+    repo = ctx.repo
 
     review_file = _review_file(repo, pr_number)
     review_dir = review_file.parent
@@ -1048,23 +1024,17 @@ def _run_self_review(args) -> None:
 
     wt_path = _resolve_wt_path(repo_dir, pr_input)
 
-    if is_branch or (repo_dir and not pr_input):
-        r = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-            capture_output=True, text=True, cwd=wt_path,
-        )
-        repo = r.stdout.strip()
-        if not repo:
-            _err("Cannot determine repository from remote URL")
-            sys.exit(1)
-    else:
-        repo = _extract_repo(pr_input or "local")
+    ctx = pr_context.resolve(
+        pr=pr_input if is_pr else None,
+        branch=pr_input if is_branch else None,
+        repo_dir=wt_path,
+    )
+    repo = ctx.repo
+    pr_number = str(ctx.pr_number) if ctx.pr_number else ""
 
-    pr_number = ""
     wt_cleanup: review_worktree.WorktreeResult | None = None
 
     if is_pr:
-        pr_number = _extract_pr_number(pr_input)
         if not skip_user_verification:
             _verify_pr_ownership(pr_number, repo)
         wt_cleanup = review_worktree.switch_to_pr_branch(pr_number, repo, wt_path)
@@ -1110,8 +1080,7 @@ def cmd_threads(args) -> None:
     threads_args = [str(BIN_DIR / "review-threads")]
 
     if pr_input:
-        pr_number = _extract_pr_number(pr_input)
-        threads_args += ["--pr", pr_number]
+        threads_args += ["--pr", pr_input]
 
     if args.resolve_verified:
         threads_args.append("--resolve-verified")
@@ -1121,15 +1090,9 @@ def cmd_threads(args) -> None:
     subprocess.run(threads_args, check=False)
 
 
-def cmd_rebuild(args) -> None:
-    pr_input = args.positional[1] if len(args.positional) > 1 else ""
-    if not pr_input:
-        _err("Usage: claude-review rebuild <pr_url_or_number>")
-        sys.exit(1)
-
-    pr_number = _extract_pr_number(pr_input)
-    pr_repo = _extract_repo(pr_input)
-    review_file = _review_file(pr_repo, pr_number)
+def cmd_rebuild(ctx: pr_context.ResolvedContext) -> None:
+    pr_num = str(ctx.pr_number)
+    review_file = _review_file(ctx.repo, pr_num)
     review_dir = review_file.parent
 
     if not review_dir.is_dir():
@@ -1137,26 +1100,20 @@ def cmd_rebuild(args) -> None:
         sys.exit(1)
 
     subprocess.run(
-        [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_number],
+        [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num],
         check=False,
     )
 
 
-def cmd_summary(args) -> None:
-    pr_input = args.positional[1] if len(args.positional) > 1 else ""
-    if not pr_input:
-        _err("Usage: claude-review summary <pr_url_or_number>")
-        sys.exit(1)
-
-    pr_number = _extract_pr_number(pr_input)
-    pr_repo = _extract_repo(pr_input)
-    review_file = _review_file(pr_repo, pr_number)
+def cmd_summary(ctx: pr_context.ResolvedContext) -> None:
+    pr_num = str(ctx.pr_number)
+    review_file = _review_file(ctx.repo, pr_num)
 
     if not review_file.is_file():
         _err(f"No review file found: {review_file}")
         sys.exit(1)
 
-    print(_json_summary(pr_repo, pr_number, str(review_file)))
+    print(_json_summary(ctx.repo, pr_num, str(review_file)))
 
 
 def cmd_gc() -> None:
@@ -1342,14 +1299,19 @@ def main() -> None:
         ctx = pr_context.resolve(pr=rebuild_input, repo_dir=parsed.repo_dir)
         pr_num = str(ctx.pr_number)
         review_file = _review_file(ctx.repo, pr_num)
-        cmd_rebuild(parsed)
+        cmd_rebuild(ctx)
         _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
         if _json_stdout_fd is not None:
             summary = _json_summary(ctx.repo, pr_num, str(review_file))
             os.write(_json_stdout_fd, (summary + "\n").encode())
             os.close(_json_stdout_fd)
     elif command == "summary":
-        cmd_summary(parsed)
+        sub_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
+        if not sub_input:
+            _err("Usage: claude-review summary <pr_url_or_number>")
+            sys.exit(1)
+        ctx = pr_context.resolve(pr=sub_input, repo_dir=parsed.repo_dir)
+        cmd_summary(ctx)
     elif command == "threads":
         cmd_threads(parsed)
     elif not command:
@@ -1358,7 +1320,7 @@ def main() -> None:
     else:
         # Default: treat as PR number/URL
         ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
-        pr_num = str(ctx.pr_number) if ctx.pr_number else _extract_pr_number(command)
+        pr_num = str(ctx.pr_number)
         review_file = _review_file(ctx.repo, pr_num)
         _run_review(parsed)
         _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")

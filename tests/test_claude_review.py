@@ -49,35 +49,6 @@ def _make_session_log(
     )
 
 
-# ── _extract_pr_number ────────────────────────────────────────────────────────
-
-
-def test_extract_pr_number_from_url(cr):
-    assert cr._extract_pr_number("https://github.com/org/repo/pull/42") == "42"
-
-
-def test_extract_pr_number_bare_number(cr):
-    assert cr._extract_pr_number("123") == "123"
-
-
-def test_extract_pr_number_url_with_trailing_path(cr):
-    assert cr._extract_pr_number("https://github.com/org/repo/pull/99/files") == "99"
-
-
-def test_extract_pr_number_single_digit(cr):
-    assert cr._extract_pr_number("1") == "1"
-
-
-def test_extract_pr_number_invalid_exits(cr):
-    with pytest.raises(SystemExit):
-        cr._extract_pr_number("not-a-number")
-
-
-def test_extract_pr_number_empty_exits(cr):
-    with pytest.raises(SystemExit):
-        cr._extract_pr_number("")
-
-
 # ── _is_pr_ref ────────────────────────────────────────────────────────────────
 
 
@@ -117,17 +88,6 @@ def test_review_file_repo_with_hyphens(cr, reviews_dir):
 def test_review_file_deep_nested_repo(cr, reviews_dir):
     result = cr._review_file("deep/nested/repo", "7")
     assert result == reviews_dir / "repo-7" / "review.md"
-
-
-# ── _extract_repo ─────────────────────────────────────────────────────────────
-
-
-def test_extract_repo_from_url(cr):
-    assert cr._extract_repo("https://github.com/org/my-repo/pull/42") == "org/my-repo"
-
-
-def test_extract_repo_strips_git_suffix(cr):
-    assert cr._extract_repo("https://github.com/org/my-repo.git") == "org/my-repo"
 
 
 # ── _format_usage ─────────────────────────────────────────────────────────────

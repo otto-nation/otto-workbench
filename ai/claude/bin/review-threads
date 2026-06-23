@@ -18,62 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import pr_comments as pc
+import pr_context
 import pr_state
-from review_common import detect_repo as _detect_repo
-
-
-def _detect_pr(cwd: str | None = None) -> tuple[str, int]:
-    """Detect repo and PR number from current branch."""
-    result = subprocess.run(
-        ["gh", "pr", "view", "--json", "number,headRepository"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if result.returncode != 0:
-        print("No PR found for current branch", file=sys.stderr)
-        sys.exit(1)
-    data = json.loads(result.stdout)
-    head_repo = data.get("headRepository") or {}
-    repo = head_repo.get("nameWithOwner", "")
-    if not repo or "/" not in repo:
-        print("Cannot determine repository from PR metadata", file=sys.stderr)
-        sys.exit(1)
-    return repo, data["number"]
-
-
-def _resolve_branch(hint: str, cwd: str | None = None) -> str:
-    """Resolve a fuzzy branch name via resolve-branch."""
-    result = subprocess.run(
-        ["resolve-branch", hint],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
-    return hint
-
-
-def _pr_from_branch(repo: str, branch: str) -> int:
-    """Look up a PR number from a branch name."""
-    result = subprocess.run(
-        ["gh", "pr", "list", "--repo", repo, "--head", branch,
-         "--json", "number", "--jq", ".[0].number"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        print(f"No PR found for branch '{branch}'", file=sys.stderr)
-        sys.exit(1)
-    return int(result.stdout.strip())
-
-
-def _git_toplevel() -> Path:
-    """Get the git toplevel directory."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        print("Not in a git repository", file=sys.stderr)
-        sys.exit(1)
-    return Path(result.stdout.strip())
 
 
 def _my_login() -> str:
@@ -109,35 +55,21 @@ def main():
                         help="Git worktree directory (skips git toplevel detection)")
     args = parser.parse_args()
 
-    cwd = args.repo_dir or None
-    if args.pr:
-        repo = _detect_repo(cwd)
-        try:
-            pr_number = int(args.pr)
-        except ValueError:
-            print(f"--pr: invalid integer value: {args.pr!r}", file=sys.stderr)
-            sys.exit(1)
-    elif args.branch:
-        repo = _detect_repo(cwd)
-        resolved = _resolve_branch(args.branch, cwd)
-        pr_number = _pr_from_branch(repo, resolved)
-        args.branch = resolved
-    else:
-        repo, pr_number = _detect_pr(cwd)
+    ctx = pr_context.resolve(
+        pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+    )
+    repo = ctx.repo
+    pr_number = ctx.pr_number
+    if pr_number is None:
+        print("No PR found for current branch", file=sys.stderr)
+        sys.exit(1)
+    branch = ctx.branch
+    toplevel = ctx.worktree_root
+    head_sha = ctx.head_sha
 
     owner, repo_name = repo.split("/", 1)
     my_login = _my_login()
 
-    # State file and git context
-    toplevel = Path(args.repo_dir) if args.repo_dir else _git_toplevel()
-    head_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True, text=True, cwd=str(toplevel),
-    ).stdout.strip()
-    branch = args.branch or subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=str(toplevel),
-    ).stdout.strip()
     state_path = toplevel / "ignore" / "pr-comments" / "state.json"
 
     # Load prior state

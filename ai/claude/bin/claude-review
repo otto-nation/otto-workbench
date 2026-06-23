@@ -875,6 +875,7 @@ _run_review() {
   # ── Run orchestrator ──
   local orchestrate_args=(
     --pr "$pr_number"
+    --repo "$repo"
     --review-file "$review_file"
     --repo-dir "$wt_path"
     --reviews-dir "$REVIEWS_DIR"
@@ -1088,8 +1089,8 @@ _run_self_review() {
   fi
 
   if [[ "$is_branch" == "true" ]]; then
-    local resolved
-    resolved=$(resolve-branch "$pr_input" 2>/dev/null) || true
+    local resolved resolve_dir="${repo_dir:-.}"
+    resolved=$(cd "$resolve_dir" && resolve-branch "$pr_input" 2>/dev/null) || true
     [[ -z "$resolved" ]] || pr_input="$resolved"
   fi
 

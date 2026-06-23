@@ -182,14 +182,17 @@ def _extract_pr_number(pr_input: str) -> str:
     sys.exit(1)
 
 
-def _extract_repo(pr_input: str) -> str:
+def _extract_repo(pr_input: str, repo_dir: str | None = None) -> str:
     m = GITHUB_REPO_RE.search(pr_input)
     if m:
         repo = m.group(1)
         return repo.removesuffix(".git")
+    kwargs: dict = {"capture_output": True, "text": True}
+    if repo_dir:
+        kwargs["cwd"] = repo_dir
     r = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True,
+        **kwargs,
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip()
@@ -1087,8 +1090,8 @@ def _run_self_review(args) -> None:
 
 # ── Subcommands ──────────────────────────────────────────────────────────────
 
-def cmd_post(repo: str, pr_number: str, submit: bool) -> None:
-    review_file = _review_file(repo, pr_number)
+def cmd_post(repo: str, pr_number: str, submit: bool, review_file_override: str | None = None) -> None:
+    review_file = Path(review_file_override) if review_file_override else _review_file(repo, pr_number)
     if not review_file.is_file():
         _err(f"No review file found: {review_file}")
         print(f"  {ANSI_DIM}Run: claude-review {pr_number}{ANSI_RESET}", file=sys.stderr)
@@ -1272,6 +1275,7 @@ def main() -> None:
     parser.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
     parser.add_argument("--branch")
     parser.add_argument("--pr")
+    parser.add_argument("--review-file")
     parser.add_argument("-V", "--version", action="store_true")
     parser.add_argument("args", nargs="*")
 
@@ -1326,9 +1330,9 @@ def main() -> None:
             _err("Usage: claude-review post <pr_url_or_number>")
             sys.exit(1)
         post_pr_number = _extract_pr_number(post_input)
-        post_repo = _extract_repo(post_input)
-        post_review_file = _review_file(post_repo, post_pr_number)
-        cmd_post(post_repo, post_pr_number, parsed.submit)
+        post_repo = _extract_repo(post_input, parsed.repo_dir)
+        post_review_file = Path(parsed.review_file) if parsed.review_file else _review_file(post_repo, post_pr_number)
+        cmd_post(post_repo, post_pr_number, parsed.submit, parsed.review_file)
         _update_pr_state(post_repo, post_pr_number, str(post_review_file), parsed.repo_dir or "", "pr")
         if _json_stdout_fd is not None:
             summary = _json_summary(post_repo, post_pr_number, str(post_review_file))
@@ -1337,7 +1341,7 @@ def main() -> None:
     elif command == "rebuild":
         rebuild_input = parsed.positional[1] if len(parsed.positional) > 1 else ""
         rebuild_pr_number = _extract_pr_number(rebuild_input) if rebuild_input else ""
-        rebuild_repo = _extract_repo(rebuild_input) if rebuild_input else ""
+        rebuild_repo = _extract_repo(rebuild_input, parsed.repo_dir) if rebuild_input else ""
         rebuild_review_file = _review_file(rebuild_repo, rebuild_pr_number) if rebuild_repo else Path()
         cmd_rebuild(parsed)
         _update_pr_state(rebuild_repo, rebuild_pr_number, str(rebuild_review_file), parsed.repo_dir or "", "pr")
@@ -1355,7 +1359,7 @@ def main() -> None:
     else:
         # Default: treat as PR number/URL
         rev_pr_number = _extract_pr_number(command)
-        rev_repo = _extract_repo(command)
+        rev_repo = _extract_repo(command, parsed.repo_dir)
         rev_review_file = _review_file(rev_repo, rev_pr_number)
         _run_review(parsed)
         _update_pr_state(rev_repo, rev_pr_number, str(rev_review_file), parsed.repo_dir or "", "pr")

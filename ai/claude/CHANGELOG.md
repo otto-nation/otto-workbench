@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.7](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.6...otto-ai-tools-v1.26.7) (2026-06-23)
+
+
+### Code Refactoring
+
+* **pr:** eliminate double-dispatch; make pr the sole CLI entry point ([#351](https://github.com/otto-nation/otto-workbench/issues/351)) ([69ca53a](https://github.com/otto-nation/otto-workbench/commit/69ca53ab760197e1aa77c47c5c241af4c65b24ea))
+* rename autoupdate agent to maintenance; fix gh auth ([#348](https://github.com/otto-nation/otto-workbench/issues/348)) ([27d56a7](https://github.com/otto-nation/otto-workbench/commit/27d56a7d5b989ae77b491f297250f2efb750ef44))
+
 ## [1.26.6](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.5...otto-ai-tools-v1.26.6) (2026-06-23)
 
 

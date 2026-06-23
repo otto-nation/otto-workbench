@@ -52,22 +52,18 @@ teardown() {
   [ "$output" = "$TEST_VERSION" ]
 }
 
-# ── 3. Patched claude-review parses without syntax errors ───────────────────
+# ── 3. claude-review is valid Python ────────────────────────────────────────
 
-@test "patched claude-review parses without bash syntax errors" {
-  run bash -n "$TARBALL_ROOT/bin/claude-review"
+@test "claude-review parses without Python syntax errors" {
+  run python3 -c "import py_compile; py_compile.compile('$TARBALL_ROOT/bin/claude-review', doraise=True)"
   [ "$status" -eq 0 ]
 }
 
-# ── 4. Patched source path ──────────────────────────────────────────────────
+# ── 4. claude-review uses Python shebang ─────────────────────────────────────
 
-@test "patched claude-review resolves paths via dirname not rev-parse" {
-  run bash -c "grep '@tarball-patch: ui-source' '$TARBALL_ROOT/bin/claude-review' | grep -q dirname"
-  [ "$status" -eq 0 ]
-  run bash -c "grep '@tarball-patch: workbench-root' '$TARBALL_ROOT/bin/claude-review' | grep -q dirname"
-  [ "$status" -eq 0 ]
-  run bash -c "grep '@tarball-patch: ui-source' '$TARBALL_ROOT/bin/claude-review' | grep -q rev-parse"
-  [ "$status" -ne 0 ]
+@test "claude-review has Python shebang" {
+  run head -1 "$TARBALL_ROOT/bin/claude-review"
+  [[ "$output" == *"python3"* ]]
 }
 
 # ── 5. --help ───────────────────────────────────────────────────────────────
@@ -85,8 +81,8 @@ teardown() {
   [[ "$output" == *"claude-review"* ]]
 }
 
-@test "patched _generator_version reads VERSION file with correct version" {
-  run bash -c "export HOME='$BATS_FILE_TMPDIR' NO_COLOR=1; source '$TARBALL_ROOT/bin/claude-review' && _generator_version"
+@test "claude-review version reads VERSION file in tarball context" {
+  run "$TARBALL_ROOT/bin/claude-review" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"$TEST_VERSION"* ]]
 }

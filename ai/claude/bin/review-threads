@@ -40,11 +40,11 @@ def _detect_pr(cwd: str | None = None) -> tuple[str, int]:
     return repo, data["number"]
 
 
-def _resolve_branch(hint: str) -> str:
+def _resolve_branch(hint: str, cwd: str | None = None) -> str:
     """Resolve a fuzzy branch name via resolve-branch."""
     result = subprocess.run(
         ["resolve-branch", hint],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=cwd,
     )
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
@@ -119,8 +119,9 @@ def main():
             sys.exit(1)
     elif args.branch:
         repo = _detect_repo(cwd)
-        resolved = _resolve_branch(args.branch)
+        resolved = _resolve_branch(args.branch, cwd)
         pr_number = _pr_from_branch(repo, resolved)
+        args.branch = resolved
     else:
         repo, pr_number = _detect_pr(cwd)
 

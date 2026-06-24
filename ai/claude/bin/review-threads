@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import pr_comments as pc
 import pr_context
 import pr_state
+import review_common
 
 TRIAGE_CONTEXT_LINES = 10
 FIX_MAX_TURNS = 15
@@ -243,7 +244,7 @@ def _render_fix_template(
     tracking_file: str, wt_path: str, max_turns: int,
 ) -> str:
     """Render the fix-comments.md template."""
-    tmpl = Template((TEMPLATE_DIR / "fix-comments.md").read_text())
+    tmpl = Template((TEMPLATE_DIR / review_common.TEMPLATE_FIX_COMMENTS).read_text())
     return tmpl.safe_substitute(
         branch_name=branch,
         repo=repo,

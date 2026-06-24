@@ -12,6 +12,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from review_github import (
+    PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
+)
+
 
 # ── State file I/O ─────────────────────────────────────────────────────────
 
@@ -125,32 +129,32 @@ def compute_thread_state(
 
 # ── GitHub data fetching ───────────────────────────────────────────────────
 
-GRAPHQL_THREADS = """
-query($owner: String!, $repo: String!, $number: Int!) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+GRAPHQL_THREADS = f"""
+query($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    pullRequest(number: $number) {{
+      reviewThreads(first: {GQL_THREADS_LIMIT}) {{
         totalCount
-        nodes {
+        nodes {{
           id
           isResolved
           path
           line
-          comments(first: 50) {
+          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
             totalCount
-            nodes {
+            nodes {{
               id
               databaseId
-              author { login }
+              author {{ login }}
               body
               createdAt
-            }
-          }
-        }
-      }
-    }
-  }
-}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
 """
 
 GRAPHQL_RESOLVE = """
@@ -162,8 +166,14 @@ mutation($threadId: ID!) {
 """
 
 
-def fetch_threads(owner: str, repo_name: str, pr_number: int) -> list[dict]:
+def fetch_threads(
+    owner: str, repo_name: str, pr_number: int,
+    pr_data: PRData | None = None,
+) -> list[dict]:
     """Fetch all review threads via GraphQL. Returns list of thread nodes."""
+    if pr_data is not None:
+        return pr_data.review_threads
+
     query = json.dumps({
         "query": GRAPHQL_THREADS,
         "variables": {"owner": owner, "repo": repo_name, "number": pr_number},
@@ -180,14 +190,14 @@ def fetch_threads(owner: str, repo_name: str, pr_number: int) -> list[dict]:
         nodes = threads_data["nodes"]
         total = threads_data.get("totalCount", len(nodes))
         if total > len(nodes):
-            print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (GraphQL limit)", file=sys.stderr)
+            print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})", file=sys.stderr)
         for node in nodes:
             comments_data = node.get("comments", {})
             comment_total = comments_data.get("totalCount", 0)
             comment_nodes = comments_data.get("nodes", [])
             if comment_total > len(comment_nodes):
                 path = node.get("path", "?")
-                print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched", file=sys.stderr)
+                print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})", file=sys.stderr)
         return nodes
     except (json.JSONDecodeError, KeyError, TypeError):
         return []
@@ -202,8 +212,14 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
-def fetch_reviewer_verdicts(repo: str, pr_number: int) -> list[dict]:
+def fetch_reviewer_verdicts(
+    repo: str, pr_number: int,
+    pr_data: PRData | None = None,
+) -> list[dict]:
     """Fetch latest review verdict per reviewer."""
+    if pr_data is not None:
+        return pr_data.reviewer_verdicts()
+
     code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100")
     if code != 0:
         return []
@@ -223,8 +239,14 @@ def fetch_reviewer_verdicts(repo: str, pr_number: int) -> list[dict]:
     return list(by_user.values())
 
 
-def fetch_issue_comments(repo: str, pr_number: int, my_login: str) -> list[dict]:
+def fetch_issue_comments(
+    repo: str, pr_number: int, my_login: str,
+    pr_data: PRData | None = None,
+) -> list[dict]:
     """Fetch issue-level comments (general discussion). Returns non-self ones."""
+    if pr_data is not None:
+        return pr_data.non_self_issue_comments(my_login)
+
     code, out = _gh_rest(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
         return []

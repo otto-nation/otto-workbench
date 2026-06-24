@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 
 from review_common import _err, _warn
 
@@ -24,6 +25,15 @@ NON_RATE_LIMIT_DELAY = 5
 GH_API_TIMEOUT = 30
 
 REVIEW_STATE_PENDING = "PENDING"
+
+# GraphQL pagination limits — shared across queries.
+# Upgrade to a query builder class when: a third query shape is added,
+# fields become runtime-conditional, or cursor-based pagination is needed.
+GQL_REVIEWS_LIMIT = 100
+GQL_THREADS_LIMIT = 100
+GQL_THREAD_COMMENTS_LIMIT = 50
+GQL_ISSUE_COMMENTS_LIMIT = 100
+GQL_COMMITS_LIMIT = 100
 
 
 # ── Exceptions ──────────────────────────────────────────────────────────────
@@ -77,8 +87,10 @@ def _fetch_json_list(endpoint: str) -> list:
 
 # ── PR metadata ─────────────────────────────────────────────────────────────
 
-def _fetch_pr_metadata(repo: str, pr: str) -> dict:
+def _fetch_pr_metadata(repo: str, pr: str, pr_data: PRData | None = None) -> dict:
     """Fetch PR metadata (head SHA, head ref, base ref) in one call."""
+    if pr_data is not None:
+        return {"head_sha": pr_data.head_sha, "head_ref": pr_data.head_ref, "base_ref": pr_data.base_ref}
     code, out = _gh_api(f"repos/{repo}/pulls/{pr}")
     if code != 0:
         _err("Failed to fetch PR metadata")
@@ -108,8 +120,10 @@ def _get_diff(repo: str, pr: str) -> str:
     return out
 
 
-def _check_existing_pending(repo: str, pr: str) -> int | None:
+def _check_existing_pending(repo: str, pr: str, pr_data: PRData | None = None) -> int | None:
     """Check for existing PENDING review and return its ID."""
+    if pr_data is not None:
+        return pr_data.pending_review_id
     code, out = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
     if code != 0:
         return None
@@ -123,8 +137,10 @@ def _check_existing_pending(repo: str, pr: str) -> int | None:
     return None
 
 
-def _count_new_commits(repo: str, pr: str, review_sha: str) -> int:
+def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | None = None) -> int:
     """Count commits on the PR since the review SHA."""
+    if pr_data is not None:
+        return pr_data.new_commit_count(review_sha)
     code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
     if code != 0:
         return 0
@@ -199,3 +215,200 @@ def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
 
     _err(f"Failed after {MAX_RETRIES} attempts")
     return None
+
+
+# ── Consolidated GraphQL PR data ───────────────────────────────────────────
+
+_PR_DATA_QUERY = f"""
+query($owner: String!, $name: String!, $pr: Int!) {{
+  viewer {{ login }}
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $pr) {{
+      headRefOid
+      headRefName
+      baseRefName
+      reviews(last: {GQL_REVIEWS_LIMIT}) {{
+        nodes {{
+          databaseId
+          state
+          body
+          minimizedReason
+          submittedAt
+          author {{ login }}
+        }}
+      }}
+      reviewThreads(first: {GQL_THREADS_LIMIT}) {{
+        totalCount
+        nodes {{
+          id
+          isResolved
+          path
+          line
+          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
+            totalCount
+            nodes {{
+              id
+              databaseId
+              author {{ login }}
+              body
+              createdAt
+            }}
+          }}
+        }}
+      }}
+      comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
+        nodes {{
+          databaseId
+          author {{ login }}
+          body
+          createdAt
+        }}
+      }}
+      commits(last: {GQL_COMMITS_LIMIT}) {{
+        nodes {{
+          commit {{
+            oid
+            messageHeadline
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+
+@dataclass
+class PRData:
+    """Consolidated PR data from a single GraphQL query.
+
+    Fields store raw GraphQL node shapes. Helper methods produce the
+    output formats that downstream callers expect.
+    """
+
+    viewer_login: str
+    head_sha: str
+    head_ref: str
+    base_ref: str
+    reviews: list[dict] = field(default_factory=list)
+    review_threads: list[dict] = field(default_factory=list)
+    issue_comments: list[dict] = field(default_factory=list)
+    commits: list[dict] = field(default_factory=list)
+
+    @property
+    def pending_review_id(self) -> int | None:
+        for r in self.reviews:
+            if r.get("state") == REVIEW_STATE_PENDING:
+                return r.get("databaseId") or None
+        return None
+
+    def new_commit_count(self, review_sha: str) -> int:
+        for i, c in enumerate(self.commits):
+            sha = c.get("commit", {}).get("oid", "")
+            if sha.startswith(review_sha) or review_sha.startswith(sha):
+                return len(self.commits) - i - 1
+        return len(self.commits)
+
+    def bot_reviews_visible(self, bot_login: str) -> list[dict]:
+        """Non-PENDING, non-DISMISSED, non-minimized reviews from bot_login."""
+        bot_lower = bot_login.lower()
+        return [
+            {"id": r.get("databaseId"), "body": r.get("body", ""), "state": r.get("state", "")}
+            for r in self.reviews
+            if (r.get("author") or {}).get("login", "").lower() == bot_lower
+            and r.get("state") not in ("PENDING", "DISMISSED")
+            and not r.get("minimizedReason")
+        ]
+
+    def bot_inline_comments(self, bot_login: str) -> list[dict]:
+        """Bot-authored inline review comments as [{path, body}]."""
+        bot_lower = bot_login.lower()
+        results = []
+        for thread in self.review_threads:
+            path = thread.get("path", "")
+            for comment in thread.get("comments", {}).get("nodes", []):
+                author = (comment.get("author") or {}).get("login", "")
+                if author.lower() == bot_lower:
+                    results.append({"path": path, "body": comment.get("body", "")})
+        return results
+
+    def bot_review_bodies(self, bot_login: str) -> list[str]:
+        """Body text of bot-authored reviews (for finding extraction)."""
+        bot_lower = bot_login.lower()
+        return [
+            r.get("body", "")
+            for r in self.reviews
+            if (r.get("author") or {}).get("login", "").lower() == bot_lower
+            and r.get("body")
+        ]
+
+    def reviewer_verdicts(self) -> list[dict]:
+        """Latest review verdict per reviewer as [{user, state, submitted_at}]."""
+        by_user: dict[str, dict] = {}
+        for r in self.reviews:
+            user = (r.get("author") or {}).get("login", "")
+            submitted = r.get("submittedAt", "")
+            state = r.get("state", "")
+            if state == "PENDING":
+                continue
+            if user not in by_user or submitted > by_user[user]["submitted_at"]:
+                by_user[user] = {"user": user, "state": state, "submitted_at": submitted}
+        return list(by_user.values())
+
+    def non_self_issue_comments(self, my_login: str) -> list[dict]:
+        """Issue-level comments excluding my_login, as [{id, user, body, created_at}]."""
+        my_lower = my_login.lower()
+        return [
+            {
+                "id": c.get("databaseId"),
+                "user": (c.get("author") or {}).get("login", ""),
+                "body": c.get("body", ""),
+                "created_at": c.get("createdAt", ""),
+            }
+            for c in self.issue_comments
+            if (c.get("author") or {}).get("login", "").lower() != my_lower
+        ]
+
+
+def fetch_pr_data(repo: str, pr: str) -> PRData:
+    """Fetch all PR review data in a single GraphQL query."""
+    owner, name = repo.split("/", 1)
+    rc, stdout = _gh_graphql(
+        _PR_DATA_QUERY, {"owner": owner, "name": name, "pr": int(pr)},
+    )
+    if rc != 0:
+        _err("Failed to fetch PR data via GraphQL")
+        sys.exit(1)
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        _err("Failed to parse PR data from GraphQL response")
+        sys.exit(1)
+
+    viewer = data.get("data", {}).get("viewer", {})
+    pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
+
+    threads_data = pr_node.get("reviewThreads", {})
+    threads = threads_data.get("nodes", [])
+    total_threads = threads_data.get("totalCount", len(threads))
+    if total_threads > len(threads):
+        _warn(f"PR has {total_threads} review threads but only {len(threads)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
+
+    for thread in threads:
+        comments_data = thread.get("comments", {})
+        total_comments = comments_data.get("totalCount", 0)
+        comment_nodes = comments_data.get("nodes", [])
+        if total_comments > len(comment_nodes):
+            path = thread.get("path", "?")
+            _warn(f"Thread at {path} has {total_comments} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
+
+    return PRData(
+        viewer_login=viewer.get("login", ""),
+        head_sha=pr_node.get("headRefOid", ""),
+        head_ref=pr_node.get("headRefName", ""),
+        base_ref=pr_node.get("baseRefName", ""),
+        reviews=pr_node.get("reviews", {}).get("nodes", []),
+        review_threads=threads,
+        issue_comments=pr_node.get("comments", {}).get("nodes", []),
+        commits=pr_node.get("commits", {}).get("nodes", []),
+    )

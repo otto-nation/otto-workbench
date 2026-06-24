@@ -25,20 +25,12 @@ import pr_comments as pc
 import pr_context
 import pr_state
 import review_common
+from review_github import fetch_pr_data
 
 TRIAGE_CONTEXT_LINES = 10
 FIX_MAX_TURNS = 15
 FIX_MODEL = "sonnet"
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
-
-
-def _my_login() -> str:
-    """Get the current GitHub user login."""
-    result = subprocess.run(
-        ["gh", "api", "user", "--jq", ".login"],
-        capture_output=True, text=True,
-    )
-    return result.stdout.strip()
 
 
 def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
@@ -501,7 +493,9 @@ def main():
     head_sha = ctx.head_sha
 
     owner, repo_name = repo.split("/", 1)
-    my_login = _my_login()
+
+    pr_data = fetch_pr_data(repo, str(pr_number))
+    my_login = pr_data.viewer_login
 
     state_path = toplevel / "ignore" / "pr-comments" / "state.json"
 
@@ -509,10 +503,10 @@ def main():
     prior_state = pc.load_state(state_path)
     prior_threads = prior_state.get("threads", {}) if prior_state else {}
 
-    # Fetch from GitHub
-    threads_raw = pc.fetch_threads(owner, repo_name, pr_number)
-    verdicts = pc.fetch_reviewer_verdicts(repo, pr_number)
-    issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login)
+    # Fetch from GitHub (served from pr_data, no extra API calls)
+    threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
+    issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
 
     # Sync
     threads = pc.sync_threads(threads_raw, prior_threads, my_login)

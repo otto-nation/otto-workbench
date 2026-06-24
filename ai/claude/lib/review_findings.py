@@ -6,6 +6,7 @@ Shared between review-orchestrate (merging/verification) and review-post (parsin
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -452,17 +453,75 @@ def _normalize_code(text: str) -> str:
     return "\n".join(line.strip() for line in lines if line.strip())
 
 
-def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
+_TRAILING_LINE_COMMENT_RE = re.compile(
+    r"^("
+    r'(?:"(?:[^"\\]|\\.)*")'       # double-quoted string
+    r"|(?:'(?:[^'\\]|\\.)*')"       # single-quoted string
+    r"|(?:`[^`]*`)"                 # backtick string (Go raw / JS template)
+    r"|[^\"'`/#]"                   # normal chars
+    r")+"                           # greedy: consume all safe content
+    r"(\s+//\s.*|\s+#\s.*)$"        # trailing // or # comment
+)
+
+_TEMPLATE_COMMENT_RE = re.compile(r"\s*\{\{/\*.*?\*/\}\}\s*$")
+
+
+def _strip_trailing_comments(text: str) -> str:
+    lines = []
+    for line in text.split("\n"):
+        line = _TEMPLATE_COMMENT_RE.sub("", line)
+        m = _TRAILING_LINE_COMMENT_RE.match(line)
+        if m:
+            line = line[:m.start(2)]
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _find_mismatch(norm_frag: str, norm_file: str) -> dict:
+    for i in range(len(norm_frag), 0, -1):
+        if norm_frag[:i] in norm_file:
+            return {"longest_match_prefix": i, "first_mismatch": norm_frag[i:i + 60]}
+    return {"longest_match_prefix": 0, "first_mismatch": norm_frag[:60]}
+
+
+def _check_fragments(evidence: str, norm_file: str) -> dict:
+    cleaned = _strip_trailing_comments(evidence)
+    fragments = re.split(r"(?m)^\s*\.\.\.\s*$", cleaned)
+    fragments = [f for f in fragments if f.strip()]
+    if not fragments:
+        return {"match_result": True}
+    result: dict = {"evidence_length": len(evidence), "fragments": len(fragments)}
+    for frag in fragments:
+        norm_frag = _normalize_code(frag)
+        if norm_frag not in norm_file:
+            result.update(_find_mismatch(norm_frag, norm_file))
+            result["match_result"] = False
+            return result
+    result["match_result"] = True
+    return result
+
+
+def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     resolved = Path(wt_path) / path
-    if not resolved.exists():
-        return False
-    if evidence is None:
-        return True
+    detail: dict = {
+        "path": path,
+        "has_evidence": evidence is not None,
+        "file_exists": resolved.exists(),
+    }
+    if evidence is None or not resolved.exists():
+        detail["match_result"] = resolved.exists() and evidence is None
+        return detail
     try:
         file_content = resolved.read_text()
     except OSError:
-        return False
-    return _normalize_code(evidence) in _normalize_code(file_content)
+        detail["match_result"] = False
+        return detail
+    detail.update(_check_fragments(evidence, _normalize_code(file_content)))
+    return detail
+
+
+def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
+    return _match_evidence(path, evidence, wt_path)["match_result"]
 
 
 _VERIFY_FINDING_RE = re.compile(
@@ -536,6 +595,15 @@ def _remove_dropped_findings(text: str, dropped: list[str]) -> str:
     return "\n".join(kept)
 
 
+def _verification_detail(
+    finding: dict, evidence: str | None, wt_path: str,
+) -> dict:
+    detail = _match_evidence(finding["path"], evidence, wt_path)
+    detail["id"] = finding["id"]
+    detail["severity"] = finding["severity"]
+    return detail
+
+
 def verify_findings(review_file: str, wt_path: str) -> list[str]:
     path = Path(review_file)
     if not path.exists():
@@ -543,12 +611,26 @@ def verify_findings(review_file: str, wt_path: str) -> list[str]:
     text = path.read_text()
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
+    details: list[dict] = []
     for f in findings:
         if f["severity"] not in (SEVERITY_MUST, SEVERITY_SHOULD):
             continue
         evidence = _extract_evidence(f["body"])
-        if not _verify_finding(f["path"], evidence, wt_path):
+        detail = _verification_detail(f, evidence, wt_path)
+        details.append(detail)
+        if not detail["match_result"]:
             dropped.append(f["id"])
+            reason = "file not found" if not detail["file_exists"] else "evidence mismatch"
+            if detail.get("longest_match_prefix") is not None:
+                reason += f" at char {detail['longest_match_prefix']}"
+            _info(f"Dropping {f['id']} ({f['path']}): {reason}")
+    log_path = Path(review_file).parent / "verification.json"
+    log_path.write_text(json.dumps({
+        "findings_checked": len(details),
+        "findings_passed": len(details) - len(dropped),
+        "findings_dropped": len(dropped),
+        "details": details,
+    }, indent=2) + "\n")
     if not dropped:
         return []
     path.write_text(_remove_dropped_findings(text, dropped))

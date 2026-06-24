@@ -11,6 +11,7 @@ import json
 import re
 
 import review_github
+from review_github import PRData
 
 from review_format import CLASS_SKIPPED
 from review_findings import Finding
@@ -73,7 +74,9 @@ def _get_bot_login() -> str:
 
 # ── Bot comment collection ──────────────────────────────────────────────────
 
-def _collect_inline_comments(repo: str, pr: str, bot_user: str) -> list[dict]:
+def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:
+    if pr_data is not None:
+        return pr_data.bot_inline_comments(bot_user)
     all_comments = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/comments")
     return [
         {"path": c.get("path", ""), "body": c.get("body", "")}
@@ -82,26 +85,29 @@ def _collect_inline_comments(repo: str, pr: str, bot_user: str) -> list[dict]:
     ]
 
 
-def _collect_review_findings(repo: str, pr: str, bot_user: str) -> list[dict]:
-    all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
-    bot_bodies = [
-        r.get("body", "") for r in all_reviews
-        if r.get("user", {}).get("login") == bot_user
-    ]
+def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:
+    if pr_data is not None:
+        bodies = pr_data.bot_review_bodies(bot_user)
+    else:
+        all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+        bodies = [
+            r.get("body", "") for r in all_reviews
+            if r.get("user", {}).get("login") == bot_user
+        ]
     entries: list[dict] = []
-    for body in bot_bodies:
+    for body in bodies:
         if body:
             entries.extend(_extract_body_findings(body))
     return entries
 
 
-def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
-    bot_user = _get_bot_login()
+def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
+    bot_user = pr_data.viewer_login if pr_data is not None else _get_bot_login()
     if not bot_user:
         return []
 
-    entries = _collect_inline_comments(repo, pr, bot_user)
-    entries.extend(_collect_review_findings(repo, pr, bot_user))
+    entries = _collect_inline_comments(repo, pr, bot_user, pr_data)
+    entries.extend(_collect_review_findings(repo, pr, bot_user, pr_data))
     return entries
 
 
@@ -109,8 +115,9 @@ def _fetch_bot_comments(repo: str, pr: str) -> list[dict]:
 
 def dedup_against_posted(
     findings: list[Finding], repo: str, pr: str,
+    pr_data: PRData | None = None,
 ) -> tuple[list[Finding], list[Finding]]:
-    existing = _fetch_bot_comments(repo, pr)
+    existing = _fetch_bot_comments(repo, pr, pr_data)
     if not existing:
         return findings, []
 
@@ -140,7 +147,7 @@ def dedup_against_posted(
 
 # ── Bot review fetching ───────────────────────────────────────────────────
 
-def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
+def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
     """Return all visible, non-PENDING, non-DISMISSED reviews from the bot.
 
     Uses GraphQL to detect minimized (hidden/outdated) reviews and exclude
@@ -150,6 +157,9 @@ def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
     Note: fetches at most the last 100 reviews. PRs with more than 100 reviews
     may miss older bot reviews — cursor-based pagination is not implemented.
     """
+    if pr_data is not None:
+        return pr_data.bot_reviews_visible(pr_data.viewer_login)
+
     bot_user = _get_bot_login()
     if not bot_user:
         return []
@@ -176,7 +186,6 @@ def fetch_bot_reviews(repo: str, pr: str) -> list[dict]:
         query, {"owner": owner, "name": name, "pr": int(pr)},
     )
     if rc != 0:
-        # Fall back to REST (without minimized filtering)
         all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
         return [
             {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}

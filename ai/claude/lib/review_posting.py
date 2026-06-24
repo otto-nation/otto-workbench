@@ -21,7 +21,7 @@ import review_github
 
 from review_common import _err, _info, _warn
 from review_findings import Finding
-from review_github import LineResolutionError
+from review_github import LineResolutionError, PRData
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -65,6 +65,7 @@ def _post_chunked_review(
     repo: str, pr: str, commit_id: str,
     body_text: str, inline_comments: list[dict],
     chunk_size: int, submit: bool,
+    pr_data: PRData | None = None,
 ) -> list[dict]:
     """Post a review, chunking if the comment count exceeds chunk_size.
 
@@ -75,7 +76,7 @@ def _post_chunked_review(
     is_chunked = len(chunks) > 1
     results: list[dict] = []
 
-    existing_id = review_github._check_existing_pending(repo, pr)
+    existing_id = review_github._check_existing_pending(repo, pr, pr_data)
     if existing_id:
         _warn(f"Deleting existing PENDING review #{existing_id}")
         review_github._gh_api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
@@ -231,9 +232,10 @@ def _post_as_comment(
     findings: list[Finding], severity_filter: set[str],
     review_sha: str, head_sha: str,
     head_ref: str, base_ref: str,
+    pr_data: PRData | None = None,
 ):
     """Post review as a single PR comment when SHA has drifted."""
-    kept, deduped = review_dedup.dedup_against_posted(findings, args.repo, args.pr)
+    kept, deduped = review_dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
     if deduped:
         _info(f"Skipped {len(deduped)} findings duplicating existing comments")
     findings = kept
@@ -254,7 +256,7 @@ def _post_as_comment(
     diff_text = review_github._get_diff(args.repo, args.pr)
     review_format.resolve_permalinks(findings, args.repo, diff_text, head_ref, base_ref)
 
-    new_commits = review_github._count_new_commits(args.repo, args.pr, review_sha)
+    new_commits = review_github._count_new_commits(args.repo, args.pr, review_sha, pr_data)
     body = _format_comment_body(
         findings, severity_filter, review_sha, head_sha, new_commits,
     )
@@ -297,6 +299,7 @@ def _reclassify_and_retry(
     inline: list[Finding], body_findings: list[Finding],
     commit_id: str, chunk_size: int, severity_filter: set[str],
     submit: bool,
+    pr_data: PRData | None = None,
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -352,11 +355,12 @@ def _post_and_track(
     body_findings: list[Finding], skipped: list[Finding],
     commit_id: str, head_sha: str,
     chunk_size: int, severity_filter: set[str],
+    pr_data: PRData | None = None,
 ):
     submit = getattr(args, "submit", False)
 
     # Fetch bot reviews once for both dedup and orphan detection
-    bot_reviews = review_dedup.fetch_bot_reviews(args.repo, args.pr)
+    bot_reviews = review_dedup.fetch_bot_reviews(args.repo, args.pr, pr_data)
 
     # Check for already-posted duplicate
     existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
@@ -416,12 +420,12 @@ def _post_and_track(
         results = _post_chunked_review(
             args.repo, args.pr, commit_id,
             body_text, inline_comments,
-            chunk_size, submit,
+            chunk_size, submit, pr_data,
         )
     except LineResolutionError:
         inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
             args, inline, body_findings,
-            commit_id, chunk_size, severity_filter, submit,
+            commit_id, chunk_size, severity_filter, submit, pr_data,
         )
 
     if not results:

@@ -12,6 +12,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from review_github import PRData
+
 
 # ── State file I/O ─────────────────────────────────────────────────────────
 
@@ -162,8 +164,14 @@ mutation($threadId: ID!) {
 """
 
 
-def fetch_threads(owner: str, repo_name: str, pr_number: int) -> list[dict]:
+def fetch_threads(
+    owner: str, repo_name: str, pr_number: int,
+    pr_data: PRData | None = None,
+) -> list[dict]:
     """Fetch all review threads via GraphQL. Returns list of thread nodes."""
+    if pr_data is not None:
+        return pr_data.review_threads
+
     query = json.dumps({
         "query": GRAPHQL_THREADS,
         "variables": {"owner": owner, "repo": repo_name, "number": pr_number},
@@ -202,8 +210,14 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
-def fetch_reviewer_verdicts(repo: str, pr_number: int) -> list[dict]:
+def fetch_reviewer_verdicts(
+    repo: str, pr_number: int,
+    pr_data: PRData | None = None,
+) -> list[dict]:
     """Fetch latest review verdict per reviewer."""
+    if pr_data is not None:
+        return pr_data.reviewer_verdicts()
+
     code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100")
     if code != 0:
         return []
@@ -223,8 +237,14 @@ def fetch_reviewer_verdicts(repo: str, pr_number: int) -> list[dict]:
     return list(by_user.values())
 
 
-def fetch_issue_comments(repo: str, pr_number: int, my_login: str) -> list[dict]:
+def fetch_issue_comments(
+    repo: str, pr_number: int, my_login: str,
+    pr_data: PRData | None = None,
+) -> list[dict]:
     """Fetch issue-level comments (general discussion). Returns non-self ones."""
+    if pr_data is not None:
+        return pr_data.non_self_issue_comments(my_login)
+
     code, out = _gh_rest(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
         return []

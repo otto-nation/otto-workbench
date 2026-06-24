@@ -43,6 +43,7 @@ from review_format import (  # noqa: E402
     _build_permalink,
 )
 from review_github import (  # noqa: E402
+    PRData, fetch_pr_data,
     _fetch_pr_metadata, _get_diff,
     _gh_api, _check_existing_pending, _fetch_json_list,
     _is_rate_limited, _is_line_resolution_error,
@@ -145,11 +146,12 @@ def main():
     head_sha = sidecar.get("head_sha", "")
     head_ref = sidecar.get("head_ref", "")
     base_ref = sidecar.get("base_ref", "")
+    pr_data = None
     if not args.dry_run:
-        pr_meta = _fetch_pr_metadata(repo, args.pr)
-        head_sha = pr_meta["head_sha"]
-        head_ref = head_ref or pr_meta["head_ref"]
-        base_ref = base_ref or pr_meta["base_ref"]
+        pr_data = fetch_pr_data(repo, args.pr)
+        head_sha = pr_data.head_sha
+        head_ref = head_ref or pr_data.head_ref
+        base_ref = base_ref or pr_data.base_ref
     else:
         head_sha = head_sha or review_sha or "dry-run"
 
@@ -159,7 +161,7 @@ def main():
         _info("Posting as comment (inline positions may be inaccurate)")
         _post_as_comment(
             args, findings, severity_filter, review_sha, head_sha,
-            head_ref, base_ref,
+            head_ref, base_ref, pr_data,
         )
         return
 
@@ -171,7 +173,7 @@ def main():
 
     all_postable = inline + file_level
     if not args.dry_run and all_postable:
-        kept, deduped = dedup_against_posted(all_postable, repo, args.pr)
+        kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
         if deduped:
             _info(f"Skipped {len(deduped)} findings duplicating existing comments")
             skipped.extend(deduped)
@@ -204,7 +206,7 @@ def main():
     _post_and_track(
         args, inline_comments, body_text,
         inline, body_findings, skipped,
-        commit_id, head_sha, chunk_size, severity_filter,
+        commit_id, head_sha, chunk_size, severity_filter, pr_data,
     )
 
 

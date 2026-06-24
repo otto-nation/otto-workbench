@@ -134,6 +134,42 @@ def parse_review_comment(comment: dict) -> dict:
 
 # ── GitHub API fetching ─────────────────────────────────────────────────────
 
+_RETRO_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: MERGED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        mergedAt
+        author { login }
+        reviewThreads(first: 100) {
+          totalCount
+          nodes {
+            path
+            line
+            comments(first: 50) {
+              nodes {
+                author { login }
+                body
+              }
+            }
+          }
+        }
+        comments(first: 100) {
+          totalCount
+          nodes {
+            author { login }
+            body
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
 def _gh_api(endpoint: str, repo: str) -> list[dict]:
     try:
         result = subprocess.run(
@@ -157,6 +193,113 @@ def _read_last_retro(home: Path) -> int:
         return int(stamp.read_text().strip())
     except (ValueError, OSError):
         return 0
+
+
+def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
+    """Fetch merged PRs with review data in a single GraphQL query.
+
+    Returns list of dicts with: number, title, author, merged_at, comments.
+    Each comment has: author, body, path (optional), line (optional).
+    """
+    since_date = (
+        datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if since_ts > 0 else "2020-01-01T00:00:00Z"
+    )
+    owner, name = repo.split("/", 1)
+    cmd = [
+        "gh", "api", "graphql",
+        "-f", f"query={_RETRO_QUERY}",
+        "-F", f"owner={owner}",
+        "-F", f"name={name}",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            _warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
+            return _fetch_repo_review_data_rest(repo, since_ts)
+        data = json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
+        _warn(f"GraphQL error for {repo}: {e}")
+        return _fetch_repo_review_data_rest(repo, since_ts)
+
+    pr_nodes = (
+        data.get("data", {})
+        .get("repository", {})
+        .get("pullRequests", {})
+        .get("nodes", [])
+    )
+
+    results = []
+    for pr_node in pr_nodes:
+        merged_at = pr_node.get("mergedAt", "")
+        if not merged_at or merged_at < since_date:
+            continue
+
+        threads_data = pr_node.get("reviewThreads", {})
+        total_threads = threads_data.get("totalCount", 0)
+        thread_nodes = threads_data.get("nodes", [])
+        if total_threads > len(thread_nodes):
+            _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched")
+
+        comments_data = pr_node.get("comments", {})
+        total_comments = comments_data.get("totalCount", 0)
+        comment_nodes = comments_data.get("nodes", [])
+        if total_comments > len(comment_nodes):
+            _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched")
+
+        all_comments = []
+        for thread in thread_nodes:
+            path = thread.get("path")
+            line = thread.get("line")
+            for c in thread.get("comments", {}).get("nodes", []):
+                body = (c.get("body") or "")[:COMMENT_BODY_MAX]
+                if not is_noise(body):
+                    all_comments.append({
+                        "author": (c.get("author") or {}).get("login", "unknown"),
+                        "body": body,
+                        "path": path,
+                        "line": line,
+                        "url": "",
+                    })
+
+        for c in comment_nodes:
+            body = (c.get("body") or "")[:COMMENT_BODY_MAX]
+            if not is_noise(body):
+                all_comments.append({
+                    "author": (c.get("author") or {}).get("login", "unknown"),
+                    "body": body,
+                    "path": None,
+                    "line": None,
+                    "url": "",
+                })
+
+        if all_comments:
+            results.append({
+                "number": pr_node.get("number"),
+                "title": pr_node.get("title", ""),
+                "user": {"login": (pr_node.get("author") or {}).get("login", "")},
+                "merged_at": merged_at,
+                "comments": all_comments,
+            })
+
+    return results
+
+
+def _fetch_repo_review_data_rest(repo: str, since_ts: int) -> list[dict]:
+    """REST fallback for fetch_repo_review_data."""
+    merged_prs = fetch_merged_prs(repo, since_ts)
+    results = []
+    for pr in merged_prs:
+        comments = fetch_pr_comments(repo, pr["number"])
+        if comments:
+            results.append({
+                "number": pr["number"],
+                "title": pr.get("title", ""),
+                "user": pr.get("user", {}),
+                "merged_at": pr.get("merged_at", ""),
+                "comments": comments,
+            })
+    return results
 
 
 def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
@@ -399,17 +542,26 @@ def _scan_repo(
     git_user: str, rule_match_counts: dict[str, dict],
 ) -> dict:
     _info(f"Fetching PRs for {repo['github']}...")
-    prs = fetch_merged_prs(repo["github"], last_retro_ts)
-    _info(f"  Found {len(prs)} merged PR(s)")
+    pr_data = fetch_repo_review_data(repo["github"], last_retro_ts)
+    _info(f"  Found {len(pr_data)} merged PR(s) with comments")
 
     repo_prs: list[dict] = []
     unmatched = 0
-    for pr in prs:
-        result = _process_pr(pr, repo["github"], git_user, rules, rule_match_counts)
-        if not result:
-            continue
-        unmatched += result.pop("unmatched")
-        repo_prs.append(result)
+    for pr in pr_data:
+        pr_author = pr.get("user", {}).get("login", "")
+        comments = pr["comments"]
+        um = 0
+        for comment in comments:
+            if _annotate_comment(comment, pr_author, git_user, rules, rule_match_counts):
+                um += 1
+        unmatched += um
+        repo_prs.append({
+            "number": pr["number"],
+            "title": pr.get("title", ""),
+            "author": pr_author,
+            "merged_at": pr.get("merged_at", "")[:10],
+            "comments": comments,
+        })
     return {"prs": repo_prs, "unmatched": unmatched}
 
 

@@ -61,31 +61,41 @@ SHARED_LIB_MODULES = [
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
+def _names_from_import_from(node: ast.ImportFrom) -> list[str]:
+    """Extract non-wildcard names from an ImportFrom node."""
+    return [
+        alias.asname or alias.name
+        for alias in node.names
+        if (alias.asname or alias.name) != "*"
+    ]
+
+
+def _names_from_assign_targets(targets: list[ast.expr]) -> list[str]:
+    """Extract Name ids from assignment targets, including tuple unpacking."""
+    result: list[str] = []
+    for target in targets:
+        if isinstance(target, ast.Name):
+            result.append(target.id)
+        elif isinstance(target, ast.Tuple):
+            result.extend(elt.id for elt in target.elts if isinstance(elt, ast.Name))
+    return result
+
+
 def _collect_explicit_names(tree: ast.Module) -> set[str]:
     """Collect names explicitly available in module scope."""
     names: set[str] = set()
 
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                name = alias.asname or alias.name
-                if name != "*":
-                    names.add(name)
+            names.update(_names_from_import_from(node))
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
+            names.update(alias.asname or alias.name for alias in node.names)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             names.add(node.name)
         elif isinstance(node, ast.ClassDef):
             names.add(node.name)
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    names.add(target.id)
-                elif isinstance(target, ast.Tuple):
-                    for elt in target.elts:
-                        if isinstance(elt, ast.Name):
-                            names.add(elt.id)
+            names.update(_names_from_assign_targets(node.targets))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
 
@@ -96,12 +106,15 @@ def _collect_bare_underscore_refs(tree: ast.Module) -> set[str]:
     """Collect _-prefixed bare Name references inside function bodies."""
     refs: set[str] = set()
 
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for child in ast.walk(node):
-            if isinstance(child, ast.Name) and child.id.startswith("_"):
-                refs.add(child.id)
+    func_nodes = [
+        node for node in ast.iter_child_nodes(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for node in func_nodes:
+        refs.update(
+            child.id for child in ast.walk(node)
+            if isinstance(child, ast.Name) and child.id.startswith("_")
+        )
 
     return refs - BUILTINS
 
@@ -123,10 +136,9 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
     def _walk_shallow(node: ast.AST):
         """Walk AST children but don't descend into nested functions."""
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if child is not func_node:
-                    local_names.add(child.name)
-                    continue
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child is not func_node:
+                local_names.add(child.name)
+                continue
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
                 local_names.add(child.id)
             elif isinstance(child, ast.For) and isinstance(child.target, ast.Name):
@@ -140,11 +152,26 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
 def _walk_excluding_nested_functions(node: ast.AST):
     """Yield all descendant nodes, stopping at nested function boundaries."""
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if child is not node:
-                continue
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child is not node:
+            continue
         yield child
         yield from _walk_excluding_nested_functions(child)
+
+
+def _gather_func_nodes(tree: ast.Module) -> list[ast.AST]:
+    """Collect top-level functions and class method nodes from a module."""
+    func_nodes = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_nodes.append(node)
+            continue
+        if not isinstance(node, ast.ClassDef):
+            continue
+        func_nodes.extend(
+            child for child in ast.iter_child_nodes(node)
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+    return func_nodes
 
 
 def _collect_bare_refs(tree: ast.Module) -> set[str]:
@@ -157,21 +184,13 @@ def _collect_bare_refs(tree: ast.Module) -> set[str]:
     """
     refs: set[str] = set()
 
-    func_nodes = []
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            func_nodes.append(node)
-        elif isinstance(node, ast.ClassDef):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    func_nodes.append(child)
-
-    for func in func_nodes:
+    for func in _gather_func_nodes(tree):
         locals_ = _collect_function_locals(func)
-        for child in _walk_excluding_nested_functions(func):
-            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
-                if child.id not in locals_:
-                    refs.add(child.id)
+        refs.update(
+            child.id for child in _walk_excluding_nested_functions(func)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+            and child.id not in locals_
+        )
 
     return refs - BUILTINS
 
@@ -186,9 +205,10 @@ def _collect_definitions(mod_path: Path) -> set[str]:
         elif isinstance(node, ast.ClassDef):
             defs.add(node.name)
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id.isupper():
-                    defs.add(target.id)
+            defs.update(
+                t.id for t in node.targets
+                if isinstance(t, ast.Name) and t.id.isupper()
+            )
     return defs
 
 
@@ -202,9 +222,7 @@ def _collect_all_names(mod_path: Path) -> set[str]:
         elif isinstance(node, ast.ClassDef):
             names.add(node.name)
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    names.add(target.id)
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
     return names
 
 
@@ -217,18 +235,15 @@ def _collect_cross_module_from_imports(
     ``from`` — classes, exceptions, and constants are excluded.
     """
     results: list[tuple[str, str]] = []
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.module not in target_modules:
-            continue
-        for alias in node.names:
-            name = alias.name
-            if name == "*":
-                continue
-            if name[0].isupper():
-                continue
-            results.append((node.module, name))
+    from_imports = [
+        node for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.ImportFrom) and node.module in target_modules
+    ]
+    for node in from_imports:
+        results.extend(
+            (node.module, alias.name) for alias in node.names
+            if alias.name != "*" and not alias.name[0].isupper()
+        )
     return results
 
 
@@ -405,28 +420,26 @@ def _collect_public_names(mod_path: Path) -> set[str]:
     tree = ast.parse(mod_path.read_text(), filename=str(mod_path))
     names: set[str] = set()
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if not node.name.startswith("_"):
-                names.add(node.name)
-        elif isinstance(node, ast.ClassDef):
-            if not node.name.startswith("_"):
-                names.add(node.name)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+            names.add(node.name)
+        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+            names.add(node.name)
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and not target.id.startswith("_"):
-                    names.add(target.id)
+            names.update(
+                t.id for t in node.targets
+                if isinstance(t, ast.Name) and not t.id.startswith("_")
+            )
     return names
 
 
 def _collect_wildcard_sources(tree: ast.Module) -> set[str]:
     """Collect module names from ``from X import *`` statements."""
-    sources: set[str] = set()
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            for alias in node.names:
-                if alias.name == "*":
-                    sources.add(node.module)
-    return sources
+    return {
+        node.module
+        for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+        and any(alias.name == "*" for alias in node.names)
+    }
 
 
 def _find_missing_cross_module_imports(

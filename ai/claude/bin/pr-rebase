@@ -31,6 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import pr_context
 import pr_state
 
+_TARGET_REF = "origin/main"
+
+_GIT_REBASE_MERGE_DIR = "rebase-merge"
+_GIT_REBASE_APPLY_DIR = "rebase-apply"
+_GIT_REBASE_TODO = "git-rebase-todo"
+_GIT_REBASE_NEXT = "next"
+_GIT_REBASE_LAST = "last"
+
 
 # ── Git helpers ─────────────────────────────────────────────────────────────
 
@@ -47,7 +55,7 @@ def _git_dir(cwd: str) -> Path:
 def _detect_rebase_in_progress(cwd: str) -> bool:
     """Check if a rebase is currently in progress."""
     git_path = _git_dir(cwd)
-    return (git_path / "rebase-merge").is_dir() or (git_path / "rebase-apply").is_dir()
+    return (git_path / _GIT_REBASE_MERGE_DIR).is_dir() or (git_path / _GIT_REBASE_APPLY_DIR).is_dir()
 
 
 def _detect_conflicts(cwd: str) -> list[str]:
@@ -81,15 +89,15 @@ _PICK_COMMANDS = {
 def _remaining_rebase_commits(cwd: str) -> int:
     """Count remaining commits in the rebase todo."""
     git_path = _git_dir(cwd)
-    todo = git_path / "rebase-merge" / "git-rebase-todo"
+    todo = git_path / _GIT_REBASE_MERGE_DIR / _GIT_REBASE_TODO
     if todo.exists():
         return sum(
             1 for line in todo.read_text().splitlines()
             if line.strip() and not line.startswith("#")
             and line.split()[0] in _PICK_COMMANDS
         )
-    next_file = git_path / "rebase-apply" / "next"
-    last_file = git_path / "rebase-apply" / "last"
+    next_file = git_path / _GIT_REBASE_APPLY_DIR / _GIT_REBASE_NEXT
+    last_file = git_path / _GIT_REBASE_APPLY_DIR / _GIT_REBASE_LAST
     if next_file.exists() and last_file.exists():
         try:
             return int(last_file.read_text().strip()) - int(next_file.read_text().strip())
@@ -113,9 +121,9 @@ def _conflict_report(cwd: str, status: str = "conflicts") -> dict:
 
 
 def _commits_ahead(cwd: str) -> int:
-    """Count commits ahead of origin/main."""
+    """Count commits ahead of the target ref."""
     out = subprocess.run(
-        ["git", "rev-list", "--count", "origin/main..HEAD"],
+        ["git", "rev-list", "--count", f"{_TARGET_REF}..HEAD"],
         capture_output=True, text=True, cwd=cwd,
     ).stdout.strip()
     return int(out) if out.isdigit() else 0
@@ -141,13 +149,13 @@ def _is_binary(path: Path) -> bool:
 def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -> str:
     """Build a prompt for claude -p to resolve a merge conflict."""
     return (
-        "You are resolving a merge conflict during a git rebase onto origin/main.\n"
+        f"You are resolving a merge conflict during a git rebase onto {_TARGET_REF}.\n"
         "\n"
         f"File: {filepath}\n"
         f"Commit being applied: {sha} — {subject}\n"
         "\n"
         "In a rebase, conflict markers mean:\n"
-        "- <<<<<<< HEAD = the base side (origin/main or previously rebased commits)\n"
+        f"- <<<<<<< HEAD = the base side ({_TARGET_REF} or previously rebased commits)\n"
         "- ======= separates the two sides\n"
         f"- >>>>>>> {sha} = the branch's changes being replayed\n"
         "\n"
@@ -407,7 +415,7 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 
     state = _load_or_init(ctx)
     target_base = state.rebase.target_base or subprocess.run(
-        ["git", "rev-parse", "origin/main"],
+        ["git", "rev-parse", _TARGET_REF],
         capture_output=True, text=True, cwd=cwd,
     ).stdout.strip()
     commits = state.rebase.commits_replayed or _commits_ahead(cwd)
@@ -455,7 +463,7 @@ def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
 
 def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
-    """Start a fresh rebase onto origin/main."""
+    """Start a fresh rebase onto the target ref."""
     if ctx.branch in ("main", "master"):
         print("Cannot rebase — currently on protected branch.", file=sys.stderr)
         return 1
@@ -471,10 +479,10 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     print("Fetching origin...", file=sys.stderr)
     fetch = subprocess.run(["git", "fetch", "origin"], cwd=cwd)
     if fetch.returncode != 0:
-        print("Warning: fetch failed — rebasing against potentially stale origin/main.", file=sys.stderr)
+        print(f"Warning: fetch failed — rebasing against potentially stale {_TARGET_REF}.", file=sys.stderr)
 
-    print("Rebasing onto origin/main...", file=sys.stderr)
-    r = subprocess.run(["git", "rebase", "origin/main"], cwd=cwd)
+    print(f"Rebasing onto {_TARGET_REF}...", file=sys.stderr)
+    r = subprocess.run(["git", "rebase", _TARGET_REF], cwd=cwd)
 
     if r.returncode == 0:
         return _rebase_success(cwd, ctx, fix)
@@ -504,7 +512,7 @@ def _rebase_success(
         print(f"{label} — force-pushing...", file=sys.stderr)
         r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
         pr_state.update_rebase(state, pr_state.RebaseSummary(
-            target_base="origin/main",
+            target_base=_TARGET_REF,
             commits_replayed=commits,
             conflicts_resolved=conflicts_resolved,
             files_resolved=files_resolved,
@@ -528,7 +536,7 @@ def _rebase_success(
         return r.returncode
 
     pr_state.update_rebase(state, pr_state.RebaseSummary(
-        target_base="origin/main",
+        target_base=_TARGET_REF,
         commits_replayed=commits,
         conflicts_resolved=conflicts_resolved,
         files_resolved=files_resolved,

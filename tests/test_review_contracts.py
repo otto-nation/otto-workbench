@@ -34,6 +34,18 @@ import review_findings  # noqa: E402
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _extract_template_assign(node: ast.Assign) -> tuple[str, str] | None:
+    """If node is a TEMPLATE_* = "..." assignment, return (name, value)."""
+    for target in node.targets:
+        if not isinstance(target, ast.Name):
+            continue
+        if not target.id.startswith("TEMPLATE_"):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return (target.id, node.value.value)
+    return None
+
+
 def _collect_template_constants() -> dict[str, str]:
     """Return {constant_name: value} for all TEMPLATE_* constants in review_common."""
     tree = ast.parse((LIB_DIR / "review_common.py").read_text())
@@ -41,10 +53,9 @@ def _collect_template_constants() -> dict[str, str]:
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, ast.Assign):
             continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id.startswith("TEMPLATE_"):
-                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                    constants[target.id] = node.value.value
+        pair = _extract_template_assign(node)
+        if pair:
+            constants[pair[0]] = pair[1]
     return constants
 
 
@@ -295,44 +306,72 @@ def _collect_string_literals_in_function(func_source: str) -> set[str]:
     return keys
 
 
+def _extract_name_pairs(dict_node: ast.Dict) -> dict[str, str]:
+    """Extract {key.id: val.id} from an ast.Dict where both key and val are ast.Name."""
+    pairs: dict[str, str] = {}
+    for key, val in zip(dict_node.keys, dict_node.values):
+        if isinstance(key, ast.Name) and isinstance(val, ast.Name):
+            pairs[key.id] = val.id
+    return pairs
+
+
+def _parse_prompt_handlers_dict(tree: ast.Module) -> dict[str, str]:
+    """Extract {constant_name: func_name} from the _PROMPT_HANDLERS assignment."""
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(t, ast.Name) and t.id == "_PROMPT_HANDLERS"
+            for t in node.targets
+        ):
+            continue
+        if isinstance(node.value, ast.Dict):
+            return _extract_name_pairs(node.value)
+    return {}
+
+
+def _resolve_handler_map(handler_map: dict[str, str]) -> dict[str, str]:
+    """Resolve constant names to {template_filename: func_name}."""
+    constants = _collect_template_constants()
+    resolved: dict[str, str] = {}
+    for const_name, func_name in handler_map.items():
+        template_value = constants.get(const_name)
+        if template_value:
+            resolved[template_value] = func_name
+    return resolved
+
+
+def _extract_handler_sources(
+    tree: ast.Module,
+    source_lines: list[str],
+    resolved_map: dict[str, str],
+) -> dict[str, str]:
+    """Extract source code of handler functions, keyed by template filename."""
+    func_to_templates: dict[str, list[str]] = {}
+    for tpl, fn in resolved_map.items():
+        func_to_templates.setdefault(fn, []).append(tpl)
+
+    handler_sources: dict[str, str] = {}
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in func_to_templates:
+            continue
+        func_src = "\n".join(source_lines[node.lineno - 1 : node.end_lineno])
+        for tpl in func_to_templates[node.name]:
+            handler_sources[tpl] = func_src
+    return handler_sources
+
+
 def _get_prompt_handler_sources() -> dict[str, str]:
     """Map template name -> source code of its _prompt_* handler function."""
     source = (LIB_DIR / "review_prompt.py").read_text()
     tree = ast.parse(source)
     source_lines = source.split("\n")
 
-    # Find _PROMPT_HANDLERS dict to map template constants to function names
-    handler_map: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_PROMPT_HANDLERS":
-                    if isinstance(node.value, ast.Dict):
-                        for key, val in zip(node.value.keys, node.value.values):
-                            if isinstance(key, ast.Name) and isinstance(val, ast.Name):
-                                handler_map[key.id] = val.id
-
-    # Resolve constant names to their string values
-    constants = _collect_template_constants()
-    resolved_map: dict[str, str] = {}
-    for const_name, func_name in handler_map.items():
-        template_value = constants.get(const_name)
-        if template_value:
-            resolved_map[template_value] = func_name
-
-    # Extract source code of each handler function
-    handler_sources: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name in resolved_map.values():
-                start = node.lineno - 1
-                end = node.end_lineno
-                func_src = "\n".join(source_lines[start:end])
-                # Find which template this function handles
-                for tpl, fn in resolved_map.items():
-                    if fn == node.name:
-                        handler_sources[tpl] = func_src
-    return handler_sources
+    handler_map = _parse_prompt_handlers_dict(tree)
+    resolved_map = _resolve_handler_map(handler_map)
+    return _extract_handler_sources(tree, source_lines, resolved_map)
 
 
 def _get_common_kwargs_keys() -> set[str]:
@@ -341,13 +380,13 @@ def _get_common_kwargs_keys() -> set[str]:
     tree = ast.parse(source)
 
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == "build_prompt":
-                source_lines = source.split("\n")
-                start = node.lineno - 1
-                end = node.end_lineno
-                func_src = "\n".join(source_lines[start:end])
-                return _collect_string_literals_in_function(func_src)
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != "build_prompt":
+            continue
+        source_lines = source.split("\n")
+        func_src = "\n".join(source_lines[node.lineno - 1 : node.end_lineno])
+        return _collect_string_literals_in_function(func_src)
     return set()
 
 

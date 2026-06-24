@@ -11,18 +11,25 @@ _PY_TRIPLE_QUOTE = re.compile(r'"""|\'\'\'')
 
 
 class _State:
-    __slots__ = ('func_name', 'stack', 'in_multiline_string', 'paren_depth')
+    __slots__ = (
+        'func_name', 'stack', 'in_multiline_string',
+        'multiline_quote', 'paren_depth',
+    )
 
     def __init__(self):
         self.func_name = '(module-level)'
         self.stack: list[tuple[int, str]] = []
         self.in_multiline_string = False
+        self.multiline_quote: str | None = None
         self.paren_depth = 0
 
 
-def _has_odd_triple_quotes(line: str) -> bool:
-    cleaned = re.sub(r"'[^']*'", '', line)
-    return len(_PY_TRIPLE_QUOTE.findall(cleaned)) % 2 == 1
+def _toggling_triple_quote(line: str) -> str | None:
+    """Return the triple-quote style that appears an odd number of times, or None."""
+    for quote in ('"""', "'''"):
+        if line.count(quote) % 2 == 1:
+            return quote
+    return None
 
 
 def _paren_delta(line: str) -> int:
@@ -34,15 +41,19 @@ def _paren_delta(line: str) -> int:
 
 def _skip_line(state: _State, line: str, trimmed: str) -> bool:
     if state.in_multiline_string:
-        if _has_odd_triple_quotes(line):
+        q = state.multiline_quote
+        if q and q in line and line.count(q) % 2 == 1:
             state.in_multiline_string = False
+            state.multiline_quote = None
         return True
 
     if not trimmed or trimmed.startswith('#'):
         return True
 
-    if _has_odd_triple_quotes(line):
+    quote = _toggling_triple_quote(line)
+    if quote:
         state.in_multiline_string = True
+        state.multiline_quote = quote
         return True
 
     delta = _paren_delta(trimmed)
@@ -96,7 +107,7 @@ def _check_line(
 
 class PythonChecker:
     EXTENSIONS: set[str] = {'.py'}
-    SHEBANG_RE: re.Pattern[bytes] | None = re.compile(rb'^#!.*/(?:env\s+)?python[23]?(?:\s|$)')
+    SHEBANG_RE: re.Pattern[bytes] | None = None
     DEFAULT_MAX_DEPTH: int = 2
 
     def check_nesting(self, lines: list[str], max_depth: int) -> list[Violation]:

@@ -71,6 +71,40 @@ def resolve(
     )
 
 
+def _current_branch_quiet(cwd: str | None = None) -> str | None:
+    """Return current branch name, or None on failure (e.g. detached HEAD)."""
+    r = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode != 0 or not r.stdout.strip() or r.stdout.strip() == "HEAD":
+        return None
+    return r.stdout.strip()
+
+
+def _find_worktree_by_branch(
+    branch_hint: str, cwd: str,
+) -> Path | None:
+    """Find a worktree for branch_hint, trying exact then fuzzy resolution."""
+    wt = find_worktree_for_branch(branch_hint, cwd)
+    if wt:
+        return wt
+    resolved = _resolve_branch(branch_hint, cwd)
+    if resolved != branch_hint:
+        return find_worktree_for_branch(resolved, cwd)
+    return None
+
+
+def _redirect_to_branch_worktree(
+    branch: str, effective_cwd: str,
+) -> Path | None:
+    """If CWD's branch differs from the target, find the target's worktree."""
+    current = _current_branch_quiet(effective_cwd)
+    if current is None or current == branch:
+        return None
+    return _find_worktree_by_branch(branch, effective_cwd)
+
+
 def _resolve_worktree(
     cwd: str | None,
     *,
@@ -79,21 +113,45 @@ def _resolve_worktree(
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree root, handling bare repos transparently."""
     toplevel = _git_toplevel(cwd)
-    if toplevel is not None:
-        return toplevel, cwd
+    if toplevel is None:
+        return _resolve_non_worktree(cwd, pr=pr, branch=branch)
 
-    if is_bare_repo(cwd):
-        wt = resolve_bare_repo_worktree(cwd, branch)
+    if branch:
+        wt = _redirect_to_branch_worktree(branch, cwd or str(toplevel))
         if wt:
             return wt, str(wt)
-        if not pr and not branch:
-            print("Bare repository — pass --branch or --repo-dir",
-                  file=sys.stderr)
-            sys.exit(1)
-        return None, cwd
+    return toplevel, cwd
+
+
+def _resolve_non_worktree(
+    cwd: str | None,
+    *,
+    pr: str | None,
+    branch: str | None,
+) -> tuple[Path | None, str | None]:
+    """Handle bare repos and non-git directories."""
+    if is_bare_repo(cwd):
+        return _resolve_bare(cwd, pr=pr, branch=branch)
 
     if not pr and not branch:
         print("Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+    return None, cwd
+
+
+def _resolve_bare(
+    cwd: str | None,
+    *,
+    pr: str | None,
+    branch: str | None,
+) -> tuple[Path | None, str | None]:
+    """Resolve worktree from a bare repo."""
+    wt = resolve_bare_repo_worktree(cwd, branch)
+    if wt:
+        return wt, str(wt)
+    if not pr and not branch:
+        print("Bare repository — pass --branch or --repo-dir",
+              file=sys.stderr)
         sys.exit(1)
     return None, cwd
 

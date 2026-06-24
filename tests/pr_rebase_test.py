@@ -111,11 +111,11 @@ def test_remaining_rebase_commits_from_apply():
 # ── _conflict_report ───────────────────────────────────────────────────────
 
 
-def test_conflict_report_structure():
-    with mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["a.py"]):
-        with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc1234", "fix: thing")):
-            with mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2):
-                report = pr_rebase_cli._conflict_report("/fake")
+@mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2)
+@mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc1234", "fix: thing"))
+@mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["a.py"])
+def test_conflict_report_structure(_m1, _m2, _m3):
+    report = pr_rebase_cli._conflict_report("/fake")
     assert report["status"] == "conflicts"
     assert report["files"] == ["a.py"]
     assert report["rebase_head"] == "abc1234"
@@ -123,11 +123,11 @@ def test_conflict_report_structure():
     assert report["remaining_commits"] == 2
 
 
-def test_conflict_report_custom_status():
-    with mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["b.py"]):
-        with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("def5678", "feat: other")):
-            with mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0):
-                report = pr_rebase_cli._conflict_report("/fake", status="conflicts_resuming")
+@mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0)
+@mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("def5678", "feat: other"))
+@mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["b.py"])
+def test_conflict_report_custom_status(_m1, _m2, _m3):
+    report = pr_rebase_cli._conflict_report("/fake", status="conflicts_resuming")
     assert report["status"] == "conflicts_resuming"
 
 

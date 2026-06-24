@@ -588,26 +588,41 @@ def _retry_failed_groups(
         if failure:
             still_failed.append(failure)
 
-    # If all retries succeeded, run previously-skipped groups too
     if not still_failed and skipped:
-        _info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
-        for name, reason in skipped:
-            if name not in group_by_name:
-                still_failed.append((name, reason))
-                continue
-            idx, grp = group_by_name[name]
-            _info(f"  Running skipped group: {name}")
-            _, _, failure = _review_group(
-                idx, grp, job, group_count, holistic_content,
-                pipeline_state=pipeline_state,
-                max_turns=DEFAULT_MAX_TURNS_GROUP + _omitted_turns(job),
-            )
-            if failure:
-                still_failed.append(failure)
+        still_failed.extend(_run_skipped_groups(
+            skipped, group_by_name, job, group_count,
+            holistic_content, pipeline_state,
+        ))
     elif skipped:
         still_failed.extend(skipped)
 
     return non_retryable + still_failed
+
+
+def _run_skipped_groups(
+    skipped: list[tuple],
+    group_by_name: dict,
+    job: ReviewJob,
+    group_count: int,
+    holistic_content: str,
+    pipeline_state: dict,
+) -> list[tuple]:
+    _info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
+    failures: list[tuple] = []
+    for name, reason in skipped:
+        if name not in group_by_name:
+            failures.append((name, reason))
+            continue
+        idx, grp = group_by_name[name]
+        _info(f"  Running skipped group: {name}")
+        _, _, failure = _review_group(
+            idx, grp, job, group_count, holistic_content,
+            pipeline_state=pipeline_state,
+            max_turns=DEFAULT_MAX_TURNS_GROUP + _omitted_turns(job),
+        )
+        if failure:
+            failures.append(failure)
+    return failures
 
 
 def _phase_group_reviews(

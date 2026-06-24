@@ -79,6 +79,13 @@ def _format_reviews(raw_json: str) -> str:
     return "\n".join(lines)
 
 
+def _truncate_body(comment: dict) -> str:
+    body = (comment.get("body") or "").replace("\n", " ").strip()
+    if len(body) > MAX_REVIEW_BODY_LEN:
+        body = body[:MAX_REVIEW_BODY_LEN] + "..."
+    return body
+
+
 def _format_review_comments(raw_json: str) -> str:
     try:
         comments = json.loads(raw_json)
@@ -102,16 +109,12 @@ def _format_review_comments(raw_json: str) -> str:
         path = root.get("path", "")
         line_num = root.get("line", "")
         user = root.get("user", "?")
-        body = (root.get("body") or "").replace("\n", " ").strip()
-        if len(body) > MAX_REVIEW_BODY_LEN:
-            body = body[:MAX_REVIEW_BODY_LEN] + "..."
+        body = _truncate_body(root)
         loc = f"`{path}:{line_num}`" if path else "(general)"
         lines.append(f"- {loc} @{user}: {body}")
         for reply in threads.get(cid, []):
             ruser = reply.get("user", "?")
-            rbody = (reply.get("body") or "").replace("\n", " ").strip()
-            if len(rbody) > MAX_REVIEW_BODY_LEN:
-                rbody = rbody[:MAX_REVIEW_BODY_LEN] + "..."
+            rbody = _truncate_body(reply)
             lines.append(f"  - @{ruser}: {rbody}")
 
     return "\n".join(lines)
@@ -157,6 +160,20 @@ _THREAD_STATE_ORDER = [
 ]
 
 
+def _format_thread_item(t: dict, state: str) -> list[str]:
+    fid = t.get("finding_id", "")
+    loc = t.get("path", "")
+    if t.get("line"):
+        loc += f":{t['line']}"
+    label = f"[{fid}] " if fid else ""
+    lines = [f"- {label}`{loc}`" if loc else f"- {label}(general comment)"]
+    if state in (THREAD_CONTESTED, THREAD_REPLIED):
+        for r in t.get("replies", []):
+            body = r.get("body", "").replace("\n", " ")[:200]
+            lines.append(f"  > @{r.get('author', '?')}: {body}")
+    return lines
+
+
 def _build_reply_threads_section(reply_threads: dict) -> str:
     threads = reply_threads.get("threads", [])
     if not threads:
@@ -180,16 +197,7 @@ def _build_reply_threads_section(reply_threads: dict) -> str:
         parts.append(f"### {heading}")
         parts.append("")
         for t in items:
-            fid = t.get("finding_id", "")
-            loc = t.get("path", "")
-            if t.get("line"):
-                loc += f":{t['line']}"
-            label = f"[{fid}] " if fid else ""
-            parts.append(f"- {label}`{loc}`" if loc else f"- {label}(general comment)")
-            if state in (THREAD_CONTESTED, THREAD_REPLIED):
-                for r in t.get("replies", []):
-                    body = r.get("body", "").replace("\n", " ")[:200]
-                    parts.append(f"  > @{r.get('author', '?')}: {body}")
+            parts.extend(_format_thread_item(t, state))
         parts.append("")
 
     return "\n".join(parts)

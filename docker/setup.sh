@@ -16,6 +16,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 . "$WORKBENCH_DIR/lib/ui.sh"
+# shellcheck source=docker/steps.sh
+. "$SCRIPT_DIR/steps.sh"
 
 # ─── Runtime aliases symlink ──────────────────────────────────────────────────
 
@@ -76,11 +78,7 @@ echo -e "${BOLD}${BLUE}Docker setup${NC}\n"
 
 if [[ "$OSTYPE" != "darwin"* ]]; then
   local_sock=""
-  if [[ -S /run/docker.sock ]]; then
-    local_sock="/run/docker.sock"
-  elif [[ -S /var/run/docker.sock ]]; then
-    local_sock="/var/run/docker.sock"
-  fi
+  _detect_native_docker_sock local_sock
 
   if [[ -n "$local_sock" ]]; then
     info "Native Docker socket: $local_sock"
@@ -93,7 +91,7 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
 
   echo
   info "Testcontainers"
-  install_symlink "$SCRIPT_DIR/testcontainers.properties" ~/.testcontainers.properties
+  install_symlink "$TESTCONTAINERS_SRC" ~/.testcontainers.properties
 
   state_set "docker.runtime" "native"
 

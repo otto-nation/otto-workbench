@@ -81,15 +81,23 @@ step_docker_testcontainers() {
   install_symlink "$TESTCONTAINERS_SRC" "$TESTCONTAINERS_FILE"
 }
 
+# _detect_native_docker_sock VAR — sets VAR to the native Docker socket path, or empty string.
+# Checks /run/docker.sock first (systemd-managed), then /var/run/docker.sock (legacy path).
+_detect_native_docker_sock() {
+  local -n __sock=$1
+  __sock=""
+  if [[ -S /run/docker.sock ]]; then
+    __sock="/run/docker.sock"
+  elif [[ -S /var/run/docker.sock ]]; then
+    __sock="/var/run/docker.sock"
+  fi
+}
+
 # _sync_docker_linux — detects native Docker socket and symlinks for path consistency.
 _sync_docker_linux() {
   sync_header "docker socket → $DOCKER_RUN_DIR/"
-  local native_sock=""
-  if [[ -S /run/docker.sock ]]; then
-    native_sock="/run/docker.sock"
-  elif [[ -S /var/run/docker.sock ]]; then
-    native_sock="/var/run/docker.sock"
-  fi
+  local native_sock
+  _detect_native_docker_sock native_sock
 
   if [[ -n "$native_sock" ]]; then
     mkdir -p "$DOCKER_RUN_DIR"

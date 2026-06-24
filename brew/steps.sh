@@ -12,8 +12,7 @@ fi
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
 # step_brew_install — prompts to install Homebrew if not already present.
-# macOS: runs the official Homebrew installer. Linux: prints manual instructions.
-# No-op if brew is already installed. This is an install-time step — not called by sync.
+# macOS-only; no-op on Linux. This is an install-time step — not called by sync.
 step_brew_install() {
   # Homebrew is macOS-only — skip entirely on Linux.
   [[ "$OSTYPE" == "darwin"* ]] || return 0

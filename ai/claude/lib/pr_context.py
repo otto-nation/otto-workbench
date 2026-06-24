@@ -45,20 +45,7 @@ def resolve(
 
     cwd = repo_dir
 
-    worktree_root = _git_toplevel(cwd)
-    if worktree_root is None:
-        if _is_bare_repo(cwd):
-            wt = _resolve_bare_repo_worktree(cwd, branch)
-            if wt:
-                worktree_root = wt
-                cwd = str(worktree_root)
-            elif not pr and not branch:
-                print("Bare repository — pass --branch or --repo-dir",
-                      file=sys.stderr)
-                sys.exit(1)
-        elif not pr and not branch:
-            print("Not in a git repository", file=sys.stderr)
-            sys.exit(1)
+    worktree_root, cwd = _resolve_worktree(cwd, pr=pr, branch=branch)
 
     repo = _detect_repo(cwd)
     head_sha = _head_sha(cwd) if worktree_root else ""
@@ -82,6 +69,33 @@ def resolve(
         worktree_root=worktree_root,
         head_sha=head_sha,
     )
+
+
+def _resolve_worktree(
+    cwd: str | None,
+    *,
+    pr: str | None,
+    branch: str | None,
+) -> tuple[Path | None, str | None]:
+    """Resolve worktree root, handling bare repos transparently."""
+    toplevel = _git_toplevel(cwd)
+    if toplevel is not None:
+        return toplevel, cwd
+
+    if _is_bare_repo(cwd):
+        wt = _resolve_bare_repo_worktree(cwd, branch)
+        if wt:
+            return wt, str(wt)
+        if not pr and not branch:
+            print("Bare repository — pass --branch or --repo-dir",
+                  file=sys.stderr)
+            sys.exit(1)
+        return None, cwd
+
+    if not pr and not branch:
+        print("Not in a git repository", file=sys.stderr)
+        sys.exit(1)
+    return None, cwd
 
 
 def _detect_repo(cwd: str | None = None) -> str:

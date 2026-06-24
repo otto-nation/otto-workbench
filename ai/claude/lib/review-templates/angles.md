@@ -19,8 +19,8 @@ For every line the diff DELETES or replaces, name the invariant or behavior it e
 ### Angle C — Cross-file tracer
 For each function the diff changes, find its callers (Grep for the symbol) and check whether the change breaks any call site: a new precondition, a changed return shape, a new exception, a timing/ordering dependency. Also check callees: does a parallel change in the same PR make a call unsafe?
 
-### Angle D — Reuse
-Flag new code that re-implements something the codebase already has. Grep shared/utility modules and files adjacent to the change, and name the existing helper to call instead.
+### Angle D — Reuse & convention fitness
+Flag new code that re-implements something the codebase already has. Grep shared/utility modules, base classes, and files adjacent to the change. Name the existing implementation and cite its location. Also check the inverse: if the existing implementation is itself an anti-pattern (stale API, accidental boilerplate, scale-broken switch/case), flag the convention as a should-fix rather than enforcing conformity — recommend the direction for improvement.
 
 ### Angle E — Simplification
 Flag unnecessary complexity the diff adds: redundant or derivable state, copy-paste with slight variation, deep nesting, dead code left behind. Name the simpler form that does the same job.

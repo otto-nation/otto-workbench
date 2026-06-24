@@ -117,8 +117,18 @@ Write the triage as a `## File Triage` section in the review output, listing eve
 
 ### 5. Consistency
 - Does the change follow existing patterns in the same file/package? If every other handler does X, a new handler should too — or justify the deviation
-- **Convention evaluation** — don't blindly enforce existing patterns. If the prevailing convention is itself an anti-pattern (e.g., every test hardcodes a list length, every handler swallows errors, every config value is copy-pasted), flag it as a should-fix and recommend a follow-up to fix the convention across the codebase. Consistency with a bad pattern is not a virtue
-- Are there existing constants, helpers, or utilities that should be used instead of inline reimplementations?
+- **Reuse existing abstractions** — before accepting new logic, search for existing functions, classes, base classes, interfaces, types, constants, and utilities that cover the same concern. Name the canonical implementation and cite its location. This applies at every level:
+  - Functions and helpers (e.g., `format_money()` in `lib/format.py:42`)
+  - Base classes, mixins, and interfaces a new class should extend or implement
+  - Type definitions, enums, and protocols that already model the domain concept
+  - Constants, config values, and registries that already own the data
+  - Patterns and idioms established across the package (e.g., every handler in `handlers/` uses `validate_request()` before processing)
+- **Convention evaluation** — don't blindly enforce existing patterns. When you identify the canonical approach, evaluate whether it's worth following. Consistency with a bad pattern is not a virtue. Flag conventions that should change:
+  - **Stale patterns** — the project has adopted a newer approach elsewhere but old code hasn't been updated (e.g., manual resource cleanup when context managers are used in newer files, old error handling style superseded by a wrapper)
+  - **Accidental conventions** — copy-pasted boilerplate that was never intentionally designed as a pattern (e.g., every file repeats the same 5-line setup block that should be a shared helper)
+  - **Scale-broken patterns** — approaches that worked at 3 instances but now exist in 15+ and should be data-driven (e.g., a switch/case or if/else chain that grows with every new entity type — use a map/registry)
+  - **Cargo-culted constraints** — patterns followed because "that's how it's always been done" with no clear reason. If the convention has no documented rationale and the PR author chose a cleaner alternative, consider whether the deviation is an improvement
+  - When flagging a bad convention: classify as should-fix, name the convention, cite 2-3 instances where it appears, and recommend the direction for a follow-up cleanup. Do not ask the PR author to fix the convention in the current PR unless the PR already touches all affected sites
 - **Magic values in production code** — flag string literals, numeric literals, and addresses that should be named constants. Common cases:
   - Service or component names passed to functions (e.g. interceptors, loggers, clients) — check if a constant already exists in config, envconfig, or a const block
   - Addresses or URLs assembled from string literals instead of configuration

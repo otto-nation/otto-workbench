@@ -415,6 +415,40 @@ def _push_fixes(job: ReviewJob):
     _warn(f"Failed to push fixes: {result.stderr.strip()}")
 
 
+def _count_checked(review_file: str) -> int:
+    if not Path(review_file).exists():
+        return 0
+    return sum(
+        1 for line in Path(review_file).read_text().splitlines()
+        if re.match(r"^- \[x\] ", line, re.IGNORECASE)
+    )
+
+
+def _count_changed_source_files(wt_path: str) -> int:
+    result = subprocess.run(
+        ["git", "-C", wt_path, "diff", "--name-only"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return 0
+    return sum(
+        1 for f in result.stdout.strip().splitlines()
+        if f and not f.endswith("review.md")
+    )
+
+
+def _count_fixed(before_unchecked: int, after_unchecked: int,
+                 review_file: str, wt_path: str) -> int:
+    """Count fixed findings: unchecked-delta, then checked marks, then changed files."""
+    delta = before_unchecked - after_unchecked
+    if delta > 0:
+        return delta
+    checked = _count_checked(review_file)
+    if checked > 0:
+        return checked
+    return _count_changed_source_files(wt_path)
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         _warn("No review file to fix — skipping fix pass")
@@ -430,7 +464,7 @@ def run_fix_pass(job: ReviewJob):
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_FIX)
     print()
     after = _count_unchecked(job.review_file)
-    fixed = before - after
+    fixed = _count_fixed(before, after, job.review_file, job.wt_path)
     _commit_fixes(job, fixed=fixed, skipped=after)
 
 

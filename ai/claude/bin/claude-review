@@ -556,42 +556,15 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
 
 def _find_worktree_for_branch(branch: str) -> str:
-    try:
-        r = subprocess.run(
-            ["git", "worktree", "list"],
-            capture_output=True, text=True,
-        )
-    except Exception:
-        return ""
-    for line in r.stdout.splitlines():
-        if f"[{branch}]" in line:
-            return line.split()[0]
-    return ""
+    wt = pr_context._find_worktree_for_branch(branch)
+    return str(wt) if wt else ""
 
 
 def _resolve_bare_repo_worktree(branch: str = "") -> str:
-    if branch:
-        path = _find_worktree_for_branch(branch)
-        if path:
-            return path
-
-    default_branch = "main"
-    try:
-        r = subprocess.run(
-            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True, text=True,
-        )
-        ref = r.stdout.strip()
-        if ref:
-            default_branch = ref.replace("refs/remotes/origin/", "")
-    except Exception:
-        pass
-
-    path = _find_worktree_for_branch(default_branch)
-    if path:
-        return path
-
-    _err(f"Bare repository — no worktree found for {branch or default_branch}. Pass --repo-dir to specify a worktree")
+    wt = pr_context._resolve_bare_repo_worktree(None, branch or None)
+    if wt:
+        return str(wt)
+    _err(f"Bare repository — no worktree found for {branch or 'main'}. Pass --repo-dir to specify a worktree")
     sys.exit(1)
 
 

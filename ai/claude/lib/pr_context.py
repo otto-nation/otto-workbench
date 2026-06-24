@@ -46,9 +46,19 @@ def resolve(
     cwd = repo_dir
 
     worktree_root = _git_toplevel(cwd)
-    if worktree_root is None and not pr and not branch:
-        print("Not in a git repository", file=sys.stderr)
-        sys.exit(1)
+    if worktree_root is None:
+        if _is_bare_repo(cwd):
+            wt = _resolve_bare_repo_worktree(cwd, branch)
+            if wt:
+                worktree_root = wt
+                cwd = str(worktree_root)
+            elif not pr and not branch:
+                print("Bare repository — pass --branch or --repo-dir",
+                      file=sys.stderr)
+                sys.exit(1)
+        elif not pr and not branch:
+            print("Not in a git repository", file=sys.stderr)
+            sys.exit(1)
 
     repo = _detect_repo(cwd)
     head_sha = _head_sha(cwd) if worktree_root else ""
@@ -174,3 +184,61 @@ def _branch_from_pr(repo: str, pr_number: int) -> str | None:
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip()
     return None
+
+
+# ── Bare-repo helpers ──────────────────────────────────────────────────────
+
+
+def _is_bare_repo(cwd: str | None = None) -> bool:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--is-bare-repository"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        return r.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
+def _find_worktree_for_branch(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Find the worktree directory checked out on *branch*."""
+    try:
+        r = subprocess.run(
+            ["git", "worktree", "list"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+    except Exception:
+        return None
+    for line in r.stdout.splitlines():
+        if f"[{branch}]" in line:
+            return Path(line.split()[0])
+    return None
+
+
+def _resolve_bare_repo_worktree(
+    cwd: str | None, branch: str | None,
+) -> Path | None:
+    """Best-effort worktree discovery for bare repos.
+
+    Tries the requested branch first, then the default branch.
+    """
+    if branch:
+        wt = _find_worktree_for_branch(branch, cwd)
+        if wt:
+            return wt
+
+    default_branch = "main"
+    try:
+        r = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        ref = r.stdout.strip()
+        if ref:
+            default_branch = ref.replace("refs/remotes/origin/", "")
+    except Exception:
+        pass
+
+    return _find_worktree_for_branch(default_branch, cwd)

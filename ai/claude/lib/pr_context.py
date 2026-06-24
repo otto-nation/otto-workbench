@@ -71,6 +71,30 @@ def resolve(
     )
 
 
+def _current_branch_quiet(cwd: str | None = None) -> str | None:
+    """Return current branch name, or None on failure (e.g. detached HEAD)."""
+    r = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode != 0 or not r.stdout.strip() or r.stdout.strip() == "HEAD":
+        return None
+    return r.stdout.strip()
+
+
+def _find_worktree_by_branch(
+    branch_hint: str, cwd: str,
+) -> Path | None:
+    """Find a worktree for branch_hint, trying exact then fuzzy resolution."""
+    wt = find_worktree_for_branch(branch_hint, cwd)
+    if wt:
+        return wt
+    resolved = _resolve_branch(branch_hint, cwd)
+    if resolved != branch_hint:
+        return find_worktree_for_branch(resolved, cwd)
+    return None
+
+
 def _resolve_worktree(
     cwd: str | None,
     *,
@@ -80,6 +104,13 @@ def _resolve_worktree(
     """Resolve worktree root, handling bare repos transparently."""
     toplevel = _git_toplevel(cwd)
     if toplevel is not None:
+        if branch:
+            effective_cwd = cwd or str(toplevel)
+            current = _current_branch_quiet(effective_cwd)
+            if current is not None and current != branch:
+                wt = _find_worktree_by_branch(branch, effective_cwd)
+                if wt:
+                    return wt, str(wt)
         return toplevel, cwd
 
     if is_bare_repo(cwd):

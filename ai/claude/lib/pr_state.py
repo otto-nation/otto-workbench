@@ -4,7 +4,7 @@ Provides a summary envelope over per-domain state files (CI failures,
 PR comments, review artifacts). Each ``pr`` subcommand updates its own
 section; ``pr status`` reads the whole thing without network calls.
 
-State file: ``<worktree>/ignore/pr/state.json``
+State file: ``<worktree>/.workbench/state.json``
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
 
 
-STATE_DIR = "ignore/pr"
+STATE_DIR = ".workbench"
 STATE_FILE = "state.json"
 STATE_VERSION = 1
 

@@ -27,6 +27,7 @@ ai/memory/
 *.swo
 *~
 ignore/
+.workbench/
 
 # Superpowers plugin artifacts
 .superpowers/

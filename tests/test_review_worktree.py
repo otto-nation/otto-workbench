@@ -402,7 +402,7 @@ def test_cleanup_worktree_fallback_uses_git_remove(mock_run):
 
 
 @patch("review_worktree.subprocess.run")
-def test_cleanup_worktree_wt_uses_wt_remove(mock_run):
+def test_cleanup_worktree_skips_non_fallback(mock_run):
     result = WorktreeResult(
         path="/repos/repo/pr-42",
         cleanup_ref="pr:42",
@@ -410,13 +410,7 @@ def test_cleanup_worktree_wt_uses_wt_remove(mock_run):
     )
     cleanup_worktree(result, "/repos/repo")
 
-    mock_run.assert_called_once()
-    cmd = mock_run.call_args[0][0]
-    assert cmd[0] == "wt"
-    assert "remove" in cmd
-    assert "pr:42" in cmd
-    assert "--force" in cmd
-    assert "-y" in cmd
+    mock_run.assert_not_called()
 
 
 @patch("review_worktree.subprocess.run")
@@ -426,11 +420,11 @@ def test_cleanup_worktree_none_is_noop(mock_run):
 
 
 @patch("review_worktree.subprocess.run")
-def test_cleanup_worktree_swallows_errors(mock_run):
+def test_cleanup_worktree_fallback_swallows_errors(mock_run):
     mock_run.side_effect = Exception("boom")
     result = WorktreeResult(
-        path="/repos/repo/pr-42",
-        cleanup_ref="pr:42",
-        is_fallback=False,
+        path="/repos/repo/.worktrees/pr-42-review",
+        cleanup_ref="/repos/repo/.worktrees/pr-42-review",
+        is_fallback=True,
     )
     cleanup_worktree(result, "/repos/repo")

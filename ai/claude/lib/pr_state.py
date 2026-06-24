@@ -15,9 +15,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
+
 
 STATE_DIR = "ignore/pr"
 STATE_FILE = "state.json"
+STATE_VERSION = 1
 
 
 def now_iso() -> str:
@@ -39,14 +42,23 @@ class PRIdentity:
 
 
 @dataclass
-class CISummary:
-    """Snapshot written by ``pr ci``."""
-    last_run_id: int | None = None
-    last_run_number: int | None = None
+class CIDomain:
+    """Full CI domain — summary fields plus detailed run history.
+
+    Merges the former CISummary (summary snapshot) with run-history tracking
+    that previously lived in ci_failures.CIState. All CI state now lives in
+    a single domain within PRState.
+    """
+    # Summary fields (formerly CISummary)
     conclusion: str = ""
     failure_count: int = 0
     failure_kinds: dict[str, int] = field(default_factory=dict)
+    last_run_id: int | None = None
+    last_run_number: int | None = None
     updated_at: str = ""
+    # Detailed run tracking (formerly in CIState)
+    runs: dict = field(default_factory=dict)
+    latest_run_id: int | None = None
 
 
 @dataclass
@@ -96,7 +108,7 @@ class RebaseSummary:
 class PRState:
     """Unified PR state — envelope over domain summaries."""
     identity: PRIdentity
-    ci: CISummary = field(default_factory=CISummary)
+    ci: CIDomain = field(default_factory=CIDomain)
     review: ReviewSummary = field(default_factory=ReviewSummary)
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
@@ -109,154 +121,107 @@ class PRState:
 
 
 def _identity_to_dict(ident: PRIdentity) -> dict:
-    return {
-        "repo": ident.repo,
-        "branch": ident.branch,
-        "pr_number": ident.pr_number,
-        "head_sha": ident.head_sha,
-        "worktree_root": ident.worktree_root,
-    }
+    return _serde_to_dict(ident)
 
 
 def _identity_from_dict(d: dict) -> PRIdentity:
-    return PRIdentity(
-        repo=d["repo"],
-        branch=d["branch"],
-        pr_number=d.get("pr_number"),
+    return _serde_from_dict(PRIdentity, d)
+
+
+def _run_state_from_dict(d: dict):
+    """Deserialize a RunState including nested FailureGroup/FailureItem objects."""
+    from ci_failures import FailureGroup, FailureItem, FailureKind, Outcome, RunState
+    failures = {}
+    for group_key, group_data in d.get("failures", {}).items():
+        items = []
+        for item_data in group_data.get("items", []):
+            outcome_val = item_data.get("outcome")
+            items.append(FailureItem(
+                id=item_data["id"],
+                annotation=item_data.get("annotation", ""),
+                file=item_data.get("file"),
+                line=item_data.get("line"),
+                diagnosis=item_data.get("diagnosis"),
+                fix_sha=item_data.get("fix_sha"),
+                outcome=Outcome(outcome_val) if outcome_val else None,
+            ))
+        failures[group_key] = FailureGroup(
+            job=group_data.get("job", group_key),
+            kind=FailureKind(group_data["kind"]),
+            items=tuple(items),
+        )
+    return RunState(
+        run_id=d["run_id"],
+        run_number=d.get("run_number", 0),
         head_sha=d.get("head_sha", ""),
-        worktree_root=d.get("worktree_root", ""),
-    )
-
-
-def _ci_to_dict(ci: CISummary) -> dict:
-    return {
-        "last_run_id": ci.last_run_id,
-        "last_run_number": ci.last_run_number,
-        "conclusion": ci.conclusion,
-        "failure_count": ci.failure_count,
-        "failure_kinds": ci.failure_kinds,
-        "updated_at": ci.updated_at,
-    }
-
-
-def _ci_from_dict(d: dict) -> CISummary:
-    return CISummary(
-        last_run_id=d.get("last_run_id"),
-        last_run_number=d.get("last_run_number"),
+        status=d.get("status", ""),
         conclusion=d.get("conclusion", ""),
-        failure_count=d.get("failure_count", 0),
-        failure_kinds=d.get("failure_kinds", {}),
-        updated_at=d.get("updated_at", ""),
+        fetched_at=d.get("fetched_at", ""),
+        failures=failures,
     )
 
 
-def _review_to_dict(rev: ReviewSummary) -> dict:
-    return {
-        "review_file": rev.review_file,
-        "review_type": rev.review_type,
-        "head_sha": rev.head_sha,
-        "finding_counts": rev.finding_counts,
-        "verdict": rev.verdict,
-        "cost_usd": rev.cost_usd,
-        "updated_at": rev.updated_at,
-    }
+def _ci_from_dict(d: dict) -> CIDomain:
+    """Deserialize CIDomain, handling nested RunState objects in runs dict."""
+    d = dict(d)
+    runs_raw = d.pop("runs", {})
+    domain = _serde_from_dict(CIDomain, d)
+    if runs_raw:
+        domain.runs = {str(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
+    return domain
 
 
 def _review_from_dict(d: dict) -> ReviewSummary:
-    return ReviewSummary(
-        review_file=d.get("review_file", ""),
-        review_type=d.get("review_type", ""),
-        head_sha=d.get("head_sha", ""),
-        finding_counts=d.get("finding_counts", {}),
-        verdict=d.get("verdict", ""),
-        cost_usd=d.get("cost_usd", 0.0),
-        updated_at=d.get("updated_at", ""),
-    )
-
-
-def _comments_to_dict(c: CommentsSummary) -> dict:
-    return {
-        "total_threads": c.total_threads,
-        "by_state": c.by_state,
-        "blocking_reviewers": c.blocking_reviewers,
-        "has_approvals": c.has_approvals,
-        "updated_at": c.updated_at,
-    }
+    return _serde_from_dict(ReviewSummary, d)
 
 
 def _comments_from_dict(d: dict) -> CommentsSummary:
-    return CommentsSummary(
-        total_threads=d.get("total_threads", 0),
-        by_state=d.get("by_state", {}),
-        blocking_reviewers=d.get("blocking_reviewers", []),
-        has_approvals=d.get("has_approvals", False),
-        updated_at=d.get("updated_at", ""),
-    )
-
-
-def _triage_to_dict(t: TriageSummary) -> dict:
-    return {
-        "total": t.total,
-        "actionable": t.actionable,
-        "valid": t.valid,
-        "questions": t.questions,
-        "updated_at": t.updated_at,
-    }
+    return _serde_from_dict(CommentsSummary, d)
 
 
 def _triage_from_dict(d: dict) -> TriageSummary:
-    return TriageSummary(
-        total=d.get("total", 0),
-        actionable=d.get("actionable", 0),
-        valid=d.get("valid", 0),
-        questions=d.get("questions", 0),
-        updated_at=d.get("updated_at", ""),
-    )
-
-
-def _rebase_to_dict(r: RebaseSummary) -> dict:
-    return {
-        "target_base": r.target_base,
-        "commits_replayed": r.commits_replayed,
-        "conflicts_resolved": r.conflicts_resolved,
-        "files_resolved": r.files_resolved,
-        "force_pushed": r.force_pushed,
-        "updated_at": r.updated_at,
-    }
+    return _serde_from_dict(TriageSummary, d)
 
 
 def _rebase_from_dict(d: dict) -> RebaseSummary:
-    return RebaseSummary(
-        target_base=d.get("target_base", ""),
-        commits_replayed=d.get("commits_replayed", 0),
-        conflicts_resolved=d.get("conflicts_resolved", 0),
-        files_resolved=d.get("files_resolved", []),
-        force_pushed=d.get("force_pushed", False),
-        updated_at=d.get("updated_at", ""),
-    )
+    return _serde_from_dict(RebaseSummary, d)
+
+
+def _ci_to_dict(ci: CIDomain) -> dict:
+    """Serialize CIDomain, handling nested RunState objects in runs dict."""
+    d = _serde_to_dict(ci)
+    # runs values are RunState dataclasses; serde.to_dict already handles them
+    # but keys must be strings for JSON compatibility
+    if ci.runs:
+        d["runs"] = {str(k): _serde_to_dict(v) for k, v in ci.runs.items()}
+    return d
 
 
 def state_to_dict(state: PRState) -> dict:
-    return {
-        "identity": _identity_to_dict(state.identity),
-        "ci": _ci_to_dict(state.ci),
-        "review": _review_to_dict(state.review),
-        "comments": _comments_to_dict(state.comments),
-        "triage": _triage_to_dict(state.triage),
-        "rebase": _rebase_to_dict(state.rebase),
-        "created_at": state.created_at,
-        "updated_at": state.updated_at,
-    }
+    d = _serde_to_dict(state)
+    d["_version"] = STATE_VERSION
+    # identity is a required positional arg — serialize separately
+    d["identity"] = _identity_to_dict(state.identity)
+    # ci.runs needs special handling for RunState nested objects
+    if state.ci.runs:
+        d["ci"]["runs"] = {str(k): _serde_to_dict(v) for k, v in state.ci.runs.items()}
+    return d
 
 
 def state_from_dict(d: dict) -> PRState:
+    ci_data = dict(d.get("ci", {}))
+    runs_raw = ci_data.pop("runs", {})
+    ci_domain = _serde_from_dict(CIDomain, ci_data)
+    if runs_raw:
+        ci_domain.runs = {str(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
+
     return PRState(
         identity=_identity_from_dict(d["identity"]),
-        ci=_ci_from_dict(d.get("ci", {})),
-        review=_review_from_dict(d.get("review", {})),
-        comments=_comments_from_dict(d.get("comments", {})),
-        triage=_triage_from_dict(d.get("triage", {})),
-        rebase=_rebase_from_dict(d.get("rebase", {})),
+        ci=ci_domain,
+        review=_serde_from_dict(ReviewSummary, d.get("review", {})),
+        comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
+        triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
+        rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
         created_at=d.get("created_at", ""),
         updated_at=d.get("updated_at", ""),
     )
@@ -317,9 +282,9 @@ def update_identity(state: PRState, head_sha: str, pr_number: int | None = None)
         state.identity.pr_number = pr_number
 
 
-def update_ci(state: PRState, summary: CISummary) -> None:
-    """Replace CI summary."""
-    state.ci = summary
+def update_ci_domain(state: PRState, domain: CIDomain) -> None:
+    """Replace CI domain (summary + run history)."""
+    state.ci = domain
 
 
 def update_review(state: PRState, summary: ReviewSummary) -> None:
@@ -368,7 +333,7 @@ def load_or_init(
 
 
 _DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
-    "ci": (_ci_from_dict, update_ci),
+    "ci": (_ci_from_dict, update_ci_domain),
     "review": (_review_from_dict, update_review),
     "comments": (_comments_from_dict, update_comments),
     "triage": (_triage_from_dict, update_triage),
@@ -389,7 +354,7 @@ def apply_state_update(
     """Load-or-init state, apply a domain update from a dict, and save."""
     if domain not in _DOMAIN_DESERIALIZERS:
         raise ValueError(f"Unknown state domain: {domain!r}")
-    from_dict, updater = _DOMAIN_DESERIALIZERS[domain]
+    domain_from_dict, updater = _DOMAIN_DESERIALIZERS[domain]
     state = load_or_init(
         worktree_root=worktree_root,
         repo=repo,
@@ -397,5 +362,5 @@ def apply_state_update(
         pr_number=pr_number,
         head_sha=head_sha,
     )
-    updater(state, from_dict(data))
+    updater(state, domain_from_dict(data))
     save_state(worktree_root, state)

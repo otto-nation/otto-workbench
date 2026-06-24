@@ -139,7 +139,7 @@ def _is_pr_target(target: str | None) -> bool:
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
-def _render_ci_section(ci: pr_state.CISummary) -> list[str]:
+def _render_ci_section(ci: pr_state.CIDomain) -> list[str]:
     if not ci.updated_at:
         return ["**CI**: not checked yet"]
     icon = "green" if ci.conclusion == "success" else "red"

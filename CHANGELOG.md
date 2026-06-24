@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.33.0](https://github.com/otto-nation/otto-workbench/compare/v1.32.7...v1.33.0) (2026-06-24)
+
+
+### Features
+
+* add Linux server support for install and Docker sync ([#354](https://github.com/otto-nation/otto-workbench/issues/354)) ([9b6486e](https://github.com/otto-nation/otto-workbench/commit/9b6486eababe8e044ce43f87b277d7a549a5008b))
+* **ai:** add Pi coding agent config component ([#353](https://github.com/otto-nation/otto-workbench/issues/353)) ([2e1eb7c](https://github.com/otto-nation/otto-workbench/commit/2e1eb7c0931e57fb2382461d448c6f1aebcd0d08))
+* **pr-rebase:** add AI-assisted conflict resolution via claude -p ([#355](https://github.com/otto-nation/otto-workbench/issues/355)) ([f1028b7](https://github.com/otto-nation/otto-workbench/commit/f1028b73835506178d4eb8ef5471b66a171074fd))
+
+
+### Bug Fixes
+
+* **review:** preserve non-fallback worktrees after review ([#356](https://github.com/otto-nation/otto-workbench/issues/356)) ([6e66d01](https://github.com/otto-nation/otto-workbench/commit/6e66d01bcbedf6f41b596c6a88645a271fb2a18a))
+
 ## [1.32.7](https://github.com/otto-nation/otto-workbench/compare/v1.32.6...v1.32.7) (2026-06-23)
 
 

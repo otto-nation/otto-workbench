@@ -103,7 +103,6 @@ class Trail:
         self._debug = debug
         self._start_ns = start_ns
         self._trail_path = self._artifact_dir / TRAIL_FILENAME
-        self._span_starts: dict[str, int] = {}
 
     @classmethod
     def start(

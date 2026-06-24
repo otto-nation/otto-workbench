@@ -81,6 +81,7 @@ messages on stderr.
 | `pr review --summary` | none (local computation) | none |
 | `pr comments` | `review-threads` | script (updates state directly) |
 | `pr comments --triage` | `review-threads --triage` | script (updates state directly) |
+| `pr comments --fix` | `review-threads --fix` | script (updates state directly) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
 | `pr gc` | none (local via `review_gc`) | none |
 | `pr fix` | `claude-review` (--fix) | none |

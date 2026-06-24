@@ -67,6 +67,7 @@ TEMPLATE_SELF_REVIEW = "self-review.md"
 TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
 TEMPLATE_ANGLES = "angles.md"
 TEMPLATE_FIX = "fix-findings.md"
+TEMPLATE_FIX_COMMENTS = "fix-comments.md"
 
 TEMPLATE_DIR_REL = Path("lib") / "review-templates"
 

@@ -83,13 +83,14 @@ git rev-parse <branch_name>
 ### Step 3: Run pr review
 
 ```bash
-pr review --self --fix [<branch_name>]
+pr review --self --fix --branch <branch_name>
 ```
 
 Run synchronously — do **not** background this command. Step 4 reads
 the completed review file; backgrounding produces stale results.
 
-Pass the resolved branch name. `pr review` handles bare repos, worktree
+Pass the resolved branch name via `--branch` so the `pr` wrapper can
+route it to context resolution. `pr review` handles bare repos, worktree
 resolution, and fresh-vs-existing review detection internally.
 
 ### Step 4: Report results

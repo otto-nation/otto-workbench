@@ -20,6 +20,7 @@ import pr_context
 import pr_state
 import review_gc
 from review_common import json_summary, review_file_path, ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET
+from trail import Trail, add_trail_args
 
 
 # ── Command registry ────────────────────────────────────────────────────────
@@ -475,6 +476,7 @@ def main():
     _global.add_argument("--repo-dir", "--worktree", dest="repo_dir")
     _global.add_argument("--branch")
     _global.add_argument("--pr")
+    add_trail_args(_global)
     global_args, remaining = _global.parse_known_args()
 
     parser = argparse.ArgumentParser(
@@ -518,17 +520,33 @@ def main():
         repo_dir=getattr(args, "repo_dir", None),
     )
 
-    handler = _CUSTOM.get(args.command)
-    if handler:
-        sys.exit(handler(extra, ctx,
-                         original_pr=original_pr,
-                         original_branch=original_branch))
-    else:
-        assert "script" in _COMMANDS[args.command], \
-            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
-        sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx,
-                               original_pr=original_pr,
-                               original_branch=original_branch))
+    trail = Trail.start(
+        script="pr",
+        artifact_dir=str(ctx.worktree_root / pr_state.STATE_DIR) if ctx.worktree_root else "/tmp",
+        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
+        debug=getattr(global_args, "debug", False),
+    )
+    try:
+        trail.decision(
+            "dispatch",
+            f"routing to {args.command}",
+            reason="matched command registry",
+            data={"subcommand": args.command},
+        )
+
+        handler = _CUSTOM.get(args.command)
+        if handler:
+            sys.exit(handler(extra, ctx,
+                             original_pr=original_pr,
+                             original_branch=original_branch))
+        else:
+            assert "script" in _COMMANDS[args.command], \
+                f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
+            sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx,
+                                   original_pr=original_pr,
+                                   original_branch=original_branch))
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

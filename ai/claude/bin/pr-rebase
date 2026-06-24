@@ -30,6 +30,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import pr_context
 import pr_state
+from trail import Trail, add_trail_args
+
+
+# Module-level trail instance — set in main() after context is resolved.
+# Inner helper functions use _trail for instrumentation without changing signatures.
+_trail: Trail | None = None
 
 _TARGET_REF = "origin/main"
 
@@ -255,6 +261,12 @@ def _resolve_one(
 ) -> bool:
     """Resolve a single conflicted file — dispatch by type."""
     if filepath.endswith("go.sum"):
+        if _trail:
+            _trail.decision(
+                "special_file",
+                f"accepting theirs for {filepath}",
+                reason="auto-resolved file type (go.sum)",
+            )
         ok = _accept_theirs_and_stage(filepath, full_path.parent, cwd)
         if ok:
             go_dirs.add(full_path.parent)
@@ -263,6 +275,8 @@ def _resolve_one(
     result = _resolve_single_file(filepath, full_path, sha, subject, cwd)
     if result is None:
         return False
+    if _trail:
+        _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
     if filepath.endswith("go.mod"):
         go_dirs.add(full_path.parent)
     return True
@@ -436,7 +450,19 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Start or resume a rebase onto origin/main."""
     if _detect_rebase_in_progress(cwd):
+        if _trail:
+            _trail.decision(
+                "rebase_state",
+                "detected in-progress rebase",
+                reason="rebase-merge or rebase-apply directory exists",
+            )
         return _resume(cwd, ctx, fix)
+    if _trail:
+        _trail.decision(
+            "rebase_state",
+            "starting fresh rebase",
+            reason="no in-progress rebase detected",
+        )
     return _fresh(cwd, ctx, fix)
 
 
@@ -511,6 +537,8 @@ def _rebase_success(
         )
         print(f"{label} — force-pushing...", file=sys.stderr)
         r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
+        if _trail:
+            _trail.info("force_push", "force-pushed to remote", data={"exit_code": r.returncode})
         pr_state.update_rebase(state, pr_state.RebaseSummary(
             target_base=_TARGET_REF,
             commits_replayed=commits,
@@ -575,6 +603,7 @@ def main():
                         help="Force-push after successful rebase")
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
+    add_trail_args(parser)
 
     args = parser.parse_args()
 
@@ -583,12 +612,26 @@ def main():
     )
     cwd = str(ctx.worktree_root)
 
-    if args.abort:
-        sys.exit(cmd_abort(cwd, ctx))
-    elif args.push:
-        sys.exit(cmd_push(cwd, ctx))
-    else:
-        sys.exit(cmd_start(cwd, ctx, args.fix))
+    global _trail
+    _trail = Trail.start(
+        script="pr-rebase",
+        artifact_dir=str(Path(cwd) / pr_state.STATE_DIR),
+        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
+        debug=args.debug,
+    )
+    try:
+        if args.abort:
+            _trail.decision("mode", "selected abort", reason="--abort flag set")
+            sys.exit(cmd_abort(cwd, ctx))
+        elif args.push:
+            _trail.decision("mode", "selected push", reason="--push flag set")
+            sys.exit(cmd_push(cwd, ctx))
+        else:
+            mode = "fix" if args.fix else "start"
+            _trail.decision("mode", f"selected {mode}", reason="--fix flag set" if args.fix else "default mode")
+            sys.exit(cmd_start(cwd, ctx, args.fix))
+    finally:
+        _trail.finish()
 
 
 if __name__ == "__main__":

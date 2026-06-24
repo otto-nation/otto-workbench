@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import ci_failures as ci
 import pr_context
 import pr_state
+from trail import Trail, add_trail_args
 
 
 def _err(msg: str) -> None:
@@ -248,6 +249,7 @@ def main():
     parser.add_argument("--run", type=int, help="Specific run ID")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory")
+    add_trail_args(parser)
     args = parser.parse_args()
 
     ctx = pr_context.resolve(
@@ -256,110 +258,139 @@ def main():
     repo = ctx.repo
     branch = ctx.branch
     pr_number = ctx.pr_number
+    toplevel = ctx.worktree_root
 
-    # Determine run IDs
-    if args.run:
-        run_ids = [args.run]
-    else:
-        run_ids = _fetch_latest_run_ids(repo, branch)
-        if not run_ids:
-            _err(f"No workflow runs found for branch '{branch}'")
+    trail = Trail.start(
+        script="ci-check",
+        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel else "/tmp",
+        context={"repo": repo, "pr": pr_number, "branch": branch},
+        debug=args.debug,
+    )
+    try:
+        # Determine run IDs
+        if args.run:
+            run_ids = [args.run]
+        else:
+            run_ids = _fetch_latest_run_ids(repo, branch)
+            if not run_ids:
+                trail.warn("no_runs", "no workflow runs found")
+                _err(f"No workflow runs found for branch '{branch}'")
+                sys.exit(1)
+
+        trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
+
+        run_data_list = []
+        for rid in run_ids:
+            rd = _fetch_run_data(repo, rid)
+            if rd is not None:
+                rd["_run_id"] = rid
+                run_data_list.append(rd)
+                trail.info("fetch_run_data", f"fetched run {rid}", data={"run_id": rid, "conclusion": rd.get("conclusion")})
+
+        primary_run_data = _merge_runs(run_data_list)
+        if primary_run_data is None:
+            trail.error("fetch_run_data", "failed to fetch run data")
+            _err("Failed to fetch run data")
             sys.exit(1)
 
-    run_data_list = []
-    for rid in run_ids:
-        rd = _fetch_run_data(repo, rid)
-        if rd is not None:
-            rd["_run_id"] = rid
-            run_data_list.append(rd)
+        # Parse into typed state
+        run_state = _parse_run(repo, primary_run_data)
 
-    primary_run_data = _merge_runs(run_data_list)
-    if primary_run_data is None:
-        _err("Failed to fetch run data")
-        sys.exit(1)
+        # Load unified PR state (or init fresh)
+        if toplevel:
+            state = pr_state.load_or_init(
+                worktree_root=toplevel, repo=repo, branch=branch,
+                pr_number=pr_number, head_sha=run_state.head_sha,
+            )
+            ci_domain = state.ci
+        else:
+            state = None
+            ci_domain = pr_state.CIDomain()
 
-    # Parse into typed state
-    run_state = _parse_run(repo, primary_run_data)
-
-    # Load unified PR state (or init fresh)
-    toplevel = ctx.worktree_root
-    if toplevel:
-        state = pr_state.load_or_init(
-            worktree_root=toplevel, repo=repo, branch=branch,
-            pr_number=pr_number, head_sha=run_state.head_sha,
+        trail.decision(
+            "classify_failures",
+            f"classified {len(run_state.failures)} failure groups",
+            reason=f"matched job patterns: {list(run_state.failures.keys())}",
+            data={"failure_kinds": {k: g.kind.value for k, g in run_state.failures.items()}},
         )
-        ci_domain = state.ci
-    else:
-        state = None
-        ci_domain = pr_state.CIDomain()
 
-    # Compute progression from prior run in domain
-    prior_run = ci_domain.runs.get(str(ci_domain.latest_run_id)) if ci_domain.latest_run_id else None
-    prior_failures = prior_run.failures if prior_run else {}
-    progression = ci.compute_progression(run_state.failures, prior_failures)
+        # Compute progression from prior run in domain
+        prior_run = ci_domain.runs.get(str(ci_domain.latest_run_id)) if ci_domain.latest_run_id else None
+        prior_failures = prior_run.failures if prior_run else {}
+        progression = ci.compute_progression(run_state.failures, prior_failures)
 
-    # Sync run into domain
-    ci.sync_ci_domain(ci_domain, run_state)
+        trail.info(
+            "compute_progression",
+            f"{len(progression)} items tracked",
+            data={"outcomes": {o.value: sum(1 for v in progression.values() if v == o) for o in ci.Outcome}},
+        )
 
-    # Dashboard to stderr
-    dashboard = ci.render_dashboard(run_state, progression)
-    print(dashboard, file=sys.stderr)
+        # Sync run into domain
+        ci.sync_ci_domain(ci_domain, run_state)
 
-    # JSON report to stdout
-    report = {
-        "repo": repo,
-        "branch": branch,
-        "pr_number": pr_number,
-        "run_id": run_state.run_id,
-        "run_number": run_state.run_number,
-        "head_sha": run_state.head_sha,
-        "conclusion": run_state.conclusion,
-        "failures": [],
-        "progression": {k: v.value for k, v in progression.items()},
-        "resolved_since_prior": [],
-    }
+        trail.info("sync_state", f"state synced, {len(ci_domain.runs)} runs retained")
 
-    for group_key, group in run_state.failures.items():
-        for item in group.items:
-            report["failures"].append({
-                "id": item.id,
-                "job": group.job,
-                "kind": group.kind.value,
-                "annotation": item.annotation,
-                "file": item.file,
-                "line": item.line,
-                "diagnosis": item.diagnosis,
-                "fix_sha": item.fix_sha,
-                "outcome": progression.get(item.id, ci.Outcome.NEW).value,
-            })
+        # Dashboard to stderr
+        dashboard = ci.render_dashboard(run_state, progression)
+        print(dashboard, file=sys.stderr)
 
-    if prior_run:
-        prior_item_ids = ci.collect_item_ids(prior_run.failures)
-        current_item_ids = ci.collect_item_ids(run_state.failures)
-        report["resolved_since_prior"] = [
-            item_id for item_id in prior_item_ids
-            if item_id not in current_item_ids
-        ]
+        # JSON report to stdout
+        report = {
+            "repo": repo,
+            "branch": branch,
+            "pr_number": pr_number,
+            "run_id": run_state.run_id,
+            "run_number": run_state.run_number,
+            "head_sha": run_state.head_sha,
+            "conclusion": run_state.conclusion,
+            "failures": [],
+            "progression": {k: v.value for k, v in progression.items()},
+            "resolved_since_prior": [],
+        }
 
-    # Update summary fields in CIDomain and save unified state
-    if state is not None:
-        kind_counts: dict[str, int] = {}
-        for f in report.get("failures", []):
-            k = f.get("kind", "unknown")
-            kind_counts[k] = kind_counts.get(k, 0) + 1
-        ci_domain.conclusion = run_state.conclusion
-        ci_domain.failure_count = len(report.get("failures", []))
-        ci_domain.failure_kinds = kind_counts
-        ci_domain.last_run_id = run_state.run_id
-        ci_domain.last_run_number = run_state.run_number
-        ci_domain.updated_at = pr_state.now_iso()
-        try:
-            pr_state.save_state(toplevel, state)
-        except Exception as exc:
-            print(f"ci-check: state update failed: {exc}", file=sys.stderr)
+        for group_key, group in run_state.failures.items():
+            for item in group.items:
+                report["failures"].append({
+                    "id": item.id,
+                    "job": group.job,
+                    "kind": group.kind.value,
+                    "annotation": item.annotation,
+                    "file": item.file,
+                    "line": item.line,
+                    "diagnosis": item.diagnosis,
+                    "fix_sha": item.fix_sha,
+                    "outcome": progression.get(item.id, ci.Outcome.NEW).value,
+                })
 
-    json.dump(report, sys.stdout, indent=2)
-    print()
+        if prior_run:
+            prior_item_ids = ci.collect_item_ids(prior_run.failures)
+            current_item_ids = ci.collect_item_ids(run_state.failures)
+            report["resolved_since_prior"] = [
+                item_id for item_id in prior_item_ids
+                if item_id not in current_item_ids
+            ]
+
+        # Update summary fields in CIDomain and save unified state
+        if state is not None:
+            kind_counts: dict[str, int] = {}
+            for f in report.get("failures", []):
+                k = f.get("kind", "unknown")
+                kind_counts[k] = kind_counts.get(k, 0) + 1
+            ci_domain.conclusion = run_state.conclusion
+            ci_domain.failure_count = len(report.get("failures", []))
+            ci_domain.failure_kinds = kind_counts
+            ci_domain.last_run_id = run_state.run_id
+            ci_domain.last_run_number = run_state.run_number
+            ci_domain.updated_at = pr_state.now_iso()
+            try:
+                pr_state.save_state(toplevel, state)
+            except Exception as exc:
+                print(f"ci-check: state update failed: {exc}", file=sys.stderr)
+
+        json.dump(report, sys.stdout, indent=2)
+        print()
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

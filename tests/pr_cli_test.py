@@ -238,7 +238,9 @@ def test_sub_command_prefix():
 
 def _run_main(*argv):
     """Run pr_cli.main() with the given argv, catching SystemExit."""
-    with patch("sys.argv", ["pr"] + list(argv)):
+    mock_trail = MagicMock()
+    with patch("sys.argv", ["pr"] + list(argv)), \
+         patch("pr_cli.Trail.start", return_value=mock_trail):
         try:
             pr_cli.main()
         except SystemExit as e:

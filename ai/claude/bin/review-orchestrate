@@ -121,6 +121,11 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         with trail.span("single_agent"):
             run_single_agent(job)
 
+    if job.verification:
+        v = job.verification
+        detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+        trail.info("evidence_verification", detail, data=v)
+
     if args.fix and Path(job.review_file).exists():
         trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
         with trail.span("fix_pass"):

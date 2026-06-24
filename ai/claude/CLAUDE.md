@@ -49,6 +49,7 @@ Review artifacts live in `~/.config/workbench/reviews/{repo}-{pr_or_branch}/`:
 | `review.md` | yes | Final review output |
 | `meta.json` | yes | PR metadata sidecar |
 | `session.jsonl` | yes | Agent cost/usage/errors |
+| `trail.jsonl` | yes | Structured trail log (decisions, spans, verification) |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
 | `prompt-*.md` | no (kept on failure) | Full prompts sent to agents |
 | `pipeline.json` | no | Resume state for multi-phase |

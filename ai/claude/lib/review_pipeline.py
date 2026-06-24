@@ -727,7 +727,7 @@ def _build_mechanical_fallback(
 
 
 def _post_process_review(job: ReviewJob) -> None:
-    post_process_findings(job.review_file, job.wt_path, job.prior_review)
+    job.verification = post_process_findings(job.review_file, job.wt_path, job.prior_review)
 
 
 def _write_mechanical_fallback(

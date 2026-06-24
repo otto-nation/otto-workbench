@@ -19,8 +19,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_BIN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_BIN_DIR))
+sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
 from _version import version_string as _version_string  # noqa: E402
+from review_github import (  # noqa: E402
+    GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
+)
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -134,39 +139,41 @@ def parse_review_comment(comment: dict) -> dict:
 
 # ── GitHub API fetching ─────────────────────────────────────────────────────
 
-_RETRO_QUERY = """
-query($owner: String!, $name: String!) {
-  repository(owner: $owner, name: $name) {
-    pullRequests(states: MERGED, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes {
+GQL_MERGED_PRS_LIMIT = 50
+
+_RETRO_QUERY = f"""
+query($owner: String!, $name: String!) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequests(states: MERGED, first: {GQL_MERGED_PRS_LIMIT}, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
+      nodes {{
         number
         title
         mergedAt
-        author { login }
-        reviewThreads(first: 100) {
+        author {{ login }}
+        reviewThreads(first: {GQL_THREADS_LIMIT}) {{
           totalCount
-          nodes {
+          nodes {{
             path
             line
-            comments(first: 50) {
-              nodes {
-                author { login }
+            comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
+              nodes {{
+                author {{ login }}
                 body
-              }
-            }
-          }
-        }
-        comments(first: 100) {
+              }}
+            }}
+          }}
+        }}
+        comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
           totalCount
-          nodes {
-            author { login }
+          nodes {{
+            author {{ login }}
             body
-          }
-        }
-      }
-    }
-  }
-}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
 """
 
 
@@ -230,13 +237,13 @@ def _parse_pr_node(pr_node: dict, since_date: str) -> dict | None:
     total_threads = threads_data.get("totalCount", 0)
     thread_nodes = threads_data.get("nodes", [])
     if total_threads > len(thread_nodes):
-        _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched")
+        _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
 
     comments_data = pr_node.get("comments", {})
     total_comments = comments_data.get("totalCount", 0)
     comment_nodes = comments_data.get("nodes", [])
     if total_comments > len(comment_nodes):
-        _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched")
+        _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: GQL_ISSUE_COMMENTS_LIMIT={GQL_ISSUE_COMMENTS_LIMIT})")
 
     all_comments = _flatten_thread_comments(thread_nodes)
     all_comments.extend(_flatten_issue_comments(comment_nodes))

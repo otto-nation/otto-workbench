@@ -11,7 +11,7 @@ import json
 import re
 
 import review_github
-from review_github import PRData
+from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
 from review_findings import Finding
@@ -165,22 +165,22 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
         return []
 
     owner, name = repo.split("/", 1)
-    query = """
-    query($owner: String!, $name: String!, $pr: Int!) {
-      repository(owner: $owner, name: $name) {
-        pullRequest(number: $pr) {
-          reviews(last: 100) {
-            nodes {
+    query = f"""
+    query($owner: String!, $name: String!, $pr: Int!) {{
+      repository(owner: $owner, name: $name) {{
+        pullRequest(number: $pr) {{
+          reviews(last: {GQL_REVIEWS_LIMIT}) {{
+            nodes {{
               databaseId
               state
               body
               minimizedReason
-              author { login }
-            }
-          }
-        }
-      }
-    }
+              author {{ login }}
+            }}
+          }}
+        }}
+      }}
+    }}
     """
     rc, stdout = review_github._gh_graphql(
         query, {"owner": owner, "name": name, "pr": int(pr)},

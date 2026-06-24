@@ -26,6 +26,15 @@ GH_API_TIMEOUT = 30
 
 REVIEW_STATE_PENDING = "PENDING"
 
+# GraphQL pagination limits — shared across queries.
+# Upgrade to a query builder class when: a third query shape is added,
+# fields become runtime-conditional, or cursor-based pagination is needed.
+GQL_REVIEWS_LIMIT = 100
+GQL_THREADS_LIMIT = 100
+GQL_THREAD_COMMENTS_LIMIT = 50
+GQL_ISSUE_COMMENTS_LIMIT = 100
+GQL_COMMITS_LIMIT = 100
+
 
 # ── Exceptions ──────────────────────────────────────────────────────────────
 
@@ -210,62 +219,62 @@ def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
 
 # ── Consolidated GraphQL PR data ───────────────────────────────────────────
 
-_PR_DATA_QUERY = """
-query($owner: String!, $name: String!, $pr: Int!) {
-  viewer { login }
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $pr) {
+_PR_DATA_QUERY = f"""
+query($owner: String!, $name: String!, $pr: Int!) {{
+  viewer {{ login }}
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $pr) {{
       headRefOid
       headRefName
       baseRefName
-      reviews(last: 100) {
-        nodes {
+      reviews(last: {GQL_REVIEWS_LIMIT}) {{
+        nodes {{
           databaseId
           state
           body
           minimizedReason
           submittedAt
-          author { login }
-        }
-      }
-      reviewThreads(first: 100) {
+          author {{ login }}
+        }}
+      }}
+      reviewThreads(first: {GQL_THREADS_LIMIT}) {{
         totalCount
-        nodes {
+        nodes {{
           id
           isResolved
           path
           line
-          comments(first: 50) {
+          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
             totalCount
-            nodes {
+            nodes {{
               id
               databaseId
-              author { login }
+              author {{ login }}
               body
               createdAt
-            }
-          }
-        }
-      }
-      comments(first: 100) {
-        nodes {
+            }}
+          }}
+        }}
+      }}
+      comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
+        nodes {{
           databaseId
-          author { login }
+          author {{ login }}
           body
           createdAt
-        }
-      }
-      commits(last: 100) {
-        nodes {
-          commit {
+        }}
+      }}
+      commits(last: {GQL_COMMITS_LIMIT}) {{
+        nodes {{
+          commit {{
             oid
             messageHeadline
-          }
-        }
-      }
-    }
-  }
-}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
 """
 
 
@@ -383,7 +392,7 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     threads = threads_data.get("nodes", [])
     total_threads = threads_data.get("totalCount", len(threads))
     if total_threads > len(threads):
-        _warn(f"PR has {total_threads} review threads but only {len(threads)} fetched (GraphQL limit)")
+        _warn(f"PR has {total_threads} review threads but only {len(threads)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
 
     for thread in threads:
         comments_data = thread.get("comments", {})
@@ -391,7 +400,7 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
         comment_nodes = comments_data.get("nodes", [])
         if total_comments > len(comment_nodes):
             path = thread.get("path", "?")
-            _warn(f"Thread at {path} has {total_comments} comments but only {len(comment_nodes)} fetched")
+            _warn(f"Thread at {path} has {total_comments} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
 
     return PRData(
         viewer_login=viewer.get("login", ""),

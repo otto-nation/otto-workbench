@@ -12,7 +12,10 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_github import PRData, fetch_pr_data
+from review_github import (
+    PRData, fetch_pr_data,
+    GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
+)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -381,12 +384,15 @@ class TestFetchPrData:
     @patch("review_github._gh_graphql")
     def test_truncation_warnings(self, mock_gql, capsys):
         thread = _make_thread(thread_id="PRT_1", path="big.py")
-        thread["comments"]["totalCount"] = 100
+        thread["comments"]["totalCount"] = GQL_THREAD_COMMENTS_LIMIT + 1
+        total_threads = GQL_THREADS_LIMIT + 1
         mock_gql.return_value = (0, self._graphql_response(
-            reviewThreads={"totalCount": 200, "nodes": [thread]},
+            reviewThreads={"totalCount": total_threads, "nodes": [thread]},
         ))
         pd = fetch_pr_data("owner/repo", "1")
         assert len(pd.review_threads) == 1
         stderr = capsys.readouterr().err
-        assert "200 review threads" in stderr
+        assert f"{total_threads} review threads" in stderr
+        assert "GQL_THREADS_LIMIT" in stderr
         assert "big.py" in stderr
+        assert "GQL_THREAD_COMMENTS_LIMIT" in stderr

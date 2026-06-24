@@ -12,7 +12,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from review_github import PRData
+from review_github import (
+    PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
+)
 
 
 # ── State file I/O ─────────────────────────────────────────────────────────
@@ -127,32 +129,32 @@ def compute_thread_state(
 
 # ── GitHub data fetching ───────────────────────────────────────────────────
 
-GRAPHQL_THREADS = """
-query($owner: String!, $repo: String!, $number: Int!) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+GRAPHQL_THREADS = f"""
+query($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    pullRequest(number: $number) {{
+      reviewThreads(first: {GQL_THREADS_LIMIT}) {{
         totalCount
-        nodes {
+        nodes {{
           id
           isResolved
           path
           line
-          comments(first: 50) {
+          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
             totalCount
-            nodes {
+            nodes {{
               id
               databaseId
-              author { login }
+              author {{ login }}
               body
               createdAt
-            }
-          }
-        }
-      }
-    }
-  }
-}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
 """
 
 GRAPHQL_RESOLVE = """
@@ -188,14 +190,14 @@ def fetch_threads(
         nodes = threads_data["nodes"]
         total = threads_data.get("totalCount", len(nodes))
         if total > len(nodes):
-            print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (GraphQL limit)", file=sys.stderr)
+            print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})", file=sys.stderr)
         for node in nodes:
             comments_data = node.get("comments", {})
             comment_total = comments_data.get("totalCount", 0)
             comment_nodes = comments_data.get("nodes", [])
             if comment_total > len(comment_nodes):
                 path = node.get("path", "?")
-                print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched", file=sys.stderr)
+                print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})", file=sys.stderr)
         return nodes
     except (json.JSONDecodeError, KeyError, TypeError):
         return []

@@ -304,7 +304,7 @@ class PRData:
         """Non-PENDING, non-DISMISSED, non-minimized reviews from bot_login."""
         bot_lower = bot_login.lower()
         return [
-            {"id": r["databaseId"], "body": r.get("body", ""), "state": r.get("state", "")}
+            {"id": r.get("databaseId"), "body": r.get("body", ""), "state": r.get("state", "")}
             for r in self.reviews
             if (r.get("author") or {}).get("login", "").lower() == bot_lower
             and r.get("state") not in ("PENDING", "DISMISSED")

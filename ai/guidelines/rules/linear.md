@@ -4,6 +4,7 @@
 - Linear issue titles should follow conventional commit format: `type(scope): subject` — same rules as git commit headers (72 chars, allowed types, no period). This keeps issues, commits, and PRs consistent.
 - When an issue's scope expands beyond its original title/description, retitle and rewrite the description to reflect the broader scope. If the original scope was a meaningful unit of work, preserve it as a sub-issue rather than losing that context.
 - Prefer sub-issues over expanding a single issue's scope when the work has distinct deliverables. A parent issue should describe the initiative; sub-issues should each be independently completable. Don't nest sub-issues more than one level.
+- Always assign issues to the creator (`--assignee self`) — unassigned issues get lost
 - Always create the Linear issue before creating a branch — the branch naming convention requires the issue ID prefix, so the issue must exist first
 
 ## CLI Operations
@@ -23,7 +24,7 @@ Team key is always the prefix of the issue identifier. Pass it explicitly where 
 |---------|-------|
 | `linear issue view <ID>` | View issue details |
 | `linear issue view <ID> --json` | JSON output — pipe through `head` before jq |
-| `linear issue create --team <KEY> --title "..." --description "..."` | `--team` is required |
+| `linear issue create --team <KEY> --assignee self --title "..." --description "..."` | `--team` and `--assignee self` are required |
 | `linear issue relation add <ID> <type> <relatedID>` | Types: `blocks`, `blocked-by`, `related`, `duplicate`. Requires `write` OAuth scope |
 | `linear team list` | Rarely needed — team key is in the identifier |
 

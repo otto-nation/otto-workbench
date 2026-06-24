@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+from trail import Trail, add_trail_args  # noqa: E402
 import review_common as _rc  # noqa: E402
 import review_findings as _rf  # noqa: E402
 import review_preflight as _rp  # noqa: E402
@@ -96,6 +97,7 @@ def main():
                         help="Override model for all agents (e.g. sonnet, opus)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
+    add_trail_args(parser)
     args = parser.parse_args()
 
     if args.mode == MODE_PR and not args.pr:
@@ -106,56 +108,83 @@ def main():
 
     session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 
-    pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
-
-    prior_review = ""
-    if args.prior_review and Path(args.prior_review).exists():
-        prior_review = Path(args.prior_review).read_text()
-
-    job = ReviewJob(
-        repo=repo, pr_number=args.pr, pr=pr, ctx=ctx,
-        wt_path=args.repo_dir, review_file=args.review_file,
-        session_log=session_log, reviews_dir=args.reviews_dir,
-        issue_link=args.issue, issue_context=args.issue_context,
-        prior_review=prior_review, mode=args.mode,
-        generator_version=args.generator_version,
-        model=args.model,
+    review_dir = Path(args.review_file).parent
+    trail = Trail.start(
+        script="review-orchestrate",
+        artifact_dir=str(review_dir),
+        context={"repo": repo, "pr": args.pr, "mode": args.mode},
+        debug=args.debug,
     )
 
-    _info("Collecting file data...")
-    if prior_review and args.pr:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            pf_future = pool.submit(collect_preflight_data, job)
-            rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
-            job.preflight = pf_future.result()
-            job.reply_threads = rt_future.result()
-    else:
-        job.preflight = collect_preflight_data(job)
+    try:
+        pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
-    is_large = (
-        pr.total_lines > MULTI_PHASE_LINE_THRESHOLD
-        or pr.changed_files > MULTI_PHASE_FILE_THRESHOLD
-    )
-    pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
+        prior_review = ""
+        if args.prior_review and Path(args.prior_review).exists():
+            prior_review = Path(args.prior_review).read_text()
 
-    if is_large:
-        run_multi_phase(
-            job, max_parallel=args.max_parallel,
-            skip_holistic=args.no_holistic, max_cost=args.max_cost,
+        job = ReviewJob(
+            repo=repo, pr_number=args.pr, pr=pr, ctx=ctx,
+            wt_path=args.repo_dir, review_file=args.review_file,
+            session_log=session_log, reviews_dir=args.reviews_dir,
+            issue_link=args.issue, issue_context=args.issue_context,
+            prior_review=prior_review, mode=args.mode,
+            generator_version=args.generator_version,
+            model=args.model,
         )
-    else:
-        run_single_agent(job)
 
-    if args.fix and Path(job.review_file).exists():
-        run_fix_pass(job)
+        _info("Collecting file data...")
+        if prior_review and args.pr:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pf_future = pool.submit(collect_preflight_data, job)
+                rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
+                job.preflight = pf_future.result()
+                job.reply_threads = rt_future.result()
+        else:
+            job.preflight = collect_preflight_data(job)
 
-    result = {
-        "review_file": job.review_file,
-        "session_log": job.session_log,
-        "mode": pipeline,
-    }
-    json.dump(result, sys.stdout)
-    print()
+        is_large = (
+            pr.total_lines > MULTI_PHASE_LINE_THRESHOLD
+            or pr.changed_files > MULTI_PHASE_FILE_THRESHOLD
+        )
+        pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
+
+        trail.decision(
+            "select_pipeline",
+            f"chose {pipeline}",
+            reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={MULTI_PHASE_FILE_THRESHOLD} lines={MULTI_PHASE_LINE_THRESHOLD})",
+            data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
+        )
+
+        if is_large:
+            with trail.span("multi_phase"):
+                run_multi_phase(
+                    job, max_parallel=args.max_parallel,
+                    skip_holistic=args.no_holistic, max_cost=args.max_cost,
+                )
+        else:
+            with trail.span("single_agent"):
+                run_single_agent(job)
+
+        if args.fix and Path(job.review_file).exists():
+            trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
+            with trail.span("fix_pass"):
+                run_fix_pass(job)
+        elif args.fix:
+            trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
+
+        result = {
+            "review_file": job.review_file,
+            "session_log": job.session_log,
+            "mode": pipeline,
+        }
+        json.dump(result, sys.stdout)
+        print()
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

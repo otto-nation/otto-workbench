@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.28.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.27.0...otto-ai-tools-v1.28.0) (2026-06-24)
+
+
+### Features
+
+* **pr-comments:** add --fix flag to triage and auto-fix review threads ([#360](https://github.com/otto-nation/otto-workbench/issues/360)) ([05227c4](https://github.com/otto-nation/otto-workbench/commit/05227c45f159a22f05321f599c626baf7b5ce3c4))
+
+
+### Bug Fixes
+
+* **ci-check:** treat skipped/cancelled runs as non-failures ([#365](https://github.com/otto-nation/otto-workbench/issues/365)) ([a827d11](https://github.com/otto-nation/otto-workbench/commit/a827d11ede7dea546fedf0f61a1b1a3df3daa6bb))
+* **pr:** handle bare repos in pr_context.resolve() ([#364](https://github.com/otto-nation/otto-workbench/issues/364)) ([c315046](https://github.com/otto-nation/otto-workbench/commit/c3150468c25dfd91420771a2731569ef539e70b9))
+
+
+### Code Refactoring
+
+* **review:** pre-create output files before launching agents ([#363](https://github.com/otto-nation/otto-workbench/issues/363)) ([ec806b6](https://github.com/otto-nation/otto-workbench/commit/ec806b66cdef1138acecc314ffe9e83aa65ac495))
+* **review:** strengthen convention-awareness in review prompts ([#366](https://github.com/otto-nation/otto-workbench/issues/366)) ([2d5495b](https://github.com/otto-nation/otto-workbench/commit/2d5495b68dc599f5ea7edabf0e41cfd4dccaeed0))
+
 ## [1.27.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.7...otto-ai-tools-v1.27.0) (2026-06-24)
 
 

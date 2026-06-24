@@ -414,6 +414,28 @@ def _push_fixes(job: ReviewJob):
     _warn(f"Failed to push fixes: {result.stderr.strip()}")
 
 
+def _count_checked(review_file: str) -> int:
+    if not Path(review_file).exists():
+        return 0
+    return sum(
+        1 for line in Path(review_file).read_text().splitlines()
+        if re.match(r"^- \[x\] ", line, re.IGNORECASE)
+    )
+
+
+def _count_changed_source_files(wt_path: str) -> int:
+    result = subprocess.run(
+        ["git", "-C", wt_path, "diff", "--name-only"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return 0
+    return sum(
+        1 for f in result.stdout.strip().splitlines()
+        if f and not f.endswith("review.md")
+    )
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         _warn("No review file to fix — skipping fix pass")
@@ -430,7 +452,12 @@ def run_fix_pass(job: ReviewJob):
     print()
     after = _count_unchecked(job.review_file)
     fixed = before - after
-    _commit_fixes(job, fixed=fixed, skipped=after)
+    if fixed == 0:
+        fixed = _count_checked(job.review_file)
+    if fixed == 0:
+        fixed = _count_changed_source_files(job.wt_path)
+    skipped = after
+    _commit_fixes(job, fixed=fixed, skipped=skipped)
 
 
 def _check_serial_abort(

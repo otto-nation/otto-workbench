@@ -477,6 +477,30 @@ def _strip_trailing_comments(text: str) -> str:
     return "\n".join(lines)
 
 
+def _find_mismatch(norm_frag: str, norm_file: str) -> dict:
+    for i in range(len(norm_frag), 0, -1):
+        if norm_frag[:i] in norm_file:
+            return {"longest_match_prefix": i, "first_mismatch": norm_frag[i:i + 60]}
+    return {"longest_match_prefix": 0, "first_mismatch": norm_frag[:60]}
+
+
+def _check_fragments(evidence: str, norm_file: str) -> dict:
+    cleaned = _strip_trailing_comments(evidence)
+    fragments = re.split(r"(?m)^\s*\.\.\.\s*$", cleaned)
+    fragments = [f for f in fragments if f.strip()]
+    if not fragments:
+        return {"match_result": True}
+    result: dict = {"evidence_length": len(evidence), "fragments": len(fragments)}
+    for frag in fragments:
+        norm_frag = _normalize_code(frag)
+        if norm_frag not in norm_file:
+            result.update(_find_mismatch(norm_frag, norm_file))
+            result["match_result"] = False
+            return result
+    result["match_result"] = True
+    return result
+
+
 def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     resolved = Path(wt_path) / path
     detail: dict = {
@@ -492,30 +516,7 @@ def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     except OSError:
         detail["match_result"] = False
         return detail
-    cleaned = _strip_trailing_comments(evidence)
-    norm_file = _normalize_code(file_content)
-    fragments = re.split(r"(?m)^\s*\.\.\.\s*$", cleaned)
-    fragments = [f for f in fragments if f.strip()]
-    if not fragments:
-        detail["match_result"] = True
-        return detail
-    all_match = True
-    detail["evidence_length"] = len(evidence)
-    detail["fragments"] = len(fragments)
-    for frag in fragments:
-        norm_frag = _normalize_code(frag)
-        if norm_frag not in norm_file:
-            all_match = False
-            for i in range(len(norm_frag), 0, -1):
-                if norm_frag[:i] in norm_file:
-                    detail["longest_match_prefix"] = i
-                    detail["first_mismatch"] = norm_frag[i:i + 60]
-                    break
-            else:
-                detail["longest_match_prefix"] = 0
-                detail["first_mismatch"] = norm_frag[:60]
-            break
-    detail["match_result"] = all_match
+    detail.update(_check_fragments(evidence, _normalize_code(file_content)))
     return detail
 
 

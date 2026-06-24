@@ -18,8 +18,10 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _version import version_string as _version_string  # noqa: E402
+from trail import Trail, add_trail_args  # noqa: E402
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -343,6 +345,7 @@ def main() -> None:
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"scan sessions from last N days (default: {DEFAULT_DAYS})")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
+    add_trail_args(parser)
     args = parser.parse_args()
 
     if args.version:
@@ -350,18 +353,31 @@ def main() -> None:
         raise SystemExit(0)
 
     home = Path(args.home)
+    log_dir = os.path.expanduser("~/.config/workbench/logs/dream-scan")
+    trail = Trail.start(
+        script="dream-scan",
+        artifact_dir=log_dir,
+        context={"days": args.days},
+        debug=args.debug,
+    )
 
-    _info(f"Scanning sessions from last {args.days} days")
-    _info(f"Home: {home}")
+    try:
+        _info(f"Scanning sessions from last {args.days} days")
+        _info(f"Home: {home}")
 
-    memory_states = scan_memory_state(home)
-    _info(f"Found {len(memory_states)} project(s) with memory")
+        memory_states = scan_memory_state(home)
+        _info(f"Found {len(memory_states)} project(s) with memory")
+        trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
-    signals = scan_sessions(home, args.days)
-    _info(f"Found {len(signals)} signal(s)")
+        signals = scan_sessions(home, args.days)
+        _info(f"Found {len(signals)} signal(s)")
+        trail.info("scan_sessions", f"scanned sessions from last {args.days} days, found {len(signals)} signals")
 
-    report = format_report(memory_states, signals)
-    print(report)
+        report = format_report(memory_states, signals)
+        trail.info("generate_report", f"report generated, {len(report)} chars")
+        print(report)
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

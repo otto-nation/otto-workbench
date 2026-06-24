@@ -31,7 +31,7 @@ The installer installs Homebrew (if missing), symlinks scripts, zsh configs, git
 
 <!-- AFTER-INSTALL-START -->
 1. **Reload your shell**: `exec zsh`
-2. **Docker** (if installed): start your runtime — `colima start` or launch OrbStack
+2. **Docker** (if installed): start your runtime — `colima start` or OrbStack (macOS), or `sudo systemctl start docker` (Linux)
 3. **AI tools** (if installed): run `task --global ai:setup` to configure your `AI_COMMAND` and tokens
 <!-- AFTER-INSTALL-END -->
 

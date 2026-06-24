@@ -16,6 +16,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 . "$WORKBENCH_DIR/lib/ui.sh"
+# shellcheck source=docker/steps.sh
+. "$SCRIPT_DIR/steps.sh"
 
 # ─── Runtime aliases symlink ──────────────────────────────────────────────────
 
@@ -71,6 +73,34 @@ select_runtime() {
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 echo -e "${BOLD}${BLUE}Docker setup${NC}\n"
+
+# ─── Linux: native Docker (no runtime selection) ────────────────────────────
+
+if [[ "$OSTYPE" != "darwin"* ]]; then
+  local_sock=""
+  _detect_native_docker_sock local_sock
+
+  if [[ -n "$local_sock" ]]; then
+    info "Native Docker socket: $local_sock"
+    mkdir -p "$DOCKER_RUN_DIR"
+    install_symlink "$local_sock" "$DOCKER_RUN_DIR/docker.sock"
+  else
+    warn "No Docker socket found at /run/docker.sock or /var/run/docker.sock"
+    echo -e "  ${DIM}Install Docker: sudo apt install docker.io${NC}"
+  fi
+
+  echo
+  info "Testcontainers"
+  install_symlink "$TESTCONTAINERS_SRC" ~/.testcontainers.properties
+
+  state_set "docker.runtime" "native"
+
+  echo
+  success "Docker setup complete!"
+  exit 0
+fi
+
+# ─── macOS: runtime selection (Colima, OrbStack) ────────────────────────────
 
 # Detect existing runtime from the persisted aliases symlink
 _existing=""

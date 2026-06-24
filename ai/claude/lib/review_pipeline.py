@@ -42,6 +42,7 @@ from review_findings import (
     build_mechanical_review,
     merge_reviews, post_process_findings,
 )
+from review_github import PRData, fetch_pr_data
 from review_preflight import (
     DEFAULT_MAX_GROUPS, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     HOLISTIC_MIN_GROUPS,
@@ -1121,16 +1122,18 @@ def run_multi_phase(
 
 def _fetch_metadata(
     repo: str, pr_number: str, mode: str, wt_path: str,
-) -> tuple[PRMetadata, PRContext]:
+) -> tuple[PRMetadata, PRContext, PRData | None]:
     if mode == MODE_SELF and not pr_number:
         _info("Gathering branch metadata...")
-        return fetch_branch_metadata(wt_path), PRContext()
+        return fetch_branch_metadata(wt_path), PRContext(), None
     _info("Fetching PR data...")
     with ThreadPoolExecutor(max_workers=2) as pool:
         pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
         if mode == MODE_SELF:
-            return pr_future.result(), PRContext()
-        ctx_future = pool.submit(fetch_pr_context, repo, pr_number)
-        return pr_future.result(), ctx_future.result()
+            return pr_future.result(), PRContext(), None
+        pd_future = pool.submit(fetch_pr_data, repo, pr_number)
+        pr_data = pd_future.result()
+        ctx = fetch_pr_context(repo, pr_number, pr_data)
+        return pr_future.result(), ctx, pr_data
 
 

@@ -106,7 +106,7 @@ def main():
 
     session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 
-    pr, ctx = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
+    pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
@@ -126,7 +126,7 @@ def main():
     if prior_review and args.pr:
         with ThreadPoolExecutor(max_workers=2) as pool:
             pf_future = pool.submit(collect_preflight_data, job)
-            rt_future = pool.submit(fetch_reply_threads, repo, args.pr)
+            rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
             job.preflight = pf_future.result()
             job.reply_threads = rt_future.result()
     else:

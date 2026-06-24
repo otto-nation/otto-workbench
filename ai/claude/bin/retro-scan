@@ -19,8 +19,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_BIN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_BIN_DIR))
+sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
 from _version import version_string as _version_string  # noqa: E402
+from review_github import (  # noqa: E402
+    GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
+)
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -134,6 +139,44 @@ def parse_review_comment(comment: dict) -> dict:
 
 # ── GitHub API fetching ─────────────────────────────────────────────────────
 
+GQL_MERGED_PRS_LIMIT = 50
+
+_RETRO_QUERY = f"""
+query($owner: String!, $name: String!) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequests(states: MERGED, first: {GQL_MERGED_PRS_LIMIT}, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
+      nodes {{
+        number
+        title
+        mergedAt
+        author {{ login }}
+        reviewThreads(first: {GQL_THREADS_LIMIT}) {{
+          totalCount
+          nodes {{
+            path
+            line
+            comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
+              nodes {{
+                author {{ login }}
+                body
+              }}
+            }}
+          }}
+        }}
+        comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
+          totalCount
+          nodes {{
+            author {{ login }}
+            body
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+
 def _gh_api(endpoint: str, repo: str) -> list[dict]:
     try:
         result = subprocess.run(
@@ -157,6 +200,122 @@ def _read_last_retro(home: Path) -> int:
         return int(stamp.read_text().strip())
     except (ValueError, OSError):
         return 0
+
+
+def _graphql_comment_to_dict(node: dict, path: str | None, line: int | None) -> dict:
+    """Convert a single GraphQL comment node to the retro-scan comment format."""
+    return {
+        "author": (node.get("author") or {}).get("login", "unknown"),
+        "body": (node.get("body") or "")[:COMMENT_BODY_MAX],
+        "path": path, "line": line, "url": "",
+    }
+
+
+def _flatten_thread_comments(thread_nodes: list[dict]) -> list[dict]:
+    """Flatten review thread nodes into comment dicts."""
+    raw = [
+        _graphql_comment_to_dict(c, thread.get("path"), thread.get("line"))
+        for thread in thread_nodes
+        for c in thread.get("comments", {}).get("nodes", [])
+    ]
+    return [c for c in raw if not is_noise(c["body"])]
+
+
+def _flatten_issue_comments(comment_nodes: list[dict]) -> list[dict]:
+    """Flatten issue comment nodes into comment dicts."""
+    raw = [_graphql_comment_to_dict(c, None, None) for c in comment_nodes]
+    return [c for c in raw if not is_noise(c["body"])]
+
+
+def _parse_pr_node(pr_node: dict, since_date: str) -> dict | None:
+    """Parse a single GraphQL PR node into the retro-scan format."""
+    merged_at = pr_node.get("mergedAt", "")
+    if not merged_at or merged_at < since_date:
+        return None
+
+    threads_data = pr_node.get("reviewThreads", {})
+    total_threads = threads_data.get("totalCount", 0)
+    thread_nodes = threads_data.get("nodes", [])
+    if total_threads > len(thread_nodes):
+        _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
+
+    comments_data = pr_node.get("comments", {})
+    total_comments = comments_data.get("totalCount", 0)
+    comment_nodes = comments_data.get("nodes", [])
+    if total_comments > len(comment_nodes):
+        _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: GQL_ISSUE_COMMENTS_LIMIT={GQL_ISSUE_COMMENTS_LIMIT})")
+
+    all_comments = _flatten_thread_comments(thread_nodes)
+    all_comments.extend(_flatten_issue_comments(comment_nodes))
+
+    if not all_comments:
+        return None
+    return {
+        "number": pr_node.get("number"),
+        "title": pr_node.get("title", ""),
+        "user": {"login": (pr_node.get("author") or {}).get("login", "")},
+        "merged_at": merged_at,
+        "comments": all_comments,
+    }
+
+
+def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
+    """Fetch merged PRs with review data in a single GraphQL query.
+
+    Returns list of dicts with: number, title, author, merged_at, comments.
+    Each comment has: author, body, path (optional), line (optional).
+    """
+    since_date = (
+        datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if since_ts > 0 else "2020-01-01T00:00:00Z"
+    )
+    owner, name = repo.split("/", 1)
+    cmd = [
+        "gh", "api", "graphql",
+        "-f", f"query={_RETRO_QUERY}",
+        "-F", f"owner={owner}",
+        "-F", f"name={name}",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            _warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
+            return _fetch_repo_review_data_rest(repo, since_ts)
+        data = json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
+        _warn(f"GraphQL error for {repo}: {e}")
+        return _fetch_repo_review_data_rest(repo, since_ts)
+
+    pr_nodes = (
+        data.get("data", {})
+        .get("repository", {})
+        .get("pullRequests", {})
+        .get("nodes", [])
+    )
+
+    results = []
+    for pr_node in pr_nodes:
+        parsed = _parse_pr_node(pr_node, since_date)
+        if parsed:
+            results.append(parsed)
+    return results
+
+
+def _fetch_repo_review_data_rest(repo: str, since_ts: int) -> list[dict]:
+    """REST fallback for fetch_repo_review_data."""
+    merged_prs = fetch_merged_prs(repo, since_ts)
+    results = []
+    for pr in merged_prs:
+        comments = fetch_pr_comments(repo, pr["number"])
+        if comments:
+            results.append({
+                "number": pr["number"],
+                "title": pr.get("title", ""),
+                "user": pr.get("user", {}),
+                "merged_at": pr.get("merged_at", ""),
+                "comments": comments,
+            })
+    return results
 
 
 def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
@@ -399,17 +558,26 @@ def _scan_repo(
     git_user: str, rule_match_counts: dict[str, dict],
 ) -> dict:
     _info(f"Fetching PRs for {repo['github']}...")
-    prs = fetch_merged_prs(repo["github"], last_retro_ts)
-    _info(f"  Found {len(prs)} merged PR(s)")
+    pr_data = fetch_repo_review_data(repo["github"], last_retro_ts)
+    _info(f"  Found {len(pr_data)} merged PR(s) with comments")
 
     repo_prs: list[dict] = []
     unmatched = 0
-    for pr in prs:
-        result = _process_pr(pr, repo["github"], git_user, rules, rule_match_counts)
-        if not result:
-            continue
-        unmatched += result.pop("unmatched")
-        repo_prs.append(result)
+    for pr in pr_data:
+        pr_author = pr.get("user", {}).get("login", "")
+        comments = pr["comments"]
+        um = sum(
+            1 for c in comments
+            if _annotate_comment(c, pr_author, git_user, rules, rule_match_counts)
+        )
+        unmatched += um
+        repo_prs.append({
+            "number": pr["number"],
+            "title": pr.get("title", ""),
+            "author": pr_author,
+            "merged_at": pr.get("merged_at", "")[:10],
+            "comments": comments,
+        })
     return {"prs": repo_prs, "unmatched": unmatched}
 
 

@@ -21,6 +21,7 @@ from review_common import (
 )
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
+from review_github import PRData
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -719,7 +720,12 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
     )
 
 
-def fetch_pr_context(repo: str, pr_number: str) -> PRContext:
+def fetch_pr_context(
+    repo: str, pr_number: str, pr_data: PRData | None = None,
+) -> PRContext:
+    if pr_data is not None:
+        return _pr_context_from_data(pr_data)
+
     cmds = {
         "commits": [
             "gh", "pr", "view", pr_number, "--repo", repo,
@@ -749,6 +755,57 @@ def fetch_pr_context(repo: str, pr_number: str) -> PRContext:
         reviews=results["reviews"] or "[]",
         review_comments=results["review_comments"] or "[]",
         comments=results["comments"] or "[]",
+    )
+
+
+def _pr_context_from_data(pr_data: PRData) -> PRContext:
+    """Build PRContext from PRData without any API calls."""
+    commits = "\n".join(
+        c.get("commit", {}).get("messageHeadline", "")
+        for c in pr_data.commits
+    )
+
+    reviews = [
+        {
+            "user": (r.get("author") or {}).get("login", ""),
+            "state": r.get("state", ""),
+            "body": r.get("body", ""),
+        }
+        for r in pr_data.reviews
+    ]
+
+    review_comments = []
+    for thread in pr_data.review_threads:
+        path = thread.get("path", "")
+        line = thread.get("line")
+        nodes = thread.get("comments", {}).get("nodes", [])
+        root_id = None
+        for i, c in enumerate(nodes):
+            entry = {
+                "id": c.get("databaseId"),
+                "path": path,
+                "line": line,
+                "body": c.get("body", ""),
+                "user": (c.get("author") or {}).get("login", ""),
+                "in_reply_to_id": root_id,
+            }
+            review_comments.append(entry)
+            if i == 0:
+                root_id = c.get("databaseId")
+
+    comments = [
+        {
+            "user": (c.get("author") or {}).get("login", ""),
+            "body": c.get("body", ""),
+        }
+        for c in pr_data.issue_comments
+    ]
+
+    return PRContext(
+        commits=commits,
+        reviews=json.dumps(reviews),
+        review_comments=json.dumps(review_comments),
+        comments=json.dumps(comments),
     )
 
 
@@ -799,7 +856,10 @@ def _match_thread_to_finding(root_body: str) -> str:
     return m.group(1) if m else ""
 
 
-def fetch_reply_threads(repo: str, pr_number: str, bot_login: str = "") -> dict:
+def fetch_reply_threads(
+    repo: str, pr_number: str, bot_login: str = "",
+    pr_data: PRData | None = None,
+) -> dict:
     """Fetch and classify reply threads on bot-authored review comments.
 
     Returns a dict with:
@@ -807,14 +867,14 @@ def fetch_reply_threads(repo: str, pr_number: str, bot_login: str = "") -> dict:
       - summary: count per state
     """
     if not bot_login:
-        bot_login = _get_bot_login()
+        bot_login = pr_data.viewer_login if pr_data is not None else _get_bot_login()
     if not bot_login:
         _warn("Could not detect bot login — skipping reply thread analysis")
         return {"threads": [], "summary": {}}
 
     owner, name = repo.split("/", 1)
     try:
-        raw_threads = fetch_threads(owner, name, int(pr_number))
+        raw_threads = fetch_threads(owner, name, int(pr_number), pr_data)
     except Exception:
         return {"threads": [], "summary": {}}
 

@@ -10,8 +10,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from pr_context import (
-    _parse_pr_input, _resolve_branch, _resolve_bare_repo_worktree,
-    _find_worktree_for_branch, ResolvedContext,
+    _parse_pr_input, _resolve_branch, resolve_bare_repo_worktree,
+    find_worktree_for_branch, ResolvedContext,
 )
 
 
@@ -88,29 +88,29 @@ def test_resolve_branch_returns_stdout(mock_run):
 # ── Bare-repo worktree resolution ─────────────────────────────────────────
 
 
-@patch("pr_context._find_worktree_for_branch")
-def test_resolve_bare_repo_worktree_prefers_branch(mock_find):
+@patch("pr_context.find_worktree_for_branch")
+def testresolve_bare_repo_worktree_prefers_branch(mock_find):
     mock_find.return_value = Path("/wt/feat-branch")
-    result = _resolve_bare_repo_worktree(None, "feat/branch")
+    result = resolve_bare_repo_worktree(None, "feat/branch")
     assert result == Path("/wt/feat-branch")
     mock_find.assert_called_once_with("feat/branch", None)
 
 
-@patch("pr_context._find_worktree_for_branch")
+@patch("pr_context.find_worktree_for_branch")
 @patch("pr_context.subprocess.run")
-def test_resolve_bare_repo_worktree_falls_back_to_default(mock_run, mock_find):
+def testresolve_bare_repo_worktree_falls_back_to_default(mock_run, mock_find):
     mock_find.side_effect = [None, Path("/wt/main")]
     mock_run.return_value = MagicMock(
         returncode=0, stdout="refs/remotes/origin/main\n",
     )
-    result = _resolve_bare_repo_worktree(None, "nonexistent")
+    result = resolve_bare_repo_worktree(None, "nonexistent")
     assert result == Path("/wt/main")
     assert mock_find.call_count == 2
 
 
-@patch("pr_context._find_worktree_for_branch", return_value=None)
+@patch("pr_context.find_worktree_for_branch", return_value=None)
 @patch("pr_context.subprocess.run")
-def test_resolve_bare_repo_worktree_returns_none(mock_run, mock_find):
+def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
-    result = _resolve_bare_repo_worktree(None, None)
+    result = resolve_bare_repo_worktree(None, None)
     assert result is None

@@ -82,8 +82,8 @@ def _resolve_worktree(
     if toplevel is not None:
         return toplevel, cwd
 
-    if _is_bare_repo(cwd):
-        wt = _resolve_bare_repo_worktree(cwd, branch)
+    if is_bare_repo(cwd):
+        wt = resolve_bare_repo_worktree(cwd, branch)
         if wt:
             return wt, str(wt)
         if not pr and not branch:
@@ -203,7 +203,7 @@ def _branch_from_pr(repo: str, pr_number: int) -> str | None:
 # ── Bare-repo helpers ──────────────────────────────────────────────────────
 
 
-def _is_bare_repo(cwd: str | None = None) -> bool:
+def is_bare_repo(cwd: str | None = None) -> bool:
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--is-bare-repository"],
@@ -214,7 +214,7 @@ def _is_bare_repo(cwd: str | None = None) -> bool:
         return False
 
 
-def _find_worktree_for_branch(
+def find_worktree_for_branch(
     branch: str, cwd: str | None = None,
 ) -> Path | None:
     """Find the worktree directory checked out on *branch*."""
@@ -231,7 +231,7 @@ def _find_worktree_for_branch(
     return None
 
 
-def _resolve_bare_repo_worktree(
+def resolve_bare_repo_worktree(
     cwd: str | None, branch: str | None,
 ) -> Path | None:
     """Best-effort worktree discovery for bare repos.
@@ -239,7 +239,7 @@ def _resolve_bare_repo_worktree(
     Tries the requested branch first, then the default branch.
     """
     if branch:
-        wt = _find_worktree_for_branch(branch, cwd)
+        wt = find_worktree_for_branch(branch, cwd)
         if wt:
             return wt
 
@@ -255,4 +255,4 @@ def _resolve_bare_repo_worktree(
     except Exception:
         pass
 
-    return _find_worktree_for_branch(default_branch, cwd)
+    return find_worktree_for_branch(default_branch, cwd)

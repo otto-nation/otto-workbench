@@ -556,10 +556,21 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
 
 def _resolve_bare_repo_worktree(branch: str = "") -> str:
-    wt = pr_context._resolve_bare_repo_worktree(None, branch or None)
+    wt = pr_context.resolve_bare_repo_worktree(None, branch or None)
     if wt:
         return str(wt)
-    _err(f"Bare repository — no worktree found for {branch or 'main'}. Pass --repo-dir to specify a worktree")
+    display_branch = branch
+    if not display_branch:
+        try:
+            r = subprocess.run(
+                ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+                capture_output=True, text=True,
+            )
+            ref = r.stdout.strip()
+            display_branch = ref.replace("refs/remotes/origin/", "") if ref else "main"
+        except Exception:
+            display_branch = "main"
+    _err(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
     sys.exit(1)
 
 
@@ -837,10 +848,13 @@ def _resolve_wt_path(repo_dir: str, pr_input: str) -> str:
     if toplevel is not None:
         return str(toplevel)
 
-    if not repo_dir and pr_context._is_bare_repo(cwd):
+    if not repo_dir and pr_context.is_bare_repo(cwd):
         return _resolve_bare_repo_worktree(pr_input)
 
-    _err("Not in a git repository — pass --repo-dir to specify the repo")
+    if repo_dir:
+        _err(f"Not a git repository: {repo_dir}")
+    else:
+        _err("Not in a git repository — pass --repo-dir to specify the repo")
     sys.exit(1)
 
 

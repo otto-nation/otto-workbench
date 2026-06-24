@@ -126,6 +126,103 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+# ── Hook behavior ────────────────────────────────────────────────────────────
+
+# Extracts and evaluates a hook command from settings.json.
+# The hook reads tool_input from stdin (JSON), so we pipe a mock payload.
+_run_hook() {
+  local hook_cmd=$1 tool_input=$2
+  echo "$tool_input" | bash -c "$hook_cmd" 2>&1
+}
+
+_get_brace_hook() {
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
+    select(.command | test("Brace expansion")) | .command' "$SETTINGS"
+}
+
+_get_branch_hook() {
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write") | .hooks[0].command' "$SETTINGS"
+}
+
+@test "brace hook: blocks real brace expansion" {
+  local hook
+  hook=$(_get_brace_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"cp file.{txt,bak}"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Brace expansion"* ]]
+}
+
+@test "brace hook: allows heredoc with braces in body" {
+  local hook cmd
+  hook=$(_get_brace_hook)
+  cmd=$(printf 'python3 << '\''PYEOF'\''\nd = {"a": 1, "b": 2}\nPYEOF')
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":$(jq -Rsa '.' <<< "$cmd")}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "brace hook: allows python -c with dict in double quotes" {
+  local hook
+  hook=$(_get_brace_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"python3 -c \"d = {\\\"a\\\": 1, \\\"b\\\": 2}\""}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "brace hook: allows jq with braces in single quotes" {
+  local hook
+  hook=$(_get_brace_hook)
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"jq '.items[] | {name, value}' file.json\"}}"
+  [ "$status" -eq 0 ]
+}
+
+_init_test_repo() {
+  local dir=$1 branch=${2:-main}
+  git -C "$dir" init -b "$branch" --quiet
+  git -C "$dir" config user.email "test@example.com"
+  git -C "$dir" config user.name "Test"
+}
+
+@test "branch hook: blocks tracked file on main" {
+  local hook tmpdir
+  hook=$(_get_branch_hook)
+  tmpdir=$(mktemp -d)
+  _init_test_repo "$tmpdir"
+  touch "$tmpdir/tracked.txt"
+  git -C "$tmpdir" add tracked.txt
+  git -C "$tmpdir" commit -m "init" --quiet
+  run _run_hook "$hook" "{\"tool_input\":{\"file_path\":\"$tmpdir/tracked.txt\"}}"
+  rm -rf "$tmpdir"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "branch hook: allows gitignored file on main" {
+  local hook tmpdir
+  hook=$(_get_branch_hook)
+  tmpdir=$(mktemp -d)
+  _init_test_repo "$tmpdir"
+  echo "ignore/" > "$tmpdir/.gitignore"
+  git -C "$tmpdir" add .gitignore
+  git -C "$tmpdir" commit -m "init" --quiet
+  mkdir -p "$tmpdir/ignore/specs"
+  run _run_hook "$hook" "{\"tool_input\":{\"file_path\":\"$tmpdir/ignore/specs/test.md\"}}"
+  rm -rf "$tmpdir"
+  [ "$status" -eq 0 ]
+}
+
+@test "branch hook: allows any file on feature branch" {
+  local hook tmpdir
+  hook=$(_get_branch_hook)
+  tmpdir=$(mktemp -d)
+  _init_test_repo "$tmpdir"
+  touch "$tmpdir/file.txt"
+  git -C "$tmpdir" add file.txt
+  git -C "$tmpdir" commit -m "init" --quiet
+  git -C "$tmpdir" checkout -b feature --quiet
+  run _run_hook "$hook" "{\"tool_input\":{\"file_path\":\"$tmpdir/file.txt\"}}"
+  rm -rf "$tmpdir"
+  [ "$status" -eq 0 ]
+}
+
 # ── sync-settings.jq integrity ───────────────────────────────────────────────
 
 @test "sync-settings.jq file exists" {

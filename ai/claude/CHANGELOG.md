@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.7...otto-ai-tools-v1.27.0) (2026-06-24)
+
+
+### Features
+
+* **pr-rebase:** add AI-assisted conflict resolution via claude -p ([#355](https://github.com/otto-nation/otto-workbench/issues/355)) ([f1028b7](https://github.com/otto-nation/otto-workbench/commit/f1028b73835506178d4eb8ef5471b66a171074fd))
+
+
+### Bug Fixes
+
+* **review:** preserve non-fallback worktrees after review ([#356](https://github.com/otto-nation/otto-workbench/issues/356)) ([6e66d01](https://github.com/otto-nation/otto-workbench/commit/6e66d01bcbedf6f41b596c6a88645a271fb2a18a))
+
 ## [1.26.7](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.26.6...otto-ai-tools-v1.26.7) (2026-06-23)
 
 

@@ -32,7 +32,7 @@
           },
           {
             "type": "command",
-            "command": "command=$(jq -r '.tool_input.command // empty'); stripped=$(printf '%s' \"$command\" | sed \"s/'[^']*'//g\"); if [[ \"$stripped\" =~ \\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\\} ]]; then echo 'BLOCKED: Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md.' >&2; exit 2; fi"
+            "command": "command=$(jq -r '.tool_input.command // empty'); first_line=$(printf '%s\\n' \"$command\" | head -1); stripped=$(printf '%s' \"$first_line\" | sed -e \"s/'[^']*'//g\" -e 's/\"[^\"]*\"//g'); if [[ \"$stripped\" =~ \\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\\} ]]; then echo 'BLOCKED: Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md.' >&2; exit 2; fi"
           },
           {
             "type": "command",
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "file_path=$(jq -r '.tool_input.file_path // empty'); [[ -z \"$file_path\" ]] && exit 0; repo_dir=$(cd \"$(dirname \"$file_path\")\" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0; branch=$(git -C \"$repo_dir\" branch --show-current 2>/dev/null); [[ -z \"$branch\" ]] && exit 0; if [[ \"$branch\" == \"main\" || \"$branch\" == \"master\" ]]; then echo \"BLOCKED: Cannot edit files on $branch. Create a worktree first: wt switch -c <branch>\" >&2; exit 2; fi"
+            "command": "file_path=$(jq -r '.tool_input.file_path // empty'); [[ -z \"$file_path\" ]] && exit 0; repo_dir=$(cd \"$(dirname \"$file_path\")\" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0; branch=$(git -C \"$repo_dir\" branch --show-current 2>/dev/null); [[ -z \"$branch\" ]] && exit 0; if [[ \"$branch\" == \"main\" || \"$branch\" == \"master\" ]]; then git -C \"$repo_dir\" check-ignore -q \"$file_path\" 2>/dev/null && exit 0; echo \"BLOCKED: Cannot edit files on $branch. Create a worktree first: wt switch -c <branch>\" >&2; exit 2; fi"
           }
         ]
       }

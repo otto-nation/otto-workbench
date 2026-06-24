@@ -196,6 +196,51 @@ def _git_add(filepath: str, cwd: str) -> bool:
     return r.returncode == 0
 
 
+def _accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
+    """Accept theirs for a generated file and stage it."""
+    r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
+    if r.returncode != 0:
+        print(f"  git checkout --theirs failed for {filepath}", file=sys.stderr)
+        return False
+    if not _git_add(filepath, cwd):
+        return False
+    print(f"  Accepted theirs: {filepath} (will regenerate)", file=sys.stderr)
+    return True
+
+
+def _resolve_single_file(
+    filepath: str, full_path: Path, sha: str, subject: str, cwd: str,
+) -> str | None:
+    """Resolve a single conflicted text file with claude -p. Returns filepath or None."""
+    try:
+        content = full_path.read_text()
+    except OSError as e:
+        print(f"  Cannot read {filepath}: {e}", file=sys.stderr)
+        return None
+
+    prompt = _build_resolve_prompt(filepath, content, sha, subject)
+    result = subprocess.run(
+        ["claude", "-p", "--bare"],
+        input=prompt,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"  claude -p failed for {filepath} (exit {result.returncode})", file=sys.stderr)
+        return None
+
+    resolved_content = _parse_resolved_content(result.stdout)
+    if resolved_content is None:
+        print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
+        return None
+
+    full_path.write_text(resolved_content)
+    if not _git_add(filepath, cwd):
+        return None
+    print(f"  Resolved: {filepath}", file=sys.stderr)
+    return filepath
+
+
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
 ) -> list[str] | None:
@@ -212,41 +257,17 @@ def _resolve_file_conflicts(
 
         # go.sum: accept theirs and regenerate after
         if filepath.endswith("go.sum"):
-            r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
-            if r.returncode != 0 or not _git_add(filepath, cwd):
+            ok = _accept_theirs_and_stage(filepath, full_path.parent, cwd)
+            if not ok:
                 return None
             go_dirs.add(full_path.parent)
             resolved.append(filepath)
-            print(f"  Accepted theirs: {filepath} (will regenerate)", file=sys.stderr)
             continue
 
-        try:
-            content = full_path.read_text()
-        except OSError as e:
-            print(f"  Cannot read {filepath}: {e}", file=sys.stderr)
-            return None
-
-        prompt = _build_resolve_prompt(filepath, content, sha, subject)
-        result = subprocess.run(
-            ["claude", "-p", "--bare"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"  claude -p failed for {filepath} (exit {result.returncode})", file=sys.stderr)
-            return None
-
-        resolved_content = _parse_resolved_content(result.stdout)
-        if resolved_content is None:
-            print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
-            return None
-
-        full_path.write_text(resolved_content)
-        if not _git_add(filepath, cwd):
+        result = _resolve_single_file(filepath, full_path, sha, subject, cwd)
+        if result is None:
             return None
         resolved.append(filepath)
-        print(f"  Resolved: {filepath}", file=sys.stderr)
 
         if filepath.endswith("go.mod"):
             go_dirs.add(full_path.parent)

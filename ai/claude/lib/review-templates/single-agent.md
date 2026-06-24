@@ -9,6 +9,7 @@ ${env_section}
 ## Output
 You MUST use the Write tool to write the review to: ${review_file}
 Do NOT print the review to stdout — it must be saved as a file using the Write tool.
+The output file and its directory already exist — do NOT create directories or empty files.
 Include this metadata comment after the head_sha line: <!-- generator: ${generator_version} -->
 Format each finding as a list item: `- **[M1]** **\`<file>:<line>\`** — <finding>`. NEVER use ### headings for findings — downstream counters and posting tools parse the `- **[X1]**` list-item format only.
 Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file proving the claim.

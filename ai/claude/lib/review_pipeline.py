@@ -85,6 +85,17 @@ DEFAULT_MAX_TURNS_FIX = 20
 OMITTED_FILE_TURNS = 2
 
 
+def _touch(path: str) -> None:
+    """Pre-create an empty output file without truncating existing content."""
+    Path(path).touch(exist_ok=True)
+
+
+def _has_output(path: str) -> bool:
+    """Check if a file exists and has content (not just pre-created empty)."""
+    p = Path(path)
+    return p.exists() and p.stat().st_size > 0
+
+
 def _omitted_turns(job: "ReviewJob") -> int:
     if not job.preflight or not job.preflight.omitted_files:
         return 0
@@ -217,16 +228,17 @@ def run_single_agent(job: ReviewJob):
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
     _info(f"Running review agent on {label}...")
     print()
+    _touch(job.review_file)
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
     rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=max_turns)
     print()
 
     reason = ""
-    if not Path(job.review_file).exists():
+    if not _has_output(job.review_file):
         reason = _diagnose_missing_output(job.session_log)
         _try_recover_review(job)
 
-    if not Path(job.review_file).exists():
+    if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
         reason = reason or "unknown"
         print(f"error: review agent {detail} and produced no review file ({reason})", file=sys.stderr)
@@ -248,11 +260,13 @@ def _review_group(
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
     if skip:
-        if Path(group_output).exists():
+        if _has_output(group_output):
             _info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
             return (i, group_output, None)
         _warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
         return (i, group_output, (grp.name, "output missing"))
+
+    _touch(group_output)
 
     group_files_formatted = "\n".join(
         FILE_STAT_FMT.format(**f)
@@ -271,9 +285,9 @@ def _review_group(
     invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, max_turns=max_turns)
 
     failed = None
-    if not Path(group_output).exists():
+    if not _has_output(group_output):
         _try_recover_output(group_log, group_output)
-    if not Path(group_output).exists():
+    if not _has_output(group_output):
         reason = _diagnose_missing_output(group_log)
         _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = (grp.name, reason)
@@ -292,6 +306,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
     holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
+    _touch(holistic_output)
+
     max_turns = DEFAULT_MAX_TURNS_HOLISTIC + _omitted_turns(job)
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
@@ -303,7 +319,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     print()
 
     holistic_content = ""
-    if Path(holistic_output).exists():
+    if _has_output(holistic_output):
         holistic_content = Path(holistic_output).read_text()
     else:
         reason = _diagnose_missing_output(holistic_log)
@@ -316,6 +332,8 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     angles_output = _derive_path(job.review_file, FILENAME_ANGLES)
     angles_log = _derive_path(job.review_file, FILENAME_ANGLES_LOG)
 
+    _touch(angles_output)
+
     max_turns = DEFAULT_MAX_TURNS_ANGLES + _omitted_turns(job)
     prompt = build_prompt(
         TEMPLATE_ANGLES, job, max_turns=max_turns,
@@ -326,7 +344,7 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, max_turns=max_turns)
 
     angles_content = ""
-    if Path(angles_output).exists():
+    if _has_output(angles_output):
         angles_content = Path(angles_output).read_text()
     else:
         reason = _diagnose_missing_output(angles_log)
@@ -397,7 +415,7 @@ def _push_fixes(job: ReviewJob):
 
 
 def run_fix_pass(job: ReviewJob):
-    if not Path(job.review_file).exists():
+    if not _has_output(job.review_file):
         _warn("No review file to fix — skipping fix pass")
         return
     fix_log = _derive_path(job.review_file, FILENAME_FIX_LOG)
@@ -683,6 +701,8 @@ def _phase_synthesis(
     synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
+    _touch(job.review_file)
+
     max_turns = _synthesis_max_turns(merged_content)
     prompt = build_prompt(
         synthesis_template, job, max_turns=max_turns,
@@ -695,13 +715,13 @@ def _phase_synthesis(
     rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=max_turns)
     print()
 
-    if not Path(job.review_file).exists():
+    if not _has_output(job.review_file):
         _try_recover_output(synthesis_log, job.review_file)
 
     if _is_complete_review(job.review_file):
         _post_process_review(job)
     else:
-        reason = "no output" if not Path(job.review_file).exists() else "incomplete output"
+        reason = "no output" if not _has_output(job.review_file) else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
         _warn(f"Synthesis agent {detail} — falling back to mechanical merge")
         _write_mechanical_fallback(
@@ -903,7 +923,7 @@ def _run_holistic_phase(
         _info(f"Holistic phase skipped ({reason})")
         return _empty
 
-    if resume_exists and Path(holistic_output).exists():
+    if resume_exists and _has_output(holistic_output):
         _info("Phase 1: Holistic scan skipped (exists)")
         return Path(holistic_output).read_text(), holistic_output, holistic_log, 0.0
 
@@ -1075,7 +1095,7 @@ def run_multi_phase(
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
     all_merge_inputs = group_outputs[:]
-    if angles_output and Path(angles_output).exists():
+    if angles_output and _has_output(angles_output):
         all_merge_inputs.append(angles_output)
     merged_content = _phase_merge(all_merge_inputs, failed_groups)
 

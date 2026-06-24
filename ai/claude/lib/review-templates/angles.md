@@ -44,6 +44,7 @@ Do NOT refute a candidate for being "speculative" when the state is realistic.
 
 You MUST use the Write tool to write findings to: ${angles_output}
 Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
+The output file and its directory already exist — do NOT create directories or empty files.
 
 Format: ## Must fix / ## Should fix / ## Nit / ## Idioms sections only.
 Do NOT write a Summary, File Triage, or Verdict section.

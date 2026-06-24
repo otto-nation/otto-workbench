@@ -26,6 +26,7 @@ ${reviews_section}
 9. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
 10. You MUST use the Write tool to write the COMPLETE review file to: ${review_file}
     Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
+    The output file and its directory already exist — do NOT create directories or empty files.
 
 ## Turn budget
 You have ${max_turns} turns total. Your FIRST action must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read source files before writing. Use remaining turns only for cross-file consistency checks (e.g., confirming a finding about file A aligns with how file B uses it) and Edit updates.

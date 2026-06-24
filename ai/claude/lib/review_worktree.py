@@ -136,17 +136,16 @@ def cleanup_worktree(result: WorktreeResult | None, repo_dir: str) -> None:
     if result is None:
         return
 
+    # Only clean up temporary fallback worktrees created for the review.
+    # Non-fallback worktrees are the user's development worktrees — leave them alone.
+    if not result.is_fallback:
+        return
+
     try:
-        if result.is_fallback:
-            subprocess.run(
-                ["git", "-C", repo_dir, "worktree", "remove", "--force", result.path],
-                capture_output=True, text=True,
-            )
-        else:
-            subprocess.run(
-                ["wt", "remove", result.cleanup_ref, "--no-hooks", "--force", "-y", "-C", repo_dir],
-                capture_output=True, text=True,
-            )
+        subprocess.run(
+            ["git", "-C", repo_dir, "worktree", "remove", "--force", result.path],
+            capture_output=True, text=True,
+        )
     except Exception:
         pass
 

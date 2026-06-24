@@ -105,14 +105,15 @@ def load_events(trail_paths: list[str | Path]) -> list[dict]:
 def _parse_since(since: str) -> datetime:
     now = datetime.now(timezone.utc)
     suffixes = {"h": "hours", "d": "days", "m": "minutes"}
-    for suffix, unit in suffixes.items():
-        if since.endswith(suffix):
-            try:
-                return now - timedelta(**{unit: int(since[:-1])})
-            except ValueError:
-                print(f"Invalid --since value: {since!r}", file=sys.stderr)
-                sys.exit(1)
-    return now - timedelta(hours=1)
+    suffix = since[-1:] if since else ""
+    unit = suffixes.get(suffix)
+    if not unit:
+        return now - timedelta(hours=1)
+    try:
+        return now - timedelta(**{unit: int(since[:-1])})
+    except ValueError:
+        print(f"Invalid --since value: {since!r}", file=sys.stderr)
+        sys.exit(1)
 
 
 def filter_events(

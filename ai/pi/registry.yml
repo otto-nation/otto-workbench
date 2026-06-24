@@ -1,0 +1,8 @@
+# Pi agent registry — installed when the Pi sub-tool is set up.
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Pi Scripts"
+  install_check: false
+  validation: none
+  source: ai/pi

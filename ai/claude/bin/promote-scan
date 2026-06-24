@@ -438,6 +438,9 @@ def main() -> None:
         report = format_report(memory_states, backed_up, rules, scripts, hooks, agents)
         trail.info("generate_report", f"report generated, {len(report)} chars")
         print(report)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
     finally:
         trail.finish()
 

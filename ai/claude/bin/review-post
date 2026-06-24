@@ -207,7 +207,7 @@ def main():
                 inline = [f for f in kept if f.classification == CLASS_INLINE]
                 file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
             trail.info("dedup", f"removed {len(deduped) if deduped else 0} duplicate findings",
-                       data={"deduped": len(deduped) if deduped else 0, "kept": len(kept) if all_postable else 0})
+                       data={"deduped": len(deduped) if deduped else 0, "kept": len(kept)})
 
         body_findings = file_level + skipped
 

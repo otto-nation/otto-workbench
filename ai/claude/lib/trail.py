@@ -43,8 +43,6 @@ class EventType(str, Enum):
 TRAIL_FILENAME = "trail.jsonl"
 SCHEMA_VERSION = 1
 
-WORKBENCH_DIR = ".workbench"
-
 _ANSI_DIM = "\033[2m"
 _ANSI_RESET = "\033[0m"
 _ANSI_LEVELS = {

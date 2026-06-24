@@ -494,10 +494,9 @@ def main():
     toplevel = ctx.worktree_root
     head_sha = ctx.head_sha
 
-    workbench_dir = toplevel / ".workbench" if toplevel else None
     trail = Trail.start(
         script="review-threads",
-        artifact_dir=str(workbench_dir) if workbench_dir else "/tmp",
+        artifact_dir=str(toplevel / pr_state.STATE_DIR),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

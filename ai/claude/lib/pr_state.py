@@ -203,21 +203,14 @@ def state_to_dict(state: PRState) -> dict:
     # identity is a required positional arg — serialize separately
     d["identity"] = _identity_to_dict(state.identity)
     # ci.runs needs special handling for RunState nested objects
-    if state.ci.runs:
-        d["ci"]["runs"] = {str(k): _serde_to_dict(v) for k, v in state.ci.runs.items()}
+    d["ci"] = _ci_to_dict(state.ci)
     return d
 
 
 def state_from_dict(d: dict) -> PRState:
-    ci_data = dict(d.get("ci", {}))
-    runs_raw = ci_data.pop("runs", {})
-    ci_domain = _serde_from_dict(CIDomain, ci_data)
-    if runs_raw:
-        ci_domain.runs = {str(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
-
     return PRState(
         identity=_identity_from_dict(d["identity"]),
-        ci=ci_domain,
+        ci=_ci_from_dict(d.get("ci", {})),
         review=_serde_from_dict(ReviewSummary, d.get("review", {})),
         comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
         triage=_serde_from_dict(TriageSummary, d.get("triage", {})),

@@ -44,8 +44,8 @@ def _coerce(hint, value):
     origin = get_origin(hint)
     args = get_args(hint)
 
-    # Optional[X] / X | None — union types
-    if origin is type(int | None) or (args and type(None) in args):
+    # Optional[X] / X | None — union types containing None
+    if args and type(None) in args:
         non_none = [a for a in args if a is not type(None)]
         if value is None:
             return None
@@ -63,10 +63,22 @@ def _coerce(hint, value):
     if isinstance(hint, type) and dataclasses.is_dataclass(hint) and isinstance(value, dict):
         return from_dict(hint, value)
 
+    # list[X] — coerce elements
+    if origin is list and args:
+        item_type = args[0]
+        if isinstance(value, list):
+            return [_coerce(item_type, v) for v in value]
+
     # tuple[X, ...] — reconstruct from list
     if origin is tuple and args:
         item_type = args[0]
         if isinstance(value, (list, tuple)):
             return tuple(_coerce(item_type, v) for v in value)
+
+    # dict[K, V] — coerce values
+    if origin is dict and args and len(args) >= 2:
+        val_type = args[1]
+        if isinstance(value, dict):
+            return {k: _coerce(val_type, v) for k, v in value.items()}
 
     return value

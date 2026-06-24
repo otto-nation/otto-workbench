@@ -93,7 +93,7 @@ messages on stderr.
 2. Add argparse subparser in `pr`
 3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
 4. If the subcommand has persistent state: add a dataclass to `pr_state.py`
-   with `_to_dict`/`_from_dict` serializers and an `update_<name>()` function
+   (serialized via generic `serde.to_dict()`/`serde.from_dict()`) and an `update_<name>()` function
 5. Add `_render_<name>_section()` to `pr` for the `cmd_status` dashboard
 6. Register in `ai/claude/registry.yml`
 7. Add tests in `tests/`

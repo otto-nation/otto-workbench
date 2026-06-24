@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -262,7 +263,7 @@ def main():
 
     trail = Trail.start(
         script="ci-check",
-        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel else "/tmp",
+        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel else os.path.expanduser("~/.config/workbench/logs/ci-check"),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

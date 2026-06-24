@@ -253,7 +253,7 @@ def sync_ci_domain(domain, run: RunState):
     If a failure item existed in the prior run with a diagnosis or fix_sha,
     those values carry forward to the new run's matching item.
     """
-    prior_run = domain.runs.get(str(domain.latest_run_id)) if domain.latest_run_id else None
+    prior_run = domain.runs.get(str(domain.latest_run_id)) if domain.latest_run_id is not None else None
     prior_items = collect_item_ids(prior_run.failures) if prior_run else {}
 
     synced_failures: dict[str, FailureGroup] = {}

@@ -29,6 +29,12 @@ class Outer:
     items: list[str] = field(default_factory=list)
 
 
+@dataclass
+class Container:
+    entries: dict[str, Inner] = field(default_factory=dict)
+    colors: list[Color] = field(default_factory=list)
+
+
 class TestToDict:
     def test_simple_dataclass(self):
         d = to_dict(Inner(name="x", color=Color.BLUE))
@@ -72,3 +78,24 @@ class TestFromDict:
         assert restored.inner.name == original.inner.name
         assert restored.inner.color == original.inner.color
         assert restored.items == original.items
+
+    def test_dict_with_dataclass_values(self):
+        obj = from_dict(Container, {
+            "entries": {"a": {"name": "x", "color": "blue"}, "b": {"name": "y"}},
+            "colors": ["red", "blue"],
+        })
+        assert isinstance(obj.entries["a"], Inner)
+        assert obj.entries["a"].color == Color.BLUE
+        assert obj.entries["b"].name == "y"
+        assert obj.colors == [Color.RED, Color.BLUE]
+
+    def test_dict_with_dataclass_values_roundtrip(self):
+        original = Container(
+            entries={"a": Inner(name="x", color=Color.BLUE)},
+            colors=[Color.RED],
+        )
+        restored = from_dict(Container, to_dict(original))
+        assert isinstance(restored.entries["a"], Inner)
+        assert restored.entries["a"].name == "x"
+        assert restored.entries["a"].color == Color.BLUE
+        assert restored.colors == [Color.RED]

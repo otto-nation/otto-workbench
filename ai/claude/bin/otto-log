@@ -18,14 +18,14 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-from trail import TRAIL_FILENAME, WORKBENCH_DIR
+from trail import TRAIL_FILENAME
+from pr_state import STATE_DIR as WORKBENCH_DIR
 from review_common import REVIEWS_DIR
 
 LOGS_DIR = Path(os.environ.get(
     "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"),
 )) / "logs"
 
-ANSI_DIM = "\033[2m"
 ANSI_RESET = "\033[0m"
 ANSI_BOLD = "\033[1m"
 ANSI_LEVELS = {
@@ -104,12 +104,14 @@ def load_events(trail_paths: list[str | Path]) -> list[dict]:
 
 def _parse_since(since: str) -> datetime:
     now = datetime.now(timezone.utc)
-    if since.endswith("h"):
-        return now - timedelta(hours=int(since[:-1]))
-    if since.endswith("d"):
-        return now - timedelta(days=int(since[:-1]))
-    if since.endswith("m"):
-        return now - timedelta(minutes=int(since[:-1]))
+    suffixes = {"h": "hours", "d": "days", "m": "minutes"}
+    for suffix, unit in suffixes.items():
+        if since.endswith(suffix):
+            try:
+                return now - timedelta(**{unit: int(since[:-1])})
+            except ValueError:
+                print(f"Invalid --since value: {since!r}", file=sys.stderr)
+                sys.exit(1)
     return now - timedelta(hours=1)
 
 
@@ -119,7 +121,7 @@ def filter_events(
     level: str | None = None,
     event_type: str | None = None,
     invocation: str | None = None,
-    pr: int | None = None,
+    pr: int | str | None = None,
     repo: str | None = None,
     since: str | None = None,
 ) -> list[dict]:
@@ -133,7 +135,8 @@ def filter_events(
     if invocation:
         result = [e for e in result if e.get("invocation") == invocation]
     if pr is not None:
-        result = [e for e in result if e.get("context", {}).get("pr") == pr]
+        pr_str = str(pr)
+        result = [e for e in result if str(e.get("context", {}).get("pr", "")) == pr_str]
     if repo:
         result = [e for e in result if e.get("context", {}).get("repo") == repo]
     if since:
@@ -187,8 +190,7 @@ def _format_show(events: list[dict]) -> str:
 def cmd_recent(args):
     trails = discover_trails()
     events = load_events(trails)
-    since = args.since if args.since else "1h"
-    filtered = filter_events(events, since=since)
+    filtered = filter_events(events, since=args.since)
     if args.json:
         for e in filtered:
             print(json.dumps(e, separators=(",", ":")))

@@ -134,7 +134,7 @@ def main():
         review_file.write_text(final)
         _info(f"Rebuilt {review_file}")
 
-        finding_lines = [l for l in final.splitlines() if l.startswith("- [")]
+        finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
         trail.info("post_process", f"processed {len(finding_lines)} findings",
                    data={"finding_count": len(finding_lines), "review_file": str(review_file)})
     except Exception as exc:

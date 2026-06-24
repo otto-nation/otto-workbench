@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 # Migration: relocate PR and CI state from ignore/pr/ and ignore/ci-failures/
 # to .workbench/. Idempotent — no-op if already migrated or nothing to migrate.
 
@@ -38,15 +39,16 @@ migration_20260624_workbench_state_dir() {
         rm -f "$old_pr" "$old_ci"
         rmdir "$root/ignore/pr" 2>/dev/null || true
         rmdir "$root/ignore/ci-failures" 2>/dev/null || true
+        rmdir "$root/ignore" 2>/dev/null || true
 
-        migrated=$((migrated + 1))
+        migrated=1
     }
 
     # Migrate the current worktree
     _migrate_worktree_state "$WORKBENCH_DIR"
 
     if [[ $migrated -gt 0 ]]; then
-        success "Migrated $migrated worktree(s) from ignore/ to .workbench/"
+        success "Migrated worktree state from ignore/ to .workbench/"
     else
         success "No worktree state to migrate"
     fi

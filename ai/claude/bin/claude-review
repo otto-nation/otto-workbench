@@ -746,7 +746,7 @@ def _run_review(args) -> None:
                 issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
 
         if issue_link or issue_context:
-            trail.info("issue_context", f"issue context available",
+            trail.info("issue_context", "issue context available",
                        data={"issue_link": issue_link, "has_context": bool(issue_context)})
 
         pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
@@ -794,8 +794,7 @@ def _run_review(args) -> None:
         finally:
             review_worktree.cleanup_worktree(wt_result, repo_root)
     except Exception as exc:
-        if not isinstance(exc, SystemExit):
-            trail.error("unexpected_error", str(exc))
+        trail.error("unexpected_error", str(exc))
         raise
     finally:
         trail.finish()

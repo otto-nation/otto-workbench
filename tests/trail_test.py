@@ -15,7 +15,6 @@ from trail import (
     EventType,
     Level,
     Trail,
-    TrailEvent,
     add_trail_args,
 )
 

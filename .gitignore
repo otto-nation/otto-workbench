@@ -26,6 +26,8 @@ ai/memory/
 *.swp
 *.swo
 *~
+
+# Worktree-local state directories
 ignore/
 .workbench/
 

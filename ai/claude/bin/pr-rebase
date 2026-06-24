@@ -171,20 +171,29 @@ def _parse_resolved_content(stdout: str) -> str | None:
     """Extract resolved file content from claude -p output."""
     begin = stdout.find(_RESOLVE_BEGIN)
     end = stdout.find(_RESOLVE_END)
-    if begin != -1 and end != -1 and end > begin:
-        resolved = stdout[begin + len(_RESOLVE_BEGIN):end]
-        if resolved.startswith("\n"):
-            resolved = resolved[1:]
-        if resolved.endswith("\n"):
-            resolved = resolved[:-1]
-        # Final newline for POSIX compliance
-        return resolved + "\n"
+    if begin == -1 or end == -1 or end <= begin:
+        return None
 
-    # Fallback: use raw stdout if it contains no conflict markers
+    resolved = stdout[begin + len(_RESOLVE_BEGIN):end]
+    if resolved.startswith("\n"):
+        resolved = resolved[1:]
+    if resolved.endswith("\n"):
+        resolved = resolved[:-1]
+
+    # Reject if conflict markers survived
     for marker in _CONFLICT_MARKER_HEADS:
-        if marker in stdout:
+        if marker in resolved:
             return None
-    return stdout if stdout.strip() else None
+
+    return resolved + "\n"
+
+
+def _git_add(filepath: str, cwd: str) -> bool:
+    """Stage a file and return True on success."""
+    r = subprocess.run(["git", "add", filepath], cwd=cwd)
+    if r.returncode != 0:
+        print(f"  git add failed for {filepath}", file=sys.stderr)
+    return r.returncode == 0
 
 
 def _resolve_file_conflicts(
@@ -192,7 +201,7 @@ def _resolve_file_conflicts(
 ) -> list[str] | None:
     """Resolve conflicted files using claude -p. Returns resolved paths or None on failure."""
     resolved = []
-    go_dirs: set[str] = set()
+    go_dirs: set[Path] = set()
 
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
@@ -203,9 +212,10 @@ def _resolve_file_conflicts(
 
         # go.sum: accept theirs and regenerate after
         if filepath.endswith("go.sum"):
-            subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
-            subprocess.run(["git", "add", filepath], cwd=cwd)
-            go_dirs.add(str(full_path.parent))
+            r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
+            if r.returncode != 0 or not _git_add(filepath, cwd):
+                return None
+            go_dirs.add(full_path.parent)
             resolved.append(filepath)
             print(f"  Accepted theirs: {filepath} (will regenerate)", file=sys.stderr)
             continue
@@ -233,26 +243,28 @@ def _resolve_file_conflicts(
             return None
 
         full_path.write_text(resolved_content)
-        subprocess.run(["git", "add", filepath], cwd=cwd)
+        if not _git_add(filepath, cwd):
+            return None
         resolved.append(filepath)
         print(f"  Resolved: {filepath}", file=sys.stderr)
 
         if filepath.endswith("go.mod"):
-            go_dirs.add(str(full_path.parent))
+            go_dirs.add(full_path.parent)
 
     # Regenerate go.sum for any directories with resolved go.mod/go.sum
     for go_dir in go_dirs:
-        print(f"  Running go mod tidy in {Path(go_dir).name}/...", file=sys.stderr)
+        print(f"  Running go mod tidy in {go_dir.name}/...", file=sys.stderr)
         r = subprocess.run(
             ["go", "mod", "tidy"],
-            cwd=go_dir,
+            cwd=str(go_dir),
             capture_output=True, text=True,
         )
         if r.returncode != 0:
-            print(f"  Warning: go mod tidy failed: {r.stderr.strip()}", file=sys.stderr)
-        go_sum = Path(go_dir) / "go.sum"
+            print(f"  go mod tidy failed: {r.stderr.strip()}", file=sys.stderr)
+            return None
+        go_sum = go_dir / "go.sum"
         if go_sum.exists():
-            subprocess.run(["git", "add", "go.sum"], cwd=go_dir)
+            _git_add("go.sum", str(go_dir))
 
     return resolved
 

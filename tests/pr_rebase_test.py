@@ -149,18 +149,16 @@ def test_commits_ahead_non_numeric():
 # ── _is_binary ─────────────────────────────────────────────────────────────
 
 
-def test_is_binary_detects_null_bytes():
-    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
-        f.write(b"hello\x00world")
-        f.flush()
-        assert pr_rebase_cli._is_binary(Path(f.name)) is True
+def test_is_binary_detects_null_bytes(tmp_path):
+    binary_file = tmp_path / "file.bin"
+    binary_file.write_bytes(b"hello\x00world")
+    assert pr_rebase_cli._is_binary(binary_file) is True
 
 
-def test_is_binary_text_file():
-    with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
-        f.write("hello world\n")
-        f.flush()
-        assert pr_rebase_cli._is_binary(Path(f.name)) is False
+def test_is_binary_text_file(tmp_path):
+    text_file = tmp_path / "file.txt"
+    text_file.write_text("hello world\n")
+    assert pr_rebase_cli._is_binary(text_file) is False
 
 
 def test_is_binary_missing_file():
@@ -198,10 +196,10 @@ def test_parse_resolved_content_preserves_internal_blank_lines():
     assert result == "line1\n\nline3\n"
 
 
-def test_parse_resolved_content_fallback_no_markers():
+def test_parse_resolved_content_no_markers_returns_none():
     stdout = "resolved content without markers\n"
     result = pr_rebase_cli._parse_resolved_content(stdout)
-    assert result == "resolved content without markers\n"
+    assert result is None
 
 
 def test_parse_resolved_content_rejects_unresolved():
@@ -240,7 +238,7 @@ def test_resolve_file_conflicts_handles_go_sum():
 
         calls = []
         def fake_run(cmd, **kwargs):
-            calls.append(cmd)
+            calls.append((cmd, kwargs.get("cwd")))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run):
@@ -249,8 +247,13 @@ def test_resolve_file_conflicts_handles_go_sum():
             )
 
         assert result == ["go.sum"]
-        assert ["git", "checkout", "--theirs", "go.sum"] in calls
-        assert ["git", "add", "go.sum"] in calls
+        cmds = [c[0] for c in calls]
+        assert ["git", "checkout", "--theirs", "go.sum"] in cmds
+        assert ["git", "add", "go.sum"] in cmds
+        # Verify cwd is set on git commands
+        for cmd, cwd in calls:
+            if cmd[0] == "git":
+                assert cwd == tmpdir
 
 
 def test_resolve_file_conflicts_calls_claude():
@@ -261,7 +264,9 @@ def test_resolve_file_conflicts_calls_claude():
 
         resolved_output = "<<<RESOLVED>>>\nmerged code\n<<<END_RESOLVED>>>\n"
 
+        calls = []
         def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs.get("cwd")))
             if cmd[:3] == ["claude", "-p", "--bare"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0,
@@ -276,6 +281,10 @@ def test_resolve_file_conflicts_calls_claude():
 
         assert result == ["main.go"]
         assert conflict_file.read_text() == "merged code\n"
+        # git add must target the worktree
+        git_add_calls = [(c, w) for c, w in calls if c == ["git", "add", "main.go"]]
+        assert len(git_add_calls) == 1
+        assert git_add_calls[0][1] == tmpdir
 
 
 def test_resolve_file_conflicts_claude_failure_returns_none():
@@ -288,6 +297,54 @@ def test_resolve_file_conflicts_claude_failure_returns_none():
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=1, stdout="", stderr="error",
                 )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["main.go"], tmpdir, "abc123", "feat: refactor",
+            )
+
+        assert result is None
+
+
+def test_resolve_file_conflicts_claude_exit0_with_conflict_markers():
+    """S4: claude returns exit 0 but output still contains conflict markers."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        conflict_file = Path(tmpdir) / "main.go"
+        conflict_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        bad_output = "<<<RESOLVED>>>\n<<<<<<< HEAD\nstill broken\n=======\nstill bad\n>>>>>>> abc\n<<<END_RESOLVED>>>\n"
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ["claude", "-p", "--bare"]:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout=bad_output, stderr="",
+                )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["main.go"], tmpdir, "abc123", "feat: refactor",
+            )
+
+        assert result is None
+
+
+def test_resolve_file_conflicts_git_add_failure_returns_none():
+    """M1: git add failure must abort, not loop infinitely."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        conflict_file = Path(tmpdir) / "main.go"
+        conflict_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        resolved_output = "<<<RESOLVED>>>\nmerged\n<<<END_RESOLVED>>>\n"
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ["claude", "-p", "--bare"]:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout=resolved_output, stderr="",
+                )
+            if cmd == ["git", "add", "main.go"]:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run):
@@ -324,6 +381,10 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
 
         assert result == ["go.mod"]
         assert ["go", "mod", "tidy"] in calls
+        # N4: verify go.sum staging after tidy
+        tidy_idx = calls.index(["go", "mod", "tidy"])
+        post_tidy = calls[tidy_idx + 1:]
+        assert ["git", "add", "go.sum"] in post_tidy
 
 
 # ── _resolve_and_continue ─────────────────────────────────────────────────
@@ -332,4 +393,38 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
 def test_resolve_and_continue_no_claude():
     with mock.patch("shutil.which", return_value=None):
         result = pr_rebase_cli._resolve_and_continue("/fake")
+    assert result is None
+
+
+def test_resolve_and_continue_success():
+    """Single-commit resolution: conflicts → resolve → continue → done."""
+    conflict_round = [0]
+
+    def fake_detect_conflicts(cwd):
+        conflict_round[0] += 1
+        if conflict_round[0] == 1:
+            return ["file.go"]
+        return []
+
+    with mock.patch("shutil.which", return_value="/usr/bin/claude"), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", side_effect=fake_detect_conflicts), \
+         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["file.go"]), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
+        result = pr_rebase_cli._resolve_and_continue("/fake")
+
+    assert result == (["file.go"], 1)
+
+
+def test_resolve_and_continue_resolution_failure():
+    """_resolve_file_conflicts returns None → loop aborts."""
+    with mock.patch("shutil.which", return_value="/usr/bin/claude"), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["file.go"]), \
+         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None):
+        result = pr_rebase_cli._resolve_and_continue("/fake")
+
     assert result is None

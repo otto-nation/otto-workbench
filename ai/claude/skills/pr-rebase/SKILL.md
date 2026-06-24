@@ -45,17 +45,18 @@ JSON output is on stdout; status messages are on stderr.
 
 ### 2. Handle the result
 
-**Exit 0 — success.** Parse the JSON output:
+**Exit 0 — success.** Parse the JSON output. Default mode omits `force_pushed`:
 
 ```json
 {
   "status": "clean",
   "commits_replayed": 22,
   "conflicts_resolved": 3,
-  "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
-  "force_pushed": true
+  "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"]
 }
 ```
+
+With `--fix`, includes `"force_pushed": true` (or `false` on push failure).
 
 Report commits replayed and any conflicts resolved.
 

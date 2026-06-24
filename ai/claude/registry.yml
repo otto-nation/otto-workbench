@@ -92,6 +92,13 @@ tools:
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
     usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary]  |  pr comments [--triage] [--fix] [--resolve]  |  pr fix  |  pr rebase [--fix] [--push] [--abort]  |  pr gc"
 
+  - name: otto-log
+    permission: true
+    visibility: full
+    description: "Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors"
+    when_to_use: "Debugging AI script behavior, investigating why a review/CI check/rebase made a particular decision, querying recent script activity"
+    usage: "otto-log recent  |  otto-log query --script ci-check --level error  |  otto-log show <invocation>  |  otto-log list --since 1d"
+
   - name: pr-rebase
     permission: false
     visibility: hidden

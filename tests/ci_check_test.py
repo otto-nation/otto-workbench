@@ -89,8 +89,8 @@ def test_empty_run_list():
 def test_merge_runs_skipped_does_not_poison_conclusion():
     """A skipped workflow should not override the overall conclusion to failure."""
     runs = [
-        {"databaseId": 1, "conclusion": "success", "jobs": []},
-        {"databaseId": 2, "conclusion": "skipped", "jobs": []},
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "skipped", "jobs": []},
     ]
     result = ci_check._merge_runs(runs)
     assert result["conclusion"] == "success"
@@ -98,8 +98,8 @@ def test_merge_runs_skipped_does_not_poison_conclusion():
 
 def test_merge_runs_cancelled_does_not_poison_conclusion():
     runs = [
-        {"databaseId": 1, "conclusion": "success", "jobs": []},
-        {"databaseId": 2, "conclusion": "cancelled", "jobs": []},
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "cancelled", "jobs": []},
     ]
     result = ci_check._merge_runs(runs)
     assert result["conclusion"] == "success"
@@ -107,8 +107,8 @@ def test_merge_runs_cancelled_does_not_poison_conclusion():
 
 def test_merge_runs_real_failure_overrides():
     runs = [
-        {"databaseId": 1, "conclusion": "success", "jobs": []},
-        {"databaseId": 2, "conclusion": "failure", "jobs": []},
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "failure", "jobs": []},
     ]
     result = ci_check._merge_runs(runs)
     assert result["conclusion"] == "failure"
@@ -120,8 +120,8 @@ def test_merge_runs_empty_list():
 
 def test_merge_runs_collects_all_jobs():
     runs = [
-        {"databaseId": 1, "conclusion": "success", "jobs": [{"name": "build"}]},
-        {"databaseId": 2, "conclusion": "success", "jobs": [{"name": "lint"}]},
+        {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": [{"name": "build"}]},
+        {"_run_id": 2, "databaseId": 2, "conclusion": "success", "jobs": [{"name": "lint"}]},
     ]
     result = ci_check._merge_runs(runs)
     assert len(result["jobs"]) == 2

@@ -259,7 +259,7 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
     for rd in run_data_list:
         if rd.get("conclusion") not in _NON_FAILURE_CONCLUSIONS:
             primary["conclusion"] = "failure"
-        rid = rd.get("_run_id", rd.get("databaseId"))
+        rid = rd.get("_run_id")
         for job in rd.get("jobs", []):
             job["_source_run_id"] = rid
         all_jobs.extend(rd.get("jobs", []))

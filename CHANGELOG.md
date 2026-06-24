@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.33.1](https://github.com/otto-nation/otto-workbench/compare/v1.33.0...v1.33.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **ci-check:** treat skipped/cancelled runs as non-failures ([#365](https://github.com/otto-nation/otto-workbench/issues/365)) ([a827d11](https://github.com/otto-nation/otto-workbench/commit/a827d11ede7dea546fedf0f61a1b1a3df3daa6bb))
+* **pr:** handle bare repos in pr_context.resolve() ([#364](https://github.com/otto-nation/otto-workbench/issues/364)) ([c315046](https://github.com/otto-nation/otto-workbench/commit/c3150468c25dfd91420771a2731569ef539e70b9))
+
 ## [1.33.0](https://github.com/otto-nation/otto-workbench/compare/v1.32.7...v1.33.0) (2026-06-24)
 
 

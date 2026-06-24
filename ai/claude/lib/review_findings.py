@@ -477,23 +477,50 @@ def _strip_trailing_comments(text: str) -> str:
     return "\n".join(lines)
 
 
-def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
+def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     resolved = Path(wt_path) / path
-    if not resolved.exists():
-        return False
-    if evidence is None:
-        return True
+    detail: dict = {
+        "path": path,
+        "has_evidence": evidence is not None,
+        "file_exists": resolved.exists(),
+    }
+    if evidence is None or not resolved.exists():
+        detail["match_result"] = resolved.exists() and evidence is None
+        return detail
     try:
         file_content = resolved.read_text()
     except OSError:
-        return False
+        detail["match_result"] = False
+        return detail
     cleaned = _strip_trailing_comments(evidence)
     norm_file = _normalize_code(file_content)
     fragments = re.split(r"(?m)^\s*\.\.\.\s*$", cleaned)
     fragments = [f for f in fragments if f.strip()]
     if not fragments:
-        return True
-    return all(_normalize_code(frag) in norm_file for frag in fragments)
+        detail["match_result"] = True
+        return detail
+    all_match = True
+    detail["evidence_length"] = len(evidence)
+    detail["fragments"] = len(fragments)
+    for frag in fragments:
+        norm_frag = _normalize_code(frag)
+        if norm_frag not in norm_file:
+            all_match = False
+            for i in range(len(norm_frag), 0, -1):
+                if norm_frag[:i] in norm_file:
+                    detail["longest_match_prefix"] = i
+                    detail["first_mismatch"] = norm_frag[i:i + 60]
+                    break
+            else:
+                detail["longest_match_prefix"] = 0
+                detail["first_mismatch"] = norm_frag[:60]
+            break
+    detail["match_result"] = all_match
+    return detail
+
+
+def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
+    return _match_evidence(path, evidence, wt_path)["match_result"]
 
 
 _VERIFY_FINDING_RE = re.compile(
@@ -570,46 +597,9 @@ def _remove_dropped_findings(text: str, dropped: list[str]) -> str:
 def _verification_detail(
     finding: dict, evidence: str | None, wt_path: str,
 ) -> dict:
-    resolved = Path(wt_path) / finding["path"]
-    detail = {
-        "id": finding["id"],
-        "severity": finding["severity"],
-        "path": finding["path"],
-        "has_evidence": evidence is not None,
-        "file_exists": resolved.exists(),
-    }
-    if evidence is None or not resolved.exists():
-        detail["match_result"] = resolved.exists() and evidence is None
-        return detail
-    try:
-        file_content = resolved.read_text()
-    except OSError:
-        detail["match_result"] = False
-        return detail
-    cleaned = _strip_trailing_comments(evidence)
-    norm_file = _normalize_code(file_content)
-    fragments = re.split(r"(?m)^\s*\.\.\.\s*$", cleaned)
-    fragments = [f for f in fragments if f.strip()]
-    if not fragments:
-        detail["match_result"] = True
-        return detail
-    all_match = True
-    detail["evidence_length"] = len(evidence)
-    detail["fragments"] = len(fragments)
-    for frag in fragments:
-        norm_frag = _normalize_code(frag)
-        if norm_frag not in norm_file:
-            all_match = False
-            for i in range(len(norm_frag), 0, -1):
-                if norm_frag[:i] in norm_file:
-                    detail["longest_match_prefix"] = i
-                    detail["first_mismatch"] = norm_frag[i:i + 60]
-                    break
-            else:
-                detail["longest_match_prefix"] = 0
-                detail["first_mismatch"] = norm_frag[:60]
-            break
-    detail["match_result"] = all_match
+    detail = _match_evidence(finding["path"], evidence, wt_path)
+    detail["id"] = finding["id"]
+    detail["severity"] = finding["severity"]
     return detail
 
 

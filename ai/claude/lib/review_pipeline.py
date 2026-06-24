@@ -436,6 +436,18 @@ def _count_changed_source_files(wt_path: str) -> int:
     )
 
 
+def _count_fixed(before_unchecked: int, after_unchecked: int,
+                 review_file: str, wt_path: str) -> int:
+    """Count fixed findings: unchecked-delta, then checked marks, then changed files."""
+    delta = before_unchecked - after_unchecked
+    if delta > 0:
+        return delta
+    checked = _count_checked(review_file)
+    if checked > 0:
+        return checked
+    return _count_changed_source_files(wt_path)
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         _warn("No review file to fix — skipping fix pass")
@@ -451,13 +463,8 @@ def run_fix_pass(job: ReviewJob):
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_FIX)
     print()
     after = _count_unchecked(job.review_file)
-    fixed = before - after
-    if fixed == 0:
-        fixed = _count_checked(job.review_file)
-    if fixed == 0:
-        fixed = _count_changed_source_files(job.wt_path)
-    skipped = after
-    _commit_fixes(job, fixed=fixed, skipped=skipped)
+    fixed = _count_fixed(before, after, job.review_file, job.wt_path)
+    _commit_fixes(job, fixed=fixed, skipped=after)
 
 
 def _check_serial_abort(

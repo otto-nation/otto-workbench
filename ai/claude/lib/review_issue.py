@@ -9,10 +9,15 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
+import review_common
+
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
 _GITHUB_BASE_URL = "https://github.com"
 _PROVIDER_DEFAULT = "linear"
+
+_CONFIG_DIR = ".claude"
+_CONFIG_FILE = "review.yml"
 
 
 @dataclass(frozen=True)
@@ -61,13 +66,12 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
 
 def _find_config_file(wt_path: str | None) -> str:
     """Locate the review.yml config file, or return empty string."""
-    if wt_path and os.path.isfile(os.path.join(wt_path, ".claude", "review.yml")):
-        return os.path.join(wt_path, ".claude", "review.yml")
+    if wt_path:
+        project_cfg = os.path.join(wt_path, _CONFIG_DIR, _CONFIG_FILE)
+        if os.path.isfile(project_cfg):
+            return project_cfg
 
-    workbench_dir = os.environ.get(
-        "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench")
-    )
-    candidate = os.path.join(workbench_dir, "review.yml")
+    candidate = str(review_common.workbench_dir() / _CONFIG_FILE)
     if os.path.isfile(candidate):
         return candidate
 

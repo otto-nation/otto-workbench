@@ -100,10 +100,10 @@ messages on stderr.
 
 ### State management
 
-- State file: `<worktree>/ignore/pr/state.json`
+- State file: `<worktree>/.workbench/state.json`
 - Lib module: `ai/claude/lib/pr_state.py`
-- Each domain has a dataclass (e.g., `CISummary`, `RebaseSummary`) with
-  `_to_dict`/`_from_dict` serializers
+- Each domain has a dataclass (e.g., `CIDomain`, `RebaseSummary`) serialized
+  via generic `serde.to_dict()`/`serde.from_dict()`
 - Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - `pr_state.load_or_init()` provides DRY state loading across all scripts

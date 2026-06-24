@@ -4,7 +4,7 @@
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using claude -p.
 Outputs structured JSON on stdout and status messages on stderr.
-Updates PR state in <worktree>/ignore/pr/state.json.
+Updates PR state in <worktree>/.workbench/state.json.
 
 Exit codes:
   0  Success (clean rebase or operation completed)

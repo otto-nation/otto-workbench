@@ -2,7 +2,7 @@
 """Fetch CI run data, classify failures, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in <worktree>/ignore/pr/state.json.
+Manages local state in <worktree>/.workbench/state.json.
 
 Usage:
   ci-check                      # latest run for current branch

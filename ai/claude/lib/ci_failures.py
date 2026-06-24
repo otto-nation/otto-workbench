@@ -277,7 +277,7 @@ def sync_ci_domain(domain, run: RunState):
     # Prune old runs to bound state file size
     _MAX_RUNS = 10
     if len(domain.runs) > _MAX_RUNS:
-        oldest_ids = sorted(domain.runs)[:len(domain.runs) - _MAX_RUNS]
+        oldest_ids = sorted(domain.runs, key=int)[:len(domain.runs) - _MAX_RUNS]
         for old_id in oldest_ids:
             del domain.runs[old_id]
 

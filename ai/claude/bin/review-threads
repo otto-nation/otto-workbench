@@ -263,7 +263,6 @@ def _invoke_fix_agent(prompt: str, wt_path: Path, tracking_dir: Path) -> int:
         "--allowedTools", "Bash(*)",
         "--disable-slash-commands",
         "--add-dir", str(wt_path),
-        "--add-dir", str(tracking_dir),
         "--max-turns", str(FIX_MAX_TURNS),
         "--model", FIX_MODEL,
     ]
@@ -318,7 +317,7 @@ def _parse_tracking_results(
             "reviewer": thread.get("reviewer", ""),
             "summary": thread.get("summary", ""),
         }
-        if "- [x]" in section or "- [X]" in section:
+        if re.search(r"^- \[[xX]\] ", section, re.MULTILINE):
             fixed.append(entry)
         else:
             entry["reason"] = "agent could not auto-fix"
@@ -337,7 +336,7 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         return None
 
     subprocess.run(
-        ["git", "-C", str(wt_path), "add", "-u"],
+        ["git", "-C", str(wt_path), "add", "-A"],
         capture_output=True, check=True,
     )
 
@@ -367,14 +366,12 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
     if push.returncode == 0:
         print("Pushed fixes", file=sys.stderr)
     else:
-        push = subprocess.run(
-            ["git", "-C", str(wt_path), "push", "--force-with-lease"],
-            capture_output=True, text=True,
+        print(
+            f"review-threads: push failed — branch has diverged. Run:\n"
+            f"  git -C '{wt_path}' push --force-with-lease",
+            file=sys.stderr,
         )
-        if push.returncode == 0:
-            print("Force-pushed fixes (branch had diverged)", file=sys.stderr)
-        else:
-            print(f"review-threads: push failed: {push.stderr.strip()}", file=sys.stderr)
+        return None
 
     return sha
 
@@ -423,7 +420,7 @@ def _run_comment_fix(
             continue
 
         if verification == "valid":
-            fixable.append({**tt, "id": tt.get("id", "")})
+            fixable.append(tt)
         elif verification == "needs_discussion":
             needs_human.append({**entry, "reason": "needs_discussion"})
 
@@ -444,8 +441,6 @@ def _run_comment_fix(
     )
 
     before = _count_unchecked(tracking_file)
-    if before == 0:
-        return empty_result
 
     prompt = _render_fix_template(
         branch=ctx.branch,

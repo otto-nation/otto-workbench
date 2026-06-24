@@ -123,6 +123,9 @@ REPLY_BODY
 ```
 
 Use the `databaseId` from the thread's first comment as the `comment_id`.
+If you ran `pr comments --fix`, the output does not include `databaseId`. Run
+`pr comments [--repo-dir <PATH>]` (without `--fix`) to fetch threads with their
+`databaseId` values before posting replies.
 
 Reply examples:
 - **Fixed:** `Fixed.`

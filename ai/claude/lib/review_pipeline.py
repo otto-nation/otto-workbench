@@ -85,6 +85,11 @@ DEFAULT_MAX_TURNS_FIX = 20
 OMITTED_FILE_TURNS = 2
 
 
+def _touch(path: str) -> None:
+    """Pre-create an empty output file without truncating existing content."""
+    Path(path).touch(exist_ok=True)
+
+
 def _omitted_turns(job: "ReviewJob") -> int:
     if not job.preflight or not job.preflight.omitted_files:
         return 0
@@ -217,6 +222,7 @@ def run_single_agent(job: ReviewJob):
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
     _info(f"Running review agent on {label}...")
     print()
+    _touch(job.review_file)
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
     rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=max_turns)
     print()
@@ -253,6 +259,8 @@ def _review_group(
             return (i, group_output, None)
         _warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
         return (i, group_output, (grp.name, "output missing"))
+
+    _touch(group_output)
 
     group_files_formatted = "\n".join(
         FILE_STAT_FMT.format(**f)
@@ -292,6 +300,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
     holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
+    _touch(holistic_output)
+
     max_turns = DEFAULT_MAX_TURNS_HOLISTIC + _omitted_turns(job)
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
@@ -315,6 +325,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]:
     angles_output = _derive_path(job.review_file, FILENAME_ANGLES)
     angles_log = _derive_path(job.review_file, FILENAME_ANGLES_LOG)
+
+    _touch(angles_output)
 
     max_turns = DEFAULT_MAX_TURNS_ANGLES + _omitted_turns(job)
     prompt = build_prompt(
@@ -682,6 +694,8 @@ def _phase_synthesis(
 ) -> str:
     synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
+
+    _touch(job.review_file)
 
     max_turns = _synthesis_max_turns(merged_content)
     prompt = build_prompt(

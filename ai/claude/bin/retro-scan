@@ -195,6 +195,63 @@ def _read_last_retro(home: Path) -> int:
         return 0
 
 
+def _graphql_comment_to_dict(node: dict, path: str | None, line: int | None) -> dict:
+    """Convert a single GraphQL comment node to the retro-scan comment format."""
+    return {
+        "author": (node.get("author") or {}).get("login", "unknown"),
+        "body": (node.get("body") or "")[:COMMENT_BODY_MAX],
+        "path": path, "line": line, "url": "",
+    }
+
+
+def _flatten_thread_comments(thread_nodes: list[dict]) -> list[dict]:
+    """Flatten review thread nodes into comment dicts."""
+    raw = [
+        _graphql_comment_to_dict(c, thread.get("path"), thread.get("line"))
+        for thread in thread_nodes
+        for c in thread.get("comments", {}).get("nodes", [])
+    ]
+    return [c for c in raw if not is_noise(c["body"])]
+
+
+def _flatten_issue_comments(comment_nodes: list[dict]) -> list[dict]:
+    """Flatten issue comment nodes into comment dicts."""
+    raw = [_graphql_comment_to_dict(c, None, None) for c in comment_nodes]
+    return [c for c in raw if not is_noise(c["body"])]
+
+
+def _parse_pr_node(pr_node: dict, since_date: str) -> dict | None:
+    """Parse a single GraphQL PR node into the retro-scan format."""
+    merged_at = pr_node.get("mergedAt", "")
+    if not merged_at or merged_at < since_date:
+        return None
+
+    threads_data = pr_node.get("reviewThreads", {})
+    total_threads = threads_data.get("totalCount", 0)
+    thread_nodes = threads_data.get("nodes", [])
+    if total_threads > len(thread_nodes):
+        _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched")
+
+    comments_data = pr_node.get("comments", {})
+    total_comments = comments_data.get("totalCount", 0)
+    comment_nodes = comments_data.get("nodes", [])
+    if total_comments > len(comment_nodes):
+        _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched")
+
+    all_comments = _flatten_thread_comments(thread_nodes)
+    all_comments.extend(_flatten_issue_comments(comment_nodes))
+
+    if not all_comments:
+        return None
+    return {
+        "number": pr_node.get("number"),
+        "title": pr_node.get("title", ""),
+        "user": {"login": (pr_node.get("author") or {}).get("login", "")},
+        "merged_at": merged_at,
+        "comments": all_comments,
+    }
+
+
 def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
     """Fetch merged PRs with review data in a single GraphQL query.
 
@@ -231,57 +288,9 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
 
     results = []
     for pr_node in pr_nodes:
-        merged_at = pr_node.get("mergedAt", "")
-        if not merged_at or merged_at < since_date:
-            continue
-
-        threads_data = pr_node.get("reviewThreads", {})
-        total_threads = threads_data.get("totalCount", 0)
-        thread_nodes = threads_data.get("nodes", [])
-        if total_threads > len(thread_nodes):
-            _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched")
-
-        comments_data = pr_node.get("comments", {})
-        total_comments = comments_data.get("totalCount", 0)
-        comment_nodes = comments_data.get("nodes", [])
-        if total_comments > len(comment_nodes):
-            _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched")
-
-        all_comments = []
-        for thread in thread_nodes:
-            path = thread.get("path")
-            line = thread.get("line")
-            for c in thread.get("comments", {}).get("nodes", []):
-                body = (c.get("body") or "")[:COMMENT_BODY_MAX]
-                if not is_noise(body):
-                    all_comments.append({
-                        "author": (c.get("author") or {}).get("login", "unknown"),
-                        "body": body,
-                        "path": path,
-                        "line": line,
-                        "url": "",
-                    })
-
-        for c in comment_nodes:
-            body = (c.get("body") or "")[:COMMENT_BODY_MAX]
-            if not is_noise(body):
-                all_comments.append({
-                    "author": (c.get("author") or {}).get("login", "unknown"),
-                    "body": body,
-                    "path": None,
-                    "line": None,
-                    "url": "",
-                })
-
-        if all_comments:
-            results.append({
-                "number": pr_node.get("number"),
-                "title": pr_node.get("title", ""),
-                "user": {"login": (pr_node.get("author") or {}).get("login", "")},
-                "merged_at": merged_at,
-                "comments": all_comments,
-            })
-
+        parsed = _parse_pr_node(pr_node, since_date)
+        if parsed:
+            results.append(parsed)
     return results
 
 
@@ -550,10 +559,10 @@ def _scan_repo(
     for pr in pr_data:
         pr_author = pr.get("user", {}).get("login", "")
         comments = pr["comments"]
-        um = 0
-        for comment in comments:
-            if _annotate_comment(comment, pr_author, git_user, rules, rule_match_counts):
-                um += 1
+        um = sum(
+            1 for c in comments
+            if _annotate_comment(c, pr_author, git_user, rules, rule_match_counts)
+        )
         unmatched += um
         repo_prs.append({
             "number": pr["number"],

@@ -242,6 +242,31 @@ def _update_pr_state(toplevel, repo, branch, pr_number, run_state, report):
         print(f"ci-check: state update failed: {exc}", file=sys.stderr)
 
 
+_NON_FAILURE_CONCLUSIONS = ("success", "skipped", "cancelled", "neutral", None)
+
+
+def _merge_runs(run_data_list: list[dict]) -> dict | None:
+    """Merge multiple workflow run dicts into a single combined run.
+
+    The first run becomes the primary; its conclusion is overridden to
+    "failure" if any run has a real failure conclusion.  Jobs from all
+    runs are collected into the primary's "jobs" list.
+    """
+    if not run_data_list:
+        return None
+    primary = run_data_list[0]
+    all_jobs = []
+    for rd in run_data_list:
+        if rd.get("conclusion") not in _NON_FAILURE_CONCLUSIONS:
+            primary["conclusion"] = "failure"
+        rid = rd.get("_run_id")
+        for job in rd.get("jobs", []):
+            job["_source_run_id"] = rid
+        all_jobs.extend(rd.get("jobs", []))
+    primary["jobs"] = all_jobs
+    return primary
+
+
 def main():
     parser = argparse.ArgumentParser(description="CI failure status")
     parser.add_argument("--pr", help="PR number or URL")
@@ -267,27 +292,17 @@ def main():
             _err(f"No workflow runs found for branch '{branch}'")
             sys.exit(1)
 
-    # Fetch all runs and merge their jobs into a single run data
-    primary_run_data = None
-    all_jobs = []
+    run_data_list = []
     for rid in run_ids:
         rd = _fetch_run_data(repo, rid)
-        if rd is None:
-            continue
-        if primary_run_data is None:
-            primary_run_data = rd
-        if rd.get("conclusion") not in ("success", None):
-            primary_run_data["conclusion"] = "failure"
-        jobs = rd.get("jobs", [])
-        for job in jobs:
-            job["_source_run_id"] = rid
-        all_jobs.extend(jobs)
+        if rd is not None:
+            rd["_run_id"] = rid
+            run_data_list.append(rd)
 
+    primary_run_data = _merge_runs(run_data_list)
     if primary_run_data is None:
         _err("Failed to fetch run data")
         sys.exit(1)
-
-    primary_run_data["jobs"] = all_jobs
 
     # Parse into typed state
     run_state = _parse_run(repo, primary_run_data)

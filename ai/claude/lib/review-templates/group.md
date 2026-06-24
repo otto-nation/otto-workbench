@@ -17,6 +17,7 @@ ${env_section}
 ## Output
 You MUST use the Write tool to write findings to: ${group_output}
 Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
+The output file and its directory already exist — do NOT create directories or empty files.
 Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit / ## Idioms sections only.
 Do NOT write a Summary or Verdict — those will be added in a synthesis step.
 Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered during merge.

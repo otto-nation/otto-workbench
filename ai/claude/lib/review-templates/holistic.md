@@ -23,6 +23,7 @@ ${env_section}
 ## Output
 You MUST use the Write tool to write to: ${holistic_output}
 Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
+The output file and its directory already exist — do NOT create directories or empty files.
 Sections: ## Holistic Assessment, ## Flags for Detailed Review, ## Cross-module Concerns
 Do NOT write per-file findings — those come from the detailed review phase.
 

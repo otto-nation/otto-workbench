@@ -167,6 +167,22 @@ def _format_finding_line(f: Finding) -> str:
     return f"- {label} {f.body}"
 
 
+def _append_file_grouped_findings(
+    parts: list[str], by_file: dict[str, list[Finding]],
+) -> None:
+    pathless = by_file.pop("", [])
+    for file_path in sorted(by_file.keys()):
+        parts.append(f"### {file_path}")
+        parts.append("")
+        for f in sorted(by_file[file_path], key=lambda f: f.line or 0):
+            parts.append(_format_finding_line(f))
+        parts.append("")
+    for f in pathless:
+        parts.append(_format_finding_line(f))
+    if pathless:
+        parts.append("")
+
+
 def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
@@ -212,18 +228,7 @@ def format_body_text(
         parts.append("")
 
     if by_file:
-        pathless = by_file.pop("", [])
-        for file_path in sorted(by_file.keys()):
-            parts.append(f"### {file_path}")
-            parts.append("")
-            file_findings = sorted(by_file[file_path], key=lambda f: f.line or 0)
-            for f in file_findings:
-                parts.append(_format_finding_line(f))
-            parts.append("")
-        for f in pathless:
-            parts.append(_format_finding_line(f))
-        if pathless:
-            parts.append("")
+        _append_file_grouped_findings(parts, by_file)
 
     return "\n".join(parts).rstrip("\n")
 

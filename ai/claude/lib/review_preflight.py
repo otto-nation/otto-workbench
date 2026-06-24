@@ -758,6 +758,27 @@ def fetch_pr_context(
     )
 
 
+def _thread_comment_entries(thread: dict) -> list[dict]:
+    """Convert a review thread's comment nodes into flat entry dicts."""
+    path = thread.get("path", "")
+    line = thread.get("line")
+    nodes = thread.get("comments", {}).get("nodes", [])
+    root_id = None
+    entries = []
+    for i, c in enumerate(nodes):
+        entries.append({
+            "id": c.get("databaseId"),
+            "path": path,
+            "line": line,
+            "body": c.get("body", ""),
+            "user": (c.get("author") or {}).get("login", ""),
+            "in_reply_to_id": root_id,
+        })
+        if i == 0:
+            root_id = c.get("databaseId")
+    return entries
+
+
 def _pr_context_from_data(pr_data: PRData) -> PRContext:
     """Build PRContext from PRData without any API calls."""
     commits = "\n".join(
@@ -776,22 +797,7 @@ def _pr_context_from_data(pr_data: PRData) -> PRContext:
 
     review_comments = []
     for thread in pr_data.review_threads:
-        path = thread.get("path", "")
-        line = thread.get("line")
-        nodes = thread.get("comments", {}).get("nodes", [])
-        root_id = None
-        for i, c in enumerate(nodes):
-            entry = {
-                "id": c.get("databaseId"),
-                "path": path,
-                "line": line,
-                "body": c.get("body", ""),
-                "user": (c.get("author") or {}).get("login", ""),
-                "in_reply_to_id": root_id,
-            }
-            review_comments.append(entry)
-            if i == 0:
-                root_id = c.get("databaseId")
+        review_comments.extend(_thread_comment_entries(thread))
 
     comments = [
         {

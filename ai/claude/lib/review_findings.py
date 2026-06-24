@@ -604,6 +604,13 @@ def _verification_detail(
     return detail
 
 
+def _drop_reason(detail: dict) -> str:
+    reason = "file not found" if not detail["file_exists"] else "evidence mismatch"
+    if detail.get("longest_match_prefix") is not None:
+        reason += f" at char {detail['longest_match_prefix']}"
+    return reason
+
+
 def verify_findings(review_file: str, wt_path: str) -> list[str]:
     path = Path(review_file)
     if not path.exists():
@@ -620,10 +627,7 @@ def verify_findings(review_file: str, wt_path: str) -> list[str]:
         details.append(detail)
         if not detail["match_result"]:
             dropped.append(f["id"])
-            reason = "file not found" if not detail["file_exists"] else "evidence mismatch"
-            if detail.get("longest_match_prefix") is not None:
-                reason += f" at char {detail['longest_match_prefix']}"
-            _info(f"Dropping {f['id']} ({f['path']}): {reason}")
+            _info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
     log_path = Path(review_file).parent / "verification.json"
     log_path.write_text(json.dumps({
         "findings_checked": len(details),

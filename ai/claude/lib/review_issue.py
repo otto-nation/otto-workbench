@@ -27,21 +27,55 @@ class IssueContext:
     context: str = ""
 
 
-def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
-    config_file = ""
-    if wt_path and os.path.isfile(os.path.join(wt_path, ".claude", "review.yml")):
-        config_file = os.path.join(wt_path, ".claude", "review.yml")
-    else:
-        workbench_dir = os.environ.get(
-            "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench")
-        )
-        candidate = os.path.join(workbench_dir, "review.yml")
-        if os.path.isfile(candidate):
-            config_file = candidate
+def _parse_opts_json(raw: str) -> dict:
+    """Parse JSON opts string, returning empty dict on failure."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
 
+
+def _parse_provider_from_file(config_file: str) -> str:
+    """Fallback: extract provider from YAML config by line scanning."""
+    with open(config_file) as f:
+        lines = f.readlines()
+    for line in lines:
+        m = re.match(r"\s*provider:\s*(.+)", line)
+        if m:
+            return m.group(1).strip().strip("'\"")
+    return _PROVIDER_DEFAULT
+
+
+def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
+    config_file = _find_config_file(wt_path)
     if not config_file:
         return IssueProvider()
 
+    provider, opts = _load_provider_via_yq(config_file)
+
+    if not provider:
+        provider = _PROVIDER_DEFAULT
+
+    return IssueProvider(name=provider, options=opts)
+
+
+def _find_config_file(wt_path: str | None) -> str:
+    """Locate the review.yml config file, or return empty string."""
+    if wt_path and os.path.isfile(os.path.join(wt_path, ".claude", "review.yml")):
+        return os.path.join(wt_path, ".claude", "review.yml")
+
+    workbench_dir = os.environ.get(
+        "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench")
+    )
+    candidate = os.path.join(workbench_dir, "review.yml")
+    if os.path.isfile(candidate):
+        return candidate
+
+    return ""
+
+
+def _load_provider_via_yq(config_file: str) -> tuple[str, dict]:
+    """Load provider and opts via yq, falling back to line scanning."""
     provider = _PROVIDER_DEFAULT
     opts: dict = {}
 
@@ -58,43 +92,74 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
             capture_output=True, text=True, timeout=5,
         )
         if r_opts.returncode == 0 and r_opts.stdout.strip():
-            try:
-                opts = json.loads(r_opts.stdout.strip())
-            except json.JSONDecodeError:
-                pass
+            opts = _parse_opts_json(r_opts.stdout.strip())
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        with open(config_file) as f:
-            for line in f:
-                m = re.match(r"\s*provider:\s*(.+)", line)
-                if m:
-                    provider = m.group(1).strip().strip("'\"")
-                    break
+        provider = _parse_provider_from_file(config_file)
 
-    if not provider:
-        provider = _PROVIDER_DEFAULT
+    return provider, opts
 
-    return IssueProvider(name=provider, options=opts)
+
+def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:
+    """Search branch then PR body for a Jira/Linear issue ID."""
+    m = _ISSUE_PATTERN_JIRA_LINEAR.search(branch)
+    if m:
+        return m.group(0)
+    if pr_body:
+        m = _ISSUE_PATTERN_JIRA_LINEAR.search(pr_body)
+        if m:
+            return m.group(0)
+    return None
 
 
 def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | None:
     if provider in ("linear", "jira"):
-        m = _ISSUE_PATTERN_JIRA_LINEAR.search(branch)
-        if m:
-            return m.group(0)
-        if pr_body:
-            m = _ISSUE_PATTERN_JIRA_LINEAR.search(pr_body)
-            if m:
-                return m.group(0)
-        return None
+        return _search_jira_linear_id(branch, pr_body)
 
-    if provider == "github":
-        if pr_body:
-            m = _GITHUB_CLOSE_PATTERN.search(pr_body)
-            if m:
-                return m.group(2)
-        return None
+    if provider == "github" and pr_body:
+        m = _GITHUB_CLOSE_PATTERN.search(pr_body)
+        return m.group(2) if m else None
 
     return None
+
+
+def _run_issue_cli(cmd: list[str]) -> str:
+    """Run a CLI command and return stripped stdout, or empty string on failure."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if r.returncode != 0:
+        return ""
+    return r.stdout.strip()
+
+
+def _fetch_linear(issue_id: str) -> IssueContext:
+    """Fetch a Linear issue by ID."""
+    context = _run_issue_cli(
+        ["linear", "issue", "view", issue_id, "--json", "--no-comments"],
+    )
+    if context:
+        print(f"✓ Found Linear issue: {issue_id}", file=sys.stderr)
+    return IssueContext(context=context)
+
+
+def _fetch_github(issue_id: str, repo: str) -> IssueContext:
+    """Fetch a GitHub issue by number and repo."""
+    link = f"{_GITHUB_BASE_URL}/{repo}/issues/{issue_id}"
+    context = _run_issue_cli(
+        ["gh", "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments"],
+    )
+    if context:
+        print(f"✓ Found GitHub issue: #{issue_id}", file=sys.stderr)
+    return IssueContext(link=link, context=context)
+
+
+def _fetch_jira(issue_id: str, opts: dict | None) -> IssueContext:
+    """Build a Jira issue context from opts."""
+    jira_url = (opts or {}).get("jira_url", "")
+    link = f"{jira_url}/browse/{issue_id}" if jira_url else ""
+    print(f"✓ Found Jira issue: {issue_id}", file=sys.stderr)
+    return IssueContext(link=link)
 
 
 def fetch_issue_context(
@@ -107,38 +172,12 @@ def fetch_issue_context(
         return IssueContext()
 
     if provider == "linear":
-        try:
-            r = subprocess.run(
-                ["linear", "issue", "view", issue_id, "--json", "--no-comments"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                print(f"✓ Found Linear issue: {issue_id}", file=sys.stderr)
-                return IssueContext(context=r.stdout.strip())
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        return IssueContext()
+        return _fetch_linear(issue_id)
 
     if provider == "github":
-        link = f"{_GITHUB_BASE_URL}/{repo}/issues/{issue_id}"
-        try:
-            r = subprocess.run(
-                ["gh", "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                print(f"✓ Found GitHub issue: #{issue_id}", file=sys.stderr)
-                return IssueContext(link=link, context=r.stdout.strip())
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        return IssueContext(link=link)
+        return _fetch_github(issue_id, repo)
 
     if provider == "jira":
-        link = ""
-        jira_url = (opts or {}).get("jira_url", "")
-        if jira_url:
-            link = f"{jira_url}/browse/{issue_id}"
-        print(f"✓ Found Jira issue: {issue_id}", file=sys.stderr)
-        return IssueContext(link=link)
+        return _fetch_jira(issue_id, opts)
 
     return IssueContext()

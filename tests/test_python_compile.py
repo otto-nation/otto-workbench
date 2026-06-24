@@ -28,32 +28,36 @@ BUILTIN_NAMES = set(dir(builtins)) | {
 }
 
 
+def _is_python_bin_script(p: Path) -> bool:
+    """Check if a bin file is a Python script (by .py suffix or python3 shebang)."""
+    if p.name.startswith("_") and p.suffix == ".py":
+        return True
+    if not p.is_file() or p.suffix:
+        return False
+    try:
+        first_line = p.read_text().split("\n", 1)[0]
+    except (UnicodeDecodeError, OSError):
+        return False
+    return "python3" in first_line
+
+
+def _discover_bin_sources(bin_dir: Path) -> list[Path]:
+    """Find Python scripts in a single bin directory."""
+    if not bin_dir.exists():
+        return []
+    return [p for p in sorted(bin_dir.iterdir()) if _is_python_bin_script(p)]
+
+
 def _discover_python_sources() -> list[Path]:
     """Find all Python source files (lib .py + bin scripts with python3 shebang)."""
-    sources: list[Path] = []
-
-    for p in sorted(LIB_DIR.glob("*.py")):
-        sources.append(p)
+    sources: list[Path] = list(sorted(LIB_DIR.glob("*.py")))
 
     bin_dirs = [
         REPO_ROOT / "ai" / "claude" / "bin",
         REPO_ROOT / "bin" / "local",
     ]
     for bin_dir in bin_dirs:
-        if not bin_dir.exists():
-            continue
-        for p in sorted(bin_dir.iterdir()):
-            if p.name.startswith("_") and p.suffix == ".py":
-                sources.append(p)
-                continue
-            if not p.is_file() or p.suffix:
-                continue
-            try:
-                first_line = p.read_text().split("\n", 1)[0]
-            except (UnicodeDecodeError, OSError):
-                continue
-            if "python3" in first_line:
-                sources.append(p)
+        sources.extend(_discover_bin_sources(bin_dir))
 
     return sources
 
@@ -61,11 +65,26 @@ def _discover_python_sources() -> list[Path]:
 def _has_wildcard_import(tree: ast.Module) -> bool:
     """Check if the module uses any ``from X import *`` statements."""
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name == "*":
-                    return True
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if any(alias.name == "*" for alias in node.names):
+            return True
     return False
+
+
+def _names_from_import(node: ast.ImportFrom | ast.Import) -> set[str]:
+    """Extract bound names from an import statement, excluding wildcard imports."""
+    if isinstance(node, ast.ImportFrom):
+        return {alias.asname or alias.name for alias in node.names if alias.name != "*"}
+    return {alias.asname or alias.name for alias in node.names}
+
+
+def _names_from_assign_targets(targets: list[ast.AST]) -> set[str]:
+    """Extract names from assignment targets (Name and Tuple unpacking)."""
+    result: set[str] = set()
+    for target in targets:
+        result |= _extract_assigned_names(target)
+    return result
 
 
 def _collect_available_names(tree: ast.Module) -> set[str]:
@@ -77,33 +96,18 @@ def _collect_available_names(tree: ast.Module) -> set[str]:
     names: set[str] = set()
 
     def _visit(node: ast.AST) -> None:
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                name = alias.asname or alias.name
-                if name != "*":
-                    names.add(name)
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
+        if isinstance(node, (ast.ImportFrom, ast.Import)):
+            names.update(_names_from_import(node))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             names.add(node.name)
         elif isinstance(node, ast.ClassDef):
             names.add(node.name)
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    names.add(target.id)
-                elif isinstance(target, ast.Tuple):
-                    for elt in target.elts:
-                        if isinstance(elt, ast.Name):
-                            names.add(elt.id)
+            names.update(_names_from_assign_targets(node.targets))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
-        elif isinstance(node, (ast.If, ast.Try)):
-            for child in ast.iter_child_nodes(node):
-                _visit(child)
-        elif isinstance(node, ast.ExceptHandler):
-            if node.name:
+        elif isinstance(node, (ast.If, ast.Try, ast.ExceptHandler)):
+            if isinstance(node, ast.ExceptHandler) and node.name:
                 names.add(node.name)
             for child in ast.iter_child_nodes(node):
                 _visit(child)
@@ -162,36 +166,48 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
             names |= _extract_assigned_names(node.target)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             names.add(node.name)
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name != "*":
-                    names.add(alias.asname or alias.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(_names_from_import(node))
 
     return names
 
 
-def _collect_bare_refs(tree: ast.Module) -> set[str]:
-    """Collect bare Name references in function/method bodies that need module scope."""
+def _methods_in_class(cls_node: ast.ClassDef) -> list[ast.AST]:
+    """Extract function/method definitions from a class body."""
+    return [
+        child for child in ast.iter_child_nodes(cls_node)
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+
+def _discover_func_nodes(tree: ast.Module) -> list[ast.AST]:
+    """Find all function/method definitions at module and class scope."""
     func_nodes: list[ast.AST] = []
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             func_nodes.append(node)
         elif isinstance(node, ast.ClassDef):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    func_nodes.append(child)
+            func_nodes.extend(_methods_in_class(node))
+    return func_nodes
 
+
+def _unresolved_refs_in_func(func: ast.AST) -> set[str]:
+    """Collect bare Name(Load) references not bound locally in a function."""
+    locals_ = _collect_function_locals(func)
     refs: set[str] = set()
-    for func in func_nodes:
-        locals_ = _collect_function_locals(func)
-        for node in _walk_scope(func):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                if node.id not in locals_:
-                    refs.add(node.id)
+    for node in _walk_scope(func):
+        if not isinstance(node, ast.Name):
+            continue
+        if isinstance(node.ctx, ast.Load) and node.id not in locals_:
+            refs.add(node.id)
+    return refs
 
+
+def _collect_bare_refs(tree: ast.Module) -> set[str]:
+    """Collect bare Name references in function/method bodies that need module scope."""
+    refs: set[str] = set()
+    for func in _discover_func_nodes(tree):
+        refs |= _unresolved_refs_in_func(func)
     return refs
 
 
@@ -210,10 +226,10 @@ def test_no_wildcard_imports(source_path: Path):
 
     wildcards: list[str] = []
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name == "*":
-                    wildcards.append(f"  - from {node.module} import * (line {node.lineno})")
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if any(alias.name == "*" for alias in node.names):
+            wildcards.append(f"  - from {node.module} import * (line {node.lineno})")
 
     assert not wildcards, (
         f"{source_path.name}: wildcard imports found:\n"

@@ -719,6 +719,75 @@ def scan_local_reviews(
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
+def _run_retro(trail, home, workbench) -> None:
+    _info(f"Home: {home}")
+    _info(f"Workbench: {workbench}")
+
+    machine_md = home / MACHINE_MD_REL
+    projects = parse_project_registry(str(machine_md))
+    _info(f"Found {len(projects)} project(s) in registry")
+    trail.info("parse_registry", f"found {len(projects)} projects in machine registry")
+
+    repos: list[dict] = []
+    for proj in projects:
+        remote_url = get_repo_remote(proj["path"])
+        if not remote_url:
+            _warn(f"No git remote for {proj['name']} at {proj['path']}")
+            continue
+        github_slug = resolve_github_remote(remote_url)
+        if not github_slug:
+            _warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
+            continue
+        repos.append({**proj, "github": github_slug})
+    _info(f"Resolved {len(repos)} GitHub repo(s)")
+    trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
+
+    rules = load_rules(workbench)
+    _info(f"Loaded {len(rules)} rule file(s)")
+    trail.info("load_rules", f"loaded {len(rules)} rule files from workbench")
+
+    last_retro_ts = _read_last_retro(home)
+    if last_retro_ts > 0:
+        _info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
+    else:
+        _info("No previous retro found — scanning all available PRs")
+    trail.info("check_state", f"last retro timestamp: {last_retro_ts}")
+
+    git_user = _get_github_login()
+
+    scan_repos: list[dict] = []
+    rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0} for r in rules}
+    unmatched_count = 0
+
+    for repo in repos:
+        result = _scan_repo(repo, last_retro_ts, rules, git_user, rule_match_counts)
+        unmatched_count += result["unmatched"]
+        if result["prs"]:
+            scan_repos.append({"github": repo["github"], "prs": result["prs"]})
+    trail.info("fetch_pr_comments", f"fetched review data from {len(repos)} repos")
+
+    local_repos, local_unmatched = scan_local_reviews(home, rules, rule_match_counts)
+    scan_repos.extend(local_repos)
+    unmatched_count += local_unmatched
+    trail.info("scan_local_reviews", f"scanned {sum(len(r['prs']) for r in local_repos)} local reviews")
+
+    rules_summary = []
+    for r in rules:
+        rc = rule_match_counts[r["filename"]]
+        rules_summary.append({
+            "filename": r["filename"],
+            "matched": rc["matched"],
+        })
+    if unmatched_count:
+        rules_summary.append({"filename": "(no rule)", "matched": unmatched_count})
+    trail.info("cross_reference_rules", f"cross-referenced {sum(rc['matched'] for rc in rule_match_counts.values())} comments against rules")
+
+    scan_data = {"repos": scan_repos, "rules_summary": rules_summary}
+    report = format_report(scan_data)
+    trail.info("generate_report", f"report generated, {len(report)} chars")
+    print(report)
+
+
 def main() -> None:
     default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
 
@@ -747,72 +816,7 @@ def main() -> None:
     )
 
     try:
-        _info(f"Home: {home}")
-        _info(f"Workbench: {workbench}")
-
-        machine_md = home / MACHINE_MD_REL
-        projects = parse_project_registry(str(machine_md))
-        _info(f"Found {len(projects)} project(s) in registry")
-        trail.info("parse_registry", f"found {len(projects)} projects in machine registry")
-
-        repos: list[dict] = []
-        for proj in projects:
-            remote_url = get_repo_remote(proj["path"])
-            if not remote_url:
-                _warn(f"No git remote for {proj['name']} at {proj['path']}")
-                continue
-            github_slug = resolve_github_remote(remote_url)
-            if not github_slug:
-                _warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
-                continue
-            repos.append({**proj, "github": github_slug})
-        _info(f"Resolved {len(repos)} GitHub repo(s)")
-        trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
-
-        rules = load_rules(workbench)
-        _info(f"Loaded {len(rules)} rule file(s)")
-        trail.info("load_rules", f"loaded {len(rules)} rule files from workbench")
-
-        last_retro_ts = _read_last_retro(home)
-        if last_retro_ts > 0:
-            _info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
-        else:
-            _info("No previous retro found — scanning all available PRs")
-        trail.info("check_state", f"last retro timestamp: {last_retro_ts}")
-
-        git_user = _get_github_login()
-
-        scan_repos: list[dict] = []
-        rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0} for r in rules}
-        unmatched_count = 0
-
-        for repo in repos:
-            result = _scan_repo(repo, last_retro_ts, rules, git_user, rule_match_counts)
-            unmatched_count += result["unmatched"]
-            if result["prs"]:
-                scan_repos.append({"github": repo["github"], "prs": result["prs"]})
-        trail.info("fetch_pr_comments", f"fetched review data from {len(repos)} repos")
-
-        local_repos, local_unmatched = scan_local_reviews(home, rules, rule_match_counts)
-        scan_repos.extend(local_repos)
-        unmatched_count += local_unmatched
-        trail.info("scan_local_reviews", f"scanned {sum(len(r['prs']) for r in local_repos)} local reviews")
-
-        rules_summary = []
-        for r in rules:
-            rc = rule_match_counts[r["filename"]]
-            rules_summary.append({
-                "filename": r["filename"],
-                "matched": rc["matched"],
-            })
-        if unmatched_count:
-            rules_summary.append({"filename": "(no rule)", "matched": unmatched_count})
-        trail.info("cross_reference_rules", f"cross-referenced {sum(rc['matched'] for rc in rule_match_counts.values())} comments against rules")
-
-        scan_data = {"repos": scan_repos, "rules_summary": rules_summary}
-        report = format_report(scan_data)
-        trail.info("generate_report", f"report generated, {len(report)} chars")
-        print(report)
+        _run_retro(trail, home, workbench)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

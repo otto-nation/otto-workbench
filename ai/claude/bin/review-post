@@ -92,6 +92,115 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def _run_post(trail, args, repo, sidecar, review_path) -> None:
+    severity_filter = set(args.severity.upper().split(","))
+    text = review_path.read_text()
+
+    sha_match = HEAD_SHA_RE.search(text)
+    review_sha = sha_match.group(1) if sha_match else None
+
+    all_findings = parse_findings(text)
+    _info(f"Parsed {len(all_findings)} findings from review file")
+    trail.info("parse_findings", f"parsed {len(all_findings)} findings",
+               data={"total": len(all_findings), "review_sha": review_sha})
+
+    findings = [f for f in all_findings if f.severity in severity_filter]
+    filtered = len(all_findings) - len(findings)
+    if filtered:
+        _info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
+    trail.decision(
+        "filter_severity",
+        f"kept {len(findings)} of {len(all_findings)} findings",
+        reason=f"severity filter: {args.severity}",
+        data={"kept": len(findings), "excluded": filtered, "filter": args.severity},
+    )
+
+    if not findings:
+        _warn("No findings to post")
+        sys.exit(0)
+
+    head_sha = sidecar.get("head_sha", "")
+    head_ref = sidecar.get("head_ref", "")
+    base_ref = sidecar.get("base_ref", "")
+    pr_data = None
+    if not args.dry_run:
+        pr_data = fetch_pr_data(repo, args.pr)
+        head_sha = pr_data.head_sha
+        head_ref = head_ref or pr_data.head_ref
+        base_ref = base_ref or pr_data.base_ref
+    else:
+        head_sha = head_sha or review_sha or "dry-run"
+
+    sha_drifted = review_sha and review_sha != head_sha
+    if sha_drifted and not args.dry_run:
+        _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
+        _info("Posting as comment (inline positions may be inaccurate)")
+        trail.decision(
+            "sha_drift",
+            f"review SHA {review_sha[:7] if review_sha else '?'} != HEAD {head_sha[:7] if head_sha else '?'}",
+            reason="HEAD moved since review; posting as comment",
+            data={"review_sha": review_sha, "head_sha": head_sha},
+        )
+        _post_as_comment(
+            args, findings, severity_filter, review_sha, head_sha,
+            head_ref, base_ref, pr_data,
+        )
+        return
+
+    if args.dry_run:
+        _info("Fetching diff for classification...")
+    diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
+    inline, file_level, skipped = classify_findings(findings, diff_text)
+    _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
+    trail.info("classify_findings",
+               f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
+               data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
+
+    all_postable = inline + file_level
+    if not args.dry_run and all_postable:
+        kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
+        if deduped:
+            _info(f"Skipped {len(deduped)} findings duplicating existing comments")
+            skipped.extend(deduped)
+            inline = [f for f in kept if f.classification == CLASS_INLINE]
+            file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
+        trail.info("dedup", f"removed {len(deduped) if deduped else 0} duplicate findings",
+                   data={"deduped": len(deduped) if deduped else 0, "kept": len(kept)})
+
+    body_findings = file_level + skipped
+
+    findings_for_links = inline + body_findings
+    resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref)
+
+    inline, body_findings = renumber_for_posting(inline, body_findings)
+
+    inline_comments = [format_inline_comment(f) for f in inline]
+    body_text = format_body_text(body_findings, len(inline) > 0, severity_filter)
+
+    commit_id = head_sha
+    chunk_size = args.chunk_size
+
+    if args.dry_run:
+        trail.decision("post_mode", "dry-run mode", reason="--dry-run flag set")
+        payload = {
+            "commit_id": commit_id,
+            "body": body_text,
+        }
+        if inline_comments:
+            payload["comments"] = inline_comments
+        _print_dry_run(payload, inline, body_findings, skipped, chunk_size)
+        return
+
+    trail.decision("post_mode", "posting to GitHub",
+                   reason="not dry-run",
+                   data={"inline_count": len(inline_comments), "has_body": bool(body_text)})
+    _post_and_track(
+        args, inline_comments, body_text,
+        inline, body_findings, skipped,
+        commit_id, head_sha, chunk_size, severity_filter, pr_data,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Post a review file to GitHub")
     parser.add_argument("--pr", required=True, help="PR number")
@@ -135,112 +244,7 @@ def main():
     )
 
     try:
-        severity_filter = set(args.severity.upper().split(","))
-        text = review_path.read_text()
-
-        sha_match = HEAD_SHA_RE.search(text)
-        review_sha = sha_match.group(1) if sha_match else None
-
-        all_findings = parse_findings(text)
-        _info(f"Parsed {len(all_findings)} findings from review file")
-        trail.info("parse_findings", f"parsed {len(all_findings)} findings",
-                   data={"total": len(all_findings), "review_sha": review_sha})
-
-        findings = [f for f in all_findings if f.severity in severity_filter]
-        filtered = len(all_findings) - len(findings)
-        if filtered:
-            _info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
-        trail.decision(
-            "filter_severity",
-            f"kept {len(findings)} of {len(all_findings)} findings",
-            reason=f"severity filter: {args.severity}",
-            data={"kept": len(findings), "excluded": filtered, "filter": args.severity},
-        )
-
-        if not findings:
-            _warn("No findings to post")
-            sys.exit(0)
-
-        head_sha = sidecar.get("head_sha", "")
-        head_ref = sidecar.get("head_ref", "")
-        base_ref = sidecar.get("base_ref", "")
-        pr_data = None
-        if not args.dry_run:
-            pr_data = fetch_pr_data(repo, args.pr)
-            head_sha = pr_data.head_sha
-            head_ref = head_ref or pr_data.head_ref
-            base_ref = base_ref or pr_data.base_ref
-        else:
-            head_sha = head_sha or review_sha or "dry-run"
-
-        sha_drifted = review_sha and review_sha != head_sha
-        if sha_drifted and not args.dry_run:
-            _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
-            _info("Posting as comment (inline positions may be inaccurate)")
-            trail.decision(
-                "sha_drift",
-                f"review SHA {review_sha[:7] if review_sha else '?'} != HEAD {head_sha[:7] if head_sha else '?'}",
-                reason="HEAD moved since review; posting as comment",
-                data={"review_sha": review_sha, "head_sha": head_sha},
-            )
-            _post_as_comment(
-                args, findings, severity_filter, review_sha, head_sha,
-                head_ref, base_ref, pr_data,
-            )
-            return
-
-        if args.dry_run:
-            _info("Fetching diff for classification...")
-        diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
-        inline, file_level, skipped = classify_findings(findings, diff_text)
-        _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
-        trail.info("classify_findings",
-                   f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
-                   data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
-
-        all_postable = inline + file_level
-        if not args.dry_run and all_postable:
-            kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
-            if deduped:
-                _info(f"Skipped {len(deduped)} findings duplicating existing comments")
-                skipped.extend(deduped)
-                inline = [f for f in kept if f.classification == CLASS_INLINE]
-                file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
-            trail.info("dedup", f"removed {len(deduped) if deduped else 0} duplicate findings",
-                       data={"deduped": len(deduped) if deduped else 0, "kept": len(kept)})
-
-        body_findings = file_level + skipped
-
-        findings_for_links = inline + body_findings
-        resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref)
-
-        inline, body_findings = renumber_for_posting(inline, body_findings)
-
-        inline_comments = [format_inline_comment(f) for f in inline]
-        body_text = format_body_text(body_findings, len(inline) > 0, severity_filter)
-
-        commit_id = head_sha
-        chunk_size = args.chunk_size
-
-        if args.dry_run:
-            trail.decision("post_mode", "dry-run mode", reason="--dry-run flag set")
-            payload = {
-                "commit_id": commit_id,
-                "body": body_text,
-            }
-            if inline_comments:
-                payload["comments"] = inline_comments
-            _print_dry_run(payload, inline, body_findings, skipped, chunk_size)
-            return
-
-        trail.decision("post_mode", "posting to GitHub",
-                       reason="not dry-run",
-                       data={"inline_count": len(inline_comments), "has_body": bool(body_text)})
-        _post_and_track(
-            args, inline_comments, body_text,
-            inline, body_findings, skipped,
-            commit_id, head_sha, chunk_size, severity_filter, pr_data,
-        )
+        _run_post(trail, args, repo, sidecar, review_path)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

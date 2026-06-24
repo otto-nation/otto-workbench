@@ -676,6 +676,96 @@ def _run_review_body(
 
 # ── Main flows ───────────────────────────────────────────────────────────────
 
+def _run_review_pr(
+    trail, ctx, pr_number, repo, review_dir, review_file,
+    issue_link, no_post, auto_post, auto_submit,
+    force, repo_dir, max_parallel, no_holistic, max_cost, model,
+) -> None:
+    trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
+               data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
+
+    # Issue detection
+    pr_meta = {}
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", pr_number, "--repo", repo,
+             "--json", "headRefName,body"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            pr_meta = json.loads(r.stdout)
+    except Exception:
+        pass
+
+    pr_head = pr_meta.get("headRefName", "")
+    pr_body = pr_meta.get("body", "")
+
+    issue_context = ""
+    detected_link = ""
+    if not issue_link:
+        provider_info = review_issue.load_issue_provider()
+        issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
+        issue_result = review_issue.fetch_issue_context(
+            provider_info.name, issue_id, repo, provider_info.options,
+        )
+        detected_link = issue_result.link
+        issue_context = issue_result.context
+        if detected_link:
+            issue_link = detected_link
+
+        if not no_post and not auto_post and not issue_link and not issue_context:
+            issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
+
+    if issue_link or issue_context:
+        trail.info("issue_context", "issue context available",
+                   data={"issue_link": issue_link, "has_context": bool(issue_context)})
+
+    pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
+
+    has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
+
+    if not has_pipeline_state:
+        _check_stale_review(repo, pr_number, review_file, force)
+    trail.decision(
+        "review_freshness",
+        "resume" if has_pipeline_state else "fresh review",
+        reason="pipeline state found" if has_pipeline_state else "no pipeline state",
+        data={"has_pipeline_state": has_pipeline_state},
+    )
+
+    _check_pending_review(repo, pr_number, force)
+
+    # Worktree setup
+    repo_root = _find_repo_root(repo, repo_dir)
+    if not repo_root:
+        trail.error("setup_worktree", f"cannot find local clone of {repo}")
+        _err(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
+        sys.exit(1)
+
+    trail.info("setup_worktree", f"setting up PR worktree",
+               data={"repo_root": repo_root, "pr_head": pr_head})
+
+    wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
+    wt_path = wt_result.path
+
+    session_log = str(review_dir / FILENAME_SESSION)
+    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+    trail.info("delegate_orchestrate", "delegating to review-orchestrate",
+               data={"wt_path": wt_path, "max_parallel": max_parallel,
+                     "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
+
+    try:
+        _run_review_body(
+            pr_number, repo, review_file, review_dir, wt_path,
+            session_log, prior_review_path, issue_link, issue_context,
+            max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+            auto_submit, pr_url,
+        )
+    finally:
+        review_worktree.cleanup_worktree(wt_result, repo_root)
+
+
 def _run_review(args) -> None:
     pr_input = args.positional[0] if args.positional else ""
     no_post = args.no_post
@@ -710,89 +800,11 @@ def _run_review(args) -> None:
     )
 
     try:
-        trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
-                   data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
-
-        # Issue detection
-        pr_meta = {}
-        try:
-            r = subprocess.run(
-                ["gh", "pr", "view", pr_number, "--repo", repo,
-                 "--json", "headRefName,body"],
-                capture_output=True, text=True,
-            )
-            if r.returncode == 0:
-                pr_meta = json.loads(r.stdout)
-        except Exception:
-            pass
-
-        pr_head = pr_meta.get("headRefName", "")
-        pr_body = pr_meta.get("body", "")
-
-        issue_context = ""
-        detected_link = ""
-        if not issue_link:
-            provider_info = review_issue.load_issue_provider()
-            issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
-            issue_result = review_issue.fetch_issue_context(
-                provider_info.name, issue_id, repo, provider_info.options,
-            )
-            detected_link = issue_result.link
-            issue_context = issue_result.context
-            if detected_link:
-                issue_link = detected_link
-
-            if not no_post and not auto_post and not issue_link and not issue_context:
-                issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
-
-        if issue_link or issue_context:
-            trail.info("issue_context", "issue context available",
-                       data={"issue_link": issue_link, "has_context": bool(issue_context)})
-
-        pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
-
-        has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
-
-        if not has_pipeline_state:
-            _check_stale_review(repo, pr_number, review_file, force)
-        trail.decision(
-            "review_freshness",
-            "resume" if has_pipeline_state else "fresh review",
-            reason="pipeline state found" if has_pipeline_state else "no pipeline state",
-            data={"has_pipeline_state": has_pipeline_state},
+        _run_review_pr(
+            trail, ctx, pr_number, repo, review_dir, review_file,
+            issue_link, no_post, auto_post, auto_submit,
+            force, repo_dir, max_parallel, no_holistic, max_cost, model,
         )
-
-        _check_pending_review(repo, pr_number, force)
-
-        # Worktree setup
-        repo_root = _find_repo_root(repo, repo_dir)
-        if not repo_root:
-            trail.error("setup_worktree", f"cannot find local clone of {repo}")
-            _err(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
-            sys.exit(1)
-
-        trail.info("setup_worktree", f"setting up PR worktree",
-                   data={"repo_root": repo_root, "pr_head": pr_head})
-
-        wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
-        wt_path = wt_result.path
-
-        session_log = str(review_dir / FILENAME_SESSION)
-        prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
-
-        trail.info("delegate_orchestrate", "delegating to review-orchestrate",
-                   data={"wt_path": wt_path, "max_parallel": max_parallel,
-                         "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
-
-        try:
-            _run_review_body(
-                pr_number, repo, review_file, review_dir, wt_path,
-                session_log, prior_review_path, issue_link, issue_context,
-                max_parallel, no_holistic, max_cost, model, no_post, auto_post,
-                auto_submit, pr_url,
-            )
-        finally:
-            review_worktree.cleanup_worktree(wt_result, repo_root)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

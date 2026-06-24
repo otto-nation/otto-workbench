@@ -463,6 +463,147 @@ def _run_comment_fix(
     }
 
 
+def _run_threads(trail, args, ctx) -> None:
+    repo = ctx.repo
+    pr_number = ctx.pr_number
+    branch = ctx.branch
+    toplevel = ctx.worktree_root
+    head_sha = ctx.head_sha
+
+    owner, repo_name = repo.split("/", 1)
+
+    pr_data = fetch_pr_data(repo, str(pr_number))
+    my_login = pr_data.viewer_login
+
+    state_path = toplevel / "ignore" / "pr-comments" / "state.json"
+
+    # Load prior state
+    prior_state = pc.load_state(state_path)
+    prior_threads = prior_state.get("threads", {}) if prior_state else {}
+
+    # Fetch from GitHub (served from pr_data, no extra API calls)
+    threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
+    issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
+    trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
+               data={"count": len(threads_raw)})
+
+    # Sync
+    threads = pc.sync_threads(threads_raw, prior_threads, my_login)
+    synced_resolved = sum(1 for t in threads.values() if t.get("state") == "resolved")
+    synced_open = len(threads) - synced_resolved
+    trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
+               data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
+
+    # Resolve verified threads if requested (or as part of triage)
+    if args.resolve or args.triage:
+        resolved_count = _resolve_verified_threads(threads_raw, threads)
+        if resolved_count:
+            print(f"Resolved {resolved_count} verified threads", file=sys.stderr)
+
+    # Save state
+    state = pc.empty_state(repo, pr_number, my_login)
+    state["threads"] = threads
+    pc.save_state(state_path, state)
+
+    # Dashboard to stderr
+    dashboard = pc.render_dashboard(pr_number, threads, verdicts, issue_comments)
+    print(dashboard, file=sys.stderr)
+
+    # JSON report to stdout
+    report = {
+        "repo": repo,
+        "pr_number": pr_number,
+        "my_login": my_login,
+        "threads": [],
+        "issue_comments": issue_comments,
+        "verdicts": verdicts,
+    }
+    for thread_data in threads_raw:
+        tid = thread_data["id"]
+        t = threads.get(tid, {})
+        comments = thread_data.get("comments", {}).get("nodes", [])
+        report["threads"].append({
+            "id": tid,
+            "state": t.get("state", "new"),
+            "classification": t.get("classification"),
+            "reviewer": t.get("reviewer", ""),
+            "comments": comments,
+            "is_resolved": thread_data.get("isResolved", False),
+            "file": thread_data.get("path"),
+            "line": thread_data.get("line"),
+        })
+
+    # Update unified PR state (best-effort)
+    ctx_args = dict(
+        worktree_root=toplevel, repo=repo, branch=branch,
+        pr_number=pr_number, head_sha=head_sha,
+    )
+    try:
+        thread_states: dict[str, int] = {}
+        for t in report["threads"]:
+            s = t.get("state", "new")
+            thread_states[s] = thread_states.get(s, 0) + 1
+        blocking = [
+            v.get("author", {}).get("login", "unknown")
+            for v in report.get("verdicts", [])
+            if v.get("state") == "CHANGES_REQUESTED"
+        ]
+        has_approvals = any(
+            v.get("state") == "APPROVED" for v in report.get("verdicts", [])
+        )
+        st = pr_state.load_or_init(**ctx_args)
+        pr_state.update_comments(st, pr_state.CommentsSummary(
+            total_threads=len(report["threads"]),
+            by_state=thread_states,
+            blocking_reviewers=blocking,
+            has_approvals=has_approvals,
+            updated_at=pr_state.now_iso(),
+        ))
+        pr_state.save_state(toplevel, st)
+    except Exception as exc:
+        print(f"review-threads: state update failed: {exc}", file=sys.stderr)
+
+    # Triage and/or fix mode
+    if args.triage:
+        triage_mode = "fix" if args.fix else "triage"
+        trail.decision("triage_mode", f"running {triage_mode}",
+                       reason="--fix flag" if args.fix else "--triage flag",
+                       data={"fix": args.fix, "triage": args.triage})
+        triage_result, rc = _run_triage(report, toplevel, ctx_args)
+        if rc != 0:
+            sys.exit(rc)
+
+        if args.fix and triage_result:
+            triage_threads = triage_result.get("threads", [])
+            fixable_count = sum(
+                1 for t in triage_threads
+                if t.get("classification") == "actionable_suggestion"
+                and t.get("verification") == "valid"
+            )
+            trail.decision(
+                "fix_classification",
+                f"{fixable_count} fixable threads identified",
+                reason="classification=actionable_suggestion and verification=valid",
+                data={"fixable": fixable_count, "total": len(triage_threads)},
+            )
+            fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx)
+            skipped_count = len(fix_pass.get("skipped", []))
+            trail.info("fix_result", "fix pass complete",
+                       data={"fixable": fixable_count, "skipped": skipped_count,
+                             "commit_sha": fix_pass.get("commit_sha")})
+            output = {**triage_result, "fix_pass": fix_pass}
+        else:
+            output = triage_result
+
+        json.dump(output, sys.stdout, indent=2)
+        print()
+        sys.exit(0)
+
+    json.dump(report, sys.stdout, indent=2)
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", help="PR number")
@@ -502,138 +643,7 @@ def main():
     )
 
     try:
-        owner, repo_name = repo.split("/", 1)
-
-        pr_data = fetch_pr_data(repo, str(pr_number))
-        my_login = pr_data.viewer_login
-
-        state_path = toplevel / "ignore" / "pr-comments" / "state.json"
-
-        # Load prior state
-        prior_state = pc.load_state(state_path)
-        prior_threads = prior_state.get("threads", {}) if prior_state else {}
-
-        # Fetch from GitHub (served from pr_data, no extra API calls)
-        threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
-        verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
-        issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
-        trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
-                   data={"count": len(threads_raw)})
-
-        # Sync
-        threads = pc.sync_threads(threads_raw, prior_threads, my_login)
-        synced_resolved = sum(1 for t in threads.values() if t.get("state") == "resolved")
-        synced_open = len(threads) - synced_resolved
-        trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
-                   data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
-
-        # Resolve verified threads if requested (or as part of triage)
-        if args.resolve or args.triage:
-            resolved_count = _resolve_verified_threads(threads_raw, threads)
-            if resolved_count:
-                print(f"Resolved {resolved_count} verified threads", file=sys.stderr)
-
-        # Save state
-        state = pc.empty_state(repo, pr_number, my_login)
-        state["threads"] = threads
-        pc.save_state(state_path, state)
-
-        # Dashboard to stderr
-        dashboard = pc.render_dashboard(pr_number, threads, verdicts, issue_comments)
-        print(dashboard, file=sys.stderr)
-
-        # JSON report to stdout
-        report = {
-            "repo": repo,
-            "pr_number": pr_number,
-            "my_login": my_login,
-            "threads": [],
-            "issue_comments": issue_comments,
-            "verdicts": verdicts,
-        }
-        for thread_data in threads_raw:
-            tid = thread_data["id"]
-            t = threads.get(tid, {})
-            comments = thread_data.get("comments", {}).get("nodes", [])
-            report["threads"].append({
-                "id": tid,
-                "state": t.get("state", "new"),
-                "classification": t.get("classification"),
-                "reviewer": t.get("reviewer", ""),
-                "comments": comments,
-                "is_resolved": thread_data.get("isResolved", False),
-                "file": thread_data.get("path"),
-                "line": thread_data.get("line"),
-            })
-
-        # Update unified PR state (best-effort)
-        ctx_args = dict(
-            worktree_root=toplevel, repo=repo, branch=branch,
-            pr_number=pr_number, head_sha=head_sha,
-        )
-        try:
-            thread_states: dict[str, int] = {}
-            for t in report["threads"]:
-                s = t.get("state", "new")
-                thread_states[s] = thread_states.get(s, 0) + 1
-            blocking = [
-                v.get("author", {}).get("login", "unknown")
-                for v in report.get("verdicts", [])
-                if v.get("state") == "CHANGES_REQUESTED"
-            ]
-            has_approvals = any(
-                v.get("state") == "APPROVED" for v in report.get("verdicts", [])
-            )
-            st = pr_state.load_or_init(**ctx_args)
-            pr_state.update_comments(st, pr_state.CommentsSummary(
-                total_threads=len(report["threads"]),
-                by_state=thread_states,
-                blocking_reviewers=blocking,
-                has_approvals=has_approvals,
-                updated_at=pr_state.now_iso(),
-            ))
-            pr_state.save_state(toplevel, st)
-        except Exception as exc:
-            print(f"review-threads: state update failed: {exc}", file=sys.stderr)
-
-        # Triage and/or fix mode
-        if args.triage:
-            triage_mode = "fix" if args.fix else "triage"
-            trail.decision("triage_mode", f"running {triage_mode}",
-                           reason="--fix flag" if args.fix else "--triage flag",
-                           data={"fix": args.fix, "triage": args.triage})
-            triage_result, rc = _run_triage(report, toplevel, ctx_args)
-            if rc != 0:
-                sys.exit(rc)
-
-            if args.fix and triage_result:
-                triage_threads = triage_result.get("threads", [])
-                fixable_count = sum(
-                    1 for t in triage_threads
-                    if t.get("classification") == "actionable_suggestion"
-                    and t.get("verification") == "valid"
-                )
-                trail.decision(
-                    "fix_classification",
-                    f"{fixable_count} fixable threads identified",
-                    reason="classification=actionable_suggestion and verification=valid",
-                    data={"fixable": fixable_count, "total": len(triage_threads)},
-                )
-                fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx)
-                skipped_count = len(fix_pass.get("skipped", []))
-                trail.info("fix_result", "fix pass complete",
-                           data={"fixable": fixable_count, "skipped": skipped_count,
-                                 "commit_sha": fix_pass.get("commit_sha")})
-                output = {**triage_result, "fix_pass": fix_pass}
-            else:
-                output = triage_result
-
-            json.dump(output, sys.stdout, indent=2)
-            print()
-            sys.exit(0)
-
-        json.dump(report, sys.stdout, indent=2)
-        print()
+        _run_threads(trail, args, ctx)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

@@ -82,20 +82,27 @@ def discover_trails(
 
 # ── Loading ───────────────────────────────────────────────────────────────
 
+def _parse_trail_file(path: str | Path) -> list[dict]:
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return []
+    events = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
 def load_events(trail_paths: list[str | Path]) -> list[dict]:
     events = []
     for path in trail_paths:
-        try:
-            for line in Path(path).read_text().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        except OSError:
-            continue
+        events.extend(_parse_trail_file(path))
     events.sort(key=lambda e: e.get("ts", ""))
     return events
 

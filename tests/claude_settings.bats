@@ -174,11 +174,18 @@ _get_branch_hook() {
   [ "$status" -eq 0 ]
 }
 
+_init_test_repo() {
+  local dir=$1 branch=${2:-main}
+  git -C "$dir" init -b "$branch" --quiet
+  git -C "$dir" config user.email "test@example.com"
+  git -C "$dir" config user.name "Test"
+}
+
 @test "branch hook: blocks tracked file on main" {
   local hook tmpdir
   hook=$(_get_branch_hook)
   tmpdir=$(mktemp -d)
-  git -C "$tmpdir" init -b main --quiet
+  _init_test_repo "$tmpdir"
   touch "$tmpdir/tracked.txt"
   git -C "$tmpdir" add tracked.txt
   git -C "$tmpdir" commit -m "init" --quiet
@@ -192,7 +199,7 @@ _get_branch_hook() {
   local hook tmpdir
   hook=$(_get_branch_hook)
   tmpdir=$(mktemp -d)
-  git -C "$tmpdir" init -b main --quiet
+  _init_test_repo "$tmpdir"
   echo "ignore/" > "$tmpdir/.gitignore"
   git -C "$tmpdir" add .gitignore
   git -C "$tmpdir" commit -m "init" --quiet
@@ -206,7 +213,7 @@ _get_branch_hook() {
   local hook tmpdir
   hook=$(_get_branch_hook)
   tmpdir=$(mktemp -d)
-  git -C "$tmpdir" init -b main --quiet
+  _init_test_repo "$tmpdir"
   touch "$tmpdir/file.txt"
   git -C "$tmpdir" add file.txt
   git -C "$tmpdir" commit -m "init" --quiet

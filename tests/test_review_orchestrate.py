@@ -74,6 +74,112 @@ class TestVerifyFinding:
         src.write_text("func foo() {\n\t\tresult := db.Query(q)\n}\n")
         assert ro._verify_finding("handler.go", "result := db.Query(q)", str(tmp_path)) is True
 
+    def test_trailing_go_comment_stripped(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text("data.Completed[n] = completed\ndata.Posted[n] = posted\n")
+        evidence = "data.Completed[n] = completed   // never read in template\ndata.Posted[n] = posted"
+        assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is True
+
+    def test_trailing_template_comment_stripped(self, ro, tmp_path):
+        src = tmp_path / "page.html"
+        src.write_text("{{ end }}\n")
+        evidence = "{{ end }}\n{{/* no else — renders nothing */}}"
+        assert ro._verify_finding("page.html", evidence, str(tmp_path)) is True
+
+    def test_ellipsis_fragments_verified(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text("func foo() {\n\tresult := db.Query(q)\n\tif err != nil {\n\t\treturn err\n\t}\n\tuse(result)\n}\n")
+        evidence = "result := db.Query(q)\n...\nuse(result)"
+        assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is True
+
+    def test_ellipsis_fragment_not_in_file_fails(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text("func foo() {\n\tresult := db.Query(q)\n\tuse(result)\n}\n")
+        evidence = "result := db.Query(q)\n...\nnonexistent_call()"
+        assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is False
+
+    def test_comment_inside_string_not_stripped(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text('msg := "value // not a comment"\n')
+        evidence = 'msg := "value // not a comment"'
+        assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is True
+
+
+class TestStripTrailingComments:
+    def test_strips_go_comment(self, ro):
+        assert ro._strip_trailing_comments("x = 1 // explanation") == "x = 1"
+
+    def test_strips_python_comment(self, ro):
+        assert ro._strip_trailing_comments("x = 1 # explanation") == "x = 1"
+
+    def test_strips_template_comment(self, ro):
+        assert ro._strip_trailing_comments("{{ end }}{{/* note */}}") == "{{ end }}"
+
+    def test_preserves_comment_inside_string(self, ro):
+        line = 'msg := "value // not a comment"'
+        assert ro._strip_trailing_comments(line) == line
+
+    def test_no_comment_unchanged(self, ro):
+        assert ro._strip_trailing_comments("x = 1") == "x = 1"
+
+
+class TestVerificationDetail:
+    def test_match_records_pass(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text("func foo() {\n\tresult := db.Query(q)\n}\n")
+        finding = {"id": "S1", "severity": "S", "path": "handler.go", "body": ""}
+        detail = ro._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
+        assert detail["match_result"] is True
+        assert detail["file_exists"] is True
+
+    def test_mismatch_records_failure(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text("func foo() {\n\tx := 1\n}\n")
+        finding = {"id": "S1", "severity": "S", "path": "handler.go", "body": ""}
+        detail = ro._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
+        assert detail["match_result"] is False
+        assert "longest_match_prefix" in detail
+        assert "first_mismatch" in detail
+
+
+class TestVerifyFindings:
+    def test_writes_verification_json(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        src = tmp_path / "handler.go"
+        src.write_text("package main\n\nfunc foo() {\n\tresult := db.Query(q)\n}\n")
+        review.write_text(
+            "## Should fix\n"
+            "- [ ] **[S1]** **`handler.go:42`** — desc\n"
+            "  > ```go\n"
+            "  > result := db.Query(q)\n"
+            "  > ```\n"
+        )
+        dropped = ro.verify_findings(str(review), str(tmp_path))
+        assert dropped == []
+        import json
+        log = json.loads((tmp_path / "verification.json").read_text())
+        assert log["findings_checked"] == 1
+        assert log["findings_passed"] == 1
+        assert log["findings_dropped"] == 0
+
+    def test_drops_unverified_and_logs(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        src = tmp_path / "handler.go"
+        src.write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
+        review.write_text(
+            "## Should fix\n"
+            "- [ ] **[S1]** **`handler.go:42`** — desc\n"
+            "  > ```go\n"
+            "  > result := db.Query(q)\n"
+            "  > ```\n"
+        )
+        dropped = ro.verify_findings(str(review), str(tmp_path))
+        assert dropped == ["S1"]
+        import json
+        log = json.loads((tmp_path / "verification.json").read_text())
+        assert log["findings_dropped"] == 1
+        assert log["details"][0]["match_result"] is False
+
 
 class TestParseVerificationStripsLine:
     def test_path_excludes_line_number(self, ro):

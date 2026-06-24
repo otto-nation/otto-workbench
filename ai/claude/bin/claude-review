@@ -555,11 +555,6 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
     return found[0] if found else ""
 
 
-def _find_worktree_for_branch(branch: str) -> str:
-    wt = pr_context._find_worktree_for_branch(branch)
-    return str(wt) if wt else ""
-
-
 def _resolve_bare_repo_worktree(branch: str = "") -> str:
     wt = pr_context._resolve_bare_repo_worktree(None, branch or None)
     if wt:
@@ -837,32 +832,12 @@ def _run_self_review_body(
 
 
 def _resolve_wt_path(repo_dir: str, pr_input: str) -> str:
-    if repo_dir:
-        try:
-            r = subprocess.run(
-                ["git", "-C", repo_dir, "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True,
-            )
-        except Exception:
-            _err(f"Not a git repository: {repo_dir}")
-            sys.exit(1)
-        if r.returncode != 0:
-            _err(f"Not a git repository: {repo_dir}")
-            sys.exit(1)
-        return r.stdout.strip()
+    cwd = repo_dir or None
+    toplevel = pr_context._git_toplevel(cwd)
+    if toplevel is not None:
+        return str(toplevel)
 
-    r = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0:
-        return r.stdout.strip()
-
-    r2 = subprocess.run(
-        ["git", "rev-parse", "--is-bare-repository"],
-        capture_output=True, text=True,
-    )
-    if r2.stdout.strip() == "true":
+    if not repo_dir and pr_context._is_bare_repo(cwd):
         return _resolve_bare_repo_worktree(pr_input)
 
     _err("Not in a git repository — pass --repo-dir to specify the repo")

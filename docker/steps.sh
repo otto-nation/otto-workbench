@@ -81,22 +81,56 @@ step_docker_testcontainers() {
   install_symlink "$TESTCONTAINERS_SRC" "$TESTCONTAINERS_FILE"
 }
 
-# sync_docker — re-applies socket, runtime aliases, and testcontainers config non-interactively.
-# Called automatically by otto-workbench sync via the sync_<component> convention.
-sync_docker() {
-  [[ "$OSTYPE" == "darwin"* ]] || return
+# _detect_native_docker_sock VAR — sets VAR to the native Docker socket path, or empty string.
+# Checks /run/docker.sock first (systemd-managed), then /var/run/docker.sock (legacy path).
+_detect_native_docker_sock() {
+  local -n __sock=$1
+  __sock=""
+  if [[ -S /run/docker.sock ]]; then
+    __sock="/run/docker.sock"
+  elif [[ -S /var/run/docker.sock ]]; then
+    __sock="/var/run/docker.sock"
+  fi
+}
 
+# _sync_docker_linux — detects native Docker socket and symlinks for path consistency.
+_sync_docker_linux() {
   sync_header "docker socket → $DOCKER_RUN_DIR/"
-  step_docker_socket
+  local native_sock
+  _detect_native_docker_sock native_sock
 
-  sync_header "runtime aliases → $DOCKER_RUNTIME_ALIASES"
-  step_docker_runtime_aliases
+  if [[ -n "$native_sock" ]]; then
+    mkdir -p "$DOCKER_RUN_DIR"
+    install_symlink "$native_sock" "$DOCKER_RUN_DIR/docker.sock"
+  else
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ no Docker socket found — is Docker installed?${NC}" || true
+  fi
 
   sync_header "testcontainers → $TESTCONTAINERS_FILE"
   step_docker_testcontainers
 
   sync_header "docker scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$DOCKER_SRC_DIR"
+}
+
+# sync_docker — re-applies socket, runtime aliases, and testcontainers config non-interactively.
+# Called automatically by otto-workbench sync via the sync_<component> convention.
+sync_docker() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sync_header "docker socket → $DOCKER_RUN_DIR/"
+    step_docker_socket
+
+    sync_header "runtime aliases → $DOCKER_RUNTIME_ALIASES"
+    step_docker_runtime_aliases
+
+    sync_header "testcontainers → $TESTCONTAINERS_FILE"
+    step_docker_testcontainers
+
+    sync_header "docker scripts → $LOCAL_BIN_DIR/"
+    sync_component_bin "$DOCKER_SRC_DIR"
+  else
+    _sync_docker_linux
+  fi
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

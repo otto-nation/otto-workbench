@@ -182,6 +182,28 @@ _clone_workbench_repo() {
   git clone "$repo_url" "$WORKBENCH_REPO_DIR"
 }
 
+_check_linux_prerequisites() {
+  local -a missing=() apt_pkgs=()
+  local cmd
+  for cmd in git zsh curl jq; do
+    command -v "$cmd" >/dev/null 2>&1 || { missing+=("$cmd"); apt_pkgs+=("$cmd"); }
+  done
+  # yq (mikefarah/yq) is not in standard apt repos — track separately for a tailored hint
+  command -v yq >/dev/null 2>&1 || missing+=("yq")
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    warn "Missing prerequisites: ${missing[*]}"
+    if [[ ${#apt_pkgs[@]} -gt 0 ]]; then
+      echo -e "  ${DIM}Install with: sudo apt install ${apt_pkgs[*]}${NC}"
+    fi
+    if [[ " ${missing[*]} " == *" yq "* ]]; then
+      echo -e "  ${DIM}Install yq: snap install yq  (or see https://github.com/mikefarah/yq/releases)${NC}"
+    fi
+  else
+    success "Linux prerequisites satisfied"
+  fi
+}
+
 cmd_install() {
   # If running from Homebrew Cellar, clone the full repo and re-exec from there.
   if [[ "$WORKBENCH_DIR" == */Cellar/* ]]; then
@@ -207,7 +229,11 @@ cmd_install() {
   echo
 
   # ─── Bootstrap ──────────────────────────────────────────────────────────
-  step_brew_install
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    step_brew_install
+  else
+    _check_linux_prerequisites
+  fi
   echo
 
   # Resolve known components and validate targets (if any).

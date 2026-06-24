@@ -90,7 +90,7 @@ tools:
     visibility: full
     description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary]  |  pr comments [--triage] [--resolve]  |  pr fix  |  pr rebase [--fix] [--push] [--abort]  |  pr gc"
+    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary]  |  pr comments [--triage] [--fix] [--resolve]  |  pr fix  |  pr rebase [--fix] [--push] [--abort]  |  pr gc"
 
   - name: pr-rebase
     permission: false

@@ -7,14 +7,17 @@ Manages local state in <worktree>/ignore/pr-comments/state.json.
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
+  review-threads --fix
   review-threads --resolve
 """
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
+from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
@@ -23,6 +26,9 @@ import pr_context
 import pr_state
 
 TRIAGE_CONTEXT_LINES = 10
+FIX_MAX_TURNS = 15
+FIX_MODEL = "sonnet"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
 
 def _my_login() -> str:
@@ -118,17 +124,18 @@ Return JSON matching this exact schema:
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""
 
 
-def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> int:
-    """Classify non-resolved threads via AI and update triage state."""
+def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> tuple[dict | None, int]:
+    """Classify non-resolved threads via AI and update triage state.
+
+    Returns (triage_result, exit_code). Caller handles stdout output.
+    """
     non_resolved = [t for t in report["threads"] if t.get("state") != "resolved"]
     if not non_resolved:
         empty = {"threads": [], "stats": {
             "total": 0, "actionable": 0, "questions": 0,
             "approvals": 0, "conflicting": 0, "valid": 0, "invalid": 0,
         }}
-        json.dump(empty, sys.stdout, indent=2)
-        print()
-        return 0
+        return empty, 0
 
     code_context = _gather_code_context(non_resolved, repo_dir)
     prompt = _build_triage_prompt(non_resolved, code_context)
@@ -139,16 +146,13 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> int:
     )
     if result.returncode != 0:
         print("review-threads: claude -p failed", file=sys.stderr)
-        return 1
+        return None, 1
 
     try:
         triage_result = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError):
         print("review-threads: claude returned non-JSON output", file=sys.stderr)
-        return 1
-
-    json.dump(triage_result, sys.stdout, indent=2)
-    print()
+        return None, 1
 
     # Update triage state
     try:
@@ -165,7 +169,309 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> int:
     except Exception as exc:
         print(f"review-threads: triage state update failed: {exc}", file=sys.stderr)
 
-    return 0
+    return triage_result, 0
+
+
+def _thread_comment_text(comments: list) -> str:
+    """Format a thread's comments as quoted conversation."""
+    parts = []
+    for c in comments:
+        author = c.get("author", {}).get("login", "unknown")
+        body = c.get("body", "").strip()
+        if body:
+            quoted = "\n".join(f"> {line}" for line in body.splitlines())
+            parts.append(f"**@{author}:**\n{quoted}")
+    return "\n\n".join(parts)
+
+
+def _code_context_for_thread(file_path: str, line: int, repo_dir: Path) -> str:
+    """Read surrounding source lines for a single thread's file location."""
+    if not file_path or line == 0:
+        return ""
+    full_path = repo_dir / file_path
+    if not full_path.is_file():
+        return ""
+    try:
+        lines = full_path.read_text().splitlines()
+    except OSError:
+        return ""
+    start = max(0, line - 1 - TRIAGE_CONTEXT_LINES)
+    end = min(len(lines), line + TRIAGE_CONTEXT_LINES)
+    snippet = "\n".join(lines[start:end])
+    return f"```\n{snippet}\n```" if snippet else ""
+
+
+def _build_tracking_file(
+    tracking_path: Path,
+    fixable: list[dict],
+    threads_by_id: dict,
+    repo_dir: Path,
+    pr_number: int,
+) -> None:
+    """Build the tracking markdown file for the fix agent."""
+    sections = []
+    for thread in fixable:
+        tid = thread["id"]
+        report_thread = threads_by_id.get(tid, {})
+        file_path = thread.get("file", "")
+        line = thread.get("line", 0)
+        reviewer = thread.get("reviewer", "")
+        summary = thread.get("summary", "")
+
+        comments = report_thread.get("comments", [])
+        conversation = _thread_comment_text(comments)
+        code_ctx = _code_context_for_thread(file_path, line, repo_dir)
+
+        section = f"## <!-- thread:{tid} --> {file_path}:{line} — @{reviewer}\n\n"
+        if summary:
+            section += f"**Summary:** {summary}\n\n"
+        if conversation:
+            section += f"**Conversation:**\n{conversation}\n\n"
+        if code_ctx:
+            section += f"**Code context:**\n{code_ctx}\n\n"
+        section += "- [ ] Apply fix\n"
+        sections.append(section)
+
+    content = f"# Comment Fix Tracking — PR #{pr_number}\n\n"
+    content += "\n".join(sections)
+    tracking_path.parent.mkdir(parents=True, exist_ok=True)
+    tracking_path.write_text(content)
+
+
+def _render_fix_template(
+    branch: str, repo: str, threads_content: str,
+    tracking_file: str, wt_path: str, max_turns: int,
+) -> str:
+    """Render the fix-comments.md template."""
+    tmpl = Template((TEMPLATE_DIR / "fix-comments.md").read_text())
+    return tmpl.safe_substitute(
+        branch_name=branch,
+        repo=repo,
+        threads_content=threads_content,
+        tracking_file=tracking_file,
+        wt_path=wt_path,
+        max_turns=str(max_turns),
+    )
+
+
+def _invoke_fix_agent(prompt: str, wt_path: Path, tracking_dir: Path) -> int:
+    """Run Claude agent to apply fixes. Returns exit code."""
+    cmd = [
+        "claude", "-p", "--bare", "--verbose",
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", "Bash(*)",
+        "--disable-slash-commands",
+        "--add-dir", str(wt_path),
+        "--add-dir", str(tracking_dir),
+        "--max-turns", str(FIX_MAX_TURNS),
+        "--model", FIX_MODEL,
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=sys.stderr,
+        text=True,
+    )
+    proc.stdin.write(prompt)
+    proc.stdin.close()
+    for line in proc.stdout:
+        print(line, end="", file=sys.stderr)
+    proc.wait()
+    return proc.returncode
+
+
+def _count_unchecked(path: Path) -> int:
+    """Count unchecked checkboxes in a tracking file."""
+    if not path.exists():
+        return 0
+    return sum(
+        1 for line in path.read_text().splitlines()
+        if re.match(r"^- \[ \] ", line)
+    )
+
+
+def _parse_tracking_results(
+    tracking_path: Path, fixable: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Parse tracking file to determine which threads were fixed vs skipped."""
+    content = tracking_path.read_text()
+    sections = re.split(r"^## <!-- thread:", content, flags=re.MULTILINE)
+
+    fixable_by_id = {t["id"]: t for t in fixable}
+    fixed = []
+    skipped = []
+
+    for section in sections[1:]:
+        tid_match = re.match(r"(\S+) -->", section)
+        if not tid_match:
+            continue
+        tid = tid_match.group(1)
+        thread = fixable_by_id.get(tid)
+        if not thread:
+            continue
+        entry = {
+            "thread_id": tid,
+            "file": thread.get("file", ""),
+            "line": thread.get("line", 0),
+            "reviewer": thread.get("reviewer", ""),
+            "summary": thread.get("summary", ""),
+        }
+        if "- [x]" in section or "- [X]" in section:
+            fixed.append(entry)
+        else:
+            entry["reason"] = "agent could not auto-fix"
+            skipped.append(entry)
+
+    return fixed, skipped
+
+
+def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
+    """Commit and push fixes if there are changes. Returns commit SHA or None."""
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", "--quiet"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return None
+
+    subprocess.run(
+        ["git", "-C", str(wt_path), "add", "-u"],
+        capture_output=True, check=True,
+    )
+
+    msg = "fix: address review comments"
+    if fixed:
+        msg += f"\n\n{fixed} fixed, {skipped} skipped"
+
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "commit", "-m", msg],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"review-threads: commit failed: {result.stderr.strip()}", file=sys.stderr)
+        return None
+
+    sha = subprocess.run(
+        ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+    print(f"Committed fixes ({fixed} fixed, {skipped} skipped)", file=sys.stderr)
+
+    push = subprocess.run(
+        ["git", "-C", str(wt_path), "push"],
+        capture_output=True, text=True,
+    )
+    if push.returncode == 0:
+        print("Pushed fixes", file=sys.stderr)
+    else:
+        push = subprocess.run(
+            ["git", "-C", str(wt_path), "push", "--force-with-lease"],
+            capture_output=True, text=True,
+        )
+        if push.returncode == 0:
+            print("Force-pushed fixes (branch had diverged)", file=sys.stderr)
+        else:
+            print(f"review-threads: push failed: {push.stderr.strip()}", file=sys.stderr)
+
+    return sha
+
+
+def _run_comment_fix(
+    triage_result: dict,
+    report: dict,
+    wt_path: Path,
+    ctx: pr_context.ResolvedContext,
+) -> dict:
+    """Apply mechanical fixes for valid actionable comment threads.
+
+    Returns a fix_pass dict with fixed/needs_human/skipped/commit_sha.
+    """
+    threads_by_id = {t["id"]: t for t in report["threads"]}
+    triage_threads = triage_result.get("threads", [])
+
+    fixable = []
+    needs_human = []
+
+    for tt in triage_threads:
+        entry = {
+            "thread_id": tt.get("id", ""),
+            "file": tt.get("file", ""),
+            "line": tt.get("line", 0),
+            "reviewer": tt.get("reviewer", ""),
+            "summary": tt.get("summary", ""),
+        }
+        classification = tt.get("classification", "")
+        verification = tt.get("verification", "")
+        state = tt.get("state", "")
+
+        if state == "contested":
+            needs_human.append({**entry, "reason": "contested"})
+            continue
+
+        if classification == "conflicting":
+            needs_human.append({**entry, "reason": "conflicting"})
+            continue
+
+        if classification == "question":
+            needs_human.append({**entry, "reason": "question"})
+            continue
+
+        if classification != "actionable_suggestion":
+            continue
+
+        if verification == "valid":
+            fixable.append({**tt, "id": tt.get("id", "")})
+        elif verification == "needs_discussion":
+            needs_human.append({**entry, "reason": "needs_discussion"})
+
+    empty_result = {
+        "fixed": [], "needs_human": needs_human,
+        "skipped": [], "commit_sha": None,
+    }
+
+    if not fixable:
+        return empty_result
+
+    tracking_dir = wt_path / "ignore" / "pr-comments"
+    tracking_file = tracking_dir / "fix-tracking.md"
+
+    _build_tracking_file(
+        tracking_file, fixable, threads_by_id,
+        wt_path, report["pr_number"],
+    )
+
+    before = _count_unchecked(tracking_file)
+    if before == 0:
+        return empty_result
+
+    prompt = _render_fix_template(
+        branch=ctx.branch,
+        repo=ctx.repo,
+        threads_content=tracking_file.read_text(),
+        tracking_file=str(tracking_file),
+        wt_path=str(wt_path),
+        max_turns=FIX_MAX_TURNS,
+    )
+
+    print("Fix pass — applying review comment suggestions...", file=sys.stderr)
+    _invoke_fix_agent(prompt, wt_path, tracking_dir)
+    print(file=sys.stderr)
+
+    after = _count_unchecked(tracking_file)
+    fixed_count = before - after
+
+    fixed, skipped = _parse_tracking_results(tracking_file, fixable)
+
+    commit_sha = _commit_and_push(wt_path, fixed_count, after)
+
+    return {
+        "fixed": fixed,
+        "needs_human": needs_human,
+        "skipped": skipped,
+        "commit_sha": commit_sha,
+    }
 
 
 def main():
@@ -174,12 +480,17 @@ def main():
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--triage", action="store_true",
                         help="Classify threads via AI and auto-resolve verified")
+    parser.add_argument("--fix", action="store_true",
+                        help="Triage threads and apply mechanical fixes via Claude agent")
     parser.add_argument("--resolve", "--resolve-verified", action="store_true",
                         dest="resolve",
                         help="Resolve all verified threads on GitHub")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
     args = parser.parse_args()
+
+    if args.fix:
+        args.triage = True
 
     ctx = pr_context.resolve(
         pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
@@ -279,9 +590,21 @@ def main():
     except Exception as exc:
         print(f"review-threads: state update failed: {exc}", file=sys.stderr)
 
-    # Triage mode: classify via AI after fetching
+    # Triage and/or fix mode
     if args.triage:
-        sys.exit(_run_triage(report, toplevel, ctx_args))
+        triage_result, rc = _run_triage(report, toplevel, ctx_args)
+        if rc != 0:
+            sys.exit(rc)
+
+        if args.fix and triage_result:
+            fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx)
+            output = {**triage_result, "fix_pass": fix_pass}
+        else:
+            output = triage_result
+
+        json.dump(output, sys.stdout, indent=2)
+        print()
+        sys.exit(0)
 
     json.dump(report, sys.stdout, indent=2)
     print()

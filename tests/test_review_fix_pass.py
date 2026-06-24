@@ -53,6 +53,45 @@ class TestCountUnchecked:
         assert review_pipeline._count_unchecked(str(review)) == 1
 
 
+class TestCountChecked:
+    def test_counts_checked_findings(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "- [x] **[M1]** fixed finding\n"
+            "- [ ] **[S1]** not fixed\n"
+            "- [x] **[S2]** also fixed\n"
+        )
+        assert review_pipeline._count_checked(str(review)) == 2
+
+    def test_none_checked(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text("- [ ] **[M1]** not fixed\n")
+        assert review_pipeline._count_checked(str(review)) == 0
+
+    def test_missing_file(self):
+        assert review_pipeline._count_checked("/nonexistent/review.md") == 0
+
+
+class TestCountChangedSourceFiles:
+    @patch("review_pipeline.subprocess.run")
+    def test_counts_changed_files_excluding_review(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="handler.go\nstore.go\nreview.md\n",
+        )
+        assert review_pipeline._count_changed_source_files("/wt") == 2
+
+    @patch("review_pipeline.subprocess.run")
+    def test_empty_diff(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        assert review_pipeline._count_changed_source_files("/wt") == 0
+
+    @patch("review_pipeline.subprocess.run")
+    def test_git_failure(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        assert review_pipeline._count_changed_source_files("/wt") == 0
+
+
 class TestCommitFixes:
     def _make_job(self, tmp_path):
         job = MagicMock()

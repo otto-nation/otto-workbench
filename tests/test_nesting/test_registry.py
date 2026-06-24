@@ -38,9 +38,9 @@ def test_shebang_lookup_bash():
     assert isinstance(checker, BashChecker)
 
 
-def test_shebang_lookup_python():
+def test_shebang_lookup_python_returns_none():
     checker = get_checker_for_shebang(b'#!/usr/bin/env python3\n')
-    assert isinstance(checker, PythonChecker)
+    assert checker is None
 
 
 def test_shebang_lookup_bash_direct_path():
@@ -53,9 +53,9 @@ def test_shebang_lookup_sh_direct_path():
     assert isinstance(checker, BashChecker)
 
 
-def test_shebang_lookup_python_no_version():
+def test_shebang_lookup_python_no_version_returns_none():
     checker = get_checker_for_shebang(b'#!/usr/bin/python\n')
-    assert isinstance(checker, PythonChecker)
+    assert checker is None
 
 
 def test_shebang_lookup_unknown_returns_none():

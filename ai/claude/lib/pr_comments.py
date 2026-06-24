@@ -166,6 +166,15 @@ mutation($threadId: ID!) {
 """
 
 
+def _warn_truncated_thread(node: dict) -> None:
+    comments_data = node.get("comments", {})
+    comment_total = comments_data.get("totalCount", 0)
+    comment_nodes = comments_data.get("nodes", [])
+    if comment_total > len(comment_nodes):
+        path = node.get("path", "?")
+        print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})", file=sys.stderr)
+
+
 def fetch_threads(
     owner: str, repo_name: str, pr_number: int,
     pr_data: PRData | None = None,
@@ -192,12 +201,7 @@ def fetch_threads(
         if total > len(nodes):
             print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})", file=sys.stderr)
         for node in nodes:
-            comments_data = node.get("comments", {})
-            comment_total = comments_data.get("totalCount", 0)
-            comment_nodes = comments_data.get("nodes", [])
-            if comment_total > len(comment_nodes):
-                path = node.get("path", "?")
-                print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})", file=sys.stderr)
+            _warn_truncated_thread(node)
         return nodes
     except (json.JSONDecodeError, KeyError, TypeError):
         return []

@@ -2,26 +2,28 @@
 name: pr-rebase
 description: "AI-assisted rebase onto origin/main with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead)."
 source: otto-workbench/ai/claude/skills/pr-rebase/SKILL.md
-invocation: "/pr-rebase [--fix]"
+invocation: "/pr-rebase [branch] [--no-fix]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."
 ---
 
 # PR Rebase
 
-Rebases the current feature branch onto origin/main. The `pr rebase` script
-handles everything: fetch, rebase, AI-assisted conflict resolution (via
-`claude -p`), and force-push.
+Rebases a feature branch onto origin/main. The `pr rebase` script handles
+everything: fetch, rebase, AI-assisted conflict resolution (via `claude -p`),
+and force-push.
 
-Run with `/pr-rebase` or `/pr-rebase --fix`.
+Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 ---
 
 ## Arguments
 
-- `--fix` (optional): Fully autonomous — resolve all conflicts with AI and
-  force-push without user confirmation. Without this flag, conflicts are
-  reported and the user decides whether to proceed.
+- `branch` (optional): Target branch to rebase. Passed as `--branch` to
+  `pr rebase`, which resolves the worktree automatically. When omitted, the
+  current branch is used.
+- `--no-fix` (optional): Report conflicts without resolving them. By default,
+  conflicts are resolved with AI and force-pushed automatically.
 
 ---
 
@@ -29,46 +31,39 @@ Run with `/pr-rebase` or `/pr-rebase --fix`.
 
 ### 1. Run pr rebase
 
-- **Default mode**:
+- **Default mode** (auto-fix):
 
 ```bash
-pr rebase --repo-dir <worktree_root>
+pr rebase --fix --branch <branch>
 ```
 
-- **`--fix` mode**:
+- **`--no-fix` mode** (report only):
 
 ```bash
-pr rebase --fix --repo-dir <worktree_root>
+pr rebase --branch <branch>
 ```
+
+When no branch argument is provided, omit `--branch` (uses CWD's branch).
 
 JSON output is on stdout; status messages are on stderr.
 
 ### 2. Handle the result
 
-**Exit 0 — success.** Parse the JSON output. Default mode omits `force_pushed`:
+**Exit 0 — success.** Parse the JSON output:
 
 ```json
 {
   "status": "clean",
   "commits_replayed": 22,
   "conflicts_resolved": 3,
-  "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"]
+  "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
+  "force_pushed": true
 }
 ```
 
-With `--fix`, includes `"force_pushed": true` (or `false` on push failure).
+Report commits replayed and any conflicts resolved. Done.
 
-Report commits replayed and any conflicts resolved.
-
-- **Default mode**: The script did not push. Ask the user to confirm, then:
-
-```bash
-pr rebase --push --repo-dir <worktree_root>
-```
-
-- **`--fix` mode**: The script already pushed (`force_pushed` in JSON). Done.
-
-**Exit 3 — conflicts detected (default mode only).** Parse the JSON:
+**Exit 3 — conflicts detected (`--no-fix` mode only).** Parse the JSON:
 
 ```json
 {
@@ -83,7 +78,7 @@ pr rebase --push --repo-dir <worktree_root>
 Report what was found. Ask the user if they want AI resolution. If yes:
 
 ```bash
-pr rebase --fix --repo-dir <worktree_root>
+pr rebase --fix --branch <branch>
 ```
 
 This resumes the in-progress rebase with AI conflict resolution and force-pushes.

@@ -325,12 +325,17 @@ class PRData:
         bot_lower = bot_login.lower()
         results = []
         for thread in self.review_threads:
-            path = thread.get("path", "")
-            for comment in thread.get("comments", {}).get("nodes", []):
-                author = (comment.get("author") or {}).get("login", "")
-                if author.lower() == bot_lower:
-                    results.append({"path": path, "body": comment.get("body", "")})
+            results.extend(self._bot_comments_in_thread(thread, bot_lower))
         return results
+
+    @staticmethod
+    def _bot_comments_in_thread(thread: dict, bot_lower: str) -> list[dict]:
+        path = thread.get("path", "")
+        return [
+            {"path": path, "body": comment.get("body", "")}
+            for comment in thread.get("comments", {}).get("nodes", [])
+            if (comment.get("author") or {}).get("login", "").lower() == bot_lower
+        ]
 
     def bot_review_bodies(self, bot_login: str) -> list[str]:
         """Body text of bot-authored reviews (for finding extraction)."""

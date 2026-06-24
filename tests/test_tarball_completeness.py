@@ -28,6 +28,14 @@ PACKAGED_BINARIES = sorted(
 )
 
 
+def _collect_import_names(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module:
+        return [node.module]
+    return []
+
+
 def _extract_python_imports(script: Path) -> set[str]:
     """Extract all local module names imported by a Python script."""
     try:
@@ -36,12 +44,7 @@ def _extract_python_imports(script: Path) -> set[str]:
         return set()
     modules: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                modules.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                modules.add(node.module)
+        modules.update(_collect_import_names(node))
     return modules
 
 
@@ -53,12 +56,10 @@ def _lib_python_files() -> set[str]:
 def _all_required_modules() -> set[str]:
     """Collect all local modules imported by any packaged Python binary."""
     lib_modules = {p.stem for p in LIB_DIR.glob("*.py")}
-    required: set[str] = set()
+    all_imports: set[str] = set()
     for binary in PACKAGED_BINARIES:
-        for mod in _extract_python_imports(binary):
-            if mod in lib_modules:
-                required.add(mod)
-    return required
+        all_imports.update(_extract_python_imports(binary))
+    return all_imports & lib_modules
 
 
 class TestTarballCompleteness:

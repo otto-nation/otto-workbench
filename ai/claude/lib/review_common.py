@@ -94,9 +94,17 @@ REVIEW_EXT = ".md"
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
 
-REVIEWS_DIR = Path(os.environ.get(
-    "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"),
-)) / "reviews"
+_WORKBENCH_STATE_ENV = "WORKBENCH_STATE_DIR"
+_WORKBENCH_STATE_DEFAULT = "~/.config/workbench"
+
+
+def workbench_dir() -> Path:
+    return Path(os.environ.get(
+        _WORKBENCH_STATE_ENV, os.path.expanduser(_WORKBENCH_STATE_DEFAULT),
+    ))
+
+
+REVIEWS_DIR = workbench_dir() / "reviews"
 
 SEVERITY_PREFIXES = ["M", "S", "N", "I"]
 SEVERITY_JSON_KEYS = ["must_fix", "should_fix", "nit", "idiom"]

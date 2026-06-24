@@ -1,0 +1,6 @@
+{
+  "enableInstallTelemetry": false,
+  "defaultProvider": "google-vertex-claude",
+  "defaultModel": "claude-opus-4-6",
+  "defaultThinkingLevel": "medium"
+}

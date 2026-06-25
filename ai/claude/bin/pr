@@ -283,14 +283,14 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     rc = _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
                        original_pr=original_pr,
                        original_branch=original_branch)
-    if rc == 0:
-        pr_num = str(ctx.pr_number) if ctx.pr_number else None
-        if pr_num:
-            review = review_file_path(ctx.repo, pr_num)
-            if review.is_file():
-                output = json_summary(ctx.repo, pr_num, str(review))
-                print(output)
-                _update_review_state_from_output(output, ctx)
+    if rc != 0 or not ctx.pr_number:
+        return rc
+    pr_num = str(ctx.pr_number)
+    review = review_file_path(ctx.repo, pr_num)
+    if review.is_file():
+        output = json_summary(ctx.repo, pr_num, str(review))
+        print(output)
+        _update_review_state_from_output(output, ctx)
     return rc
 
 

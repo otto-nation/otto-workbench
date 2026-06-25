@@ -29,46 +29,28 @@ or `/ci-failures <branch_name>`.
 
 ## Steps
 
-### 1. Resolve the argument
+### 1. Fetch status and display dashboard
 
-If a skill argument was provided that looks like a branch name (contains `/` or
-is not purely numeric), resolve it first:
+Run the `pr ci` wrapper to fetch the latest run, classify failures, and display
+status. The wrapper handles branch resolution, repo detection, and context
+injection — pass arguments through directly:
 
-```bash
-resolve-branch "<argument>"
-```
+- **Branch name** (contains `/` or is not numeric): `pr ci --branch <argument> 2>&1`
+- **PR number** (small integer): `pr ci --pr <number> 2>&1`
+- **Run ID** (large integer): `pr ci --run <run_id> 2>&1`
+- **No argument**: `pr ci 2>&1`
 
-This tries exact match, worktree directory match, separator normalization
-(`-` → `/`), and fuzzy search — in that order.
-- **Success (exit 0)**: use the stdout output as the resolved branch name
-- **Multiple matches (exit 1)**: candidates are listed on stderr — show them
-  and ask the user to pick
-- **No matches (exit 1)**: error and stop
-
-Purely numeric arguments skip resolution — they are PR numbers or run IDs.
-
-### 2. Fetch status and display dashboard
-
-Run the CI check script to fetch the latest run, classify failures, and display status.
-
-Route the resolved argument to the correct `ci-check` flag:
-
-- **Branch name**: `ci-check --branch <resolved_name> 2>&1`
-- **PR number** (small integer): `ci-check --pr <number> 2>&1`
-- **Run ID** (large integer): `ci-check --run <run_id> 2>&1`
-- **No argument**: `ci-check 2>&1`
-
-The script auto-detects the repo, branch, and worktree root from CWD. Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).
+Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).
 
 The script outputs:
 - **stderr:** Human-readable dashboard (run number, commit, failure counts by kind, progression)
 - **stdout:** Structured JSON report with all failures, classifications, and progression markers
 
-**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — the scripts handle all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
+**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
 If all checks pass (conclusion is "success" and no failures), report that CI is green and stop.
 
-### 3. Classify and group failures
+### 2. Classify and group failures
 
 From the JSON report, present failures grouped by kind in priority order:
 
@@ -92,7 +74,7 @@ Proceed with this classification? Override any kinds?
 
 Allow the user to override classifications (e.g. "that test failure is flaky").
 
-### 4. Diagnose
+### 3. Diagnose
 
 For each non-infra, non-flaky failure group:
 
@@ -107,7 +89,7 @@ Present diagnosis per group. User confirms before fixing.
 For persisting/regressed failures, include context from prior attempts:
 > "Previously diagnosed as X, fix Y was applied at commit Z — still failing. The prior fix may have been incomplete or targeted the wrong root cause."
 
-### 5. Apply fixes and push
+### 4. Apply fixes and push
 
 For each confirmed diagnosis:
 1. Edit the files to address the failure
@@ -119,9 +101,9 @@ git commit -m "fix: address CI failures from run #<number>"
 git push
 ```
 
-Group all fixes into a single commit. The state file is updated automatically on the next `ci-check` invocation.
+Group all fixes into a single commit. The state file is updated automatically on the next `pr ci` invocation.
 
-### 6. Monitor (on re-invocation)
+### 5. Monitor (on re-invocation)
 
 When re-invoked after a push:
 1. Fetch the new run triggered by the push
@@ -136,9 +118,9 @@ Persisting: 1 (pytest test_validate — was diagnosed as X, fix Y applied)
 New: 1 (bats test_cleanup)
 ```
 
-Re-enter Step 4 for persisting failures with context of what was already tried.
+Re-enter Step 3 for persisting failures with context of what was already tried.
 
-### 7. Report
+### 6. Report
 
 Print:
 - Number of fixes applied

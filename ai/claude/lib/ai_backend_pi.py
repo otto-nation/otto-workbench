@@ -388,6 +388,5 @@ def invoke_fix(
 
     proc.stdin.close()
     proc.wait()
-    if session_log:
-        _log_stderr_on_failure(proc, session_log)
+    _log_stderr_on_failure(proc, session_log)
     return proc.returncode

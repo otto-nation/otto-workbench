@@ -34,6 +34,16 @@ FIX_MAX_TURNS = 15
 FIX_MODEL = "sonnet"
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+
+
+def _extract_json(text: str) -> str:
+    """Strip markdown code fences from AI output before JSON parsing."""
+    m = _FENCE_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
 
 def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
     """Resolve all verified threads on GitHub. Returns count resolved."""
@@ -141,7 +151,7 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> tuple[dict | No
         return None, 1
 
     try:
-        triage_result = json.loads(stdout)
+        triage_result = json.loads(_extract_json(stdout))
     except (json.JSONDecodeError, TypeError):
         print("review-threads: ai returned non-JSON output", file=sys.stderr)
         return None, 1

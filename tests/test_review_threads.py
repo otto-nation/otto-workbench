@@ -1,4 +1,4 @@
-"""Tests for reply thread classification and prompt formatting for re-reviews."""
+"""Tests for review-threads: JSON extraction, thread classification, and prompt formatting."""
 
 import json
 import sys
@@ -21,6 +21,33 @@ from review_prompt import (
     _build_reply_threads_section,
     _format_general_comments, _format_review_comments, _format_reviews,
 )
+
+
+# ── _extract_json ───────────────────────────────────────────────────────────
+
+class TestExtractJson:
+    def test_plain_json(self, rt):
+        assert rt._extract_json('{"a": 1}') == '{"a": 1}'
+
+    def test_json_fenced(self, rt):
+        text = '```json\n{"a": 1}\n```'
+        assert rt._extract_json(text) == '{"a": 1}'
+
+    def test_bare_fence(self, rt):
+        text = '```\n{"a": 1}\n```'
+        assert rt._extract_json(text) == '{"a": 1}'
+
+    def test_fence_with_surrounding_text(self, rt):
+        text = 'Here is the result:\n```json\n{"a": 1}\n```\nDone.'
+        assert rt._extract_json(text) == '{"a": 1}'
+
+    def test_whitespace_stripped(self, rt):
+        assert rt._extract_json('  {"a": 1}  ') == '{"a": 1}'
+
+    def test_multiline_json_in_fence(self, rt):
+        text = '```json\n{\n  "threads": [],\n  "stats": {}\n}\n```'
+        result = json.loads(rt._extract_json(text))
+        assert result == {"threads": [], "stats": {}}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

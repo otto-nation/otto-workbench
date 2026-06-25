@@ -214,9 +214,7 @@ def _consume_stream(
 
         if event_type == "turn_end":
             turn_count += 1
-            reason = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget)
-            if reason:
-                stop_reason = reason
+            stop_reason = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget) or stop_reason
 
         if event_type == "agent_end":
             break

@@ -44,6 +44,7 @@ def _build_agent_cmd(
     max_turns: int | None = None,
     max_budget: float | None = None,
     model: str | None = None,
+    thinking_level: str | None = None,
 ) -> list[str]:
     add_dir_args = []
     for d in add_dirs:
@@ -70,6 +71,7 @@ def _build_fix_cmd(
     add_dirs: list[str],
     max_turns: int | None = None,
     model: str | None = None,
+    thinking_level: str | None = None,
 ) -> list[str]:
     add_dir_args = []
     for d in add_dirs:
@@ -122,12 +124,14 @@ def invoke_agent(
     max_turns: int | None = None,
     max_budget: float | None = None,
     model: str | None = None,
+    thinking_level: str | None = None,
     label: str = "",
 ) -> int:
     """Full agent with JSONL streaming to session log. Returns exit code."""
     cmd = _build_agent_cmd(
         add_dirs=add_dirs, agent=agent,
-        max_turns=max_turns, max_budget=max_budget, model=model,
+        max_turns=max_turns, max_budget=max_budget,
+        model=model, thinking_level=thinking_level,
     )
     proc = subprocess.Popen(
         cmd,
@@ -149,9 +153,13 @@ def invoke_fix(
     add_dirs: list[str],
     max_turns: int | None = None,
     model: str | None = None,
+    thinking_level: str | None = None,
 ) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    cmd = _build_fix_cmd(add_dirs=add_dirs, max_turns=max_turns, model=model)
+    cmd = _build_fix_cmd(
+        add_dirs=add_dirs, max_turns=max_turns,
+        model=model, thinking_level=thinking_level,
+    )
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,

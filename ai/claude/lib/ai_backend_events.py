@@ -97,7 +97,7 @@ def _parse_message_update_tool(data: dict) -> StreamEvent | None:
 
 
 def parse_pi_event(raw_line: str) -> StreamEvent | None:
-    """Parse a Pi --mode json line into a StreamEvent, or None."""
+    """Parse a Pi JSONL line into a StreamEvent, or None."""
     try:
         data = json.loads(raw_line)
     except (json.JSONDecodeError, ValueError):
@@ -108,4 +108,22 @@ def parse_pi_event(raw_line: str) -> StreamEvent | None:
         return StreamEvent(tool_label=label) if label else None
     if event_type == "message_update":
         return _parse_message_update_tool(data)
+    return None
+
+
+def parse_pi_cost(raw_line: str) -> float | None:
+    """Extract per-message cost from a Pi message_end event.
+
+    Returns the message's total cost in USD, or None if not a message_end.
+    """
+    try:
+        data = json.loads(raw_line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if data.get("type") != "message_end":
+        return None
+    cost_obj = data.get("message", {}).get("usage", {}).get("cost", {})
+    total = cost_obj.get("total")
+    if isinstance(total, (int, float)):
+        return float(total)
     return None

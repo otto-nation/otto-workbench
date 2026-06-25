@@ -2805,3 +2805,139 @@ EOF
     --review-dir "$TMPDIR/no-meta" --pr 1
   [ "$status" -ne 0 ]
 }
+
+# ── Pi backend: RPC mode and budget ──────────────────────────────────────────
+
+@test "pi _build_agent_cmd: uses --mode rpc" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_agent_cmd()
+print("--mode" in cmd, cmd[cmd.index("--mode") + 1] if "--mode" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"rpc"* ]]
+}
+
+@test "pi _build_agent_cmd: includes --thinking when set" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_agent_cmd(thinking_level="medium")
+print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"medium"* ]]
+}
+
+@test "pi _build_agent_cmd: omits --thinking when None" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_agent_cmd()
+print("--thinking" not in cmd)
+')
+  [ "$result" = "True" ]
+}
+
+@test "pi _build_fix_cmd: includes --thinking when set" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_fix_cmd(thinking_level="low")
+print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"low"* ]]
+}
+
+@test "claude _build_agent_cmd: accepts thinking_level without error" {
+  result=$(_py '
+import ai_backend_claude as abc
+cmd = abc._build_agent_cmd(add_dirs=["/tmp"], thinking_level="high")
+print(type(cmd).__name__)
+')
+  [ "$result" = "list" ]
+}
+
+@test "parse_pi_cost: extracts cost from message_end" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+import json
+line = json.dumps({"type": "message_end", "message": {"usage": {"cost": {"input": 0.01, "output": 0.05, "total": 0.06}}}})
+print(f"{parse_pi_cost(line):.2f}")
+')
+  [ "$result" = "0.06" ]
+}
+
+@test "parse_pi_cost: returns None for non-message_end" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+import json
+line = json.dumps({"type": "turn_end"})
+print(parse_pi_cost(line))
+')
+  [ "$result" = "None" ]
+}
+
+@test "parse_pi_cost: returns None for missing cost" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+import json
+line = json.dumps({"type": "message_end", "message": {}})
+print(parse_pi_cost(line))
+')
+  [ "$result" = "None" ]
+}
+
+@test "parse_pi_cost: returns None for invalid JSON" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+print(parse_pi_cost("not json"))
+')
+  [ "$result" = "None" ]
+}
+
+@test "pi _write_result_record: generates Claude-compatible record" {
+  result=$(_py "
+import ai_backend_pi as abp
+import json
+abp._write_result_record(
+    '$TMPDIR/result.jsonl', 'completed', 5, 1.23, 60000,
+    {'cost': 1.25, 'tokens': {'input': 1000, 'output': 500, 'cacheRead': 200, 'cacheWrite': 100}},
+)
+with open('$TMPDIR/result.jsonl') as f:
+    rec = json.loads(f.read().strip())
+print(rec['type'], rec['subtype'], f'{rec[\"total_cost_usd\"]:.2f}', rec['num_turns'])
+print(rec['usage']['input_tokens'], rec['usage']['output_tokens'])
+print(rec['usage']['cache_read_input_tokens'], rec['usage']['cache_creation_input_tokens'])
+")
+  [[ "$result" == *"result completed 1.25 5"* ]]
+  [[ "$result" == *"1000 500"* ]]
+  [[ "$result" == *"200 100"* ]]
+}
+
+@test "pi _write_result_record: uses accumulated cost when stats empty" {
+  result=$(_py "
+import ai_backend_pi as abp
+import json
+abp._write_result_record(
+    '$TMPDIR/fallback.jsonl', 'max_turns', 10, 3.50, 120000, {},
+)
+with open('$TMPDIR/fallback.jsonl') as f:
+    rec = json.loads(f.read().strip())
+print(f'{rec[\"total_cost_usd\"]:.2f}', rec['subtype'], rec['num_turns'])
+")
+  [ "$result" = "3.50 max_turns 10" ]
+}
+
+@test "pi _write_result_record: result record works with _parse_session_cost" {
+  _py "
+import ai_backend_pi as abp
+abp._write_result_record(
+    '$TMPDIR/compat.jsonl', 'completed', 3, 2.00, 30000,
+    {'cost': 2.10, 'tokens': {'input': 500, 'output': 200}},
+)
+"
+  result=$(_py "
+cost = mod._parse_session_cost('$TMPDIR/compat.jsonl')
+print(f'{cost:.2f}')
+")
+  [ "$result" = "2.10" ]
+}

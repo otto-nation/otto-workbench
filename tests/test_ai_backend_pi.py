@@ -199,3 +199,27 @@ class TestBuildAgentCmdWithSkills:
         cmd = ai_backend_pi._build_agent_cmd(agent="reviewer")
         assert "--append-system-prompt" in cmd
         assert "--skill" not in cmd
+
+
+class TestProviderFlag:
+    def test_agent_cmd_with_provider(self):
+        cmd = ai_backend_pi._build_agent_cmd(provider="bedrock")
+        assert "--provider" in cmd
+        idx = cmd.index("--provider")
+        assert cmd[idx + 1] == "bedrock"
+
+    def test_agent_cmd_without_provider(self):
+        cmd = ai_backend_pi._build_agent_cmd()
+        assert "--provider" not in cmd
+
+    def test_fix_cmd_with_provider(self):
+        cmd = ai_backend_pi._build_fix_cmd(provider="vertex")
+        assert "--provider" in cmd
+        idx = cmd.index("--provider")
+        assert cmd[idx + 1] == "vertex"
+
+    def test_prompt_cmd_with_provider(self):
+        cmd = ai_backend_pi._build_prompt_cmd(provider="bedrock")
+        assert "--provider" in cmd
+        idx = cmd.index("--provider")
+        assert cmd[idx + 1] == "bedrock"

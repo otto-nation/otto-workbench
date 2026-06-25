@@ -239,7 +239,8 @@ def run_single_agent(job: ReviewJob):
     _touch(job.review_file)
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SINGLE_THINKING", DEFAULT_THINKING_SINGLE)
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, max_turns=max_turns)
+    provider = os.environ.get("CLAUDE_REVIEW_PROVIDER")
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
     print()
 
     reason = ""
@@ -291,8 +292,9 @@ def _review_group(
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", DEFAULT_THINKING_GROUP)
+    provider = os.environ.get("CLAUDE_REVIEW_PROVIDER")
     _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, max_turns=max_turns)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
 
     failed = None
     if not _has_output(group_output):
@@ -324,9 +326,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_HOLISTIC_THINKING", DEFAULT_THINKING_HOLISTIC)
+    provider = os.environ.get("CLAUDE_REVIEW_PROVIDER")
     _info(f"Phase 1/{group_count}: Holistic scan...")
     print()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, max_turns=max_turns)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
     print()
 
     holistic_content = ""
@@ -352,8 +355,9 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_ANGLES_MODEL", DEFAULT_MODEL_ANGLES)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_ANGLES_THINKING", DEFAULT_THINKING_ANGLES)
+    provider = os.environ.get("CLAUDE_REVIEW_PROVIDER")
     _info("Angles scan (7 review angles)...")
-    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, max_turns=max_turns)
+    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
 
     angles_content = ""
     if _has_output(angles_output):
@@ -470,10 +474,11 @@ def run_fix_pass(job: ReviewJob):
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING", DEFAULT_THINKING_FIX)
+    provider = os.environ.get("CLAUDE_REVIEW_PROVIDER")
     before = _count_unchecked(job.review_file)
     _info("Fix pass — applying review findings...")
     print()
-    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, max_turns=DEFAULT_MAX_TURNS_FIX)
+    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=DEFAULT_MAX_TURNS_FIX)
     print()
     after = _count_unchecked(job.review_file)
     fixed = _count_fixed(before, after, job.review_file, job.wt_path)
@@ -773,9 +778,10 @@ def _phase_synthesis(
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SYNTHESIS_THINKING", DEFAULT_THINKING_SYNTHESIS)
+    provider = os.environ.get("CLAUDE_REVIEW_PROVIDER")
     _info(f"Phase 4: Synthesis ({max_turns} turns)...")
     print()
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, max_turns=max_turns)
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
     print()
 
     if not _has_output(job.review_file):

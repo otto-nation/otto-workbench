@@ -117,6 +117,9 @@ def invoke_agent(
     max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    # provider is accepted for interface parity with the Pi backend but intentionally
+    # unused — Claude Code CLI has no --provider flag.
+    provider: str | None = None,
     label: str = "",
 ) -> int:
     """Full agent with JSONL streaming to session log. Returns exit code."""
@@ -148,9 +151,12 @@ def invoke_fix(
     max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    # provider is accepted for interface parity with the Pi backend but intentionally
+    # unused — Claude Code CLI has no --provider flag.
+    provider: str | None = None,
 ) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    # session_log and max_budget are accepted for interface parity with the Pi backend
+    # session_log, max_budget, and provider are accepted for interface parity with the Pi backend
     # but are not used — Claude Code CLI handles budget natively via --max-budget-usd
     cmd = _build_fix_cmd(
         add_dirs=add_dirs, max_turns=max_turns,

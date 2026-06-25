@@ -69,8 +69,10 @@ def _resolve_skill_path(agent: str) -> Path | None:
 # ── Command builders ──────────────────────────────────────────────────────────
 
 
-def _build_prompt_cmd(model: str | None = None) -> list[str]:
+def _build_prompt_cmd(model: str | None = None, provider: str | None = None) -> list[str]:
     cmd = ["pi", "-p", "--no-session", "--approve"]
+    if provider:
+        cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
     return cmd
@@ -80,6 +82,7 @@ def _build_agent_cmd(
     agent: str | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
@@ -94,6 +97,8 @@ def _build_agent_cmd(
             if agent_prompt is None:
                 raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
             cmd += ["--append-system-prompt", agent_prompt]
+    if provider:
+        cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
     if thinking_level:
@@ -104,11 +109,14 @@ def _build_agent_cmd(
 def _build_fix_cmd(
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,
     ]
+    if provider:
+        cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
     if thinking_level:
@@ -306,6 +314,7 @@ def invoke_agent(
     max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
     label: str = "",
 ) -> int:
     """Full agent with RPC streaming to session log. Returns exit code.
@@ -324,7 +333,7 @@ def invoke_agent(
     full_prompt = dir_context + prompt if dir_context else prompt
 
     cmd = _build_agent_cmd(
-        agent=agent, model=model, thinking_level=thinking_level,
+        agent=agent, model=model, thinking_level=thinking_level, provider=provider,
     )
     proc = subprocess.Popen(
         cmd,
@@ -373,6 +382,7 @@ def invoke_fix(
     max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> int:
     """Agent with workspace write access via RPC. Returns exit code.
 
@@ -386,7 +396,7 @@ def invoke_fix(
 
     full_prompt = dir_context + prompt if dir_context else prompt
 
-    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level)
+    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level, provider=provider)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,

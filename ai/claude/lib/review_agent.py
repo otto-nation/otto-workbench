@@ -164,6 +164,7 @@ def invoke_agent(
     max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> int:
     add_dirs = [reviews_dir, wt_path]
     if review_file:
@@ -174,7 +175,8 @@ def invoke_agent(
         prompt, session_log,
         add_dirs=add_dirs, agent="reviewer",
         max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level, label=label,
+        model=model, thinking_level=thinking_level,
+        provider=provider, label=label,
     )
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/otto-nation/otto-workbench/compare/v1.34.0...v1.35.0) (2026-06-25)
+
+
+### Features
+
+* **maintenance:** add systemd user timer support for Linux ([#376](https://github.com/otto-nation/otto-workbench/issues/376)) ([969831c](https://github.com/otto-nation/otto-workbench/commit/969831c0a862d8c7897b6f8003a2d6d303f09c56))
+
 ## [1.34.0](https://github.com/otto-nation/otto-workbench/compare/v1.33.1...v1.34.0) (2026-06-25)
 
 

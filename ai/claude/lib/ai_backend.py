@@ -41,6 +41,7 @@ def invoke_agent(
     max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
     label: str = "",
 ) -> int:
     """Full agent with tool use and JSONL streaming. Returns exit code."""
@@ -49,21 +50,26 @@ def invoke_agent(
         add_dirs=add_dirs, agent=agent,
         max_turns=max_turns, max_budget=max_budget,
         model=model, thinking_level=thinking_level,
-        label=label,
+        provider=provider, label=label,
     )
 
 
 def invoke_fix(
     prompt: str, *,
+    session_log: str = "",
     add_dirs: list[str],
     max_turns: int | None = None,
+    max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> int:
     """Agent with workspace write access, raw output echoed. Returns exit code."""
     return _get_module().invoke_fix(
-        prompt, add_dirs=add_dirs, max_turns=max_turns,
+        prompt, session_log=session_log, add_dirs=add_dirs,
+        max_turns=max_turns, max_budget=max_budget,
         model=model, thinking_level=thinking_level,
+        provider=provider,
     )
 
 

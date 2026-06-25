@@ -142,6 +142,22 @@ def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     return default
 
 
+def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:
+    if explicit:
+        return explicit
+    from_env = os.environ.get(env_key)
+    if from_env:
+        return from_env
+    global_env = os.environ.get("CLAUDE_REVIEW_THINKING")
+    if global_env:
+        return global_env
+    return default
+
+
+def _resolve_provider() -> str | None:
+    return os.environ.get("CLAUDE_REVIEW_PROVIDER")
+
+
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 
@@ -152,6 +168,7 @@ def invoke_agent(
     max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> int:
     add_dirs = [reviews_dir, wt_path]
     if review_file:
@@ -162,7 +179,8 @@ def invoke_agent(
         prompt, session_log,
         add_dirs=add_dirs, agent="reviewer",
         max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level, label=label,
+        model=model, thinking_level=thinking_level,
+        provider=provider, label=label,
     )
 
 

@@ -1041,40 +1041,47 @@ _discover_scripts() {
   done
 }
 
+_discover_launchd_agents() {
+  local found=false plist label short interval
+  for plist in "$HOME"/Library/LaunchAgents/com.otto-workbench.*.plist; do
+    [[ -f "$plist" ]] || continue
+    found=true
+    label=$(/usr/libexec/PlistBuddy -c "Print :Label" "$plist" 2>/dev/null)
+    short="${label#com.otto-workbench.}"
+    if launchctl list "$label" &>/dev/null; then
+      interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$plist" 2>/dev/null || echo "")
+      [[ -n "$interval" ]] \
+        && printf "    ${GREEN}%-18s${NC} Running (every %s)\n" "$short" "$(_format_interval "$interval")" \
+        || printf "    ${GREEN}%-18s${NC} Running\n" "$short"
+    else
+      printf "    ${DIM}%-18s Stopped${NC}\n" "$short"
+    fi
+  done
+  [[ "$found" == true ]]
+}
+
+_discover_systemd_timers() {
+  local found=false unit short
+  for unit in "$_SYSTEMD_USER_DIR"/otto-workbench-*.timer; do
+    [[ -f "$unit" ]] || continue
+    found=true
+    short=$(basename "$unit" .timer)
+    if systemctl --user is-active "$short.timer" &>/dev/null; then
+      printf "    ${GREEN}%-18s${NC} Running (systemd timer)\n" "${short#otto-workbench-}"
+    else
+      printf "    ${DIM}%-18s Stopped${NC}\n" "${short#otto-workbench-}"
+    fi
+  done
+  [[ "$found" == true ]]
+}
+
 _discover_agents() {
   local found=false
-
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    local plist label short interval
-    for plist in "$HOME"/Library/LaunchAgents/com.otto-workbench.*.plist; do
-      [[ -f "$plist" ]] || continue
-      found=true
-      label=$(/usr/libexec/PlistBuddy -c "Print :Label" "$plist" 2>/dev/null)
-      short="${label#com.otto-workbench.}"
-      if launchctl list "$label" &>/dev/null; then
-        interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$plist" 2>/dev/null || echo "")
-        [[ -n "$interval" ]] \
-          && printf "    ${GREEN}%-18s${NC} Running (every %s)\n" "$short" "$(_format_interval "$interval")" \
-          || printf "    ${GREEN}%-18s${NC} Running\n" "$short"
-      else
-        printf "    ${DIM}%-18s Stopped${NC}\n" "$short"
-      fi
-    done
+    _discover_launchd_agents && found=true
   else
-    local unit
-    for unit in "$_SYSTEMD_USER_DIR"/otto-workbench-*.timer; do
-      [[ -f "$unit" ]] || continue
-      found=true
-      local short
-      short=$(basename "$unit" .timer)
-      if systemctl --user is-active "$short.timer" &>/dev/null; then
-        printf "    ${GREEN}%-18s${NC} Running (systemd timer)\n" "${short#otto-workbench-}"
-      else
-        printf "    ${DIM}%-18s Stopped${NC}\n" "${short#otto-workbench-}"
-      fi
-    done
+    _discover_systemd_timers && found=true
   fi
-
   [[ "$found" == false ]] && echo -e "    ${DIM}(none installed)${NC}"
   return 0
 }

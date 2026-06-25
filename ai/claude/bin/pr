@@ -19,7 +19,8 @@ sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 import pr_context
 import pr_state
 import review_gc
-from review_common import json_summary, review_file_path, ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET
+import log
+from review_common import json_summary, review_file_path
 from trail import Trail, add_trail_args
 
 
@@ -262,7 +263,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     flags = set(argv)
     mode_flags = flags & {"--post", "--repair", "--summary"}
     if len(mode_flags) > 1:
-        print("pr: --post, --repair, and --summary are mutually exclusive", file=sys.stderr)
+        log.error("pr: --post, --repair, and --summary are mutually exclusive")
         return 1
 
     if "--post" in flags:
@@ -298,13 +299,13 @@ def _review_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Post an existing review directly to GitHub via review-post."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
-        print(f"{ANSI_ERR} Cannot determine PR number", file=sys.stderr)
+        log.error("Cannot determine PR number")
         return 1
 
     review = review_file_path(ctx.repo, pr_num)
     if not review.is_file():
-        print(f"{ANSI_ERR} No review file found: {review}", file=sys.stderr)
-        print(f"  {ANSI_DIM}Run: pr review{ANSI_RESET}", file=sys.stderr)
+        log.error(f"No review file found: {review}")
+        log.dim("Run: pr review")
         return 1
 
     cmd = [str(BIN_DIR / "review-post"), "--pr", pr_num, "--review-file", str(review)]
@@ -319,7 +320,7 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Repair broken review artifacts via summary or rebuild."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
-        print(f"{ANSI_ERR} Cannot determine PR number", file=sys.stderr)
+        log.error("Cannot determine PR number")
         return 1
 
     review = review_file_path(ctx.repo, pr_num)
@@ -329,10 +330,10 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
         _update_review_state_from_output(output, ctx)
         return 0
 
-    print("No review file found, trying rebuild...", file=sys.stderr)
+    log.info("No review file found, trying rebuild...")
     review_dir = review.parent
     if not review_dir.is_dir():
-        print(f"{ANSI_ERR} No review directory found: {review_dir}", file=sys.stderr)
+        log.error(f"No review directory found: {review_dir}")
         return 1
 
     cmd = [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num]
@@ -351,12 +352,12 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     """Output JSON summary of an existing review."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
-        print(f"{ANSI_ERR} Cannot determine PR number", file=sys.stderr)
+        log.error("Cannot determine PR number")
         return 1
 
     review = review_file_path(ctx.repo, pr_num)
     if not review.is_file():
-        print(f"{ANSI_ERR} No review file found: {review}", file=sys.stderr)
+        log.error(f"No review file found: {review}")
         return 1
 
     print(json_summary(ctx.repo, pr_num, str(review)))
@@ -367,13 +368,13 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments."""
     state = pr_state.load_state(ctx.worktree_root)
     if not state:
-        print("No state yet. Run pr ci, pr review, or pr comments first.", file=sys.stderr)
+        log.error("No state yet. Run pr ci, pr review, or pr comments first.")
         return 1
 
     exit_code = 0
 
     if state.review.updated_at and sum(state.review.finding_counts.values()) > 0:
-        print("## Fixing review findings...", file=sys.stderr)
+        log.info("Fixing review findings...")
         review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
         review_args += ["--repo-dir", str(ctx.worktree_root)]
         review_args += list(argv)
@@ -385,11 +386,13 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         infra_count = state.ci.failure_kinds.get("infra", 0) + state.ci.failure_kinds.get("flaky", 0)
         fixable = state.ci.failure_count - infra_count
         if fixable > 0:
-            print(f"\n## CI: {fixable} fixable failure(s) — run pr ci --fix", file=sys.stderr)
+            log.blank()
+            log.info(f"CI: {fixable} fixable failure(s) — run pr ci --fix")
 
     actionable = state.comments.by_state.get("new", 0) + state.comments.by_state.get("contested", 0)
     if state.comments.updated_at and actionable > 0:
-        print(f"\n## Comments: {actionable} actionable thread(s) — run pr comments --fix", file=sys.stderr)
+        log.blank()
+        log.info(f"Comments: {actionable} actionable thread(s) — run pr comments --fix")
 
     return exit_code
 
@@ -427,7 +430,7 @@ def _gc_stale_pr_state(worktree_root: Path | None) -> int:
     if pr_st not in ("MERGED", "CLOSED"):
         return 0
     shutil.rmtree(state_dir, ignore_errors=True)
-    print(f"{ANSI_INFO} GC: removed stale pr state ({pr_st})", file=sys.stderr)
+    log.info(f"GC: removed stale pr state ({pr_st})")
     return 1
 
 
@@ -437,9 +440,9 @@ def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     total += _gc_stale_pr_state(ctx.worktree_root)
 
     if total > 0:
-        print(f"{ANSI_INFO} GC: cleaned {total} item(s) total", file=sys.stderr)
+        log.info(f"GC: cleaned {total} item(s) total")
     else:
-        print(f"{ANSI_INFO} GC: nothing to clean", file=sys.stderr)
+        log.info("GC: nothing to clean")
     return 0
 
 

@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 
+import log
 from review_common import (
     FILE_STAT_FMT,
     FILENAME_ANGLES, FILENAME_ANGLES_LOG,
@@ -32,7 +33,7 @@ from review_common import (
     TEMPLATE_ANGLES, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
-    _derive_path, _info, _warn,
+    _derive_path,
 )
 from review_findings import (
     Finding,
@@ -238,14 +239,14 @@ def run_single_agent(job: ReviewJob):
         template, job, max_turns=max_turns, branch_name=job.pr.head,
     )
     label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
-    _info(f"Running review agent on {label}...")
-    print()
+    log.info(f"Running review agent on {label}...")
+    log.blank()
     _touch(job.review_file)
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SINGLE_THINKING", DEFAULT_THINKING_SINGLE)
     provider = _resolve_provider()
     rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
-    print()
+    log.blank()
 
     reason = ""
     if not _has_output(job.review_file):
@@ -255,8 +256,8 @@ def run_single_agent(job: ReviewJob):
     if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
         reason = reason or "unknown"
-        print(f"error: review agent {detail} and produced no review file ({reason})", file=sys.stderr)
-        print(f"  Session log: {job.session_log}", file=sys.stderr)
+        log.error(f"review agent {detail} and produced no review file ({reason})")
+        log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
     _post_process_review(job)
@@ -275,9 +276,9 @@ def _review_group(
 
     if skip:
         if _has_output(group_output):
-            _info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
+            log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
             return (i, group_output, None)
-        _warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
+        log.warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
         return (i, group_output, (grp.name, "output missing"))
 
     _touch(group_output)
@@ -297,7 +298,7 @@ def _review_group(
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", DEFAULT_THINKING_GROUP)
     provider = _resolve_provider()
-    _info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
+    log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
     invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
 
     failed = None
@@ -305,13 +306,13 @@ def _review_group(
         _try_recover_output(group_log, group_output)
     if not _has_output(group_output):
         reason = _diagnose_missing_output(group_log)
-        _warn(f"Group {i} ({grp.name}) produced no output ({reason})")
+        log.warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = (grp.name, reason)
         if pipeline_state is not None:
             _update_group_failed(job, i, reason, pipeline_state)
     else:
         _validate_group_output(group_output, grp.name)
-        _info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
+        log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
         if pipeline_state is not None:
             _update_group_done(job, i, pipeline_state)
 
@@ -331,17 +332,17 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_HOLISTIC_THINKING", DEFAULT_THINKING_HOLISTIC)
     provider = _resolve_provider()
-    _info(f"Phase 1/{group_count}: Holistic scan...")
-    print()
+    log.info(f"Phase 1/{group_count}: Holistic scan...")
+    log.blank()
     invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
-    print()
+    log.blank()
 
     holistic_content = ""
     if _has_output(holistic_output):
         holistic_content = Path(holistic_output).read_text()
     else:
         reason = _diagnose_missing_output(holistic_log)
-        _warn(f"Holistic scan produced no output ({reason}) — continuing without it")
+        log.warn(f"Holistic scan produced no output ({reason}) — continuing without it")
 
     return holistic_content, holistic_output, holistic_log
 
@@ -360,7 +361,7 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     model = _resolve_model(job.model, "CLAUDE_REVIEW_ANGLES_MODEL", DEFAULT_MODEL_ANGLES)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_ANGLES_THINKING", DEFAULT_THINKING_ANGLES)
     provider = _resolve_provider()
-    _info("Angles scan (7 review angles)...")
+    log.info("Angles scan (7 review angles)...")
     invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
 
     angles_content = ""
@@ -368,7 +369,7 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
         angles_content = Path(angles_output).read_text()
     else:
         reason = _diagnose_missing_output(angles_log)
-        _warn(f"Angles scan produced no output ({reason}) — continuing without it")
+        log.warn(f"Angles scan produced no output ({reason}) — continuing without it")
 
     return angles_content, angles_output, angles_log
 
@@ -408,10 +409,10 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        _warn(f"Failed to commit fixes: {result.stderr.strip()}")
+        log.warn(f"Failed to commit fixes: {result.stderr.strip()}")
         return
 
-    _info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
+    log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
     _push_fixes(job)
 
 
@@ -422,7 +423,7 @@ def _push_fixes(job: ReviewJob):
         capture_output=True, text=True,
     )
     if result.returncode == 0:
-        _info("Pushed fixes")
+        log.info("Pushed fixes")
         return
 
     result = subprocess.run(
@@ -430,10 +431,10 @@ def _push_fixes(job: ReviewJob):
         capture_output=True, text=True,
     )
     if result.returncode == 0:
-        _info("Force-pushed fixes (branch had diverged)")
+        log.info("Force-pushed fixes (branch had diverged)")
         return
 
-    _warn(f"Failed to push fixes: {result.stderr.strip()}")
+    log.warn(f"Failed to push fixes: {result.stderr.strip()}")
 
 
 def _count_checked(review_file: str) -> int:
@@ -531,7 +532,7 @@ def _fix_turn_budget(unchecked: int) -> int:
 
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
-        _warn("No review file to fix — skipping fix pass")
+        log.warn("No review file to fix — skipping fix pass")
         return
     fix_log = _derive_path(job.review_file, FILENAME_FIX_LOG)
 
@@ -540,7 +541,7 @@ def run_fix_pass(job: ReviewJob):
     before_unchecked = sum(1 for f in before_findings if not f.checked)
 
     if before_unchecked == 0:
-        _info("All findings already checked — skipping fix pass")
+        log.info("All findings already checked — skipping fix pass")
         return
 
     max_turns = _fix_turn_budget(before_unchecked)
@@ -551,12 +552,12 @@ def run_fix_pass(job: ReviewJob):
     model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING", DEFAULT_THINKING_FIX)
     provider = _resolve_provider()
-    _info("Fix pass — applying review findings...")
-    print()
+    log.info("Fix pass — applying review findings...")
+    log.blank()
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
                  review_file=job.review_file, model=model, thinking_level=thinking,
                  provider=provider, max_turns=max_turns)
-    print()
+    log.blank()
 
     after_text = Path(job.review_file).read_text()
     after_findings = parse_findings(after_text)
@@ -566,7 +567,7 @@ def run_fix_pass(job: ReviewJob):
 
     summary = _format_fix_summary(result)
     if summary:
-        _info("Fix summary:")
+        log.info("Fix summary:")
         for line in summary.splitlines():
             print(f"  {line}", file=sys.stderr)
 
@@ -615,7 +616,7 @@ def _run_serial_reviews(
         )
         if not abort_msg:
             continue
-        _warn(abort_msg)
+        log.warn(abort_msg)
         failed_groups.extend((remaining.name, f"skipped: {abort_msg}") for remaining in groups[i:])
         break
     return failed_groups
@@ -627,8 +628,8 @@ def _run_parallel_reviews(
     skip_groups: "set[int] | None",
     pipeline_state: "PipelineState | None",
 ) -> "list[tuple[str, str]]":
-    _info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
-    print()
+    log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
+    log.blank()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
             pool.submit(
@@ -639,7 +640,7 @@ def _run_parallel_reviews(
             for i, grp in enumerate(groups, 1)
         ]
         results = [f.result() for f in futures]
-    print()
+    log.blank()
     return [failure for _, _, failure in results if failure]
 
 
@@ -677,7 +678,7 @@ def _retry_failed_groups(
 
     group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
 
-    _info(f"Retrying {len(retryable)} failed groups...")
+    log.info(f"Retrying {len(retryable)} failed groups...")
     still_failed: list[tuple[str, str]] = []
     for name, reason in retryable:
         if name not in group_by_name:
@@ -685,7 +686,7 @@ def _retry_failed_groups(
             continue
         idx, grp = group_by_name[name]
         turns = _retry_turns(reason, job)
-        _info(f"  Retry: {name} (max_turns={turns})")
+        log.info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
@@ -713,14 +714,14 @@ def _run_skipped_groups(
     holistic_content: str,
     pipeline_state: dict,
 ) -> list[tuple]:
-    _info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
+    log.info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
     failures: list[tuple] = []
     for name, reason in skipped:
         if name not in group_by_name:
             failures.append((name, reason))
             continue
         idx, grp = group_by_name[name]
-        _info(f"  Running skipped group: {name}")
+        log.info(f"  Running skipped group: {name}")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
@@ -758,7 +759,7 @@ def _phase_group_reviews(
 
 
 def _phase_merge(group_outputs: list[str], failed_groups: "list[tuple[str, str]]") -> str:
-    _info("Phase 3: Merging findings...")
+    log.info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 
     if failed_groups:
@@ -868,10 +869,10 @@ def _phase_synthesis(
     model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SYNTHESIS_THINKING", DEFAULT_THINKING_SYNTHESIS)
     provider = _resolve_provider()
-    _info(f"Phase 4: Synthesis ({max_turns} turns)...")
-    print()
+    log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
+    log.blank()
     rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
-    print()
+    log.blank()
 
     if not _has_output(job.review_file):
         _try_recover_output(synthesis_log, job.review_file)
@@ -881,7 +882,7 @@ def _phase_synthesis(
     else:
         reason = "no output" if not _has_output(job.review_file) else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
-        _warn(f"Synthesis agent {detail} — falling back to mechanical merge")
+        log.warn(f"Synthesis agent {detail} — falling back to mechanical merge")
         _write_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=skipped_groups,
         )
@@ -989,7 +990,7 @@ def _resolve_recovery(
     if not state:
         return 0.0, None, False, None
     if not _validate_resume_state(state, job.pr.head_sha, groups):
-        _warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+        log.warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return 0.0, None, False, None
 
@@ -998,26 +999,26 @@ def _resolve_recovery(
     is_complete = state.synthesis_done
 
     if is_complete and not has_failed_groups and not has_failed_synthesis:
-        _info("Prior review completed successfully — nothing to recover")
+        log.info("Prior review completed successfully — nothing to recover")
         return 0.0, None, False, None
 
     cost_so_far = _sum_existing_costs(job, state)
 
     if is_complete and (has_failed_groups or has_failed_synthesis):
-        _info("Prior review had failures — recovering")
+        log.info("Prior review had failures — recovering")
         skip_groups = set(state.groups_done)
         if has_failed_groups:
             failed_count = len(state.groups_failed)
             state.groups_failed.clear()
-            _info(f"  Re-running {failed_count} failed groups")
+            log.info(f"  Re-running {failed_count} failed groups")
         if has_failed_synthesis:
             state.synthesis_done = False
             state.synthesis_failed = ""
-            _info("  Re-running synthesis")
+            log.info("  Re-running synthesis")
         return cost_so_far, skip_groups, state.holistic_done, state
 
     # Incomplete pipeline — resume from where it left off
-    _info("Resuming incomplete pipeline")
+    log.info("Resuming incomplete pipeline")
     skip_holistic = state.holistic_done
     skip_groups = set(state.groups_done) if state.groups_done else None
     return cost_so_far, skip_groups, skip_holistic, state
@@ -1078,11 +1079,11 @@ def _run_holistic_phase(
 
     reason = _holistic_skip_reason(skip_holistic, incremental, group_count)
     if reason:
-        _info(f"Holistic phase skipped ({reason})")
+        log.info(f"Holistic phase skipped ({reason})")
         return _empty
 
     if resume_exists and _has_output(holistic_output):
-        _info("Phase 1: Holistic scan skipped (exists)")
+        log.info("Phase 1: Holistic scan skipped (exists)")
         return Path(holistic_output).read_text(), holistic_output, holistic_log, 0.0
 
     content, holistic_output, holistic_log = _phase_holistic(job, group_count)
@@ -1141,14 +1142,14 @@ def _run_synthesis_or_fallback(
     all_groups_failed = len(failed_groups) == group_count
 
     if not _has_findings(merged_content) and not failed_groups:
-        _info("No findings from any group — writing clean review")
+        log.info("No findings from any group — writing clean review")
         _write_clean_review(job, group_count, skipped_groups=n_skipped)
         state.synthesis_done = True
         _write_pipeline_state(job, state)
         return ""
 
     if all_groups_failed:
-        _warn("All group agents failed — skipping synthesis")
+        log.warn("All group agents failed — skipping synthesis")
         fallback = _build_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=n_skipped,
         )
@@ -1160,7 +1161,7 @@ def _run_synthesis_or_fallback(
         return ""
 
     if cost_so_far > max_cost:
-        _warn("Using merged group output as final review (synthesis skipped due to budget)")
+        log.warn("Using merged group output as final review (synthesis skipped due to budget)")
         Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)
         state.synthesis_done = True
@@ -1188,7 +1189,7 @@ def run_multi_phase(
     groups = _merge_smallest_groups(groups, DEFAULT_MAX_GROUPS)
     group_count = len(groups)
 
-    _info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
+    log.info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
     incremental = _is_incremental(job)
     incremental_skips: set[int] = set()
@@ -1200,7 +1201,7 @@ def run_multi_phase(
         )
         if incremental_skips:
             affected = group_count - len(incremental_skips)
-            _info(
+            log.info(
                 f"Incremental: {affected}/{group_count} groups affected, "
                 f"{len(incremental_skips)} unchanged (findings carried forward)"
             )
@@ -1213,7 +1214,7 @@ def run_multi_phase(
     )
 
     if state is None and _read_pipeline_state(job) is not None:
-        _info("Review already complete — use --force to re-run from scratch")
+        log.info("Review already complete — use --force to re-run from scratch")
         return
 
     if state is None:
@@ -1240,7 +1241,7 @@ def run_multi_phase(
 
     # ── Phase 2: Groups + Angles ─────────────────────────────────────────────
     if cost_so_far > max_cost:
-        _warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
+        log.warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
         group_outputs: list[str] = []
         failed_groups: list[tuple[str, str]] = [(g.name, "budget exceeded") for g in groups]
         angles_output, angles_log = "", ""
@@ -1281,9 +1282,9 @@ def _fetch_metadata(
     repo: str, pr_number: str, mode: str, wt_path: str,
 ) -> tuple[PRMetadata, PRContext, PRData | None]:
     if mode == MODE_SELF and not pr_number:
-        _info("Gathering branch metadata...")
+        log.info("Gathering branch metadata...")
         return fetch_branch_metadata(wt_path), PRContext(), None
-    _info("Fetching PR data...")
+    log.info("Fetching PR data...")
     with ThreadPoolExecutor(max_workers=2) as pool:
         pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
         if mode == MODE_SELF:

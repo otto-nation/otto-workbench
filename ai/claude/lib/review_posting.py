@@ -19,7 +19,7 @@ import review_dedup
 import review_format
 import review_github
 
-from review_common import _err, _info, _warn
+import log
 from review_findings import Finding
 from review_github import LineResolutionError, PRData
 
@@ -52,10 +52,10 @@ def _handle_chunk_failure(
     chunk_num: int, total_chunks: int, prior_results: list[dict],
 ) -> None:
     """Log chunk failure details and exit."""
-    _err(f"Failed to post chunk {chunk_num}/{total_chunks}")
+    log.error(f"Failed to post chunk {chunk_num}/{total_chunks}")
     if prior_results:
         posted_ids = [r.get("id", "?") for r in prior_results]
-        _warn(f"Partial post: chunks 1-{chunk_num - 1} succeeded (review IDs: {posted_ids})")
+        log.warn(f"Partial post: chunks 1-{chunk_num - 1} succeeded (review IDs: {posted_ids})")
     sys.exit(1)
 
 
@@ -78,7 +78,7 @@ def _post_chunked_review(
 
     existing_id = review_github._check_existing_pending(repo, pr, pr_data)
     if existing_id:
-        _warn(f"Deleting existing PENDING review #{existing_id}")
+        log.warn(f"Deleting existing PENDING review #{existing_id}")
         review_github._gh_api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
 
     for i, chunk in enumerate(chunks):
@@ -99,9 +99,9 @@ def _post_chunked_review(
             payload["event"] = "COMMENT"
 
         if is_chunked:
-            _info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
+            log.info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
         else:
-            _info(f"Posting review ({len(chunk)} inline)...")
+            log.info(f"Posting review ({len(chunk)} inline)...")
 
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", prefix="review-post-", delete=False
@@ -121,9 +121,9 @@ def _post_chunked_review(
 
         if not is_chunked:
             continue
-        _info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
+        log.info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
         if i < len(chunks) - 1:
-            _info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
+            log.info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
             time.sleep(INTER_CHUNK_DELAY)
 
     return results
@@ -161,7 +161,7 @@ def _submit_review(repo: str, pr: str, review_id: int) -> bool:
             tmp_path,
         )
         if result is None:
-            _warn(f"Failed to submit review #{review_id} after {review_github.MAX_RETRIES} attempts")
+            log.warn(f"Failed to submit review #{review_id} after {review_github.MAX_RETRIES} attempts")
             return False
         return True
     finally:
@@ -205,7 +205,7 @@ def write_post_tracking(
             json.dump(entry, f)
             f.write("\n")
     except OSError as e:
-        _warn(f"Failed to write post tracking ({post_file}): {e}")
+        log.warn(f"Failed to write post tracking ({post_file}): {e}")
 
 
 # ── SHA-drift fallback ──────────────────────────────────────────────────────
@@ -237,11 +237,11 @@ def _post_as_comment(
     """Post review as a single PR comment when SHA has drifted."""
     kept, deduped = review_dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
     if deduped:
-        _info(f"Skipped {len(deduped)} findings duplicating existing comments")
+        log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
     findings = kept
 
     if not findings:
-        _warn("No findings to post after dedup")
+        log.warn("No findings to post after dedup")
         write_post_tracking(
             args.review_file, [0], head_sha,
             inline_count=0, body_count=0, skipped_count=len(deduped),
@@ -275,11 +275,11 @@ def _post_as_comment(
         Path(tmp_path).unlink(missing_ok=True)
 
     if result is None:
-        _err("Failed to post review as comment")
+        log.error("Failed to post review as comment")
         sys.exit(1)
 
     comment_id = result.get("id", 0)
-    _info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
+    log.info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
 
     write_post_tracking(
         args.review_file, [comment_id], head_sha,
@@ -305,7 +305,7 @@ def _reclassify_and_retry(
 
     Returns (inline_comments, inline, body_findings, body_text, results).
     """
-    _warn("Inline comments could not be resolved — re-fetching diff and retrying")
+    log.warn("Inline comments could not be resolved — re-fetching diff and retrying")
     fresh_diff = review_github._get_diff(args.repo, args.pr)
     all_findings = list(inline) + [
         f for f in body_findings if f.classification != review_format.CLASS_SKIPPED
@@ -322,7 +322,7 @@ def _reclassify_and_retry(
     new_body = new_file_level + new_skipped + skipped_body
 
     if new_inline:
-        _info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
+        log.info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
         new_inline, new_body = review_format.renumber_for_posting(new_inline, new_body)
         new_inline_comments = [review_format.format_inline_comment(f) for f in new_inline]
         new_body_text = review_format.format_body_text(new_body, True, severity_filter)
@@ -334,7 +334,7 @@ def _reclassify_and_retry(
             )
             return new_inline_comments, new_inline, new_body, new_body_text, results
         except LineResolutionError:
-            _warn("Retry still failed — demoting all to body-level")
+            log.warn("Retry still failed — demoting all to body-level")
 
     _, new_body = review_format.renumber_for_posting([], list(inline) + list(body_findings))
     new_body_text = review_format.format_body_text(new_body, False, severity_filter)
@@ -397,14 +397,14 @@ def _mark_orphan_review(repo: str, pr: str, review_id: int) -> None:
             method="PUT", input_file=tmp_path,
         )
         if code != 0:
-            _warn(f"Failed to mark review #{review_id} as duplicate (exit code {code})")
+            log.warn(f"Failed to mark review #{review_id} as duplicate (exit code {code})")
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
 
 def _mark_orphaned_reviews(repo: str, pr: str, orphaned_ids: list[int]) -> None:
     """Mark orphaned chunk reviews as duplicates."""
-    _warn(f"Marking {len(orphaned_ids)} orphaned chunk reviews as duplicates: {orphaned_ids}")
+    log.warn(f"Marking {len(orphaned_ids)} orphaned chunk reviews as duplicates: {orphaned_ids}")
     for rid in orphaned_ids:
         _mark_orphan_review(repo, pr, rid)
 
@@ -428,7 +428,7 @@ def _post_and_track(
     # Check for already-posted duplicate
     existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
     if existing_ids:
-        _warn(f"Review already posted (review IDs: {existing_ids})")
+        log.warn(f"Review already posted (review IDs: {existing_ids})")
         write_post_tracking(
             args.review_file, list(existing_ids), commit_id,
             inline_count=0, body_count=0, skipped_count=0,
@@ -459,11 +459,11 @@ def _post_and_track(
     review_ids = [r.get("id", 0) for r in results]
 
     if is_chunked:
-        _info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
+        log.info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
     elif submit:
-        _info(f"Review submitted: #{review_ids[0]}")
+        log.info(f"Review submitted: #{review_ids[0]}")
     else:
-        _info(f"Review created: #{review_ids[0]} (PENDING)")
+        log.info(f"Review created: #{review_ids[0]} (PENDING)")
         print()
         print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
 
@@ -487,17 +487,17 @@ def _print_dry_run(
     comments = payload.get("comments", [])
     chunks = _chunk_comments(comments, chunk_size)
     if len(chunks) > 1:
-        _info(f"Would post in {len(chunks)} chunks of <={chunk_size} comments")
+        log.info(f"Would post in {len(chunks)} chunks of <={chunk_size} comments")
         for i, chunk in enumerate(chunks):
-            _info(f"  Chunk {i + 1}: {len(chunk)} comments")
+            log.info(f"  Chunk {i + 1}: {len(chunk)} comments")
 
     print()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     print()
-    _info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
-    _info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
+    log.info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
+    log.info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
     for f in skipped:
-        _warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
+        log.warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
 
 
 def _format_submit_command(repo: str, pr: str, review_id: int) -> str:

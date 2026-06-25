@@ -14,13 +14,14 @@ from pathlib import Path
 from string import Template
 
 import json
+import log
 from review_common import (
     FILENAME_PROMPT_STATS,
     TEMPLATE_DIR_REL,
     TEMPLATE_ANGLES, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
-    _derive_path, _warn,
+    _derive_path,
 )
 from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
 from review_preflight import (
@@ -465,7 +466,7 @@ def _compute_diff_budget(
     non_diff_total = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + non_diff_preflight
     remaining = MAX_PROMPT_BYTES - non_diff_total
     if remaining < MIN_DIFF_BYTES:
-        _warn(
+        log.warn(
             f"Prompt budget tight: {non_diff_total // 1024}KB non-diff vs "
             f"{MAX_PROMPT_BYTES // 1024}KB limit — diff capped to {MIN_DIFF_BYTES // 1024}KB"
         )
@@ -489,7 +490,7 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
     msg = f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})"
     if prompt_bytes > MAX_PROMPT_BYTES:
         msg += f" — EXCEEDS budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB"
-    print(msg, file=sys.stderr, flush=True)
+    log.info(msg)
 
     suffix = f"-{label}" if label else ""
     prompt_file = _derive_path(job.review_file, f"prompt-{template_name}{suffix}")

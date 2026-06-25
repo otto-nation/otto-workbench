@@ -21,6 +21,7 @@ from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import log
 import ai_backend
 import pr_comments as pc
 import pr_context
@@ -151,7 +152,7 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
     if rc != 0:
         if trail:
             trail.error("triage", "AI prompt failed", data={"exit_code": rc})
-        print("review-threads: ai prompt failed", file=sys.stderr)
+        log.error("ai prompt failed")
         return None, 1
 
     try:
@@ -159,7 +160,7 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
     except (json.JSONDecodeError, TypeError):
         if trail:
             trail.error("triage", "AI returned non-JSON output")
-        print("review-threads: ai returned non-JSON output", file=sys.stderr)
+        log.error("ai returned non-JSON output")
         return None, 1
 
     # Update triage state
@@ -177,7 +178,7 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
     except Exception as exc:
         if trail:
             trail.error("triage", f"state update failed: {exc}")
-        print(f"review-threads: triage state update failed: {exc}", file=sys.stderr)
+        log.error(f"triage state update failed: {exc}")
 
     return triage_result, 0
 
@@ -344,7 +345,7 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"review-threads: commit failed: {result.stderr.strip()}", file=sys.stderr)
+        log.error(f"commit failed: {result.stderr.strip()}")
         return None
 
     sha = subprocess.run(
@@ -352,19 +353,18 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         capture_output=True, text=True,
     ).stdout.strip()
 
-    print(f"Committed fixes ({fixed} fixed, {skipped} skipped)", file=sys.stderr)
+    log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
 
     push = subprocess.run(
         ["git", "-C", str(wt_path), "push"],
         capture_output=True, text=True,
     )
     if push.returncode == 0:
-        print("Pushed fixes", file=sys.stderr)
+        log.info("Pushed fixes")
     else:
-        print(
-            f"review-threads: push failed — branch has diverged. Run:\n"
-            f"  git -C '{wt_path}' push --force-with-lease",
-            file=sys.stderr,
+        log.error(
+            f"push failed — branch has diverged. Run:\n"
+            f"  git -C '{wt_path}' push --force-with-lease"
         )
         return None
 
@@ -395,7 +395,7 @@ def _post_fix_replies(
         if pc.post_thread_reply(repo, pr_number, database_id, body):
             posted += 1
     if posted:
-        print(f"Posted {posted} thread replies", file=sys.stderr)
+        log.info(f"Posted {posted} thread replies")
     return posted
 
 
@@ -463,9 +463,9 @@ def _post_fix_summary(
     body = _build_summary_body(fixed, needs_human, skipped, commit_sha, repo)
     url = pc.post_issue_comment(repo, pr_number, body)
     if url:
-        print(f"Posted fix summary: {url}", file=sys.stderr)
+        log.info(f"Posted fix summary: {url}")
     else:
-        print("review-threads: failed to post fix summary", file=sys.stderr)
+        log.error("failed to post fix summary")
     return url
 
 
@@ -550,9 +550,9 @@ def _run_comment_fix(
         max_turns=FIX_MAX_TURNS,
     )
 
-    print("Fix pass — applying review comment suggestions...", file=sys.stderr)
+    log.info("Fix pass — applying review comment suggestions...")
     _invoke_fix_agent(prompt, wt_path)
-    print(file=sys.stderr)
+    log.blank()
 
     after = _count_unchecked(tracking_file)
     fixed_count = before - after
@@ -617,7 +617,7 @@ def _run_threads(trail, args, ctx) -> None:
     if args.resolve or args.triage:
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
-            print(f"Resolved {resolved_count} verified threads", file=sys.stderr)
+            log.info(f"Resolved {resolved_count} verified threads")
 
     # Save state
     state = pc.empty_state(repo, pr_number, my_login)
@@ -681,7 +681,7 @@ def _run_threads(trail, args, ctx) -> None:
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")
-        print(f"review-threads: state update failed: {exc}", file=sys.stderr)
+        log.error(f"state update failed: {exc}")
 
     # Triage and/or fix mode
     if args.triage:
@@ -748,7 +748,7 @@ def main():
     repo = ctx.repo
     pr_number = ctx.pr_number
     if pr_number is None:
-        print("No PR found for current branch", file=sys.stderr)
+        log.error("No PR found for current branch")
         sys.exit(1)
     branch = ctx.branch
     toplevel = ctx.worktree_root

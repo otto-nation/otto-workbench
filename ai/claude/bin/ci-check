@@ -25,11 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import ci_failures as ci
 import pr_context
 import pr_state
+import log
 from trail import Trail, add_trail_args
-
-
-def _err(msg: str) -> None:
-    print(f"✗ {msg}", file=sys.stderr)
 
 
 def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
@@ -256,7 +253,7 @@ def _run_ci(trail, args, ctx) -> None:
         run_ids = _fetch_latest_run_ids(repo, branch)
         if not run_ids:
             trail.warn("no_runs", "no workflow runs found")
-            _err(f"No workflow runs found for branch '{branch}'")
+            log.error(f"No workflow runs found for branch '{branch}'")
             sys.exit(1)
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
@@ -272,7 +269,7 @@ def _run_ci(trail, args, ctx) -> None:
     primary_run_data = _merge_runs(run_data_list)
     if primary_run_data is None:
         trail.error("fetch_run_data", "failed to fetch run data")
-        _err("Failed to fetch run data")
+        log.error("Failed to fetch run data")
         sys.exit(1)
 
     # Parse into typed state
@@ -368,7 +365,7 @@ def _run_ci(trail, args, ctx) -> None:
             pr_state.save_state(toplevel, state)
         except Exception as exc:
             trail.error("state_update", f"state update failed: {exc}")
-            print(f"ci-check: state update failed: {exc}", file=sys.stderr)
+            log.error(f"ci-check: state update failed: {exc}")
 
     json.dump(report, sys.stdout, indent=2)
     print()

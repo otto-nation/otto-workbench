@@ -11,12 +11,12 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import log
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
     REVIEW_EXT,
     REVIEWS_DIR,
-    _info,
     read_review_meta,
 )
 
@@ -69,7 +69,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
 
         if not has_review and gc_dir_is_all_stale(review_dir):
             shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"GC: removed orphaned {review_dir.name}")
+            log.info(f"GC: removed orphaned {review_dir.name}")
             cleaned += 1
             continue
 
@@ -112,7 +112,7 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
         if state in ("MERGED", "CLOSED"):
             review_dir = meta_file.parent
             shutil.rmtree(review_dir, ignore_errors=True)
-            _info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
+            log.info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
             pruned += 1
 
     return pruned

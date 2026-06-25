@@ -12,7 +12,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-from review_common import _err, _warn
+import log
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -93,12 +93,12 @@ def _fetch_pr_metadata(repo: str, pr: str, pr_data: PRData | None = None) -> dic
         return {"head_sha": pr_data.head_sha, "head_ref": pr_data.head_ref, "base_ref": pr_data.base_ref}
     code, out = _gh_api(f"repos/{repo}/pulls/{pr}")
     if code != 0:
-        _err("Failed to fetch PR metadata")
+        log.error("Failed to fetch PR metadata")
         sys.exit(1)
     try:
         data = json.loads(out)
     except (json.JSONDecodeError, TypeError):
-        _err("Failed to parse PR metadata from API response")
+        log.error("Failed to parse PR metadata from API response")
         sys.exit(1)
     return {
         "head_sha": data.get("head", {}).get("sha", ""),
@@ -115,7 +115,7 @@ def _get_diff(repo: str, pr: str) -> str:
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
     if code != 0:
-        _warn("Failed to get diff from API — inline positioning unavailable")
+        log.warn("Failed to get diff from API — inline positioning unavailable")
         return ""
     return out
 
@@ -179,7 +179,7 @@ def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
         try:
             return json.loads(stdout)
         except json.JSONDecodeError:
-            _err(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
+            log.error(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
             return None
 
     if _is_line_resolution_error(stdout):
@@ -187,7 +187,7 @@ def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
 
     if _is_rate_limited(stdout):
         wait = int(min(RATE_LIMIT_WAIT * (RATE_LIMIT_BACKOFF ** attempt), RATE_LIMIT_MAX_WAIT))
-        _warn(f"Rate limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s...")
+        log.warn(f"Rate limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s...")
         time.sleep(wait)
         return None
 
@@ -199,7 +199,7 @@ def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
             error_msg += " — " + "; ".join(str(e) for e in errors)
     except (json.JSONDecodeError, AttributeError):
         error_msg = stdout[:200]
-    _err(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}")
+    log.error(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}")
     if attempt < MAX_RETRIES - 1:
         time.sleep(NON_RATE_LIMIT_DELAY)
     return None
@@ -213,7 +213,7 @@ def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
         if result is not None:
             return result
 
-    _err(f"Failed after {MAX_RETRIES} attempts")
+    log.error(f"Failed after {MAX_RETRIES} attempts")
     return None
 
 
@@ -382,12 +382,12 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
         _PR_DATA_QUERY, {"owner": owner, "name": name, "pr": int(pr)},
     )
     if rc != 0:
-        _err("Failed to fetch PR data via GraphQL")
+        log.error("Failed to fetch PR data via GraphQL")
         sys.exit(1)
     try:
         data = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
-        _err("Failed to parse PR data from GraphQL response")
+        log.error("Failed to parse PR data from GraphQL response")
         sys.exit(1)
 
     viewer = data.get("data", {}).get("viewer", {})
@@ -397,7 +397,7 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     threads = threads_data.get("nodes", [])
     total_threads = threads_data.get("totalCount", len(threads))
     if total_threads > len(threads):
-        _warn(f"PR has {total_threads} review threads but only {len(threads)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
+        log.warn(f"PR has {total_threads} review threads but only {len(threads)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
 
     for thread in threads:
         comments_data = thread.get("comments", {})
@@ -405,7 +405,7 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
         comment_nodes = comments_data.get("nodes", [])
         if total_comments > len(comment_nodes):
             path = thread.get("path", "?")
-            _warn(f"Thread at {path} has {total_comments} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
+            log.warn(f"Thread at {path} has {total_comments} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
 
     return PRData(
         viewer_login=viewer.get("login", ""),

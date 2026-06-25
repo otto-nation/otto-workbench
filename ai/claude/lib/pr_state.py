@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import log
 from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
 
 
@@ -266,7 +267,7 @@ def _ensure_gitignored(worktree_root: Path) -> None:
     prefix = "\n" if needs_newline else ""
     with open(gitignore, "a") as f:
         f.write(f"{prefix}\n# Worktree-local state (pr CLI)\n{STATE_DIR}/\n")
-    print(f"pr_state: added {STATE_DIR}/ to .gitignore", file=sys.stderr)
+    log.info(f"pr_state: added {STATE_DIR}/ to .gitignore")
 
 
 def save_state(worktree_root: Path, state: PRState) -> None:

@@ -10,10 +10,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import log
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
     SECTION_FILE_TRIAGE,
-    _info, _warn,
 )
 
 _FINDING_SECTIONS = [(s.section, s.key) for s in SEVERITIES]
@@ -261,7 +261,7 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
         if line.strip().startswith("## ")
     )
     if not has_section:
-        _warn(f"Group {group_name} output has no recognized sections — findings may be lost")
+        log.warn(f"Group {group_name} output has no recognized sections — findings may be lost")
     return has_section
 
 
@@ -642,7 +642,7 @@ def verify_findings(review_file: str, wt_path: str) -> dict:
         details.append(detail)
         if not detail["match_result"]:
             dropped.append(f["id"])
-            _info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
+            log.info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
     result = {
         "findings_checked": len(details),
         "findings_passed": len(details) - len(dropped),
@@ -774,13 +774,13 @@ def post_process_findings(
             Path(review_file).read_text(),
         )
         if orphaned:
-            _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
+            log.warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
     verification: dict | None = None
     if wt_path:
         verification = verify_findings(review_file, wt_path)
         dropped = verification["dropped"]
         if dropped:
-            _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+            log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     strip_evidence_blocks(review_file)
     strip_stable_ids(review_file)
     renumber_findings(review_file)

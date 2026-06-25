@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import log
 import pr_context
 import pr_state
 from trail import Trail, add_trail_args
@@ -27,7 +28,6 @@ except ImportError:
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
 from review_common import (
-    ANSI_DIM, ANSI_ERR, ANSI_INFO, ANSI_RESET, ANSI_WARN,
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
@@ -52,18 +52,6 @@ ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
 PR_URL_RE = re.compile(r"/pull/(\d+)")
 PR_NUMBER_RE = re.compile(r"^\d+$")
-
-
-def _info(msg: str) -> None:
-    print(f"{ANSI_INFO} {msg}", file=sys.stderr, flush=True)
-
-
-def _warn(msg: str) -> None:
-    print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
-
-
-def _err(msg: str) -> None:
-    print(f"{ANSI_ERR} {msg}", file=sys.stderr, flush=True)
 
 
 # ── Startup migrations ──────────────────────────────────────────────────────
@@ -127,7 +115,7 @@ def _migrate_flat_reviews() -> None:
         migrated += 1
 
     if migrated > 0:
-        _info(f"Migrated {migrated} reviews to folder layout")
+        log.info(f"Migrated {migrated} reviews to folder layout")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -180,8 +168,8 @@ def _post_review(repo: str, pr_number: str, review_file: str, submit: bool) -> N
 
 
 def _display_review(path: Path) -> None:
-    print()
-    print("\033[1m─── Review ───\033[0m", file=sys.stderr)
+    log.blank()
+    log.info("─── Review ───")
     print()
     print(path.read_text())
     print()
@@ -222,20 +210,20 @@ def _print_summary(
     post_session_log: str = "",
     branch_name: str = "",
 ) -> None:
-    print(file=sys.stderr)
-    print("\033[1m─── Summary ───\033[0m", file=sys.stderr)
-    print(f"  Review:          {review_file}", file=sys.stderr)
-    print(f"  Session log:     {session_log}", file=sys.stderr)
+    log.blank()
+    log.info("─── Summary ───")
+    log.dim(f"Review:          {review_file}")
+    log.dim(f"Session log:     {session_log}")
     if post_session_log and os.path.isfile(post_session_log):
-        print(f"  Post session:    {post_session_log}", file=sys.stderr)
+        log.dim(f"Post session:    {post_session_log}")
     if pr_url:
-        print(f"  PR:              {pr_url}", file=sys.stderr)
+        log.dim(f"PR:              {pr_url}")
     elif branch_name:
-        print(f"  Branch:          {branch_name}", file=sys.stderr)
+        log.dim(f"Branch:          {branch_name}")
     usage_line = _format_usage(session_log, post_session_log)
     if usage_line:
-        print(usage_line, file=sys.stderr)
-    print(file=sys.stderr)
+        log.dim(usage_line.strip())
+    log.blank()
 
 
 def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str, review_type: str = "") -> None:
@@ -297,7 +285,7 @@ def _archive_review(review_file: Path, session_log: str) -> str:
         archive_dir.mkdir(exist_ok=True)
         ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
         shutil.move(str(review_file), str(archive_dir / f"{ts}{REVIEW_EXT}"))
-        _info(f"Archived prior review to archives/{ts}{REVIEW_EXT}")
+        log.info(f"Archived prior review to archives/{ts}{REVIEW_EXT}")
 
     if os.path.isfile(session_log):
         archive_dir.mkdir(exist_ok=True)
@@ -386,9 +374,9 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
     except Exception:
         pass
 
-    _warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
+    log.warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
     if not _confirm("Delete the pending review before re-reviewing?"):
-        _info("Keeping pending review — new review will replace it at post time")
+        log.info("Keeping pending review — new review will replace it at post time")
         return
 
     try:
@@ -397,7 +385,7 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
              "--method", "DELETE"],
             capture_output=True, text=True,
         )
-        _info("Deleted pending review")
+        log.info("Deleted pending review")
     except Exception:
         pass
 
@@ -431,11 +419,11 @@ def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: boo
         return
 
     if review_sha == pr_head_sha:
-        _warn(f"No new commits since the last review (HEAD {pr_head_sha[:7]})")
+        log.warn(f"No new commits since the last review (HEAD {pr_head_sha[:7]})")
         if not _confirm("Re-review anyway?"):
             sys.exit(0)
     else:
-        _info(f"Incremental review: new commits since last review ({review_sha[:7]}..{pr_head_sha[:7]})")
+        log.info(f"Incremental review: new commits since last review ({review_sha[:7]}..{pr_head_sha[:7]})")
 
 
 def _generator_version() -> str:
@@ -450,7 +438,7 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
     review_dir = Path(review_file).parent
     post_file = review_dir / FILENAME_POST_SESSION
     if not post_file.is_file():
-        _err(f"No post tracking file found: {post_file}")
+        log.error(f"No post tracking file found: {post_file}")
         return
 
     try:
@@ -460,19 +448,19 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
         review_id = None
 
     if not review_id:
-        _err(f"Could not read review_id from {post_file}")
+        log.error(f"Could not read review_id from {post_file}")
         return
 
-    _info(f"Submitting review #{review_id}...")
+    log.info(f"Submitting review #{review_id}...")
     r = subprocess.run(
         ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{review_id}/events",
          "--method", "POST", "-f", "event=COMMENT"],
         capture_output=True, text=True,
     )
     if r.returncode == 0:
-        _info(f"Review #{review_id} submitted")
+        log.info(f"Review #{review_id} submitted")
     else:
-        _warn(f"Failed to submit review #{review_id}")
+        log.warn(f"Failed to submit review #{review_id}")
 
     try:
         data["submitted"] = True
@@ -505,7 +493,7 @@ def _verify_pr_ownership(pr_number: str, repo: str) -> None:
     if not pr_author or not gh_user or pr_author == gh_user:
         return
 
-    _warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
+    log.warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
     if not _confirm("Continue with self-review?"):
         sys.exit(0)
 
@@ -572,14 +560,14 @@ def _resolve_bare_repo_worktree(branch: str = "") -> str:
             display_branch = ref.replace("refs/remotes/origin/", "") if ref else "main"
         except Exception:
             display_branch = "main"
-    _err(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
+    log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
     sys.exit(1)
 
 
 def _fail_orchestration(msg: str, session_log: str) -> None:
-    _err(msg)
+    log.error(msg)
     if os.path.isfile(session_log):
-        print(f"  Session log: {session_log}", file=sys.stderr)
+        log.dim(f"Session log: {session_log}")
     sys.exit(1)
 
 
@@ -646,7 +634,7 @@ def _run_review_body(
 
     if no_post:
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}To post later: pr review --post{ANSI_RESET}", file=sys.stderr)
+        log.dim("To post later: pr review --post")
         return
 
     if auto_post:
@@ -657,12 +645,12 @@ def _run_review_body(
 
     if not _confirm("Satisfied with the review?"):
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}Edit the file, then run: pr review --post{ANSI_RESET}", file=sys.stderr)
+        log.dim("Edit the file, then run: pr review --post")
         sys.exit(0)
 
     if not _confirm("Post review to GitHub?"):
         _print_summary(str(review_file), session_log, pr_url)
-        print(f"  {ANSI_DIM}To post later: pr review --post{ANSI_RESET}", file=sys.stderr)
+        log.dim("To post later: pr review --post")
         return
 
     _post_review(repo, pr_number, str(review_file), False)
@@ -739,7 +727,7 @@ def _run_review_pr(
     repo_root = _find_repo_root(repo, repo_dir)
     if not repo_root:
         trail.error("setup_worktree", f"cannot find local clone of {repo}")
-        _err(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
+        log.error(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
         sys.exit(1)
 
     trail.info("setup_worktree", f"setting up PR worktree",
@@ -889,9 +877,9 @@ def _resolve_wt_path(repo_dir: str, pr_input: str) -> str:
         return _resolve_bare_repo_worktree(pr_input)
 
     if repo_dir:
-        _err(f"Not a git repository: {repo_dir}")
+        log.error(f"Not a git repository: {repo_dir}")
     else:
-        _err("Not in a git repository — pass --repo-dir to specify the repo")
+        log.error("Not in a git repository — pass --repo-dir to specify the repo")
     sys.exit(1)
 
 
@@ -990,7 +978,7 @@ def _run_self_review(args) -> None:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    signal.signal(signal.SIGINT, lambda *_: (print("", file=sys.stderr), _info("Interrupted"), sys.exit(130)))
+    signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
 
     parser = argparse.ArgumentParser(
         prog="claude-review",
@@ -1044,7 +1032,7 @@ def main() -> None:
     _migrate_flat_reviews()
 
     if parsed.fix and not parsed.self_review:
-        _err("--fix requires --self")
+        log.error("--fix requires --self")
         sys.exit(1)
 
     if parsed.self_review:
@@ -1055,7 +1043,7 @@ def main() -> None:
         return
 
     if parsed.no_post and parsed.post:
-        _err("--no-post and --post are mutually exclusive")
+        log.error("--no-post and --post are mutually exclusive")
         sys.exit(1)
 
     command = parsed.positional[0] if parsed.positional else ""
@@ -1066,7 +1054,7 @@ def main() -> None:
     _REMOVED = {"gc": "pr gc", "post": "pr review --post", "rebuild": "pr review --repair",
                 "summary": "pr review --summary", "threads": "pr comments"}
     if command in _REMOVED:
-        _err(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
+        log.error(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
         sys.exit(1)
 
     ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)

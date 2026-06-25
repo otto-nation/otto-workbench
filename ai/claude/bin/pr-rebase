@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import ai_backend
+import log
 import pr_context
 import pr_state
 from trail import Trail, add_trail_args
@@ -212,7 +213,7 @@ def _git_add(filepath: str, cwd: str) -> bool:
     """Stage a file and return True on success."""
     r = subprocess.run(["git", "add", filepath], cwd=cwd)
     if r.returncode != 0:
-        print(f"  git add failed for {filepath}", file=sys.stderr)
+        log.error(f"git add failed for {filepath}")
     return r.returncode == 0
 
 
@@ -220,11 +221,11 @@ def _accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
     """Accept theirs for a generated file and stage it."""
     r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
     if r.returncode != 0:
-        print(f"  git checkout --theirs failed for {filepath}", file=sys.stderr)
+        log.error(f"git checkout --theirs failed for {filepath}")
         return False
     if not _git_add(filepath, cwd):
         return False
-    print(f"  Accepted theirs: {filepath} (will regenerate)", file=sys.stderr)
+    log.info(f"Accepted theirs: {filepath} (will regenerate)")
     return True
 
 
@@ -235,26 +236,26 @@ def _resolve_single_file(
     try:
         content = full_path.read_text()
     except OSError as e:
-        print(f"  Cannot read {filepath}: {e}", file=sys.stderr)
+        log.error(f"Cannot read {filepath}: {e}")
         return None
 
     prompt = _build_resolve_prompt(filepath, content, sha, subject)
     stdout, rc = ai_backend.prompt(prompt)
     if rc != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
-        print(f"  ai prompt failed for {filepath} (exit {rc})", file=sys.stderr)
+        log.error(f"ai prompt failed for {filepath} (exit {rc})")
         return None
 
     resolved_content = _parse_resolved_content(stdout)
     if resolved_content is None:
         _terr("resolve_conflicts", f"failed to parse resolution for {filepath}", data={"filepath": filepath})
-        print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
+        log.error(f"Failed to parse resolution for {filepath}")
         return None
 
     full_path.write_text(resolved_content)
     if not _git_add(filepath, cwd):
         return None
-    print(f"  Resolved: {filepath}", file=sys.stderr)
+    log.ok(f"Resolved: {filepath}")
     return filepath
 
 
@@ -297,7 +298,7 @@ def _resolve_file_conflicts(
 
         if _is_binary(full_path):
             _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
-            print(f"  Cannot resolve binary file: {filepath}", file=sys.stderr)
+            log.error(f"Cannot resolve binary file: {filepath}")
             return None
 
         ok = _resolve_one(filepath, full_path, sha, subject, cwd, go_dirs)
@@ -307,7 +308,7 @@ def _resolve_file_conflicts(
 
     # Regenerate go.sum for any directories with resolved go.mod/go.sum
     for go_dir in go_dirs:
-        print(f"  Running go mod tidy in {go_dir.name}/...", file=sys.stderr)
+        log.info(f"Running go mod tidy in {go_dir.name}/...")
         r = subprocess.run(
             ["go", "mod", "tidy"],
             cwd=str(go_dir),
@@ -315,7 +316,7 @@ def _resolve_file_conflicts(
         )
         if r.returncode != 0:
             _terr("resolve_conflicts", f"go mod tidy failed in {go_dir.name}", data={"stderr": r.stderr.strip()})
-            print(f"  go mod tidy failed: {r.stderr.strip()}", file=sys.stderr)
+            log.error(f"go mod tidy failed: {r.stderr.strip()}")
             return None
         go_sum = go_dir / "go.sum"
         if go_sum.exists():
@@ -343,10 +344,9 @@ def _resolve_and_continue(cwd: str) -> tuple[list[str], int] | None:
         commits_conflicted += 1
         sha, subject = _rebase_head_info(cwd)
         remaining = _remaining_rebase_commits(cwd)
-        print(
+        log.info(
             f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
-            f"({remaining} commits remaining)...",
-            file=sys.stderr,
+            f"({remaining} commits remaining)..."
         )
 
         resolved = _resolve_file_conflicts(conflicts, cwd, sha, subject)
@@ -367,7 +367,7 @@ def _resolve_and_continue(cwd: str) -> tuple[list[str], int] | None:
         new_conflicts = _detect_conflicts(cwd)
         if not new_conflicts:
             _terr("rebase_continue", f"rebase --continue failed (exit {r.returncode})")
-            print(f"rebase --continue failed (exit {r.returncode})", file=sys.stderr)
+            log.error(f"rebase --continue failed (exit {r.returncode})")
             return None
         # Loop again with new conflicts
 
@@ -402,7 +402,7 @@ def _handle_conflicts(
     result = _resolve_and_continue(cwd)
     if result is None:
         _terr("resolve_conflicts", "AI resolution failed, aborting rebase")
-        print("AI conflict resolution failed — aborting rebase.", file=sys.stderr)
+        log.error("AI conflict resolution failed — aborting rebase.")
         subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
         return 1
     return _rebase_success(cwd, ctx, fix, resolved=result)
@@ -413,13 +413,13 @@ def _handle_conflicts(
 
 def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     """Abort an in-progress rebase and reset state."""
-    print("Aborting rebase...", file=sys.stderr)
+    log.info("Aborting rebase...")
     r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
     if r.returncode == 0:
         state = _load_or_init(ctx)
         pr_state.update_rebase(state, pr_state.RebaseSummary())
         pr_state.save_state(ctx.worktree_root, state)
-        print("Rebase aborted.", file=sys.stderr)
+        log.ok("Rebase aborted.")
     return r.returncode
 
 
@@ -427,10 +427,10 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     """Force-push after a completed rebase."""
     if _detect_rebase_in_progress(cwd):
         _terr("push", "rebase still in progress")
-        print("Cannot push — rebase still in progress.", file=sys.stderr)
+        log.error("Cannot push — rebase still in progress.")
         return 1
 
-    print("Force-pushing...", file=sys.stderr)
+    log.info("Force-pushing...")
     r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
     if r.returncode != 0:
         _terr("push", "force-push failed", data={"exit_code": r.returncode})
@@ -452,7 +452,7 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
         updated_at=pr_state.now_iso(),
     ))
     pr_state.save_state(ctx.worktree_root, state)
-    print("Force-pushed successfully.", file=sys.stderr)
+    log.ok("Force-pushed successfully.")
     return 0
 
 
@@ -477,7 +477,7 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
 def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Resume an in-progress rebase."""
-    print("Detected in-progress rebase — resuming...", file=sys.stderr)
+    log.info("Detected in-progress rebase — resuming...")
 
     conflicts = _detect_conflicts(cwd)
     if conflicts:
@@ -501,7 +501,7 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Start a fresh rebase onto the target ref."""
     if ctx.branch in ("main", "master"):
         _terr("preflight", f"on protected branch {ctx.branch}")
-        print("Cannot rebase — currently on protected branch.", file=sys.stderr)
+        log.error("Cannot rebase — currently on protected branch.")
         return 1
 
     status = subprocess.run(
@@ -510,15 +510,15 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     )
     if status.stdout.strip():
         _terr("preflight", "working tree has uncommitted changes")
-        print("Cannot rebase — working tree has uncommitted changes.", file=sys.stderr)
+        log.error("Cannot rebase — working tree has uncommitted changes.")
         return 1
 
-    print("Fetching origin...", file=sys.stderr)
+    log.info("Fetching origin...")
     fetch = subprocess.run(["git", "fetch", "origin"], cwd=cwd)
     if fetch.returncode != 0:
-        print(f"Warning: fetch failed — rebasing against potentially stale {_TARGET_REF}.", file=sys.stderr)
+        log.warn(f"Fetch failed — rebasing against potentially stale {_TARGET_REF}.")
 
-    print(f"Rebasing onto {_TARGET_REF}...", file=sys.stderr)
+    log.info(f"Rebasing onto {_TARGET_REF}...")
     r = subprocess.run(["git", "rebase", _TARGET_REF], cwd=cwd)
 
     if r.returncode == 0:
@@ -546,7 +546,7 @@ def _rebase_success(
             f"Rebase complete — resolved {len(files_resolved)} file(s) "
             f"across {conflicts_resolved} commit(s)"
         )
-        print(f"{label} — force-pushing...", file=sys.stderr)
+        log.info(f"{label} — force-pushing...")
         r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
         if r.returncode == 0:
             _trail and _trail.info("force_push", "force-pushed to remote")
@@ -571,9 +571,9 @@ def _rebase_success(
         json.dump(report, sys.stdout, indent=2)
         print()
         if r.returncode == 0:
-            print("Force-pushed.", file=sys.stderr)
+            log.ok("Force-pushed.")
         else:
-            print("Force-push failed.", file=sys.stderr)
+            log.error("Force-push failed.")
         return r.returncode
 
     pr_state.update_rebase(state, pr_state.RebaseSummary(
@@ -593,7 +593,7 @@ def _rebase_success(
     }
     json.dump(report, sys.stdout, indent=2)
     print()
-    print("Rebase clean — run `pr rebase --push` to force-push.", file=sys.stderr)
+    log.ok("Rebase clean — run `pr rebase --push` to force-push.")
     return 0
 
 

@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
+import log
 import review_common
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
@@ -143,7 +144,7 @@ def _fetch_linear(issue_id: str) -> IssueContext:
         ["linear", "issue", "view", issue_id, "--json", "--no-comments"],
     )
     if context:
-        print(f"✓ Found Linear issue: {issue_id}", file=sys.stderr)
+        log.ok(f"Found Linear issue: {issue_id}")
     return IssueContext(context=context)
 
 
@@ -154,7 +155,7 @@ def _fetch_github(issue_id: str, repo: str) -> IssueContext:
         ["gh", "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments"],
     )
     if context:
-        print(f"✓ Found GitHub issue: #{issue_id}", file=sys.stderr)
+        log.ok(f"Found GitHub issue: #{issue_id}")
     return IssueContext(link=link, context=context)
 
 
@@ -162,7 +163,7 @@ def _fetch_jira(issue_id: str, opts: dict | None) -> IssueContext:
     """Build a Jira issue context from opts."""
     jira_url = (opts or {}).get("jira_url", "")
     link = f"{jira_url}/browse/{issue_id}" if jira_url else ""
-    print(f"✓ Found Jira issue: {issue_id}", file=sys.stderr)
+    log.ok(f"Found Jira issue: {issue_id}")
     return IssueContext(link=link)
 
 

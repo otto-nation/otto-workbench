@@ -522,46 +522,112 @@ cmd_changelog() {
 
 # ─── Maintenance ─────────────────────────────────────────────────────────────
 
-_MAINTENANCE_LABEL="com.otto-workbench.maintenance"
-_MAINTENANCE_PLIST="$HOME/Library/LaunchAgents/${_MAINTENANCE_LABEL}.plist"
-_MAINTENANCE_LOG_DIR="$HOME/Library/Logs/otto-workbench"
 _MAINTENANCE_DEFAULT_INTERVAL=43200  # 12 hours
 
-_maintenance_is_loaded() {
+# ── macOS (launchd) ──────────────────────────────────────────────────────────
+
+_MAINTENANCE_LABEL="com.otto-workbench.maintenance"
+_MAINTENANCE_PLIST="$HOME/Library/LaunchAgents/${_MAINTENANCE_LABEL}.plist"
+_MAINTENANCE_LOG_DIR_MACOS="$HOME/Library/Logs/otto-workbench"
+
+_launchd_is_loaded() {
   launchctl list "$_MAINTENANCE_LABEL" >/dev/null 2>&1
 }
 
-_maintenance_install_plist() {
+_launchd_install() {
   local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
   local template="$MAINTENANCE_SRC_DIR/maintenance.plist.template"
 
-  mkdir -p "$(dirname "$_MAINTENANCE_PLIST")" "$_MAINTENANCE_LOG_DIR"
+  mkdir -p "$(dirname "$_MAINTENANCE_PLIST")" "$_MAINTENANCE_LOG_DIR_MACOS"
 
   sed \
     -e "s|__WORKBENCH_DIR__|${WORKBENCH_DIR}|g" \
     -e "s|__INTERVAL__|${interval}|g" \
-    -e "s|__LOG_DIR__|${_MAINTENANCE_LOG_DIR}|g" \
+    -e "s|__LOG_DIR__|${_MAINTENANCE_LOG_DIR_MACOS}|g" \
     "$template" > "$_MAINTENANCE_PLIST"
 }
 
-_maintenance_status() {
-  if ! _maintenance_is_loaded; then
-    echo -e "  ${DIM}Not running${NC}"
-    echo -e "  ${DIM}Start with: otto-workbench maintenance start${NC}"
-    return
+_launchd_start() {
+  local interval="$1"
+  if _launchd_is_loaded; then
+    launchctl unload "$_MAINTENANCE_PLIST" 2>/dev/null || true
   fi
+  _launchd_install "$interval"
+  launchctl load "$_MAINTENANCE_PLIST"
+}
 
+_launchd_stop() {
+  if _launchd_is_loaded; then
+    launchctl unload "$_MAINTENANCE_PLIST" 2>/dev/null || true
+    rm -f "$_MAINTENANCE_PLIST"
+    return 0
+  fi
+  return 1
+}
+
+_launchd_status() {
+  if ! _launchd_is_loaded; then return 1; fi
   local interval
   interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$_MAINTENANCE_PLIST" 2>/dev/null || echo "unknown")
   echo -e "  ${GREEN}Running${NC}  every $(_format_interval "$interval")"
-
-  local last_run_file="${XDG_CONFIG_HOME:-$HOME/.config}/workbench/maintenance.last"
-  [[ -f "$last_run_file" ]] || return 0
-  local ts last_date
-  ts=$(cat "$last_run_file")
-  last_date=$(date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
-  echo -e "  ${DIM}Last run: $last_date${NC}"
+  return 0
 }
+
+# ── Linux (systemd user timer) ───────────────────────────────────────────────
+
+_SYSTEMD_UNIT="otto-workbench-maintenance"
+_SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+
+_systemd_is_active() {
+  systemctl --user is-active "${_SYSTEMD_UNIT}.timer" >/dev/null 2>&1
+}
+
+_systemd_install() {
+  local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
+  local svc_template="$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.service.template"
+  local tmr_template="$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.timer.template"
+
+  mkdir -p "$_SYSTEMD_USER_DIR"
+
+  sed -e "s|__WORKBENCH_DIR__|${WORKBENCH_DIR}|g" \
+    "$svc_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service"
+
+  sed -e "s|__INTERVAL__|${interval}|g" \
+    "$tmr_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
+
+  systemctl --user daemon-reload
+}
+
+_systemd_start() {
+  local interval="$1"
+  _systemd_install "$interval"
+  systemctl --user enable --now "${_SYSTEMD_UNIT}.timer"
+}
+
+_systemd_stop() {
+  if _systemd_is_active; then
+    systemctl --user disable --now "${_SYSTEMD_UNIT}.timer"
+    rm -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}".{service,timer}
+    systemctl --user daemon-reload
+    return 0
+  fi
+  return 1
+}
+
+_systemd_status() {
+  if ! _systemd_is_active; then return 1; fi
+  local interval
+  interval=$(systemctl --user show -p TriggerUSec "${_SYSTEMD_UNIT}.timer" 2>/dev/null \
+    | grep -oP '\d+' | head -1)
+  if [[ -n "$interval" ]]; then
+    echo -e "  ${GREEN}Running${NC}  (systemd timer active)"
+  else
+    echo -e "  ${GREEN}Running${NC}"
+  fi
+  return 0
+}
+
+# ── Platform-dispatching commands ────────────────────────────────────────────
 
 _format_interval() {
   local seconds=$1
@@ -576,20 +642,23 @@ _format_interval() {
 
 cmd_maintenance_start() {
   local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
-
-  if _maintenance_is_loaded; then
-    launchctl unload "$_MAINTENANCE_PLIST" 2>/dev/null || true
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    _launchd_start "$interval"
+  else
+    _systemd_start "$interval"
   fi
-
-  _maintenance_install_plist "$interval"
-  launchctl load "$_MAINTENANCE_PLIST"
   success "Maintenance started (every $(_format_interval "$interval"))"
 }
 
 cmd_maintenance_stop() {
-  if _maintenance_is_loaded; then
-    launchctl unload "$_MAINTENANCE_PLIST" 2>/dev/null || true
-    rm -f "$_MAINTENANCE_PLIST"
+  local stopped=false
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    _launchd_stop && stopped=true
+  else
+    _systemd_stop && stopped=true
+  fi
+
+  if [[ "$stopped" == true ]]; then
     success "Maintenance stopped"
   else
     info "Maintenance is not running"
@@ -597,7 +666,29 @@ cmd_maintenance_stop() {
 }
 
 cmd_maintenance_status() {
-  _maintenance_status
+  local running=false
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    _launchd_status && running=true
+  else
+    _systemd_status && running=true
+  fi
+
+  if [[ "$running" == false ]]; then
+    echo -e "  ${DIM}Not running${NC}"
+    echo -e "  ${DIM}Start with: otto-workbench maintenance start${NC}"
+    return
+  fi
+
+  local last_run_file="${XDG_CONFIG_HOME:-$HOME/.config}/workbench/maintenance.last"
+  [[ -f "$last_run_file" ]] || return 0
+  local ts last_date
+  ts=$(cat "$last_run_file")
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    last_date=$(date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+  else
+    last_date=$(date -d "@$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+  fi
+  echo -e "  ${DIM}Last run: $last_date${NC}"
 }
 
 cmd_maintenance_run() {
@@ -606,11 +697,16 @@ cmd_maintenance_run() {
 }
 
 cmd_maintenance_logs() {
-  local logfile="$_MAINTENANCE_LOG_DIR/maintenance.log"
-  if [[ -f "$logfile" ]]; then
-    tail -50 "$logfile"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    local logfile="$_MAINTENANCE_LOG_DIR_MACOS/maintenance.log"
+    if [[ -f "$logfile" ]]; then
+      tail -50 "$logfile"
+    else
+      info "No log file yet"
+    fi
   else
-    info "No log file yet"
+    journalctl --user -u "$_SYSTEMD_UNIT" --no-pager -n 50 2>/dev/null \
+      || info "No journal entries yet"
   fi
 }
 
@@ -618,7 +714,7 @@ _maintenance_usage() {
   cat <<EOF
 Usage: otto-workbench maintenance <command>
 
-Scheduled maintenance via launchd. Pulls changes, runs sync, and cleans stale worktrees.
+Scheduled maintenance via $(if [[ "$OSTYPE" == "darwin"* ]]; then echo "launchd"; else echo "systemd"; fi). Pulls changes, runs sync, and cleans stale worktrees.
 
 Commands:
 $(commands_usage COMMANDS_MAINTENANCE)
@@ -946,21 +1042,39 @@ _discover_scripts() {
 }
 
 _discover_agents() {
-  local found=false plist label short interval
-  for plist in "$HOME"/Library/LaunchAgents/com.otto-workbench.*.plist; do
-    [[ -f "$plist" ]] || continue
-    found=true
-    label=$(/usr/libexec/PlistBuddy -c "Print :Label" "$plist" 2>/dev/null)
-    short="${label#com.otto-workbench.}"
-    if launchctl list "$label" &>/dev/null; then
-      interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$plist" 2>/dev/null || echo "")
-      [[ -n "$interval" ]] \
-        && printf "    ${GREEN}%-18s${NC} Running (every %s)\n" "$short" "$(_format_interval "$interval")" \
-        || printf "    ${GREEN}%-18s${NC} Running\n" "$short"
-    else
-      printf "    ${DIM}%-18s Stopped${NC}\n" "$short"
-    fi
-  done
+  local found=false
+
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    local plist label short interval
+    for plist in "$HOME"/Library/LaunchAgents/com.otto-workbench.*.plist; do
+      [[ -f "$plist" ]] || continue
+      found=true
+      label=$(/usr/libexec/PlistBuddy -c "Print :Label" "$plist" 2>/dev/null)
+      short="${label#com.otto-workbench.}"
+      if launchctl list "$label" &>/dev/null; then
+        interval=$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$plist" 2>/dev/null || echo "")
+        [[ -n "$interval" ]] \
+          && printf "    ${GREEN}%-18s${NC} Running (every %s)\n" "$short" "$(_format_interval "$interval")" \
+          || printf "    ${GREEN}%-18s${NC} Running\n" "$short"
+      else
+        printf "    ${DIM}%-18s Stopped${NC}\n" "$short"
+      fi
+    done
+  else
+    local unit
+    for unit in "$_SYSTEMD_USER_DIR"/otto-workbench-*.timer; do
+      [[ -f "$unit" ]] || continue
+      found=true
+      local short
+      short=$(basename "$unit" .timer)
+      if systemctl --user is-active "$short.timer" &>/dev/null; then
+        printf "    ${GREEN}%-18s${NC} Running (systemd timer)\n" "${short#otto-workbench-}"
+      else
+        printf "    ${DIM}%-18s Stopped${NC}\n" "${short#otto-workbench-}"
+      fi
+    done
+  fi
+
   [[ "$found" == false ]] && echo -e "    ${DIM}(none installed)${NC}"
   return 0
 }

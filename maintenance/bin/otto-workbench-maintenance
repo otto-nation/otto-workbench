@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Scheduled maintenance for otto-workbench.
-# Called by launchd — pulls latest changes, runs sync, and cleans stale worktrees.
+# Called by launchd (macOS) or systemd timer (Linux) — pulls latest changes,
+# runs sync, and cleans stale worktrees.
 #
 # Exit codes:
 #   0  Success (updated or already up-to-date)

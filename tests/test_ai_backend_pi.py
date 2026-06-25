@@ -58,6 +58,10 @@ class TestBuildAgentCmd:
         agents_dir.mkdir()
         (agents_dir / "test.md").write_text("# Test Agent\nDo things.")
         monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
+        # Ensure no skill file exists so fallback path is exercised
+        empty_skills_dir = tmp_path / "skills"
+        empty_skills_dir.mkdir()
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", empty_skills_dir)
         cmd = ai_backend_pi._build_agent_cmd(agent="test")
         assert "--append-system-prompt" in cmd
         idx = cmd.index("--append-system-prompt")
@@ -67,6 +71,9 @@ class TestBuildAgentCmd:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
+        empty_skills_dir = tmp_path / "skills"
+        empty_skills_dir.mkdir()
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", empty_skills_dir)
         with pytest.raises(FileNotFoundError):
             ai_backend_pi._build_agent_cmd(agent="nonexistent")
 
@@ -151,3 +158,44 @@ class TestCheckLimits:
         proc = self._make_proc()
         stop, steered = ai_backend_pi._check_limits(proc, 5, 2.0, 10, 5.0, steered=False)
         assert steered is False
+
+
+class TestResolveSkillPath:
+    def test_returns_skill_path_when_exists(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "pi" / "skills"
+        reviewer_dir = skills_dir / "reviewer"
+        reviewer_dir.mkdir(parents=True)
+        skill_file = reviewer_dir / "SKILL.md"
+        skill_file.write_text("---\nname: reviewer\n---\n# Reviewer")
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        assert ai_backend_pi._resolve_skill_path("reviewer") == skill_file
+
+    def test_returns_none_when_no_skill(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "pi" / "skills"
+        skills_dir.mkdir(parents=True)
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        assert ai_backend_pi._resolve_skill_path("reviewer") is None
+
+
+class TestBuildAgentCmdWithSkills:
+    def test_uses_skill_flag_when_available(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "pi" / "skills"
+        reviewer_dir = skills_dir / "reviewer"
+        reviewer_dir.mkdir(parents=True)
+        (reviewer_dir / "SKILL.md").write_text("---\nname: reviewer\n---\n# R")
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        cmd = ai_backend_pi._build_agent_cmd(agent="reviewer")
+        assert "--skill" in cmd
+        assert "--append-system-prompt" not in cmd
+
+    def test_falls_back_to_append_system_prompt(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "empty_skills"
+        skills_dir.mkdir()
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "reviewer.md").write_text("# Reviewer agent")
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
+        cmd = ai_backend_pi._build_agent_cmd(agent="reviewer")
+        assert "--append-system-prompt" in cmd
+        assert "--skill" not in cmd

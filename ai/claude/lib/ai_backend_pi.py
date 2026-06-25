@@ -42,6 +42,7 @@ from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
+PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
 
 
 class _NullLog:
@@ -57,6 +58,12 @@ def _read_agent_prompt(agent: str) -> str | None:
         return agent_file.read_text()
     print(f"  warning: agent file not found: {agent_file}", file=sys.stderr)
     return None
+
+
+def _resolve_skill_path(agent: str) -> Path | None:
+    """Check if a Pi-format SKILL.md exists for the given agent name."""
+    skill_file = PI_SKILLS_DIR / agent / "SKILL.md"
+    return skill_file if skill_file.is_file() else None
 
 
 # ── Command builders ──────────────────────────────────────────────────────────
@@ -79,10 +86,14 @@ def _build_agent_cmd(
         "--tools", PI_TOOLS,
     ]
     if agent:
-        agent_prompt = _read_agent_prompt(agent)
-        if agent_prompt is None:
-            raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
-        cmd += ["--append-system-prompt", agent_prompt]
+        skill_path = _resolve_skill_path(agent)
+        if skill_path:
+            cmd += ["--skill", str(skill_path)]
+        else:
+            agent_prompt = _read_agent_prompt(agent)
+            if agent_prompt is None:
+                raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
+            cmd += ["--append-system-prompt", agent_prompt]
     if model:
         cmd += ["--model", model]
     if thinking_level:

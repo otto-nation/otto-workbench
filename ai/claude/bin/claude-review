@@ -969,9 +969,14 @@ def _run_self_review(args) -> None:
         if wt_cleanup:
             wt_path = wt_cleanup.path
 
+    repo_name = repo.split("/")[-1]
+    branch_sanitized = (ctx.branch or "").replace("/", "-")
+    self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
+    self_review_dir.mkdir(parents=True, exist_ok=True)
+
     trail = Trail.start(
         script="claude-review",
-        artifact_dir=str(Path(wt_path) / pr_state.STATE_DIR),
+        artifact_dir=str(self_review_dir),
         context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "self"},
         debug=getattr(args, "debug", False),
     )

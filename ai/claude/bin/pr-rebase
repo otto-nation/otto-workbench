@@ -236,14 +236,14 @@ def _resolve_single_file(
     stdout, rc = ai_backend.prompt(prompt)
     if rc != 0:
         if _trail:
-            _trail.error("resolve_conflicts", f"AI prompt failed for {filepath}", data={"exit_code": rc})
+            _trail.error("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
         print(f"  ai prompt failed for {filepath} (exit {rc})", file=sys.stderr)
         return None
 
     resolved_content = _parse_resolved_content(stdout)
     if resolved_content is None:
         if _trail:
-            _trail.error("resolve_conflicts", f"failed to parse resolution for {filepath}")
+            _trail.error("resolve_conflicts", f"failed to parse resolution for {filepath}", data={"filepath": filepath})
         print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
         return None
 
@@ -293,7 +293,7 @@ def _resolve_file_conflicts(
 
         if _is_binary(full_path):
             if _trail:
-                _trail.error("resolve_conflicts", f"binary file: {filepath}")
+                _trail.error("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
             print(f"  Cannot resolve binary file: {filepath}", file=sys.stderr)
             return None
 

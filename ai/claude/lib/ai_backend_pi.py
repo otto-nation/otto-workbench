@@ -164,19 +164,38 @@ def _parse_event_type(raw_line: str) -> tuple[str, dict]:
     return data.get("type", ""), data
 
 
+BUDGET_WARN_THRESHOLD = 0.8
+
+
 def _check_limits(
     process: subprocess.Popen,
     turn_count: int, accumulated_cost: float,
     max_turns: int | None, max_budget: float | None,
-) -> str | None:
-    """Check turn and budget limits after a turn_end. Returns stop reason or None."""
+    steered: bool = False,
+) -> tuple[str | None, bool]:
+    """Check turn and budget limits after a turn_end.
+
+    Returns (stop_reason, steered) where stop_reason is None if not aborting.
+    Sends steer at 80% of either limit (once), abort + follow_up when exceeded.
+    """
     if max_turns is not None and turn_count >= max_turns:
         _send(process, {"type": "abort"})
-        return "max_turns"
+        _send(process, {"type": "follow_up", "message": "You were stopped due to turn limit. Summarize what you found and what remains."})
+        return "max_turns", steered
     if max_budget is not None and accumulated_cost > max_budget:
         _send(process, {"type": "abort"})
-        return "max_budget"
-    return None
+        _send(process, {"type": "follow_up", "message": "You were stopped due to budget limit. Summarize what you found and what remains."})
+        return "max_budget", steered
+
+    if not steered:
+        if max_budget is not None and accumulated_cost >= max_budget * BUDGET_WARN_THRESHOLD:
+            _send(process, {"type": "steer", "message": f"Budget warning: {accumulated_cost:.2f}/{max_budget:.2f} USD consumed. Wrap up your current analysis and write your output."})
+            steered = True
+        elif max_turns is not None and turn_count >= int(max_turns * BUDGET_WARN_THRESHOLD):
+            _send(process, {"type": "steer", "message": f"Turn warning: {turn_count}/{max_turns} turns used. Wrap up your current analysis and write your output."})
+            steered = True
+
+    return None, steered
 
 
 def _consume_stream(
@@ -193,6 +212,7 @@ def _consume_stream(
     turn_count = 0
     accumulated_cost = 0.0
     stop_reason = "completed"
+    steered = False
 
     for raw_line in process.stdout:
         log.write(raw_line)
@@ -211,7 +231,9 @@ def _consume_stream(
 
         if event_type == "turn_end":
             turn_count += 1
-            stop_reason = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget) or stop_reason
+            stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered)
+            if stop:
+                stop_reason = stop
 
         if event_type == "agent_end":
             break

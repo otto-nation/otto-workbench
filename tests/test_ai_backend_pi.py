@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -68,3 +69,85 @@ class TestBuildAgentCmd:
         monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
         with pytest.raises(FileNotFoundError):
             ai_backend_pi._build_agent_cmd(agent="nonexistent")
+
+
+class TestCheckLimits:
+    def _make_proc(self):
+        """Create a mock process with stdin that records writes."""
+        class MockStdin:
+            def __init__(self):
+                self.commands = []
+            def write(self, data):
+                self.commands.append(json.loads(data.strip()))
+            def flush(self):
+                pass
+
+        class MockProc:
+            def __init__(self):
+                self.stdin = MockStdin()
+
+        return MockProc()
+
+    def test_no_action_within_limits(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 5, 2.0, 10, 5.0)
+        assert stop is None
+        assert len(proc.stdin.commands) == 0
+
+    def test_abort_at_max_turns(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
+        assert stop == "max_turns"
+        assert any(c["type"] == "abort" for c in proc.stdin.commands)
+
+    def test_abort_over_budget(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 5, 5.1, 10, 5.0)
+        assert stop == "max_budget"
+        assert any(c["type"] == "abort" for c in proc.stdin.commands)
+
+    def test_steer_at_80_pct_budget(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 5, 4.1, 10, 5.0)
+        assert stop is None
+        assert any(c["type"] == "steer" for c in proc.stdin.commands)
+
+    def test_steer_at_80_pct_turns(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 8, 2.0, 10, 5.0)
+        assert stop is None
+        assert any(c["type"] == "steer" for c in proc.stdin.commands)
+
+    def test_no_steer_when_no_limits(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 100, 100.0, None, None)
+        assert stop is None
+        assert len(proc.stdin.commands) == 0
+
+    def test_follow_up_on_abort(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
+        assert stop == "max_turns"
+        assert any(c["type"] == "follow_up" for c in proc.stdin.commands)
+
+    def test_no_duplicate_steer_when_steered_true(self):
+        proc = self._make_proc()
+        # First call triggers steer
+        stop, steered = ai_backend_pi._check_limits(proc, 8, 2.0, 10, 5.0, steered=False)
+        assert stop is None
+        assert steered is True
+        first_count = len(proc.stdin.commands)
+        # Second call with steered=True should not send another steer
+        stop, steered = ai_backend_pi._check_limits(proc, 9, 2.0, 10, 5.0, steered=True)
+        assert stop is None
+        assert len(proc.stdin.commands) == first_count
+
+    def test_steered_flag_returned_true_after_steer(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 8, 2.0, 10, 5.0, steered=False)
+        assert steered is True
+
+    def test_steered_flag_unchanged_when_within_limits(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 5, 2.0, 10, 5.0, steered=False)
+        assert steered is False

@@ -142,6 +142,18 @@ def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     return default
 
 
+def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:
+    if explicit:
+        return explicit
+    from_env = os.environ.get(env_key)
+    if from_env:
+        return from_env
+    global_env = os.environ.get("CLAUDE_REVIEW_THINKING")
+    if global_env:
+        return global_env
+    return default
+
+
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 

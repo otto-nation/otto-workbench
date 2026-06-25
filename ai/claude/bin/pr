@@ -280,9 +280,18 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     positionals, _ = _split_argv(argv)
     has_pr_target = any(_is_pr_target(p) for p in positionals)
     inject = ["--self"] if not has_self and not has_pr_target else []
-    return _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
-                         original_pr=original_pr,
-                         original_branch=original_branch)
+    rc = _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
+                       original_pr=original_pr,
+                       original_branch=original_branch)
+    if rc != 0 or not ctx.pr_number:
+        return rc
+    pr_num = str(ctx.pr_number)
+    review = review_file_path(ctx.repo, pr_num)
+    if review.is_file():
+        output = json_summary(ctx.repo, pr_num, str(review))
+        print(output)
+        _update_review_state_from_output(output, ctx)
+    return rc
 
 
 def _review_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:

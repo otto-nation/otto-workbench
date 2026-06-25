@@ -651,26 +651,19 @@ cmd_maintenance_start() {
 }
 
 cmd_maintenance_stop() {
-  local stopped=false
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    _launchd_stop && stopped=true
+    if _launchd_stop; then success "Maintenance stopped"; else info "Maintenance is not running"; fi
   else
-    _systemd_stop && stopped=true
-  fi
-
-  if [[ "$stopped" == true ]]; then
-    success "Maintenance stopped"
-  else
-    info "Maintenance is not running"
+    if _systemd_stop; then success "Maintenance stopped"; else info "Maintenance is not running"; fi
   fi
 }
 
 cmd_maintenance_status() {
   local running=false
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    _launchd_status && running=true
+    if _launchd_status; then running=true; fi
   else
-    _systemd_status && running=true
+    if _systemd_status; then running=true; fi
   fi
 
   if [[ "$running" == false ]]; then
@@ -1078,9 +1071,9 @@ _discover_systemd_timers() {
 _discover_agents() {
   local found=false
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    _discover_launchd_agents && found=true
+    if _discover_launchd_agents; then found=true; fi
   else
-    _discover_systemd_timers && found=true
+    if _discover_systemd_timers; then found=true; fi
   fi
   [[ "$found" == false ]] && echo -e "    ${DIM}(none installed)${NC}"
   return 0

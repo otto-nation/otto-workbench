@@ -79,6 +79,23 @@ def _pi_tool_label(data: dict) -> str:
     return tool_name
 
 
+def _parse_message_update_tool(data: dict) -> StreamEvent | None:
+    """Extract a tool event from a Pi message_update with toolCall blocks."""
+    content = data.get("content", [])
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if block.get("type") != "toolCall":
+            continue
+        name = block.get("name", "")
+        if not name:
+            continue
+        label = _pi_tool_label({"toolName": name, "arguments": block.get("arguments", {})})
+        if label:
+            return StreamEvent(tool_label=label)
+    return None
+
+
 def parse_pi_event(raw_line: str) -> StreamEvent | None:
     """Parse a Pi --mode json line into a StreamEvent, or None."""
     try:
@@ -88,19 +105,7 @@ def parse_pi_event(raw_line: str) -> StreamEvent | None:
     event_type = data.get("type", "")
     if event_type == "tool_execution_start":
         label = _pi_tool_label(data)
-        if label:
-            return StreamEvent(tool_label=label)
-        return None
-    # Pi message_update with toolCall content blocks
+        return StreamEvent(tool_label=label) if label else None
     if event_type == "message_update":
-        content = data.get("content", [])
-        if isinstance(content, list):
-            for block in content:
-                if block.get("type") == "toolCall":
-                    name = block.get("name", "")
-                    args = block.get("arguments", {})
-                    if name:
-                        label = _pi_tool_label({"toolName": name, "arguments": args})
-                        if label:
-                            return StreamEvent(tool_label=label)
+        return _parse_message_update_tool(data)
     return None

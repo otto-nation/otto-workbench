@@ -16,6 +16,15 @@ from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 # ── Stream progress ───────────────────────────────────────────────────────────
 
 
+def _display_event(raw_line: str, prev_tool: str, prefix: str) -> str:
+    event = parse_claude_event(raw_line)
+    if not event or event.tool_label == prev_tool:
+        return prev_tool
+    with _print_lock:
+        print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
+    return event.tool_label
+
+
 def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""):
     prev_tool = ""
     prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
@@ -23,11 +32,7 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
         for raw_line in process.stdout:
             log.write(raw_line)
             log.flush()
-            event = parse_claude_event(raw_line)
-            if event and event.tool_label != prev_tool:
-                with _print_lock:
-                    print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
-                prev_tool = event.tool_label
+            prev_tool = _display_event(raw_line, prev_tool, prefix)
 
 
 # ── Command builders ──────────────────────────────────────────────────────────
@@ -90,6 +95,16 @@ def _build_prompt_cmd(model: str | None = None) -> list[str]:
     return cmd
 
 
+def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
+    if proc.returncode == 0:
+        return
+    stderr_output = proc.stderr.read()
+    if not stderr_output:
+        return
+    with open(session_log, "a") as f:
+        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
@@ -125,11 +140,7 @@ def invoke_agent(
     proc.stdin.close()
     stream_progress(proc, session_log, label=label)
     proc.wait()
-    if proc.returncode != 0:
-        stderr_output = proc.stderr.read()
-        if stderr_output:
-            with open(session_log, "a") as f:
-                f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+    _log_stderr_on_failure(proc, session_log)
     return proc.returncode
 
 

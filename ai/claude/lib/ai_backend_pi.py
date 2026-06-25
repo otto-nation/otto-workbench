@@ -82,41 +82,64 @@ def _build_fix_cmd(model: str | None = None) -> list[str]:
     return cmd
 
 
+def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
+    if proc.returncode == 0:
+        return
+    stderr_output = proc.stderr.read()
+    if not stderr_output:
+        return
+    with open(session_log, "a") as f:
+        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+
+
 # ── Stream progress (Pi JSONL) ────────────────────────────────────────────────
+
+
+def _display_event(raw_line: str, prev_tool: str, prefix: str) -> str:
+    event = parse_pi_event(raw_line)
+    if not event or event.tool_label == prev_tool:
+        return prev_tool
+    with _print_lock:
+        print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
+    return event.tool_label
+
+
+def _check_turn_limit(raw_line: str, turn_count: int, max_turns: int) -> tuple[int, bool]:
+    """Check if a line is a turn_end event and if max_turns is reached."""
+    try:
+        data = json.loads(raw_line)
+    except (json.JSONDecodeError, ValueError):
+        return turn_count, False
+    if data.get("type") != "turn_end":
+        return turn_count, False
+    turn_count += 1
+    return turn_count, turn_count >= max_turns
+
+
+def _consume_stream(process: subprocess.Popen, log, prefix: str,
+                    max_turns: int | None = None):
+    prev_tool = ""
+    turn_count = 0
+    for raw_line in process.stdout:
+        log.write(raw_line)
+        log.flush()
+        prev_tool = _display_event(raw_line, prev_tool, prefix)
+        if max_turns is None:
+            continue
+        turn_count, exceeded = _check_turn_limit(raw_line, turn_count, max_turns)
+        if not exceeded:
+            continue
+        process.send_signal(signal.SIGTERM)
+        process.stdout.close()
+        break
 
 
 def _stream_progress_pi(process: subprocess.Popen, session_log: str, label: str = "",
                         max_turns: int | None = None):
-    """Stream Pi JSONL events to session log and display progress.
-
-    Counts turn_end events for max_turns enforcement.
-    """
-    prev_tool = ""
+    """Stream Pi JSONL events to session log and display progress."""
     prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
-    turn_count = 0
-
     with open(session_log, "w") as log:
-        for raw_line in process.stdout:
-            log.write(raw_line)
-            log.flush()
-
-            event = parse_pi_event(raw_line)
-            if event and event.tool_label != prev_tool:
-                with _print_lock:
-                    print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
-                prev_tool = event.tool_label
-
-            if max_turns is not None:
-                try:
-                    data = json.loads(raw_line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                if data.get("type") == "turn_end":
-                    turn_count += 1
-                    if turn_count >= max_turns:
-                        process.send_signal(signal.SIGTERM)
-                        process.stdout.close()
-                        break
+        _consume_stream(process, log, prefix, max_turns)
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
@@ -168,11 +191,7 @@ def invoke_agent(
     proc.stdin.close()
     _stream_progress_pi(proc, session_log, label=label, max_turns=max_turns)
     proc.wait()
-    if proc.returncode != 0:
-        stderr_output = proc.stderr.read()
-        if stderr_output:
-            with open(session_log, "a") as f:
-                f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
+    _log_stderr_on_failure(proc, session_log)
     return proc.returncode
 
 

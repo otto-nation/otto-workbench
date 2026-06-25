@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+from trail import Trail, add_trail_args  # noqa: E402
 import review_common as _rc  # noqa: E402
 import review_findings as _rf  # noqa: E402
 import review_preflight as _rp  # noqa: E402
@@ -70,42 +71,7 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(description="Review orchestration for claude-review")
-    parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
-    parser.add_argument("--review-file", required=True, help="Output review file path")
-    parser.add_argument("--repo-dir", "--worktree",
-                        required=True, help="Worktree path")
-    parser.add_argument("--repo", default="", help="Repository name (owner/repo)")
-    parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
-    parser.add_argument("--session-log", help="Session log path")
-    parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
-    parser.add_argument("--issue", default="", help="Issue URL")
-    parser.add_argument("--issue-context", default="", help="Issue context JSON")
-    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
-                        help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
-    parser.add_argument("--no-holistic", action="store_true",
-                        help="Skip holistic phase in multi-phase reviews")
-    parser.add_argument("--generator-version", default="",
-                        help="Version string to embed in review metadata")
-    parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
-                        help="Review mode: pr (default) or self")
-    parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
-                        help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
-    parser.add_argument("--model", default="",
-                        help="Override model for all agents (e.g. sonnet, opus)")
-    parser.add_argument("--fix", action="store_true",
-                        help="Run fix pass after review to apply findings")
-    args = parser.parse_args()
-
-    if args.mode == MODE_PR and not args.pr:
-        print("error: --pr is required in pr mode", file=sys.stderr)
-        sys.exit(1)
-
-    repo = args.repo or detect_repo(cwd=args.repo_dir)
-
-    session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
-
+def _run_orchestrate(trail, args, repo, session_log) -> None:
     pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
     prior_review = ""
@@ -138,16 +104,34 @@ def main():
     )
     pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
+    trail.decision(
+        "select_pipeline",
+        f"chose {pipeline}",
+        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={MULTI_PHASE_FILE_THRESHOLD} lines={MULTI_PHASE_LINE_THRESHOLD})",
+        data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
+    )
+
     if is_large:
-        run_multi_phase(
-            job, max_parallel=args.max_parallel,
-            skip_holistic=args.no_holistic, max_cost=args.max_cost,
-        )
+        with trail.span("multi_phase"):
+            run_multi_phase(
+                job, max_parallel=args.max_parallel,
+                skip_holistic=args.no_holistic, max_cost=args.max_cost,
+            )
     else:
-        run_single_agent(job)
+        with trail.span("single_agent"):
+            run_single_agent(job)
+
+    if job.verification:
+        v = job.verification
+        detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+        trail.info("evidence_verification", detail, data=v)
 
     if args.fix and Path(job.review_file).exists():
-        run_fix_pass(job)
+        trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
+        with trail.span("fix_pass"):
+            run_fix_pass(job)
+    elif args.fix:
+        trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
 
     result = {
         "review_file": job.review_file,
@@ -156,6 +140,60 @@ def main():
     }
     json.dump(result, sys.stdout)
     print()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Review orchestration for claude-review")
+    parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
+    parser.add_argument("--review-file", required=True, help="Output review file path")
+    parser.add_argument("--repo-dir", "--worktree",
+                        required=True, help="Worktree path")
+    parser.add_argument("--repo", default="", help="Repository name (owner/repo)")
+    parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
+    parser.add_argument("--session-log", help="Session log path")
+    parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
+    parser.add_argument("--issue", default="", help="Issue URL")
+    parser.add_argument("--issue-context", default="", help="Issue context JSON")
+    parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+                        help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
+    parser.add_argument("--no-holistic", action="store_true",
+                        help="Skip holistic phase in multi-phase reviews")
+    parser.add_argument("--generator-version", default="",
+                        help="Version string to embed in review metadata")
+    parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
+                        help="Review mode: pr (default) or self")
+    parser.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
+                        help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
+    parser.add_argument("--model", default="",
+                        help="Override model for all agents (e.g. sonnet, opus)")
+    parser.add_argument("--fix", action="store_true",
+                        help="Run fix pass after review to apply findings")
+    add_trail_args(parser)
+    args = parser.parse_args()
+
+    if args.mode == MODE_PR and not args.pr:
+        print("error: --pr is required in pr mode", file=sys.stderr)
+        sys.exit(1)
+
+    repo = args.repo or detect_repo(cwd=args.repo_dir)
+
+    session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
+
+    review_dir = Path(args.review_file).parent
+    trail = Trail.start(
+        script="review-orchestrate",
+        artifact_dir=str(review_dir),
+        context={"repo": repo, "pr": args.pr, "mode": args.mode},
+        debug=args.debug,
+    )
+
+    try:
+        _run_orchestrate(trail, args, repo, session_log)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

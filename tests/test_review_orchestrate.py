@@ -143,7 +143,7 @@ class TestVerificationDetail:
 
 
 class TestVerifyFindings:
-    def test_writes_verification_json(self, ro, tmp_path):
+    def test_returns_verification_summary(self, ro, tmp_path):
         review = tmp_path / "review.md"
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tresult := db.Query(q)\n}\n")
@@ -154,15 +154,14 @@ class TestVerifyFindings:
             "  > result := db.Query(q)\n"
             "  > ```\n"
         )
-        dropped = ro.verify_findings(str(review), str(tmp_path))
-        assert dropped == []
-        import json
-        log = json.loads((tmp_path / "verification.json").read_text())
-        assert log["findings_checked"] == 1
-        assert log["findings_passed"] == 1
-        assert log["findings_dropped"] == 0
+        result = ro.verify_findings(str(review), str(tmp_path))
+        assert result["dropped"] == []
+        assert result["findings_checked"] == 1
+        assert result["findings_passed"] == 1
+        assert result["findings_dropped"] == 0
+        assert not (tmp_path / "verification.json").exists()
 
-    def test_drops_unverified_and_logs(self, ro, tmp_path):
+    def test_drops_unverified_and_returns_details(self, ro, tmp_path):
         review = tmp_path / "review.md"
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
@@ -173,12 +172,10 @@ class TestVerifyFindings:
             "  > result := db.Query(q)\n"
             "  > ```\n"
         )
-        dropped = ro.verify_findings(str(review), str(tmp_path))
-        assert dropped == ["S1"]
-        import json
-        log = json.loads((tmp_path / "verification.json").read_text())
-        assert log["findings_dropped"] == 1
-        assert log["details"][0]["match_result"] is False
+        result = ro.verify_findings(str(review), str(tmp_path))
+        assert result["dropped"] == ["S1"]
+        assert result["findings_dropped"] == 1
+        assert result["details"][0]["match_result"] is False
 
 
 class TestParseVerificationStripsLine:

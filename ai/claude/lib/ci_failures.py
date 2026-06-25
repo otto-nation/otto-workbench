@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """CI failure lifecycle tracking.
 
-Handles failure classification, progression tracking, and local state
-persistence for the ci-failures skill.
+Handles failure classification, progression tracking, and rendering for the
+ci-failures skill. State persistence is delegated to pr_state.CIDomain.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────
@@ -34,8 +32,6 @@ class Outcome(Enum):
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
-STATE_DIR = "ignore/ci-failures"
-STATE_FILE = "state.json"
 _MAX_CONTEXT_CHARS = 4000
 _CONTEXT_LINES = 80
 
@@ -91,15 +87,6 @@ class RunState:
     conclusion: str
     fetched_at: str
     failures: dict[str, FailureGroup]
-
-
-@dataclass
-class CIState:
-    repo: str
-    pr_number: int | None
-    branch: str
-    runs: dict[int, RunState]
-    latest_run_id: int | None
 
 
 # ── Classification ─────────────────────────────────────────────────────────
@@ -202,127 +189,6 @@ def _extract_around_marker(lines: list[str], marker: re.Pattern) -> str:
     return ""
 
 
-# ── State factories ────────────────────────────────────────────────────────
-
-def empty_state(
-    repo: str, branch: str, pr_number: int | None = None,
-) -> CIState:
-    """Create a fresh CI state object."""
-    return CIState(
-        repo=repo, pr_number=pr_number, branch=branch,
-        runs={}, latest_run_id=None,
-    )
-
-
-# ── Serialization ──────────────────────────────────────────────────────────
-
-def _item_to_dict(item: FailureItem) -> dict:
-    return {
-        "id": item.id,
-        "annotation": item.annotation,
-        "file": item.file,
-        "line": item.line,
-        "diagnosis": item.diagnosis,
-        "fix_sha": item.fix_sha,
-        "outcome": item.outcome.value if item.outcome else None,
-    }
-
-
-def _item_from_dict(data: dict) -> FailureItem:
-    outcome_val = data.get("outcome")
-    return FailureItem(
-        id=data["id"],
-        annotation=data["annotation"],
-        file=data.get("file"),
-        line=data.get("line"),
-        diagnosis=data.get("diagnosis"),
-        fix_sha=data.get("fix_sha"),
-        outcome=Outcome(outcome_val) if outcome_val else None,
-    )
-
-
-def _group_to_dict(group: FailureGroup) -> dict:
-    return {
-        "job": group.job,
-        "kind": group.kind.value,
-        "items": [_item_to_dict(i) for i in group.items],
-    }
-
-
-def _group_from_dict(data: dict) -> FailureGroup:
-    return FailureGroup(
-        job=data["job"],
-        kind=FailureKind(data["kind"]),
-        items=tuple(_item_from_dict(i) for i in data.get("items", [])),
-    )
-
-
-def _run_to_dict(run: RunState) -> dict:
-    return {
-        "run_id": run.run_id,
-        "run_number": run.run_number,
-        "head_sha": run.head_sha,
-        "status": run.status,
-        "conclusion": run.conclusion,
-        "fetched_at": run.fetched_at,
-        "failures": {k: _group_to_dict(v) for k, v in run.failures.items()},
-    }
-
-
-def _run_from_dict(data: dict) -> RunState:
-    return RunState(
-        run_id=data["run_id"],
-        run_number=data["run_number"],
-        head_sha=data["head_sha"],
-        status=data["status"],
-        conclusion=data["conclusion"],
-        fetched_at=data["fetched_at"],
-        failures={k: _group_from_dict(v) for k, v in data.get("failures", {}).items()},
-    )
-
-
-def state_to_dict(state: CIState) -> dict:
-    """Serialize CIState to a JSON-compatible dict."""
-    return {
-        "repo": state.repo,
-        "pr_number": state.pr_number,
-        "branch": state.branch,
-        "runs": {str(k): _run_to_dict(v) for k, v in state.runs.items()},
-        "latest_run_id": state.latest_run_id,
-    }
-
-
-def state_from_dict(data: dict) -> CIState:
-    """Deserialize CIState from a dict."""
-    return CIState(
-        repo=data["repo"],
-        pr_number=data.get("pr_number"),
-        branch=data["branch"],
-        runs={int(k): _run_from_dict(v) for k, v in data.get("runs", {}).items()},
-        latest_run_id=data.get("latest_run_id"),
-    )
-
-
-# ── State I/O ──────────────────────────────────────────────────────────────
-
-def load_state(worktree_root: Path) -> CIState | None:
-    """Load state from worktree. Returns None if file doesn't exist."""
-    path = worktree_root / STATE_DIR / STATE_FILE
-    if not path.exists():
-        return None
-    with open(path) as f:
-        return state_from_dict(json.load(f))
-
-
-def save_state(worktree_root: Path, state: CIState) -> None:
-    """Save state to worktree, creating parent directories."""
-    path = worktree_root / STATE_DIR / STATE_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(state_to_dict(state), f, indent=2)
-        f.write("\n")
-
-
 # ── Progression ────────────────────────────────────────────────────────────
 
 def collect_item_ids(failures: dict[str, FailureGroup]) -> dict[str, FailureItem]:
@@ -380,13 +246,14 @@ def _carry_forward_item(
     )
 
 
-def sync_state(state: CIState, run: RunState) -> CIState:
-    """Merge a new run into state, preserving prior diagnosis and fix history.
+def sync_ci_domain(domain, run: RunState):
+    """Merge a new run into a CIDomain, preserving prior diagnosis and fix history.
 
+    Accepts a pr_state.CIDomain and returns the updated CIDomain.
     If a failure item existed in the prior run with a diagnosis or fix_sha,
     those values carry forward to the new run's matching item.
     """
-    prior_run = state.runs.get(state.latest_run_id) if state.latest_run_id else None
+    prior_run = domain.runs.get(str(domain.latest_run_id)) if domain.latest_run_id is not None else None
     prior_items = collect_item_ids(prior_run.failures) if prior_run else {}
 
     synced_failures: dict[str, FailureGroup] = {}
@@ -404,17 +271,17 @@ def sync_state(state: CIState, run: RunState) -> CIState:
         failures=synced_failures,
     )
 
-    state.runs[run.run_id] = synced_run
-    state.latest_run_id = run.run_id
+    domain.runs[str(run.run_id)] = synced_run
+    domain.latest_run_id = run.run_id
 
     # Prune old runs to bound state file size
     _MAX_RUNS = 10
-    if len(state.runs) > _MAX_RUNS:
-        oldest_ids = sorted(state.runs)[:len(state.runs) - _MAX_RUNS]
+    if len(domain.runs) > _MAX_RUNS:
+        oldest_ids = sorted(domain.runs, key=int)[:len(domain.runs) - _MAX_RUNS]
         for old_id in oldest_ids:
-            del state.runs[old_id]
+            del domain.runs[old_id]
 
-    return state
+    return domain
 
 
 # ── Dashboard ──────────────────────────────────────────────────────────────

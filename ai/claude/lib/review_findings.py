@@ -6,7 +6,6 @@ Shared between review-orchestrate (merging/verification) and review-post (parsin
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -611,10 +610,10 @@ def _drop_reason(detail: dict) -> str:
     return reason
 
 
-def verify_findings(review_file: str, wt_path: str) -> list[str]:
+def verify_findings(review_file: str, wt_path: str) -> dict:
     path = Path(review_file)
     if not path.exists():
-        return []
+        return {"findings_checked": 0, "findings_passed": 0, "findings_dropped": 0, "dropped": [], "details": []}
     text = path.read_text()
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
@@ -628,17 +627,16 @@ def verify_findings(review_file: str, wt_path: str) -> list[str]:
         if not detail["match_result"]:
             dropped.append(f["id"])
             _info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
-    log_path = Path(review_file).parent / "verification.json"
-    log_path.write_text(json.dumps({
+    result = {
         "findings_checked": len(details),
         "findings_passed": len(details) - len(dropped),
         "findings_dropped": len(dropped),
+        "dropped": dropped,
         "details": details,
-    }, indent=2) + "\n")
-    if not dropped:
-        return []
-    path.write_text(_remove_dropped_findings(text, dropped))
-    return dropped
+    }
+    if dropped:
+        path.write_text(_remove_dropped_findings(text, dropped))
+    return result
 
 
 _EVIDENCE_BLOCK_START_RE = re.compile(r"^ {2,}>\s*```")
@@ -753,7 +751,7 @@ def post_process_findings(
     review_file: str,
     wt_path: str = "",
     prior_review: str = "",
-) -> None:
+) -> dict | None:
     if prior_review:
         orphaned = _check_orphaned_prior_ids(
             annotate_prior_with_stable_ids(prior_review),
@@ -761,13 +759,16 @@ def post_process_findings(
         )
         if orphaned:
             _warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
+    verification: dict | None = None
     if wt_path:
-        dropped = verify_findings(review_file, wt_path)
+        verification = verify_findings(review_file, wt_path)
+        dropped = verification["dropped"]
         if dropped:
             _info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     strip_evidence_blocks(review_file)
     strip_stable_ids(review_file)
     renumber_findings(review_file)
+    return verification
 
 
 def build_mechanical_review(

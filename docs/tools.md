@@ -31,6 +31,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
+| `otto-log` | Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |

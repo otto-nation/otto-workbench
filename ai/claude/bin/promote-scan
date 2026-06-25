@@ -10,14 +10,17 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _version import version_string as _version_string  # noqa: E402
+from trail import Trail, add_trail_args  # noqa: E402
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -387,8 +390,6 @@ def _resolve_workbench(raw: str) -> Path:
 
 
 def main() -> None:
-    import argparse
-
     default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
 
     parser = argparse.ArgumentParser(
@@ -398,6 +399,7 @@ def main() -> None:
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
     parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    add_trail_args(parser)
     args = parser.parse_args()
 
     if args.version:
@@ -406,24 +408,41 @@ def main() -> None:
 
     home = Path(os.path.expanduser(args.home))
     workbench = _resolve_workbench(args.workbench)
+    log_dir = os.path.expanduser("~/.config/workbench/logs/promote-scan")
+    trail = Trail.start(
+        script="promote-scan",
+        artifact_dir=log_dir,
+        context={"workbench": args.workbench},
+        debug=args.debug,
+    )
 
-    _info(f"Home: {home}")
-    _info(f"Workbench: {workbench}")
+    try:
+        _info(f"Home: {home}")
+        _info(f"Workbench: {workbench}")
 
-    memory_states = scan_memory_state(home)
-    _info(f"Found {len(memory_states)} project(s) with memory")
+        memory_states = scan_memory_state(home)
+        _info(f"Found {len(memory_states)} project(s) with memory")
+        trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
-    backed_up = scan_backed_up_memories(workbench)
-    _info(f"Found {len(backed_up)} backed-up memory file(s)")
+        backed_up = scan_backed_up_memories(workbench)
+        _info(f"Found {len(backed_up)} backed-up memory file(s)")
+        trail.info("scan_backed_up", f"found {len(backed_up)} backed-up memory files")
 
-    rules = scan_rules(workbench)
-    scripts = scan_scripts(workbench)
-    hooks = scan_hooks(workbench)
-    agents = scan_agents(workbench)
-    _info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
+        rules = scan_rules(workbench)
+        scripts = scan_scripts(workbench)
+        hooks = scan_hooks(workbench)
+        agents = scan_agents(workbench)
+        _info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
+        trail.info("scan_artifacts", f"found {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
 
-    report = format_report(memory_states, backed_up, rules, scripts, hooks, agents)
-    print(report)
+        report = format_report(memory_states, backed_up, rules, scripts, hooks, agents)
+        trail.info("generate_report", f"report generated, {len(report)} chars")
+        print(report)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

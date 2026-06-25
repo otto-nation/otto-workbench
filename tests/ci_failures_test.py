@@ -1,7 +1,6 @@
 """Tests for ci_failures library."""
 
 import sys
-import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -11,11 +10,10 @@ if str(LIB_DIR) not in sys.path:
 
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
-    CIState, empty_state, load_state, save_state, state_to_dict, state_from_dict,
-    compute_progression, sync_state, render_dashboard, extract_failure_context,
+    compute_progression, sync_ci_domain, render_dashboard, extract_failure_context,
     _MAX_CONTEXT_CHARS,
 )
-
+from pr_state import CIDomain
 
 
 def test_failure_item_fields():
@@ -61,16 +59,6 @@ def test_run_state_fields():
     assert run.conclusion == "failure"
 
 
-def test_ci_state_fields():
-    state = CIState(
-        repo="owner/repo", pr_number=42,
-        branch="isaac/feat/foo", runs={}, latest_run_id=None,
-    )
-    assert state.repo == "owner/repo"
-    assert state.pr_number == 42
-    assert state.latest_run_id is None
-
-
 def test_classify_job_shellcheck():
     assert classify_job("lint / shellcheck", []) == FailureKind.LINT
 
@@ -109,78 +97,6 @@ def test_classify_job_case_insensitive():
 def test_classify_job_no_infra_override_without_signature():
     annotations = ["SC2086: Double quote to prevent globbing"]
     assert classify_job("lint / shellcheck", annotations) == FailureKind.LINT
-
-
-def test_empty_state_fields():
-    state = empty_state("owner/repo", "isaac/feat/foo", pr_number=42)
-    assert state.repo == "owner/repo"
-    assert state.branch == "isaac/feat/foo"
-    assert state.pr_number == 42
-    assert state.runs == {}
-    assert state.latest_run_id is None
-
-
-def test_empty_state_no_pr():
-    state = empty_state("owner/repo", "main")
-    assert state.pr_number is None
-
-
-def test_load_state_missing_file():
-    result = load_state(Path("/nonexistent/worktree"))
-    assert result is None
-
-
-def test_save_and_load_roundtrip():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = empty_state("owner/repo", "main", pr_number=1)
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.repo == "owner/repo"
-        assert loaded.branch == "main"
-        assert loaded.pr_number == 1
-        assert loaded.runs == {}
-
-
-def test_save_creates_parent_directories():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp) / "nested" / "worktree"
-        state = empty_state("repo", "branch")
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-
-
-def test_state_roundtrip_with_run():
-    state = empty_state("owner/repo", "branch", pr_number=5)
-    item = FailureItem(
-        id="sc2086-bin-foo-42", annotation="SC2086: Double quote",
-        file="bin/foo.sh", line=42, diagnosis="Unquoted var",
-        fix_sha="abc123", outcome=Outcome.FIXED,
-    )
-    group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
-    run = RunState(
-        run_id=999, run_number=7, head_sha="def456",
-        status="completed", conclusion="failure",
-        fetched_at="2026-06-18T14:30:00+00:00",
-        failures={"shellcheck": group},
-    )
-    state.runs[999] = run
-    state.latest_run_id = 999
-
-    as_dict = state_to_dict(state)
-    restored = state_from_dict(as_dict)
-    assert restored.latest_run_id == 999
-    assert 999 in restored.runs
-    restored_run = restored.runs[999]
-    assert restored_run.head_sha == "def456"
-    assert "shellcheck" in restored_run.failures
-    restored_group = restored_run.failures["shellcheck"]
-    assert restored_group.kind == FailureKind.LINT
-    assert len(restored_group.items) == 1
-    assert restored_group.items[0].outcome == Outcome.FIXED
-    assert restored_group.items[0].fix_sha == "abc123"
 
 
 # ── Progression Tests ──────────────────────────────────────────────────────
@@ -239,22 +155,21 @@ def test_progression_mixed():
     assert result["c"] == Outcome.NEW
 
 
+# ── State Sync Tests (using CIDomain) ─────────────────────────────────────
 
-# ── State Sync Tests ──────────────────────────────────────────────────────
-
-def test_sync_state_adds_new_run():
-    state = empty_state("owner/repo", "branch")
+def test_sync_ci_domain_adds_new_run():
+    domain = CIDomain()
     run = RunState(
         run_id=100, run_number=1, head_sha="aaa",
         status="completed", conclusion="failure",
         fetched_at="2026-06-18T14:30:00+00:00", failures={},
     )
-    updated = sync_state(state, run)
-    assert 100 in updated.runs
+    updated = sync_ci_domain(domain, run)
+    assert "100" in updated.runs
     assert updated.latest_run_id == 100
 
 
-def test_sync_state_preserves_prior_diagnosis():
+def test_sync_ci_domain_preserves_prior_diagnosis():
     diagnosed_item = _make_item("a", diagnosis="root cause found", fix_sha="abc")
     prior_group = FailureGroup(
         job="shellcheck", kind=FailureKind.LINT, items=(diagnosed_item,),
@@ -265,9 +180,9 @@ def test_sync_state_preserves_prior_diagnosis():
         fetched_at="2026-06-18T00:00:00+00:00",
         failures={"shellcheck": prior_group},
     )
-    state = empty_state("owner/repo", "branch")
-    state.runs[100] = prior_run
-    state.latest_run_id = 100
+    domain = CIDomain()
+    domain.runs["100"] = prior_run
+    domain.latest_run_id = 100
 
     new_item = _make_item("a")
     new_group = FailureGroup(
@@ -280,9 +195,9 @@ def test_sync_state_preserves_prior_diagnosis():
         failures={"shellcheck": new_group},
     )
 
-    updated = sync_state(state, new_run)
+    updated = sync_ci_domain(domain, new_run)
     assert updated.latest_run_id == 200
-    synced_item = updated.runs[200].failures["shellcheck"].items[0]
+    synced_item = updated.runs["200"].failures["shellcheck"].items[0]
     assert synced_item.diagnosis == "root cause found"
     assert synced_item.fix_sha == "abc"
 

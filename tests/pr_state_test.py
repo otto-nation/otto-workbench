@@ -12,13 +12,15 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 from pr_state import (
-    PRIdentity, CISummary, ReviewSummary, CommentsSummary, TriageSummary,
+    PRIdentity, CIDomain, ReviewSummary, CommentsSummary, TriageSummary,
     RebaseSummary,
-    PRState, load_state, save_state, new_state, update_identity, update_ci,
+    PRState, load_state, save_state, new_state, update_identity, update_ci_domain,
     update_review, update_comments, update_triage, update_rebase,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
+    STATE_VERSION,
 )
+from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
 
 
 # ── Dataclass construction ──────────────────────────────────────────────────
@@ -33,12 +35,16 @@ def test_pr_identity_fields():
     assert ident.pr_number == 42
 
 
-def test_ci_summary_defaults():
-    ci = CISummary()
-    assert ci.last_run_id is None
+def test_ci_domain_defaults():
+    ci = CIDomain()
+    assert ci.conclusion == ""
     assert ci.failure_count == 0
     assert ci.failure_kinds == {}
+    assert ci.last_run_id is None
+    assert ci.last_run_number is None
     assert ci.updated_at == ""
+    assert ci.runs == {}
+    assert ci.latest_run_id is None
 
 
 def test_review_summary_defaults():
@@ -95,6 +101,12 @@ def test_new_state_no_pr():
 # ── Serialization roundtrip ─────────────────────────────────────────────────
 
 
+def test_state_to_dict_has_version():
+    state = new_state("owner/repo", "main", pr_number=1, head_sha="abc", worktree_root="/wt")
+    d = state_to_dict(state)
+    assert d["_version"] == STATE_VERSION
+
+
 def test_state_to_dict_and_back_empty():
     state = new_state("owner/repo", "main", pr_number=1, head_sha="abc", worktree_root="/wt")
     d = state_to_dict(state)
@@ -109,7 +121,7 @@ def test_state_to_dict_and_back_empty():
 
 def test_state_roundtrip_with_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_ci(state, CISummary(
+    update_ci_domain(state, CIDomain(
         last_run_id=999, last_run_number=7,
         conclusion="failure", failure_count=3,
         failure_kinds={"lint": 2, "test": 1},
@@ -162,6 +174,41 @@ def test_state_roundtrip_with_triage_data():
     assert restored.triage.updated_at == "2026-06-20T00:00:00+00:00"
 
 
+def test_state_roundtrip_with_ci_runs():
+    """CIDomain with nested RunState objects survives round-trip."""
+    item = FailureItem(
+        id="sc2086-bin-foo-42", annotation="SC2086: Double quote",
+        file="bin/foo.sh", line=42, diagnosis="Unquoted var",
+        fix_sha="abc123", outcome=Outcome.FIXED,
+    )
+    group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
+    run = RunState(
+        run_id=999, run_number=7, head_sha="def456",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T14:30:00+00:00",
+        failures={"shellcheck": group},
+    )
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="def456", worktree_root="/wt")
+    state.ci.runs["999"] = run
+    state.ci.latest_run_id = 999
+    state.ci.conclusion = "failure"
+    state.ci.failure_count = 1
+
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+
+    assert restored.ci.latest_run_id == 999
+    assert "999" in restored.ci.runs
+    restored_run = restored.ci.runs["999"]
+    assert restored_run.head_sha == "def456"
+    assert "shellcheck" in restored_run.failures
+    restored_group = restored_run.failures["shellcheck"]
+    assert restored_group.kind == FailureKind.LINT
+    assert len(restored_group.items) == 1
+    assert restored_group.items[0].outcome == Outcome.FIXED
+    assert restored_group.items[0].fix_sha == "abc123"
+
+
 # ── File I/O ────────────────────────────────────────────────────────────────
 
 
@@ -195,7 +242,7 @@ def test_save_preserves_ci_data():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_ci(state, CISummary(
+        update_ci_domain(state, CIDomain(
             last_run_id=100, conclusion="failure", failure_count=2,
             failure_kinds={"lint": 2}, updated_at="2026-06-20T00:00:00+00:00",
         ))
@@ -206,6 +253,26 @@ def test_save_preserves_ci_data():
         assert loaded.ci.last_run_id == 100
         assert loaded.ci.failure_count == 2
         assert loaded.ci.failure_kinds == {"lint": 2}
+
+
+def test_save_preserves_ci_runs():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        run = RunState(
+            run_id=200, run_number=3, head_sha="ghi",
+            status="completed", conclusion="failure",
+            fetched_at="2026-06-18T14:30:00+00:00", failures={},
+        )
+        state.ci.runs["200"] = run
+        state.ci.latest_run_id = 200
+        save_state(root, state)
+
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.ci.latest_run_id == 200
+        assert "200" in loaded.ci.runs
+        assert loaded.ci.runs["200"].run_number == 3
 
 
 def test_save_preserves_triage_data():
@@ -242,11 +309,11 @@ def test_update_identity_preserves_pr_when_none():
     assert state.identity.pr_number == 7
 
 
-def test_update_ci_replaces():
+def test_update_ci_domain_replaces():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_ci(state, CISummary(conclusion="success", updated_at="t1"))
+    update_ci_domain(state, CIDomain(conclusion="success", updated_at="t1"))
     assert state.ci.conclusion == "success"
-    update_ci(state, CISummary(conclusion="failure", failure_count=1, updated_at="t2"))
+    update_ci_domain(state, CIDomain(conclusion="failure", failure_count=1, updated_at="t2"))
     assert state.ci.conclusion == "failure"
     assert state.ci.failure_count == 1
 
@@ -359,7 +426,7 @@ def test_load_or_init_loads_existing_and_updates_identity():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=1, head_sha="old", worktree_root=tmp)
-        update_ci(state, CISummary(conclusion="failure", failure_count=3, updated_at="t"))
+        update_ci_domain(state, CIDomain(conclusion="failure", failure_count=3, updated_at="t"))
         save_state(root, state)
 
         loaded = load_or_init(

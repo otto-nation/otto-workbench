@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+from trail import Trail, add_trail_args
 from review_common import (
     FILENAME_GROUP,
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
@@ -78,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description="Rebuild review.md from group findings")
     parser.add_argument("--review-dir", required=True, help="Path to the review directory")
     parser.add_argument("--pr", required=True, help="PR number")
+    add_trail_args(parser)
     args = parser.parse_args()
 
     review_dir = Path(args.review_dir)
@@ -97,27 +99,53 @@ def main():
         sys.exit(1)
     mode = meta.get("mode", "")
 
-    merged_content = merge_reviews(group_files)
-
-    review_file.write_text(merged_content)
-    post_process_findings(str(review_file))
-    processed = review_file.read_text()
-
-    title = _build_title(meta, repo, args.pr)
-    meta_header = _build_meta_header(meta)
-
-    final = build_mechanical_review(
-        processed,
-        title=title,
-        meta_header=meta_header,
-        group_count=len(group_files),
-        summary_note=REBUILD_SUMMARY,
-        include_verdict=(mode != MODE_SELF),
-        file_count=meta.get("changed_files", 0),
+    trail = Trail.start(
+        script="review-rebuild",
+        artifact_dir=str(review_dir),
+        context={"repo": repo, "pr": args.pr},
+        debug=args.debug,
     )
 
-    review_file.write_text(final)
-    _info(f"Rebuilt {review_file}")
+    try:
+        trail.info("discover_groups", f"found {len(group_files)} group files",
+                   data={"count": len(group_files), "files": group_files})
+
+        merged_content = merge_reviews(group_files)
+        trail.info("merge_reviews", "merged group outputs",
+                   data={"group_count": len(group_files)})
+
+        review_file.write_text(merged_content)
+        verification = post_process_findings(str(review_file))
+        if verification:
+            v = verification
+            detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+            trail.info("evidence_verification", detail, data=v)
+        processed = review_file.read_text()
+
+        title = _build_title(meta, repo, args.pr)
+        meta_header = _build_meta_header(meta)
+
+        final = build_mechanical_review(
+            processed,
+            title=title,
+            meta_header=meta_header,
+            group_count=len(group_files),
+            summary_note=REBUILD_SUMMARY,
+            include_verdict=(mode != MODE_SELF),
+            file_count=meta.get("changed_files", 0),
+        )
+
+        review_file.write_text(final)
+        _info(f"Rebuilt {review_file}")
+
+        finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
+        trail.info("post_process", f"processed {len(finding_lines)} findings",
+                   data={"finding_count": len(finding_lines), "review_file": str(review_file)})
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

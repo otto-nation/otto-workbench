@@ -31,23 +31,22 @@ or `/ci-failures <branch_name>`.
 
 ### 1. Fetch status and display dashboard
 
-Run the CI check script to fetch the latest run, classify failures, and display status.
+Run the `pr ci` wrapper to fetch the latest run, classify failures, and display
+status. The wrapper handles branch resolution, repo detection, and context
+injection — pass arguments through directly:
 
-Route the argument to the correct `ci-check` flag — the script handles branch
-resolution internally via `pr_context`:
+- **Branch name** (contains `/` or is not numeric): `pr ci --branch <argument> 2>&1`
+- **PR number** (small integer): `pr ci --pr <number> 2>&1`
+- **Run ID** (large integer): `pr ci --run <run_id> 2>&1`
+- **No argument**: `pr ci 2>&1`
 
-- **Branch name** (contains `/` or is not numeric): `ci-check --branch <argument> 2>&1`
-- **PR number** (small integer): `ci-check --pr <number> 2>&1`
-- **Run ID** (large integer): `ci-check --run <run_id> 2>&1`
-- **No argument**: `ci-check 2>&1`
-
-The script auto-detects the repo, branch, and worktree root from CWD. Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).
+Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).
 
 The script outputs:
 - **stderr:** Human-readable dashboard (run number, commit, failure counts by kind, progression)
 - **stdout:** Structured JSON report with all failures, classifications, and progression markers
 
-**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — the scripts handle all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
+**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
 If all checks pass (conclusion is "success" and no failures), report that CI is green and stop.
 
@@ -102,7 +101,7 @@ git commit -m "fix: address CI failures from run #<number>"
 git push
 ```
 
-Group all fixes into a single commit. The state file is updated automatically on the next `ci-check` invocation.
+Group all fixes into a single commit. The state file is updated automatically on the next `pr ci` invocation.
 
 ### 5. Monitor (on re-invocation)
 

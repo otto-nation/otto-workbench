@@ -10,6 +10,8 @@ State file: ``<worktree>/.workbench/state.json``
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -233,10 +235,47 @@ def load_state(worktree_root: Path) -> PRState | None:
     return state_from_dict(data)
 
 
+def _ensure_gitignored(worktree_root: Path) -> None:
+    """Append .workbench/ to the repo's .gitignore if not already ignored.
+
+    Skips silently when worktree_root is not inside a git repository.
+    """
+    try:
+        toplevel = subprocess.run(
+            ["git", "-C", str(worktree_root), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if toplevel.returncode != 0:
+            return
+    except FileNotFoundError:
+        return
+
+    result = subprocess.run(
+        ["git", "-C", str(worktree_root), "check-ignore", "-q", STATE_DIR],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return
+
+    repo_root = Path(toplevel.stdout.strip())
+    gitignore = repo_root / ".gitignore"
+    needs_newline = False
+    if gitignore.exists():
+        content = gitignore.read_text()
+        needs_newline = content and not content.endswith("\n")
+    prefix = "\n" if needs_newline else ""
+    with open(gitignore, "a") as f:
+        f.write(f"{prefix}\n# Worktree-local state (pr CLI)\n{STATE_DIR}/\n")
+    print(f"pr_state: added {STATE_DIR}/ to .gitignore", file=sys.stderr)
+
+
 def save_state(worktree_root: Path, state: PRState) -> None:
     """Save unified PR state, creating directories as needed."""
     path = worktree_root / STATE_DIR / STATE_FILE
+    created = not path.parent.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
+    if created:
+        _ensure_gitignored(worktree_root)
     state.updated_at = datetime.now(timezone.utc).isoformat()
     with open(path, "w") as f:
         json.dump(state_to_dict(state), f, indent=2)

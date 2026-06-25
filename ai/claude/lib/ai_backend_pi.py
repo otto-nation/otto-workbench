@@ -23,13 +23,12 @@ Gaps vs Claude Code CLI:
 from __future__ import annotations
 
 import json
-import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
 
-from ai_backend_events import StreamEvent, parse_pi_event
+from ai_backend_events import parse_pi_event
 from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
@@ -42,6 +41,7 @@ def _read_agent_prompt(agent: str) -> str | None:
     agent_file = AGENTS_DIR / f"{agent}.md"
     if agent_file.is_file():
         return agent_file.read_text()
+    print(f"  warning: agent file not found: {agent_file}", file=sys.stderr)
     return None
 
 
@@ -106,7 +106,6 @@ def _stream_progress_pi(process: subprocess.Popen, session_log: str, label: str 
                     print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
                 prev_tool = event.tool_label
 
-            # Count turns for max_turns enforcement
             if max_turns is not None:
                 try:
                     data = json.loads(raw_line)
@@ -116,6 +115,7 @@ def _stream_progress_pi(process: subprocess.Popen, session_log: str, label: str 
                     turn_count += 1
                     if turn_count >= max_turns:
                         process.send_signal(signal.SIGTERM)
+                        process.stdout.close()
                         break
 
 
@@ -183,6 +183,17 @@ def invoke_fix(
     model: str | None = None,
 ) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
+    if max_turns is not None:
+        print(f"  {ANSI_DIM}(pi backend: --max-turns not supported in fix mode, ignoring){ANSI_RESET}",
+              file=sys.stderr)
+
+    dir_context = ""
+    if add_dirs:
+        dir_lines = "\n".join(f"  - {d}" for d in add_dirs)
+        dir_context = f"\nAccessible directories:\n{dir_lines}\n\n"
+
+    full_prompt = dir_context + prompt if dir_context else prompt
+
     cmd = _build_fix_cmd(model=model)
     proc = subprocess.Popen(
         cmd,
@@ -191,7 +202,7 @@ def invoke_fix(
         stderr=sys.stderr,
         text=True,
     )
-    proc.stdin.write(prompt)
+    proc.stdin.write(full_prompt)
     proc.stdin.close()
     for line in proc.stdout:
         print(line, end="", file=sys.stderr)

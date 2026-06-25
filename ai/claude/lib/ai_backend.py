@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import types
 
 ENV_AI_BACKEND = "AI_BACKEND"
 BACKEND_CLAUDE = "claude"
@@ -18,7 +19,7 @@ def _backend() -> str:
     return os.environ.get(ENV_AI_BACKEND, BACKEND_CLAUDE)
 
 
-def _get_module():
+def _get_module() -> "types.ModuleType":
     backend = _backend()
     if backend == BACKEND_PI:
         import ai_backend_pi as mod

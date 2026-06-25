@@ -246,7 +246,7 @@ def _render_fix_template(
     )
 
 
-def _invoke_fix_agent(prompt: str, wt_path: Path, tracking_dir: Path) -> int:
+def _invoke_fix_agent(prompt: str, wt_path: Path) -> int:
     """Run AI agent to apply fixes. Returns exit code."""
     return ai_backend.invoke_fix(
         prompt,
@@ -427,7 +427,7 @@ def _run_comment_fix(
     )
 
     print("Fix pass — applying review comment suggestions...", file=sys.stderr)
-    _invoke_fix_agent(prompt, wt_path, tracking_dir)
+    _invoke_fix_agent(prompt, wt_path)
     print(file=sys.stderr)
 
     after = _count_unchecked(tracking_file)

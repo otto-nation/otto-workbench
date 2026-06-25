@@ -6,50 +6,14 @@ Implements prompt(), invoke_agent(), and invoke_fix() by building
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
-from pathlib import Path
 
+from ai_backend_events import parse_claude_event
 from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 
 
 # ── Stream progress ───────────────────────────────────────────────────────────
-
-
-def _tool_label_from_block(block: dict) -> str:
-    if block.get("type") != "tool_use":
-        return ""
-    inp = block.get("input", {})
-    name = block.get("name", "")
-    if inp.get("description"):
-        return inp["description"]
-    if name == "Read":
-        return "Read " + (inp.get("file_path", "").split("/")[-1] or "")
-    if name == "Grep":
-        return "Grep " + inp.get("pattern", "")
-    if name == "Glob":
-        return "Glob " + inp.get("pattern", "")
-    if name == "Write":
-        return "Write " + (inp.get("file_path", "").split("/")[-1] or "")
-    return name
-
-
-def _process_stream_line(raw_line: str, prev_tool: str, prefix: str) -> str:
-    try:
-        data = json.loads(raw_line)
-    except (json.JSONDecodeError, ValueError):
-        return prev_tool
-    if data.get("type") != "assistant":
-        return prev_tool
-    for block in data.get("message", {}).get("content", []):
-        tool_label = _tool_label_from_block(block)
-        if not tool_label or tool_label == prev_tool:
-            continue
-        with _print_lock:
-            print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
-        prev_tool = tool_label
-    return prev_tool
 
 
 def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""):
@@ -59,7 +23,11 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
         for raw_line in process.stdout:
             log.write(raw_line)
             log.flush()
-            prev_tool = _process_stream_line(raw_line, prev_tool, prefix)
+            event = parse_claude_event(raw_line)
+            if event and event.tool_label != prev_tool:
+                with _print_lock:
+                    print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
+                prev_tool = event.tool_label
 
 
 # ── Command builders ──────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
+REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
 
 
 # Session-scoped: the module is loaded once and shared across all tests.
@@ -45,3 +46,14 @@ def ro():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["review_orchestrate"]
+
+
+@pytest.fixture(scope="session")
+def rt():
+    loader = importlib.machinery.SourceFileLoader("review_threads", str(REVIEW_THREADS))
+    spec = importlib.util.spec_from_loader("review_threads", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["review_threads"] = mod
+    spec.loader.exec_module(mod)
+    yield mod
+    del sys.modules["review_threads"]

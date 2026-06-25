@@ -2547,8 +2547,10 @@ print(rc)
 @test "invoke_agent: logs stderr on failure" {
   result=$(_py "
 import subprocess, os, ai_backend_claude as abc
+original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
 mod.invoke_agent('test', '$TMPDIR/stderr_test.jsonl', '/tmp', '/tmp')
+abc._build_agent_cmd = original
 content = open('$TMPDIR/stderr_test.jsonl').read()
 print('has_stderr=' + str('agent-error-msg' in content))
 ")
@@ -2851,9 +2853,10 @@ print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in c
   result=$(_py '
 import ai_backend_claude as abc
 cmd = abc._build_agent_cmd(add_dirs=["/tmp"], thinking_level="high")
-print(type(cmd).__name__)
+print(type(cmd).__name__, "--thinking" not in cmd)
 ')
-  [ "$result" = "list" ]
+  [[ "$result" == *"list"* ]]
+  [[ "$result" == *"True"* ]]
 }
 
 @test "parse_pi_cost: extracts cost from message_end" {
@@ -2908,7 +2911,7 @@ print(rec['type'], rec['subtype'], f'{rec[\"total_cost_usd\"]:.2f}', rec['num_tu
 print(rec['usage']['input_tokens'], rec['usage']['output_tokens'])
 print(rec['usage']['cache_read_input_tokens'], rec['usage']['cache_creation_input_tokens'])
 ")
-  [[ "$result" == *"result completed 1.25 5"* ]]
+  [[ "$result" == *"result success 1.25 5"* ]]
   [[ "$result" == *"1000 500"* ]]
   [[ "$result" == *"200 100"* ]]
 }

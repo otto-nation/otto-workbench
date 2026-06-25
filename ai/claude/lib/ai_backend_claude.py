@@ -9,7 +9,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from ai_backend_events import parse_claude_event
+from ai_backend_events import _log_stderr_on_failure, parse_claude_event
 from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 
 
@@ -38,24 +38,30 @@ def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""
 # ── Command builders ──────────────────────────────────────────────────────────
 
 
+def _base_cmd() -> list[str]:
+    """Shared flags used by both agent and fix commands."""
+    return [
+        "claude", "-p", "--bare", "--verbose",
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", "Bash(*)",
+        "--disable-slash-commands",
+    ]
+
+
 def _build_agent_cmd(
     add_dirs: list[str],
     agent: str | None = None,
     max_turns: int | None = None,
     max_budget: float | None = None,
     model: str | None = None,
+    # thinking_level is accepted for API compatibility but intentionally unused:
+    # Claude Code CLI has no --thinking flag.
     thinking_level: str | None = None,
 ) -> list[str]:
     add_dir_args = []
     for d in add_dirs:
         add_dir_args += ["--add-dir", d]
-    cmd = [
-        "claude", "-p", "--bare", "--verbose", "--output-format", "stream-json",
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", "Bash(*)",
-        "--disable-slash-commands",
-        *add_dir_args,
-    ]
+    cmd = [*_base_cmd(), "--output-format", "stream-json", *add_dir_args]
     if agent:
         cmd += ["--agent", agent]
     if max_turns is not None:
@@ -71,18 +77,14 @@ def _build_fix_cmd(
     add_dirs: list[str],
     max_turns: int | None = None,
     model: str | None = None,
+    # thinking_level is accepted for API compatibility but intentionally unused:
+    # Claude Code CLI has no --thinking flag.
     thinking_level: str | None = None,
 ) -> list[str]:
     add_dir_args = []
     for d in add_dirs:
         add_dir_args += ["--add-dir", d]
-    cmd = [
-        "claude", "-p", "--bare", "--verbose",
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", "Bash(*)",
-        "--disable-slash-commands",
-        *add_dir_args,
-    ]
+    cmd = [*_base_cmd(), *add_dir_args]
     if max_turns is not None:
         cmd += ["--max-turns", str(max_turns)]
     if model:
@@ -95,16 +97,6 @@ def _build_prompt_cmd(model: str | None = None) -> list[str]:
     if model:
         cmd += ["--model", model]
     return cmd
-
-
-def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
-    if proc.returncode == 0:
-        return
-    stderr_output = proc.stderr.read()
-    if not stderr_output:
-        return
-    with open(session_log, "a") as f:
-        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
 
 
 # ── Public interface ──────────────────────────────────────────────────────────

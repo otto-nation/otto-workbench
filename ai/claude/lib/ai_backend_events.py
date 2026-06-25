@@ -8,7 +8,19 @@ works identically regardless of backend.
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
+
+
+def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
+    """Append stderr to the session log when a subprocess exits non-zero."""
+    if proc.returncode == 0:
+        return
+    stderr_output = proc.stderr.read()
+    if not stderr_output:
+        return
+    with open(session_log, "a") as f:
+        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
 
 
 @dataclass

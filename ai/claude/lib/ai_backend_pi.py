@@ -36,7 +36,7 @@ import sys
 import time
 from pathlib import Path
 
-from ai_backend_events import parse_pi_cost, parse_pi_event
+from ai_backend_events import _log_stderr_on_failure, parse_pi_cost, parse_pi_event
 from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
@@ -74,8 +74,9 @@ def _build_agent_cmd(
     ]
     if agent:
         agent_prompt = _read_agent_prompt(agent)
-        if agent_prompt:
-            cmd += ["--append-system-prompt", agent_prompt]
+        if agent_prompt is None:
+            raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
+        cmd += ["--append-system-prompt", agent_prompt]
     if model:
         cmd += ["--model", model]
     if thinking_level:
@@ -96,16 +97,6 @@ def _build_fix_cmd(
     if thinking_level:
         cmd += ["--thinking", thinking_level]
     return cmd
-
-
-def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
-    if proc.returncode == 0:
-        return
-    stderr_output = proc.stderr.read()
-    if not stderr_output:
-        return
-    with open(session_log, "a") as f:
-        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
 
 
 # ── RPC protocol helpers ─────────────────────────────────────────────────────
@@ -242,7 +233,7 @@ def _write_result_record(
 
     record = {
         "type": "result",
-        "subtype": stop_reason if stop_reason == "success" else stop_reason,
+        "subtype": "success" if stop_reason == "completed" else stop_reason,
         "is_error": False,
         "total_cost_usd": stats.get("cost", cost),
         "num_turns": turn_count,

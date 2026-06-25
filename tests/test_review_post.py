@@ -1634,23 +1634,38 @@ class TestFindingIdRegexEdgeCases:
         line = "- **[M1]** <!-- sid:abc12345 --> **`file.go:10`** — body"
         m = rp.FINDING_ID_RE.match(line)
         assert m is not None
-        assert m.group(1) == "M"
-        assert m.group(2) == "1"
+        assert m.group(2) == "M"
+        assert m.group(3) == "1"
 
     def test_checkbox_and_strikethrough_combined(self, rp):
-        # The regex has optional checkbox then optional strikethrough
         line = "- [ ] ~~**[S1]** **`file.go:5`** — Fix~~"
         m = rp.FINDING_ID_RE.match(line)
         assert m is not None
-        assert m.group(1) == "S"
-        assert m.group(2) == "1"
+        assert m.group(1) == " "
+        assert m.group(2) == "S"
+        assert m.group(3) == "1"
 
     def test_double_digit_seq(self, rp):
         line = "- **[M12]** **`file.go:10`** — body"
         m = rp.FINDING_ID_RE.match(line)
         assert m is not None
-        assert m.group(1) == "M"
-        assert m.group(2) == "12"
+        assert m.group(2) == "M"
+        assert m.group(3) == "12"
+
+    def test_checked_checkbox(self, rp):
+        line = "- [x] **[M1]** **`file.go:10`** — body"
+        m = rp.FINDING_ID_RE.match(line)
+        assert m is not None
+        assert m.group(1) == "x"
+        assert m.group(2) == "M"
+        assert m.group(3) == "1"
+
+    def test_no_checkbox(self, rp):
+        line = "- **[M1]** **`file.go:10`** — body"
+        m = rp.FINDING_ID_RE.match(line)
+        assert m is not None
+        assert m.group(1) is None
+        assert m.group(2) == "M"
 
 
 class TestFirstFileRegexEdgeCases:

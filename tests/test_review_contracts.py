@@ -238,8 +238,8 @@ class TestFindingIdRegex:
     def test_standard_finding_format(self, severity, seq, line):
         m = review_findings.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match: {line!r}"
-        assert m.group(1) == severity
-        assert int(m.group(2)) == seq
+        assert m.group(2) == severity
+        assert int(m.group(3)) == seq
 
     @pytest.mark.parametrize(
         "line",
@@ -269,8 +269,8 @@ class TestFindingIdRegex:
         line = '- **[N7]** **`foo.py:1`** — trailing whitespace'
         m = review_findings.FINDING_ID_RE.match(line)
         assert m is not None
-        assert m.group(1) == "N"
-        assert m.group(2) == "7"
+        assert m.group(2) == "N"
+        assert m.group(3) == "7"
 
     def test_agent_example_format_from_reviewer_md(self):
         reviewer_path = AGENTS_DIR / "reviewer.md"

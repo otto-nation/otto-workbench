@@ -8,7 +8,9 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import review_findings
 import review_pipeline
+from review_findings import Finding
 
 
 class TestCountUnchecked:
@@ -133,3 +135,221 @@ class TestCommitFixes:
         commit_call = mock_run.call_args_list[2]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
+
+
+class TestParseCheckboxState:
+    def test_unchecked_finding(self):
+        text = "## Must fix\n- [ ] **[M1]** **`file.go:10`** — Bug found\n"
+        findings = review_findings.parse_findings(text)
+        assert len(findings) == 1
+        assert findings[0].checked is False
+
+    def test_checked_finding(self):
+        text = "## Must fix\n- [x] **[M1]** **`file.go:10`** — Bug fixed\n"
+        findings = review_findings.parse_findings(text)
+        assert len(findings) == 1
+        assert findings[0].checked is True
+
+    def test_no_checkbox_finding(self):
+        text = "## Must fix\n- **[M1]** **`file.go:10`** — Bug found\n"
+        findings = review_findings.parse_findings(text)
+        assert len(findings) == 1
+        assert findings[0].checked is False
+
+    def test_mixed_checkbox_states(self):
+        text = (
+            "## Must fix\n"
+            "- [x] **[M1]** **`a.go:1`** — Fixed\n"
+            "- [ ] **[M2]** **`b.go:2`** — Not fixed\n"
+            "## Nit\n"
+            "- [x] **[N1]** **`c.go:3`** — Also fixed\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert len(findings) == 3
+        by_id = {f.id: f for f in findings}
+        assert by_id["M1"].checked is True
+        assert by_id["M2"].checked is False
+        assert by_id["N1"].checked is True
+
+
+class TestExtractSkipReasons:
+    def test_extracts_skip_reason_em_dash(self):
+        findings = [Finding(
+            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
+            body="*(skipped — requires design decision)* — Some finding body",
+        )]
+        review_findings.extract_skip_reasons(findings)
+        assert findings[0].skip_reason == "requires design decision"
+
+    def test_extracts_skip_reason_double_hyphen(self):
+        findings = [Finding(
+            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
+            body="*(skipped -- needs confirmation)* — body",
+        )]
+        review_findings.extract_skip_reasons(findings)
+        assert findings[0].skip_reason == "needs confirmation"
+
+    def test_no_skip_reason(self):
+        findings = [Finding(
+            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
+            body="Plain finding body",
+        )]
+        review_findings.extract_skip_reasons(findings)
+        assert findings[0].skip_reason == ""
+
+    def test_skips_checked_findings(self):
+        findings = [Finding(
+            id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None,
+            body="*(skipped — stale)* — body", checked=True,
+        )]
+        review_findings.extract_skip_reasons(findings)
+        assert findings[0].skip_reason == ""
+
+
+class TestDiffFindings:
+    def _finding(self, fid, checked=False, skip_reason=""):
+        sev = fid[0]
+        seq = int(fid[1:])
+        return Finding(
+            id=fid, severity=sev, seq=seq, path="file.go",
+            line=1, end_line=None, body="body",
+            checked=checked, skip_reason=skip_reason,
+        )
+
+    def test_finding_fixed(self):
+        before = [self._finding("M1", checked=False)]
+        after = [self._finding("M1", checked=True)]
+        result = review_pipeline._diff_findings(before, after)
+        assert result.fixed_count == 1
+        assert result.skipped_count == 0
+
+    def test_finding_skipped_with_reason(self):
+        before = [self._finding("S1", checked=False)]
+        after = [self._finding("S1", checked=False, skip_reason="needs design")]
+        result = review_pipeline._diff_findings(before, after)
+        assert result.fixed_count == 0
+        assert result.skipped_count == 1
+        assert result.skipped[0].skip_reason == "needs design"
+
+    def test_finding_skipped_without_reason(self):
+        before = [self._finding("N1", checked=False)]
+        after = [self._finding("N1", checked=False)]
+        result = review_pipeline._diff_findings(before, after)
+        assert result.fixed_count == 0
+        assert result.skipped_count == 1
+
+    def test_already_checked_is_unchanged(self):
+        before = [self._finding("M1", checked=True)]
+        after = [self._finding("M1", checked=True)]
+        result = review_pipeline._diff_findings(before, after)
+        assert result.fixed_count == 0
+        assert result.skipped_count == 0
+        assert len(result.unchanged) == 1
+
+    def test_mixed_outcomes(self):
+        before = [
+            self._finding("M1", checked=False),
+            self._finding("S1", checked=False),
+            self._finding("N1", checked=True),
+        ]
+        after = [
+            self._finding("M1", checked=True),
+            self._finding("S1", checked=False, skip_reason="design choice"),
+            self._finding("N1", checked=True),
+        ]
+        result = review_pipeline._diff_findings(before, after)
+        assert result.fixed_count == 1
+        assert result.skipped_count == 1
+        assert len(result.unchanged) == 1
+
+
+class TestFormatFixSummary:
+    def _finding(self, fid, body="body", skip_reason=""):
+        sev = fid[0]
+        seq = int(fid[1:])
+        return Finding(
+            id=fid, severity=sev, seq=seq, path="file.go",
+            line=1, end_line=None, body=body,
+            checked=True, skip_reason=skip_reason,
+        )
+
+    def test_fixed_and_skipped(self):
+        result = review_pipeline.FixPassResult(
+            fixed=[self._finding("M1", body="corrected condition")],
+            skipped=[self._finding("S1", body="body", skip_reason="needs design")],
+            unchanged=[],
+        )
+        summary = review_pipeline._format_fix_summary(result)
+        assert "Fixed:" in summary
+        assert "[M1]" in summary
+        assert "corrected condition" in summary
+        assert "Skipped:" in summary
+        assert "[S1]" in summary
+        assert "needs design" in summary
+
+    def test_empty_result(self):
+        result = review_pipeline.FixPassResult(fixed=[], skipped=[], unchanged=[])
+        assert review_pipeline._format_fix_summary(result) == ""
+
+    def test_skipped_without_reason_uses_default(self):
+        result = review_pipeline.FixPassResult(
+            fixed=[],
+            skipped=[self._finding("N1", body="body", skip_reason="")],
+            unchanged=[],
+        )
+        summary = review_pipeline._format_fix_summary(result)
+        assert "no auto-fix" in summary
+
+
+class TestCommitFixesWithSummary:
+    def _make_job(self, tmp_path):
+        job = MagicMock()
+        job.wt_path = str(tmp_path / "worktree")
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_commit_includes_summary(self, mock_run, mock_push, tmp_path):
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
+        review_pipeline._commit_fixes(job, fixed=1, skipped=1, summary=summary)
+        commit_call = mock_run.call_args_list[2]
+        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        assert "1 fixed, 1 skipped" in msg
+        assert "corrected condition" in msg
+        assert "needs design" in msg
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_commit_without_summary(self, mock_run, mock_push, tmp_path):
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        review_pipeline._commit_fixes(job, fixed=2, skipped=0, summary="")
+        commit_call = mock_run.call_args_list[2]
+        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        assert "2 fixed, 0 skipped" in msg
+        assert msg.count("\n\n") == 1
+
+
+class TestTurnBudgetScaling:
+    def test_small_review_uses_default(self):
+        turns = review_pipeline._fix_turn_budget(5)
+        assert turns == review_pipeline.DEFAULT_MAX_TURNS_FIX
+
+    def test_large_review_scales_up(self):
+        turns = review_pipeline._fix_turn_budget(25)
+        assert turns == 50
+
+    def test_very_large_review_caps(self):
+        turns = review_pipeline._fix_turn_budget(100)
+        assert turns == review_pipeline.MAX_TURNS_FIX_CAP

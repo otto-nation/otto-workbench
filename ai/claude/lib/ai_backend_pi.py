@@ -31,6 +31,7 @@ Gaps vs Claude Code CLI:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -46,12 +47,6 @@ PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
 REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "pi" / "extensions" / "review-guard.ts"
 
 
-class _NullLog:
-    """Sink for stream events when no session log is needed."""
-    def write(self, _): pass
-    def flush(self): pass
-
-
 def _read_agent_prompt(agent: str) -> str | None:
     """Read an agent's system prompt from ~/.claude/agents/<name>.md."""
     agent_file = AGENTS_DIR / f"{agent}.md"
@@ -61,10 +56,20 @@ def _read_agent_prompt(agent: str) -> str | None:
     return None
 
 
+AGENT_PROTOCOL_PLACEHOLDER = "AGENT_PROTOCOL_PLACEHOLDER"
+
+
 def _resolve_skill_path(agent: str) -> Path | None:
-    """Check if a Pi-format SKILL.md exists for the given agent name."""
+    """Check if a Pi-format SKILL.md exists for the given agent name.
+
+    Returns None if the file is missing or still contains the unresolved placeholder.
+    """
     skill_file = PI_SKILLS_DIR / agent / "SKILL.md"
-    return skill_file if skill_file.is_file() else None
+    if not skill_file.is_file():
+        return None
+    if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():
+        return None
+    return skill_file
 
 
 # ── Command builders ──────────────────────────────────────────────────────────
@@ -422,15 +427,14 @@ def invoke_fix(
 
     _send(proc, {"type": "prompt", "message": full_prompt})
 
-    log_file = open(session_log, "w") if session_log else None
+    log_file = open(session_log, "w") if session_log else open(os.devnull, "w")
     try:
         turn_count, accumulated_cost, stop_reason = _consume_stream(
-            proc, log_file or _NullLog(), "",
+            proc, log_file, "",
             max_turns=max_turns, max_budget=max_budget,
         )
     finally:
-        if log_file:
-            log_file.close()
+        log_file.close()
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 

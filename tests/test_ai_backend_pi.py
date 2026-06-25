@@ -38,6 +38,8 @@ class TestBuildFixCmd:
         cmd = ai_backend_pi._build_fix_cmd()
         assert "--model" not in cmd
         assert "--thinking" not in cmd
+        assert "--provider" not in cmd
+        assert "--extension" not in cmd
 
 
 class TestBuildAgentCmd:
@@ -78,21 +80,21 @@ class TestBuildAgentCmd:
 
 
 class TestCheckLimits:
+    class MockStdin:
+        def __init__(self):
+            self.commands = []
+        def write(self, data):
+            self.commands.append(json.loads(data.strip()))
+        def flush(self):
+            pass
+
+    class MockProc:
+        def __init__(self, stdin_cls):
+            self.stdin = stdin_cls()
+
     def _make_proc(self):
         """Create a mock process with stdin that records writes."""
-        class MockStdin:
-            def __init__(self):
-                self.commands = []
-            def write(self, data):
-                self.commands.append(json.loads(data.strip()))
-            def flush(self):
-                pass
-
-        class MockProc:
-            def __init__(self):
-                self.stdin = MockStdin()
-
-        return MockProc()
+        return self.MockProc(self.MockStdin)
 
     def test_no_action_within_limits(self):
         proc = self._make_proc()
@@ -116,6 +118,13 @@ class TestCheckLimits:
         proc = self._make_proc()
         stop, steered = ai_backend_pi._check_limits(proc, 5, 4.1, 10, 5.0)
         assert stop is None
+        assert any(c["type"] == "steer" for c in proc.stdin.commands)
+
+    def test_steer_at_exact_80_pct_budget_boundary(self):
+        proc = self._make_proc()
+        stop, steered = ai_backend_pi._check_limits(proc, 5, 4.0, 10, 5.0)
+        assert stop is None
+        assert steered is True
         assert any(c["type"] == "steer" for c in proc.stdin.commands)
 
     def test_steer_at_80_pct_turns(self):
@@ -172,6 +181,15 @@ class TestResolveSkillPath:
     def test_returns_none_when_no_skill(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "pi" / "skills"
         skills_dir.mkdir(parents=True)
+        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        assert ai_backend_pi._resolve_skill_path("reviewer") is None
+
+    def test_returns_none_when_placeholder_present(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "pi" / "skills"
+        reviewer_dir = skills_dir / "reviewer"
+        reviewer_dir.mkdir(parents=True)
+        skill_file = reviewer_dir / "SKILL.md"
+        skill_file.write_text("---\nname: reviewer\n---\n<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced by setup -->\n")
         monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
         assert ai_backend_pi._resolve_skill_path("reviewer") is None
 
@@ -240,3 +258,9 @@ class TestExtensionFlag:
         assert "--extension" in cmd
         idx = cmd.index("--extension")
         assert cmd[idx + 1] == "/path/to/review-guard.ts"
+
+    def test_prompt_cmd_does_not_accept_extension(self):
+        """_build_prompt_cmd intentionally omits --extension (stateless, no tool gating)."""
+        import inspect
+        sig = inspect.signature(ai_backend_pi._build_prompt_cmd)
+        assert "extension" not in sig.parameters

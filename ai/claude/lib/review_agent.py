@@ -154,6 +154,10 @@ def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | N
     return default
 
 
+def _resolve_provider() -> str | None:
+    return os.environ.get("CLAUDE_REVIEW_PROVIDER")
+
+
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 

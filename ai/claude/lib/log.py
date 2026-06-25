@@ -15,13 +15,13 @@ ANSI_DIM = "" if _NO_COLOR else "\033[2m"
 ANSI_BOLD = "" if _NO_COLOR else "\033[1m"
 ANSI_RESET = "" if _NO_COLOR else "\033[0m"
 
-ANSI_INFO = "" if _NO_COLOR else "\033[1;34m▸\033[0m"
-ANSI_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
-ANSI_ERR = "" if _NO_COLOR else "\033[1;31m✗\033[0m"
-ANSI_OK = "" if _NO_COLOR else "\033[1;32m✓\033[0m"
-ANSI_INFO_DOT = "" if _NO_COLOR else "\033[1;34m●\033[0m"
-ANSI_WARN_DOT = "" if _NO_COLOR else "\033[1;33m●\033[0m"
-ANSI_ERR_DOT = "" if _NO_COLOR else "\033[1;31m●\033[0m"
+ANSI_INFO = "▸" if _NO_COLOR else "\033[1;34m▸\033[0m"
+ANSI_WARN = "⚠" if _NO_COLOR else "\033[1;33m⚠\033[0m"
+ANSI_ERR = "✗" if _NO_COLOR else "\033[1;31m✗\033[0m"
+ANSI_OK = "✓" if _NO_COLOR else "\033[1;32m✓\033[0m"
+ANSI_INFO_DOT = "●" if _NO_COLOR else "\033[1;34m●\033[0m"
+ANSI_WARN_DOT = "●" if _NO_COLOR else "\033[1;33m●\033[0m"
+ANSI_ERR_DOT = "●" if _NO_COLOR else "\033[1;31m●\033[0m"
 
 _print_lock = threading.Lock()
 

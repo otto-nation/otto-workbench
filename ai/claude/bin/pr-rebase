@@ -549,8 +549,7 @@ def _rebase_success(
         print(f"{label} — force-pushing...", file=sys.stderr)
         r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
         if r.returncode == 0:
-            if _trail:
-                _trail.info("force_push", "force-pushed to remote")
+            _trail and _trail.info("force_push", "force-pushed to remote")
         else:
             _terr("force_push", "force-push failed", data={"exit_code": r.returncode})
         pr_state.update_rebase(state, pr_state.RebaseSummary(

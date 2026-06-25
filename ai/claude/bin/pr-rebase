@@ -2,7 +2,7 @@
 """Rebase current branch onto origin/main with conflict detection and AI resolution.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
-With --fix, automatically resolves merge conflicts using claude -p.
+With --fix, automatically resolves merge conflicts using AI.
 Outputs structured JSON on stdout and status messages on stderr.
 Updates PR state in <worktree>/.workbench/state.json.
 
@@ -21,13 +21,13 @@ Usage:
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import ai_backend
 import pr_context
 import pr_state
 from trail import Trail, add_trail_args
@@ -153,7 +153,7 @@ def _is_binary(path: Path) -> bool:
 
 
 def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -> str:
-    """Build a prompt for claude -p to resolve a merge conflict."""
+    """Build a prompt to resolve a merge conflict."""
     return (
         f"You are resolving a merge conflict during a git rebase onto {_TARGET_REF}.\n"
         "\n"
@@ -182,7 +182,7 @@ def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -
 
 
 def _parse_resolved_content(stdout: str) -> str | None:
-    """Extract resolved file content from claude -p output."""
+    """Extract resolved file content from AI output."""
     begin = stdout.find(_RESOLVE_BEGIN)
     end = stdout.find(_RESOLVE_END)
     if begin == -1 or end == -1 or end <= begin:
@@ -225,7 +225,7 @@ def _accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
 def _resolve_single_file(
     filepath: str, full_path: Path, sha: str, subject: str, cwd: str,
 ) -> str | None:
-    """Resolve a single conflicted text file with claude -p. Returns filepath or None."""
+    """Resolve a single conflicted text file via AI. Returns filepath or None."""
     try:
         content = full_path.read_text()
     except OSError as e:
@@ -233,17 +233,12 @@ def _resolve_single_file(
         return None
 
     prompt = _build_resolve_prompt(filepath, content, sha, subject)
-    result = subprocess.run(
-        ["claude", "-p", "--bare"],
-        input=prompt,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"  claude -p failed for {filepath} (exit {result.returncode})", file=sys.stderr)
+    stdout, rc = ai_backend.prompt(prompt)
+    if rc != 0:
+        print(f"  ai prompt failed for {filepath} (exit {rc})", file=sys.stderr)
         return None
 
-    resolved_content = _parse_resolved_content(result.stdout)
+    resolved_content = _parse_resolved_content(stdout)
     if resolved_content is None:
         print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
         return None
@@ -285,7 +280,7 @@ def _resolve_one(
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
 ) -> list[str] | None:
-    """Resolve conflicted files using claude -p. Returns resolved paths or None on failure."""
+    """Resolve conflicted files via AI. Returns resolved paths or None on failure."""
     resolved = []
     go_dirs: set[Path] = set()
 
@@ -324,7 +319,7 @@ def _resolve_and_continue(cwd: str) -> tuple[list[str], int] | None:
 
     Returns (files_resolved, commits_with_conflicts) on success, or None on failure.
     """
-    if not shutil.which("claude"):
+    if not ai_backend.is_available():
         return None
 
     all_resolved: list[str] = []

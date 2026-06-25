@@ -604,11 +604,12 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
   [ "$result" = "ok" ]
 }
 
-# ── Agent command building ───────────────────────────────────────────────────
+# ── Agent command building (now in ai_backend_claude) ────────────────────────
 
 @test "_build_agent_cmd: includes max-turns when set" {
   result=$(_py '
-cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", max_turns=10)
+import ai_backend_claude as abc
+cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"], max_turns=10)
 print("--max-turns" in cmd, cmd[cmd.index("--max-turns") + 1] if "--max-turns" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -617,7 +618,8 @@ print("--max-turns" in cmd, cmd[cmd.index("--max-turns") + 1] if "--max-turns" i
 
 @test "_build_agent_cmd: includes max-budget-usd when set" {
   result=$(_py '
-cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", max_budget=5.0)
+import ai_backend_claude as abc
+cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"], max_budget=5.0)
 print("--max-budget-usd" in cmd, cmd[cmd.index("--max-budget-usd") + 1] if "--max-budget-usd" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -626,7 +628,8 @@ print("--max-budget-usd" in cmd, cmd[cmd.index("--max-budget-usd") + 1] if "--ma
 
 @test "_build_agent_cmd: omits flags when None" {
   result=$(_py '
-cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt")
+import ai_backend_claude as abc
+cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"])
 print("--max-turns" not in cmd and "--max-budget-usd" not in cmd)
 ')
   [ "$result" = "True" ]
@@ -634,7 +637,8 @@ print("--max-turns" not in cmd and "--max-budget-usd" not in cmd)
 
 @test "_build_agent_cmd: includes model when set" {
   result=$(_py '
-cmd = mod._build_agent_cmd("/tmp/reviews", "/tmp/wt", model="sonnet")
+import ai_backend_claude as abc
+cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"], model="sonnet")
 print("--model" in cmd, cmd[cmd.index("--model") + 1] if "--model" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -2530,12 +2534,11 @@ print(f'done={loaded.groups_done}')
 
 @test "invoke_agent: returns subprocess exit code" {
   result=$(_py "
-import subprocess
-# Patch _build_agent_cmd to return a simple failing command
-original = mod._build_agent_cmd
-mod._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
+import subprocess, ai_backend_claude as abc
+original = abc._build_agent_cmd
+abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
 rc = mod.invoke_agent('test', '$TMPDIR/test.jsonl', '/tmp', '/tmp')
-mod._build_agent_cmd = original
+abc._build_agent_cmd = original
 print(rc)
 ")
   [ "$result" = "42" ]
@@ -2543,9 +2546,11 @@ print(rc)
 
 @test "invoke_agent: logs stderr on failure" {
   result=$(_py "
-import subprocess, os
-mod._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
+import subprocess, os, ai_backend_claude as abc
+original = abc._build_agent_cmd
+abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
 mod.invoke_agent('test', '$TMPDIR/stderr_test.jsonl', '/tmp', '/tmp')
+abc._build_agent_cmd = original
 content = open('$TMPDIR/stderr_test.jsonl').read()
 print('has_stderr=' + str('agent-error-msg' in content))
 ")
@@ -2801,4 +2806,141 @@ EOF
   run "$REPO_ROOT/ai/claude/bin/review-rebuild" \
     --review-dir "$TMPDIR/no-meta" --pr 1
   [ "$status" -ne 0 ]
+}
+
+# ── Pi backend: RPC mode and budget ──────────────────────────────────────────
+
+@test "pi _build_agent_cmd: uses --mode rpc" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_agent_cmd()
+print("--mode" in cmd, cmd[cmd.index("--mode") + 1] if "--mode" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"rpc"* ]]
+}
+
+@test "pi _build_agent_cmd: includes --thinking when set" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_agent_cmd(thinking_level="medium")
+print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"medium"* ]]
+}
+
+@test "pi _build_agent_cmd: omits --thinking when None" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_agent_cmd()
+print("--thinking" not in cmd)
+')
+  [ "$result" = "True" ]
+}
+
+@test "pi _build_fix_cmd: includes --thinking when set" {
+  result=$(_py '
+import ai_backend_pi as abp
+cmd = abp._build_fix_cmd(thinking_level="low")
+print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
+')
+  [[ "$result" == *"True"* ]]
+  [[ "$result" == *"low"* ]]
+}
+
+@test "claude _build_agent_cmd: accepts thinking_level without error" {
+  result=$(_py '
+import ai_backend_claude as abc
+cmd = abc._build_agent_cmd(add_dirs=["/tmp"], thinking_level="high")
+print(type(cmd).__name__, "--thinking" not in cmd)
+')
+  [[ "$result" == *"list"* ]]
+  [[ "$result" == *"True"* ]]
+}
+
+@test "parse_pi_cost: extracts cost from message_end" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+import json
+line = json.dumps({"type": "message_end", "message": {"usage": {"cost": {"input": 0.01, "output": 0.05, "total": 0.06}}}})
+print(f"{parse_pi_cost(line):.2f}")
+')
+  [ "$result" = "0.06" ]
+}
+
+@test "parse_pi_cost: returns None for non-message_end" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+import json
+line = json.dumps({"type": "turn_end"})
+print(parse_pi_cost(line))
+')
+  [ "$result" = "None" ]
+}
+
+@test "parse_pi_cost: returns None for missing cost" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+import json
+line = json.dumps({"type": "message_end", "message": {}})
+print(parse_pi_cost(line))
+')
+  [ "$result" = "None" ]
+}
+
+@test "parse_pi_cost: returns None for invalid JSON" {
+  result=$(_py '
+from ai_backend_events import parse_pi_cost
+print(parse_pi_cost("not json"))
+')
+  [ "$result" = "None" ]
+}
+
+@test "pi _write_result_record: generates Claude-compatible record" {
+  result=$(_py "
+import ai_backend_pi as abp
+import json
+abp._write_result_record(
+    '$TMPDIR/result.jsonl', 'completed', 5, 1.23, 60000,
+    {'cost': 1.25, 'tokens': {'input': 1000, 'output': 500, 'cacheRead': 200, 'cacheWrite': 100}},
+)
+with open('$TMPDIR/result.jsonl') as f:
+    rec = json.loads(f.read().strip())
+print(rec['type'], rec['subtype'], f'{rec[\"total_cost_usd\"]:.2f}', rec['num_turns'])
+print(rec['usage']['input_tokens'], rec['usage']['output_tokens'])
+print(rec['usage']['cache_read_input_tokens'], rec['usage']['cache_creation_input_tokens'])
+")
+  [[ "$result" == *"result success 1.25 5"* ]]
+  [[ "$result" == *"1000 500"* ]]
+  [[ "$result" == *"200 100"* ]]
+}
+
+@test "pi _write_result_record: uses accumulated cost when stats empty" {
+  result=$(_py "
+import ai_backend_pi as abp
+import json
+abp._write_result_record(
+    '$TMPDIR/fallback.jsonl', 'max_turns', 10, 3.50, 120000, {},
+)
+with open('$TMPDIR/fallback.jsonl') as f:
+    rec = json.loads(f.read().strip())
+print(f'{rec[\"total_cost_usd\"]:.2f}', rec['subtype'], rec['num_turns'])
+")
+  [ "$result" = "3.50 max_turns 10" ]
+}
+
+@test "pi _write_result_record: result record works with _parse_session_cost" {
+  _py "
+import ai_backend_pi as abp
+abp._write_result_record(
+    '$TMPDIR/compat.jsonl', 'completed', 3, 2.00, 30000,
+    {'cost': 2.10, 'tokens': {'input': 500, 'output': 200}},
+)
+"
+  result=$(_py "
+cost = mod._parse_session_cost('$TMPDIR/compat.jsonl')
+print(f'{cost:.2f}')
+")
+  [ "$result" = "2.10" ]
 }

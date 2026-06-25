@@ -21,6 +21,7 @@ from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import ai_backend
 import pr_comments as pc
 import pr_context
 import pr_state
@@ -134,18 +135,15 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> tuple[dict | No
     code_context = _gather_code_context(non_resolved, repo_dir)
     prompt = _build_triage_prompt(non_resolved, code_context)
 
-    result = subprocess.run(
-        ["claude", "-p"],
-        input=prompt, capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        print("review-threads: claude -p failed", file=sys.stderr)
+    stdout, rc = ai_backend.prompt(prompt)
+    if rc != 0:
+        print("review-threads: ai prompt failed", file=sys.stderr)
         return None, 1
 
     try:
-        triage_result = json.loads(result.stdout)
+        triage_result = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
-        print("review-threads: claude returned non-JSON output", file=sys.stderr)
+        print("review-threads: ai returned non-JSON output", file=sys.stderr)
         return None, 1
 
     # Update triage state
@@ -248,30 +246,14 @@ def _render_fix_template(
     )
 
 
-def _invoke_fix_agent(prompt: str, wt_path: Path, tracking_dir: Path) -> int:
-    """Run Claude agent to apply fixes. Returns exit code."""
-    cmd = [
-        "claude", "-p", "--bare", "--verbose",
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", "Bash(*)",
-        "--disable-slash-commands",
-        "--add-dir", str(wt_path),
-        "--max-turns", str(FIX_MAX_TURNS),
-        "--model", FIX_MODEL,
-    ]
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=sys.stderr,
-        text=True,
+def _invoke_fix_agent(prompt: str, wt_path: Path) -> int:
+    """Run AI agent to apply fixes. Returns exit code."""
+    return ai_backend.invoke_fix(
+        prompt,
+        add_dirs=[str(wt_path)],
+        max_turns=FIX_MAX_TURNS,
+        model=FIX_MODEL,
     )
-    proc.stdin.write(prompt)
-    proc.stdin.close()
-    for line in proc.stdout:
-        print(line, end="", file=sys.stderr)
-    proc.wait()
-    return proc.returncode
 
 
 def _count_unchecked(path: Path) -> int:
@@ -445,7 +427,7 @@ def _run_comment_fix(
     )
 
     print("Fix pass — applying review comment suggestions...", file=sys.stderr)
-    _invoke_fix_agent(prompt, wt_path, tracking_dir)
+    _invoke_fix_agent(prompt, wt_path)
     print(file=sys.stderr)
 
     after = _count_unchecked(tracking_file)

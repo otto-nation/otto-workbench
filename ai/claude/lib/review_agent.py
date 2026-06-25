@@ -1,20 +1,18 @@
-"""Agent invocation, streaming, cost tracking, and model selection.
+"""Agent invocation, cost tracking, model selection, and diagnostics.
 
-Handles spawning Claude reviewer agents, streaming their output,
-parsing session costs, and diagnosing failures.
+Delegates actual AI invocation to ai_backend (which dispatches to
+Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
+adds cost tracking, failure diagnosis, and output recovery on top.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
-from review_common import (
-    ANSI_DIM, ANSI_RESET,
-    _info, _print_lock, _warn,
-)
+import ai_backend
+from review_common import _warn
 
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -22,53 +20,6 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
-
-
-# ── Stream progress ───────────────────────────────────────────────────────────
-
-def _tool_label_from_block(block: dict) -> str:
-    if block.get("type") != "tool_use":
-        return ""
-    inp = block.get("input", {})
-    name = block.get("name", "")
-    if inp.get("description"):
-        return inp["description"]
-    if name == "Read":
-        return "Read " + (inp.get("file_path", "").split("/")[-1] or "")
-    if name == "Grep":
-        return "Grep " + inp.get("pattern", "")
-    if name == "Glob":
-        return "Glob " + inp.get("pattern", "")
-    if name == "Write":
-        return "Write " + (inp.get("file_path", "").split("/")[-1] or "")
-    return name
-
-
-def _process_stream_line(raw_line: str, prev_tool: str, prefix: str) -> str:
-    try:
-        data = json.loads(raw_line)
-    except (json.JSONDecodeError, ValueError):
-        return prev_tool
-    if data.get("type") != "assistant":
-        return prev_tool
-    for block in data.get("message", {}).get("content", []):
-        tool_label = _tool_label_from_block(block)
-        if not tool_label or tool_label == prev_tool:
-            continue
-        with _print_lock:
-            print(f"{prefix}  {ANSI_DIM}▸ {tool_label}{ANSI_RESET}", flush=True)
-        prev_tool = tool_label
-    return prev_tool
-
-
-def stream_progress(process: subprocess.Popen, session_log: str, label: str = ""):
-    prev_tool = ""
-    prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
-    with open(session_log, "w") as log:
-        for raw_line in process.stdout:
-            log.write(raw_line)
-            log.flush()
-            prev_tool = _process_stream_line(raw_line, prev_tool, prefix)
 
 
 # ── Cost tracking ────────────────────────────────────────────────────────────
@@ -193,42 +144,6 @@ def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
 
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
-def _build_agent_cmd(
-    reviews_dir: str, wt_path: str,
-    review_file: str = "",
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-) -> list[str]:
-    add_dir_args = ["--add-dir", reviews_dir, "--add-dir", wt_path]
-    if review_file:
-        review_dir = str(Path(review_file).parent)
-        if review_dir not in (reviews_dir, wt_path):
-            add_dir_args += ["--add-dir", review_dir]
-    cmd = [
-        "claude", "-p", "--bare", "--verbose", "--output-format", "stream-json",
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", "Bash(*)",
-        "--disable-slash-commands",
-        *add_dir_args,
-        "--agent", "reviewer",
-    ]
-    if max_turns is not None:
-        cmd += ["--max-turns", str(max_turns)]
-    if max_budget is not None:
-        cmd += ["--max-budget-usd", str(max_budget)]
-    if model:
-        cmd += ["--model", model]
-    return cmd
-
-
-def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
-    stderr_output = proc.stderr.read()
-    if not stderr_output:
-        return
-    with open(session_log, "a") as f:
-        f.write(f"\n--- stderr (exit {proc.returncode}) ---\n{stderr_output}\n")
-
 
 def invoke_agent(
     prompt: str, session_log: str, wt_path: str, reviews_dir: str,
@@ -236,24 +151,18 @@ def invoke_agent(
     max_turns: int | None = DEFAULT_MAX_TURNS,
     max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
     model: str | None = None,
+    thinking_level: str | None = None,
 ) -> int:
-    cmd = _build_agent_cmd(
-        reviews_dir, wt_path, review_file=review_file,
-        max_turns=max_turns, max_budget=max_budget, model=model,
+    add_dirs = [reviews_dir, wt_path]
+    if review_file:
+        review_dir = str(Path(review_file).parent)
+        if review_dir not in (reviews_dir, wt_path):
+            add_dirs.append(review_dir)
+    return ai_backend.invoke_agent(
+        prompt, session_log,
+        add_dirs=add_dirs, agent="reviewer",
+        max_turns=max_turns, max_budget=max_budget,
+        model=model, thinking_level=thinking_level, label=label,
     )
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    proc.stdin.write(prompt)
-    proc.stdin.close()
-    stream_progress(proc, session_log, label=label)
-    proc.wait()
-    if proc.returncode != 0:
-        _log_stderr_on_failure(proc, session_log)
-    return proc.returncode
 
 

@@ -43,6 +43,7 @@ PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
 PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
+REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "pi" / "extensions" / "review-guard.ts"
 
 
 class _NullLog:
@@ -83,6 +84,7 @@ def _build_agent_cmd(
     model: str | None = None,
     thinking_level: str | None = None,
     provider: str | None = None,
+    extension: str | None = None,
 ) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
@@ -103,6 +105,8 @@ def _build_agent_cmd(
         cmd += ["--model", model]
     if thinking_level:
         cmd += ["--thinking", thinking_level]
+    if extension:
+        cmd += ["--extension", extension]
     return cmd
 
 
@@ -110,6 +114,7 @@ def _build_fix_cmd(
     model: str | None = None,
     thinking_level: str | None = None,
     provider: str | None = None,
+    extension: str | None = None,
 ) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
@@ -121,6 +126,8 @@ def _build_fix_cmd(
         cmd += ["--model", model]
     if thinking_level:
         cmd += ["--thinking", thinking_level]
+    if extension:
+        cmd += ["--extension", extension]
     return cmd
 
 
@@ -332,8 +339,10 @@ def invoke_agent(
 
     full_prompt = dir_context + prompt if dir_context else prompt
 
+    ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(
         agent=agent, model=model, thinking_level=thinking_level, provider=provider,
+        extension=ext,
     )
     proc = subprocess.Popen(
         cmd,
@@ -396,7 +405,8 @@ def invoke_fix(
 
     full_prompt = dir_context + prompt if dir_context else prompt
 
-    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level, provider=provider)
+    ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
+    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level, provider=provider, extension=ext)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,

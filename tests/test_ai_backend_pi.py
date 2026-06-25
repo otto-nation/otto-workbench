@@ -223,3 +223,21 @@ class TestProviderFlag:
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
+
+
+class TestExtensionFlag:
+    def test_agent_cmd_with_extension(self):
+        cmd = ai_backend_pi._build_agent_cmd(extension="/path/to/review-guard.ts")
+        assert "--extension" in cmd
+        idx = cmd.index("--extension")
+        assert cmd[idx + 1] == "/path/to/review-guard.ts"
+
+    def test_agent_cmd_without_extension(self):
+        cmd = ai_backend_pi._build_agent_cmd()
+        assert "--extension" not in cmd
+
+    def test_fix_cmd_with_extension(self):
+        cmd = ai_backend_pi._build_fix_cmd(extension="/path/to/review-guard.ts")
+        assert "--extension" in cmd
+        idx = cmd.index("--extension")
+        assert cmd[idx + 1] == "/path/to/review-guard.ts"

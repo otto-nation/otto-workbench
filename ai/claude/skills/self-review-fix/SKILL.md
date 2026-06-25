@@ -87,9 +87,10 @@ resolution, and fresh-vs-existing review detection internally.
 Fixes are automatically committed by `pr review` — no manual commit needed.
 
 Read the review file **after the command completes** and present:
-- Extract fixed/skipped counts from the `<!-- fix-pass: N fixed, M skipped -->`
-  comment — this is the authoritative source, not manual checkbox counting
-- If Must-fix or Should-fix findings remain unfixed, list them prominently
+- The commit message includes a per-finding summary (fixed findings with
+  descriptions, skipped findings with reasons)
+- If Must-fix or Should-fix findings remain unfixed, list them with any
+  skip reasons annotated inline as `*(skipped — reason)*`
 
 **Do not** ask "how would you like to proceed" or offer choices.
 **Do not** attempt to fix remaining findings manually via Edit tool —

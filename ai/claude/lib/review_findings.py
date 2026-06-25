@@ -49,6 +49,7 @@ class Finding:
     posted_id: str = ""
     classification: str = ""
     skip_reason: str = ""
+    checked: bool = False
 
 
 BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
@@ -56,7 +57,7 @@ BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
 # ── Finding parsing ──────────────────────────────────────────────────────────
 
 FINDING_ID_RE = re.compile(
-    r"^- (?:\[ \] )?"
+    r"^- (?:\[([ x])\] )?"
     r"(?:~~)?"
     r"\*\*\[([MSNI])(\d+)\](?:\*\*)?"
     r"\s+"
@@ -76,6 +77,8 @@ FIRST_FILE_RE = re.compile(
 )
 
 STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
+
+SKIP_REASON_RE = re.compile(r"\*\(skipped\s*[—–-]+\s*(.+?)\)\*")
 
 
 def _extract_path(after_id: str) -> tuple[str, int | None, int | None]:
@@ -108,8 +111,9 @@ def _parse_finding_line(stripped: str) -> Finding | None:
     id_match = FINDING_ID_RE.match(stripped)
     if not id_match:
         return None
-    sev = id_match.group(1)
-    seq = int(id_match.group(2))
+    checkbox = id_match.group(1)
+    sev = id_match.group(2)
+    seq = int(id_match.group(3))
     after_id = stripped[id_match.end():]
     path, line_num, end_line = _extract_path(after_id)
     if path:
@@ -119,6 +123,7 @@ def _parse_finding_line(stripped: str) -> Finding | None:
     return Finding(
         id=f"{sev}{seq}", severity=sev, seq=seq,
         path=path, line=line_num, end_line=end_line, body=body,
+        checked=(checkbox is not None and checkbox.lower() == "x"),
     )
 
 
@@ -184,6 +189,16 @@ def parse_findings(text: str) -> list[Finding]:
 
     _close_previous(findings, body_lines)
     return findings
+
+
+def extract_skip_reasons(findings: list[Finding]) -> None:
+    """Extract skip reasons from finding body text (mutates in place)."""
+    for f in findings:
+        if f.checked:
+            continue
+        m = SKIP_REASON_RE.search(f.body)
+        if m:
+            f.skip_reason = m.group(1).strip()
 
 
 # ── Diff hunk parsing ────────────────────────────────────────────────────────

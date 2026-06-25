@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.36.0](https://github.com/otto-nation/otto-workbench/compare/v1.35.1...v1.36.0) (2026-06-25)
+
+
+### Features
+
+* **ai:** Pi backend follow-ups — skills, extensions, steer, thinking, providers ([#390](https://github.com/otto-nation/otto-workbench/issues/390)) ([96b8dd5](https://github.com/otto-nation/otto-workbench/commit/96b8dd5b89cec09419de299d873c1c695ad069df))
+
+
+### Bug Fixes
+
+* **claude-review:** deterministic fix-pass summary via Finding diffing ([#396](https://github.com/otto-nation/otto-workbench/issues/396)) ([818a7ff](https://github.com/otto-nation/otto-workbench/commit/818a7ff11157cfb5187609295f08f627adcf7773))
+* **git:** sync gitignore.global entries into ~/.config/git/ignore ([#388](https://github.com/otto-nation/otto-workbench/issues/388)) ([83648fb](https://github.com/otto-nation/otto-workbench/commit/83648fb82202bc28282b9cb460b7ed15b835434b))
+* **review-threads:** strip markdown fences from AI triage JSON output ([#391](https://github.com/otto-nation/otto-workbench/issues/391)) ([80ccf14](https://github.com/otto-nation/otto-workbench/commit/80ccf14a6a17d51782dd1ab9b5148401c761c431))
+* **validate-nesting:** detect extensionless python scripts via shebang ([#389](https://github.com/otto-nation/otto-workbench/issues/389)) ([77e3a35](https://github.com/otto-nation/otto-workbench/commit/77e3a35410690c11cd90b372c1bdaeab876ad6df))
+
+
+### Code Refactoring
+
+* **ai:** centralize stderr output in log module ([#397](https://github.com/otto-nation/otto-workbench/issues/397)) ([5bcf726](https://github.com/otto-nation/otto-workbench/commit/5bcf72674a9f4dcdd26b18cee01b30b3fdcd3929))
+* **ai:** extract AI backend abstraction for multi-backend support ([#383](https://github.com/otto-nation/otto-workbench/issues/383)) ([fa333e5](https://github.com/otto-nation/otto-workbench/commit/fa333e57411fdd68d1a43cd7bb21efe1273c0b95))
+
 ## [1.35.1](https://github.com/otto-nation/otto-workbench/compare/v1.35.0...v1.35.1) (2026-06-25)
 
 

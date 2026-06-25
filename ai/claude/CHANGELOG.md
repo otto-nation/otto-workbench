@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.2](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.1...otto-ai-tools-v1.29.2) (2026-06-25)
+
+
+### Bug Fixes
+
+* **ai:** remove redundant WORKBENCH_DIR from migration ([#380](https://github.com/otto-nation/otto-workbench/issues/380)) ([ebce72a](https://github.com/otto-nation/otto-workbench/commit/ebce72a40364a87c22d4e5e7a0364244d65bc093))
+
 ## [1.29.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.0...otto-ai-tools-v1.29.1) (2026-06-25)
 
 

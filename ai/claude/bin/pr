@@ -554,6 +554,9 @@ def main():
             sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx,
                                    original_pr=original_pr,
                                    original_branch=original_branch))
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
     finally:
         trail.finish()
 

@@ -367,6 +367,7 @@ def _run_ci(trail, args, ctx) -> None:
         try:
             pr_state.save_state(toplevel, state)
         except Exception as exc:
+            trail.error("state_update", f"state update failed: {exc}")
             print(f"ci-check: state update failed: {exc}", file=sys.stderr)
 
     json.dump(report, sys.stdout, indent=2)
@@ -399,6 +400,9 @@ def main():
     )
     try:
         _run_ci(trail, args, ctx)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
     finally:
         trail.finish()
 

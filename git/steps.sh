@@ -287,6 +287,33 @@ step_gitconfig() {
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "gitconfig includes up to date" || true
 }
 
+# step_global_gitignore — ensures entries from git/gitignore.global are present
+# in the global gitignore file (~/.config/git/ignore, set via excludesFile).
+step_global_gitignore() {
+  local src="$GIT_SRC_DIR/gitignore.global"
+  local dest="$HOME/.config/git/ignore"
+
+  [[ -f "$src" ]] || return 0
+
+  mkdir -p "$(dirname "$dest")"
+  [[ -f "$dest" ]] || touch "$dest"
+
+  local added=0
+  while IFS= read -r entry; do
+    [[ -z "$entry" || "$entry" == \#* ]] && continue
+    if ! grep -qxF "$entry" "$dest"; then
+      printf '\n# Managed by otto-workbench\n%s\n' "$entry" >> "$dest"
+      added=$((added + 1))
+    fi
+  done < "$src"
+
+  if [[ $added -gt 0 ]]; then
+    success "global gitignore: added $added entries to $dest"
+  else
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "global gitignore up to date" || true
+  fi
+}
+
 # step_global_hooks — symlinks the workbench pre-commit hook into $GIT_HOOKS_DIR
 # and sets git's global core.hooksPath so every repo on this machine is protected.
 step_global_hooks() {
@@ -390,6 +417,9 @@ install_git() {
     skip "gitconfig identity (kept existing)"
   fi
 
+  echo; info "global gitignore → ~/.config/git/ignore"
+  step_global_gitignore
+
   echo; info "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
   step_local_hooks
@@ -407,6 +437,9 @@ install_git() {
 sync_git() {
   sync_header "git config → $GITCONFIG_FILE"
   step_gitconfig
+
+  sync_header "global gitignore → ~/.config/git/ignore"
+  step_global_gitignore
 
   sync_header "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks

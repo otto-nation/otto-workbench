@@ -352,6 +352,103 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
     return sha
 
 
+def _post_fix_replies(
+    fixed: list[dict],
+    threads_by_id: dict,
+    repo: str,
+    pr_number: int,
+    commit_sha: str,
+) -> int:
+    """Post replies to each fixed thread. Returns count of replies posted."""
+    posted = 0
+    commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
+    for entry in fixed:
+        tid = entry.get("thread_id", "")
+        thread = threads_by_id.get(tid, {})
+        comments = thread.get("comments", [])
+        if not comments:
+            continue
+        database_id = comments[0].get("databaseId")
+        if not database_id:
+            continue
+        summary = entry.get("summary", "")
+        body = f"Applied: {summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
+        if pc.post_thread_reply(repo, pr_number, database_id, body):
+            posted += 1
+    if posted:
+        print(f"Posted {posted} thread replies", file=sys.stderr)
+    return posted
+
+
+def _build_summary_body(
+    fixed: list[dict],
+    needs_human: list[dict],
+    skipped: list[dict],
+    commit_sha: str | None,
+    repo: str,
+) -> str:
+    """Build the markdown body for the fix summary comment."""
+    fixed_count = len(fixed)
+    skipped_count = len(skipped)
+    human_count = len(needs_human)
+
+    parts = ["## Review Comments Addressed", ""]
+    counts = []
+    if fixed_count:
+        counts.append(f"**{fixed_count} fixed**")
+    if skipped_count:
+        counts.append(f"{skipped_count} skipped")
+    if human_count:
+        counts.append(f"{human_count} need discussion")
+    parts.append(" · ".join(counts))
+    parts.append("")
+
+    rows = []
+    commit_url = f"https://github.com/{repo}/commit/{commit_sha}" if commit_sha else ""
+    sha_link = f"[`{commit_sha}`]({commit_url})" if commit_sha else ""
+    for entry in fixed:
+        summary = entry.get("summary", "—")
+        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
+        rows.append(f"| {summary} | {file_loc} | Fixed in {sha_link} |")
+    for entry in needs_human:
+        summary = entry.get("summary", "—")
+        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
+        reason = entry.get("reason", "needs discussion")
+        rows.append(f"| {summary} | {file_loc} | {reason} |")
+    for entry in skipped:
+        summary = entry.get("summary", "—")
+        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
+        rows.append(f"| {summary} | {file_loc} | Skipped |")
+
+    if rows:
+        parts.append("| Thread | File | Action |")
+        parts.append("|--------|------|--------|")
+        parts.extend(rows)
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def _post_fix_summary(
+    fixed: list[dict],
+    needs_human: list[dict],
+    skipped: list[dict],
+    commit_sha: str | None,
+    repo: str,
+    pr_number: int,
+) -> str | None:
+    """Post summary issue comment to the PR. Returns the comment URL or None."""
+    if not fixed and not needs_human and not skipped:
+        return None
+    body = _build_summary_body(fixed, needs_human, skipped, commit_sha, repo)
+    url = pc.post_issue_comment(repo, pr_number, body)
+    if url:
+        print(f"Posted fix summary: {url}", file=sys.stderr)
+    else:
+        print("review-threads: failed to post fix summary", file=sys.stderr)
+    return url
+
+
 def _run_comment_fix(
     triage_result: dict,
     report: dict,
@@ -403,9 +500,15 @@ def _run_comment_fix(
     empty_result = {
         "fixed": [], "needs_human": needs_human,
         "skipped": [], "commit_sha": None,
+        "replies_posted": 0, "summary_url": None,
     }
 
     if not fixable:
+        if needs_human:
+            summary_url = _post_fix_summary(
+                [], needs_human, [], None, ctx.repo, report["pr_number"],
+            )
+            empty_result["summary_url"] = summary_url
         return empty_result
 
     tracking_dir = wt_path / "ignore" / "pr-comments"
@@ -438,11 +541,23 @@ def _run_comment_fix(
 
     commit_sha = _commit_and_push(wt_path, fixed_count, after)
 
+    replies_posted = 0
+    if commit_sha and fixed:
+        replies_posted = _post_fix_replies(
+            fixed, threads_by_id, ctx.repo, report["pr_number"], commit_sha,
+        )
+
+    summary_url = _post_fix_summary(
+        fixed, needs_human, skipped, commit_sha, ctx.repo, report["pr_number"],
+    )
+
     return {
         "fixed": fixed,
         "needs_human": needs_human,
         "skipped": skipped,
         "commit_sha": commit_sha,
+        "replies_posted": replies_posted,
+        "summary_url": summary_url,
     }
 
 

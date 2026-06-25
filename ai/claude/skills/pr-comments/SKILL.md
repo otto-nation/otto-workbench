@@ -83,6 +83,8 @@ Parse the JSON output. The `fix_pass` object contains:
 | `needs_human` | Threads requiring user input (contested, conflicting, questions, needs_discussion) |
 | `skipped` | Threads the agent could not auto-fix |
 | `commit_sha` | Short SHA of the fix commit, or null |
+| `replies_posted` | Count of per-thread replies posted to GitHub |
+| `summary_url` | URL of the summary issue comment, or null |
 
 **Report auto-fixes:** "Fixed N threads (commit SHA). M threads need your input. K skipped."
 
@@ -97,15 +99,17 @@ Ask the user what to do for each:
 **Do not** attempt to fix `skipped` threads — the agent already determined
 they require judgment.
 
-### Step 4: Reply and resolve
+### Step 4: Handle remaining threads and resolve
 
-After all fixes (auto and manual) are applied, commit and push if needed,
-then reply to addressed threads.
+The script automatically posts per-thread replies (with summary and commit link)
+and a summary issue comment after fixing and pushing. No manual reply posting needed.
 
-**IMPORTANT:** The PR number is required in the URL path — `pulls/{number}/comments/...`.
+Present the `needs_human` threads to the user and handle them interactively:
+- **Fix it** — apply the edit inline, then commit and push
+- **Skip** — move on
+- **Reply** — compose a reply to the reviewer
 
-**Never use `-f body="..."`** — backticks and special characters cause shell
-escaping failures. Use `-F body=@-` with a quoted heredoc:
+For manual replies, use the `databaseId` from the thread's first comment:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
@@ -114,17 +118,7 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
 REPLY_BODY
 ```
 
-Use the `databaseId` from the thread's first comment as the `comment_id`.
-If you ran `pr comments --fix`, the output does not include `databaseId`. Run
-`pr comments [--repo-dir <PATH>]` (without `--fix`) to fetch threads with their
-`databaseId` values before posting replies.
-
-Reply examples:
-- **Fixed:** `Fixed.`
-- **Rejected:** `Not applying — [specific reason with evidence].`
-- **Question answered:** Direct answer to the reviewer's question.
-
-After replying, resolve verified threads:
+After all manual work is done, resolve verified threads:
 
 ```bash
 pr comments --resolve [--repo-dir <PATH>]

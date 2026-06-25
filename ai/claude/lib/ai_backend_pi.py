@@ -167,6 +167,21 @@ def _parse_event_type(raw_line: str) -> tuple[str, dict]:
     return data.get("type", ""), data
 
 
+def _check_limits(
+    process: subprocess.Popen,
+    turn_count: int, accumulated_cost: float,
+    max_turns: int | None, max_budget: float | None,
+) -> str | None:
+    """Check turn and budget limits after a turn_end. Returns stop reason or None."""
+    if max_turns is not None and turn_count >= max_turns:
+        _send(process, {"type": "abort"})
+        return "max_turns"
+    if max_budget is not None and accumulated_cost > max_budget:
+        _send(process, {"type": "abort"})
+        return "max_budget"
+    return None
+
+
 def _consume_stream(
     process: subprocess.Popen, log, prefix: str,
     max_turns: int | None = None,
@@ -188,27 +203,20 @@ def _consume_stream(
 
         event_type, _ = _parse_event_type(raw_line)
 
-        # Skip RPC responses (e.g. from our abort command)
         if event_type == "response":
             continue
 
         prev_tool = _display_event(raw_line, prev_tool, prefix)
 
-        # Accumulate cost from message_end events
         msg_cost = parse_pi_cost(raw_line)
         if msg_cost is not None:
             accumulated_cost += msg_cost
 
         if event_type == "turn_end":
             turn_count += 1
-            if max_turns is not None and turn_count >= max_turns:
-                _send(process, {"type": "abort"})
-                stop_reason = "max_turns"
-                continue
-            if max_budget is not None and accumulated_cost > max_budget:
-                _send(process, {"type": "abort"})
-                stop_reason = "max_budget"
-                continue
+            reason = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget)
+            if reason:
+                stop_reason = reason
 
         if event_type == "agent_end":
             break

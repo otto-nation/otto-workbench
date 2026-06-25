@@ -31,6 +31,7 @@ from trail import Trail, add_trail_args
 
 TRIAGE_CONTEXT_LINES = 10
 FIX_MAX_TURNS = 15
+FIX_MAX_BUDGET = 2.0
 FIX_MODEL = "sonnet"
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
@@ -270,6 +271,7 @@ def _invoke_fix_agent(prompt: str, wt_path: Path) -> int:
         prompt,
         add_dirs=[str(wt_path)],
         max_turns=FIX_MAX_TURNS,
+        max_budget=FIX_MAX_BUDGET,
         model=FIX_MODEL,
     )
 

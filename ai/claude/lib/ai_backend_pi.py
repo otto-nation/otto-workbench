@@ -3,12 +3,12 @@
 Implements prompt(), invoke_agent(), and invoke_fix() by building
 `pi` commands and running them as subprocesses.
 
-invoke_agent uses RPC mode (--mode rpc) for bidirectional control:
+invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
   - Clean abort via {"type": "abort"} instead of SIGTERM
   - Claude-compatible result records written to session logs
 
-prompt() and invoke_fix() use print mode (pi -p) for simplicity.
+prompt() uses print mode (pi -p) for simplicity.
 
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
@@ -31,6 +31,7 @@ Gaps vs Claude Code CLI:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -42,6 +43,8 @@ from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
+PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
+REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "pi" / "extensions" / "review-guard.ts"
 
 
 def _read_agent_prompt(agent: str) -> str | None:
@@ -53,11 +56,29 @@ def _read_agent_prompt(agent: str) -> str | None:
     return None
 
 
+AGENT_PROTOCOL_PLACEHOLDER = "AGENT_PROTOCOL_PLACEHOLDER"
+
+
+def _resolve_skill_path(agent: str) -> Path | None:
+    """Check if a Pi-format SKILL.md exists for the given agent name.
+
+    Returns None if the file is missing or still contains the unresolved placeholder.
+    """
+    skill_file = PI_SKILLS_DIR / agent / "SKILL.md"
+    if not skill_file.is_file():
+        return None
+    if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():
+        return None
+    return skill_file
+
+
 # ── Command builders ──────────────────────────────────────────────────────────
 
 
-def _build_prompt_cmd(model: str | None = None) -> list[str]:
+def _build_prompt_cmd(model: str | None = None, provider: str | None = None) -> list[str]:
     cmd = ["pi", "-p", "--no-session", "--approve"]
+    if provider:
+        cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
     return cmd
@@ -67,35 +88,51 @@ def _build_agent_cmd(
     agent: str | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
+    extension: str | None = None,
 ) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,
     ]
     if agent:
-        agent_prompt = _read_agent_prompt(agent)
-        if agent_prompt is None:
-            raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
-        cmd += ["--append-system-prompt", agent_prompt]
+        skill_path = _resolve_skill_path(agent)
+        if skill_path:
+            cmd += ["--skill", str(skill_path)]
+        else:
+            agent_prompt = _read_agent_prompt(agent)
+            if agent_prompt is None:
+                raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
+            cmd += ["--append-system-prompt", agent_prompt]
+    if provider:
+        cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
     if thinking_level:
         cmd += ["--thinking", thinking_level]
+    if extension:
+        cmd += ["--extension", extension]
     return cmd
 
 
 def _build_fix_cmd(
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
+    extension: str | None = None,
 ) -> list[str]:
     cmd = [
-        "pi", "-p", "--no-session", "--approve", "--verbose",
+        "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,
     ]
+    if provider:
+        cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
     if thinking_level:
         cmd += ["--thinking", thinking_level]
+    if extension:
+        cmd += ["--extension", extension]
     return cmd
 
 
@@ -158,19 +195,38 @@ def _parse_event_type(raw_line: str) -> tuple[str, dict]:
     return data.get("type", ""), data
 
 
+BUDGET_WARN_THRESHOLD = 0.8
+
+
 def _check_limits(
     process: subprocess.Popen,
     turn_count: int, accumulated_cost: float,
     max_turns: int | None, max_budget: float | None,
-) -> str | None:
-    """Check turn and budget limits after a turn_end. Returns stop reason or None."""
+    steered: bool = False,
+) -> tuple[str | None, bool]:
+    """Check turn and budget limits after a turn_end.
+
+    Returns (stop_reason, steered) where stop_reason is None if not aborting.
+    Sends steer at 80% of either limit (once), abort + follow_up when exceeded.
+    """
     if max_turns is not None and turn_count >= max_turns:
         _send(process, {"type": "abort"})
-        return "max_turns"
+        _send(process, {"type": "follow_up", "message": "You were stopped due to turn limit. Summarize what you found and what remains."})
+        return "max_turns", steered
     if max_budget is not None and accumulated_cost > max_budget:
         _send(process, {"type": "abort"})
-        return "max_budget"
-    return None
+        _send(process, {"type": "follow_up", "message": "You were stopped due to budget limit. Summarize what you found and what remains."})
+        return "max_budget", steered
+
+    if not steered:
+        if max_budget is not None and accumulated_cost >= max_budget * BUDGET_WARN_THRESHOLD:
+            _send(process, {"type": "steer", "message": f"Budget warning: {accumulated_cost:.2f}/{max_budget:.2f} USD consumed. Wrap up your current analysis and write your output."})
+            steered = True
+        elif max_turns is not None and turn_count >= int(max_turns * BUDGET_WARN_THRESHOLD):
+            _send(process, {"type": "steer", "message": f"Turn warning: {turn_count}/{max_turns} turns used. Wrap up your current analysis and write your output."})
+            steered = True
+
+    return None, steered
 
 
 def _consume_stream(
@@ -187,6 +243,8 @@ def _consume_stream(
     turn_count = 0
     accumulated_cost = 0.0
     stop_reason = "completed"
+    steered = False
+    aborted = False
 
     for raw_line in process.stdout:
         log.write(raw_line)
@@ -205,7 +263,11 @@ def _consume_stream(
 
         if event_type == "turn_end":
             turn_count += 1
-            stop_reason = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget) or stop_reason
+            if not aborted:
+                stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered)
+                if stop:
+                    stop_reason = stop
+                    aborted = True
 
         if event_type == "agent_end":
             break
@@ -267,6 +329,7 @@ def invoke_agent(
     max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
     label: str = "",
 ) -> int:
     """Full agent with RPC streaming to session log. Returns exit code.
@@ -284,8 +347,10 @@ def invoke_agent(
 
     full_prompt = dir_context + prompt if dir_context else prompt
 
+    ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(
-        agent=agent, model=model, thinking_level=thinking_level,
+        agent=agent, model=model, thinking_level=thinking_level, provider=provider,
+        extension=ext,
     )
     proc = subprocess.Popen(
         cmd,
@@ -328,16 +393,19 @@ def invoke_agent(
 
 def invoke_fix(
     prompt: str, *,
+    session_log: str = "",
     add_dirs: list[str],
     max_turns: int | None = None,
+    max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
+    provider: str | None = None,
 ) -> int:
-    """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    if max_turns is not None:
-        print(f"  {ANSI_DIM}(pi backend: --max-turns not supported in fix mode, ignoring){ANSI_RESET}",
-              file=sys.stderr)
+    """Agent with workspace write access via RPC. Returns exit code.
 
+    Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
+    If session_log is empty, events are consumed but not persisted.
+    """
     dir_context = ""
     if add_dirs:
         dir_lines = "\n".join(f"  - {d}" for d in add_dirs)
@@ -345,17 +413,39 @@ def invoke_fix(
 
     full_prompt = dir_context + prompt if dir_context else prompt
 
-    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level)
+    ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
+    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level, provider=provider, extension=ext)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=sys.stderr,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    proc.stdin.write(full_prompt)
+
+    start_time = time.monotonic()
+
+    _send(proc, {"type": "prompt", "message": full_prompt})
+
+    log_file = open(session_log, "w") if session_log else open(os.devnull, "w")
+    try:
+        turn_count, accumulated_cost, stop_reason = _consume_stream(
+            proc, log_file, "",
+            max_turns=max_turns, max_budget=max_budget,
+        )
+    finally:
+        log_file.close()
+
+    duration_ms = int((time.monotonic() - start_time) * 1000)
+
+    if session_log:
+        stats = _get_stats_after_agent_end(proc)
+        _write_result_record(
+            session_log, stop_reason, turn_count,
+            accumulated_cost, duration_ms, stats,
+        )
+
     proc.stdin.close()
-    for line in proc.stdout:
-        print(line, end="", file=sys.stderr)
     proc.wait()
+    _log_stderr_on_failure(proc, session_log)
     return proc.returncode

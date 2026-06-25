@@ -43,7 +43,7 @@ function isWriteOperation(call: ToolCall): boolean {
 }
 
 function hasWriteCommand(cmd: string): boolean {
-  const writePatterns = [/\bcp\b/, /\bmv\b/, /\brm\b/, /\btee\b/, />>?\s/, /\bsed\s+-i/];
+  const writePatterns = [/\bcp\b/, /\bmv\b/, /\brm\b/, /\btee\b/, />>?/, /\bsed\s+-i/];
   return writePatterns.some((p) => p.test(cmd));
 }
 

@@ -239,6 +239,7 @@ def _consume_stream(
     accumulated_cost = 0.0
     stop_reason = "completed"
     steered = False
+    aborted = False
 
     for raw_line in process.stdout:
         log.write(raw_line)
@@ -257,9 +258,11 @@ def _consume_stream(
 
         if event_type == "turn_end":
             turn_count += 1
-            stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered)
-            if stop:
-                stop_reason = stop
+            if not aborted:
+                stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered)
+                if stop:
+                    stop_reason = stop
+                    aborted = True
 
         if event_type == "agent_end":
             break
@@ -431,9 +434,8 @@ def invoke_fix(
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
-    stats = _get_stats_after_agent_end(proc)
-
     if session_log:
+        stats = _get_stats_after_agent_end(proc)
         _write_result_record(
             session_log, stop_reason, turn_count,
             accumulated_cost, duration_ms, stats,

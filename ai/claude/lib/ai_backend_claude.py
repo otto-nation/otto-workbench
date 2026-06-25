@@ -76,6 +76,7 @@ def _build_agent_cmd(
 def _build_fix_cmd(
     add_dirs: list[str],
     max_turns: int | None = None,
+    max_budget: float | None = None,
     model: str | None = None,
     # thinking_level is accepted for API compatibility but intentionally unused:
     # Claude Code CLI has no --thinking flag.
@@ -87,6 +88,8 @@ def _build_fix_cmd(
     cmd = [*_base_cmd(), *add_dir_args]
     if max_turns is not None:
         cmd += ["--max-turns", str(max_turns)]
+    if max_budget is not None:
+        cmd += ["--max-budget-usd", str(max_budget)]
     if model:
         cmd += ["--model", model]
     return cmd
@@ -156,10 +159,10 @@ def invoke_fix(
     provider: str | None = None,
 ) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    # session_log, max_budget, and provider are accepted for interface parity with the Pi backend
-    # but are not used — Claude Code CLI handles budget natively via --max-budget-usd
+    # session_log and provider are accepted for interface parity with the Pi backend
+    # but are not used — Claude Code CLI has no --provider flag.
     cmd = _build_fix_cmd(
-        add_dirs=add_dirs, max_turns=max_turns,
+        add_dirs=add_dirs, max_turns=max_turns, max_budget=max_budget,
         model=model, thinking_level=thinking_level,
     )
     proc = subprocess.Popen(

@@ -3,12 +3,12 @@
 Implements prompt(), invoke_agent(), and invoke_fix() by building
 `pi` commands and running them as subprocesses.
 
-invoke_agent uses RPC mode (--mode rpc) for bidirectional control:
+invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
   - Clean abort via {"type": "abort"} instead of SIGTERM
   - Claude-compatible result records written to session logs
 
-prompt() and invoke_fix() use print mode (pi -p) for simplicity.
+prompt() uses print mode (pi -p) for simplicity.
 
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
@@ -42,6 +42,12 @@ from review_common import ANSI_DIM, ANSI_RESET, _print_lock
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
+
+
+class _NullLog:
+    """Sink for stream events when no session log is needed."""
+    def write(self, _): pass
+    def flush(self): pass
 
 
 def _read_agent_prompt(agent: str) -> str | None:
@@ -89,7 +95,7 @@ def _build_fix_cmd(
     thinking_level: str | None = None,
 ) -> list[str]:
     cmd = [
-        "pi", "-p", "--no-session", "--approve", "--verbose",
+        "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,
     ]
     if model:
@@ -328,16 +334,18 @@ def invoke_agent(
 
 def invoke_fix(
     prompt: str, *,
+    session_log: str = "",
     add_dirs: list[str],
     max_turns: int | None = None,
+    max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
 ) -> int:
-    """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    if max_turns is not None:
-        print(f"  {ANSI_DIM}(pi backend: --max-turns not supported in fix mode, ignoring){ANSI_RESET}",
-              file=sys.stderr)
+    """Agent with workspace write access via RPC. Returns exit code.
 
+    Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
+    If session_log is empty, events are consumed but not persisted.
+    """
     dir_context = ""
     if add_dirs:
         dir_lines = "\n".join(f"  - {d}" for d in add_dirs)
@@ -350,12 +358,36 @@ def invoke_fix(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=sys.stderr,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    proc.stdin.write(full_prompt)
+
+    start_time = time.monotonic()
+
+    _send(proc, {"type": "prompt", "message": full_prompt})
+
+    log_file = open(session_log, "w") if session_log else None
+    try:
+        turn_count, accumulated_cost, stop_reason = _consume_stream(
+            proc, log_file or _NullLog(), "",
+            max_turns=max_turns, max_budget=max_budget,
+        )
+    finally:
+        if log_file:
+            log_file.close()
+
+    duration_ms = int((time.monotonic() - start_time) * 1000)
+
+    stats = _get_stats_after_agent_end(proc)
+
+    if session_log:
+        _write_result_record(
+            session_log, stop_reason, turn_count,
+            accumulated_cost, duration_ms, stats,
+        )
+
     proc.stdin.close()
-    for line in proc.stdout:
-        print(line, end="", file=sys.stderr)
     proc.wait()
+    if session_log:
+        _log_stderr_on_failure(proc, session_log)
     return proc.returncode

@@ -142,12 +142,16 @@ def invoke_agent(
 
 def invoke_fix(
     prompt: str, *,
+    session_log: str = "",
     add_dirs: list[str],
     max_turns: int | None = None,
+    max_budget: float | None = None,
     model: str | None = None,
     thinking_level: str | None = None,
 ) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
+    # session_log and max_budget are accepted for interface parity with the Pi backend
+    # but are not used — Claude Code CLI handles budget natively via --max-budget-usd
     cmd = _build_fix_cmd(
         add_dirs=add_dirs, max_turns=max_turns,
         model=model, thinking_level=thinking_level,

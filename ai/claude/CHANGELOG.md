@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.0...otto-ai-tools-v1.29.1) (2026-06-25)
+
+
+### Code Refactoring
+
+* **skills:** remove redundant resolve-branch and direct script calls ([#377](https://github.com/otto-nation/otto-workbench/issues/377)) ([caf1e2c](https://github.com/otto-nation/otto-workbench/commit/caf1e2c1c077ab9f9cdb00e2f9e373d8f92ef439))
+
 ## [1.29.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.28.0...otto-ai-tools-v1.29.0) (2026-06-25)
 
 

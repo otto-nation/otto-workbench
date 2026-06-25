@@ -133,3 +133,71 @@ class TestCommitFixes:
         commit_call = mock_run.call_args_list[2]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_commit_includes_fix_summary(self, mock_run, mock_push, tmp_path):
+        job = self._make_job(tmp_path)
+        review = Path(job.review_file)
+        review.write_text(
+            "- [x] **[M1]** fixed\n"
+            "- [ ] **[S1]** skipped\n"
+            "<!-- fix-summary\n"
+            "## Fixed\n"
+            "- [M1] corrected wrong condition\n"
+            "\n"
+            "## Skipped\n"
+            "- [S1] reason: requires design decision\n"
+            "-->\n"
+        )
+        mock_run.side_effect = [
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        review_pipeline._commit_fixes(job, fixed=1, skipped=1)
+        commit_call = mock_run.call_args_list[2]
+        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        assert "1 fixed, 1 skipped" in msg
+        assert "corrected wrong condition" in msg
+        assert "requires design decision" in msg
+
+
+class TestExtractFixSummary:
+    def test_extracts_summary(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "- [x] **[M1]** fixed\n"
+            "<!-- fix-summary\n"
+            "## Fixed\n"
+            "- [M1] corrected wrong condition\n"
+            "\n"
+            "## Skipped\n"
+            "- [S1] reason: requires design decision\n"
+            "-->\n"
+        )
+        summary = review_pipeline._extract_fix_summary(str(review))
+        assert "corrected wrong condition" in summary
+        assert "requires design decision" in summary
+
+    def test_returns_empty_when_no_summary(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text("- [x] **[M1]** fixed\n")
+        assert review_pipeline._extract_fix_summary(str(review)) == ""
+
+    def test_returns_empty_for_missing_file(self):
+        assert review_pipeline._extract_fix_summary("/nonexistent/review.md") == ""
+
+
+class TestTurnBudgetScaling:
+    def test_small_review_uses_default(self):
+        turns = min(max(review_pipeline.DEFAULT_MAX_TURNS_FIX, 5 * 2), review_pipeline.MAX_TURNS_FIX_CAP)
+        assert turns == review_pipeline.DEFAULT_MAX_TURNS_FIX
+
+    def test_large_review_scales_up(self):
+        turns = min(max(review_pipeline.DEFAULT_MAX_TURNS_FIX, 25 * 2), review_pipeline.MAX_TURNS_FIX_CAP)
+        assert turns == 50
+
+    def test_very_large_review_caps(self):
+        turns = min(max(review_pipeline.DEFAULT_MAX_TURNS_FIX, 100 * 2), review_pipeline.MAX_TURNS_FIX_CAP)
+        assert turns == review_pipeline.MAX_TURNS_FIX_CAP

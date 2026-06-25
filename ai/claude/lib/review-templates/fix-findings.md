@@ -10,16 +10,31 @@ For each unchecked finding (`- [ ]`) in the review above:
 
 1. Read the referenced file at the specified line
 2. Determine if the finding is auto-fixable:
-   - **Fixable**: clear code change — wrong condition, missing guard, off-by-one, missing import, dead code, duplicate logic
-   - **Not fixable**: requires design decision, architectural change, or user input
-3. If fixable: apply the fix using the Edit tool on the source file
-4. After fixing: update the finding checkbox from `- [ ]` to `- [x]` in the review file using Edit
+   - **Fixable**: clear, unambiguous change — wrong value, missing guard, off-by-one, missing import, dead code, duplicate logic, incorrect prose, wrong field names in docs, missing comments, wording fixes
+   - **Not fixable**: requires design decision, architectural change, user input, external verification, or changes to files outside this branch
+3. If fixable: apply the fix using the Edit tool, then check the box: `- [x]`
+4. If not fixable: leave unchecked and append a skip reason: `<!-- skip: one-line reason -->`
+   Example: `- [ ] **[S1]** ... <!-- skip: requires product team sign-off on SLA figure -->`
 
 ## Rules
 
 - Fix findings in severity order: Must fix first, then Should fix, then Nit, then Idioms
 - For each fix, make the minimal correct change — do not refactor surrounding code
-- If a finding is ambiguous or requires a design choice, skip it (leave unchecked)
+- If a finding is ambiguous or requires a design choice, skip it with a reason
+- When a generated file needs fixing, fix the source template AND the generated output
+- After processing all findings, append a summary block to the review file:
+
+  ```
+  <!-- fix-summary
+  ## Fixed
+  - [M1] brief description of what was changed
+  - [S2] brief description of what was changed
+
+  ## Skipped
+  - [S3] reason: requires design decision about X
+  - [N1] reason: needs confirmation from compliance team
+  -->
+  ```
 
 ## Review file location
 ${review_file}

@@ -81,6 +81,7 @@ DEFAULT_MODEL_FIX = "sonnet"
 
 DEFAULT_MAX_TURNS_ANGLES = 15
 DEFAULT_MAX_TURNS_FIX = 20
+MAX_TURNS_FIX_CAP = 60
 
 
 OMITTED_FILE_TURNS = 2
@@ -381,6 +382,9 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int):
     msg = "fix: self-review findings"
     if fixed:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
+    summary = _extract_fix_summary(job.review_file)
+    if summary:
+        msg += f"\n\n{summary}"
 
     result = subprocess.run(
         ["git", "-C", job.wt_path, "commit", "-m", msg],
@@ -449,22 +453,37 @@ def _count_fixed(before_unchecked: int, after_unchecked: int,
     return _count_changed_source_files(wt_path)
 
 
+def _extract_fix_summary(review_file: str) -> str:
+    """Extract fix-summary HTML comment from the review file."""
+    if not Path(review_file).exists():
+        return ""
+    text = Path(review_file).read_text()
+    match = re.search(r"<!-- fix-summary\n(.+?)\n-->", text, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         _warn("No review file to fix — skipping fix pass")
         return
     fix_log = _derive_path(job.review_file, FILENAME_FIX_LOG)
+    before = _count_unchecked(job.review_file)
+    max_turns = min(max(DEFAULT_MAX_TURNS_FIX, before * 2), MAX_TURNS_FIX_CAP)
     prompt = build_prompt(
-        TEMPLATE_FIX, job, max_turns=DEFAULT_MAX_TURNS_FIX,
+        TEMPLATE_FIX, job, max_turns=max_turns,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX)
-    before = _count_unchecked(job.review_file)
     _info("Fix pass — applying review findings...")
     print()
-    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=DEFAULT_MAX_TURNS_FIX)
+    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, max_turns=max_turns)
     print()
     after = _count_unchecked(job.review_file)
     fixed = _count_fixed(before, after, job.review_file, job.wt_path)
+    summary = _extract_fix_summary(job.review_file)
+    if summary:
+        _info("Fix summary:")
+        for line in summary.splitlines():
+            print(f"  {line}", file=sys.stderr)
     _commit_fixes(job, fixed=fixed, skipped=after)
 
 

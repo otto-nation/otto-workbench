@@ -409,7 +409,8 @@ def _build_summary_body(
     for entry in fixed:
         summary = entry.get("summary", "—")
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
-        rows.append(f"| {summary} | {file_loc} | Fixed in {sha_link} |")
+        status = f"Fixed in {sha_link}" if sha_link else "Fix pending (push failed)"
+        rows.append(f"| {summary} | {file_loc} | {status} |")
     for entry in needs_human:
         summary = entry.get("summary", "—")
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"

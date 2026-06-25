@@ -104,12 +104,7 @@ they require judgment.
 The script automatically posts per-thread replies (with summary and commit link)
 and a summary issue comment after fixing and pushing. No manual reply posting needed.
 
-Present the `needs_human` threads to the user and handle them interactively:
-- **Fix it** — apply the edit inline, then commit and push
-- **Skip** — move on
-- **Reply** — compose a reply to the reviewer
-
-For manual replies, use the `databaseId` from the thread's first comment:
+For manual replies to `needs_human` threads, use the `databaseId` from the thread's first comment:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \

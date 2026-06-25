@@ -223,6 +223,8 @@ def _gh_post(endpoint: str, body: str) -> tuple[int, str]:
         ["gh", "api", endpoint, "--method", "POST", "--input", "-"],
         input=payload, capture_output=True, text=True,
     )
+    if result.returncode != 0 and result.stderr.strip():
+        print(f"gh api error: {result.stderr.strip()}", file=sys.stderr)
     return result.returncode, result.stdout
 
 

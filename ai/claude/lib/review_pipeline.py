@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 
@@ -35,12 +35,14 @@ from review_common import (
     _derive_path, _info, _warn,
 )
 from review_findings import (
+    Finding,
     _MECHANICAL_NOTE,
     _count_findings, _has_findings,
     _validate_group_output,
     annotate_prior_with_stable_ids,
     build_mechanical_review,
-    merge_reviews, post_process_findings,
+    extract_skip_reasons,
+    merge_reviews, parse_findings, post_process_findings,
 )
 from review_github import PRData, fetch_pr_data
 from review_preflight import (
@@ -89,6 +91,7 @@ DEFAULT_THINKING_FIX = "low"
 
 DEFAULT_MAX_TURNS_ANGLES = 15
 DEFAULT_MAX_TURNS_FIX = 20
+MAX_TURNS_FIX_CAP = 60
 
 
 OMITTED_FILE_TURNS = 2
@@ -380,7 +383,7 @@ def _count_unchecked(review_file: str) -> int:
     )
 
 
-def _commit_fixes(job: ReviewJob, fixed: int, skipped: int):
+def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     """Commit source-file fixes applied by the fix-pass agent."""
     result = subprocess.run(
         ["git", "-C", job.wt_path, "diff", "--quiet"],
@@ -397,6 +400,8 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int):
     msg = "fix: self-review findings"
     if fixed:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
+    if summary:
+        msg += f"\n\n{summary}"
 
     result = subprocess.run(
         ["git", "-C", job.wt_path, "commit", "-m", msg],
@@ -465,25 +470,108 @@ def _count_fixed(before_unchecked: int, after_unchecked: int,
     return _count_changed_source_files(wt_path)
 
 
+@dataclass
+class FixPassResult:
+    fixed: list[Finding]
+    skipped: list[Finding]
+    unchanged: list[Finding]
+
+    @property
+    def fixed_count(self) -> int:
+        return len(self.fixed)
+
+    @property
+    def skipped_count(self) -> int:
+        return len(self.skipped)
+
+
+def _diff_findings(before: list[Finding], after: list[Finding]) -> FixPassResult:
+    """Diff findings before/after fix pass by ID to classify outcomes."""
+    before_by_id = {f.id: f for f in before}
+    after_by_id = {f.id: f for f in after}
+
+    fixed: list[Finding] = []
+    skipped: list[Finding] = []
+    unchanged: list[Finding] = []
+
+    for fid, bf in before_by_id.items():
+        af = after_by_id.get(fid)
+        if af is None:
+            unchanged.append(bf)
+            continue
+        if not bf.checked and af.checked:
+            fixed.append(af)
+        elif not bf.checked and not af.checked:
+            skipped.append(af)
+        else:
+            unchanged.append(af)
+
+    return FixPassResult(fixed=fixed, skipped=skipped, unchanged=unchanged)
+
+
+def _format_fix_summary(result: FixPassResult) -> str:
+    """Format a human-readable fix summary for commit message and stderr."""
+    lines: list[str] = []
+    if result.fixed:
+        lines.append("Fixed:")
+        for f in result.fixed:
+            desc = f.body.split('\n', 1)[0][:80] if f.body else f.path
+            lines.append(f"  - [{f.id}] {desc}")
+    if result.skipped:
+        lines.append("Skipped:")
+        for f in result.skipped:
+            reason = f.skip_reason if f.skip_reason else "no auto-fix"
+            lines.append(f"  - [{f.id}] {reason}")
+    return "\n".join(lines)
+
+
+def _fix_turn_budget(unchecked: int) -> int:
+    return min(max(DEFAULT_MAX_TURNS_FIX, unchecked * 2), MAX_TURNS_FIX_CAP)
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         _warn("No review file to fix — skipping fix pass")
         return
     fix_log = _derive_path(job.review_file, FILENAME_FIX_LOG)
+
+    before_text = Path(job.review_file).read_text()
+    before_findings = parse_findings(before_text)
+    before_unchecked = sum(1 for f in before_findings if not f.checked)
+
+    if before_unchecked == 0:
+        _info("All findings already checked — skipping fix pass")
+        return
+
+    max_turns = _fix_turn_budget(before_unchecked)
+
     prompt = build_prompt(
-        TEMPLATE_FIX, job, max_turns=DEFAULT_MAX_TURNS_FIX,
+        TEMPLATE_FIX, job, max_turns=max_turns,
     )
     model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING", DEFAULT_THINKING_FIX)
     provider = _resolve_provider()
-    before = _count_unchecked(job.review_file)
     _info("Fix pass — applying review findings...")
     print()
-    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=DEFAULT_MAX_TURNS_FIX)
+    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
+                 review_file=job.review_file, model=model, thinking_level=thinking,
+                 provider=provider, max_turns=max_turns)
     print()
-    after = _count_unchecked(job.review_file)
-    fixed = _count_fixed(before, after, job.review_file, job.wt_path)
-    _commit_fixes(job, fixed=fixed, skipped=after)
+
+    after_text = Path(job.review_file).read_text()
+    after_findings = parse_findings(after_text)
+    extract_skip_reasons(after_findings)
+
+    result = _diff_findings(before_findings, after_findings)
+
+    summary = _format_fix_summary(result)
+    if summary:
+        _info("Fix summary:")
+        for line in summary.splitlines():
+            print(f"  {line}", file=sys.stderr)
+
+    _commit_fixes(job, fixed=result.fixed_count, skipped=result.skipped_count,
+                  summary=summary)
 
 
 def _check_serial_abort(
@@ -1204,5 +1292,3 @@ def _fetch_metadata(
         pr_data = pd_future.result()
         ctx = fetch_pr_context(repo, pr_number, pr_data)
         return pr_future.result(), ctx, pr_data
-
-

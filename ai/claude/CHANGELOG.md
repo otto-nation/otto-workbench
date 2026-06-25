@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.29.3](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.2...otto-ai-tools-v1.29.3) (2026-06-25)
+
+
+### Bug Fixes
+
+* **git:** sync gitignore.global entries into ~/.config/git/ignore ([#388](https://github.com/otto-nation/otto-workbench/issues/388)) ([83648fb](https://github.com/otto-nation/otto-workbench/commit/83648fb82202bc28282b9cb460b7ed15b835434b))
+* **pr:** emit REVIEW_SUMMARY after successful review delegation ([#387](https://github.com/otto-nation/otto-workbench/issues/387)) ([d44c06e](https://github.com/otto-nation/otto-workbench/commit/d44c06e5d8854736ec002d7bdb6f2f76d6ef39e3))
+* **review-threads:** cast line field to int before arithmetic comparison ([#386](https://github.com/otto-nation/otto-workbench/issues/386)) ([3e2f725](https://github.com/otto-nation/otto-workbench/commit/3e2f725a9de2cd3f8e3a32fac0b7ef0bc89b1bb5))
+
+
+### Code Refactoring
+
+* **ai:** extract AI backend abstraction for multi-backend support ([#383](https://github.com/otto-nation/otto-workbench/issues/383)) ([fa333e5](https://github.com/otto-nation/otto-workbench/commit/fa333e57411fdd68d1a43cd7bb21efe1273c0b95))
+
 ## [1.29.2](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.1...otto-ai-tools-v1.29.2) (2026-06-25)
 
 

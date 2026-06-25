@@ -216,6 +216,41 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def _gh_post(endpoint: str, body: str) -> tuple[int, str]:
+    """POST JSON to a gh api REST endpoint. Returns (exit_code, stdout)."""
+    payload = json.dumps({"body": body})
+    result = subprocess.run(
+        ["gh", "api", endpoint, "--method", "POST", "--input", "-"],
+        input=payload, capture_output=True, text=True,
+    )
+    if result.returncode != 0 and result.stderr.strip():
+        print(f"gh api error: {result.stderr.strip()}", file=sys.stderr)
+    return result.returncode, result.stdout
+
+
+def post_thread_reply(
+    repo: str, pr_number: int, comment_database_id: int, body: str,
+) -> bool:
+    """Post a reply to a review thread comment. Returns True on success."""
+    endpoint = f"repos/{repo}/pulls/{pr_number}/comments/{comment_database_id}/replies"
+    code, _ = _gh_post(endpoint, body)
+    return code == 0
+
+
+def post_issue_comment(
+    repo: str, pr_number: int, body: str,
+) -> str | None:
+    """Post an issue-level comment on a PR. Returns the comment URL or None."""
+    endpoint = f"repos/{repo}/issues/{pr_number}/comments"
+    code, out = _gh_post(endpoint, body)
+    if code != 0:
+        return None
+    try:
+        return json.loads(out).get("html_url")
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 def fetch_reviewer_verdicts(
     repo: str, pr_number: int,
     pr_data: PRData | None = None,

@@ -29,31 +29,14 @@ or `/ci-failures <branch_name>`.
 
 ## Steps
 
-### 1. Resolve the argument
-
-If a skill argument was provided that looks like a branch name (contains `/` or
-is not purely numeric), resolve it first:
-
-```bash
-resolve-branch "<argument>"
-```
-
-This tries exact match, worktree directory match, separator normalization
-(`-` → `/`), and fuzzy search — in that order.
-- **Success (exit 0)**: use the stdout output as the resolved branch name
-- **Multiple matches (exit 1)**: candidates are listed on stderr — show them
-  and ask the user to pick
-- **No matches (exit 1)**: error and stop
-
-Purely numeric arguments skip resolution — they are PR numbers or run IDs.
-
-### 2. Fetch status and display dashboard
+### 1. Fetch status and display dashboard
 
 Run the CI check script to fetch the latest run, classify failures, and display status.
 
-Route the resolved argument to the correct `ci-check` flag:
+Route the argument to the correct `ci-check` flag — the script handles branch
+resolution internally via `pr_context`:
 
-- **Branch name**: `ci-check --branch <resolved_name> 2>&1`
+- **Branch name** (contains `/` or is not numeric): `ci-check --branch <argument> 2>&1`
 - **PR number** (small integer): `ci-check --pr <number> 2>&1`
 - **Run ID** (large integer): `ci-check --run <run_id> 2>&1`
 - **No argument**: `ci-check 2>&1`
@@ -68,7 +51,7 @@ The script outputs:
 
 If all checks pass (conclusion is "success" and no failures), report that CI is green and stop.
 
-### 3. Classify and group failures
+### 2. Classify and group failures
 
 From the JSON report, present failures grouped by kind in priority order:
 
@@ -92,7 +75,7 @@ Proceed with this classification? Override any kinds?
 
 Allow the user to override classifications (e.g. "that test failure is flaky").
 
-### 4. Diagnose
+### 3. Diagnose
 
 For each non-infra, non-flaky failure group:
 
@@ -107,7 +90,7 @@ Present diagnosis per group. User confirms before fixing.
 For persisting/regressed failures, include context from prior attempts:
 > "Previously diagnosed as X, fix Y was applied at commit Z — still failing. The prior fix may have been incomplete or targeted the wrong root cause."
 
-### 5. Apply fixes and push
+### 4. Apply fixes and push
 
 For each confirmed diagnosis:
 1. Edit the files to address the failure
@@ -121,7 +104,7 @@ git push
 
 Group all fixes into a single commit. The state file is updated automatically on the next `ci-check` invocation.
 
-### 6. Monitor (on re-invocation)
+### 5. Monitor (on re-invocation)
 
 When re-invoked after a push:
 1. Fetch the new run triggered by the push
@@ -136,9 +119,9 @@ Persisting: 1 (pytest test_validate — was diagnosed as X, fix Y applied)
 New: 1 (bats test_cleanup)
 ```
 
-Re-enter Step 4 for persisting failures with context of what was already tried.
+Re-enter Step 3 for persisting failures with context of what was already tried.
 
-### 7. Report
+### 6. Report
 
 Print:
 - Number of fixes applied

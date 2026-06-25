@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from dataclasses import dataclass
+
+import log
 
 
 WORKTREE_FALLBACK_DIR = ".worktrees"
@@ -20,7 +21,7 @@ class WorktreeResult:
 
 def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: str = "") -> WorktreeResult:
     if _is_shallow(repo_dir):
-        print("Unshallowing repository...", file=sys.stderr)
+        log.info("Unshallowing repository...")
         try:
             subprocess.run(
                 ["git", "-C", repo_dir, "fetch", "--unshallow"],
@@ -29,7 +30,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
         except Exception:
             pass
 
-    print(f"Setting up worktree for PR #{pr_number}...", file=sys.stderr)
+    log.info(f"Setting up worktree for PR #{pr_number}...")
 
     wt_path = _wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
@@ -37,7 +38,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
             _fetch_and_reset(wt_path, pr_head)
         return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
 
-    print("Branch deleted, fetching via PR ref...", file=sys.stderr)
+    log.info("Branch deleted, fetching via PR ref...")
     try:
         subprocess.run(
             ["git", "-C", repo_dir, "fetch", "origin", f"pull/{pr_number}/head"],
@@ -67,7 +68,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
 
 
 def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
-    print(f"Switching to branch {branch}...", file=sys.stderr)
+    log.info(f"Switching to branch {branch}...")
 
     wt_path = _wt_switch(branch, repo_dir)
     if wt_path:

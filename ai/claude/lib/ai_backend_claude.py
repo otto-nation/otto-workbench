@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from ai_backend_events import _log_stderr_on_failure, parse_claude_event
-from review_common import ANSI_DIM, ANSI_RESET, _print_lock
+from log import ANSI_DIM, ANSI_RESET, _print_lock
 
 
 # ── Stream progress ───────────────────────────────────────────────────────────

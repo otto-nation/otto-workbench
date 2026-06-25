@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 import ai_backend
-from review_common import _warn
+import log
 
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -119,7 +119,7 @@ def _try_recover_output(log_path: str, output_path: str) -> bool:
         if "## " not in content:
             continue
         Path(output_path).write_text(content + "\n")
-        _warn(f"Recovered review from denied write — saved to {output_path}")
+        log.warn(f"Recovered review from denied write — saved to {output_path}")
         return True
     return False
 

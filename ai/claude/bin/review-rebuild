@@ -15,12 +15,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import log
 from trail import Trail, add_trail_args
 from review_common import (
     FILENAME_GROUP,
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
     MODE_SELF,
-    _err, _info,
 )
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
@@ -87,15 +87,15 @@ def main():
 
     group_files = _discover_group_files(review_dir)
     if not group_files:
-        _err(f"No group finding files in {review_dir}")
+        log.error(f"No group finding files in {review_dir}")
         sys.exit(1)
 
-    _info(f"Found {len(group_files)} group files")
+    log.info(f"Found {len(group_files)} group files")
 
     meta = _read_meta(review_dir)
     repo = meta.get("repo", "")
     if not repo:
-        _err("Cannot determine repository — meta.json missing or has no 'repo' field")
+        log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         sys.exit(1)
     mode = meta.get("mode", "")
 
@@ -136,7 +136,7 @@ def main():
         )
 
         review_file.write_text(final)
-        _info(f"Rebuilt {review_file}")
+        log.info(f"Rebuilt {review_file}")
 
         finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
         trail.info("post_process", f"processed {len(finding_lines)} findings",

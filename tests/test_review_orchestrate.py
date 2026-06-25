@@ -1284,6 +1284,15 @@ class TestSplitLargeDir:
         all_files = [f for g in groups for f in g.files]
         assert set(all_files) == set(files)
 
+    def test_splits_on_file_count(self, ro):
+        files = [f"f{i}.py" for i in range(20)]
+        file_lines = {f: 10 for f in files}
+        groups = ro._split_large_dir("pkg", files, file_lines)
+        assert len(groups) > 1
+        assert all(len(g.files) <= ro.MAX_GROUP_FILES for g in groups)
+        all_files = [f for g in groups for f in g.files]
+        assert set(all_files) == set(files)
+
 
 # ── 28. group_files ─────────────────────────────────────────────────────────
 
@@ -1317,6 +1326,38 @@ class TestGroupFiles:
         # pkg dir has 2500 lines, should be split
         pkg_groups = [g for g in groups if g.name.startswith("pkg")]
         assert len(pkg_groups) > 1
+
+    def test_many_files_split(self, ro):
+        files = [
+            {"path": f"pkg/file{i}.go", "additions": 10, "deletions": 5}
+            for i in range(20)
+        ]
+        pr = ro.PRMetadata(
+            title="test", body="", head="feat", base="main", head_sha="abc",
+            additions=200, deletions=100, changed_files=20, files=files,
+        )
+        groups = ro.group_files(pr)
+        pkg_groups = [g for g in groups if g.name.startswith("pkg")]
+        assert len(pkg_groups) > 1
+        assert all(len(g.files) <= ro.MAX_GROUP_FILES for g in pkg_groups)
+        all_files = [f for g in pkg_groups for f in g.files]
+        assert set(all_files) == {f"pkg/file{i}.go" for i in range(20)}
+
+    def test_exactly_max_files_no_split(self, ro):
+        # group_files uses > MAX_GROUP_FILES, so exactly MAX_GROUP_FILES files
+        # must not trigger a split — verifies the threshold is exclusive
+        files = [
+            {"path": f"pkg/file{i}.go", "additions": 10, "deletions": 0}
+            for i in range(ro.MAX_GROUP_FILES)
+        ]
+        pr = ro.PRMetadata(
+            title="test", body="", head="feat", base="main", head_sha="abc",
+            additions=ro.MAX_GROUP_FILES * 10, deletions=0,
+            changed_files=ro.MAX_GROUP_FILES, files=files,
+        )
+        groups = ro.group_files(pr)
+        pkg_groups = [g for g in groups if g.name.startswith("pkg")]
+        assert len(pkg_groups) == 1
 
 
 # ── 29. _merge_smallest_groups ──────────────────────────────────────────────

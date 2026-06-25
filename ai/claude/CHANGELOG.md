@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.30.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.3...otto-ai-tools-v1.30.0) (2026-06-25)
+
+
+### Features
+
+* **ai:** Pi backend follow-ups — skills, extensions, steer, thinking, providers ([#390](https://github.com/otto-nation/otto-workbench/issues/390)) ([96b8dd5](https://github.com/otto-nation/otto-workbench/commit/96b8dd5b89cec09419de299d873c1c695ad069df))
+* **review-threads:** post per-thread replies and summary after --fix ([#394](https://github.com/otto-nation/otto-workbench/issues/394)) ([ca8789d](https://github.com/otto-nation/otto-workbench/commit/ca8789def7afa13427afe838644f3cbaa4a5cdff))
+
+
+### Bug Fixes
+
+* **claude-review:** deterministic fix-pass summary via Finding diffing ([#396](https://github.com/otto-nation/otto-workbench/issues/396)) ([818a7ff](https://github.com/otto-nation/otto-workbench/commit/818a7ff11157cfb5187609295f08f627adcf7773))
+* **review-threads:** strip markdown fences from AI triage JSON output ([#391](https://github.com/otto-nation/otto-workbench/issues/391)) ([80ccf14](https://github.com/otto-nation/otto-workbench/commit/80ccf14a6a17d51782dd1ab9b5148401c761c431))
+* **trail:** add error coverage across pr CLI subcommands ([#393](https://github.com/otto-nation/otto-workbench/issues/393)) ([1fbc800](https://github.com/otto-nation/otto-workbench/commit/1fbc800cd395de4d633a94a75fc321c1a0c466fe))
+
+
+### Code Refactoring
+
+* **ai:** centralize stderr output in log module ([#397](https://github.com/otto-nation/otto-workbench/issues/397)) ([5bcf726](https://github.com/otto-nation/otto-workbench/commit/5bcf72674a9f4dcdd26b18cee01b30b3fdcd3929))
+
 ## [1.29.3](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.2...otto-ai-tools-v1.29.3) (2026-06-25)
 
 

@@ -12,6 +12,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import log
+
 RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / "resolve-branch"
 
 
@@ -134,7 +136,7 @@ def _resolve_non_worktree(
         return _resolve_bare(cwd, pr=pr, branch=branch)
 
     if not pr and not branch:
-        print("Not in a git repository", file=sys.stderr)
+        log.error("Not in a git repository")
         sys.exit(1)
     return None, cwd
 
@@ -150,8 +152,7 @@ def _resolve_bare(
     if wt:
         return wt, str(wt)
     if not pr and not branch:
-        print("Bare repository — pass --branch or --repo-dir",
-              file=sys.stderr)
+        log.error("Bare repository — pass --branch or --repo-dir")
         sys.exit(1)
     return None, cwd
 
@@ -162,7 +163,7 @@ def _detect_repo(cwd: str | None = None) -> str:
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 or not r.stdout.strip():
-        print("Cannot determine repository from git remote", file=sys.stderr)
+        log.error("Cannot determine repository from git remote")
         sys.exit(1)
     return r.stdout.strip()
 
@@ -173,7 +174,7 @@ def _current_branch(cwd: str | None = None) -> str:
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 or not r.stdout.strip():
-        print("Cannot determine current branch", file=sys.stderr)
+        log.error("Cannot determine current branch")
         sys.exit(1)
     return r.stdout.strip()
 
@@ -188,7 +189,7 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
             return r.stdout.strip()
         # resolve-branch exited non-zero or returned nothing — use hint as-is
         # rather than silently discarding the user's explicit --branch value
-        print(f"resolve-branch: could not resolve {hint!r}, using as-is", file=sys.stderr)
+        log.warn(f"resolve-branch: could not resolve {hint!r}, using as-is")
         return hint
     except FileNotFoundError:
         return hint if hint else _current_branch(cwd)

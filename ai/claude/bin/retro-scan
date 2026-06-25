@@ -65,19 +65,7 @@ REVIEW_HEADER_RE = re.compile(
 )
 
 
-# ── Output helpers ───────────────────────────────────────────────────────────
-
-_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
-_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
-_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
-
-
-def _info(msg: str) -> None:
-    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
-
-
-def _warn(msg: str) -> None:
-    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+import log
 
 
 # ── Project registry ────────────────────────────────────────────────────────
@@ -185,11 +173,11 @@ def _gh_api(endpoint: str, repo: str) -> list[dict]:
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
-            _warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
+            log.warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
             return []
         return json.loads(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
-        _warn(f"gh api error for {repo}/{endpoint}: {e}")
+        log.warn(f"gh api error for {repo}/{endpoint}: {e}")
         return []
 
 
@@ -238,13 +226,13 @@ def _parse_pr_node(pr_node: dict, since_date: str) -> dict | None:
     total_threads = threads_data.get("totalCount", 0)
     thread_nodes = threads_data.get("nodes", [])
     if total_threads > len(thread_nodes):
-        _warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
+        log.warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
 
     comments_data = pr_node.get("comments", {})
     total_comments = comments_data.get("totalCount", 0)
     comment_nodes = comments_data.get("nodes", [])
     if total_comments > len(comment_nodes):
-        _warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: GQL_ISSUE_COMMENTS_LIMIT={GQL_ISSUE_COMMENTS_LIMIT})")
+        log.warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: GQL_ISSUE_COMMENTS_LIMIT={GQL_ISSUE_COMMENTS_LIMIT})")
 
     all_comments = _flatten_thread_comments(thread_nodes)
     all_comments.extend(_flatten_issue_comments(comment_nodes))
@@ -280,11 +268,11 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            _warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
+            log.warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
             return _fetch_repo_review_data_rest(repo, since_ts)
         data = json.loads(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
-        _warn(f"GraphQL error for {repo}: {e}")
+        log.warn(f"GraphQL error for {repo}: {e}")
         return _fetch_repo_review_data_rest(repo, since_ts)
 
     pr_nodes = (
@@ -558,9 +546,9 @@ def _scan_repo(
     repo: dict, last_retro_ts: int, rules: list[dict],
     git_user: str, rule_match_counts: dict[str, dict],
 ) -> dict:
-    _info(f"Fetching PRs for {repo['github']}...")
+    log.info(f"Fetching PRs for {repo['github']}...")
     pr_data = fetch_repo_review_data(repo["github"], last_retro_ts)
-    _info(f"  Found {len(pr_data)} merged PR(s) with comments")
+    log.info(f"  Found {len(pr_data)} merged PR(s) with comments")
 
     repo_prs: list[dict] = []
     unmatched = 0
@@ -712,7 +700,7 @@ def scan_local_reviews(
         for repo_key, prs in local_repos.items()
     ]
 
-    _info(f"Found {sum(len(r['prs']) for r in result_list)} local review(s)")
+    log.info(f"Found {sum(len(r['prs']) for r in result_list)} local review(s)")
     return result_list, unmatched
 
 
@@ -720,37 +708,37 @@ def scan_local_reviews(
 
 
 def _run_retro(trail, home, workbench) -> None:
-    _info(f"Home: {home}")
-    _info(f"Workbench: {workbench}")
+    log.info(f"Home: {home}")
+    log.info(f"Workbench: {workbench}")
 
     machine_md = home / MACHINE_MD_REL
     projects = parse_project_registry(str(machine_md))
-    _info(f"Found {len(projects)} project(s) in registry")
+    log.info(f"Found {len(projects)} project(s) in registry")
     trail.info("parse_registry", f"found {len(projects)} projects in machine registry")
 
     repos: list[dict] = []
     for proj in projects:
         remote_url = get_repo_remote(proj["path"])
         if not remote_url:
-            _warn(f"No git remote for {proj['name']} at {proj['path']}")
+            log.warn(f"No git remote for {proj['name']} at {proj['path']}")
             continue
         github_slug = resolve_github_remote(remote_url)
         if not github_slug:
-            _warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
+            log.warn(f"Non-GitHub remote for {proj['name']}: {remote_url}")
             continue
         repos.append({**proj, "github": github_slug})
-    _info(f"Resolved {len(repos)} GitHub repo(s)")
+    log.info(f"Resolved {len(repos)} GitHub repo(s)")
     trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
 
     rules = load_rules(workbench)
-    _info(f"Loaded {len(rules)} rule file(s)")
+    log.info(f"Loaded {len(rules)} rule file(s)")
     trail.info("load_rules", f"loaded {len(rules)} rule files from workbench")
 
     last_retro_ts = _read_last_retro(home)
     if last_retro_ts > 0:
-        _info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
+        log.info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
     else:
-        _info("No previous retro found — scanning all available PRs")
+        log.info("No previous retro found — scanning all available PRs")
     trail.info("check_state", f"last retro timestamp: {last_retro_ts}")
 
     git_user = _get_github_login()

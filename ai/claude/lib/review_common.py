@@ -11,9 +11,10 @@ import os
 import re
 import subprocess
 import sys
-import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+import log
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -127,35 +128,6 @@ PRIOR_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 PRIOR_DATE_RE = re.compile(r"<!-- date: (\d{4}-\d{2}-\d{2}) -->")
 
 
-# ── ANSI output ──────────────────────────────────────────────────────────────
-
-ANSI_DIM = "\033[2m"
-ANSI_RESET = "\033[0m"
-ANSI_INFO = "\033[1;34m▸\033[0m"
-ANSI_WARN = "\033[1;33m⚠\033[0m"
-ANSI_ERR = "\033[1;31m✗\033[0m"
-ANSI_INFO_DOT = "\033[1;34m●\033[0m"
-ANSI_WARN_DOT = "\033[1;33m●\033[0m"
-ANSI_ERR_DOT = "\033[1;31m●\033[0m"
-
-_print_lock = threading.Lock()
-
-
-def _info(msg: str):
-    with _print_lock:
-        print(f"{ANSI_INFO} {msg}", flush=True)
-
-
-def _warn(msg: str):
-    with _print_lock:
-        print(f"{ANSI_WARN} {msg}", file=sys.stderr, flush=True)
-
-
-def _err(msg: str):
-    with _print_lock:
-        print(f"{ANSI_ERR_DOT} {msg}", file=sys.stderr, flush=True)
-
-
 # ── Repo detection ────────────────────────────────────────────────────────────
 
 def detect_repo(cwd: str | None = None) -> str:
@@ -165,7 +137,7 @@ def detect_repo(cwd: str | None = None) -> str:
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 or not r.stdout.strip():
-        _err("Cannot determine repository from git remote")
+        log.error("Cannot determine repository from git remote")
         sys.exit(1)
     return r.stdout.strip()
 

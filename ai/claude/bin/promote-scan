@@ -49,19 +49,7 @@ STALE_DAYS = 90
 BODY_PREVIEW_LENGTH = 500
 
 
-# ── Output helpers ───────────────────────────────────────────────────────────
-
-_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
-_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
-_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
-
-
-def _info(msg: str) -> None:
-    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
-
-
-def _warn(msg: str) -> None:
-    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+import log
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
@@ -231,7 +219,7 @@ def scan_hooks(workbench: Path) -> list[dict]:
     try:
         data = json.loads(settings_file.read_text())
     except (json.JSONDecodeError, OSError):
-        _warn(f"Could not parse {settings_file}")
+        log.warn(f"Could not parse {settings_file}")
         return []
 
     hooks = data.get("hooks", {})
@@ -417,22 +405,22 @@ def main() -> None:
     )
 
     try:
-        _info(f"Home: {home}")
-        _info(f"Workbench: {workbench}")
+        log.info(f"Home: {home}")
+        log.info(f"Workbench: {workbench}")
 
         memory_states = scan_memory_state(home)
-        _info(f"Found {len(memory_states)} project(s) with memory")
+        log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
         backed_up = scan_backed_up_memories(workbench)
-        _info(f"Found {len(backed_up)} backed-up memory file(s)")
+        log.info(f"Found {len(backed_up)} backed-up memory file(s)")
         trail.info("scan_backed_up", f"found {len(backed_up)} backed-up memory files")
 
         rules = scan_rules(workbench)
         scripts = scan_scripts(workbench)
         hooks = scan_hooks(workbench)
         agents = scan_agents(workbench)
-        _info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
+        log.info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
         trail.info("scan_artifacts", f"found {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
 
         report = format_report(memory_states, backed_up, rules, scripts, hooks, agents)

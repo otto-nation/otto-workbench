@@ -79,19 +79,7 @@ SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_fe
 STALE_DAYS = 90
 
 
-# ── Output helpers ───────────────────────────────────────────────────────────
-
-_NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stderr.isatty()
-_INFO = "" if _NO_COLOR else "\033[1;34m→\033[0m"
-_WARN = "" if _NO_COLOR else "\033[1;33m⚠\033[0m"
-
-
-def _info(msg: str) -> None:
-    print(f"{_INFO} {msg}", file=sys.stderr, flush=True)
-
-
-def _warn(msg: str) -> None:
-    print(f"{_WARN} {msg}", file=sys.stderr, flush=True)
+import log
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
@@ -209,7 +197,7 @@ def _extract_signals_from_file(jsonl_file: Path, project_id: str) -> list[dict]:
     try:
         raw_lines = jsonl_file.read_text().splitlines()
     except OSError:
-        _warn(f"Could not read {jsonl_file}")
+        log.warn(f"Could not read {jsonl_file}")
         return []
     results = [_classify_line(line, project_id, session_date) for line in raw_lines]
     return [sig for sig in results if sig is not None]
@@ -362,15 +350,15 @@ def main() -> None:
     )
 
     try:
-        _info(f"Scanning sessions from last {args.days} days")
-        _info(f"Home: {home}")
+        log.info(f"Scanning sessions from last {args.days} days")
+        log.info(f"Home: {home}")
 
         memory_states = scan_memory_state(home)
-        _info(f"Found {len(memory_states)} project(s) with memory")
+        log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
         signals = scan_sessions(home, args.days)
-        _info(f"Found {len(signals)} signal(s)")
+        log.info(f"Found {len(signals)} signal(s)")
         trail.info("scan_sessions", f"scanned sessions from last {args.days} days, found {len(signals)} signals")
 
         report = format_report(memory_states, signals)

@@ -12,6 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import log
 from review_github import (
     PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
 )
@@ -172,7 +173,7 @@ def _warn_truncated_thread(node: dict) -> None:
     comment_nodes = comments_data.get("nodes", [])
     if comment_total > len(comment_nodes):
         path = node.get("path", "?")
-        print(f"Warning: thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})", file=sys.stderr)
+        log.warn(f"thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
 
 
 def fetch_threads(
@@ -199,7 +200,7 @@ def fetch_threads(
         nodes = threads_data["nodes"]
         total = threads_data.get("totalCount", len(nodes))
         if total > len(nodes):
-            print(f"Warning: PR has {total} threads but only {len(nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})", file=sys.stderr)
+            log.warn(f"PR has {total} threads but only {len(nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
         for node in nodes:
             _warn_truncated_thread(node)
         return nodes
@@ -224,7 +225,7 @@ def _gh_post(endpoint: str, body: str) -> tuple[int, str]:
         input=payload, capture_output=True, text=True,
     )
     if result.returncode != 0 and result.stderr.strip():
-        print(f"gh api error: {result.stderr.strip()}", file=sys.stderr)
+        log.error(f"gh api error: {result.stderr.strip()}")
     return result.returncode, result.stdout
 
 

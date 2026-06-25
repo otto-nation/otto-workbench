@@ -33,12 +33,12 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
+import log
 from ai_backend_events import _log_stderr_on_failure, parse_pi_cost, parse_pi_event
-from review_common import ANSI_DIM, ANSI_RESET, _print_lock
+from log import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 
@@ -52,7 +52,7 @@ def _read_agent_prompt(agent: str) -> str | None:
     agent_file = AGENTS_DIR / f"{agent}.md"
     if agent_file.is_file():
         return agent_file.read_text()
-    print(f"  warning: agent file not found: {agent_file}", file=sys.stderr)
+    log.warn(f"agent file not found: {agent_file}")
     return None
 
 

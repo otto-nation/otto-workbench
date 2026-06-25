@@ -28,7 +28,8 @@ import review_format as _rfmt  # noqa: E402
 import review_github as _rg  # noqa: E402
 import review_posting as _rp  # noqa: E402
 
-from review_common import SEVERITIES, _err, _info, _warn  # noqa: E402
+import log  # noqa: E402
+from review_common import SEVERITIES  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
     Finding, parse_findings,
@@ -100,14 +101,14 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     review_sha = sha_match.group(1) if sha_match else None
 
     all_findings = parse_findings(text)
-    _info(f"Parsed {len(all_findings)} findings from review file")
+    log.info(f"Parsed {len(all_findings)} findings from review file")
     trail.info("parse_findings", f"parsed {len(all_findings)} findings",
                data={"total": len(all_findings), "review_sha": review_sha})
 
     findings = [f for f in all_findings if f.severity in severity_filter]
     filtered = len(all_findings) - len(findings)
     if filtered:
-        _info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
+        log.info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
     trail.decision(
         "filter_severity",
         f"kept {len(findings)} of {len(all_findings)} findings",
@@ -116,7 +117,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     )
 
     if not findings:
-        _warn("No findings to post")
+        log.warn("No findings to post")
         sys.exit(0)
 
     head_sha = sidecar.get("head_sha", "")
@@ -133,8 +134,8 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
 
     sha_drifted = review_sha and review_sha != head_sha
     if sha_drifted and not args.dry_run:
-        _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
-        _info("Posting as comment (inline positions may be inaccurate)")
+        log.warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
+        log.info("Posting as comment (inline positions may be inaccurate)")
         trail.decision(
             "sha_drift",
             f"review SHA {review_sha[:7] if review_sha else '?'} != HEAD {head_sha[:7] if head_sha else '?'}",
@@ -148,10 +149,10 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
         return
 
     if args.dry_run:
-        _info("Fetching diff for classification...")
+        log.info("Fetching diff for classification...")
     diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
-    _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
+    log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
     trail.info("classify_findings",
                f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
                data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
@@ -160,7 +161,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     if not args.dry_run and all_postable:
         kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
         if deduped:
-            _info(f"Skipped {len(deduped)} findings duplicating existing comments")
+            log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
             skipped.extend(deduped)
             inline = [f for f in kept if f.classification == CLASS_INLINE]
             file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
@@ -219,7 +220,7 @@ def main():
 
     review_path = Path(args.review_file)
     if not review_path.exists():
-        _err(f"Review file not found: {review_path}")
+        log.error(f"Review file not found: {review_path}")
         sys.exit(1)
 
     sidecar: dict = {}
@@ -232,7 +233,7 @@ def main():
 
     repo = sidecar.get("repo", "")
     if not repo:
-        _err("Cannot determine repository — meta.json missing or has no 'repo' field")
+        log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         sys.exit(1)
     args.repo = repo
 

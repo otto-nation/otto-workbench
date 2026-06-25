@@ -14,10 +14,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import log
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_common import (
     FILE_STAT_FMT, MODE_PR, PRIOR_SHA_RE,
-    _info, _run, _warn,
+    _run,
 )
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
@@ -199,7 +200,7 @@ def _truncate_log(text: str, max_bytes: int, label: str = "Commit log") -> str:
     raw = text.encode()
     if len(raw) <= max_bytes:
         return text
-    _warn(f"{label} too large ({len(raw) // 1024}KB), truncating to {max_bytes // 1024}KB")
+    log.warn(f"{label} too large ({len(raw) // 1024}KB), truncating to {max_bytes // 1024}KB")
     truncated = raw[:max_bytes].decode(errors="ignore").rsplit("\n", 1)[0]
     return truncated + "\n\n... (truncated — full log exceeded size limit)"
 
@@ -245,7 +246,7 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
     prior_sha = prior_sha_match.group(1)
     verify = _run(["git", "cat-file", "-t", prior_sha], cwd=job.wt_path, check=False)
     if verify.strip() != "commit":
-        _warn(f"Prior review SHA {prior_sha[:7]} not reachable — running full review")
+        log.warn(f"Prior review SHA {prior_sha[:7]} not reachable — running full review")
         return empty
 
     raw_diff = _run(["git", "diff", f"{prior_sha}..HEAD"], cwd=job.wt_path)
@@ -260,7 +261,7 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
         cwd=job.wt_path,
     )
     delta_files = [f for f in delta_names.split("\n") if f.strip()]
-    _info(
+    log.info(
         f"Incremental review: {len(delta_files)} files changed since "
         f"prior review ({prior_sha[:7]}..{job.pr.head_sha[:7]})"
     )
@@ -362,10 +363,10 @@ def _fit_to_budget(
 
     if density_skipped:
         density_kb = sum(len(all_contents[p].encode()) for p in density_skipped) // 1024
-        _info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
+        log.info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
     if omitted:
         omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
-        _info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+        log.info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
     return included, included_perms, omitted
 
@@ -470,7 +471,7 @@ def _truncate_diff(full_diff: str, max_bytes: int) -> tuple[str, list[str]]:
         included_count = len(included_indices)
 
     if omitted_paths:
-        _warn(
+        log.warn(
             f"Diff truncated: {included_count}/{len(sections)} file diffs included, "
             f"{len(omitted_paths)} omitted — agent can read via tools"
         )
@@ -702,7 +703,7 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
                   "additions,deletions,changedFiles,files",
     ])
     if not raw:
-        print(f"error: failed to fetch PR #{pr_number} from {repo}", file=sys.stderr)
+        log.error(f"failed to fetch PR #{pr_number} from {repo}")
         sys.exit(1)
     data = json.loads(raw)
     return PRMetadata(
@@ -876,7 +877,7 @@ def fetch_reply_threads(
     if not bot_login:
         bot_login = pr_data.viewer_login if pr_data is not None else _get_bot_login()
     if not bot_login:
-        _warn("Could not detect bot login — skipping reply thread analysis")
+        log.warn("Could not detect bot login — skipping reply thread analysis")
         return {"threads": [], "summary": {}}
 
     owner, name = repo.split("/", 1)

@@ -54,7 +54,7 @@ def _gather_code_context(threads: list, repo_dir: Path) -> str:
     snippets = []
     for t in threads:
         file_path = t.get("file")
-        line = t.get("line") or 0
+        line = int(t.get("line") or 0)
         if not file_path or line == 0:
             continue
         full_path = repo_dir / file_path
@@ -176,8 +176,9 @@ def _thread_comment_text(comments: list) -> str:
     return "\n\n".join(parts)
 
 
-def _code_context_for_thread(file_path: str, line: int, repo_dir: Path) -> str:
+def _code_context_for_thread(file_path: str, line: int | str, repo_dir: Path) -> str:
     """Read surrounding source lines for a single thread's file location."""
+    line = int(line) if line else 0
     if not file_path or line == 0:
         return ""
     full_path = repo_dir / file_path

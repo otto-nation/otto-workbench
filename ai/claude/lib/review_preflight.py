@@ -137,6 +137,7 @@ class PipelineState:
 MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
+MAX_GROUP_FILES = 15
 DEFAULT_MAX_PARALLEL = 4
 DEFAULT_MAX_GROUPS = 12
 HOLISTIC_MIN_GROUPS = 4
@@ -576,7 +577,7 @@ def _split_large_dir(name: str, files: list[str], file_lines: dict[str, int]) ->
     sub_idx = 1
     for f in files:
         fl = file_lines[f]
-        if sub_lines + fl > MAX_GROUP_LINES and sub_files:
+        if sub_files and (sub_lines + fl > MAX_GROUP_LINES or len(sub_files) >= MAX_GROUP_FILES):
             groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
             sub_files = []
             sub_lines = 0
@@ -619,7 +620,7 @@ def group_files(pr: PRMetadata) -> list[Group]:
     for d in dir_order:
         files = dir_files[d]
         total = dir_lines[d]
-        if total > MAX_GROUP_LINES:
+        if total > MAX_GROUP_LINES or len(files) > MAX_GROUP_FILES:
             groups.extend(_split_large_dir(d, files, file_lines))
         else:
             groups.append(Group(d, files, total))

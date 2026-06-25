@@ -588,6 +588,7 @@ def _is_next_finding_or_section(stripped: str) -> bool:
     return (
         stripped.startswith("- **[")
         or stripped.startswith("- [ ] **[")
+        or stripped.startswith("- [x] **[")
         or stripped.startswith("## ")
     )
 

@@ -343,16 +343,13 @@ class TestCommitFixesWithSummary:
 
 class TestTurnBudgetScaling:
     def test_small_review_uses_default(self):
-        turns = min(max(review_pipeline.DEFAULT_MAX_TURNS_FIX, 5 * 2),
-                    review_pipeline.MAX_TURNS_FIX_CAP)
+        turns = review_pipeline._fix_turn_budget(5)
         assert turns == review_pipeline.DEFAULT_MAX_TURNS_FIX
 
     def test_large_review_scales_up(self):
-        turns = min(max(review_pipeline.DEFAULT_MAX_TURNS_FIX, 25 * 2),
-                    review_pipeline.MAX_TURNS_FIX_CAP)
+        turns = review_pipeline._fix_turn_budget(25)
         assert turns == 50
 
     def test_very_large_review_caps(self):
-        turns = min(max(review_pipeline.DEFAULT_MAX_TURNS_FIX, 100 * 2),
-                    review_pipeline.MAX_TURNS_FIX_CAP)
+        turns = review_pipeline._fix_turn_budget(100)
         assert turns == review_pipeline.MAX_TURNS_FIX_CAP

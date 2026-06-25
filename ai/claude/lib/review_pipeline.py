@@ -472,9 +472,9 @@ def _count_fixed(before_unchecked: int, after_unchecked: int,
 
 @dataclass
 class FixPassResult:
-    fixed: list
-    skipped: list
-    unchanged: list
+    fixed: list[Finding]
+    skipped: list[Finding]
+    unchanged: list[Finding]
 
     @property
     def fixed_count(self) -> int:
@@ -515,7 +515,7 @@ def _format_fix_summary(result: FixPassResult) -> str:
     if result.fixed:
         lines.append("Fixed:")
         for f in result.fixed:
-            desc = f.body[:80] if f.body else f.path
+            desc = f.body.split('\n', 1)[0][:80] if f.body else f.path
             lines.append(f"  - [{f.id}] {desc}")
     if result.skipped:
         lines.append("Skipped:")
@@ -523,6 +523,10 @@ def _format_fix_summary(result: FixPassResult) -> str:
             reason = f.skip_reason if f.skip_reason else "no auto-fix"
             lines.append(f"  - [{f.id}] {reason}")
     return "\n".join(lines)
+
+
+def _fix_turn_budget(unchecked: int) -> int:
+    return min(max(DEFAULT_MAX_TURNS_FIX, unchecked * 2), MAX_TURNS_FIX_CAP)
 
 
 def run_fix_pass(job: ReviewJob):
@@ -535,7 +539,11 @@ def run_fix_pass(job: ReviewJob):
     before_findings = parse_findings(before_text)
     before_unchecked = sum(1 for f in before_findings if not f.checked)
 
-    max_turns = min(max(DEFAULT_MAX_TURNS_FIX, before_unchecked * 2), MAX_TURNS_FIX_CAP)
+    if before_unchecked == 0:
+        _info("All findings already checked — skipping fix pass")
+        return
+
+    max_turns = _fix_turn_budget(before_unchecked)
 
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,

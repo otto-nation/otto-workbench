@@ -58,6 +58,11 @@ _write_script() {
   [ "$result" = "None" ]
 }
 
+@test "registry: python shebang returns PythonChecker" {
+  result=$(_py "from nesting import get_checker_for_shebang; print(type(get_checker_for_shebang(b'#!/usr/bin/env python3\n')).__name__)")
+  [ "$result" = "PythonChecker" ]
+}
+
 # ── CLI: basic behavior ────────────────────────────────────────────────────
 
 @test "validate-nesting --help exits 0" {
@@ -167,6 +172,37 @@ def ok():
 SCRIPT
   )
   run "$VALIDATE_NESTING" "$bash_f" "$python_f"
+  [ "$status" -eq 0 ]
+}
+
+# ── CLI: extensionless scripts (shebang detection) ────────────────────────
+
+@test "validate-nesting: extensionless python script detected via shebang" {
+  local f
+  f=$(_write_script "my-script" <<'SCRIPT'
+#!/usr/bin/env python3
+def bad():
+    if True:
+        for x in range(10):
+            if x > 5:
+                print("too deep")
+SCRIPT
+  )
+  run "$VALIDATE_NESTING" "$f"
+  [ "$status" -eq 1 ]
+}
+
+@test "validate-nesting: extensionless python script within limit exits 0" {
+  local f
+  f=$(_write_script "my-script" <<'SCRIPT'
+#!/usr/bin/env python3
+def good():
+    if True:
+        for x in range(10):
+            print(x)
+SCRIPT
+  )
+  run "$VALIDATE_NESTING" "$f"
   [ "$status" -eq 0 ]
 }
 

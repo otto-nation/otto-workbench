@@ -830,20 +830,8 @@ def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
 def _run_self_review_body(
     repo, pr_number, wt_path, issue_link, max_parallel,
     no_holistic, max_cost, model, fix_pass, args,
+    self_review_dir, branch_name,
 ) -> None:
-    repo_name = repo.split("/")[-1]
-    try:
-        r = subprocess.run(
-            ["git", "-C", wt_path, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True,
-        )
-        branch_name = r.stdout.strip()
-    except Exception:
-        branch_name = ""
-
-    branch_sanitized = branch_name.replace("/", "-")
-    self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
-    self_review_dir.mkdir(parents=True, exist_ok=True)
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)
 
@@ -969,12 +957,32 @@ def _run_self_review(args) -> None:
         if wt_cleanup:
             wt_path = wt_cleanup.path
 
+    repo_name = repo.split("/")[-1]
+    branch_sanitized = (ctx.branch or "").replace("/", "-")
+    self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
+    self_review_dir.mkdir(parents=True, exist_ok=True)
+
+    trail = Trail.start(
+        script="claude-review",
+        artifact_dir=str(self_review_dir),
+        context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "self"},
+        debug=getattr(args, "debug", False),
+    )
+
     try:
+        trail.info("resolve_context", f"self-review in {repo}",
+                   data={"pr": pr_number, "repo": repo, "branch": ctx.branch, "wt_path": wt_path})
         _run_self_review_body(
             repo, pr_number, wt_path, issue_link, max_parallel,
             no_holistic, max_cost, model, fix_pass, args,
+            self_review_dir=self_review_dir,
+            branch_name=ctx.branch or "",
         )
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
     finally:
+        trail.finish()
         if wt_cleanup:
             _cleanup_self_review_worktree(wt_cleanup, repo_dir)
 

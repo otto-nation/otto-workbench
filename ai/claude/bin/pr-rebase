@@ -37,6 +37,12 @@ from trail import Trail, add_trail_args
 # Inner helper functions use _trail for instrumentation without changing signatures.
 _trail: Trail | None = None
 
+
+def _terr(action: str, detail: str, **kwargs) -> None:
+    if _trail:
+        _trail.error(action, detail, **kwargs)
+
+
 _TARGET_REF = "origin/main"
 
 _GIT_REBASE_MERGE_DIR = "rebase-merge"
@@ -235,11 +241,13 @@ def _resolve_single_file(
     prompt = _build_resolve_prompt(filepath, content, sha, subject)
     stdout, rc = ai_backend.prompt(prompt)
     if rc != 0:
+        _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
         print(f"  ai prompt failed for {filepath} (exit {rc})", file=sys.stderr)
         return None
 
     resolved_content = _parse_resolved_content(stdout)
     if resolved_content is None:
+        _terr("resolve_conflicts", f"failed to parse resolution for {filepath}", data={"filepath": filepath})
         print(f"  Failed to parse resolution for {filepath}", file=sys.stderr)
         return None
 
@@ -288,6 +296,7 @@ def _resolve_file_conflicts(
         full_path = Path(cwd) / filepath
 
         if _is_binary(full_path):
+            _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
             print(f"  Cannot resolve binary file: {filepath}", file=sys.stderr)
             return None
 
@@ -305,6 +314,7 @@ def _resolve_file_conflicts(
             capture_output=True, text=True,
         )
         if r.returncode != 0:
+            _terr("resolve_conflicts", f"go mod tidy failed in {go_dir.name}", data={"stderr": r.stderr.strip()})
             print(f"  go mod tidy failed: {r.stderr.strip()}", file=sys.stderr)
             return None
         go_sum = go_dir / "go.sum"
@@ -356,6 +366,7 @@ def _resolve_and_continue(cwd: str) -> tuple[list[str], int] | None:
         # Continue failed — check for new conflicts on the next commit
         new_conflicts = _detect_conflicts(cwd)
         if not new_conflicts:
+            _terr("rebase_continue", f"rebase --continue failed (exit {r.returncode})")
             print(f"rebase --continue failed (exit {r.returncode})", file=sys.stderr)
             return None
         # Loop again with new conflicts
@@ -390,6 +401,7 @@ def _handle_conflicts(
 
     result = _resolve_and_continue(cwd)
     if result is None:
+        _terr("resolve_conflicts", "AI resolution failed, aborting rebase")
         print("AI conflict resolution failed — aborting rebase.", file=sys.stderr)
         subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
         return 1
@@ -414,12 +426,14 @@ def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     """Force-push after a completed rebase."""
     if _detect_rebase_in_progress(cwd):
+        _terr("push", "rebase still in progress")
         print("Cannot push — rebase still in progress.", file=sys.stderr)
         return 1
 
     print("Force-pushing...", file=sys.stderr)
     r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
     if r.returncode != 0:
+        _terr("push", "force-push failed", data={"exit_code": r.returncode})
         return r.returncode
 
     state = _load_or_init(ctx)
@@ -486,6 +500,7 @@ def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Start a fresh rebase onto the target ref."""
     if ctx.branch in ("main", "master"):
+        _terr("preflight", f"on protected branch {ctx.branch}")
         print("Cannot rebase — currently on protected branch.", file=sys.stderr)
         return 1
 
@@ -494,6 +509,7 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
         capture_output=True, text=True, cwd=cwd,
     )
     if status.stdout.strip():
+        _terr("preflight", "working tree has uncommitted changes")
         print("Cannot rebase — working tree has uncommitted changes.", file=sys.stderr)
         return 1
 
@@ -532,8 +548,10 @@ def _rebase_success(
         )
         print(f"{label} — force-pushing...", file=sys.stderr)
         r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
-        if _trail:
-            _trail.info("force_push", "force-pushed to remote", data={"exit_code": r.returncode})
+        if r.returncode == 0:
+            _trail and _trail.info("force_push", "force-pushed to remote")
+        else:
+            _terr("force_push", "force-push failed", data={"exit_code": r.returncode})
         pr_state.update_rebase(state, pr_state.RebaseSummary(
             target_base=_TARGET_REF,
             commits_replayed=commits,
@@ -625,6 +643,9 @@ def main():
             mode = "fix" if args.fix else "start"
             _trail.decision("mode", f"selected {mode}", reason="--fix flag set" if args.fix else "default mode")
             sys.exit(cmd_start(cwd, ctx, args.fix))
+    except Exception as exc:
+        _trail.error("unexpected_error", str(exc))
+        raise
     finally:
         _trail.finish()
 

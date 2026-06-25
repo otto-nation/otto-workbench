@@ -969,12 +969,25 @@ def _run_self_review(args) -> None:
         if wt_cleanup:
             wt_path = wt_cleanup.path
 
+    trail = Trail.start(
+        script="claude-review",
+        artifact_dir=str(Path(wt_path) / pr_state.STATE_DIR),
+        context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "self"},
+        debug=getattr(args, "debug", False),
+    )
+
     try:
+        trail.info("resolve_context", f"self-review in {repo}",
+                   data={"pr": pr_number, "repo": repo, "branch": ctx.branch, "wt_path": wt_path})
         _run_self_review_body(
             repo, pr_number, wt_path, issue_link, max_parallel,
             no_holistic, max_cost, model, fix_pass, args,
         )
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
     finally:
+        trail.finish()
         if wt_cleanup:
             _cleanup_self_review_worktree(wt_cleanup, repo_dir)
 

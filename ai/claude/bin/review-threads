@@ -119,7 +119,8 @@ Return JSON matching this exact schema:
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""
 
 
-def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> tuple[dict | None, int]:
+def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
+                trail: Trail | None = None) -> tuple[dict | None, int]:
     """Classify non-resolved threads via AI and update triage state.
 
     Returns (triage_result, exit_code). Caller handles stdout output.
@@ -137,12 +138,16 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> tuple[dict | No
 
     stdout, rc = ai_backend.prompt(prompt)
     if rc != 0:
+        if trail:
+            trail.error("triage", "AI prompt failed", data={"exit_code": rc})
         print("review-threads: ai prompt failed", file=sys.stderr)
         return None, 1
 
     try:
         triage_result = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
+        if trail:
+            trail.error("triage", "AI returned non-JSON output")
         print("review-threads: ai returned non-JSON output", file=sys.stderr)
         return None, 1
 
@@ -159,6 +164,8 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict) -> tuple[dict | No
         ))
         pr_state.save_state(ctx_args["worktree_root"], st)
     except Exception as exc:
+        if trail:
+            trail.error("triage", f"state update failed: {exc}")
         print(f"review-threads: triage state update failed: {exc}", file=sys.stderr)
 
     return triage_result, 0
@@ -545,6 +552,7 @@ def _run_threads(trail, args, ctx) -> None:
         ))
         pr_state.save_state(toplevel, st)
     except Exception as exc:
+        trail.error("state_update", f"state update failed: {exc}")
         print(f"review-threads: state update failed: {exc}", file=sys.stderr)
 
     # Triage and/or fix mode
@@ -553,7 +561,7 @@ def _run_threads(trail, args, ctx) -> None:
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",
                        data={"fix": args.fix, "triage": args.triage})
-        triage_result, rc = _run_triage(report, toplevel, ctx_args)
+        triage_result, rc = _run_triage(report, toplevel, ctx_args, trail=trail)
         if rc != 0:
             sys.exit(rc)
 

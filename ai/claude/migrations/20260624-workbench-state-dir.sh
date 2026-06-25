@@ -3,10 +3,6 @@ set -e
 # Migration: relocate PR and CI state from ignore/pr/ and ignore/ci-failures/
 # to .workbench/. Idempotent — no-op if already migrated or nothing to migrate.
 
-WORKBENCH_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || WORKBENCH_DIR="."
-# shellcheck source=../lib/ui.sh
-. "$WORKBENCH_DIR/lib/ui.sh"
-
 migration_20260624_workbench_state_dir() {
     local migrated=0
 

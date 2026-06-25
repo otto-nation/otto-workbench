@@ -8,6 +8,7 @@
 #   - Each file has a #!/usr/bin/env bash shebang
 #   - Each file defines a function matching migration_YYYYMMDD_slug (derived from filename)
 #   - No duplicate filenames across components
+#   - No redundant WORKBENCH_DIR assignment or lib/ui.sh sourcing (provided by framework)
 #
 # Exit code: 0 if all checks pass (or no migrations found), 1 if any fail.
 
@@ -48,6 +49,46 @@ ALL_BASENAMES=()
 _migration_dirs=()
 discover_migration_dirs _migration_dirs
 
+_validate_migration() {
+  local migration="$1" display="$2"
+  local basename_m
+  basename_m="$(basename "$migration")"
+
+  ALL_BASENAMES+=("$basename_m")
+
+  # Filename format: YYYYMMDD-slug.sh
+  [[ "$basename_m" =~ ^[0-9]{8}-[a-z0-9-]+\.sh$ ]] \
+    && _pass "$display: filename format valid" \
+    || _fail "$display: filename must match YYYYMMDD-slug.sh (lowercase alphanumeric + dashes)"
+
+  # Shebang check
+  local first_line
+  first_line="$(head -1 "$migration")"
+  [[ "$first_line" == "#!/usr/bin/env bash" ]] \
+    && _pass "$display: shebang present" \
+    || _fail "$display: missing #!/usr/bin/env bash shebang"
+
+  # Function name: migration_YYYYMMDD_slug (dashes to underscores, .sh stripped)
+  local expected_fn="migration_${basename_m%.sh}"
+  expected_fn="${expected_fn//-/_}"
+  grep -qE "^${expected_fn}[[:space:]]*\(\)" "$migration" \
+    && _pass "$display: defines ${expected_fn}()" \
+    || _fail "$display: expected function ${expected_fn}() not found"
+
+  # No redundant WORKBENCH_DIR or lib/ui.sh — the migration framework provides both
+  if grep -qE '^WORKBENCH_DIR=' "$migration"; then
+    _fail "$display: must not assign WORKBENCH_DIR (provided by migration framework)"
+  else
+    _pass "$display: no redundant WORKBENCH_DIR"
+  fi
+
+  if grep -qE '^\.\s+".*lib/ui\.sh"' "$migration"; then
+    _fail "$display: must not source lib/ui.sh (provided by migration framework)"
+  else
+    _pass "$display: no redundant lib/ui.sh sourcing"
+  fi
+}
+
 for migrations_dir in "${_migration_dirs[@]}"; do
   for migration in "$migrations_dir"/*.sh; do
     [[ -f "$migration" ]] || continue
@@ -56,27 +97,8 @@ for migrations_dir in "${_migration_dirs[@]}"; do
     basename_m="$(basename "$migration")"
     component_rel="$(dirname "$migrations_dir")"
     component_rel="${component_rel#"$WORKBENCH_DIR/"}"
-    display="$component_rel/$basename_m"
 
-    ALL_BASENAMES+=("$basename_m")
-
-    # Filename format: YYYYMMDD-slug.sh
-    [[ "$basename_m" =~ ^[0-9]{8}-[a-z0-9-]+\.sh$ ]] \
-      && _pass "$display: filename format valid" \
-      || _fail "$display: filename must match YYYYMMDD-slug.sh (lowercase alphanumeric + dashes)"
-
-    # Shebang check
-    first_line="$(head -1 "$migration")"
-    [[ "$first_line" == "#!/usr/bin/env bash" ]] \
-      && _pass "$display: shebang present" \
-      || _fail "$display: missing #!/usr/bin/env bash shebang"
-
-    # Function name: migration_YYYYMMDD_slug (dashes to underscores, .sh stripped)
-    expected_fn="migration_${basename_m%.sh}"
-    expected_fn="${expected_fn//-/_}"
-    grep -qE "^${expected_fn}[[:space:]]*\(\)" "$migration" \
-      && _pass "$display: defines ${expected_fn}()" \
-      || _fail "$display: expected function ${expected_fn}() not found"
+    _validate_migration "$migration" "$component_rel/$basename_m"
   done
 done
 

@@ -22,7 +22,7 @@ Reviews a branch and automatically applies fixes for the findings.
 
 ## How It Works
 
-1. Resolve the branch name (validate it exists, fuzzy-match if needed)
+1. Determine the branch name (from argument or current HEAD)
 2. Check if a self-review already exists for the current repo and branch in
    `~/.config/workbench/reviews/`
 3. If no review, or the review is stale, run `pr review --self --fix`
@@ -32,26 +32,15 @@ Reviews a branch and automatically applies fixes for the findings.
 
 ## Steps
 
-### Step 1: Resolve branch name
+### Step 1: Determine branch name
 
-Determine and validate the branch name. Run each lookup as a **separate**
-Bash call — never chain variable assignments with `&&`.
+Get the branch name — use the skill argument if provided, otherwise:
+```bash
+git rev-parse --abbrev-ref HEAD
+```
 
-1. Get the branch name — use the skill argument if provided, otherwise:
-   ```bash
-   git rev-parse --abbrev-ref HEAD
-   ```
-
-2. **If a skill argument was provided**, resolve the branch:
-   ```bash
-   resolve-branch "<argument>"
-   ```
-   This tries exact match, worktree directory match, separator normalization
-   (`-` → `/`), and fuzzy search — in that order.
-   - **Success (exit 0)**: use the stdout output as the branch name
-   - **Multiple matches (exit 1)**: candidates are listed on stderr — show
-     them and ask the user to pick
-   - **No matches (exit 1)**: error and stop
+The `pr` script handles branch resolution (fuzzy matching, worktree lookup)
+internally via `pr_context` — pass the argument through directly.
 
 ### Step 2: Check for existing review
 

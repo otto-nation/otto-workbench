@@ -30,28 +30,20 @@ Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_na
 
 ### Step 1: Resolve argument
 
-Determine how to invoke the CLI. Run each lookup as a **separate** Bash
-call — never chain variable assignments with `&&`.
+Determine how to invoke the CLI. The `pr` script handles branch resolution
+internally via `pr_context` — pass the argument through directly.
 
 **If no argument provided** and CWD is inside the target repo worktree:
 no resolution needed — `pr comments` auto-detects from CWD. Skip to Step 2.
 
 **If a branch name argument was provided** (contains `/` or is not numeric):
 
-1. Resolve the branch:
-   ```bash
-   resolve-branch "<argument>"
-   ```
-   - **Success (exit 0)**: use stdout as the resolved branch name
-   - **Multiple matches (exit 1)**: candidates on stderr — show them and ask
-   - **No matches (exit 1)**: error and stop
-
-2. Find the worktree path:
-   ```bash
-   wt switch <resolved_branch> --no-cd --format json --no-hooks
-   ```
-   Extract the `path` from the JSON output. This is the only value the CLI
-   needs — it derives repo, branch, and PR number from the worktree.
+Find the worktree path:
+```bash
+wt switch <argument> --no-cd --format json --no-hooks
+```
+Extract the `path` from the JSON output. This is the only value the CLI
+needs — it derives repo, branch, and PR number from the worktree.
 
 **If a PR number was provided** (numeric): pass it directly as `--pr`.
 

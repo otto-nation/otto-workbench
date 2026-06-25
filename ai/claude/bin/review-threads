@@ -26,6 +26,7 @@ import pr_context
 import pr_state
 import review_common
 from review_github import fetch_pr_data
+from trail import Trail, add_trail_args
 
 TRIAGE_CONTEXT_LINES = 10
 FIX_MAX_TURNS = 15
@@ -462,32 +463,9 @@ def _run_comment_fix(
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="PR review thread status")
-    parser.add_argument("--pr", help="PR number")
-    parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
-    parser.add_argument("--triage", action="store_true",
-                        help="Classify threads via AI and auto-resolve verified")
-    parser.add_argument("--fix", action="store_true",
-                        help="Triage threads and apply mechanical fixes via Claude agent")
-    parser.add_argument("--resolve", "--resolve-verified", action="store_true",
-                        dest="resolve",
-                        help="Resolve all verified threads on GitHub")
-    parser.add_argument("--repo-dir", "--worktree",
-                        help="Git worktree directory (skips git toplevel detection)")
-    args = parser.parse_args()
-
-    if args.fix:
-        args.triage = True
-
-    ctx = pr_context.resolve(
-        pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
-    )
+def _run_threads(trail, args, ctx) -> None:
     repo = ctx.repo
     pr_number = ctx.pr_number
-    if pr_number is None:
-        print("No PR found for current branch", file=sys.stderr)
-        sys.exit(1)
     branch = ctx.branch
     toplevel = ctx.worktree_root
     head_sha = ctx.head_sha
@@ -507,9 +485,15 @@ def main():
     threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
     verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
     issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
+    trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
+               data={"count": len(threads_raw)})
 
     # Sync
     threads = pc.sync_threads(threads_raw, prior_threads, my_login)
+    synced_resolved = sum(1 for t in threads.values() if t.get("state") == "resolved")
+    synced_open = len(threads) - synced_resolved
+    trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
+               data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
 
     # Resolve verified threads if requested (or as part of triage)
     if args.resolve or args.triage:
@@ -582,12 +566,32 @@ def main():
 
     # Triage and/or fix mode
     if args.triage:
+        triage_mode = "fix" if args.fix else "triage"
+        trail.decision("triage_mode", f"running {triage_mode}",
+                       reason="--fix flag" if args.fix else "--triage flag",
+                       data={"fix": args.fix, "triage": args.triage})
         triage_result, rc = _run_triage(report, toplevel, ctx_args)
         if rc != 0:
             sys.exit(rc)
 
         if args.fix and triage_result:
+            triage_threads = triage_result.get("threads", [])
+            fixable_count = sum(
+                1 for t in triage_threads
+                if t.get("classification") == "actionable_suggestion"
+                and t.get("verification") == "valid"
+            )
+            trail.decision(
+                "fix_classification",
+                f"{fixable_count} fixable threads identified",
+                reason="classification=actionable_suggestion and verification=valid",
+                data={"fixable": fixable_count, "total": len(triage_threads)},
+            )
             fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx)
+            skipped_count = len(fix_pass.get("skipped", []))
+            trail.info("fix_result", "fix pass complete",
+                       data={"fixable": fixable_count, "skipped": skipped_count,
+                             "commit_sha": fix_pass.get("commit_sha")})
             output = {**triage_result, "fix_pass": fix_pass}
         else:
             output = triage_result
@@ -598,6 +602,53 @@ def main():
 
     json.dump(report, sys.stdout, indent=2)
     print()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="PR review thread status")
+    parser.add_argument("--pr", help="PR number")
+    parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
+    parser.add_argument("--triage", action="store_true",
+                        help="Classify threads via AI and auto-resolve verified")
+    parser.add_argument("--fix", action="store_true",
+                        help="Triage threads and apply mechanical fixes via Claude agent")
+    parser.add_argument("--resolve", "--resolve-verified", action="store_true",
+                        dest="resolve",
+                        help="Resolve all verified threads on GitHub")
+    parser.add_argument("--repo-dir", "--worktree",
+                        help="Git worktree directory (skips git toplevel detection)")
+    add_trail_args(parser)
+    args = parser.parse_args()
+
+    if args.fix:
+        args.triage = True
+
+    ctx = pr_context.resolve(
+        pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+    )
+    repo = ctx.repo
+    pr_number = ctx.pr_number
+    if pr_number is None:
+        print("No PR found for current branch", file=sys.stderr)
+        sys.exit(1)
+    branch = ctx.branch
+    toplevel = ctx.worktree_root
+    head_sha = ctx.head_sha
+
+    trail = Trail.start(
+        script="review-threads",
+        artifact_dir=str(toplevel / pr_state.STATE_DIR),
+        context={"repo": repo, "pr": pr_number, "branch": branch},
+        debug=args.debug,
+    )
+
+    try:
+        _run_threads(trail, args, ctx)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

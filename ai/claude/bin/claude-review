@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import pr_context
 import pr_state
+from trail import Trail, add_trail_args
+from serde import to_dict as _serde_to_dict
 try:
     from _version import version_string
 except ImportError:
@@ -277,7 +279,7 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
             pr_number=ctx.pr_number,
             head_sha=ctx.head_sha,
             domain="review",
-            data=pr_state._review_to_dict(summary),
+            data=_serde_to_dict(summary),
         )
     except Exception:
         pass
@@ -674,31 +676,13 @@ def _run_review_body(
 
 # ── Main flows ───────────────────────────────────────────────────────────────
 
-def _run_review(args) -> None:
-    pr_input = args.positional[0] if args.positional else ""
-    no_post = args.no_post
-    auto_post = args.post
-    auto_submit = args.submit
-    issue_link = args.issue or ""
-    max_parallel = args.max_parallel
-    force = args.force
-    no_holistic = args.no_holistic
-    max_cost = args.max_cost
-    model = args.model
-    repo_dir = args.repo_dir or ""
-
-    if no_post or auto_post:
-        force = True
-
-    review_gc.prune_merged_reviews()
-
-    ctx = pr_context.resolve(pr=pr_input or None, repo_dir=repo_dir or None)
-    pr_number = str(ctx.pr_number)
-    repo = ctx.repo
-
-    review_file = review_file_path(repo, pr_number)
-    review_dir = review_file.parent
-    review_dir.mkdir(parents=True, exist_ok=True)
+def _run_review_pr(
+    trail, ctx, pr_number, repo, review_dir, review_file,
+    issue_link, no_post, auto_post, auto_submit,
+    force, repo_dir, max_parallel, no_holistic, max_cost, model,
+) -> None:
+    trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
+               data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
 
     # Issue detection
     pr_meta = {}
@@ -732,25 +716,44 @@ def _run_review(args) -> None:
         if not no_post and not auto_post and not issue_link and not issue_context:
             issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
 
+    if issue_link or issue_context:
+        trail.info("issue_context", "issue context available",
+                   data={"issue_link": issue_link, "has_context": bool(issue_context)})
+
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
     has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
 
     if not has_pipeline_state:
         _check_stale_review(repo, pr_number, review_file, force)
+    trail.decision(
+        "review_freshness",
+        "resume" if has_pipeline_state else "fresh review",
+        reason="pipeline state found" if has_pipeline_state else "no pipeline state",
+        data={"has_pipeline_state": has_pipeline_state},
+    )
+
     _check_pending_review(repo, pr_number, force)
 
     # Worktree setup
     repo_root = _find_repo_root(repo, repo_dir)
     if not repo_root:
+        trail.error("setup_worktree", f"cannot find local clone of {repo}")
         _err(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
         sys.exit(1)
+
+    trail.info("setup_worktree", f"setting up PR worktree",
+               data={"repo_root": repo_root, "pr_head": pr_head})
 
     wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
     wt_path = wt_result.path
 
     session_log = str(review_dir / FILENAME_SESSION)
     prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+    trail.info("delegate_orchestrate", "delegating to review-orchestrate",
+               data={"wt_path": wt_path, "max_parallel": max_parallel,
+                     "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
 
     try:
         _run_review_body(
@@ -761,6 +764,52 @@ def _run_review(args) -> None:
         )
     finally:
         review_worktree.cleanup_worktree(wt_result, repo_root)
+
+
+def _run_review(args) -> None:
+    pr_input = args.positional[0] if args.positional else ""
+    no_post = args.no_post
+    auto_post = args.post
+    auto_submit = args.submit
+    issue_link = args.issue or ""
+    max_parallel = args.max_parallel
+    force = args.force
+    no_holistic = args.no_holistic
+    max_cost = args.max_cost
+    model = args.model
+    repo_dir = args.repo_dir or ""
+
+    if no_post or auto_post:
+        force = True
+
+    review_gc.prune_merged_reviews()
+
+    ctx = pr_context.resolve(pr=pr_input or None, repo_dir=repo_dir or None)
+    pr_number = str(ctx.pr_number)
+    repo = ctx.repo
+
+    review_file = review_file_path(repo, pr_number)
+    review_dir = review_file.parent
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    trail = Trail.start(
+        script="claude-review",
+        artifact_dir=str(review_dir),
+        context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "pr"},
+        debug=getattr(args, "debug", False),
+    )
+
+    try:
+        _run_review_pr(
+            trail, ctx, pr_number, repo, review_dir, review_file,
+            issue_link, no_post, auto_post, auto_submit,
+            force, repo_dir, max_parallel, no_holistic, max_cost, model,
+        )
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
@@ -958,6 +1007,7 @@ def main() -> None:
     parser.add_argument("--pr")
     parser.add_argument("-V", "--version", action="store_true")
     parser.add_argument("args", nargs="*")
+    add_trail_args(parser)
 
     parsed = parser.parse_args()
 

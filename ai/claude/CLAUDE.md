@@ -49,6 +49,7 @@ Review artifacts live in `~/.config/workbench/reviews/{repo}-{pr_or_branch}/`:
 | `review.md` | yes | Final review output |
 | `meta.json` | yes | PR metadata sidecar |
 | `session.jsonl` | yes | Agent cost/usage/errors |
+| `trail.jsonl` | yes | Structured trail log (decisions, spans, verification) |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
 | `prompt-*.md` | no (kept on failure) | Full prompts sent to agents |
 | `pipeline.json` | no | Resume state for multi-phase |
@@ -93,17 +94,17 @@ messages on stderr.
 2. Add argparse subparser in `pr`
 3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
 4. If the subcommand has persistent state: add a dataclass to `pr_state.py`
-   with `_to_dict`/`_from_dict` serializers and an `update_<name>()` function
+   (serialized via generic `serde.to_dict()`/`serde.from_dict()`) and an `update_<name>()` function
 5. Add `_render_<name>_section()` to `pr` for the `cmd_status` dashboard
 6. Register in `ai/claude/registry.yml`
 7. Add tests in `tests/`
 
 ### State management
 
-- State file: `<worktree>/ignore/pr/state.json`
+- State file: `<worktree>/.workbench/state.json`
 - Lib module: `ai/claude/lib/pr_state.py`
-- Each domain has a dataclass (e.g., `CISummary`, `RebaseSummary`) with
-  `_to_dict`/`_from_dict` serializers
+- Each domain has a dataclass (e.g., `CIDomain`, `RebaseSummary`) serialized
+  via generic `serde.to_dict()`/`serde.from_dict()`
 - Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - `pr_state.load_or_init()` provides DRY state loading across all scripts

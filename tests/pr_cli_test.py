@@ -78,7 +78,7 @@ def test_is_pr_target_empty():
 def test_merge_readiness_all_green():
     import pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.update_ci(state, pr_state.CISummary(conclusion="success", updated_at="t"))
+    pr_state.update_ci_domain(state, pr_state.CIDomain(conclusion="success", updated_at="t"))
     pr_state.update_review(state, pr_state.ReviewSummary(
         finding_counts={"S": 1}, verdict="approve", updated_at="t",
     ))
@@ -92,7 +92,7 @@ def test_merge_readiness_all_green():
 def test_merge_readiness_ci_failing():
     import pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.update_ci(state, pr_state.CISummary(conclusion="failure", updated_at="t"))
+    pr_state.update_ci_domain(state, pr_state.CIDomain(conclusion="failure", updated_at="t"))
     pr_state.update_review(state, pr_state.ReviewSummary(updated_at="t"))
     pr_state.update_comments(state, pr_state.CommentsSummary(updated_at="t"))
     result = pr_cli._merge_readiness(state)
@@ -102,7 +102,7 @@ def test_merge_readiness_ci_failing():
 def test_merge_readiness_must_fix():
     import pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
-    pr_state.update_ci(state, pr_state.CISummary(conclusion="success", updated_at="t"))
+    pr_state.update_ci_domain(state, pr_state.CIDomain(conclusion="success", updated_at="t"))
     pr_state.update_review(state, pr_state.ReviewSummary(
         finding_counts={"M": 2}, updated_at="t",
     ))
@@ -238,7 +238,9 @@ def test_sub_command_prefix():
 
 def _run_main(*argv):
     """Run pr_cli.main() with the given argv, catching SystemExit."""
-    with patch("sys.argv", ["pr"] + list(argv)):
+    mock_trail = MagicMock()
+    with patch("sys.argv", ["pr"] + list(argv)), \
+         patch("pr_cli.Trail.start", return_value=mock_trail):
         try:
             pr_cli.main()
         except SystemExit as e:

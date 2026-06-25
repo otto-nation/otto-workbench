@@ -93,6 +93,7 @@ class ReviewJob:
     preflight: "PreflightData | None" = None
     model: str = ""
     reply_threads: dict = field(default_factory=dict)
+    verification: dict | None = None
 
 
 @dataclass

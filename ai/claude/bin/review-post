@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+from trail import Trail, add_trail_args  # noqa: E402
 import review_common as _rc  # noqa: E402
 import review_dedup as _rd  # noqa: E402
 import review_findings as _rfi  # noqa: E402
@@ -91,40 +92,7 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(description="Post a review file to GitHub")
-    parser.add_argument("--pr", required=True, help="PR number")
-    parser.add_argument("--review-file", required=True, help="Path to review markdown file")
-    all_sevs = ",".join(s.key for s in SEVERITIES)
-    parser.add_argument("--severity", default=all_sevs,
-                        help=f"Severity levels to post (comma-separated, default: {all_sevs})")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Parse and classify without posting")
-    parser.add_argument("--submit", action="store_true",
-                        help="Submit the review after posting (default: leave PENDING)")
-    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE,
-                        help=f"Max inline comments per review chunk (default: {DEFAULT_CHUNK_SIZE})")
-    args = parser.parse_args()
-
-    review_path = Path(args.review_file)
-    if not review_path.exists():
-        _err(f"Review file not found: {review_path}")
-        sys.exit(1)
-
-    sidecar: dict = {}
-    sidecar_path = review_path.parent / "meta.json"
-    if sidecar_path.exists():
-        try:
-            sidecar = json.loads(sidecar_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    repo = sidecar.get("repo", "")
-    if not repo:
-        _err("Cannot determine repository — meta.json missing or has no 'repo' field")
-        sys.exit(1)
-    args.repo = repo
-
+def _run_post(trail, args, repo, sidecar, review_path) -> None:
     severity_filter = set(args.severity.upper().split(","))
     text = review_path.read_text()
 
@@ -133,11 +101,19 @@ def main():
 
     all_findings = parse_findings(text)
     _info(f"Parsed {len(all_findings)} findings from review file")
+    trail.info("parse_findings", f"parsed {len(all_findings)} findings",
+               data={"total": len(all_findings), "review_sha": review_sha})
 
     findings = [f for f in all_findings if f.severity in severity_filter]
     filtered = len(all_findings) - len(findings)
     if filtered:
         _info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
+    trail.decision(
+        "filter_severity",
+        f"kept {len(findings)} of {len(all_findings)} findings",
+        reason=f"severity filter: {args.severity}",
+        data={"kept": len(findings), "excluded": filtered, "filter": args.severity},
+    )
 
     if not findings:
         _warn("No findings to post")
@@ -159,6 +135,12 @@ def main():
     if sha_drifted and not args.dry_run:
         _warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
         _info("Posting as comment (inline positions may be inaccurate)")
+        trail.decision(
+            "sha_drift",
+            f"review SHA {review_sha[:7] if review_sha else '?'} != HEAD {head_sha[:7] if head_sha else '?'}",
+            reason="HEAD moved since review; posting as comment",
+            data={"review_sha": review_sha, "head_sha": head_sha},
+        )
         _post_as_comment(
             args, findings, severity_filter, review_sha, head_sha,
             head_ref, base_ref, pr_data,
@@ -170,6 +152,9 @@ def main():
     diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     _info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
+    trail.info("classify_findings",
+               f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
+               data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
 
     all_postable = inline + file_level
     if not args.dry_run and all_postable:
@@ -179,6 +164,8 @@ def main():
             skipped.extend(deduped)
             inline = [f for f in kept if f.classification == CLASS_INLINE]
             file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
+        trail.info("dedup", f"removed {len(deduped) if deduped else 0} duplicate findings",
+                   data={"deduped": len(deduped) if deduped else 0, "kept": len(kept)})
 
     body_findings = file_level + skipped
 
@@ -194,6 +181,7 @@ def main():
     chunk_size = args.chunk_size
 
     if args.dry_run:
+        trail.decision("post_mode", "dry-run mode", reason="--dry-run flag set")
         payload = {
             "commit_id": commit_id,
             "body": body_text,
@@ -203,11 +191,65 @@ def main():
         _print_dry_run(payload, inline, body_findings, skipped, chunk_size)
         return
 
+    trail.decision("post_mode", "posting to GitHub",
+                   reason="not dry-run",
+                   data={"inline_count": len(inline_comments), "has_body": bool(body_text)})
     _post_and_track(
         args, inline_comments, body_text,
         inline, body_findings, skipped,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
     )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Post a review file to GitHub")
+    parser.add_argument("--pr", required=True, help="PR number")
+    parser.add_argument("--review-file", required=True, help="Path to review markdown file")
+    all_sevs = ",".join(s.key for s in SEVERITIES)
+    parser.add_argument("--severity", default=all_sevs,
+                        help=f"Severity levels to post (comma-separated, default: {all_sevs})")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Parse and classify without posting")
+    parser.add_argument("--submit", action="store_true",
+                        help="Submit the review after posting (default: leave PENDING)")
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE,
+                        help=f"Max inline comments per review chunk (default: {DEFAULT_CHUNK_SIZE})")
+    add_trail_args(parser)
+    args = parser.parse_args()
+
+    review_path = Path(args.review_file)
+    if not review_path.exists():
+        _err(f"Review file not found: {review_path}")
+        sys.exit(1)
+
+    sidecar: dict = {}
+    sidecar_path = review_path.parent / "meta.json"
+    if sidecar_path.exists():
+        try:
+            sidecar = json.loads(sidecar_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    repo = sidecar.get("repo", "")
+    if not repo:
+        _err("Cannot determine repository — meta.json missing or has no 'repo' field")
+        sys.exit(1)
+    args.repo = repo
+
+    trail = Trail.start(
+        script="review-post",
+        artifact_dir=str(review_path.parent),
+        context={"repo": repo, "pr": args.pr},
+        debug=args.debug,
+    )
+
+    try:
+        _run_post(trail, args, repo, sidecar, review_path)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

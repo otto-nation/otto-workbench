@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Query trail files across otto-workbench AI scripts.
+
+Discovers trail.jsonl files from worktree (.workbench/), review artifacts
+(~/.config/workbench/reviews/), and standalone tool logs (~/.config/workbench/logs/).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
+sys.path.insert(0, str(LIB_DIR))
+
+from trail import TRAIL_FILENAME
+from pr_state import STATE_DIR as WORKBENCH_DIR
+from review_common import REVIEWS_DIR
+
+LOGS_DIR = Path(os.environ.get(
+    "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"),
+)) / "logs"
+
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_LEVELS = {
+    "debug": "\033[2m",
+    "info": "\033[1;34m",
+    "warn": "\033[1;33m",
+    "error": "\033[1;31m",
+}
+
+
+# ── Discovery ─────────────────────────────────────────────────────────────
+
+def _detect_worktree_root() -> str | None:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except FileNotFoundError:
+        pass
+    return None
+
+
+def discover_trails(
+    worktree_root: str | None = None,
+    reviews_dir: str | None = None,
+    logs_dir: str | None = None,
+) -> list[Path]:
+    trails = []
+
+    # Worktree trail
+    wt = worktree_root or _detect_worktree_root()
+    if wt:
+        wt_trail = Path(wt) / WORKBENCH_DIR / TRAIL_FILENAME
+        if wt_trail.is_file():
+            trails.append(wt_trail)
+
+    # Review trails
+    rd = Path(reviews_dir) if reviews_dir else REVIEWS_DIR
+    if rd.is_dir():
+        for trail_file in rd.glob(f"*/{TRAIL_FILENAME}"):
+            trails.append(trail_file)
+
+    # Standalone tool trails
+    ld = Path(logs_dir) if logs_dir else LOGS_DIR
+    if ld.is_dir():
+        for trail_file in ld.glob(f"*/{TRAIL_FILENAME}"):
+            trails.append(trail_file)
+
+    return trails
+
+
+# ── Loading ───────────────────────────────────────────────────────────────
+
+def _parse_trail_file(path: str | Path) -> list[dict]:
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return []
+    events = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
+def load_events(trail_paths: list[str | Path]) -> list[dict]:
+    events = []
+    for path in trail_paths:
+        events.extend(_parse_trail_file(path))
+    events.sort(key=lambda e: e.get("ts", ""))
+    return events
+
+
+# ── Filtering ─────────────────────────────────────────────────────────────
+
+def _parse_since(since: str) -> datetime:
+    now = datetime.now(timezone.utc)
+    suffixes = {"h": "hours", "d": "days", "m": "minutes"}
+    suffix = since[-1:] if since else ""
+    unit = suffixes.get(suffix)
+    if not unit:
+        return now - timedelta(hours=1)
+    try:
+        return now - timedelta(**{unit: int(since[:-1])})
+    except ValueError:
+        print(f"Invalid --since value: {since!r}", file=sys.stderr)
+        sys.exit(1)
+
+
+def filter_events(
+    events: list[dict],
+    script: str | None = None,
+    level: str | None = None,
+    event_type: str | None = None,
+    invocation: str | None = None,
+    pr: int | str | None = None,
+    repo: str | None = None,
+    since: str | None = None,
+) -> list[dict]:
+    result = events
+    if script:
+        result = [e for e in result if e.get("script") == script]
+    if level:
+        result = [e for e in result if e.get("level") == level]
+    if event_type:
+        result = [e for e in result if e.get("event_type") == event_type]
+    if invocation:
+        result = [e for e in result if e.get("invocation") == invocation]
+    if pr is not None:
+        pr_str = str(pr)
+        result = [e for e in result if str(e.get("context", {}).get("pr", "")) == pr_str]
+    if repo:
+        result = [e for e in result if e.get("context", {}).get("repo") == repo]
+    if since:
+        cutoff = _parse_since(since)
+        cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = [e for e in result if e.get("ts", "") >= cutoff_str]
+    return result
+
+
+# ── Formatting ────────────────────────────────────────────────────────────
+
+def _format_event_line(e: dict) -> str:
+    ts = e.get("ts", "")[11:19]
+    level = e.get("level", "?").upper().ljust(5)
+    etype = e.get("event_type", "?").ljust(11)
+    action = e.get("action", "?").ljust(20)
+    detail = e.get("detail", "")
+    color = ANSI_LEVELS.get(e.get("level", ""), "")
+    parts = [f"{ts} {color}{level}{ANSI_RESET} {etype} {action} {detail}"]
+    if e.get("reason"):
+        parts.append(f"\n{'':>56}reason: {e['reason']}")
+    if e.get("duration_ms") is not None:
+        parts.append(f" ({e['duration_ms']}ms)")
+    return "".join(parts)
+
+
+def _format_show(events: list[dict]) -> str:
+    if not events:
+        return "No events found."
+    first = events[0]
+    inv = first.get("invocation", "?")
+    script = first.get("script", "?")
+    ts = first.get("ts", "?")
+    summaries = [e for e in events if e.get("event_type") == "summary"]
+    duration = f" — {summaries[0]['duration_ms'] / 1000:.1f}s" if summaries else ""
+    ctx = first.get("context", {})
+    ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items())
+
+    lines = [
+        f"{ANSI_BOLD}Invocation {inv}{ANSI_RESET} — {script} — {ts}{duration}",
+        f"Context: {ctx_str}",
+        "",
+    ]
+    for e in events:
+        lines.append(_format_event_line(e))
+    return "\n".join(lines)
+
+
+# ── Commands ──────────────────────────────────────────────────────────────
+
+def cmd_recent(args):
+    trails = discover_trails()
+    events = load_events(trails)
+    filtered = filter_events(events, since=args.since)
+    if args.json:
+        for e in filtered:
+            print(json.dumps(e, separators=(",", ":")))
+    else:
+        for e in filtered:
+            print(_format_event_line(e))
+
+
+def cmd_query(args):
+    trails = discover_trails()
+    events = load_events(trails)
+    filtered = filter_events(
+        events,
+        script=args.script,
+        level=args.level,
+        event_type=args.event_type,
+        invocation=args.invocation,
+        pr=args.pr,
+        repo=args.repo,
+        since=args.since,
+    )
+    if args.json:
+        for e in filtered:
+            print(json.dumps(e, separators=(",", ":")))
+    else:
+        for e in filtered:
+            print(_format_event_line(e))
+
+
+def cmd_show(args):
+    trails = discover_trails()
+    events = load_events(trails)
+    filtered = filter_events(events, invocation=args.invocation)
+    if args.json:
+        for e in filtered:
+            print(json.dumps(e, separators=(",", ":")))
+    else:
+        print(_format_show(filtered))
+
+
+def cmd_list(args):
+    trails = discover_trails()
+    events = load_events(trails)
+    since = args.since
+    if since:
+        events = filter_events(events, since=since)
+    if args.script:
+        events = filter_events(events, script=args.script)
+
+    # Group by invocation
+    invocations: dict[str, list[dict]] = {}
+    for e in events:
+        inv = e.get("invocation", "?")
+        invocations.setdefault(inv, []).append(e)
+
+    # Sort by first event timestamp, most recent first
+    sorted_invs = sorted(invocations.items(), key=lambda x: x[1][0].get("ts", ""), reverse=True)
+
+    if args.json:
+        for inv_id, inv_events in sorted_invs:
+            first = inv_events[0]
+            summaries = [e for e in inv_events if e.get("event_type") == "summary"]
+            print(json.dumps({
+                "invocation": inv_id,
+                "script": first.get("script"),
+                "ts": first.get("ts"),
+                "event_count": len(inv_events),
+                "duration_ms": summaries[0].get("duration_ms") if summaries else None,
+            }, separators=(",", ":")))
+    else:
+        for inv_id, inv_events in sorted_invs:
+            first = inv_events[0]
+            summaries = [e for e in inv_events if e.get("event_type") == "summary"]
+            duration = f"{summaries[0]['duration_ms'] / 1000:.1f}s" if summaries else "?"
+            ts = first.get("ts", "?")[:19]
+            script = first.get("script", "?")
+            n = len(inv_events)
+            print(f"{inv_id}  {script:<20} {ts}  {n:>3} events  {duration}")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Query trail files across otto-workbench AI scripts.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    # recent
+    p_recent = sub.add_parser("recent", help="Recent events (default: last 1h)")
+    p_recent.add_argument("--since", default="1h", help="Time window (e.g. 2h, 1d, 30m)")
+    p_recent.add_argument("--json", action="store_true", help="Output raw JSONL")
+
+    # query
+    p_query = sub.add_parser("query", help="Filter events")
+    p_query.add_argument("--script", help="Filter by script name")
+    p_query.add_argument("--level", help="Filter by level (debug, info, warn, error)")
+    p_query.add_argument("--event-type", help="Filter by event type")
+    p_query.add_argument("--invocation", help="Filter by invocation ID")
+    p_query.add_argument("--pr", type=int, help="Filter by PR number")
+    p_query.add_argument("--repo", help="Filter by repo (org/repo)")
+    p_query.add_argument("--since", help="Time window (e.g. 2h, 1d)")
+    p_query.add_argument("--json", action="store_true", help="Output raw JSONL")
+
+    # show
+    p_show = sub.add_parser("show", help="Show a single invocation timeline")
+    p_show.add_argument("invocation", help="Invocation ID")
+    p_show.add_argument("--json", action="store_true", help="Output raw JSONL")
+
+    # list
+    p_list = sub.add_parser("list", help="List invocations")
+    p_list.add_argument("--script", help="Filter by script name")
+    p_list.add_argument("--since", help="Time window (e.g. 2h, 1d)")
+    p_list.add_argument("--json", action="store_true", help="Output raw JSONL")
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    commands = {
+        "recent": cmd_recent,
+        "query": cmd_query,
+        "show": cmd_show,
+        "list": cmd_list,
+    }
+    commands[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+[Unit]
+Description=otto-workbench maintenance — pull, sync, and cleanup
+
+[Service]
+Type=oneshot
+ExecStart=__WORKBENCH_DIR__/maintenance/bin/otto-workbench-maintenance
+Environment=PATH=/usr/local/bin:/usr/bin:/bin

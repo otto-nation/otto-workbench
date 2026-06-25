@@ -1,0 +1,10 @@
+[Unit]
+Description=otto-workbench maintenance timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=__INTERVAL__sec
+Persistent=true
+
+[Install]
+WantedBy=timers.target

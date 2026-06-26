@@ -29,16 +29,21 @@ import log
 from trail import Trail, add_trail_args
 
 
+_SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
+
+
 def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
     """Fetch workflow run IDs for the latest commit, one per workflow.
 
+    Filters out skipped and cancelled runs before deduplication.
     When a workflow is re-run, both the original and re-run share the same
     SHA.  gh run list returns newest first, so we deduplicate by workflow
     name to keep only the most recent run of each workflow.
     """
     result = subprocess.run(
         ["gh", "run", "list", "--repo", repo, "--branch", branch,
-         "--limit", "20", "--json", "databaseId,headSha,workflowName"],
+         "--limit", "20", "--json",
+         "databaseId,headSha,workflowName,conclusion"],
         capture_output=True, text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -54,6 +59,8 @@ def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
     ids: list[int] = []
     for r in runs:
         if r["headSha"] != latest_sha:
+            continue
+        if r.get("conclusion") in _SKIP_CONCLUSIONS:
             continue
         wf = r.get("workflowName", "")
         if wf in seen_workflows:
@@ -134,14 +141,16 @@ def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.Fai
         if ann.get("annotation_level") == "notice":
             continue
         item_id = _build_failure_id(ann, job_name)
+        text = ann.get("message", ann.get("title", ""))
         items.append(ci.FailureItem(
             id=item_id,
-            annotation=ann.get("message", ann.get("title", "")),
+            annotation=text,
             file=ann.get("path") or None,
             line=ann.get("start_line") or None,
             diagnosis=None,
             fix_sha=None,
             outcome=None,
+            headline=ci.extract_headline(text),
         ))
     return items
 
@@ -334,6 +343,7 @@ def _run_ci(trail, args, ctx) -> None:
                 "job": group.job,
                 "kind": group.kind.value,
                 "annotation": item.annotation,
+                "headline": item.headline,
                 "file": item.file,
                 "line": item.line,
                 "diagnosis": item.diagnosis,

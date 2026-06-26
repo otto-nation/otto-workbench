@@ -11,7 +11,7 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     compute_progression, sync_ci_domain, render_dashboard, extract_failure_context,
-    _MAX_CONTEXT_CHARS,
+    extract_headline, LogMarker, LOG_MARKERS, _MAX_CONTEXT_CHARS,
 )
 from pr_state import CIDomain
 
@@ -30,6 +30,16 @@ def test_failure_item_fields():
     assert item.file == "bin/foo.sh"
     assert item.line == 42
     assert item.diagnosis is None
+    assert item.headline is None
+
+
+def test_failure_item_headline():
+    item = FailureItem(
+        id="x", annotation="full context", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None,
+        headline="main.go:9:2: replacement directory ../lib-go does not exist",
+    )
+    assert item.headline == "main.go:9:2: replacement directory ../lib-go does not exist"
 
 
 def test_failure_item_is_frozen():
@@ -337,3 +347,196 @@ def test_extract_failure_context_go_fail_tab():
     ])
     result = extract_failure_context(log, FailureKind.TEST)
     assert "FAIL\tsvc-foo/pkg/b" in result
+
+
+def test_extract_failure_context_go_compiler():
+    log = "\n".join([
+        "go build ./...",
+        "cmd/server/main.go:9:2: replacement directory ../lib-go does not exist",
+        "cmd/server/main.go:10:2: replacement directory ../lib-go does not exist",
+    ])
+    result = extract_failure_context(log, FailureKind.BUILD)
+    assert "replacement directory ../lib-go does not exist" in result
+
+
+def test_extract_failure_context_gha_error():
+    log = "\n".join([
+        "Setting up job...",
+        "##[error]Process completed with exit code 1.",
+        "Cleaning up orphan processes",
+    ])
+    result = extract_failure_context(log, FailureKind.BUILD)
+    assert "##[error]" in result
+
+
+# ── LogMarker Tests ──────────────────────────────────────────────────────
+
+
+def test_log_marker_fields():
+    marker = LogMarker("test-marker", __import__("re").compile(r"error"), FailureKind.BUILD, before=3, after=15)
+    assert marker.name == "test-marker"
+    assert marker.kind == FailureKind.BUILD
+    assert marker.before == 3
+    assert marker.after == 15
+
+
+def test_log_marker_defaults():
+    marker = LogMarker("test-default", __import__("re").compile(r"x"), FailureKind.TEST)
+    assert marker.before == 5
+    assert marker.after == 20
+
+
+def test_log_markers_registry_not_empty():
+    assert len(LOG_MARKERS) > 0
+    for m in LOG_MARKERS:
+        assert m.name
+        assert m.kind in FailureKind
+
+
+# ── Headline Extraction Tests ────────────────────────────────────────────
+
+
+def test_extract_headline_go_compiler():
+    context = "\n".join([
+        "go build ./...",
+        "cmd/server/main.go:9:2: replacement directory ../lib-go does not exist",
+        "FAIL",
+    ])
+    headline = extract_headline(context)
+    assert headline == "cmd/server/main.go:9:2: replacement directory ../lib-go does not exist"
+
+
+def test_extract_headline_gha_error():
+    context = "##[error]Process completed with exit code 1."
+    headline = extract_headline(context)
+    assert headline == "Process completed with exit code 1."
+
+
+def test_extract_headline_error_prefix():
+    context = "\n".join([
+        "running build...",
+        "error: undefined symbol 'foo'",
+    ])
+    headline = extract_headline(context)
+    assert headline == "error: undefined symbol 'foo'"
+
+
+def test_extract_headline_fatal_prefix():
+    context = "fatal: not a git repository"
+    headline = extract_headline(context)
+    assert headline == "fatal: not a git repository"
+
+
+def test_extract_headline_go_test_fail():
+    context = "\n".join([
+        "=== RUN   TestFoo",
+        "--- FAIL: TestFoo (0.01s)",
+    ])
+    headline = extract_headline(context)
+    assert headline == "--- FAIL: TestFoo (0.01s)"
+
+
+def test_extract_headline_go_pkg_fail():
+    context = "FAIL\tsvc-foo/pkg\t0.3s"
+    headline = extract_headline(context)
+    assert headline == "FAIL\tsvc-foo/pkg\t0.3s"
+
+
+def test_extract_headline_no_match():
+    context = "\n".join([
+        "Setting up job...",
+        "Downloading dependencies...",
+        "All good here",
+    ])
+    assert extract_headline(context) is None
+
+
+def test_extract_headline_empty():
+    assert extract_headline("") is None
+    assert extract_headline(None) is None
+
+
+def test_extract_headline_truncates():
+    long_msg = "cmd/main.go:1:1: " + "x" * 300
+    headline = extract_headline(long_msg)
+    assert len(headline) == 200
+
+
+def test_extract_headline_ts_error():
+    context = "src/app.ts(42,5): error TS2304: Cannot find name 'foo'."
+    headline = extract_headline(context)
+    assert "error TS2304" in headline
+
+
+def test_extract_headline_panic():
+    context = "\n".join([
+        "goroutine 1 [running]:",
+        "panic: runtime error: index out of range",
+    ])
+    headline = extract_headline(context)
+    assert headline == "panic: runtime error: index out of range"
+
+
+# ── Dashboard with Headlines Tests ──────────────────────────────────────
+
+
+def test_render_dashboard_with_headlines():
+    item = _make_item("a", annotation="full context...",
+                      headline="main.go:9:2: missing import")
+    group = FailureGroup(job="Analyze (go)", kind=FailureKind.BUILD, items=(item,))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"analyze-go": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW})
+    assert "Analyze (go):" in dashboard
+    assert "main.go:9:2: missing import" in dashboard
+
+
+def test_render_dashboard_deduplicates_headlines():
+    items = [
+        _make_item("a", headline="same error"),
+        _make_item("b", headline="same error"),
+        _make_item("c", headline="same error"),
+    ]
+    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=tuple(items))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"build": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW, "b": Outcome.NEW, "c": Outcome.NEW})
+    assert "same error (×3)" in dashboard
+    assert dashboard.count("same error") == 1
+
+
+def test_render_dashboard_truncates_at_five():
+    items = [_make_item(f"item-{i}", headline=f"error {i}") for i in range(8)]
+    group = FailureGroup(job="lint", kind=FailureKind.LINT, items=tuple(items))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"lint": group},
+    )
+    dashboard = render_dashboard(run, {f"item-{i}": Outcome.NEW for i in range(8)})
+    assert "▸" in dashboard
+    headline_lines = [l for l in dashboard.splitlines() if "▸" in l]
+    assert len(headline_lines) == 5
+    assert "… and 3 more" in dashboard
+
+
+def test_render_dashboard_no_headline_falls_back_to_annotation():
+    item = _make_item("a", annotation="SC2086: Double quote to prevent globbing")
+    group = FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=(item,))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"shellcheck": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW})
+    assert "SC2086" in dashboard

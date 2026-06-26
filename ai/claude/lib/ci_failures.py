@@ -69,6 +69,7 @@ class FailureItem:
     diagnosis: str | None
     fix_sha: str | None
     outcome: Outcome | None
+    headline: str | None = None
 
 
 @dataclass(frozen=True)
@@ -108,14 +109,66 @@ def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
 
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
 
-_FAILURE_MARKERS: list[tuple[re.Pattern, FailureKind | None]] = [
-    (re.compile(r"^--- FAIL:", re.MULTILINE), FailureKind.TEST),
-    (re.compile(r"^FAIL\t", re.MULTILINE), FailureKind.TEST),
-    (re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
-    (re.compile(r"AssertionError|AssertError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
-    (re.compile(r"^error:", re.MULTILINE | re.IGNORECASE), FailureKind.BUILD),
-    (re.compile(r"^fatal:", re.MULTILINE | re.IGNORECASE), FailureKind.BUILD),
+_MAX_HEADLINE_LEN = 200
+
+
+@dataclass(frozen=True)
+class LogMarker:
+    """Structural marker for finding error sections in CI logs.
+
+    Matches output formats (file:line:col:, ##[error], --- FAIL:), not
+    specific error messages. Extensible by adding entries to LOG_MARKERS.
+    """
+    name: str
+    pattern: re.Pattern
+    kind: FailureKind
+    before: int = 5
+    after: int = 20
+
+
+LOG_MARKERS: list[LogMarker] = [
+    LogMarker("go-test-fail", re.compile(r"--- FAIL:"), FailureKind.TEST),
+    LogMarker("go-pkg-fail", re.compile(r"^FAIL\t", re.MULTILINE), FailureKind.TEST),
+    LogMarker("assertion-error", re.compile(r"AssertionError|AssertError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
+    LogMarker("go-compiler", re.compile(r"\S+\.go:\d+:\d+:"), FailureKind.BUILD, before=2, after=30),
+    LogMarker("gha-error", re.compile(r"##\[error\]"), FailureKind.BUILD, before=2, after=10),
+    LogMarker("python-traceback", re.compile(r"^Traceback \(most recent call last\)", re.MULTILINE), FailureKind.TEST, before=0, after=30),
+    LogMarker("ts-error", re.compile(r"error TS\d+:"), FailureKind.BUILD, before=2, after=20),
+    LogMarker("error-prefix", re.compile(r"^error:", re.IGNORECASE), FailureKind.BUILD),
+    LogMarker("fatal-prefix", re.compile(r"^fatal:", re.IGNORECASE), FailureKind.BUILD),
+    LogMarker("test-failed", re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
 ]
+
+_HEADLINE_INDICATORS: list[re.Pattern] = [
+    re.compile(r"\S+\.\w+:\d+:\d+:"),
+    re.compile(r"##\[error\]"),
+    re.compile(r"^(?:error|fatal):", re.IGNORECASE),
+    re.compile(r"^--- FAIL:"),
+    re.compile(r"^FAIL\t"),
+    re.compile(r"error TS\d+:"),
+    re.compile(r"(?:Error|FAILED|panic):", re.IGNORECASE),
+]
+
+
+def extract_headline(context: str, max_len: int = _MAX_HEADLINE_LEN) -> str | None:
+    """Find the most informative error line from extracted log context.
+
+    Scans line-by-line for structural indicators (compiler output, error
+    prefixes, test failure markers). Returns the raw line — no rewriting.
+    """
+    if not context:
+        return None
+    for line in context.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for indicator in _HEADLINE_INDICATORS:
+            if indicator.search(stripped):
+                headline = stripped
+                if headline.startswith("##[error]"):
+                    headline = headline[len("##[error]"):]
+                return headline[:max_len]
+    return None
 
 
 def _strip_timestamps(text: str) -> str:
@@ -142,13 +195,8 @@ def extract_failure_context(log_text: str, kind: FailureKind) -> str:
         if context:
             return context[:_MAX_CONTEXT_CHARS]
 
-    if kind == FailureKind.BUILD:
-        context = _extract_build_context(lines)
-        if context:
-            return context[:_MAX_CONTEXT_CHARS]
-
-    for marker, _ in _FAILURE_MARKERS:
-        context = _extract_around_marker(lines, marker)
+    for marker in LOG_MARKERS:
+        context = _extract_around_marker(lines, marker.pattern, marker.before, marker.after)
         if context:
             return context[:_MAX_CONTEXT_CHARS]
 
@@ -173,18 +221,12 @@ def _extract_test_context(lines: list[str]) -> str:
     return "\n".join(lines[start:end])
 
 
-def _extract_build_context(lines: list[str]) -> str:
-    """Extract build error output — captures lines around error/fatal markers."""
-    error_re = re.compile(r"^(error|fatal):", re.IGNORECASE)
-    return _extract_around_marker(lines, error_re)
-
-
-def _extract_around_marker(lines: list[str], marker: re.Pattern) -> str:
+def _extract_around_marker(lines: list[str], marker: re.Pattern, before: int = 10, after: int = 30) -> str:
     """Extract context around the first line matching marker."""
     for i, line in enumerate(lines):
         if marker.search(line):
-            start = max(0, i - 10)
-            end = min(len(lines), i + 30)
+            start = max(0, i - before)
+            end = min(len(lines), i + after)
             return "\n".join(lines[start:end])
     return ""
 
@@ -243,6 +285,7 @@ def _carry_forward_item(
         diagnosis=prior.diagnosis if item.diagnosis is None else item.diagnosis,
         fix_sha=prior.fix_sha if item.fix_sha is None else item.fix_sha,
         outcome=item.outcome,
+        headline=item.headline,
     )
 
 
@@ -286,6 +329,10 @@ def sync_ci_domain(domain, run: RunState):
 
 # ── Dashboard ──────────────────────────────────────────────────────────────
 
+_MAX_DASHBOARD_HEADLINES = 5
+_MAX_DASHBOARD_ANNOTATION = 120
+
+
 def render_dashboard(run: RunState, progression: dict[str, Outcome]) -> str:
     """Render a human-readable dashboard string for stderr output."""
     lines = [f"## CI Run #{run.run_number} ({run.head_sha[:7]})", ""]
@@ -305,6 +352,36 @@ def render_dashboard(run: RunState, progression: dict[str, Outcome]) -> str:
         if count:
             lines.append(f"  {kind.value}: {count}")
     lines.append("")
+
+    headline_count = 0
+    overflow = 0
+    for group in run.failures.values():
+        group_headlines: dict[str, int] = {}
+        for item in group.items:
+            text = item.headline or item.annotation[:_MAX_DASHBOARD_ANNOTATION]
+            group_headlines[text] = group_headlines.get(text, 0) + 1
+
+        if not group_headlines:
+            continue
+
+        remaining = _MAX_DASHBOARD_HEADLINES - headline_count
+        if remaining <= 0:
+            overflow += len(group_headlines)
+            continue
+
+        lines.append(f"  {group.job}:")
+        for text, count in list(group_headlines.items())[:remaining]:
+            suffix = f" (×{count})" if count > 1 else ""
+            lines.append(f"    ▸ {text}{suffix}")
+            headline_count += 1
+        leftover = len(group_headlines) - remaining
+        if leftover > 0:
+            overflow += leftover
+        lines.append("")
+
+    if overflow > 0:
+        lines.append(f"  … and {overflow} more")
+        lines.append("")
 
     outcome_counts: dict[Outcome, int] = {}
     for outcome in progression.values():

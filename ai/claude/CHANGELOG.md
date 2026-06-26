@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.30.0...otto-ai-tools-v1.31.0) (2026-06-26)
+
+
+### Features
+
+* **ci-check:** structural log extraction; headline surfacing in dashboard ([#398](https://github.com/otto-nation/otto-workbench/issues/398)) ([55fb271](https://github.com/otto-nation/otto-workbench/commit/55fb2718e2c166d50faced6023d312e099e954f6))
+
 ## [1.30.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.29.3...otto-ai-tools-v1.30.0) (2026-06-25)
 
 

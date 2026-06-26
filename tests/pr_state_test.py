@@ -180,6 +180,7 @@ def test_state_roundtrip_with_ci_runs():
         id="sc2086-bin-foo-42", annotation="SC2086: Double quote",
         file="bin/foo.sh", line=42, diagnosis="Unquoted var",
         fix_sha="abc123", outcome=Outcome.FIXED,
+        headline="SC2086: Double quote to prevent globbing",
     )
     group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
     run = RunState(
@@ -207,6 +208,32 @@ def test_state_roundtrip_with_ci_runs():
     assert len(restored_group.items) == 1
     assert restored_group.items[0].outcome == Outcome.FIXED
     assert restored_group.items[0].fix_sha == "abc123"
+    assert restored_group.items[0].headline == "SC2086: Double quote to prevent globbing"
+
+
+def test_state_roundtrip_ci_runs_without_headline():
+    """Old state files without headline field should deserialize with None."""
+    item = FailureItem(
+        id="x", annotation="err", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None,
+    )
+    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
+    run = RunState(
+        run_id=100, run_number=1, head_sha="aaa",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"build": group},
+    )
+    state = new_state("owner/repo", "feat", pr_number=1, head_sha="aaa", worktree_root="/wt")
+    state.ci.runs["100"] = run
+    state.ci.latest_run_id = 100
+
+    d = state_to_dict(state)
+    del d["ci"]["runs"]["100"]["failures"]["build"]["items"][0]["headline"]
+
+    restored = state_from_dict(d)
+    restored_item = restored.ci.runs["100"].failures["build"].items[0]
+    assert restored_item.headline is None
 
 
 # ── File I/O ────────────────────────────────────────────────────────────────

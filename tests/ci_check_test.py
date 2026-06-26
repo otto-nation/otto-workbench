@@ -83,6 +83,50 @@ def test_empty_run_list():
     assert result == []
 
 
+def test_filters_skipped_runs():
+    """Skipped workflows should be excluded from results."""
+    runs = [
+        {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
+        {"databaseId": 201, "headSha": "abc", "workflowName": "Dependabot", "conclusion": "skipped"},
+    ]
+    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+        result = ci_check._fetch_latest_run_ids("owner/repo", "main")
+    assert result == [200]
+
+
+def test_filters_cancelled_runs():
+    """Cancelled workflows should be excluded from results."""
+    runs = [
+        {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
+        {"databaseId": 201, "headSha": "abc", "workflowName": "Old CI", "conclusion": "cancelled"},
+    ]
+    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+        result = ci_check._fetch_latest_run_ids("owner/repo", "main")
+    assert result == [200]
+
+
+def test_all_skipped_returns_empty():
+    """When all runs at the latest SHA are skipped, return empty list."""
+    runs = [
+        {"databaseId": 200, "headSha": "abc", "workflowName": "A", "conclusion": "skipped"},
+        {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "cancelled"},
+    ]
+    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+        result = ci_check._fetch_latest_run_ids("owner/repo", "main")
+    assert result == []
+
+
+def test_in_progress_runs_kept():
+    """Runs still in progress (conclusion=None) should be included."""
+    runs = [
+        {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": None},
+        {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy", "conclusion": "skipped"},
+    ]
+    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+        result = ci_check._fetch_latest_run_ids("owner/repo", "main")
+    assert result == [200]
+
+
 # ── _merge_runs ──────────────────────────────────────────────────────────
 
 

@@ -1,5 +1,6 @@
 """Tests for ci_failures library."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -373,7 +374,7 @@ def test_extract_failure_context_gha_error():
 
 
 def test_log_marker_fields():
-    marker = LogMarker("test-marker", __import__("re").compile(r"error"), FailureKind.BUILD, before=3, after=15)
+    marker = LogMarker("test-marker", re.compile(r"error"), FailureKind.BUILD, before=3, after=15)
     assert marker.name == "test-marker"
     assert marker.kind == FailureKind.BUILD
     assert marker.before == 3
@@ -381,9 +382,9 @@ def test_log_marker_fields():
 
 
 def test_log_marker_defaults():
-    marker = LogMarker("test-default", __import__("re").compile(r"x"), FailureKind.TEST)
-    assert marker.before == 5
-    assert marker.after == 20
+    marker = LogMarker("test-default", re.compile(r"x"), FailureKind.TEST)
+    assert marker.before == 10
+    assert marker.after == 30
 
 
 def test_log_markers_registry_not_empty():

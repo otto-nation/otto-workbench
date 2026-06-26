@@ -122,32 +122,30 @@ class LogMarker:
     name: str
     pattern: re.Pattern
     kind: FailureKind
-    before: int = 5
-    after: int = 20
+    before: int = 10
+    after: int = 30
 
 
 LOG_MARKERS: list[LogMarker] = [
     LogMarker("go-test-fail", re.compile(r"--- FAIL:"), FailureKind.TEST),
-    LogMarker("go-pkg-fail", re.compile(r"^FAIL\t", re.MULTILINE), FailureKind.TEST),
+    LogMarker("go-pkg-fail", re.compile(r"^FAIL\t"), FailureKind.TEST),
     LogMarker("assertion-error", re.compile(r"AssertionError|AssertError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
     LogMarker("go-compiler", re.compile(r"\S+\.go:\d+:\d+:"), FailureKind.BUILD, before=2, after=30),
     LogMarker("gha-error", re.compile(r"##\[error\]"), FailureKind.BUILD, before=2, after=10),
-    LogMarker("python-traceback", re.compile(r"^Traceback \(most recent call last\)", re.MULTILINE), FailureKind.TEST, before=0, after=30),
+    LogMarker("python-traceback", re.compile(r"^Traceback \(most recent call last\)"), FailureKind.TEST, before=0, after=30),
     LogMarker("ts-error", re.compile(r"error TS\d+:"), FailureKind.BUILD, before=2, after=20),
     LogMarker("error-prefix", re.compile(r"^error:", re.IGNORECASE), FailureKind.BUILD),
     LogMarker("fatal-prefix", re.compile(r"^fatal:", re.IGNORECASE), FailureKind.BUILD),
     LogMarker("test-failed", re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
 ]
 
-_HEADLINE_INDICATORS: list[re.Pattern] = [
-    re.compile(r"\S+\.\w+:\d+:\d+:"),
-    re.compile(r"##\[error\]"),
-    re.compile(r"^(?:error|fatal):", re.IGNORECASE),
-    re.compile(r"^--- FAIL:"),
-    re.compile(r"^FAIL\t"),
-    re.compile(r"error TS\d+:"),
+_HEADLINE_EXTRA: list[re.Pattern] = [
     re.compile(r"(?:Error|FAILED|panic):", re.IGNORECASE),
 ]
+
+_HEADLINE_INDICATORS: list[re.Pattern] = [
+    m.pattern for m in LOG_MARKERS
+] + _HEADLINE_EXTRA
 
 
 def extract_headline(context: str, max_len: int = _MAX_HEADLINE_LEN) -> str | None:

@@ -152,7 +152,7 @@ def _match_headline(line: str) -> bool:
     return any(indicator.search(line) for indicator in _HEADLINE_INDICATORS)
 
 
-def extract_headline(context: str, max_len: int = _MAX_HEADLINE_LEN) -> str | None:
+def extract_headline(context: str | None, max_len: int = _MAX_HEADLINE_LEN) -> str | None:
     """Find the most informative error line from extracted log context.
 
     Scans line-by-line for structural indicators (compiler output, error

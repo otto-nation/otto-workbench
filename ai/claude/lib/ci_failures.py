@@ -148,6 +148,10 @@ _HEADLINE_INDICATORS: list[re.Pattern] = [
 ] + _HEADLINE_EXTRA
 
 
+def _match_headline(line: str) -> bool:
+    return any(indicator.search(line) for indicator in _HEADLINE_INDICATORS)
+
+
 def extract_headline(context: str, max_len: int = _MAX_HEADLINE_LEN) -> str | None:
     """Find the most informative error line from extracted log context.
 
@@ -158,14 +162,11 @@ def extract_headline(context: str, max_len: int = _MAX_HEADLINE_LEN) -> str | No
         return None
     for line in context.splitlines():
         stripped = line.strip()
-        if not stripped:
+        if not stripped or not _match_headline(stripped):
             continue
-        for indicator in _HEADLINE_INDICATORS:
-            if indicator.search(stripped):
-                headline = stripped
-                if headline.startswith("##[error]"):
-                    headline = headline[len("##[error]"):]
-                return headline[:max_len]
+        if stripped.startswith("##[error]"):
+            stripped = stripped[len("##[error]"):]
+        return stripped[:max_len]
     return None
 
 

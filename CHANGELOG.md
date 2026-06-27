@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.1](https://github.com/otto-nation/otto-workbench/compare/v1.37.0...v1.37.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **pr-rebase:** ignore untracked files in preflight dirty check ([#401](https://github.com/otto-nation/otto-workbench/issues/401)) ([45e529a](https://github.com/otto-nation/otto-workbench/commit/45e529a0c1863f4d3f8a982f70089d41d2b82be5))
+
 ## [1.37.0](https://github.com/otto-nation/otto-workbench/compare/v1.36.0...v1.37.0) (2026-06-26)
 
 

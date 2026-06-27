@@ -353,32 +353,44 @@ def _drive_to_completion(
     Loops until the rebase finishes, handling conflicts (via AI when --fix),
     empty commits (via --skip), and stuck states (fallback to --skip).
     """
-    all_resolved: list[str] = []
-    commits_conflicted = 0
-
     with _trail.span("drive_to_completion") if _trail else _nullspan():
-        for step in range(_MAX_REBASE_STEPS):
-            if not _detect_rebase_in_progress(cwd):
-                resolved = (all_resolved, commits_conflicted) if commits_conflicted else None
-                return _rebase_success(cwd, ctx, fix, resolved=resolved)
+        return _drive_loop(cwd, ctx, fix)
 
-            conflicts = _detect_conflicts(cwd)
 
-            if conflicts:
-                rc = _step_conflicts(cwd, ctx, fix, conflicts, all_resolved)
-                if rc is not None:
-                    return rc
-                commits_conflicted += 1
-                continue
+def _drive_loop(
+    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+) -> int:
+    all_resolved: list[str] = []
+    commits_conflicted: list[int] = [0]
 
-            rc = _step_advance(cwd)
-            if rc is not None:
-                return rc
+    for _ in range(_MAX_REBASE_STEPS):
+        if not _detect_rebase_in_progress(cwd):
+            resolved = (all_resolved, commits_conflicted[0]) if commits_conflicted[0] else None
+            return _rebase_success(cwd, ctx, fix, resolved=resolved)
+
+        rc = _drive_one_step(cwd, ctx, fix, all_resolved, commits_conflicted)
+        if rc is not None:
+            return rc
 
     _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
     log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
     subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
     return 1
+
+
+def _drive_one_step(
+    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    all_resolved: list[str], commits_conflicted: list[int],
+) -> int | None:
+    conflicts = _detect_conflicts(cwd)
+    if not conflicts:
+        return _step_advance(cwd)
+
+    rc = _step_conflicts(cwd, ctx, fix, conflicts, all_resolved)
+    if rc is not None:
+        return rc
+    commits_conflicted[0] += 1
+    return None
 
 
 def _step_conflicts(

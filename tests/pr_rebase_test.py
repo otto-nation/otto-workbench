@@ -387,47 +387,230 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
         assert ["git", "add", "go.sum"] in post_tidy
 
 
-# ── _resolve_and_continue ─────────────────────────────────────────────────
+# ── _is_empty_patch ──────────────────────────────────────────────────────
 
 
-def test_resolve_and_continue_no_claude():
-    with mock.patch("shutil.which", return_value=None):
-        result = pr_rebase_cli._resolve_and_continue("/fake")
-    assert result is None
+def test_is_empty_patch_both_clean():
+    """Empty patch: no staged or unstaged changes."""
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._is_empty_patch("/fake") is True
 
 
-def test_resolve_and_continue_success():
-    """Single-commit resolution: conflicts → resolve → continue → done."""
-    conflict_round = [0]
+def test_is_empty_patch_staged_changes():
+    """Not empty: staged changes exist."""
+    def fake_run(cmd, **kwargs):
+        if "--cached" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    def fake_detect_conflicts(cwd):
-        conflict_round[0] += 1
-        if conflict_round[0] == 1:
-            return ["file.go"]
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._is_empty_patch("/fake") is False
+
+
+def test_is_empty_patch_unstaged_changes():
+    """Not empty: unstaged changes exist."""
+    def fake_run(cmd, **kwargs):
+        if "--cached" not in cmd and "--quiet" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._is_empty_patch("/fake") is False
+
+
+# ── _drive_to_completion ─────────────────────────────────────────────────
+
+
+def test_drive_to_completion_already_done():
+    """Rebase already finished — returns success immediately."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0) as mock_success:
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+
+    assert result == 0
+    mock_success.assert_called_once()
+    _, kwargs = mock_success.call_args
+    assert kwargs.get("resolved") is None
+
+
+def test_drive_to_completion_with_conflicts_fix():
+    """Conflicts detected with --fix: resolves via AI and continues."""
+    ctx = mock.MagicMock()
+    rebase_state = [True, False]
+    progress_state = [0]
+
+    def fake_in_progress(cwd):
+        idx = min(progress_state[0], len(rebase_state) - 1)
+        progress_state[0] += 1
+        return rebase_state[idx]
+
+    conflict_rounds = [["file.go"]]
+
+    def fake_conflicts(cwd):
+        if conflict_rounds[0]:
+            return conflict_rounds[0].pop()
         return []
 
-    with mock.patch("shutil.which", return_value="/usr/bin/claude"), \
-         mock.patch.object(pr_rebase_cli, "_detect_conflicts", side_effect=fake_detect_conflicts), \
-         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
-         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["file.go"]), \
-         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
-         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
-        result = pr_rebase_cli._resolve_and_continue("/fake")
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", side_effect=fake_in_progress), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", side_effect=fake_conflicts), \
+         mock.patch.object(pr_rebase_cli, "_step_conflicts", return_value=None) as mock_step, \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0) as mock_success:
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, True)
 
-    assert result == (["file.go"], 1)
+    assert result == 0
+    mock_step.assert_called_once()
+    mock_success.assert_called_once()
+    _, kwargs = mock_success.call_args
+    assert kwargs["resolved"] == ([], 1)
 
 
-def test_resolve_and_continue_resolution_failure():
-    """_resolve_file_conflicts returns None → loop aborts."""
-    with mock.patch("shutil.which", return_value="/usr/bin/claude"), \
+def test_drive_to_completion_conflicts_no_fix():
+    """Conflicts without --fix: reports and exits 3."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["file.go"]), \
-         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
-         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None):
-        result = pr_rebase_cli._resolve_and_continue("/fake")
+         mock.patch.object(pr_rebase_cli, "_step_conflicts", return_value=3):
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
 
-    assert result is None
+    assert result == 3
+
+
+def test_drive_to_completion_empty_commit():
+    """Empty commit detected: skips via _step_advance."""
+    ctx = mock.MagicMock()
+    rebase_state = [True, False]
+    call_count = [0]
+
+    def fake_in_progress(cwd):
+        idx = min(call_count[0], len(rebase_state) - 1)
+        call_count[0] += 1
+        return rebase_state[idx]
+
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", side_effect=fake_in_progress), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
+         mock.patch.object(pr_rebase_cli, "_step_advance", return_value=None) as mock_advance, \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+
+    assert result == 0
+    mock_advance.assert_called_once()
+
+
+def test_drive_to_completion_safety_valve():
+    """Exceeding max steps aborts the rebase."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_MAX_REBASE_STEPS", 2), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
+         mock.patch.object(pr_rebase_cli, "_step_advance", return_value=None), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+
+    assert result == 1
+
+
+# ── _step_conflicts ──────────────────────────────────────────────────────
+
+
+def test_step_conflicts_no_fix_reports():
+    """Without --fix, reports conflicts and returns 3."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, False, ["a.py"], [])
+
+    assert rc == 3
+
+
+def test_step_conflicts_fix_resolves():
+    """With --fix, resolves conflicts via AI and returns None to continue."""
+    ctx = mock.MagicMock()
+    all_resolved = []
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], all_resolved)
+
+    assert rc is None
+    assert all_resolved == ["a.py"]
+
+
+def test_step_conflicts_fix_resolution_fails_aborts():
+    """AI resolution failure aborts rebase and returns 1."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
+
+    assert rc == 1
+
+
+# ── _step_advance ────────────────────────────────────────────────────────
+
+
+def test_step_advance_empty_patch_skips():
+    """Empty patch triggers git rebase --skip."""
+    skip_called = []
+
+    def fake_run(cmd, **kwargs):
+        if "--skip" in cmd:
+            skip_called.append(True)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._step_advance("/fake")
+
+    assert rc is None
+    assert skip_called
+
+
+def test_step_advance_continue_succeeds():
+    """Non-empty patch with successful --continue returns None."""
+    with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=False), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+        rc = pr_rebase_cli._step_advance("/fake")
+
+    assert rc is None
+
+
+def test_step_advance_continue_fails_falls_back_to_skip():
+    """--continue failure without conflicts falls back to --skip."""
+    skip_called = []
+    call_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        call_count[0] += 1
+        if "--skip" in cmd:
+            skip_called.append(True)
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="stuck state")
+
+    with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=False), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._step_advance("/fake")
+
+    assert rc is None
+    assert skip_called
 
 
 # ── _fresh ──────────────────────────────────────────────────────────────────
@@ -443,11 +626,11 @@ def test_fresh_preflight_allows_untracked_files():
     def fake_run(cmd, **kwargs):
         if "--porcelain" in cmd:
             status_cmds.append(list(cmd))
-            # Simulate clean tracked tree — untracked files are ignored by the flag
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         result = pr_rebase_cli._fresh("/fake", ctx, False)
 
@@ -456,24 +639,20 @@ def test_fresh_preflight_allows_untracked_files():
     assert "--untracked-files=no" in status_cmds[0]
 
 
-def test_fresh_delegates_to_resume_on_paused_rebase():
-    """_fresh calls _resume when rebase exits non-zero, no conflicts, but rebase is still in progress."""
+def test_fresh_delegates_to_drive_on_paused_rebase():
+    """_fresh calls _drive_to_completion when rebase is in progress after initial start."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
 
     def fake_run(cmd, **kwargs):
         if "--porcelain" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        if "fetch" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        # git rebase fails with non-zero (no conflicts — rebase paused awaiting --continue)
-        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
-         mock.patch.object(pr_rebase_cli, "_resume", return_value=0) as mock_resume:
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+         mock.patch.object(pr_rebase_cli, "_drive_to_completion", return_value=0) as mock_drive:
+        result = pr_rebase_cli._fresh("/fake", ctx, True)
 
     assert result == 0
-    mock_resume.assert_called_once_with("/fake", ctx, False)
+    mock_drive.assert_called_once_with("/fake", ctx, True)

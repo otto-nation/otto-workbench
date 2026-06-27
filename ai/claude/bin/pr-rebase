@@ -24,7 +24,7 @@ import json
 import subprocess
 import sys
 import traceback
-from contextlib import contextmanager
+from contextlib import nullcontext
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -148,11 +148,11 @@ def _is_empty_patch(cwd: str) -> bool:
     """Check if the current rebase step has no changes (patch already applied upstream)."""
     staged = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
-        cwd=cwd,
+        capture_output=True, cwd=cwd,
     )
     unstaged = subprocess.run(
         ["git", "diff", "--quiet"],
-        cwd=cwd,
+        capture_output=True, cwd=cwd,
     )
     return staged.returncode == 0 and unstaged.returncode == 0
 
@@ -351,56 +351,48 @@ def _drive_to_completion(
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
     Loops until the rebase finishes, handling conflicts (via AI when --fix),
-    empty commits (via --skip), and stuck states (fallback to --skip).
+    empty commits (via --skip), and stuck states (abort on unexpected failure).
     """
-    with _trail.span("drive_to_completion") if _trail else _nullspan():
-        return _drive_loop(cwd, ctx, fix)
+    with _trail.span("drive_to_completion") if _trail else nullcontext():
+        all_resolved: list[str] = []
+        commits_conflicted = 0
 
+        for _ in range(_MAX_REBASE_STEPS):
+            if not _detect_rebase_in_progress(cwd):
+                resolved = (all_resolved, commits_conflicted) if commits_conflicted else None
+                return _rebase_success(cwd, ctx, fix, resolved=resolved)
 
-def _drive_loop(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
-) -> int:
-    all_resolved: list[str] = []
-    commits_conflicted: list[int] = [0]
+            rc, conflict_found = _drive_one_step(cwd, fix, all_resolved)
+            if rc is not None:
+                return rc
+            if conflict_found:
+                commits_conflicted += 1
 
-    for _ in range(_MAX_REBASE_STEPS):
-        if not _detect_rebase_in_progress(cwd):
-            resolved = (all_resolved, commits_conflicted[0]) if commits_conflicted[0] else None
-            return _rebase_success(cwd, ctx, fix, resolved=resolved)
-
-        rc = _drive_one_step(cwd, ctx, fix, all_resolved, commits_conflicted)
-        if rc is not None:
-            return rc
-
-    _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
-    log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
-    return 1
+        _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
+        log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
+        subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+        return 1
 
 
 def _drive_one_step(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
-    all_resolved: list[str], commits_conflicted: list[int],
-) -> int | None:
+    cwd: str, fix: bool,
+    all_resolved: list[str],
+) -> tuple[int | None, bool]:
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
-        return _step_advance(cwd)
+        return _step_advance(cwd), False
 
-    rc = _step_conflicts(cwd, ctx, fix, conflicts, all_resolved)
+    rc = _step_conflicts(cwd, fix, conflicts, all_resolved)
     if rc is not None:
-        return rc
-    commits_conflicted[0] += 1
-    return None
+        return rc, False
+    return None, True
 
 
 def _step_conflicts(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    cwd: str, fix: bool,
     conflicts: list[str], all_resolved: list[str],
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
-    sha, subject = _rebase_head_info(cwd)
-    remaining = _remaining_rebase_commits(cwd)
-
     if not fix:
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
@@ -414,6 +406,9 @@ def _step_conflicts(
         json.dump(report, sys.stdout, indent=2)
         print()
         return 3
+
+    sha, subject = _rebase_head_info(cwd)
+    remaining = _remaining_rebase_commits(cwd)
 
     log.info(
         f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
@@ -439,7 +434,7 @@ def _step_conflicts(
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 and r.stderr.strip():
-        log.dim(r.stderr.strip())
+        log.warn(r.stderr.strip())
     return None
 
 
@@ -454,7 +449,10 @@ def _step_advance(cwd: str) -> int | None:
                 reason="patch already applied upstream",
                 data={"commit": sha, "subject": subject},
             )
-        subprocess.run(["git", "rebase", "--skip"], cwd=cwd)
+        r = subprocess.run(["git", "rebase", "--skip"], cwd=cwd)
+        if r.returncode != 0:
+            log.error(f"git rebase --skip failed (exit {r.returncode})")
+            return 1
         return None
 
     r = subprocess.run(
@@ -464,21 +462,16 @@ def _step_advance(cwd: str) -> int | None:
     if r.returncode == 0:
         return None
 
-    log.warn("rebase --continue failed without conflicts — trying --skip")
+    log.warn("rebase --continue failed without conflicts — aborting")
     if r.stderr.strip():
         log.dim(r.stderr.strip())
     if _trail:
         _trail.warn(
-            "step", "falling back to --skip",
+            "step", "aborting after --continue failure",
             data={"stderr": r.stderr.strip(), "exit_code": r.returncode},
         )
-    subprocess.run(["git", "rebase", "--skip"], cwd=cwd)
-    return None
-
-
-@contextmanager
-def _nullspan():
-    yield
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    return 1
 
 
 # ── State helpers ───────────────────────────────────────────────────────────

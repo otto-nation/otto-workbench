@@ -483,23 +483,20 @@ def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     if conflicts:
         return _handle_conflicts(cwd, ctx, fix, status="conflicts_resuming")
 
-    r = subprocess.run(
-        ["git", "-c", "core.editor=true", "rebase", "--continue"],
-        cwd=cwd,
-    )
-    if r.returncode == 0:
-        return _rebase_success(cwd, ctx, fix)
+    while True:
+        r = subprocess.run(
+            ["git", "-c", "core.editor=true", "rebase", "--continue"],
+            cwd=cwd,
+        )
+        if r.returncode == 0:
+            return _rebase_success(cwd, ctx, fix)
 
-    conflicts = _detect_conflicts(cwd)
-    if conflicts:
-        return _handle_conflicts(cwd, ctx, fix)
+        conflicts = _detect_conflicts(cwd)
+        if conflicts:
+            return _handle_conflicts(cwd, ctx, fix)
 
-    # Rebase paused without unmerged files (e.g. auto-resolved conflicts
-    # awaiting --continue). Resume again if still in progress.
-    if _detect_rebase_in_progress(cwd):
-        return _resume(cwd, ctx, fix)
-
-    return r.returncode
+        if not _detect_rebase_in_progress(cwd):
+            return r.returncode
 
 
 def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
@@ -654,7 +651,8 @@ def main():
             _trail.decision("mode", f"selected {mode}", reason="--fix flag set" if args.fix else "default mode")
             sys.exit(cmd_start(cwd, ctx, args.fix))
     except Exception as exc:
-        _trail.error("unexpected_error", str(exc))
+        import traceback
+        _trail.error("unexpected_error", str(exc), data={"traceback": traceback.format_exc()})
         raise
     finally:
         _trail.finish()

@@ -428,3 +428,52 @@ def test_resolve_and_continue_resolution_failure():
         result = pr_rebase_cli._resolve_and_continue("/fake")
 
     assert result is None
+
+
+# ── _fresh ──────────────────────────────────────────────────────────────────
+
+
+def test_fresh_preflight_allows_untracked_files():
+    """Preflight passes when tracked tree is clean; --untracked-files=no flag is used."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+
+    status_cmds = []
+
+    def fake_run(cmd, **kwargs):
+        if "--porcelain" in cmd:
+            status_cmds.append(list(cmd))
+            # Simulate clean tracked tree — untracked files are ignored by the flag
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 0
+    assert len(status_cmds) == 1
+    assert "--untracked-files=no" in status_cmds[0]
+
+
+def test_fresh_delegates_to_resume_on_paused_rebase():
+    """_fresh calls _resume when rebase exits non-zero, no conflicts, but rebase is still in progress."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+
+    def fake_run(cmd, **kwargs):
+        if "--porcelain" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if "fetch" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        # git rebase fails with non-zero (no conflicts — rebase paused awaiting --continue)
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_resume", return_value=0) as mock_resume:
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 0
+    mock_resume.assert_called_once_with("/fake", ctx, False)

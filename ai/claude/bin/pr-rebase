@@ -528,6 +528,11 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     if conflicts:
         return _handle_conflicts(cwd, ctx, fix)
 
+    # Rebase paused without unmerged files (e.g. auto-resolved conflicts
+    # awaiting --continue). Resume if still in progress.
+    if _detect_rebase_in_progress(cwd):
+        return _resume(cwd, ctx, fix)
+
     return r.returncode
 
 

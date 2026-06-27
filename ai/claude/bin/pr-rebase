@@ -483,20 +483,26 @@ def _resume(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     if conflicts:
         return _handle_conflicts(cwd, ctx, fix, status="conflicts_resuming")
 
-    while True:
-        r = subprocess.run(
-            ["git", "-c", "core.editor=true", "rebase", "--continue"],
-            cwd=cwd,
-        )
-        if r.returncode == 0:
-            return _rebase_success(cwd, ctx, fix)
+    r = subprocess.run(
+        ["git", "-c", "core.editor=true", "rebase", "--continue"],
+        cwd=cwd,
+    )
+    if r.returncode == 0:
+        return _rebase_success(cwd, ctx, fix)
 
-        conflicts = _detect_conflicts(cwd)
-        if conflicts:
-            return _handle_conflicts(cwd, ctx, fix)
+    conflicts = _detect_conflicts(cwd)
+    if conflicts:
+        return _handle_conflicts(cwd, ctx, fix)
 
-        if not _detect_rebase_in_progress(cwd):
-            return r.returncode
+    if not _detect_rebase_in_progress(cwd):
+        return r.returncode
+
+    # rebase --continue failed without conflicts but rebase is still in progress —
+    # state is corrupted (e.g. missing message file). Abort to recover.
+    _terr("resume", "rebase --continue failed without conflicts, aborting")
+    log.error("rebase --continue failed — rebase state may be corrupted. Aborting.")
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    return 1
 
 
 def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:

@@ -381,10 +381,10 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
 
         assert result == ["go.mod"]
         assert ["go", "mod", "tidy"] in calls
-        # N4: verify go.sum staging after tidy
+        # Verify all changes staged after tidy (git add . in go directory)
         tidy_idx = calls.index(["go", "mod", "tidy"])
         post_tidy = calls[tidy_idx + 1:]
-        assert ["git", "add", "go.sum"] in post_tidy
+        assert ["git", "add", "."] in post_tidy
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────
@@ -617,8 +617,8 @@ def test_step_advance_continue_fails_aborts():
 # ── _fresh ──────────────────────────────────────────────────────────────────
 
 
-def test_fresh_preflight_allows_untracked_files():
-    """Preflight passes when tracked tree is clean; --untracked-files=no flag is used."""
+def test_fresh_no_dirty_check():
+    """_fresh no longer checks for uncommitted changes (handled by cmd_start auto-stash)."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
 
@@ -627,7 +627,6 @@ def test_fresh_preflight_allows_untracked_files():
     def fake_run(cmd, **kwargs):
         if "--porcelain" in cmd:
             status_cmds.append(list(cmd))
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
@@ -636,8 +635,7 @@ def test_fresh_preflight_allows_untracked_files():
         result = pr_rebase_cli._fresh("/fake", ctx, False)
 
     assert result == 0
-    assert len(status_cmds) == 1
-    assert "--untracked-files=no" in status_cmds[0]
+    assert len(status_cmds) == 0
 
 
 def test_fresh_delegates_to_drive_on_paused_rebase():

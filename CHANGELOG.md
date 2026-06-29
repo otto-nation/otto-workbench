@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.37.3](https://github.com/otto-nation/otto-workbench/compare/v1.37.2...v1.37.3) (2026-06-29)
+
+
+### Bug Fixes
+
+* **pr-rebase:** auto-stash dirty tree; stage all tidy changes; abort on continue failure ([#408](https://github.com/otto-nation/otto-workbench/issues/408)) ([15572c6](https://github.com/otto-nation/otto-workbench/commit/15572c6912103d7dccd69d53a14e25bad0b1ba4c))
+* self-review findings ([#412](https://github.com/otto-nation/otto-workbench/issues/412)) ([0569472](https://github.com/otto-nation/otto-workbench/commit/0569472cccb6fa3207ff4ea2bd9651844b54c0fe))
+
+
+### Code Refactoring
+
+* redirect tool events to stderr; misc cleanups ([#411](https://github.com/otto-nation/otto-workbench/issues/411)) ([55e85bd](https://github.com/otto-nation/otto-workbench/commit/55e85bd058a01a4b36ee68911f20d783e67e7421))
+* **retro:** extract helpers; scope cleanup to consumed reviews ([#413](https://github.com/otto-nation/otto-workbench/issues/413)) ([57857b9](https://github.com/otto-nation/otto-workbench/commit/57857b9e6ed1c5780efc5322686709b086b10cc1))
+
 ## [1.37.2](https://github.com/otto-nation/otto-workbench/compare/v1.37.1...v1.37.2) (2026-06-29)
 
 

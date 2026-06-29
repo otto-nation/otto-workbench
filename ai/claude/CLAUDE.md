@@ -76,6 +76,7 @@ messages on stderr.
 | Subcommand | Script | State updated by |
 |------------|--------|------------------|
 | `pr ci` | `ci-check` | script (updates state directly) |
+| `pr ci --fix` | `ci-check --fix` | script (updates state directly) |
 | `pr review` | `claude-review` | script (updates state directly) |
 | `pr review --post` | `review-post` | `pr` wrapper |
 | `pr review --repair` | `review-rebuild` (fallback) | `pr` wrapper |
@@ -85,7 +86,7 @@ messages on stderr.
 | `pr comments --fix` | `review-threads --fix` | script (updates state directly) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
 | `pr gc` | none (local via `review_gc`) | none |
-| `pr fix` | `claude-review` (--fix) | none |
+| `pr fix` | `claude-review` (--fix), `ci-check` (--fix) | none |
 | `pr status` | none (reads cached state) | none |
 
 ### Adding a new subcommand

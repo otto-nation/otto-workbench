@@ -10,6 +10,7 @@ Usage:
   ci-check --run <run_id>       # specific run
   ci-check --pr <number_or_url> # discover branch from PR
   ci-check --repo-dir <path>    # specify worktree directory
+  ci-check --fix                # diagnose then invoke AI to fix failures
 """
 
 import argparse
@@ -19,14 +20,26 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from string import Template
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import ai_backend
 import ci_failures as ci
 import pr_context
 import pr_state
+import review_common
 import log
 from trail import Trail, add_trail_args
+
+
+# ── Fix phase constants ─────────────────────────────────────────────────────
+
+_SKIP_KINDS = frozenset(("infra", "flaky"))
+FIX_MAX_TURNS = 20
+FIX_MAX_BUDGET = 3.0
+FIX_MODEL = "sonnet"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
 
 _SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
@@ -249,7 +262,7 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
     return primary
 
 
-def _run_ci(trail, args, ctx) -> None:
+def _run_ci(trail, args, ctx) -> dict:
     repo = ctx.repo
     branch = ctx.branch
     pr_number = ctx.pr_number
@@ -380,6 +393,175 @@ def _run_ci(trail, args, ctx) -> None:
     json.dump(report, sys.stdout, indent=2)
     print()
 
+    return report
+
+
+# ── Fix phase ────────────────────────────────────────────────────────────────
+
+
+def _build_ci_tracking_file(
+    tracking_path: Path, failures: list[dict], run_number: int,
+) -> int:
+    """Build markdown tracking file for fixable CI failures. Returns count."""
+    fixable = [f for f in failures if f["kind"] not in _SKIP_KINDS]
+    if not fixable:
+        return 0
+
+    sections = []
+    for f in fixable:
+        file_ref = f"{f['file']}:{f['line']}" if f.get("file") and f.get("line") else "—"
+        section = f"## <!-- failure:{f['id']} --> {file_ref} — {f['job']}\n\n"
+        section += f"**Kind:** {f['kind']}\n"
+        if f.get("headline"):
+            section += f"**Error:** {f['headline']}\n"
+        if f.get("annotation") and f["annotation"] != f.get("headline"):
+            section += f"**Details:** {f['annotation']}\n"
+        if f.get("outcome") and f["outcome"] != "new":
+            section += f"**Progression:** {f['outcome']}\n"
+        section += "\n- [ ] Apply fix\n"
+        sections.append(section)
+
+    content = f"# CI Fix Tracking — Run #{run_number}\n\n"
+    content += "\n".join(sections)
+    tracking_path.parent.mkdir(parents=True, exist_ok=True)
+    tracking_path.write_text(content)
+    return len(fixable)
+
+
+def _render_ci_fix_template(
+    branch: str, repo: str, failures_content: str,
+    tracking_file: str, wt_path: str, max_turns: int,
+) -> str:
+    """Render the fix-ci.md template."""
+    tmpl = Template((TEMPLATE_DIR / review_common.TEMPLATE_FIX_CI).read_text())
+    return tmpl.safe_substitute(
+        branch_name=branch,
+        repo=repo,
+        failures_content=failures_content,
+        tracking_file=tracking_file,
+        wt_path=wt_path,
+        max_turns=str(max_turns),
+    )
+
+
+def _count_checked(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text().splitlines()
+               if line.strip().startswith("- [x]"))
+
+
+def _count_unchecked(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text().splitlines()
+               if line.strip().startswith("- [ ]"))
+
+
+def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
+    """Commit and push fixes if there are changes. Returns commit SHA or None."""
+    r = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", "--quiet"],
+        capture_output=True,
+    )
+    if r.returncode == 0:
+        r2 = subprocess.run(
+            ["git", "-C", str(wt_path), "diff", "--cached", "--quiet"],
+            capture_output=True,
+        )
+        if r2.returncode == 0:
+            log.info("No changes to commit")
+            return None
+
+    subprocess.run(
+        ["git", "-C", str(wt_path), "add", "-u"],
+        check=True,
+    )
+    msg = "fix: address CI failures"
+    if fixed:
+        msg += f"\n\n{fixed} fixed, {skipped} skipped"
+    subprocess.run(
+        ["git", "-C", str(wt_path), "commit", "-m", msg],
+        check=True,
+    )
+    sha = subprocess.run(
+        ["git", "-C", str(wt_path), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
+
+    r = subprocess.run(
+        ["git", "-C", str(wt_path), "push"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        log.info("Pushed fixes")
+    else:
+        log.warn(f"Push failed: {r.stderr.strip()}")
+
+    return sha
+
+
+def _run_fix(trail, report: dict, ctx) -> int:
+    """Apply AI-driven fixes for CI failures. Returns exit code."""
+    toplevel = ctx.worktree_root
+    if not toplevel:
+        log.error("--fix requires a worktree (use --repo-dir)")
+        return 1
+
+    failures = report.get("failures", [])
+    if not failures:
+        log.info("No failures to fix")
+        return 0
+
+    tracking_dir = toplevel / "ignore" / "ci-failures"
+    tracking_file = tracking_dir / "fix-tracking.md"
+
+    fixable_count = _build_ci_tracking_file(
+        tracking_file, failures, report.get("run_number", 0),
+    )
+    if fixable_count == 0:
+        log.info("No fixable failures (all infra/flaky)")
+        return 0
+
+    trail.info("fix_start", f"{fixable_count} fixable failure(s)")
+    log.info(f"Fixing {fixable_count} CI failure(s)...")
+
+    prompt = _render_ci_fix_template(
+        branch=ctx.branch,
+        repo=ctx.repo,
+        failures_content=tracking_file.read_text(),
+        tracking_file=str(tracking_file),
+        wt_path=str(toplevel),
+        max_turns=FIX_MAX_TURNS,
+    )
+
+    rc = ai_backend.invoke_fix(
+        prompt,
+        add_dirs=[str(toplevel)],
+        max_turns=FIX_MAX_TURNS,
+        max_budget=FIX_MAX_BUDGET,
+        model=FIX_MODEL,
+    )
+
+    fixed = _count_checked(tracking_file)
+    skipped = _count_unchecked(tracking_file)
+
+    trail.info(
+        "fix_result", f"{fixed} fixed, {skipped} skipped",
+        data={"fixed": fixed, "skipped": skipped},
+    )
+
+    if fixed > 0:
+        sha = _commit_and_push(toplevel, fixed, skipped)
+        if sha:
+            trail.info("fix_committed", f"committed at {sha}")
+
+    if skipped > 0:
+        log.info(f"{skipped} failure(s) could not be auto-fixed")
+
+    return 0 if rc == 0 else 1
+
 
 def main():
     parser = argparse.ArgumentParser(description="CI failure status")
@@ -388,6 +570,8 @@ def main():
     parser.add_argument("--run", type=int, help="Specific run ID")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory")
+    parser.add_argument("--fix", action="store_true",
+                        help="Invoke AI to fix failures after diagnosis")
     add_trail_args(parser)
     args = parser.parse_args()
 
@@ -406,7 +590,10 @@ def main():
         debug=args.debug,
     )
     try:
-        _run_ci(trail, args, ctx)
+        report = _run_ci(trail, args, ctx)
+        if args.fix:
+            rc = _run_fix(trail, report, ctx)
+            sys.exit(rc)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

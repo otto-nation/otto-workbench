@@ -426,15 +426,12 @@ def _push_fixes(job: ReviewJob):
         log.info("Pushed fixes")
         return
 
-    result = subprocess.run(
-        ["git", "-C", job.wt_path, "push", "--force-with-lease"],
-        capture_output=True, text=True,
+    stderr = result.stderr.strip()
+    log.error(
+        f"push failed — branch may have diverged. Run:\n"
+        f"  git -C '{job.wt_path}' push --force-with-lease\n"
+        f"stderr: {stderr}"
     )
-    if result.returncode == 0:
-        log.info("Force-pushed fixes (branch had diverged)")
-        return
-
-    log.warn(f"Failed to push fixes: {result.stderr.strip()}")
 
 
 def _count_checked(review_file: str) -> int:

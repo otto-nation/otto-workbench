@@ -654,13 +654,13 @@ scaffold_project_claude() {
     if [[ -f "$tmpl" ]]; then _scaffold_file "$tmpl" ".claude/rules/${s}.md" "${s}.md" "$force"; fi
   done
 
-  # Scaffold context.md for stacks that benefit from architecture narrative
+  # Scaffold architecture.md for stacks that benefit from architecture narrative
   for s in "${DETECTED_STACKS[@]}"; do
-    local ctx_tmpl="$CLAUDE_TEMPLATES_DIR/context/${s}.md"
-    if [[ -f "$ctx_tmpl" ]]; then
+    local arch_tmpl="$CLAUDE_TEMPLATES_DIR/architecture/${s}.md"
+    if [[ -f "$arch_tmpl" ]]; then
       echo
-      info "Scaffolding .claude/context.md"
-      _scaffold_file "$ctx_tmpl" ".claude/context.md" "context.md" "$force"
+      info "Scaffolding .claude/architecture.md"
+      _scaffold_file "$arch_tmpl" ".claude/architecture.md" "architecture.md" "$force"
       break
     fi
   done

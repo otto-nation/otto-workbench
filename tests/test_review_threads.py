@@ -430,3 +430,242 @@ class TestFormatGeneralComments:
 
     def test_invalid_json(self):
         assert _format_general_comments("not json") == "_None._"
+
+
+# ── CommitPushResult ────────────────────────────────────────────────────────
+
+
+def _make_completed(returncode, stdout="", stderr=""):
+    """Create a CompletedProcess with the given results."""
+    import subprocess
+    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
+
+
+class TestCommitAndPush:
+    """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
+
+    def test_no_changes(self, rt):
+        """git diff --quiet returns 0 → no_changes."""
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            if "diff" in cmd:
+                return _make_completed(0)
+            return _make_completed(0)
+
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 0, 0)
+        assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_commit_failed(self, rt):
+        """git commit returns non-zero → commit_failed with error text."""
+        def mock_run(cmd, **kwargs):
+            if "diff" in cmd:
+                return _make_completed(1)
+            if "add" in cmd:
+                return _make_completed(0)
+            if "commit" in cmd:
+                return _make_completed(1, stderr="hook failed\n")
+            return _make_completed(0)
+
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        assert result.status == "commit_failed"
+        assert result.sha is None
+        assert "hook failed" in result.error
+
+    def test_push_failed(self, rt):
+        """git push returns non-zero → push_failed with SHA preserved."""
+        def mock_run(cmd, **kwargs):
+            if "diff" in cmd:
+                return _make_completed(1)
+            if "add" in cmd:
+                return _make_completed(0)
+            if "commit" in cmd:
+                return _make_completed(0)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
+            if "push" in cmd:
+                return _make_completed(1, stderr="rejected\n")
+            return _make_completed(0)
+
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        assert result.status == "push_failed"
+        assert result.sha == "abc1234"
+        assert "rejected" in result.error
+
+    def test_success(self, rt):
+        """git push returns 0 → pushed with SHA."""
+        def mock_run(cmd, **kwargs):
+            if "diff" in cmd:
+                return _make_completed(1)
+            if "add" in cmd:
+                return _make_completed(0)
+            if "commit" in cmd:
+                return _make_completed(0)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
+            if "push" in cmd:
+                return _make_completed(0)
+            return _make_completed(0)
+
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        assert result.status == "pushed"
+        assert result.sha == "abc1234"
+        assert result.error == ""
+
+
+# ── _get_head_sha ────────────────────────────────────────────────────────────
+
+
+class TestGetHeadSha:
+    def test_returns_short_sha(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="abc1234\n")):
+            result = rt._get_head_sha(Path("/fake"))
+        assert result == "abc1234"
+
+
+# ── _is_pushed ───────────────────────────────────────────────────────────────
+
+
+class TestIsPushed:
+    def test_sha_on_remote(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="  origin/main\n")):
+            assert rt._is_pushed(Path("/fake"), "abc1234") is True
+
+    def test_sha_not_on_remote(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="")):
+            assert rt._is_pushed(Path("/fake"), "abc1234") is False
+
+    def test_command_failure_returns_false(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(1)):
+            assert rt._is_pushed(Path("/fake"), "abc1234") is False
+
+
+# ── _recover_agent_commit ────────────────────────────────────────────────────
+
+
+class TestRecoverAgentCommit:
+    """Three distinct branches: no change, already pushed, push attempt."""
+
+    def test_no_change_when_sha_unchanged(self, rt):
+        """head_after == head_before → no_changes, no push attempted."""
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_already_pushed_skips_push(self, rt):
+        """head changed and SHA already on remote → pushed without a new push."""
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=True):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "pushed"
+        assert result.sha == "def5678"
+
+    def test_push_success(self, rt):
+        """head changed, not yet on remote, push succeeds → pushed."""
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(0)):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "pushed"
+        assert result.sha == "def5678"
+
+    def test_push_failure(self, rt):
+        """head changed, not yet on remote, push fails → push_failed with error."""
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "push_failed"
+        assert result.sha == "def5678"
+        assert "rejected" in result.error
+
+
+# ── _fixed_status_text ──────────────────────────────────────────────────────
+
+
+class TestFixedStatusText:
+    """Test status text rendering for each CommitPushResult state."""
+
+    def test_pushed(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "Fixed in" in text
+        assert "abc1234" in text
+        assert "push failed" not in text
+
+    def test_push_failed_with_sha(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "abc1234" in text
+        assert "push failed" in text
+
+    def test_no_changes(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "no commit needed" in text
+
+    def test_commit_failed(self, rt):
+        cp = rt.CommitPushResult(None, "commit_failed", "hook error")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "commit failed" in text
+        assert "pre-commit" in text
+
+
+# ── _build_summary_body ─────────────────────────────────────────────────────
+
+
+class TestBuildSummaryBody:
+    """Test summary body renders correct status per CommitPushResult."""
+
+    def _fixed_entry(self, **overrides):
+        return {"summary": "fix regex", "file": "parsers.py", "line": 10, **overrides}
+
+    def test_pushed_shows_commit_link(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "abc1234" in body
+        assert "push failed" not in body
+
+    def test_no_changes_shows_no_commit_needed(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "no commit needed" in body
+
+    def test_commit_failed_shows_precommit_hint(self, rt):
+        cp = rt.CommitPushResult(None, "commit_failed", "hook error")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "commit failed" in body
+
+    def test_push_failed_shows_sha_and_warning(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "abc1234" in body
+        assert "push failed" in body
+
+    def test_needs_human_rows(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [], [{"summary": "question", "file": "a.py", "line": 1, "reason": "contested"}],
+            [], cp, "owner/repo",
+        )
+        assert "contested" in body
+
+    def test_empty_returns_no_table(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body([], [], [], cp, "owner/repo")
+        assert "Thread" not in body

@@ -171,3 +171,97 @@ def test_merge_runs_collects_all_jobs():
     assert len(result["jobs"]) == 2
     assert result["jobs"][0]["name"] == "build"
     assert result["jobs"][1]["name"] == "lint"
+
+
+# ── _build_ci_tracking_file ─────────────────────────────────────────────
+
+
+def test_tracking_file_includes_fixable_failures(tmp_path):
+    """Lint and test failures should appear in the tracking file."""
+    tracking = tmp_path / "fix-tracking.md"
+    failures = [
+        {"id": "sc2086-bin-foo-42", "job": "shellcheck", "kind": "lint",
+         "annotation": "SC2086: Double quote", "headline": "SC2086: Double quote",
+         "file": "bin/foo.sh", "line": 42, "outcome": "new"},
+        {"id": "pytest-test-auth-18", "job": "pytest", "kind": "test",
+         "annotation": "AssertionError", "headline": "AssertionError",
+         "file": "tests/auth.py", "line": 18, "outcome": "persisting"},
+    ]
+    count = ci_check._build_ci_tracking_file(tracking, failures, 7)
+
+    assert count == 2
+    content = tracking.read_text()
+    assert "Run #7" in content
+    assert "bin/foo.sh:42" in content
+    assert "tests/auth.py:18" in content
+    assert "SC2086: Double quote" in content
+    assert content.count("- [ ] Apply fix") == 2
+    assert "persisting" in content
+
+
+def test_tracking_file_excludes_infra_and_flaky(tmp_path):
+    """Infra and flaky failures should not appear in the tracking file."""
+    tracking = tmp_path / "fix-tracking.md"
+    failures = [
+        {"id": "lint-1", "job": "shellcheck", "kind": "lint",
+         "annotation": "SC2086", "headline": "SC2086",
+         "file": "bin/foo.sh", "line": 42, "outcome": "new"},
+        {"id": "infra-1", "job": "docker", "kind": "infra",
+         "annotation": "connection refused", "headline": "connection refused",
+         "file": None, "line": None, "outcome": "new"},
+        {"id": "flaky-1", "job": "pytest", "kind": "flaky",
+         "annotation": "timeout", "headline": "timeout",
+         "file": "tests/slow.py", "line": 1, "outcome": "new"},
+    ]
+    count = ci_check._build_ci_tracking_file(tracking, failures, 8)
+
+    assert count == 1
+    content = tracking.read_text()
+    assert "shellcheck" in content
+    assert "docker" not in content
+    assert "timeout" not in content
+
+
+def test_tracking_file_returns_zero_when_all_skipped(tmp_path):
+    """When all failures are infra/flaky, no file is written and count is 0."""
+    tracking = tmp_path / "fix-tracking.md"
+    failures = [
+        {"id": "infra-1", "job": "docker", "kind": "infra",
+         "annotation": "OOM", "headline": "OOM",
+         "file": None, "line": None, "outcome": "new"},
+    ]
+    count = ci_check._build_ci_tracking_file(tracking, failures, 9)
+
+    assert count == 0
+    assert not tracking.exists()
+
+
+def test_tracking_file_handles_missing_file_and_line(tmp_path):
+    """Failures without file/line should show '—' as the reference."""
+    tracking = tmp_path / "fix-tracking.md"
+    failures = [
+        {"id": "build-1", "job": "gradle", "kind": "build",
+         "annotation": "compilation failed", "headline": "compilation failed",
+         "file": None, "line": None, "outcome": "new"},
+    ]
+    count = ci_check._build_ci_tracking_file(tracking, failures, 10)
+
+    assert count == 1
+    content = tracking.read_text()
+    assert "— — gradle" in content
+
+
+# ── _count_checked / _count_unchecked ────────────────────────────────────
+
+
+def test_count_checked_and_unchecked(tmp_path):
+    tracking = tmp_path / "tracking.md"
+    tracking.write_text("- [x] Done\n- [ ] Todo\n- [x] Also done\n- [ ] Also todo\n")
+    assert ci_check._count_checked(tracking) == 2
+    assert ci_check._count_unchecked(tracking) == 2
+
+
+def test_count_on_missing_file(tmp_path):
+    missing = tmp_path / "nope.md"
+    assert ci_check._count_checked(missing) == 0
+    assert ci_check._count_unchecked(missing) == 0

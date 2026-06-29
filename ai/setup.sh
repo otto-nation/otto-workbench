@@ -97,7 +97,10 @@ STEPS=()
 
 _STATE_KEY="ai.tools"
 
-if ! state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TOOLS; then
+_AVAILABLE_TOOLS=()
+while IFS= read -r _t; do _AVAILABLE_TOOLS+=("$_t"); done < <(_ai_discover_tools)
+
+if ! state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TOOLS _AVAILABLE_TOOLS; then
   select_tools
 fi
 

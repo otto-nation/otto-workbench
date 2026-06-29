@@ -221,14 +221,22 @@ state_get_list() {
   yq '.components.'"$1"' | (. // []) | .[]' "$INSTALL_YML_FILE" 2>/dev/null || true
 }
 
-# state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY
+# state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]
 # Loads saved selections from YAML, validates each against SCRIPT_DIR.
-# Returns 0 (replaying) if valid saved selections found.
-# Returns 1 (fresh) and clears the list if interactive or no valid saves.
+# When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in
+# the saved list — forces a fresh menu so the user can opt in (or deselect).
+# Returns 0 (replaying) if valid saved selections found with no drift.
+# Returns 1 (fresh) and clears the list if interactive, no valid saves, or drift detected.
 state_load_selections() {
   local state_key="$1" script_dir="$2"
   local -n __selections=$3
   __selections=()
+
+  local _has_available=false
+  if [[ $# -ge 4 ]]; then
+    local -n __available=$4
+    _has_available=true
+  fi
 
   local _saved
   _saved=$(state_get_list "$state_key")
@@ -238,6 +246,22 @@ state_load_selections() {
       if [[ -d "$script_dir/$_item" ]]; then __selections+=("$_item"); fi
     done <<< "$_saved"
     if [[ ${#__selections[@]} -gt 0 ]]; then
+      if [[ "$_has_available" == true ]]; then
+        local _new_tools=() _avail _found _sel
+        for _avail in "${__available[@]}"; do
+          _found=false
+          for _sel in "${__selections[@]}"; do
+            if [[ "$_sel" == "$_avail" ]]; then _found=true; break; fi
+          done
+          if [[ "$_found" == false ]]; then _new_tools+=("$_avail"); fi
+        done
+        if [[ ${#_new_tools[@]} -gt 0 ]]; then
+          info "New tools available: ${_new_tools[*]}"
+          __selections=()
+          state_clear_list "$state_key"
+          return 1
+        fi
+      fi
       info "Using saved selections: ${__selections[*]}"
       return 0
     fi

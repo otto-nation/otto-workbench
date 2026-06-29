@@ -88,7 +88,7 @@ Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intellig
 - **validate-errexit** — Validates bash scripts for dangerous && patterns that silently exit under set -e
 - **validate-skills** — Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing
 - **validate-cli-flags** — Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity
-- **generate-tool-context** — Generates ai/guidelines/rules/tools.generated.md from the domain registries
+- **generate-tool-context** — Generates tools.generated*.md rule files from the domain registries
 
 ## Dev Tools
 

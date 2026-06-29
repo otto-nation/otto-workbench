@@ -258,6 +258,8 @@ _render_registry() {
 }
 
 # ── Scope → paths mapping ────────────────────────────────────────────────────
+# Centralized here so registries stay simple (just `scope: go`). Adding a new
+# scope requires an entry here and `scope:` in the registry YAML.
 
 declare -A SCOPE_PATHS
 SCOPE_PATHS[go]='  - "**/*.go"
@@ -281,15 +283,12 @@ collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_ST
 # Group registries by meta.scope (empty/core → core group, others → named scope)
 declare -a _core_registries=()
 declare -A _scope_registries=()
-declare -A _active_scopes=()
-
 for _reg in "${_tool_registries[@]}"; do
   _scope=$(yq '.meta.scope // ""' "$_reg")
   if [[ -z "$_scope" || "$_scope" == "null" || "$_scope" == "core" ]]; then
     _core_registries+=("$_reg")
   else
     _scope_registries["$_scope"]+="$_reg"$'\n'
-    _active_scopes["$_scope"]=1
   fi
 done
 
@@ -307,15 +306,18 @@ OUTPUT_DIR="$(dirname "$OUTPUT")"
 $QUIET || success "Generated $(basename "$OUTPUT")"
 
 # Scoped files — loaded only when the session touches matching file types.
-for _scope in "${!_active_scopes[@]}"; do
+for _scope in "${!_scope_registries[@]}"; do
   _scope_output="$OUTPUT_DIR/tools.generated.${_scope}.md"
   _scope_regs="${_scope_registries[$_scope]}"
   _paths="${SCOPE_PATHS[$_scope]:-}"
 
+  if [[ -z "$_paths" ]]; then
+    err "Scope '$_scope' has no entry in SCOPE_PATHS — add a paths mapping before using it"
+    exit 1
+  fi
+
   {
-    if [[ -n "$_paths" ]]; then
-      printf -- '---\npaths:\n%s\n---\n' "$_paths"
-    fi
+    printf -- '---\npaths:\n%s\n---\n' "$_paths"
     printf '# Tools — %s\n' "$_scope"
     printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
     printf '<!-- Regenerate: generate-tool-context -->\n'
@@ -330,10 +332,10 @@ done
 # Clean up stale scope files (scopes that no longer have registries).
 for _existing in "$OUTPUT_DIR"/tools.generated.*.md; do
   [[ -f "$_existing" ]] || continue
-  _basename="$(basename "$_existing")"
-  _existing_scope="${_basename#tools.generated.}"
+  _stale_file="$(basename "$_existing")"
+  _existing_scope="${_stale_file#tools.generated.}"
   _existing_scope="${_existing_scope%.md}"
-  if [[ -z "${_active_scopes[$_existing_scope]:-}" ]]; then
+  if [[ -z "${_scope_registries[$_existing_scope]+set}" ]]; then
     rm "$_existing"
     $QUIET || info "Removed stale $(basename "$_existing")"
   fi

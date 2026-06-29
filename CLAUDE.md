@@ -28,7 +28,7 @@ otto-workbench changelog       # show recent changes from conventional commits
 - Dynamic discovery over hardcoded config — glob patterns, not individual entries. Test: "does adding a new item require editing this file?" If yes, use a convention-based alternative.
 - Adding a brew tool = add to Brewfile + registry.yml. No other config edits needed. Env vars go in a `.env.yml` next to the consumer, not in the brew registry.
 - Adding a migration = create `<component>/migrations/YYYYMMDD-slug.sh` with a `migration_YYYYMMDD_slug()` function. No registry edits needed. Migrations must not source `lib/ui.sh` or assign `WORKBENCH_DIR` — both are provided by the migration framework (`lib/migrations.sh`).
-- Generated files (`tools.generated.md`, `git.generated.md`) are never edited directly — edit the source and regenerate.
+- Generated files (`tools.generated*.md`, `git.generated.md`) are never edited directly — edit the source and regenerate.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
 - All scripts and git hooks use `#!/usr/bin/env bash` (not `#!/bin/bash`) to pick up Homebrew's modern bash on macOS. Bash 4.3+ is required. Never invoke scripts with `bash script.sh` — run them directly (`./script.sh` or `"$path/script.sh"`) so their shebang is honored.
 - All scripts source `lib/ui.sh` via `git rev-parse --show-toplevel` — depth-independent, no `../` paths.

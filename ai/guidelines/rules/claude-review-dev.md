@@ -6,7 +6,6 @@ paths:
   - "ai/claude/bin/pr"
   - "ai/claude/lib/**"
   - "ai/claude/agents/reviewer.md"
-  - "lib/review-templates/**"
 ---
 
 # claude-review Development
@@ -62,6 +61,7 @@ messages on stderr.
 | `pr comments` | `review-threads` | script (updates state directly) |
 | `pr comments --triage` | `review-threads --triage` | script (updates state directly) |
 | `pr comments --fix` | `review-threads --fix` | script (updates state directly) |
+| `pr comments --resolve` | `review-threads --resolve` | script (updates state directly) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
 | `pr gc` | none (local via `review_gc`) | none |
 | `pr fix` | `claude-review` (--fix), `ci-check` (--fix) | none |

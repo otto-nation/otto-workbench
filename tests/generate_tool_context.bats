@@ -347,7 +347,7 @@ _write_scoped_registry() {
   cat > "$file" << EOF
 meta:
   section: "$section"
-  scope: $scope
+  scope: "$scope"
   install_check: false
   validation: none
 
@@ -423,6 +423,13 @@ EOF
   _write_registry "$BREW_REGISTRY"
   bash "$GENERATOR"
   [ ! -f "$stale_file" ]
+}
+
+@test "unknown scope exits non-zero" {
+  _write_scoped_registry "$WORK_DIR/python.registry.yml" "Python Tools" "python"
+
+  run bash "$GENERATOR"
+  [ "$status" -ne 0 ]
 }
 
 @test "core scope is treated as unscoped" {

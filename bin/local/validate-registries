@@ -308,7 +308,7 @@ _validate_install_check_command() {
 }
 
 # _validate_meta_scope FILE
-# If meta.scope is present, validates it is a non-empty string.
+# If meta.scope is present, validates it contains only lowercase alphanumeric characters and hyphens.
 _validate_meta_scope() {
   local file="$1"
   local scope

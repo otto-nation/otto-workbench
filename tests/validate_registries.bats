@@ -884,6 +884,26 @@ EOF
   [[ "$output" == *"must be lowercase alphanumeric"* ]]
 }
 
+@test "passes with hyphenated meta.scope" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  scope: "cloud-infra"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
+    description: "A tool"
+EOF
+  echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
+
+  run "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds and warns when registries are missing" {

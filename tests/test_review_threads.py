@@ -519,6 +519,74 @@ class TestCommitAndPush:
         assert result.error == ""
 
 
+# ── _get_head_sha ────────────────────────────────────────────────────────────
+
+
+class TestGetHeadSha:
+    def test_returns_short_sha(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="abc1234\n")):
+            result = rt._get_head_sha(Path("/fake"))
+        assert result == "abc1234"
+
+
+# ── _is_pushed ───────────────────────────────────────────────────────────────
+
+
+class TestIsPushed:
+    def test_sha_on_remote(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="  origin/main\n")):
+            assert rt._is_pushed(Path("/fake"), "abc1234") is True
+
+    def test_sha_not_on_remote(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="")):
+            assert rt._is_pushed(Path("/fake"), "abc1234") is False
+
+    def test_command_failure_returns_false(self, rt):
+        with patch.object(rt.subprocess, "run", return_value=_make_completed(1)):
+            assert rt._is_pushed(Path("/fake"), "abc1234") is False
+
+
+# ── _recover_agent_commit ────────────────────────────────────────────────────
+
+
+class TestRecoverAgentCommit:
+    """Three distinct branches: no change, already pushed, push attempt."""
+
+    def test_no_change_when_sha_unchanged(self, rt):
+        """head_after == head_before → no_changes, no push attempted."""
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_already_pushed_skips_push(self, rt):
+        """head changed and SHA already on remote → pushed without a new push."""
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=True):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "pushed"
+        assert result.sha == "def5678"
+
+    def test_push_success(self, rt):
+        """head changed, not yet on remote, push succeeds → pushed."""
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(0)):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "pushed"
+        assert result.sha == "def5678"
+
+    def test_push_failure(self, rt):
+        """head changed, not yet on remote, push fails → push_failed with error."""
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "push_failed"
+        assert result.sha == "def5678"
+        assert "rejected" in result.error
+
+
 # ── _fixed_status_text ──────────────────────────────────────────────────────
 
 

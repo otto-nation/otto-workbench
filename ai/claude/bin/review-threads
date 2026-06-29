@@ -364,10 +364,7 @@ def _commit_and_push(
             trail.error("commit", "commit failed", data={"error": err[:500]})
         return CommitPushResult(None, "commit_failed", err)
 
-    sha = subprocess.run(
-        ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True,
-    ).stdout.strip()
+    sha = _get_head_sha(wt_path)
 
     log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
 
@@ -596,6 +593,7 @@ def _run_comment_fix(
     empty_result = {
         "fixed": [], "needs_human": needs_human,
         "skipped": [], "commit_sha": None,
+        "commit_status": "no_changes",
         "replies_posted": 0, "summary_url": None,
     }
 

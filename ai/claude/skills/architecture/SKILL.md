@@ -1,19 +1,19 @@
 ---
-name: context
-description: "On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or context.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine)."
-source: otto-workbench/ai/claude/skills/context/SKILL.md
-invocation: "/context"
-trigger: "Run after discovering wrong-software assumptions, adding a new service or role to a project, when context.md last-reviewed date is more than 14 days old, or after discovering container tool constraints."
+name: architecture
+description: "On-demand architecture.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/architecture.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or architecture.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine)."
+source: otto-workbench/ai/claude/skills/architecture/SKILL.md
+invocation: "/architecture"
+trigger: "Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints."
 skip: "Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead)."
-output: ".claude/context.md"
+output: ".claude/architecture.md"
 ---
 
-# Context — Project Context Refresh
+# Architecture — Project Architecture Refresh
 
-Refreshes `.claude/context.md` with architectural facts discovered in recent sessions.
-Lighter than `/dream` — focuses only on context.md, not memory consolidation.
+Refreshes `.claude/architecture.md` with architectural facts discovered in recent sessions.
+Lighter than `/dream` — focuses only on architecture.md, not memory consolidation.
 
-Run manually with `/context` after adding a new service, discovering a wrong-API assumption,
+Run manually with `/architecture` after adding a new service, discovering a wrong-API assumption,
 or when `<!-- last-reviewed -->` is more than 14 days old and active work is ongoing.
 
 ---
@@ -23,8 +23,8 @@ or when `<!-- last-reviewed -->` is more than 14 days old and active work is ong
 ### 1. Read current state
 
 ```bash
-# Find the current project's context.md
-cat .claude/context.md
+# Find the current project's architecture.md
+cat .claude/architecture.md
 
 # Find the project's memory files (if any)
 ls ~/.claude/projects/$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo "unknown"))/memory/ 2>/dev/null
@@ -35,7 +35,7 @@ ls -t ~/.claude/projects/${project_slug}/*.jsonl 2>/dev/null | head -5
 ```
 
 Note:
-- The `<!-- last-reviewed: -->` date from context.md
+- The `<!-- last-reviewed: -->` date from architecture.md
 - Which sections exist (Service Stack, Known Constraints, Conventions)
 - What's already documented so you don't duplicate it
 
@@ -46,7 +46,7 @@ For each file in the project's memory directory, read it and look for entries th
 - Infrastructure constraints (tool availability, network topology)
 - Architectural decisions that should be stable facts
 
-These may belong in context.md rather than (or in addition to) memory.
+These may belong in architecture.md rather than (or in addition to) memory.
 
 ### 3. Read recent sessions
 
@@ -54,20 +54,20 @@ Read the 5 most recent session `.jsonl` files. For each file, scan for:
 - Wrong-software discoveries: "not Synapse", "actually Conduit", "wrong API", "turned out"
 - Tool-availability findings: "no curl", "no wget", "doesn't have bash", "minimal image"
 - Architectural confirmations: "the convention is", "always goes in", "never edit directly"
-- New services or roles mentioned that aren't in context.md's Service Stack
+- New services or roles mentioned that aren't in architecture.md's Service Stack
 
 Read ONLY the context around matches — lines where `type` is `"human"` or `"assistant"`.
 
 ### 4. Build a proposed diff
 
-For each finding NOT already in context.md:
+For each finding NOT already in architecture.md:
 
 **Format a proposed addition:**
 ```
 Section: Known Constraints > Software identity
 Evidence: [session date, quote]
 Proposed addition:
-  - <Fact.> <!-- added by /context YYYY-MM-DD -->
+  - <Fact.> <!-- added by /architecture YYYY-MM-DD -->
 ```
 
 Present all proposed additions before writing anything. For each one, confirm before applying.
@@ -101,4 +101,4 @@ Print:
 
 ## Output location
 
-`.claude/context.md` in the project root (committed, human-maintained).
+`.claude/architecture.md` in the project root (committed, human-maintained).

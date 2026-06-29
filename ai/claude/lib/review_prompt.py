@@ -453,7 +453,7 @@ def _compute_diff_budget(
         non_diff_preflight = (
             len(pf.commit_log.encode())
             + len(pf.claude_md.encode())
-            + len(pf.context_md.encode())
+            + len(pf.architecture_md.encode())
             + sum(len(v.encode()) for v in pf.review_checklists.values())
         )
         if not skip_file_contents:

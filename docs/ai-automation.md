@@ -31,7 +31,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, ci-failures, context, dream, machine, pr-comments, pr-rebase, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ci-failures, dream, machine, pr-comments, pr-rebase, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -73,6 +73,18 @@ Generate or refresh a project file index (.claude/anatomy.md) with per-file desc
 **Trigger:** Run to refresh the project file index before exploring an unfamiliar codebase, or after significant file changes.
 **Skip:** Do not use when the user asks about a specific file they already know — just read it directly.
 
+### `/architecture`
+
+On-demand architecture.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/architecture.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or architecture.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine).
+
+```
+/architecture
+```
+
+**Output:** `.claude/architecture.md`
+**Trigger:** Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints.
+**Skip:** Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead).
+
 ### `/ci-failures [<pr_number_or_run_id_or_branch>]`
 
 Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or pr review instead); addressing PR review comments (use pr-comments instead).
@@ -83,21 +95,9 @@ Diagnose and fix GitHub Actions CI failures with run-aware progression tracking:
 **Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
 **Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
 
-### `/context`
-
-On-demand context.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/context.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or context.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine).
-
-```
-/context
-```
-
-**Output:** `.claude/context.md`
-**Trigger:** Run after discovering wrong-software assumptions, adding a new service or role to a project, when context.md last-reviewed date is more than 14 days old, or after discovering container tool constraints.
-**Skip:** Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead).
-
 ### `/dream`
 
-Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use context); machine profile updates (use machine).
+Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use architecture); machine profile updates (use machine).
 
 ```
 /dream
@@ -106,11 +106,11 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 **Output:** `memory/ topic files`
 **Auto-trigger:** 24h (via Stop hook)
 **Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h.
-**Skip:** Do not use for project architecture facts (use context instead) or machine profile updates (use machine instead).
+**Skip:** Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead).
 
 ### `/machine`
 
-Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific context (use context); memory consolidation (use dream).
+Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific architecture (use architecture); memory consolidation (use dream).
 
 ```
 /machine
@@ -119,7 +119,7 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 **Output:** `~/.claude/machine/machine.md`
 **Auto-trigger:** 24h (via Stop hook)
 **Trigger:** Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h.
-**Skip:** Do not use for project-specific context (use context instead) or memory consolidation (use dream instead).
+**Skip:** Do not use for project-specific architecture (use architecture instead) or memory consolidation (use dream instead).
 
 ### `/pr-comments [<pr_number_or_branch>]`
 

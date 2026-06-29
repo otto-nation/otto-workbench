@@ -303,6 +303,7 @@ serena-mcp <command>
 | [tree](https://oldmanprogrammer.net/source.php?dir=projects/tree) | Recursive directory listing tool — visualizes folder structure as a tree |
 | [delta](https://dandavison.github.io/delta/) | Syntax-highlighting pager for git diffs — automatically used for all git diff output via core.pager |
 | [pipx](https://pipx.pypa.io/) | Install and run Python CLI tools in isolated environments |
+| [rtk](https://www.rtk-ai.app/) | CLI proxy that compresses command output to reduce LLM token consumption |
 | [uv](https://docs.astral.sh/uv/) | Fast Python package and project manager (Rust-based pip/venv replacement) |
 | [worktrunk](https://worktrunk.dev) | Git worktree manager — create, switch, list, merge, and remove worktrees with hooks and CI integration |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanner — detects committed credentials, tokens, and keys |

@@ -9,10 +9,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   . "$WORKBENCH_DIR/lib/ui.sh"
 fi
 
-# sync_ai — no-op; sub-tools (claude, serena, headroom) handle their own script installation.
+# sync_ai — no-op; sub-tools (claude, serena) handle their own script installation.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {
-  # No component-level scripts — sub-tools (claude, serena, headroom) handle their own.
+  # No component-level scripts — sub-tools (claude, serena) handle their own.
   :
 }
 

@@ -172,6 +172,13 @@ def _is_rate_limited(stderr: str) -> bool:
     return "rate limit" in lower or "abuse" in lower
 
 
+def _log_api_error(label: str, stderr: str) -> None:
+    if _is_rate_limited(stderr):
+        log.warn(f"GitHub API rate limited for {label}")
+    else:
+        log.warn(f"gh api failed for {label}: {stderr.strip()}")
+
+
 def _gh_api(endpoint: str, repo: str) -> list[dict]:
     try:
         result = subprocess.run(
@@ -179,10 +186,7 @@ def _gh_api(endpoint: str, repo: str) -> list[dict]:
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
-            if _is_rate_limited(result.stderr):
-                log.warn(f"GitHub API rate limited for {repo}/{endpoint}")
-            else:
-                log.warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
+            _log_api_error(f"{repo}/{endpoint}", result.stderr)
             return []
         return json.loads(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
@@ -277,10 +281,7 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            if _is_rate_limited(result.stderr):
-                log.warn(f"GitHub API rate limited for {repo}")
-            else:
-                log.warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
+            _log_api_error(repo, result.stderr)
             return _fetch_repo_review_data_rest(repo, since_ts)
         data = json.loads(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
@@ -425,35 +426,41 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union)
 
 
+def _collect_github_entries(github_repos: list[dict]) -> list[tuple[str | None, set[str]]]:
+    return [
+        (c.get("path"), _word_set(c["body"]))
+        for repo in github_repos
+        for pr in repo.get("prs", [])
+        for c in pr.get("comments", [])
+    ]
+
+
+def _is_dup_comment(comment: dict, github_entries: list[tuple[str | None, set[str]]]) -> bool:
+    c_words = _word_set(comment["body"])
+    return any(
+        comment.get("path") == gh_path
+        and _jaccard(c_words, gh_words) >= DEDUP_THRESHOLD
+        for gh_path, gh_words in github_entries
+    )
+
+
+def _dedup_pr_comments(pr: dict, github_entries: list[tuple[str | None, set[str]]]) -> dict | None:
+    kept = [c for c in pr.get("comments", []) if not _is_dup_comment(c, github_entries)]
+    return {**pr, "comments": kept} if kept else None
+
+
 def _dedup_local_against_github(
     github_repos: list[dict], local_repos: list[dict],
 ) -> list[dict]:
     """Remove local review comments that duplicate GitHub comments."""
-    github_entries: list[tuple[str | None, set[str]]] = []
-    for repo in github_repos:
-        for pr in repo.get("prs", []):
-            for c in pr.get("comments", []):
-                github_entries.append((c.get("path"), _word_set(c["body"])))
-
+    github_entries = _collect_github_entries(github_repos)
     if not github_entries:
         return local_repos
 
     deduped_repos: list[dict] = []
     for repo in local_repos:
-        deduped_prs: list[dict] = []
-        for pr in repo.get("prs", []):
-            kept: list[dict] = []
-            for c in pr.get("comments", []):
-                c_words = _word_set(c["body"])
-                is_dup = any(
-                    c.get("path") == gh_path
-                    and _jaccard(c_words, gh_words) >= DEDUP_THRESHOLD
-                    for gh_path, gh_words in github_entries
-                )
-                if not is_dup:
-                    kept.append(c)
-            if kept:
-                deduped_prs.append({**pr, "comments": kept})
+        deduped_prs = [_dedup_pr_comments(pr, github_entries) for pr in repo.get("prs", [])]
+        deduped_prs = [pr for pr in deduped_prs if pr]
         if deduped_prs:
             deduped_repos.append({**repo, "prs": deduped_prs})
     return deduped_repos
@@ -512,6 +519,14 @@ def _format_pr(pr: dict) -> list[str]:
     lines.append("")
     for comment in pr["comments"]:
         lines.extend(_format_comment(comment))
+    return lines
+
+
+def _format_theme(rule_file: str, examples: list[dict]) -> list[str]:
+    lines = [f"### {rule_file} ({len(examples)} occurrences)", ""]
+    for ex in examples[:5]:
+        lines.append(f"- PR #{ex['pr']}: \"{ex['body'][:100]}\"")
+    lines.append("")
     return lines
 
 
@@ -576,11 +591,7 @@ def format_report(scan_data: dict) -> str:
         lines.append("## Repeated Themes")
         lines.append("")
         for rule_file, examples in sorted(repeated.items()):
-            lines.append(f"### {rule_file} ({len(examples)} occurrences)")
-            lines.append("")
-            for ex in examples[:5]:
-                lines.append(f"- PR #{ex['pr']}: \"{ex['body'][:100]}\"")
-            lines.append("")
+            lines.extend(_format_theme(rule_file, examples))
 
     return "\n".join(lines)
 
@@ -812,19 +823,22 @@ def scan_local_reviews(
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
+def _all_matched_comments(scan_repos: list[dict]) -> list[tuple[str, int, str]]:
+    """Yield (rule_filename, pr_number, body) for every matched comment."""
+    return [
+        (c["nearest_rule"]["filename"], pr["number"], c["body"])
+        for repo in scan_repos
+        for pr in repo.get("prs", [])
+        for c in pr.get("comments", [])
+        if c.get("nearest_rule")
+    ]
+
+
 def _build_themes(scan_repos: list[dict]) -> dict[str, list[dict]]:
     """Group matched comments by nearest rule file for cross-PR pattern detection."""
     themes: dict[str, list[dict]] = {}
-    for repo in scan_repos:
-        for pr in repo.get("prs", []):
-            for c in pr.get("comments", []):
-                nr = c.get("nearest_rule")
-                if not nr:
-                    continue
-                themes.setdefault(nr["filename"], []).append({
-                    "pr": pr["number"],
-                    "body": c["body"],
-                })
+    for rule_file, pr_num, body in _all_matched_comments(scan_repos):
+        themes.setdefault(rule_file, []).append({"pr": pr_num, "body": body})
     return themes
 
 

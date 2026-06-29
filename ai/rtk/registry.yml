@@ -1,0 +1,16 @@
+# RTK registry — token compression CLI installed via brew.
+# Regenerate: generate-tool-context
+
+meta:
+  section: "AI Tooling"
+  install_check: false
+  validation: none
+
+tools:
+  - name: rtk
+    permission: true
+    visibility: full
+    description: "CLI proxy that compresses command output to reduce LLM token consumption"
+    when_to_use: "Automatically active via PreToolUse hook — compresses Bash tool output before it reaches the context window. Run rtk gain to view token savings"
+    usage: "rtk gain  |  rtk gain --daily  |  rtk init -g"
+    docs: "https://www.rtk-ai.app/"

@@ -430,3 +430,184 @@ class TestFormatGeneralComments:
 
     def test_invalid_json(self):
         assert _format_general_comments("not json") == "_None._"
+
+
+# ── CommitPushResult ────────────────────────────────────────────────────────
+
+
+class TestCommitAndPush:
+    """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
+
+    def test_no_changes(self, rt, tmp_path):
+        """git diff --quiet returns 0 → no_changes."""
+        import subprocess
+        subprocess.run(["git", "init", str(tmp_path)], capture_output=True)
+        (tmp_path / "file.txt").write_text("hello")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
+            capture_output=True,
+        )
+        result = rt._commit_and_push(tmp_path, 0, 0)
+        assert result.status == "no_changes"
+        assert result.sha is None
+        assert result.error == ""
+
+    def test_commit_failed(self, rt, tmp_path, monkeypatch):
+        """git commit returns non-zero → commit_failed with error text."""
+        import subprocess as sp
+        original_run = sp.run
+
+        def mock_run(cmd, **kwargs):
+            if "commit" in cmd:
+                return sp.CompletedProcess(cmd, 1, stdout="", stderr="hook failed\n")
+            return original_run(cmd, **kwargs)
+
+        sp.run(["git", "init", str(tmp_path)], capture_output=True)
+        (tmp_path / "file.txt").write_text("hello")
+        sp.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
+        sp.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
+            capture_output=True,
+        )
+        (tmp_path / "file.txt").write_text("changed")
+
+        monkeypatch.setattr(sp, "run", mock_run)
+        result = rt._commit_and_push(tmp_path, 1, 0)
+        assert result.status == "commit_failed"
+        assert result.sha is None
+        assert "hook failed" in result.error
+
+    def test_push_failed(self, rt, tmp_path, monkeypatch):
+        """git push returns non-zero → push_failed with SHA preserved."""
+        import subprocess as sp
+        original_run = sp.run
+
+        def mock_run(cmd, **kwargs):
+            if "push" in cmd:
+                return sp.CompletedProcess(cmd, 1, stdout="", stderr="rejected\n")
+            return original_run(cmd, **kwargs)
+
+        sp.run(["git", "init", str(tmp_path)], capture_output=True)
+        (tmp_path / "file.txt").write_text("hello")
+        sp.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
+        sp.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
+            capture_output=True,
+        )
+        (tmp_path / "file.txt").write_text("changed")
+
+        monkeypatch.setattr(sp, "run", mock_run)
+        result = rt._commit_and_push(tmp_path, 1, 0)
+        assert result.status == "push_failed"
+        assert result.sha is not None
+        assert "rejected" in result.error
+
+    def test_success(self, rt, tmp_path, monkeypatch):
+        """git push returns 0 → pushed with SHA."""
+        import subprocess as sp
+        original_run = sp.run
+
+        def mock_run(cmd, **kwargs):
+            if "push" in cmd:
+                return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return original_run(cmd, **kwargs)
+
+        sp.run(["git", "init", str(tmp_path)], capture_output=True)
+        (tmp_path / "file.txt").write_text("hello")
+        sp.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
+        sp.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
+            capture_output=True,
+        )
+        (tmp_path / "file.txt").write_text("changed")
+
+        monkeypatch.setattr(sp, "run", mock_run)
+        result = rt._commit_and_push(tmp_path, 1, 0)
+        assert result.status == "pushed"
+        assert result.sha is not None
+        assert result.error == ""
+
+
+# ── _fixed_status_text ──────────────────────────────────────────────────────
+
+
+class TestFixedStatusText:
+    """Test status text rendering for each CommitPushResult state."""
+
+    def test_pushed(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "Fixed in" in text
+        assert "abc1234" in text
+        assert "push failed" not in text
+
+    def test_push_failed_with_sha(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "abc1234" in text
+        assert "push failed" in text
+
+    def test_no_changes(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "no commit needed" in text
+
+    def test_commit_failed(self, rt):
+        cp = rt.CommitPushResult(None, "commit_failed", "hook error")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "commit failed" in text
+        assert "pre-commit" in text
+
+
+# ── _build_summary_body ─────────────────────────────────────────────────────
+
+
+class TestBuildSummaryBody:
+    """Test summary body renders correct status per CommitPushResult."""
+
+    def _fixed_entry(self, **overrides):
+        return {"summary": "fix regex", "file": "parsers.py", "line": 10, **overrides}
+
+    def test_pushed_shows_commit_link(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "abc1234" in body
+        assert "push failed" not in body
+
+    def test_no_changes_shows_no_commit_needed(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "no commit needed" in body
+
+    def test_commit_failed_shows_precommit_hint(self, rt):
+        cp = rt.CommitPushResult(None, "commit_failed", "hook error")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "commit failed" in body
+
+    def test_push_failed_shows_sha_and_warning(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        body = rt._build_summary_body(
+            [self._fixed_entry()], [], [], cp, "owner/repo",
+        )
+        assert "abc1234" in body
+        assert "push failed" in body
+
+    def test_needs_human_rows(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [], [{"summary": "question", "file": "a.py", "line": 1, "reason": "contested"}],
+            [], cp, "owner/repo",
+        )
+        assert "contested" in body
+
+    def test_empty_returns_no_table(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body([], [], [], cp, "owner/repo")
+        assert "Thread" not in body

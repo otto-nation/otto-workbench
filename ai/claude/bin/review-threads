@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 
@@ -158,9 +159,12 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
     try:
         triage_result = json.loads(_extract_json(stdout))
     except (json.JSONDecodeError, TypeError):
+        preview = (stdout or "")[:200]
         if trail:
-            trail.error("triage", "AI returned non-JSON output")
-        log.error("ai returned non-JSON output")
+            trail.error("triage", "AI returned non-JSON output",
+                        data={"output_len": len(stdout or ""),
+                              "output_preview": (stdout or "")[:500]})
+        log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
         return None, 1
 
     # Update triage state
@@ -322,14 +326,23 @@ def _parse_tracking_results(
     return fixed, skipped
 
 
-def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
-    """Commit and push fixes if there are changes. Returns commit SHA or None."""
+@dataclass
+class CommitPushResult:
+    sha: str | None
+    status: str  # "pushed", "no_changes", "commit_failed", "push_failed"
+    error: str
+
+
+def _commit_and_push(
+    wt_path: Path, fixed: int, skipped: int, trail: Trail | None = None,
+) -> CommitPushResult:
+    """Commit and push fixes. Returns structured result with status."""
     result = subprocess.run(
         ["git", "-C", str(wt_path), "diff", "--quiet"],
         capture_output=True,
     )
     if result.returncode == 0:
-        return None
+        return CommitPushResult(None, "no_changes", "")
 
     subprocess.run(
         ["git", "-C", str(wt_path), "add", "-A"],
@@ -345,8 +358,11 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        log.error(f"commit failed: {result.stderr.strip()}")
-        return None
+        err = result.stderr.strip()
+        log.error(f"commit failed: {err}")
+        if trail:
+            trail.error("commit", "commit failed", data={"error": err[:500]})
+        return CommitPushResult(None, "commit_failed", err)
 
     sha = subprocess.run(
         ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
@@ -361,14 +377,16 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
     )
     if push.returncode == 0:
         log.info("Pushed fixes")
-    else:
-        log.error(
-            f"push failed — branch has diverged. Run:\n"
-            f"  git -C '{wt_path}' push --force-with-lease"
-        )
-        return None
+        return CommitPushResult(sha, "pushed", "")
 
-    return sha
+    err = push.stderr.strip()
+    log.error(
+        f"push failed — branch has diverged. Run:\n"
+        f"  git -C '{wt_path}' push --force-with-lease"
+    )
+    if trail:
+        trail.error("push", "push failed", data={"sha": sha, "error": err[:500]})
+    return CommitPushResult(sha, "push_failed", err)
 
 
 def _post_fix_replies(
@@ -399,11 +417,26 @@ def _post_fix_replies(
     return posted
 
 
+def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
+    """Human-readable status for fixed threads in the summary table."""
+    if cp.sha:
+        url = f"https://github.com/{repo}/commit/{cp.sha}"
+        sha_link = f"[`{cp.sha}`]({url})"
+        if cp.status == "pushed":
+            return f"Fixed in {sha_link}"
+        return f"Fixed in {sha_link} (push failed — run manually)"
+    if cp.status == "no_changes":
+        return "Fix applied (no commit needed)"
+    if cp.status == "commit_failed":
+        return "Fix applied (commit failed — pre-commit hook?)"
+    return "Fix pending"
+
+
 def _build_summary_body(
     fixed: list[dict],
     needs_human: list[dict],
     skipped: list[dict],
-    commit_sha: str | None,
+    cp: CommitPushResult,
     repo: str,
 ) -> str:
     """Build the markdown body for the fix summary comment."""
@@ -423,12 +456,10 @@ def _build_summary_body(
     parts.append("")
 
     rows = []
-    commit_url = f"https://github.com/{repo}/commit/{commit_sha}" if commit_sha else ""
-    sha_link = f"[`{commit_sha}`]({commit_url})" if commit_sha else ""
+    status = _fixed_status_text(cp, repo)
     for entry in fixed:
         summary = entry.get("summary", "—")
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
-        status = f"Fixed in {sha_link}" if sha_link else "Fix pending (push failed)"
         rows.append(f"| {summary} | {file_loc} | {status} |")
     for entry in needs_human:
         summary = entry.get("summary", "—")
@@ -453,14 +484,14 @@ def _post_fix_summary(
     fixed: list[dict],
     needs_human: list[dict],
     skipped: list[dict],
-    commit_sha: str | None,
+    cp: CommitPushResult,
     repo: str,
     pr_number: int,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     if not fixed and not needs_human and not skipped:
         return None
-    body = _build_summary_body(fixed, needs_human, skipped, commit_sha, repo)
+    body = _build_summary_body(fixed, needs_human, skipped, cp, repo)
     url = pc.post_issue_comment(repo, pr_number, body)
     if url:
         log.info(f"Posted fix summary: {url}")
@@ -469,11 +500,55 @@ def _post_fix_summary(
     return url
 
 
+def _get_head_sha(wt_path: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def _is_pushed(wt_path: Path, sha: str) -> bool:
+    """Check if a commit has been pushed to the remote tracking branch."""
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "branch", "-r", "--contains", sha],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() != ""
+
+
+def _recover_agent_commit(
+    wt_path: Path, head_before: str, trail: Trail | None = None,
+) -> CommitPushResult:
+    """Detect and push commits made directly by the fix agent."""
+    head_after = _get_head_sha(wt_path)
+    if head_after == head_before:
+        return CommitPushResult(None, "no_changes", "")
+
+    if _is_pushed(wt_path, head_after):
+        return CommitPushResult(head_after, "pushed", "")
+
+    push = subprocess.run(
+        ["git", "-C", str(wt_path), "push"],
+        capture_output=True, text=True,
+    )
+    if push.returncode == 0:
+        log.info("Pushed agent-committed fixes")
+        return CommitPushResult(head_after, "pushed", "")
+
+    err = push.stderr.strip()
+    log.error("push failed after agent commit")
+    if trail:
+        trail.error("push", "push failed after agent commit",
+                    data={"sha": head_after, "error": err[:500]})
+    return CommitPushResult(head_after, "push_failed", err)
+
+
 def _run_comment_fix(
     triage_result: dict,
     report: dict,
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
+    trail: Trail | None = None,
 ) -> dict:
     """Apply mechanical fixes for valid actionable comment threads.
 
@@ -517,6 +592,7 @@ def _run_comment_fix(
         elif verification == "needs_discussion":
             needs_human.append({**entry, "reason": "needs_discussion"})
 
+    no_commit = CommitPushResult(None, "no_changes", "")
     empty_result = {
         "fixed": [], "needs_human": needs_human,
         "skipped": [], "commit_sha": None,
@@ -526,7 +602,7 @@ def _run_comment_fix(
     if not fixable:
         if needs_human:
             summary_url = _post_fix_summary(
-                [], needs_human, [], None, ctx.repo, report["pr_number"],
+                [], needs_human, [], no_commit, ctx.repo, report["pr_number"],
             )
             empty_result["summary_url"] = summary_url
         return empty_result
@@ -540,6 +616,8 @@ def _run_comment_fix(
     )
 
     before = _count_unchecked(tracking_file)
+
+    head_before = _get_head_sha(wt_path)
 
     prompt = _render_fix_template(
         branch=ctx.branch,
@@ -559,23 +637,27 @@ def _run_comment_fix(
 
     fixed, skipped = _parse_tracking_results(tracking_file, fixable)
 
-    commit_sha = _commit_and_push(wt_path, fixed_count, after)
+    cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
+
+    if cp.status == "no_changes":
+        cp = _recover_agent_commit(wt_path, head_before, trail)
 
     replies_posted = 0
-    if commit_sha and fixed:
+    if cp.sha and fixed:
         replies_posted = _post_fix_replies(
-            fixed, threads_by_id, ctx.repo, report["pr_number"], commit_sha,
+            fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
         )
 
     summary_url = _post_fix_summary(
-        fixed, needs_human, skipped, commit_sha, ctx.repo, report["pr_number"],
+        fixed, needs_human, skipped, cp, ctx.repo, report["pr_number"],
     )
 
     return {
         "fixed": fixed,
         "needs_human": needs_human,
         "skipped": skipped,
-        "commit_sha": commit_sha,
+        "commit_sha": cp.sha,
+        "commit_status": cp.status,
         "replies_posted": replies_posted,
         "summary_url": summary_url,
     }
@@ -706,11 +788,12 @@ def _run_threads(trail, args, ctx) -> None:
                 reason="classification=actionable_suggestion and verification=valid",
                 data={"fixable": fixable_count, "total": len(triage_threads)},
             )
-            fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx)
+            fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx, trail=trail)
             skipped_count = len(fix_pass.get("skipped", []))
             trail.info("fix_result", "fix pass complete",
                        data={"fixable": fixable_count, "skipped": skipped_count,
-                             "commit_sha": fix_pass.get("commit_sha")})
+                             "commit_sha": fix_pass.get("commit_sha"),
+                             "commit_status": fix_pass.get("commit_status")})
             output = {**triage_result, "fix_pass": fix_pass}
         else:
             output = triage_result

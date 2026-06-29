@@ -25,6 +25,11 @@
 #   visibility: brief  — compact one-liner
 #   visibility: hidden — omitted from AI context
 #
+# Scaling: tools.generated.md is loaded into every session in full. If it grows
+# past ~300 lines, split into a brief index (always loaded) plus per-tool detail
+# files that Claude reads on demand — similar to the llms.txt pattern of tiered
+# context (see https://llmstxt.org/).
+#
 # Environment overrides (for tests):
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
 #   BREW_STACKS_DIR      brew/ directory (scanned for *.registry.yml stacks)

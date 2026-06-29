@@ -313,13 +313,13 @@ cmd_sync() {
       continue
     fi
 
-    # Skip sub-components whose parent sync function already calls them.
-    # E.g. editors/zed/steps.sh is skipped because editors/steps.sh's
-    # sync_editors calls sync_zed.
+    # Skip sub-components whose parent has a sync function — the parent
+    # is responsible for dispatching to its children.
     local _parent_dir="${_path%/*}"
+    local _parent_name
+    _parent_name=$(basename "$_parent_dir")
     if [[ "$_parent_dir" != "$_path" ]] \
-       && [[ -f "$WORKBENCH_DIR/$_parent_dir/steps.sh" ]] \
-       && grep -q "sync_${_c}" "$WORKBENCH_DIR/$_parent_dir/steps.sh"; then
+       && declare -f "sync_${_parent_name}" > /dev/null; then
       continue
     fi
 
@@ -497,8 +497,7 @@ EOF
 
   title "AI sync"
   echo
-  sync_claude
-  sync_headroom
+  sync_ai
   echo
   success "AI sync complete!"
 }

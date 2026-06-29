@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# description: Symlink AI scripts to ~/.local/bin
-# AI component sync — sub-tools handle their own script installation.
+# description: AI component sync — dispatches to installed sub-tools
+# AI parent dispatcher — sources all sub-tool steps.sh files and dispatches
+# sync to each installed sub-tool.
 
 # Bootstrap when run standalone; when sourced, the caller has already set up the environment.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -9,20 +10,34 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   . "$WORKBENCH_DIR/lib/ui.sh"
 fi
 
-# sync_ai — no-op; sub-tools (claude, serena) handle their own script installation.
+_AI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source all sub-tool steps.sh files so sync_<tool> functions are available.
+for _ai_sub in "$_AI_DIR"/*/; do
+  if [[ -f "${_ai_sub}steps.sh" ]]; then
+    # shellcheck source=/dev/null
+    . "${_ai_sub}steps.sh"
+  fi
+done
+unset _ai_sub _AI_DIR
+
+# sync_ai — dispatches to each installed AI sub-tool's sync function.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {
-  # No component-level scripts — sub-tools (claude, serena) handle their own.
-  :
+  local _tool
+  while IFS= read -r _tool; do
+    [[ -z "$_tool" ]] && continue
+    if declare -f "sync_${_tool}" > /dev/null; then
+      "sync_${_tool}"
+    fi
+  done < <(state_get_list "ai.tools")
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  echo -e "${BOLD}${BLUE}AI bin setup${NC}\n"
-
+  echo -e "${BOLD}${BLUE}AI sync${NC}\n"
   sync_ai
-
   echo
-  success "AI bin setup complete!"
+  success "AI sync complete!"
 fi

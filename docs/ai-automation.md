@@ -73,16 +73,6 @@ Generate or refresh a project file index (.claude/anatomy.md) with per-file desc
 **Trigger:** Run to refresh the project file index before exploring an unfamiliar codebase, or after significant file changes.
 **Skip:** Do not use when the user asks about a specific file they already know — just read it directly.
 
-### `/ci-failures [<pr_number_or_run_id_or_branch>]`
-
-Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or pr review instead); addressing PR review comments (use pr-comments instead).
-
-```
-/ci-failures [<pr_number_or_run_id_or_branch>]
-```
-**Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
-**Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
-
 ### `/architecture`
 
 On-demand architecture.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/architecture.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or architecture.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine).
@@ -94,6 +84,16 @@ On-demand architecture.md refresh. Reads recent sessions and memory to identify 
 **Output:** `.claude/architecture.md`
 **Trigger:** Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints.
 **Skip:** Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead).
+
+### `/ci-failures [<pr_number_or_run_id_or_branch>]`
+
+Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or pr review instead); addressing PR review comments (use pr-comments instead).
+
+```
+/ci-failures [<pr_number_or_run_id_or_branch>]
+```
+**Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
+**Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
 
 ### `/dream`
 

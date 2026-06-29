@@ -333,7 +333,11 @@ def _resolve_file_conflicts(
             _terr("resolve_conflicts", f"go mod tidy failed in {go_dir.name}", data={"stderr": r.stderr.strip()})
             log.error(f"go mod tidy failed: {r.stderr.strip()}")
             return None
-        subprocess.run(["git", "add", "."], cwd=str(go_dir))
+        r = subprocess.run(["git", "add", "-u"], cwd=str(go_dir))
+        if r.returncode != 0:
+            _terr("resolve_conflicts", f"git add -u failed in {go_dir.name}")
+            log.error(f"git add -u failed in {go_dir.name}")
+            return None
 
     return resolved
 
@@ -496,8 +500,11 @@ def _step_advance(cwd: str) -> int | None:
 _STASH_MSG = "pr-rebase: auto-stash"
 
 
-def _auto_stash(cwd: str) -> bool:
-    """Stash uncommitted changes if the working tree is dirty. Returns True if stashed."""
+def _auto_stash(cwd: str) -> bool | None:
+    """Stash uncommitted changes if the working tree is dirty.
+
+    Returns True if stashed, False if tree was clean, None if stash failed.
+    """
     status = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
         capture_output=True, text=True, cwd=cwd,
@@ -512,7 +519,7 @@ def _auto_stash(cwd: str) -> bool:
     )
     if r.returncode != 0:
         log.error(f"git stash failed: {r.stderr.strip()}")
-        return False
+        return None
     if _trail:
         _trail.info("stash", "auto-stashed uncommitted changes")
     return True
@@ -570,15 +577,20 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
             log.error(f"Failed to parse stash resolution for {filepath}")
             continue
         full_path.write_text(resolved_content)
-        _git_add(filepath, cwd)
+        if not _git_add(filepath, cwd):
+            log.error(f"Failed to stage resolved stash conflict: {filepath}")
+            continue
         log.ok(f"Resolved stash conflict: {filepath}")
 
     remaining = _detect_conflicts(cwd)
     if remaining:
         log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, then `git stash drop`.")
     else:
-        subprocess.run(["git", "stash", "drop"], cwd=cwd)
-        log.ok("Restored stashed changes.")
+        r = subprocess.run(["git", "stash", "drop"], cwd=cwd, capture_output=True, text=True)
+        if r.returncode != 0:
+            log.warn(f"git stash drop failed: {r.stderr.strip()}")
+        else:
+            log.ok("Restored stashed changes.")
 
 
 # ── State helpers ───────────────────────────────────────────────────────────
@@ -646,6 +658,10 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Start or resume a rebase onto origin/main."""
     stashed = _auto_stash(cwd)
+    if stashed is None:
+        # Tree was dirty but stash failed — abort rather than letting git rebase
+        # fail with a cryptic "uncommitted changes" error.
+        return 1
 
     if _detect_rebase_in_progress(cwd):
         if _trail:

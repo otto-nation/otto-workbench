@@ -39,8 +39,13 @@ echo -e "${BOLD}${BLUE}Terminal setup${NC}\n"
 
 _STATE_KEY="terminals.tools"
 
+_AVAILABLE_TERMINALS=()
+for _dir in "$SCRIPT_DIR"/*/; do
+  if [[ -f "${_dir}setup.sh" ]]; then _AVAILABLE_TERMINALS+=("$(basename "$_dir")"); fi
+done
+
 SELECTED_TERMINALS=()
-if state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TERMINALS; then
+if state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_TERMINALS _AVAILABLE_TERMINALS; then
   _replaying=true
 else
   select_terminals

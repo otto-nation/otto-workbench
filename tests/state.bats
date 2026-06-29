@@ -405,3 +405,48 @@ teardown() {
   run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
   unset WORKBENCH_INTERACTIVE
 }
+
+# ─── state_load_selections — drift detection ────────────────────────────────
+
+@test "state_load_selections detects new tools and returns 1" {
+  mkdir -p "$TMPDIR/tools/claude" "$TMPDIR/tools/serena" "$TMPDIR/tools/rtk"
+  state_append_list "ai.tools" "claude"
+  state_append_list "ai.tools" "serena"
+
+  local AVAILABLE=("claude" "serena" "rtk")
+  local RESULT=()
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT AVAILABLE
+  [[ "$output" == *"New tools available: rtk"* ]]
+}
+
+@test "state_load_selections returns 0 when available matches saved" {
+  mkdir -p "$TMPDIR/tools/claude" "$TMPDIR/tools/serena"
+  state_append_list "ai.tools" "claude"
+  state_append_list "ai.tools" "serena"
+
+  local AVAILABLE=("claude" "serena")
+  local RESULT=()
+  state_load_selections "ai.tools" "$TMPDIR/tools" RESULT AVAILABLE
+  [[ ${#RESULT[@]} -eq 2 ]]
+}
+
+@test "state_load_selections without available array works (backward compat)" {
+  mkdir -p "$TMPDIR/tools/claude"
+  state_append_list "ai.tools" "claude"
+
+  local RESULT=()
+  state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+  [[ ${#RESULT[@]} -eq 1 ]]
+  [[ "${RESULT[0]}" == "claude" ]]
+}
+
+@test "state_load_selections detects drift with simultaneous add and remove" {
+  mkdir -p "$TMPDIR/tools/claude" "$TMPDIR/tools/rtk"
+  state_append_list "ai.tools" "claude"
+  state_append_list "ai.tools" "serena"
+
+  local AVAILABLE=("claude" "rtk")
+  local RESULT=()
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT AVAILABLE
+  [[ "$output" == *"New tools available: rtk"* ]]
+}

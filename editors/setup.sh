@@ -35,8 +35,13 @@ echo -e "${BOLD}${BLUE}Editor setup${NC}\n"
 
 _STATE_KEY="editors.tools"
 
+_AVAILABLE_EDITORS=()
+for _dir in "$SCRIPT_DIR"/*/; do
+  if [[ -f "${_dir}setup.sh" ]]; then _AVAILABLE_EDITORS+=("$(basename "$_dir")"); fi
+done
+
 SELECTED_EDITORS=()
-if state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_EDITORS; then
+if state_load_selections "$_STATE_KEY" "$SCRIPT_DIR" SELECTED_EDITORS _AVAILABLE_EDITORS; then
   _replaying=true
 else
   select_editors

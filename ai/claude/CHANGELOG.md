@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.2](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.31.1...otto-ai-tools-v1.31.2) (2026-06-27)
+
+
+### Code Refactoring
+
+* **pr-rebase:** replace fragmented resume logic with _drive_to_completion loop ([#405](https://github.com/otto-nation/otto-workbench/issues/405)) ([e0d0046](https://github.com/otto-nation/otto-workbench/commit/e0d0046c3e01a278b444841d1dd521d05513bf4c))
+
 ## [1.31.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.31.0...otto-ai-tools-v1.31.1) (2026-06-27)
 
 

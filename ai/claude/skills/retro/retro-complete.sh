@@ -23,15 +23,17 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 date +%s > "$CLAUDE_DIR/.last-retro"
 
 # ── Clean up consumed reviews ───────────────────────────────────────────────
+# Only delete review dirs listed in the consumed file written by retro-scan.
 
+CONSUMED_FILE="$WORKBENCH_STATE_DIR/retro-consumed-reviews.txt"
 REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
-if [[ -d "$REVIEWS_DIR" ]]; then
-  for review_dir in "$REVIEWS_DIR"/*/; do
-    [[ -d "$review_dir" ]] || continue
-    review_file="${review_dir}review.md"
-    [[ -f "$review_file" ]] || continue
-    rm -rf "$review_dir"
-  done
+if [[ -f "$CONSUMED_FILE" ]] && [[ -d "$REVIEWS_DIR" ]]; then
+  while IFS= read -r dir_name; do
+    [[ -z "$dir_name" ]] && continue
+    target="$REVIEWS_DIR/$dir_name"
+    [[ -d "$target" ]] && rm -rf "$target"
+  done < "$CONSUMED_FILE"
+  rm -f "$CONSUMED_FILE"
 fi
 
 # ── Remove pending flag ──────────────────────────────────────────────────────

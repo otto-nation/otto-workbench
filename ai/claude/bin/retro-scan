@@ -5,7 +5,7 @@ Replaces Phase 1 of the retro skill (Orient).
 Outputs a structured markdown report to stdout.
 
 Usage:
-  retro-scan [--home DIR] [--workbench DIR]
+  retro-scan [--home DIR] [--workbench DIR] [--since DURATION]
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _BIN_DIR = Path(__file__).resolve().parent
@@ -54,6 +54,7 @@ NOISE_PATTERNS = re.compile(
 COMMENT_BODY_MAX = 500
 
 REVIEWS_DIR_REL = Path(".config") / "workbench" / "reviews"
+CONSUMED_REVIEWS_REL = Path(".config") / "workbench" / "retro-consumed-reviews.txt"
 
 FINDING_RE = re.compile(
     r"^- \[[ x]\] \*\*\[([MSNI])(\d+)\]\*\*\s+"
@@ -166,6 +167,11 @@ query($owner: String!, $name: String!) {{
 """
 
 
+def _is_rate_limited(stderr: str) -> bool:
+    lower = stderr.lower()
+    return "rate limit" in lower or "abuse" in lower
+
+
 def _gh_api(endpoint: str, repo: str) -> list[dict]:
     try:
         result = subprocess.run(
@@ -173,7 +179,10 @@ def _gh_api(endpoint: str, repo: str) -> list[dict]:
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
-            log.warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
+            if _is_rate_limited(result.stderr):
+                log.warn(f"GitHub API rate limited for {repo}/{endpoint}")
+            else:
+                log.warn(f"gh api failed for {repo}/{endpoint}: {result.stderr.strip()}")
             return []
         return json.loads(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
@@ -268,7 +277,10 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            log.warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
+            if _is_rate_limited(result.stderr):
+                log.warn(f"GitHub API rate limited for {repo}")
+            else:
+                log.warn(f"GraphQL query failed for {repo}: {result.stderr.strip()}")
             return _fetch_repo_review_data_rest(repo, since_ts)
         data = json.loads(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
@@ -351,7 +363,7 @@ STOP_WORDS = frozenset({
 
 KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
 
-MIN_KEYWORD_OVERLAP = 1
+MIN_KEYWORD_OVERLAP = 2
 
 
 def _extract_keywords(text: str) -> set[str]:
@@ -395,6 +407,76 @@ def find_nearest_rule(comment_body: str, rules: list[dict]) -> dict | None:
     return best_match
 
 
+# ── Dedup helpers ──────────────────────────────────────────────────────────
+
+DEDUP_THRESHOLD = 0.6
+
+
+def _word_set(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9_]+", text.lower()))
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _dedup_local_against_github(
+    github_repos: list[dict], local_repos: list[dict],
+) -> list[dict]:
+    """Remove local review comments that duplicate GitHub comments."""
+    github_entries: list[tuple[str | None, set[str]]] = []
+    for repo in github_repos:
+        for pr in repo.get("prs", []):
+            for c in pr.get("comments", []):
+                github_entries.append((c.get("path"), _word_set(c["body"])))
+
+    if not github_entries:
+        return local_repos
+
+    deduped_repos: list[dict] = []
+    for repo in local_repos:
+        deduped_prs: list[dict] = []
+        for pr in repo.get("prs", []):
+            kept: list[dict] = []
+            for c in pr.get("comments", []):
+                c_words = _word_set(c["body"])
+                is_dup = any(
+                    c.get("path") == gh_path
+                    and _jaccard(c_words, gh_words) >= DEDUP_THRESHOLD
+                    for gh_path, gh_words in github_entries
+                )
+                if not is_dup:
+                    kept.append(c)
+            if kept:
+                deduped_prs.append({**pr, "comments": kept})
+        if deduped_prs:
+            deduped_repos.append({**repo, "prs": deduped_prs})
+    return deduped_repos
+
+
+# ── Since parsing ──────────────────────────────────────────────────────────
+
+def _parse_since(since: str) -> int:
+    """Parse a duration string (e.g. 7d, 24h, 30m) into a UTC timestamp."""
+    suffixes = {"h": "hours", "d": "days", "m": "minutes"}
+    suffix = since[-1:] if since else ""
+    unit = suffixes.get(suffix)
+    if not unit:
+        log.error(f"Invalid --since value: {since!r} (use e.g. 7d, 24h, 30m)")
+        sys.exit(1)
+    try:
+        dt = datetime.now(timezone.utc) - timedelta(**{unit: int(since[:-1])})
+        return int(dt.timestamp())
+    except ValueError:
+        log.error(f"Invalid --since value: {since!r}")
+        sys.exit(1)
+
+
 # ── Report formatting ───────────────────────────────────────────────────────
 
 def _format_comment_location(comment: dict) -> str:
@@ -410,7 +492,7 @@ def _format_comment(comment: dict) -> list[str]:
     lines: list[str] = []
     location = _format_comment_location(comment)
     lines.append(f"- **Comment by @{comment['author']}**{location}")
-    lines.append(f"  > {comment['body'][:200]}")
+    lines.append(f"  > {comment['body'][:COMMENT_BODY_MAX]}")
     if comment.get("direction"):
         lines.append(f"  - Direction: {comment['direction']}")
     nr = comment.get("nearest_rule")
@@ -436,18 +518,30 @@ def _format_pr(pr: dict) -> list[str]:
 def format_report(scan_data: dict) -> str:
     repos = scan_data.get("repos", [])
     rules_summary = scan_data.get("rules_summary", [])
+    themes = scan_data.get("themes", {})
 
     total_prs = sum(len(r.get("prs", [])) for r in repos)
-    total_comments = sum(
-        len(pr.get("comments", []))
+    all_comments = [
+        c
         for r in repos for pr in r.get("prs", [])
-    )
+        for c in pr.get("comments", [])
+    ]
+    total_comments = len(all_comments)
+
+    direction_counts: dict[str, int] = {}
+    for c in all_comments:
+        d = c.get("direction", "")
+        if d:
+            direction_counts[d] = direction_counts.get(d, 0) + 1
 
     lines: list[str] = []
     lines.append("# Retro Scan Report")
     version = _version_string("retro-scan").split("\n")[0]
     lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: {version} -->")
     lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} -->")
+    dir_parts = [f"{k}: {v}" for k, v in sorted(direction_counts.items())]
+    if dir_parts:
+        lines.append(f"<!-- {' | '.join(dir_parts)} -->")
     lines.append("")
 
     if not repos or total_comments == 0:
@@ -459,7 +553,11 @@ def format_report(scan_data: dict) -> str:
     lines.append("")
 
     for repo in repos:
-        lines.append(f"### {repo['github']}")
+        repo_unmatched = repo.get("unmatched", 0)
+        if repo_unmatched:
+            lines.append(f"### {repo['github']} ({repo_unmatched} unmatched)")
+        else:
+            lines.append(f"### {repo['github']}")
         lines.append("")
         for pr in repo.get("prs", []):
             lines.extend(_format_pr(pr))
@@ -472,6 +570,17 @@ def format_report(scan_data: dict) -> str:
         for rs in rules_summary:
             lines.append(f"| {rs['filename']} | {rs['matched']} |")
         lines.append("")
+
+    repeated = {k: v for k, v in themes.items() if len(v) >= 2}
+    if repeated:
+        lines.append("## Repeated Themes")
+        lines.append("")
+        for rule_file, examples in sorted(repeated.items()):
+            lines.append(f"### {rule_file} ({len(examples)} occurrences)")
+            lines.append("")
+            for ex in examples[:5]:
+                lines.append(f"- PR #{ex['pr']}: \"{ex['body'][:100]}\"")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -506,8 +615,17 @@ def _best_matching_bullet(comment_body: str, rule: dict) -> str:
 def _annotate_comment(
     comment: dict, pr_author: str, git_user: str,
     rules: list[dict], rule_match_counts: dict[str, dict],
-) -> bool:
-    comment["direction"] = "received" if pr_author == git_user else "gave"
+) -> str:
+    """Returns "skip", "matched", or "unmatched"."""
+    comment_author = comment.get("author", "unknown")
+    if git_user and comment_author == git_user and pr_author == git_user:
+        return "skip"
+    if git_user and comment_author == git_user:
+        comment["direction"] = "gave"
+    elif git_user and pr_author == git_user:
+        comment["direction"] = "received"
+    else:
+        comment["direction"] = "observed"
     nearest = find_nearest_rule(comment["body"], rules)
     if nearest:
         comment["nearest_rule"] = {
@@ -515,31 +633,9 @@ def _annotate_comment(
             "match_snippet": _best_matching_bullet(comment["body"], nearest),
         }
         rule_match_counts[nearest["filename"]]["matched"] += 1
-        return False
+        return "matched"
     comment["nearest_rule"] = None
-    return True
-
-
-def _process_pr(
-    pr: dict, github_slug: str, git_user: str,
-    rules: list[dict], rule_match_counts: dict[str, dict],
-) -> dict | None:
-    pr_author = pr.get("user", {}).get("login", "")
-    comments = fetch_pr_comments(github_slug, pr["number"])
-    if not comments:
-        return None
-    unmatched = 0
-    for comment in comments:
-        if _annotate_comment(comment, pr_author, git_user, rules, rule_match_counts):
-            unmatched += 1
-    return {
-        "number": pr["number"],
-        "title": pr.get("title", ""),
-        "author": pr_author,
-        "merged_at": pr.get("merged_at", "")[:10],
-        "comments": comments,
-        "unmatched": unmatched,
-    }
+    return "unmatched"
 
 
 def _scan_repo(
@@ -549,24 +645,30 @@ def _scan_repo(
     log.info(f"Fetching PRs for {repo['github']}...")
     pr_data = fetch_repo_review_data(repo["github"], last_retro_ts)
     log.info(f"  Found {len(pr_data)} merged PR(s) with comments")
+    if last_retro_ts == 0:
+        log.info(f"  First run: fetched {len(pr_data)} PR(s) (limit: {GQL_MERGED_PRS_LIMIT})")
 
     repo_prs: list[dict] = []
     unmatched = 0
     for pr in pr_data:
         pr_author = pr.get("user", {}).get("login", "")
         comments = pr["comments"]
-        um = sum(
-            1 for c in comments
-            if _annotate_comment(c, pr_author, git_user, rules, rule_match_counts)
-        )
+        results = [
+            _annotate_comment(c, pr_author, git_user, rules, rule_match_counts)
+            for c in comments
+        ]
+        comments = [c for c, r in zip(comments, results) if r != "skip"]
+        um = sum(1 for r in results if r == "unmatched")
         unmatched += um
-        repo_prs.append({
-            "number": pr["number"],
-            "title": pr.get("title", ""),
-            "author": pr_author,
-            "merged_at": pr.get("merged_at", "")[:10],
-            "comments": comments,
-        })
+        if comments:
+            repo_prs.append({
+                "number": pr["number"],
+                "title": pr.get("title", ""),
+                "author": pr_author,
+                "merged_at": pr.get("merged_at", "")[:10],
+                "comments": comments,
+                "unmatched": um,
+            })
     return {"prs": repo_prs, "unmatched": unmatched}
 
 
@@ -677,12 +779,14 @@ def _scan_review_dir(
 
 def scan_local_reviews(
     home: Path, rules: list[dict], rule_match_counts: dict[str, dict],
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, list[str]]:
+    """Returns (repo_list, unmatched_count, consumed_dir_names)."""
     reviews_dir = home / REVIEWS_DIR_REL
     if not reviews_dir.exists():
-        return [], 0
+        return [], 0, []
 
     local_repos: dict[str, list[dict]] = {}
+    consumed_dirs: list[str] = []
     unmatched = 0
 
     for review_dir in sorted(reviews_dir.iterdir()):
@@ -694,6 +798,7 @@ def scan_local_reviews(
         repo_key, pr_entry, dir_unmatched = result
         unmatched += dir_unmatched
         local_repos.setdefault(repo_key, []).append(pr_entry)
+        consumed_dirs.append(review_dir.name)
 
     result_list = [
         {"github": f"local/{repo_key}", "prs": prs}
@@ -701,13 +806,29 @@ def scan_local_reviews(
     ]
 
     log.info(f"Found {sum(len(r['prs']) for r in result_list)} local review(s)")
-    return result_list, unmatched
+    return result_list, unmatched, consumed_dirs
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
-def _run_retro(trail, home, workbench) -> None:
+def _build_themes(scan_repos: list[dict]) -> dict[str, list[dict]]:
+    """Group matched comments by nearest rule file for cross-PR pattern detection."""
+    themes: dict[str, list[dict]] = {}
+    for repo in scan_repos:
+        for pr in repo.get("prs", []):
+            for c in pr.get("comments", []):
+                nr = c.get("nearest_rule")
+                if not nr:
+                    continue
+                themes.setdefault(nr["filename"], []).append({
+                    "pr": pr["number"],
+                    "body": c["body"],
+                })
+    return themes
+
+
+def _run_retro(trail, home, workbench, since_override: str | None = None) -> None:
     log.info(f"Home: {home}")
     log.info(f"Workbench: {workbench}")
 
@@ -734,7 +855,11 @@ def _run_retro(trail, home, workbench) -> None:
     log.info(f"Loaded {len(rules)} rule file(s)")
     trail.info("load_rules", f"loaded {len(rules)} rule files from workbench")
 
-    last_retro_ts = _read_last_retro(home)
+    if since_override:
+        last_retro_ts = _parse_since(since_override)
+        log.info(f"Scan window override: --since {since_override}")
+    else:
+        last_retro_ts = _read_last_retro(home)
     if last_retro_ts > 0:
         log.info(f"Last retro: {datetime.fromtimestamp(last_retro_ts).strftime(DATE_FMT)}")
     else:
@@ -751,13 +876,34 @@ def _run_retro(trail, home, workbench) -> None:
         result = _scan_repo(repo, last_retro_ts, rules, git_user, rule_match_counts)
         unmatched_count += result["unmatched"]
         if result["prs"]:
-            scan_repos.append({"github": repo["github"], "prs": result["prs"]})
+            scan_repos.append({
+                "github": repo["github"],
+                "prs": result["prs"],
+                "unmatched": result["unmatched"],
+            })
     trail.info("fetch_pr_comments", f"fetched review data from {len(repos)} repos")
 
-    local_repos, local_unmatched = scan_local_reviews(home, rules, rule_match_counts)
+    local_repos, local_unmatched, consumed_dirs = scan_local_reviews(
+        home, rules, rule_match_counts,
+    )
+    local_repos = _dedup_local_against_github(scan_repos, local_repos)
+    for lr in local_repos:
+        lr["unmatched"] = sum(
+            1 for pr in lr.get("prs", [])
+            for c in pr.get("comments", [])
+            if not c.get("nearest_rule")
+        )
     scan_repos.extend(local_repos)
     unmatched_count += local_unmatched
     trail.info("scan_local_reviews", f"scanned {sum(len(r['prs']) for r in local_repos)} local reviews")
+
+    if consumed_dirs:
+        consumed_file = home / CONSUMED_REVIEWS_REL
+        consumed_file.parent.mkdir(parents=True, exist_ok=True)
+        consumed_file.write_text("\n".join(consumed_dirs) + "\n")
+        trail.info("write_consumed", f"wrote {len(consumed_dirs)} consumed review dirs")
+
+    themes = _build_themes(scan_repos)
 
     rules_summary = []
     for r in rules:
@@ -770,7 +916,11 @@ def _run_retro(trail, home, workbench) -> None:
         rules_summary.append({"filename": "(no rule)", "matched": unmatched_count})
     trail.info("cross_reference_rules", f"cross-referenced {sum(rc['matched'] for rc in rule_match_counts.values())} comments against rules")
 
-    scan_data = {"repos": scan_repos, "rules_summary": rules_summary}
+    scan_data = {
+        "repos": scan_repos,
+        "rules_summary": rules_summary,
+        "themes": themes,
+    }
     report = format_report(scan_data)
     trail.info("generate_report", f"report generated, {len(report)} chars")
     print(report)
@@ -781,11 +931,12 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description="Scan PR review comments and cross-reference against coding rules.",
-        usage="retro-scan [--home DIR] [--workbench DIR]",
+        usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override")
     parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    parser.add_argument("--since", type=str, default=None, help="override scan window (e.g. 7d, 24h, 30m)")
     add_trail_args(parser)
     args = parser.parse_args()
 
@@ -804,7 +955,7 @@ def main() -> None:
     )
 
     try:
-        _run_retro(trail, home, workbench)
+        _run_retro(trail, home, workbench, since_override=args.since)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

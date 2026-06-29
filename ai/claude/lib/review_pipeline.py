@@ -426,9 +426,11 @@ def _push_fixes(job: ReviewJob):
         log.info("Pushed fixes")
         return
 
+    stderr = result.stderr.strip()
     log.error(
-        f"push failed — branch has diverged. Run:\n"
-        f"  git -C '{job.wt_path}' push --force-with-lease"
+        f"push failed — branch may have diverged. Run:\n"
+        f"  git -C '{job.wt_path}' push --force-with-lease\n"
+        f"stderr: {stderr}"
     )
 
 

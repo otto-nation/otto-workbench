@@ -312,9 +312,6 @@ step_global_gitignore() {
     for entry in "${new_entries[@]}"; do
       printf '%s\n' "$entry" >> "$dest"
     done
-  fi
-
-  if [[ $added -gt 0 ]]; then
     success "global gitignore: added $added entries to $dest"
   else
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "global gitignore up to date" || true

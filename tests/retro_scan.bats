@@ -275,7 +275,7 @@ PY
   result=$(_py_here <<PY
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
-match = mod.find_nearest_rule("This API key should not be hardcoded in the source", rules)
+match = mod.find_nearest_rule("This secret token should never be written to a tracked file", rules)
 print(match["filename"] if match else "None")
 PY
 )
@@ -356,4 +356,295 @@ PY
   run "$RETRO_SCAN" --home "$TMPDIR"
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"Retro Scan Report"* ]]
+}
+
+# ── _annotate_comment direction ─────────────────────────────────────────────
+
+@test "_annotate_comment: skips self-replies" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+counts = {r["filename"]: {"matched": 0} for r in rules}
+comment = {"author": "isaac", "body": "Responding to my own review", "path": None, "line": None}
+status = mod._annotate_comment(comment, "isaac", "isaac", rules, counts)
+print(status)
+PY
+)
+  [[ "$result" == "skip" ]]
+}
+
+@test "_annotate_comment: gave direction when user is comment author" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+counts = {r["filename"]: {"matched": 0} for r in rules}
+comment = {"author": "isaac", "body": "This needs more test coverage for general solutions", "path": None, "line": None}
+mod._annotate_comment(comment, "other-dev", "isaac", rules, counts)
+print(comment["direction"])
+PY
+)
+  [[ "$result" == "gave" ]]
+}
+
+@test "_annotate_comment: received direction when user is PR author" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+counts = {r["filename"]: {"matched": 0} for r in rules}
+comment = {"author": "reviewer1", "body": "This needs more test coverage for general solutions", "path": None, "line": None}
+mod._annotate_comment(comment, "isaac", "isaac", rules, counts)
+print(comment["direction"])
+PY
+)
+  [[ "$result" == "received" ]]
+}
+
+@test "_annotate_comment: observed direction for third-party" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+counts = {r["filename"]: {"matched": 0} for r in rules}
+comment = {"author": "reviewer1", "body": "This needs more test coverage for general solutions", "path": None, "line": None}
+mod._annotate_comment(comment, "other-dev", "isaac", rules, counts)
+print(comment["direction"])
+PY
+)
+  [[ "$result" == "observed" ]]
+}
+
+# ── _parse_since ────────────────────────────────────────────────────────────
+
+@test "_parse_since: parses 7d into timestamp ~7 days ago" {
+  result=$(_py_here <<'PY'
+import time
+ts = mod._parse_since("7d")
+now = int(time.time())
+diff = now - ts
+print("ok" if 6 * 86400 < diff < 8 * 86400 else f"bad: {diff}")
+PY
+)
+  [[ "$result" == "ok" ]]
+}
+
+@test "_parse_since: parses 24h into timestamp ~24 hours ago" {
+  result=$(_py_here <<'PY'
+import time
+ts = mod._parse_since("24h")
+now = int(time.time())
+diff = now - ts
+print("ok" if 23 * 3600 < diff < 25 * 3600 else f"bad: {diff}")
+PY
+)
+  [[ "$result" == "ok" ]]
+}
+
+# ── _dedup_local_against_github ─────────────────────────────────────────────
+
+@test "_dedup_local_against_github: removes duplicate comments" {
+  result=$(_py_here <<'PY'
+github_repos = [{
+    "github": "org/repo",
+    "prs": [{
+        "number": 1, "title": "t", "merged_at": "",
+        "comments": [
+            {"author": "r", "body": "This secret token should not be in the code", "path": "src/auth.go", "line": 10},
+        ],
+    }],
+}]
+local_repos = [{
+    "github": "local/repo",
+    "prs": [{
+        "number": "local:repo-self-1", "title": "Local review", "merged_at": "",
+        "comments": [
+            {"author": "self-review", "body": "This secret token should not be in the code here", "path": "src/auth.go", "line": 10},
+            {"author": "self-review", "body": "Completely different comment about naming", "path": "src/api.go", "line": 5},
+        ],
+    }],
+}]
+deduped = mod._dedup_local_against_github(github_repos, local_repos)
+total = sum(len(pr["comments"]) for r in deduped for pr in r["prs"])
+print(total)
+PY
+)
+  [[ "$result" == "1" ]]
+}
+
+@test "_dedup_local_against_github: keeps all when no overlap" {
+  result=$(_py_here <<'PY'
+github_repos = [{
+    "github": "org/repo",
+    "prs": [{
+        "number": 1, "title": "t", "merged_at": "",
+        "comments": [
+            {"author": "r", "body": "Fix the authentication flow", "path": "src/auth.go", "line": 10},
+        ],
+    }],
+}]
+local_repos = [{
+    "github": "local/repo",
+    "prs": [{
+        "number": "local:1", "title": "t", "merged_at": "",
+        "comments": [
+            {"author": "self-review", "body": "Variable naming is inconsistent", "path": "src/api.go", "line": 5},
+        ],
+    }],
+}]
+deduped = mod._dedup_local_against_github(github_repos, local_repos)
+total = sum(len(pr["comments"]) for r in deduped for pr in r["prs"])
+print(total)
+PY
+)
+  [[ "$result" == "1" ]]
+}
+
+# ── format_report: new features ─────────────────────────────────────────────
+
+@test "format_report: includes direction counts in metadata" {
+  result=$(_py_here <<'PY'
+scan_data = {
+    "repos": [{
+        "github": "org/repo",
+        "prs": [{
+            "number": 1, "title": "t", "merged_at": "2026-06-08",
+            "comments": [
+                {"author": "r1", "body": "comment one", "path": None, "line": None, "nearest_rule": None, "direction": "received"},
+                {"author": "r2", "body": "comment two", "path": None, "line": None, "nearest_rule": None, "direction": "gave"},
+            ],
+        }],
+    }],
+    "rules_summary": [],
+    "themes": {},
+}
+report = mod.format_report(scan_data)
+print("ok" if "gave: 1" in report and "received: 1" in report else "missing")
+PY
+)
+  [[ "$result" == "ok" ]]
+}
+
+@test "format_report: includes unmatched count per repo" {
+  result=$(_py_here <<'PY'
+scan_data = {
+    "repos": [{
+        "github": "org/repo",
+        "unmatched": 3,
+        "prs": [{
+            "number": 1, "title": "t", "merged_at": "2026-06-08",
+            "comments": [
+                {"author": "r1", "body": "c", "path": None, "line": None, "nearest_rule": None, "direction": "received"},
+            ],
+        }],
+    }],
+    "rules_summary": [],
+    "themes": {},
+}
+report = mod.format_report(scan_data)
+print("ok" if "3 unmatched" in report else "missing")
+PY
+)
+  [[ "$result" == "ok" ]]
+}
+
+@test "format_report: includes repeated themes section" {
+  result=$(_py_here <<'PY'
+scan_data = {
+    "repos": [{
+        "github": "org/repo",
+        "prs": [{
+            "number": 1, "title": "t", "merged_at": "2026-06-08",
+            "comments": [
+                {"author": "r1", "body": "c", "path": None, "line": None, "nearest_rule": None, "direction": "received"},
+            ],
+        }],
+    }],
+    "rules_summary": [],
+    "themes": {
+        "security.md": [
+            {"pr": 1, "body": "hardcoded secret"},
+            {"pr": 2, "body": "exposed token"},
+            {"pr": 3, "body": "leaked credential"},
+        ],
+    },
+}
+report = mod.format_report(scan_data)
+has_section = "Repeated Themes" in report
+has_count = "3 occurrences" in report
+has_example = "hardcoded secret" in report
+print("ok" if has_section and has_count and has_example else "missing")
+PY
+)
+  [[ "$result" == "ok" ]]
+}
+
+@test "format_report: skips themes section when no repeats" {
+  result=$(_py_here <<'PY'
+scan_data = {
+    "repos": [{
+        "github": "org/repo",
+        "prs": [{
+            "number": 1, "title": "t", "merged_at": "2026-06-08",
+            "comments": [
+                {"author": "r1", "body": "c", "path": None, "line": None, "nearest_rule": None, "direction": "received"},
+            ],
+        }],
+    }],
+    "rules_summary": [],
+    "themes": {"security.md": [{"pr": 1, "body": "only one"}]},
+}
+report = mod.format_report(scan_data)
+print("ok" if "Repeated Themes" not in report else "present")
+PY
+)
+  [[ "$result" == "ok" ]]
+}
+
+# ── scan_local_reviews: consumed dirs ───────────────────────────────────────
+
+@test "scan_local_reviews: returns consumed dir names" {
+  local reviews_dir="$TMPDIR/.config/workbench/reviews"
+  mkdir -p "$reviews_dir/myrepo-self-1"
+  cat > "$reviews_dir/myrepo-self-1/review.md" <<'EOF'
+# Self-Review: myrepo — branch
+
+## Findings
+
+- [ ] **[M1]** `src/main.go` — Missing error handling for secret token write
+EOF
+
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+counts = {r["filename"]: {"matched": 0} for r in rules}
+repos, unmatched, consumed = mod.scan_local_reviews(Path("$TMPDIR"), rules, counts)
+print(len(consumed))
+print(consumed[0] if consumed else "none")
+PY
+)
+  [[ "$result" == *"1"* ]]
+  [[ "$result" == *"myrepo-self-1"* ]]
+}
+
+# ── find_nearest_rule: MIN_KEYWORD_OVERLAP=2 ───────────────────────────────
+
+@test "find_nearest_rule: single keyword overlap returns None" {
+  _make_rules_dir "$TMPDIR/wb"
+
+  result=$(_py_here <<PY
+from pathlib import Path
+rules = mod.load_rules(Path("$TMPDIR/wb"))
+match = mod.find_nearest_rule("This API endpoint needs work", rules)
+print(match["filename"] if match else "None")
+PY
+)
+  [[ "$result" == "None" ]]
 }

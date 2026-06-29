@@ -40,11 +40,26 @@ Run `retro-scan` to produce a structured report:
 retro-scan
 ```
 
+To override the scan window (e.g. for debugging or historical analysis):
+```bash
+retro-scan --since 7d
+```
+
 The report contains:
 - **PR Comments by Repo** — substantive review comments from merged PRs since
-  last retro, each with: author, body, file/line, direction (received vs. gave),
-  nearest matching rule (or "none")
+  last retro, each with: author, body, file/line, direction, nearest matching
+  rule (or "none"), and per-repo unmatched comment counts
 - **Rules Coverage Summary** — per-rule-file counts of matched comments and gaps
+- **Repeated Themes** — rules that matched 2+ comments across different PRs,
+  with example comments (use these to prioritize classification)
+
+Comment directions:
+- `received` — feedback on the user's PR from a reviewer
+- `gave` — feedback the user left on someone else's PR
+- `observed` — feedback between other contributors
+
+Self-replies (user commenting on their own PR) are automatically filtered out.
+Duplicate comments between GitHub and local reviews are deduplicated.
 
 Read all rule files referenced in the report to understand what each rule currently
 covers before classifying.
@@ -152,6 +167,10 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 ```
 
 ### Record timestamp and clean up
+
+`retro-complete.sh` records the timestamp and cleans up only the review
+directories that were scanned by `retro-scan` (listed in
+`~/.config/workbench/retro-consumed-reviews.txt`).
 
 ```bash
 ~/.claude/skills/retro/retro-complete.sh

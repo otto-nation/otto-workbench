@@ -13,10 +13,8 @@ tools:
     permission:
       - "Bash(gradle:*)"
       - "Bash(./gradlew:*)"
-    visibility: full
+    visibility: brief
     description: "Gradle build tool — build, test, and publish JVM projects"
-    when_to_use: "Building, testing, or running Gradle-based projects when no wrapper (gradlew) is present"
-    usage: "gradle build  |  gradle test  |  gradle dependencies"
     docs: "https://docs.gradle.org/"
 
   - name: mvn

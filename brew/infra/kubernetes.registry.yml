@@ -23,9 +23,7 @@ tools:
 
   - name: kubectl
     permission: true
-    visibility: full
+    visibility: brief
     brew_name: kubernetes-cli
     description: "Kubernetes CLI — manage clusters, deployments, pods, and services"
-    when_to_use: "Inspecting or modifying Kubernetes resources; debugging pods; applying manifests"
-    usage: "kubectl get pods  |  kubectl describe pod <name>  |  kubectl apply -f manifest.yml  |  kubectl logs <pod>"
     docs: "https://kubernetes.io/docs/reference/kubectl/"

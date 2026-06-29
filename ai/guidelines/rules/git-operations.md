@@ -23,8 +23,9 @@
 ## Pushing
 
 - Never run `git push --force` or `git push --force-with-lease` — always print the exact command for the user to run and stop
-- After a rebase, skip the regular push attempt entirely — rebase rewrites history so a regular push will always be rejected, and pre-push hooks waste time on a push that cannot succeed. Print the force-push command immediately
-- When a regular push fails because the branch diverged (without a preceding rebase), print the force-push command for the user
+- After a rebase, skip the regular push attempt entirely — print the force-push command immediately
+- When a regular push fails because the branch diverged, print the force-push command for the user
+- Never retry a failed push/fetch — diagnose instead (see Git Failure Debugging)
 
 ## Commit History
 
@@ -47,28 +48,24 @@
 
 ## Branch Freshness
 
-- Before starting work on an existing worktree branch, rebase it onto `origin/main` — stale branches cause merge conflicts that grow with every commit to main
-- Before creating a PR, rebase onto `origin/main` and verify the diff (`git diff --stat origin/main...HEAD`) contains only your changes — reversions of changelogs, manifests, or other files indicate a stale base
-- When creating a new branch, always branch from `origin/main` (already covered in git.generated.md) — never from a local `main` that may be behind
+- Before starting work or creating a PR on an existing branch, rebase onto `origin/main` and verify the diff (`git diff --stat origin/main...HEAD`) contains only your changes — reversions indicate a stale base
 - If a rebase has conflicts, resolve them before writing new code — don't add commits on top of a stale base
 
 ## Branch Completion
 
-- Never present a menu of completion options ("What would you like to do? 1. Merge 2. PR 3. Keep 4. Discard") — always create a PR via `task --global pr:create -- --no-issue --draft` when implementation is complete (see PR Creation section for the full invocation)
+- Never present a menu of completion options — always create a PR when implementation is complete (see PR Creation for the full invocation)
 - When the user states a specific next step ("merge this", "push it", "just keep it"), execute that action directly
 - Never re-ask after the user has already chosen — if a chosen action fails, debug the failure, don't fall back to an options menu
 
 ## Git Failure Debugging
 
-When a git command fails (push, fetch, pull, clone), do not retry. Diagnose in this order:
+When a git command fails (push, fetch, pull, clone), diagnose in this order:
 
-1. **Check hooks first** — `git config core.hooksPath` and list the relevant hook file (pre-push, pre-commit, etc.). Run the hook directly to see its output — hooks that fail silently are the most common cause of unexplained git errors
-2. **Check git config** — signing requirements (`commit.gpgSign`, `gpg.format`, `gpg.program`), credential helpers, push configuration (`push.default`, `push.autoSetupRemote`)
-3. **Check connectivity** — `ssh -T git@github.com` for SSH remotes, or test HTTPS auth. Verify the remote URL is correct with `git remote -v`
-4. **Check ref state** — `git status`, upstream tracking (`git rev-parse --abbrev-ref @{upstream}`), whether the branch exists on the remote (`git ls-remote origin <branch>`)
-5. **Surface the diagnosis** — report what you found and the specific fix. If you cannot determine the cause after these steps, tell the user what you checked and ask them to run the failing command manually with `!` so the raw output lands in the conversation
-
-Never run the same push/fetch command more than once. If it failed, the second attempt will also fail — diagnose instead.
+1. **Hooks** — `git config core.hooksPath`, run the hook directly
+2. **Config** — signing, credential helpers, push settings
+3. **Connectivity** — `ssh -T git@github.com` or HTTPS auth; verify remote URL
+4. **Ref state** — `git status`, upstream tracking, `git ls-remote origin <branch>`
+5. **Surface** — report findings and the fix; if unresolved, ask the user to run the command with `!`
 
 ## Branch Analysis
 
@@ -77,9 +74,8 @@ When analyzing what a branch contains vs main, use exactly two commands:
 1. `git log --oneline origin/main..origin/<branch>` — two dots for log (commits on branch not on main)
 2. `git diff --stat origin/main...origin/<branch>` — three dots for diff (changes from merge-base only)
 
-- Never use two-dot diff (`origin/main..branch`) — it compares tips directly, including all of main's changes not yet merged into the branch. On a stale branch this produces hundreds of irrelevant files
-- Three-dot diff (`origin/main...branch`) automatically diffs from the merge-base, showing only the branch's own changes — no separate `merge-base` call or grep filtering needed
-- If the output still looks noisy after using three dots, the branch likely needs a rebase — don't filter the noise, fix the source
+- Never use two-dot diff — it includes main's changes and produces false noise on stale branches
+- If three-dot diff is still noisy, the branch needs a rebase — don't filter the noise, fix the source
 
 ## Rebase, Cherry-Pick, Merge Conflicts
 

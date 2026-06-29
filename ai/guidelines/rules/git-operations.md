@@ -48,7 +48,7 @@
 ## Branch Freshness
 
 - Before starting work on an existing worktree branch, rebase it onto `origin/main` — stale branches cause merge conflicts that grow with every commit to main
-- Before creating a PR, rebase onto `origin/main` and verify the diff (`git diff origin/main..HEAD`) contains only your changes — reversions of changelogs, manifests, or other files indicate a stale base
+- Before creating a PR, rebase onto `origin/main` and verify the diff (`git diff --stat origin/main...HEAD`) contains only your changes — reversions of changelogs, manifests, or other files indicate a stale base
 - When creating a new branch, always branch from `origin/main` (already covered in git.generated.md) — never from a local `main` that may be behind
 - If a rebase has conflicts, resolve them before writing new code — don't add commits on top of a stale base
 
@@ -69,6 +69,17 @@ When a git command fails (push, fetch, pull, clone), do not retry. Diagnose in t
 5. **Surface the diagnosis** — report what you found and the specific fix. If you cannot determine the cause after these steps, tell the user what you checked and ask them to run the failing command manually with `!` so the raw output lands in the conversation
 
 Never run the same push/fetch command more than once. If it failed, the second attempt will also fail — diagnose instead.
+
+## Branch Analysis
+
+When analyzing what a branch contains vs main, use exactly two commands:
+
+1. `git log --oneline origin/main..origin/<branch>` — two dots for log (commits on branch not on main)
+2. `git diff --stat origin/main...origin/<branch>` — three dots for diff (changes from merge-base only)
+
+- Never use two-dot diff (`origin/main..branch`) — it compares tips directly, including all of main's changes not yet merged into the branch. On a stale branch this produces hundreds of irrelevant files
+- Three-dot diff (`origin/main...branch`) automatically diffs from the merge-base, showing only the branch's own changes — no separate `merge-base` call or grep filtering needed
+- If the output still looks noisy after using three dots, the branch likely needs a rebase — don't filter the noise, fix the source
 
 ## Rebase, Cherry-Pick, Merge Conflicts
 

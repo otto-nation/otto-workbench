@@ -435,97 +435,87 @@ class TestFormatGeneralComments:
 # ── CommitPushResult ────────────────────────────────────────────────────────
 
 
+def _make_completed(returncode, stdout="", stderr=""):
+    """Create a CompletedProcess with the given results."""
+    import subprocess
+    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
+
+
 class TestCommitAndPush:
     """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
 
-    def test_no_changes(self, rt, tmp_path):
+    def test_no_changes(self, rt):
         """git diff --quiet returns 0 → no_changes."""
-        import subprocess
-        subprocess.run(["git", "init", str(tmp_path)], capture_output=True)
-        (tmp_path / "file.txt").write_text("hello")
-        subprocess.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
-        subprocess.run(
-            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
-            capture_output=True,
-        )
-        result = rt._commit_and_push(tmp_path, 0, 0)
-        assert result.status == "no_changes"
-        assert result.sha is None
-        assert result.error == ""
-
-    def test_commit_failed(self, rt, tmp_path, monkeypatch):
-        """git commit returns non-zero → commit_failed with error text."""
-        import subprocess as sp
-        original_run = sp.run
+        calls = []
 
         def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            if "diff" in cmd:
+                return _make_completed(0)
+            return _make_completed(0)
+
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 0, 0)
+        assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_commit_failed(self, rt):
+        """git commit returns non-zero → commit_failed with error text."""
+        def mock_run(cmd, **kwargs):
+            if "diff" in cmd:
+                return _make_completed(1)
+            if "add" in cmd:
+                return _make_completed(0)
             if "commit" in cmd:
-                return sp.CompletedProcess(cmd, 1, stdout="", stderr="hook failed\n")
-            return original_run(cmd, **kwargs)
+                return _make_completed(1, stderr="hook failed\n")
+            return _make_completed(0)
 
-        sp.run(["git", "init", str(tmp_path)], capture_output=True)
-        (tmp_path / "file.txt").write_text("hello")
-        sp.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
-        sp.run(
-            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
-            capture_output=True,
-        )
-        (tmp_path / "file.txt").write_text("changed")
-
-        monkeypatch.setattr(sp, "run", mock_run)
-        result = rt._commit_and_push(tmp_path, 1, 0)
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 1, 0)
         assert result.status == "commit_failed"
         assert result.sha is None
         assert "hook failed" in result.error
 
-    def test_push_failed(self, rt, tmp_path, monkeypatch):
+    def test_push_failed(self, rt):
         """git push returns non-zero → push_failed with SHA preserved."""
-        import subprocess as sp
-        original_run = sp.run
-
         def mock_run(cmd, **kwargs):
+            if "diff" in cmd:
+                return _make_completed(1)
+            if "add" in cmd:
+                return _make_completed(0)
+            if "commit" in cmd:
+                return _make_completed(0)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
             if "push" in cmd:
-                return sp.CompletedProcess(cmd, 1, stdout="", stderr="rejected\n")
-            return original_run(cmd, **kwargs)
+                return _make_completed(1, stderr="rejected\n")
+            return _make_completed(0)
 
-        sp.run(["git", "init", str(tmp_path)], capture_output=True)
-        (tmp_path / "file.txt").write_text("hello")
-        sp.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
-        sp.run(
-            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
-            capture_output=True,
-        )
-        (tmp_path / "file.txt").write_text("changed")
-
-        monkeypatch.setattr(sp, "run", mock_run)
-        result = rt._commit_and_push(tmp_path, 1, 0)
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 1, 0)
         assert result.status == "push_failed"
-        assert result.sha is not None
+        assert result.sha == "abc1234"
         assert "rejected" in result.error
 
-    def test_success(self, rt, tmp_path, monkeypatch):
+    def test_success(self, rt):
         """git push returns 0 → pushed with SHA."""
-        import subprocess as sp
-        original_run = sp.run
-
         def mock_run(cmd, **kwargs):
+            if "diff" in cmd:
+                return _make_completed(1)
+            if "add" in cmd:
+                return _make_completed(0)
+            if "commit" in cmd:
+                return _make_completed(0)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
             if "push" in cmd:
-                return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
-            return original_run(cmd, **kwargs)
+                return _make_completed(0)
+            return _make_completed(0)
 
-        sp.run(["git", "init", str(tmp_path)], capture_output=True)
-        (tmp_path / "file.txt").write_text("hello")
-        sp.run(["git", "-C", str(tmp_path), "add", "."], capture_output=True)
-        sp.run(
-            ["git", "-C", str(tmp_path), "commit", "-m", "init"],
-            capture_output=True,
-        )
-        (tmp_path / "file.txt").write_text("changed")
-
-        monkeypatch.setattr(sp, "run", mock_run)
-        result = rt._commit_and_push(tmp_path, 1, 0)
+        with patch.object(rt.subprocess, "run", side_effect=mock_run):
+            result = rt._commit_and_push(Path("/fake"), 1, 0)
         assert result.status == "pushed"
-        assert result.sha is not None
+        assert result.sha == "abc1234"
         assert result.error == ""
 
 

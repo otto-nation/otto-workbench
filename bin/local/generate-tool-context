@@ -16,6 +16,7 @@
 # Each registry file must contain a `meta` block:
 #   meta:
 #     section:       "Section Title"   # H2 heading in generated output
+#     scope:         go                # optional: routes into tools.generated.<scope>.md
 #     install_check: false             # if true, omit tools not found in PATH
 #     validation:    brewfile          # brewfile | bindir | zsh-comments | none
 #     source:        brew/Brewfile     # relative path used by validate-registries
@@ -25,10 +26,12 @@
 #   visibility: brief  — compact one-liner
 #   visibility: hidden — omitted from AI context
 #
-# Scaling: tools.generated.md is loaded into every session in full. If it grows
-# past ~300 lines, split into a brief index (always loaded) plus per-tool detail
-# files that Claude reads on demand — similar to the llms.txt pattern of tiered
-# context (see https://llmstxt.org/).
+# Scoped output:
+#   Registries with meta.scope route into tools.generated.<scope>.md with paths:
+#   frontmatter (loaded only when the session touches matching file types).
+#   Registries without scope (or scope: core) render into tools.generated.md
+#   (always loaded, no frontmatter). Scope-to-paths mapping is defined in
+#   SCOPE_PATHS below.
 #
 # Environment overrides (for tests):
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
@@ -254,27 +257,87 @@ _render_registry() {
   return 0
 }
 
+# ── Scope → paths mapping ────────────────────────────────────────────────────
+
+declare -A SCOPE_PATHS
+SCOPE_PATHS[go]='  - "**/*.go"
+  - "**/go.mod"
+  - "**/go.sum"'
+SCOPE_PATHS[java]='  - "**/*.java"
+  - "**/*.kt"
+  - "**/*.kts"
+  - "**/build.gradle*"
+  - "**/pom.xml"'
+SCOPE_PATHS[infra]='  - "**/Dockerfile*"
+  - "**/compose*.yml"
+  - "**/compose*.yaml"
+  - "**/*.tf"
+  - "**/k8s/**"
+  - "**/kubernetes/**"'
+
 _tool_registries=()
 collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
 
-# Single always-loaded file — no frontmatter, available in every Claude session.
-# Tools with visibility: hidden are omitted; visibility: brief renders as one-liners.
+# Group registries by meta.scope (empty/core → core group, others → named scope)
+declare -a _core_registries=()
+declare -A _scope_registries=()
+declare -A _active_scopes=()
+
+for _reg in "${_tool_registries[@]}"; do
+  _scope=$(yq '.meta.scope // ""' "$_reg")
+  if [[ -z "$_scope" || "$_scope" == "null" || "$_scope" == "core" ]]; then
+    _core_registries+=("$_reg")
+  else
+    _scope_registries["$_scope"]+="$_reg"$'\n'
+    _active_scopes["$_scope"]=1
+  fi
+done
+
+OUTPUT_DIR="$(dirname "$OUTPUT")"
+
+# Core file — always loaded, no frontmatter.
 {
   printf '# Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
   printf '<!-- Regenerate: generate-tool-context -->\n'
-  for _reg in "${_tool_registries[@]}"; do
+  for _reg in "${_core_registries[@]}"; do
     _render_registry "$_reg"
   done
 } > "$OUTPUT"
 $QUIET || success "Generated $(basename "$OUTPUT")"
 
-# Clean up legacy workflow file if it exists
-_legacy_workflow="$REPO_ROOT/ai/guidelines/rules/tools-workflow.generated.md"
-if [[ -f "$_legacy_workflow" ]]; then
-  rm "$_legacy_workflow"
-  $QUIET || info "Removed legacy $(basename "$_legacy_workflow")"
-fi
+# Scoped files — loaded only when the session touches matching file types.
+for _scope in "${!_active_scopes[@]}"; do
+  _scope_output="$OUTPUT_DIR/tools.generated.${_scope}.md"
+  _scope_regs="${_scope_registries[$_scope]}"
+  _paths="${SCOPE_PATHS[$_scope]:-}"
+
+  {
+    if [[ -n "$_paths" ]]; then
+      printf -- '---\npaths:\n%s\n---\n' "$_paths"
+    fi
+    printf '# Tools — %s\n' "$_scope"
+    printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
+    printf '<!-- Regenerate: generate-tool-context -->\n'
+    while IFS= read -r _reg; do
+      [[ -z "$_reg" ]] && continue
+      _render_registry "$_reg"
+    done <<< "$_scope_regs"
+  } > "$_scope_output"
+  $QUIET || success "Generated $(basename "$_scope_output")"
+done
+
+# Clean up stale scope files (scopes that no longer have registries).
+for _existing in "$OUTPUT_DIR"/tools.generated.*.md; do
+  [[ -f "$_existing" ]] || continue
+  _basename="$(basename "$_existing")"
+  _existing_scope="${_basename#tools.generated.}"
+  _existing_scope="${_existing_scope%.md}"
+  if [[ -z "${_active_scopes[$_existing_scope]:-}" ]]; then
+    rm "$_existing"
+    $QUIET || info "Removed stale $(basename "$_existing")"
+  fi
+done
 
 # ── README sections ───────────────────────────────────────────────────────────
 

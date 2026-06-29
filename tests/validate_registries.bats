@@ -841,6 +841,49 @@ EOF
   [[ "$output" == *"must match Bash(...) pattern"* ]]
 }
 
+# ── meta.scope ────────────────────────────────────────────────────────────────
+
+@test "passes with valid meta.scope" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  scope: go
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
+    description: "A tool"
+EOF
+  echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
+
+  run "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "fails with invalid meta.scope characters" {
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "Tools"
+  scope: "Go Tools"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
+    description: "A tool"
+EOF
+  echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be lowercase alphanumeric"* ]]
+}
+
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds and warns when registries are missing" {

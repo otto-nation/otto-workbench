@@ -338,3 +338,111 @@ EOF
   run grep "^---" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
+
+# ── Scoped output ────────────────────────────────────────────────────────────
+
+# _write_scoped_registry FILE SECTION SCOPE — writes a registry with meta.scope
+_write_scoped_registry() {
+  local file="$1" section="${2:-Tools}" scope="$3"
+  cat > "$file" << EOF
+meta:
+  section: "$section"
+  scope: $scope
+  install_check: false
+  validation: none
+
+tools:
+  - name: scoped-tool
+    permission: false
+    visibility: brief
+    description: "A scoped tool"
+EOF
+}
+
+@test "scoped registry writes to tools.generated.<scope>.md" {
+  _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
+
+  bash "$GENERATOR"
+  local scoped_file
+  scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.go.md"
+  [ -f "$scoped_file" ]
+  grep -q "Go Tools" "$scoped_file"
+}
+
+@test "scoped registry does not appear in core output" {
+  _write_registry "$BREW_REGISTRY" "Core Tools"
+  _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
+
+  bash "$GENERATOR"
+  grep -q "Core Tools" "$TOOL_CONTEXT_OUTPUT"
+  run grep "Go Tools" "$TOOL_CONTEXT_OUTPUT"
+  [ "$status" -ne 0 ]
+}
+
+@test "scoped output file has paths frontmatter" {
+  _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
+
+  bash "$GENERATOR"
+  local scoped_file
+  scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.go.md"
+  grep -q "^---" "$scoped_file"
+  grep -q "paths:" "$scoped_file"
+  grep -q '"\*\*/\*.go"' "$scoped_file"
+}
+
+@test "multiple registries with same scope merge into one file" {
+  _write_scoped_registry "$WORK_DIR/aws.registry.yml" "AWS Tools" "infra"
+
+  cat > "$WORK_DIR/k8s.registry.yml" << 'EOF'
+meta:
+  section: "Kubernetes Tools"
+  scope: infra
+  install_check: false
+  validation: none
+
+tools:
+  - name: kubectl
+    permission: false
+    visibility: brief
+    description: "Kubernetes CLI"
+EOF
+
+  bash "$GENERATOR"
+  local scoped_file
+  scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.infra.md"
+  [ -f "$scoped_file" ]
+  grep -q "AWS Tools" "$scoped_file"
+  grep -q "Kubernetes Tools" "$scoped_file"
+}
+
+@test "stale scope files are cleaned up" {
+  local stale_file
+  stale_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.oldscope.md"
+  echo "stale" > "$stale_file"
+
+  _write_registry "$BREW_REGISTRY"
+  bash "$GENERATOR"
+  [ ! -f "$stale_file" ]
+}
+
+@test "core scope is treated as unscoped" {
+  cat > "$WORK_DIR/core.registry.yml" << 'EOF'
+meta:
+  section: "Core Extra"
+  scope: core
+  install_check: false
+  validation: none
+
+tools:
+  - name: core-tool
+    permission: false
+    visibility: brief
+    description: "Explicit core scope tool"
+EOF
+
+  bash "$GENERATOR"
+  grep -q "Core Extra" "$TOOL_CONTEXT_OUTPUT"
+  local scoped_file
+  scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.core.md"
+  [ ! -f "$scoped_file" ]
+}

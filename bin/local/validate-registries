@@ -307,6 +307,18 @@ _validate_install_check_command() {
   fi
 }
 
+# _validate_meta_scope FILE
+# If meta.scope is present, validates it is a non-empty string.
+_validate_meta_scope() {
+  local file="$1"
+  local scope
+  scope=$(yq '.meta.scope // ""' "$file")
+  [[ -z "$scope" || "$scope" == "null" ]] && return 0
+  if [[ "$scope" =~ [^a-z0-9-] ]]; then
+    _fail "$(basename "$file"): meta.scope '$scope' must be lowercase alphanumeric with hyphens"
+  fi
+}
+
 # _validate_auth_fields FILE
 # If auth block is present, env_var must be non-empty. Warns if setup_url is missing.
 _validate_auth_fields() {
@@ -390,6 +402,7 @@ for registry in "${all_registries[@]}"; do
   _validate_env_fields "$registry"
   _validate_auth_fields "$registry"
   _validate_install_check_command "$registry"
+  _validate_meta_scope "$registry"
   _validate_registry "$registry"
 done
 

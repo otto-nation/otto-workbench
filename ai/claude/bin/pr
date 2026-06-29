@@ -382,19 +382,21 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         if r.returncode != 0:
             exit_code = 1
 
+    ci_fixable = 0
     if state.ci.updated_at and state.ci.failure_count > 0:
         infra_count = state.ci.failure_kinds.get("infra", 0) + state.ci.failure_kinds.get("flaky", 0)
-        fixable = state.ci.failure_count - infra_count
-        if fixable > 0:
-            log.blank()
-            log.info(f"Fixing {fixable} CI failure(s)...")
-            rc = _run_delegate(
-                _COMMANDS["ci"], ["--fix"] + list(argv), ctx,
-                original_pr=_kw.get("original_pr"),
-                original_branch=_kw.get("original_branch"),
-            )
-            if rc != 0:
-                exit_code = 1
+        ci_fixable = state.ci.failure_count - infra_count
+
+    if ci_fixable > 0:
+        log.blank()
+        log.info(f"Fixing {ci_fixable} CI failure(s)...")
+        rc = _run_delegate(
+            _COMMANDS["ci"], ["--fix"] + list(argv), ctx,
+            original_pr=_kw.get("original_pr"),
+            original_branch=_kw.get("original_branch"),
+        )
+        if rc != 0:
+            exit_code = 1
 
     actionable = state.comments.by_state.get("new", 0) + state.comments.by_state.get("contested", 0)
     if state.comments.updated_at and actionable > 0:

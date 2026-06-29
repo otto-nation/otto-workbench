@@ -82,7 +82,7 @@ Use this report as input for Phase 3. Read the topic files referenced in the Mem
    **memory/** — session-derived behavior and preferences:
    - Signs it belongs here: "user prefers", "we decided", "stop doing", "next time"
 
-6. **Entry format.** Each memory entry should be concise:
+7. **Entry format.** Each memory entry should be concise:
 ```markdown
 - [YYYY-MM-DD] The fact or preference. (source: session, confidence: high/medium)
 ```

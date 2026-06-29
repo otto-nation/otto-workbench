@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -182,7 +183,7 @@ def _display_event(raw_line: str, prev_tool: str, prefix: str) -> str:
     if not event or event.tool_label == prev_tool:
         return prev_tool
     with _print_lock:
-        print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
+        print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", file=sys.stderr, flush=True)
     return event.tool_label
 
 
@@ -230,7 +231,7 @@ def _check_limits(
 
 
 def _consume_stream(
-    process: subprocess.Popen, log, prefix: str,
+    process: subprocess.Popen, log_file, prefix: str,
     max_turns: int | None = None,
     max_budget: float | None = None,
 ) -> tuple[int, float, str]:
@@ -247,8 +248,8 @@ def _consume_stream(
     aborted = False
 
     for raw_line in process.stdout:
-        log.write(raw_line)
-        log.flush()
+        log_file.write(raw_line)
+        log_file.flush()
 
         event_type, _ = _parse_event_type(raw_line)
 
@@ -367,9 +368,9 @@ def invoke_agent(
     _send(proc, {"type": "prompt", "message": full_prompt})
 
     # Stream events with budget and turn enforcement
-    with open(session_log, "w") as log:
+    with open(session_log, "w") as log_fh:
         turn_count, accumulated_cost, stop_reason = _consume_stream(
-            proc, log, prefix,
+            proc, log_fh, prefix,
             max_turns=max_turns, max_budget=max_budget,
         )
 
@@ -427,14 +428,12 @@ def invoke_fix(
 
     _send(proc, {"type": "prompt", "message": full_prompt})
 
-    log_file = open(session_log, "w") if session_log else open(os.devnull, "w")
-    try:
+    log_path = session_log if session_log else os.devnull
+    with open(log_path, "w") as log_file:
         turn_count, accumulated_cost, stop_reason = _consume_stream(
             proc, log_file, "",
             max_turns=max_turns, max_budget=max_budget,
         )
-    finally:
-        log_file.close()
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 

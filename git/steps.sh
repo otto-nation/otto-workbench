@@ -298,14 +298,21 @@ step_global_gitignore() {
   mkdir -p "$(dirname "$dest")"
   [[ -f "$dest" ]] || touch "$dest"
 
-  local added=0
+  local -a new_entries=()
   while IFS= read -r entry; do
     [[ -z "$entry" || "$entry" == \#* ]] && continue
     if ! grep -qxF "$entry" "$dest"; then
-      printf '\n# Managed by otto-workbench\n%s\n' "$entry" >> "$dest"
-      added=$((added + 1))
+      new_entries+=("$entry")
     fi
   done < "$src"
+
+  local added=${#new_entries[@]}
+  if [[ $added -gt 0 ]]; then
+    printf '\n# Managed by otto-workbench\n' >> "$dest"
+    for entry in "${new_entries[@]}"; do
+      printf '%s\n' "$entry" >> "$dest"
+    done
+  fi
 
   if [[ $added -gt 0 ]]; then
     success "global gitignore: added $added entries to $dest"

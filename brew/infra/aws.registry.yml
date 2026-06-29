@@ -12,11 +12,9 @@ meta:
 tools:
   - name: aws
     permission: false
-    visibility: full
+    visibility: brief
     brew_name: awscli
     description: "AWS CLI — manage AWS resources, services, and credentials from the terminal"
-    when_to_use: "Interacting with AWS services (S3, EC2, Lambda, Secrets Manager, etc.); managing IAM and credentials"
-    usage: "aws s3 ls  |  aws secretsmanager get-secret-value --secret-id <name>  |  aws sts get-caller-identity"
     docs: "https://docs.aws.amazon.com/cli/"
 
   - name: aws-sso-util

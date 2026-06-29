@@ -59,31 +59,23 @@ tools:
 
   - name: dream-scan
     permission: true
-    visibility: full
+    visibility: brief
     description: "Scan session transcripts and memory state for dream consolidation"
-    when_to_use: "Called by the dream skill to replace Phases 1+2 (Orient + Gather Signal); outputs a structured markdown report"
-    usage: "dream-scan --days 7  |  dream-scan --days 30 --home /path/to/home"
 
   - name: dream-verify
     permission: true
-    visibility: full
+    visibility: brief
     description: "Verify dream memory file integrity across all projects"
-    when_to_use: "Called by the dream skill to replace Phase 4 verification; checks line counts, broken refs, relative dates, duplicate names"
-    usage: "dream-verify"
 
   - name: promote-scan
     permission: true
-    visibility: full
+    visibility: brief
     description: "Scan memories and workbench artifacts for promotion evaluation"
-    when_to_use: "Called by the promote skill to replace Phase 1 (Orient); outputs a structured markdown report of all memories and existing workbench artifacts"
-    usage: "promote-scan  |  promote-scan --workbench /path/to/workbench"
 
   - name: retro-scan
     permission: true
-    visibility: full
+    visibility: brief
     description: "Scan PR review comments and cross-reference against coding rules"
-    when_to_use: "Called by the retro skill to replace Phase 1 (Orient); fetches PR comments from all registered repos and outputs a structured markdown report"
-    usage: "retro-scan  |  retro-scan --home /path/to/home --workbench /path/to/workbench"
 
   - name: pr
     permission: true
@@ -94,10 +86,8 @@ tools:
 
   - name: otto-log
     permission: true
-    visibility: full
+    visibility: brief
     description: "Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors"
-    when_to_use: "Debugging AI script behavior, investigating why a review/CI check/rebase made a particular decision, querying recent script activity"
-    usage: "otto-log recent  |  otto-log query --script ci-check --level error  |  otto-log show <invocation>  |  otto-log list --since 1d"
 
   - name: pr-rebase
     permission: false

@@ -381,10 +381,10 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
 
         assert result == ["go.mod"]
         assert ["go", "mod", "tidy"] in calls
-        # Verify all changes staged after tidy (git add . in go directory)
+        # Verify tracked changes staged after tidy (git add -u in go directory)
         tidy_idx = calls.index(["go", "mod", "tidy"])
         post_tidy = calls[tidy_idx + 1:]
-        assert ["git", "add", "."] in post_tidy
+        assert ["git", "add", "-u"] in post_tidy
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────

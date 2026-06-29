@@ -1,10 +1,10 @@
 ---
 name: dream
-description: "Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use context); machine profile updates (use machine)."
+description: "Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use architecture); machine profile updates (use machine)."
 source: otto-workbench/ai/claude/skills/dream/SKILL.md
 invocation: "/dream"
 trigger: "Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h."
-skip: "Do not use for project architecture facts (use context instead) or machine profile updates (use machine instead)."
+skip: "Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead)."
 output: "memory/ topic files"
 lifecycle_cadence: "24h"
 lifecycle_scope: per-project
@@ -23,7 +23,7 @@ Run manually with `/dream`. Auto-triggers every 24 hours via the Stop hook manag
 Dream runs 5 sequential phases. Execute them in order. Do not skip phases.
 
 ```
-ORIENT --> GATHER SIGNAL --> CONSOLIDATE --> PRUNE & INDEX --> CONTEXT UPDATE
+ORIENT --> GATHER SIGNAL --> CONSOLIDATE --> PRUNE & INDEX --> ARCHITECTURE UPDATE
 ```
 
 ---
@@ -67,17 +67,17 @@ Use this report as input for Phase 3. Read the topic files referenced in the Mem
    - `review-feedback.md` — Accepted/rejected review findings and false positive patterns
    - Create new topic files only when existing ones don't fit
 
-6. **Route facts to the right destination — memory, context.md, or machine.md.**
+6. **Route facts to the right destination — memory, architecture.md, or machine.md.**
 
    **machine.md** (`~/.claude/machine/machine.md`) — facts about the machine itself:
    - OS behavior, runtime versions, tool paths, Docker state changes
    - Signs it belongs here: "Colima stopped", "upgraded to Node 22", "brew installed X", "not running"
-   - Flag for Phase 5 (Machine Update) rather than writing to memory or context.md
+   - Flag for Phase 5 (Machine Update) rather than writing to memory or architecture.md
 
-   **context.md** (`.claude/context.md` in the project) — stable project architectural truth:
+   **architecture.md** (`.claude/architecture.md` in the project) — stable project architectural truth:
    - Software identity (what software actually runs), container tool constraints, conventions
    - Signs it belongs here: "X is not Y", "doesn't have curl", "use conduit.toml not homeserver.yaml"
-   - Flag for Phase 5 (Context Update)
+   - Flag for Phase 5 (Architecture Update)
 
    **memory/** — session-derived behavior and preferences:
    - Signs it belongs here: "user prefers", "we decided", "stop doing", "next time"
@@ -134,18 +134,18 @@ dream-verify
 
 It validates: MEMORY.md under 200 lines, all references resolve, no relative dates in topic files, no duplicate `name:` frontmatter.
 
-After verification, print a summary: entries added, updated, archived, contradictions resolved, context.md updates made.
+After verification, print a summary: entries added, updated, archived, contradictions resolved, architecture.md updates made.
 
 ---
 
-## Phase 5: CONTEXT UPDATE
+## Phase 5: ARCHITECTURE UPDATE
 
-**Goal:** Push architectural facts discovered in sessions into `.claude/context.md`.
-Memory captures behavior; context.md captures stable truth about the project.
+**Goal:** Push architectural facts discovered in sessions into `.claude/architecture.md`.
+Memory captures behavior; architecture.md captures stable truth about the project.
 
 ### When to run
 
-Only if `.claude/context.md` exists in the project directory. Skip silently otherwise.
+Only if `.claude/architecture.md` exists in the project directory. Skip silently otherwise.
 
 ### What to scan for
 
@@ -168,13 +168,13 @@ grep -il "the convention is\|the pattern is\|always goes in\|never edit directly
 
 ### Confidence threshold
 
-- **Two or more sessions** mention the same fact → add it directly to context.md
+- **Two or more sessions** mention the same fact → add it directly to architecture.md
 - **One session only** → add as an HTML comment `<!-- candidate: <fact> (seen: YYYY-MM-DD) -->` at the bottom of the relevant section for human review
-- **Already in context.md** → skip (never duplicate)
+- **Already in architecture.md** → skip (never duplicate)
 
 ### What to write
 
-For each qualifying fact, determine the right section in context.md:
+For each qualifying fact, determine the right section in architecture.md:
 - Software/API identity → add to **Known Constraints** under "Software identity"
 - Container tool absence → add to **Known Constraints** under "Container tool availability"
 - Convention confirmed or corrected → add to **Conventions** section
@@ -187,9 +187,9 @@ Format for new bullets:
 
 ### After writing
 
-1. Update the `<!-- last-reviewed: YYYY-MM-DD -->` header at the top of context.md to today's date
+1. Update the `<!-- last-reviewed: YYYY-MM-DD -->` header at the top of architecture.md to today's date
 2. Do NOT remove existing content — only append
-3. If context.md was updated, note it in the Phase 5 summary line
+3. If architecture.md was updated, note it in the Phase 5 summary line
 
 ---
 

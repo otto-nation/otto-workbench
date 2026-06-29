@@ -104,7 +104,7 @@ class PreflightData:
     file_contents: dict[str, str]
     file_permissions: dict[str, str]
     claude_md: str
-    context_md: str
+    architecture_md: str
     review_checklists: dict[str, str] = field(default_factory=dict)
     omitted_files: list[str] = field(default_factory=list)
     delta_diff: str = ""
@@ -296,10 +296,10 @@ def _collect_project_context(
             claude_md = _read_file_safe(p)
             break
 
-    context_md = ""
-    ctx_path = wt / ".claude" / "context.md"
-    if ctx_path.exists():
-        context_md = _read_file_safe(ctx_path)
+    architecture_md = ""
+    arch_path = wt / ".claude" / "architecture.md"
+    if arch_path.exists():
+        architecture_md = _read_file_safe(arch_path)
 
     review_checklists: dict[str, str] = {}
     review_dir = wt / ".claude" / "review"
@@ -307,7 +307,7 @@ def _collect_project_context(
         for checklist in sorted(review_dir.glob("*.md")):
             review_checklists[checklist.name] = _read_file_safe(checklist)
 
-    return claude_md, context_md, review_checklists
+    return claude_md, architecture_md, review_checklists
 
 
 def _collect_file_data(
@@ -377,14 +377,14 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     base = job.pr.base or DEFAULT_BASE_BRANCH
 
     diff, commit_log = _collect_git_data(job.wt_path, base, job.pr.files)
-    claude_md, context_md, review_checklists = _collect_project_context(wt)
+    claude_md, architecture_md, review_checklists = _collect_project_context(wt)
     all_contents, all_permissions, file_changes = _collect_file_data(wt, job.pr.files)
 
     base_size = (
         len(diff.encode())
         + len(commit_log.encode())
         + len(claude_md.encode())
-        + len(context_md.encode())
+        + len(architecture_md.encode())
         + sum(len(v.encode()) for v in review_checklists.values())
         + TEMPLATE_OVERHEAD_BYTES
     )
@@ -400,7 +400,7 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         file_contents=included,
         file_permissions=included_perms,
         claude_md=claude_md,
-        context_md=context_md,
+        architecture_md=architecture_md,
         review_checklists=review_checklists,
         omitted_files=omitted,
         delta_diff=delta_diff,
@@ -539,8 +539,8 @@ def format_preflight_data(
 
     if data.claude_md:
         parts += ["", "### Project context", "", "#### CLAUDE.md", "", data.claude_md]
-    if data.context_md:
-        parts += ["", "#### .claude/context.md", "", data.context_md]
+    if data.architecture_md:
+        parts += ["", "#### .claude/architecture.md", "", data.architecture_md]
     if data.review_checklists:
         parts.append("\n#### Review checklists")
         for name, content in data.review_checklists.items():

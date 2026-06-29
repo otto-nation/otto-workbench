@@ -1236,7 +1236,7 @@ data = mod.PreflightData(
     file_contents={"foo.go": "package main\n", "bar.go": "package bar\n"},
     file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
     claude_md="# My Project",
-    context_md="## Known Constraints",
+    architecture_md="## Known Constraints",
     review_checklists={"security.md": "# Security checks"},
 )
 result = mod.format_preflight_data(data)
@@ -1263,7 +1263,7 @@ data = mod.PreflightData(
     file_contents={"foo.go": "package main", "bar.go": "package bar"},
     file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
     claude_md="",
-    context_md="",
+    architecture_md="",
 )
 result = mod.format_preflight_data(data, file_filter=["foo.go"])
 has_foo = "package main" in result
@@ -1360,7 +1360,7 @@ data = mod.PreflightData(
     file_contents={"foo.go": "package main", "bar.go": "package bar"},
     file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
     claude_md="",
-    context_md="",
+    architecture_md="",
 )
 result = mod.format_preflight_data(data, file_filter=["foo.go"])
 has_foo_diff = "a/foo.go" in result
@@ -1481,7 +1481,7 @@ preflight = mod.PreflightData(
     file_contents={"a.go": "package main"},
     file_permissions={"a.go": "0o644"},
     claude_md="# Project",
-    context_md="",
+    architecture_md="",
 )
 job = mod.ReviewJob(
     repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
@@ -1579,7 +1579,7 @@ print(mod._file_permissions(Path('$TMPDIR/exec.sh')))
   git config commit.gpgsign false
   echo "package main" > "$repo/main.go"
   echo "# Project" > "$repo/CLAUDE.md"
-  echo "## Known Constraints" > "$repo/.claude/context.md"
+  echo "## Known Constraints" > "$repo/.claude/architecture.md"
   echo "# Security" > "$repo/.claude/review/security.md"
   git add . && git commit -q --no-verify -m "init"
   # Create a fake origin/main ref so git diff origin/main...HEAD works
@@ -1608,7 +1608,7 @@ checks = [
     'main.go' in data.file_permissions,
     data.file_permissions['main.go'] != '?',
     '# Project' in data.claude_md,
-    '## Known Constraints' in data.context_md,
+    '## Known Constraints' in data.architecture_md,
     'security.md' in data.review_checklists,
     len(data.diff) > 0,
     len(data.commit_log) > 0,
@@ -1666,7 +1666,7 @@ data = mod.PreflightData(
     file_contents={"f.go": "code"},
     file_permissions={"f.go": "0o644"},
     claude_md="",
-    context_md="",
+    architecture_md="",
 )
 result = mod.format_preflight_data(data)
 print("absent" if "Commit history" not in result else "present")
@@ -1691,7 +1691,7 @@ preflight = mod.PreflightData(
     file_contents={"a.go": "package a", "b.go": "package b"},
     file_permissions={"a.go": "0o644", "b.go": "0o644"},
     claude_md="",
-    context_md="",
+    architecture_md="",
 )
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
@@ -1727,7 +1727,7 @@ preflight = mod.PreflightData(
     file_contents={"a.go": "package main"},
     file_permissions={"a.go": "0o644"},
     claude_md="# Proj",
-    context_md="",
+    architecture_md="",
 )
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
@@ -1757,7 +1757,7 @@ preflight = mod.PreflightData(
     file_contents={"a.go": "package main"},
     file_permissions={"a.go": "0o644"},
     claude_md="",
-    context_md="",
+    architecture_md="",
 )
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
@@ -1785,7 +1785,7 @@ preflight = mod.PreflightData(
     diff="diff", commit_log="log",
     file_contents={"a.go": "pkg"},
     file_permissions={"a.go": "0o644"},
-    claude_md="", context_md="",
+    claude_md="", architecture_md="",
 )
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
@@ -1817,7 +1817,7 @@ preflight = mod.PreflightData(
     diff="diff", commit_log="log",
     file_contents={"a.go": "pkg"},
     file_permissions={"a.go": "0o644"},
-    claude_md="", context_md="",
+    claude_md="", architecture_md="",
     omitted_files=["b.go"],
 )
 job = mod.ReviewJob(
@@ -1864,7 +1864,7 @@ data = mod.PreflightData(
     commit_log="log",
     file_contents={"a.go": "code"},
     file_permissions={"a.go": "0o644"},
-    claude_md="", context_md="",
+    claude_md="", architecture_md="",
     omitted_files=["big.go", "huge.go"],
 )
 result = mod.format_preflight_data(data)
@@ -1884,7 +1884,7 @@ data = mod.PreflightData(
     commit_log="log",
     file_contents={"a.go": "code"},
     file_permissions={"a.go": "0o644"},
-    claude_md="", context_md="",
+    claude_md="", architecture_md="",
 )
 result = mod.format_preflight_data(data)
 print("absent" if "Files not pre-collected" not in result else "present")
@@ -1900,7 +1900,7 @@ data = mod.PreflightData(
     file_contents={"foo.go": "package main"},
     file_permissions={"foo.go": "0o644"},
     claude_md="# Project",
-    context_md="",
+    architecture_md="",
     omitted_files=["bar.go"],
 )
 result = mod.format_preflight_data(data, skip_file_contents=True)

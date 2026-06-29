@@ -51,11 +51,13 @@ _ai_discover_tools() {
   done
 }
 
-# select_tools — discovers available AI tools, prompts the user to select which
-# to configure, and populates SELECTED_TOOLS.
+# select_tools — presents available AI tools and populates SELECTED_TOOLS.
+# Uses _AVAILABLE_TOOLS if already populated, otherwise discovers from disk.
 select_tools() {
-  local tools=()
-  while IFS= read -r tool; do tools+=("$tool"); done < <(_ai_discover_tools)
+  local tools=("${_AVAILABLE_TOOLS[@]}")
+  if [[ ${#tools[@]} -eq 0 ]]; then
+    while IFS= read -r tool; do tools+=("$tool"); done < <(_ai_discover_tools)
+  fi
 
   if [[ ${#tools[@]} -eq 0 ]]; then
     err "No AI tools found in $SCRIPT_DIR"

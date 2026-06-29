@@ -19,7 +19,7 @@ for _ai_sub in "$_AI_DIR"/*/; do
     . "${_ai_sub}steps.sh"
   fi
 done
-unset _ai_sub
+unset _ai_sub _AI_DIR
 
 # sync_ai — dispatches to each installed AI sub-tool's sync function.
 # Called automatically by otto-workbench sync via the sync_<component> convention.

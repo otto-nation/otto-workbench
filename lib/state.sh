@@ -221,6 +221,23 @@ state_get_list() {
   yq '.components.'"$1"' | (. // []) | .[]' "$INSTALL_YML_FILE" 2>/dev/null || true
 }
 
+# _state_has_new_items SAVED_ARRAY AVAILABLE_ARRAY NEW_ARRAY
+# Compares two arrays and populates NEW_ARRAY with items in AVAILABLE but not SAVED.
+# Returns 0 if new items were found, 1 otherwise.
+_state_has_new_items() {
+  local -n __saved=$1 __avail=$2 __new=$3
+  __new=()
+  local _a _found _s
+  for _a in "${__avail[@]}"; do
+    _found=false
+    for _s in "${__saved[@]}"; do
+      if [[ "$_s" == "$_a" ]]; then _found=true; break; fi
+    done
+    if [[ "$_found" == false ]]; then __new+=("$_a"); fi
+  done
+  [[ ${#__new[@]} -gt 0 ]]
+}
+
 # state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]
 # Loads saved selections from YAML, validates each against SCRIPT_DIR.
 # When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in
@@ -240,33 +257,33 @@ state_load_selections() {
 
   local _saved
   _saved=$(state_get_list "$state_key")
-  if [[ -n "$_saved" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
-    local _item
-    while IFS= read -r _item; do
-      if [[ -d "$script_dir/$_item" ]]; then __selections+=("$_item"); fi
-    done <<< "$_saved"
-    if [[ ${#__selections[@]} -gt 0 ]]; then
-      if [[ "$_has_available" == true ]]; then
-        local _new_tools=() _avail _found _sel
-        for _avail in "${__available[@]}"; do
-          _found=false
-          for _sel in "${__selections[@]}"; do
-            if [[ "$_sel" == "$_avail" ]]; then _found=true; break; fi
-          done
-          if [[ "$_found" == false ]]; then _new_tools+=("$_avail"); fi
-        done
-        if [[ ${#_new_tools[@]} -gt 0 ]]; then
-          info "New tools available: ${_new_tools[*]}"
-          __selections=()
-          state_clear_list "$state_key"
-          return 1
-        fi
-      fi
-      info "Using saved selections: ${__selections[*]}"
-      return 0
-    fi
+
+  # No saved state or interactive mode — force fresh selection
+  if [[ -z "$_saved" ]] || [[ "${WORKBENCH_INTERACTIVE:-}" == "1" ]]; then
+    state_clear_list "$state_key"
+    return 1
   fi
 
-  state_clear_list "$state_key"
-  return 1
+  local _item
+  while IFS= read -r _item; do
+    if [[ -d "$script_dir/$_item" ]]; then __selections+=("$_item"); fi
+  done <<< "$_saved"
+
+  # All saved items gone from disk — force fresh selection
+  if [[ ${#__selections[@]} -eq 0 ]]; then
+    state_clear_list "$state_key"
+    return 1
+  fi
+
+  # Drift detection: new tools on disk that aren't in saved state
+  local _new_tools=()
+  if [[ "$_has_available" == true ]] && _state_has_new_items __selections __available _new_tools; then
+    info "New tools available: ${_new_tools[*]}"
+    __selections=()
+    state_clear_list "$state_key"
+    return 1
+  fi
+
+  info "Using saved selections: ${__selections[*]}"
+  return 0
 }

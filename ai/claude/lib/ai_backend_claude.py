@@ -21,7 +21,7 @@ def _display_event(raw_line: str, prev_tool: str, prefix: str) -> str:
     if not event or event.tool_label == prev_tool:
         return prev_tool
     with _print_lock:
-        print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", flush=True)
+        print(f"{prefix}  {ANSI_DIM}▸ {event.tool_label}{ANSI_RESET}", file=sys.stderr, flush=True)
     return event.tool_label
 
 

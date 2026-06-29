@@ -26,26 +26,20 @@ tools:
       - "Bash(docker tag:*)"
       - "Bash(docker version:*)"
       - "Bash(docker volume:*)"
-    visibility: full
+    visibility: brief
     description: "Docker CLI — build, run, and manage containers against any backend runtime"
-    when_to_use: "Running container commands; works with Colima, OrbStack, or any Docker-compatible runtime"
-    usage: "docker run  |  docker build  |  docker compose up  |  docker ps"
     docs: "https://docs.docker.com/engine/reference/commandline/cli/"
 
   - name: jq
     permission: true
-    visibility: full
+    visibility: brief
     description: "JSON processor for querying, filtering, and transforming JSON data"
-    when_to_use: "Parsing API responses, extracting fields from JSON output, transforming JSON config"
-    usage: "jq '.field' file.json  |  echo '{}' | jq '.key'"
     docs: "https://jqlang.github.io/jq/manual/"
 
   - name: yq
     permission: true
-    visibility: full
+    visibility: brief
     description: "YAML/JSON/TOML processor — like jq but for YAML"
-    when_to_use: "Reading or modifying YAML files (Taskfile.yml, docker-compose.yml, k8s manifests)"
-    usage: "yq '.key' file.yaml  |  yq -i '.key = \"value\"' file.yaml"
     docs: "https://mikefarah.gitbook.io/yq/"
 
   - name: gh
@@ -66,10 +60,8 @@ tools:
       - "Bash(gh label:*)"
       - "Bash(gh milestone:*)"
       - "Bash(gh api:*)" # broad — needed for review workflows and scripted API calls
-    visibility: full
+    visibility: brief
     description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
-    when_to_use: "Creating/viewing PRs, checking CI status, managing issues, cloning repos, viewing runs"
-    usage: "gh pr create  |  gh pr view  |  gh run list  |  gh issue create"
     docs: "https://cli.github.com/manual/"
 
   - name: go-task
@@ -80,18 +72,14 @@ tools:
 
   - name: shellcheck
     permission: true
-    visibility: full
+    visibility: brief
     description: "Static analysis tool for shell scripts — catches bugs and style issues"
-    when_to_use: "Before committing any .sh file; run automatically in pre-push and CI"
-    usage: "shellcheck script.sh"
     docs: "https://www.shellcheck.net/"
 
   - name: bats-core
     permission: "bats"
-    visibility: full
+    visibility: brief
     description: "Bash Automated Testing System — unit testing framework for shell scripts"
-    when_to_use: "Writing or running tests for bash scripts in this repo"
-    usage: "bats tests/  |  bats tests/foo.bats"
     docs: "https://bats-core.readthedocs.io/"
 
   - name: parallel

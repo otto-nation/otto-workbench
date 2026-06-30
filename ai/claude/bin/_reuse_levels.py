@@ -18,5 +18,5 @@ LEVEL_DESCRIPTIONS = {
 def read_level() -> str:
     try:
         return LEVEL_FILE.read_text().strip()
-    except FileNotFoundError:
+    except OSError:
         return DEFAULT_LEVEL

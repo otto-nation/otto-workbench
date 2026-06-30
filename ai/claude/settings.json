@@ -91,6 +91,17 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/bin/reuse-subagent-start 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",

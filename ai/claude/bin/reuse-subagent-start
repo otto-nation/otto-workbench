@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""SubagentStart hook: inject reuse level into spawned subagents.
+
+Emits the active reuse level so subagents inherit the parent session's mode.
+Skips ceiling scan (too expensive for subagent startup).
+
+Usage (called by settings.json SubagentStart hook):
+  reuse-subagent-start
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _reuse_levels import (  # noqa: E402
+    DEFAULT_LEVEL,
+    LEVEL_DESCRIPTIONS,
+    read_level,
+)
+
+
+def main() -> None:
+    level = read_level()
+    if level != DEFAULT_LEVEL:
+        print(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
+
+
+if __name__ == "__main__":
+    main()

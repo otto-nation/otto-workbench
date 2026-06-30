@@ -16,11 +16,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _reuse_levels import (  # noqa: E402
+    DEFAULT_FILE,
     LEVEL_DESCRIPTIONS,
     LEVEL_FILE,
     VALID_LEVELS,
+    read_default,
     read_level,
 )
+
+
+def _handle_default(args: str) -> None:
+    """Handle /reuse default [<level>]."""
+    parts = args.split(None, 1)
+    if len(parts) < 2:
+        print(f"Current default reuse level: {read_default()}")
+        return
+
+    level = parts[1].lower().strip()
+    if level not in VALID_LEVELS:
+        print(f"Unknown reuse level: {level}. Valid: lite, full, ultra")
+        return
+
+    DEFAULT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_FILE.write_text(level)
+    print(f"Default reuse level set to: {level} — {LEVEL_DESCRIPTIONS[level]}")
 
 
 def main() -> None:
@@ -38,9 +57,14 @@ def main() -> None:
         print(f"Current reuse level: {read_level()}")
         return
 
-    level = parts[1].lower().strip()
+    arg = parts[1].strip()
+    if arg.lower().startswith("default"):
+        _handle_default(arg)
+        return
+
+    level = arg.lower()
     if level not in VALID_LEVELS:
-        print(f"Unknown reuse level: {level}. Valid: lite, full, ultra")
+        print(f"Unknown reuse level: {level}. Valid: lite, full, ultra, default <level>")
         return
 
     LEVEL_FILE.parent.mkdir(parents=True, exist_ok=True)

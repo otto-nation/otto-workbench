@@ -384,13 +384,24 @@ def _count_unchecked(review_file: str) -> int:
     )
 
 
-def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
-    """Commit source-file fixes applied by the fix-pass agent."""
-    result = subprocess.run(
-        ["git", "-C", job.wt_path, "diff", "--quiet"],
+def _has_uncommitted_changes(wt_path: str) -> bool:
+    """Check for both unstaged and staged changes."""
+    unstaged = subprocess.run(
+        ["git", "-C", wt_path, "diff", "--quiet"],
         capture_output=True,
     )
-    if result.returncode == 0:
+    if unstaged.returncode != 0:
+        return True
+    staged = subprocess.run(
+        ["git", "-C", wt_path, "diff", "--cached", "--quiet"],
+        capture_output=True,
+    )
+    return staged.returncode != 0
+
+
+def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
+    """Commit source-file fixes applied by the fix-pass agent."""
+    if not _has_uncommitted_changes(job.wt_path):
         return
 
     subprocess.run(
@@ -443,16 +454,21 @@ def _count_checked(review_file: str) -> int:
     )
 
 
-def _count_changed_source_files(wt_path: str) -> int:
+def _changed_source_files(wt_path: str) -> set[str]:
+    """Return set of changed files (staged + unstaged) relative to HEAD."""
     result = subprocess.run(
-        ["git", "-C", wt_path, "diff", "--name-only"],
+        ["git", "-C", wt_path, "diff", "HEAD", "--name-only"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        return 0
+        return set()
+    return {f for f in result.stdout.strip().splitlines() if f}
+
+
+def _count_changed_source_files(wt_path: str) -> int:
     return sum(
-        1 for f in result.stdout.strip().splitlines()
-        if f and not f.endswith("review.md")
+        1 for f in _changed_source_files(wt_path)
+        if not f.endswith("review.md")
     )
 
 
@@ -481,6 +497,33 @@ class FixPassResult:
     @property
     def skipped_count(self) -> int:
         return len(self.skipped)
+
+
+def _reconcile_checkboxes(review_file: str, wt_path: str) -> None:
+    """Auto-check findings whose files were modified but checkboxes weren't updated.
+
+    The fix agent sometimes edits source files without updating the review
+    markdown.  This reconciles by matching changed file paths to finding paths.
+    """
+    changed = _changed_source_files(wt_path)
+    if not changed:
+        return
+
+    text = Path(review_file).read_text()
+    findings = parse_findings(text)
+    updated = False
+    for f in findings:
+        if f.checked or not f.path:
+            continue
+        if f.path in changed:
+            old = f"- [ ] **[{f.id}]**"
+            new = f"- [x] **[{f.id}]**"
+            if old in text:
+                text = text.replace(old, new, 1)
+                updated = True
+
+    if updated:
+        Path(review_file).write_text(text)
 
 
 def _diff_findings(before: list[Finding], after: list[Finding]) -> FixPassResult:
@@ -555,6 +598,8 @@ def run_fix_pass(job: ReviewJob):
                  review_file=job.review_file, model=model, thinking_level=thinking,
                  provider=provider, max_turns=max_turns)
     log.blank()
+
+    _reconcile_checkboxes(job.review_file, job.wt_path)
 
     after_text = Path(job.review_file).read_text()
     after_findings = parse_findings(after_text)

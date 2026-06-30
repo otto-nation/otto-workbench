@@ -106,7 +106,7 @@ class TestCommitFixes:
         job = self._make_job(tmp_path)
         mock_run.return_value = MagicMock(returncode=0)
         review_pipeline._commit_fixes(job, fixed=3, skipped=1)
-        assert mock_run.call_count == 1
+        assert mock_run.call_count == 2  # unstaged + staged checks
 
     @patch("review_pipeline._push_fixes")
     @patch("review_pipeline.subprocess.run")
@@ -339,6 +339,88 @@ class TestCommitFixesWithSummary:
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "2 fixed, 0 skipped" in msg
         assert msg.count("\n\n") == 1
+
+
+class TestHasUncommittedChanges:
+    @patch("review_pipeline.subprocess.run")
+    def test_unstaged_changes(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1)
+        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
+        assert mock_run.call_count == 1
+
+    @patch("review_pipeline.subprocess.run")
+    def test_staged_only_changes(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # unstaged clean
+            MagicMock(returncode=1),  # staged dirty
+        ]
+        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
+        assert mock_run.call_count == 2
+
+    @patch("review_pipeline.subprocess.run")
+    def test_no_changes(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is False
+        assert mock_run.call_count == 2
+
+
+class TestCommitFixesStagedChanges:
+    def _make_job(self, tmp_path):
+        job = MagicMock()
+        job.wt_path = str(tmp_path / "worktree")
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_staged_only_changes_still_commit(self, mock_run, mock_push, tmp_path):
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # unstaged clean
+            MagicMock(returncode=1),  # staged dirty
+            MagicMock(returncode=0),  # git add -u
+            MagicMock(returncode=0, stdout="", stderr=""),  # git commit
+        ]
+        review_pipeline._commit_fixes(job, fixed=3, skipped=0)
+        assert mock_run.call_count == 4
+        commit_call = mock_run.call_args_list[3]
+        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        assert "3 fixed, 0 skipped" in msg
+
+
+class TestReconcileCheckboxes:
+    @patch("review_pipeline._changed_source_files")
+    def test_checks_matching_findings(self, mock_changed, tmp_path):
+        mock_changed.return_value = {"src/auth.go", "src/config.go"}
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** **`src/auth.go:10`** — Missing nil check\n"
+            "## Nit\n"
+            "- [ ] **[N1]** **`src/unrelated.go:5`** — Style issue\n"
+        )
+        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        text = review.read_text()
+        assert "- [x] **[M1]**" in text
+        assert "- [ ] **[N1]**" in text
+
+    @patch("review_pipeline._changed_source_files")
+    def test_no_changes_is_noop(self, mock_changed, tmp_path):
+        mock_changed.return_value = set()
+        review = tmp_path / "review.md"
+        original = "- [ ] **[M1]** **`src/auth.go:10`** — Bug\n"
+        review.write_text(original)
+        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        assert review.read_text() == original
+
+    @patch("review_pipeline._changed_source_files")
+    def test_already_checked_not_modified(self, mock_changed, tmp_path):
+        mock_changed.return_value = {"src/auth.go"}
+        review = tmp_path / "review.md"
+        original = "- [x] **[M1]** **`src/auth.go:10`** — Already fixed\n"
+        review.write_text(original)
+        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        assert review.read_text() == original
 
 
 class TestTurnBudgetScaling:

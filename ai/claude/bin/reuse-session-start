@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _reuse_levels import (  # noqa: E402
-    DEFAULT_LEVEL,
     LEVEL_DESCRIPTIONS,
+    read_default,
     read_level,
 )
 
@@ -55,7 +55,7 @@ def main() -> None:
     lines: list[str] = []
 
     level = read_level()
-    if level != DEFAULT_LEVEL:
+    if level != read_default():
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()

@@ -2,6 +2,11 @@
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true
   },
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.claude/bin/workbench-statusline",
+    "refreshInterval": 10
+  },
   "hooks": {
     "PermissionRequest": [
       {
@@ -87,6 +92,17 @@
           {
             "type": "command",
             "command": "python3 $HOME/.claude/bin/reuse-mode-tracker 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/bin/reuse-subagent-start 2>/dev/null || true"
           }
         ]
       }
@@ -256,6 +272,7 @@
       "Bash(wc:*)",
       "Bash(which:*)",
       "Bash(while:*)",
+      "Bash(workbench-reference:*)",
       "Bash(wt-cleanup:*)",
       "Bash(wt-init:*)",
       "Bash(wt:*)",
@@ -344,6 +361,7 @@
     "Bash(task:*)",
     "Bash(tree:*)",
     "Bash(validate-nesting:*)",
+    "Bash(workbench-reference:*)",
     "Bash(wt-cleanup:*)",
     "Bash(wt-init:*)",
     "Bash(wt:*)",

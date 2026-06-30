@@ -55,6 +55,7 @@ Unified PR lifecycle CLI — CI failures, code review, and review comments
 - **retro-scan** — Scan PR review comments and cross-reference against coding rules
 - **otto-log** — Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors
 - **ceiling-scan** — Scan for ceiling: markers and produce a structured debt ledger
+- **workbench-reference** — Reference card — lists all workbench skills, agents, and reuse modes
 
 ## AI Tooling
 - **rtk** — CLI proxy that compresses command output to reduce LLM token consumption — auto-active via PreToolUse hook

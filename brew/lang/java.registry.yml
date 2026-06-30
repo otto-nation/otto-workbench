@@ -5,7 +5,7 @@
 meta:
   section: "Java Tools"
   scope: java
-  install_check: true
+  install_check: false
   validation: brewfile
   source: brew/lang/java.Brewfile
 

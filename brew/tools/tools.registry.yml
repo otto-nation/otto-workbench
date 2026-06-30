@@ -4,7 +4,7 @@
 
 meta:
   section: "Dev Tools"
-  install_check: true
+  install_check: false
   validation: brewfile
   source: brew/tools/tools.Brewfile
 

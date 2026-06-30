@@ -4,6 +4,7 @@
 
 meta:
   section: "Workbench Dev Scripts"
+  scope: workbench
   install_check: false
   validation: bindir
   source: bin/local

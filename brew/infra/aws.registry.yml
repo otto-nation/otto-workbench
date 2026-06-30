@@ -5,7 +5,7 @@
 meta:
   section: "AWS Tools"
   scope: infra
-  install_check: true
+  install_check: false
   install_check_command: aws
   validation: brewfile
   source: brew/infra/aws.Brewfile

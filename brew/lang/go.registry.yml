@@ -5,7 +5,7 @@
 meta:
   section: "Go Tools"
   scope: go
-  install_check: true
+  install_check: false
   validation: brewfile
   source: brew/lang/go.Brewfile
 

@@ -192,9 +192,11 @@ def scan_rules(workbench: Path) -> list[dict]:
     results = []
     for f in sorted(rules_dir.glob("*.md")):
         heading = first_heading(f)
+        body = read_body(f)
         results.append({
             "filename": f.name,
             "heading": heading,
+            "body": body[:BODY_PREVIEW_LENGTH],
         })
     return results
 
@@ -299,8 +301,11 @@ def _format_rules(rules: list[dict]) -> list[str]:
         return ["No rules found.\n"]
     lines: list[str] = []
     for r in rules:
-        lines.append(f"- `{r['filename']}` — {r['heading']}")
-    lines.append("")
+        lines.append(f"#### `{r['filename']}` — {r['heading']}")
+        if r.get("body"):
+            lines.append("")
+            lines.append(r["body"])
+        lines.append("")
     return lines
 
 

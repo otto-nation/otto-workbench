@@ -1,3 +1,10 @@
+---
+paths:
+  - "**/SKILL.md"
+  - "ai/claude/skills/**"
+  - "ai/claude/bin/**"
+---
+
 # Claude Skills
 
 ## Usage

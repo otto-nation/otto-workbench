@@ -1,78 +1,100 @@
-#!/usr/bin/env bash
-# Print a reference card of all workbench skills, agents, and modes.
-# Discovers from SKILL.md frontmatter and agent .md files.
-#
-# Usage: workbench-reference
-#   Prints a markdown reference card of all available workbench skills,
-#   agents, and reuse modes. Auto-discovers from installed files.
-set -e
+#!/usr/bin/env python3
+"""Print a reference card of all workbench skills, agents, and modes.
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  # ceiling: duplicated help pattern, extract to shared helper if a third script needs it
-  sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# *//p; }' "$0"
-  exit 0
-fi
+Discovers from SKILL.md frontmatter and agent .md files.
 
-CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
-SKILLS_DIR="$CLAUDE_DIR/skills"
-AGENTS_DIR="$CLAUDE_DIR/agents"
+Usage: workbench-reference
+  Prints a markdown reference card of all available workbench skills,
+  agents, and reuse modes. Auto-discovers from installed files.
+"""
 
-parse_frontmatter_field() {
-  local file="$1" field="$2"
-  grep "^${field}:" "$file" | head -1 | sed "s/^${field}: *//; s/^\"//; s/\"$//"
-}
+from __future__ import annotations
 
-print_skill_row() {
-  local skill_file="$1"
-  local name invocation desc
+import os
+import re
+import sys
+from pathlib import Path
 
-  name=$(parse_frontmatter_field "$skill_file" "name")
-  [[ -z "$name" ]] && return 0
-  invocation=$(parse_frontmatter_field "$skill_file" "invocation")
-  invocation="${invocation:-/$name}"
-  desc=$(parse_frontmatter_field "$skill_file" "description")
-  desc=$(echo "$desc" | sed 's/\. TRIGGER.*/./; s/\. SKIP.*/./; s/\. Use when.*/\./')
-  printf "| \`%s\` | %s |\n" "$invocation" "$desc"
-}
+if "--help" in sys.argv or "-h" in sys.argv:
+    for line in (__doc__ or "").strip().splitlines():
+        print(line)
+    sys.exit(0)
 
-print_agent_row() {
-  local agent_file="$1"
-  local name desc
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude")))
+SKILLS_DIR = CLAUDE_DIR / "skills"
+AGENTS_DIR = CLAUDE_DIR / "agents"
 
-  name=$(parse_frontmatter_field "$agent_file" "name")
-  [[ -z "$name" ]] && name=$(basename "$agent_file" .md)
-  desc=$(parse_frontmatter_field "$agent_file" "description")
-  printf "| %s | %s |\n" "$name" "$desc"
-}
+FRONTMATTER_RE = re.compile(r"^(\w+):\s*(.*)$")
+DESC_TRIM_RE = re.compile(r"\.\s*(?:TRIGGER|SKIP|Use when).*", re.DOTALL)
 
-# ── Skills ────────────────────────────────────────────────────────────────────
 
-printf "## Skills\n\n"
-printf "| Command | Description |\n"
-printf "|---------|-------------|\n"
+def _parse_frontmatter(path: Path) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    in_frontmatter = False
+    for line in path.read_text().splitlines():
+        if line.strip() == "---":
+            if in_frontmatter:
+                break
+            in_frontmatter = True
+            continue
+        if not in_frontmatter:
+            continue
+        m = FRONTMATTER_RE.match(line)
+        if m:
+            val = m.group(2).strip().strip('"')
+            fields[m.group(1)] = val
+    return fields
 
-for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
-  [[ -f "$skill_file" ]] || continue
-  print_skill_row "$skill_file"
-done
 
-# ── Agents ────────────────────────────────────────────────────────────────────
+def _trim_description(desc: str) -> str:
+    m = DESC_TRIM_RE.search(desc)
+    if m:
+        return desc[:m.start() + 1]
+    return desc
 
-printf "\n## Agents\n\n"
-printf "| Agent | Description |\n"
-printf "|-------|-------------|\n"
 
-for agent_file in "$AGENTS_DIR"/*.md; do
-  [[ -f "$agent_file" ]] || continue
-  print_agent_row "$agent_file"
-done
+def _print_skills() -> None:
+    print("## Skills\n")
+    print("| Command | Description |")
+    print("|---------|-------------|")
 
-# ── Reuse Modes ───────────────────────────────────────────────────────────────
+    for skill_file in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        fields = _parse_frontmatter(skill_file)
+        name = fields.get("name")
+        if not name:
+            continue
+        invocation = fields.get("invocation", f"/{name}")
+        desc = _trim_description(fields.get("description", ""))
+        print(f"| `{invocation}` | {desc} |")
 
-printf "\n## Reuse Modes\n\n"
-printf "| Level | Behavior |\n"
-printf "|-------|----------|\n"
-printf "| lite | Build what's asked, name the lazier alternative in one line |\n"
-printf "| **full** | Enforce the reuse ladder. Stdlib and native first (default) |\n"
-printf "| ultra | Challenge the requirement. Deletion before addition |\n"
-printf "\nSwitch: \`/reuse lite|full|ultra\`  ·  Persist: \`/reuse default <level>\`\n"
+
+def _print_agents() -> None:
+    print("\n## Agents\n")
+    print("| Agent | Description |")
+    print("|-------|-------------|")
+
+    for agent_file in sorted(AGENTS_DIR.glob("*.md")):
+        fields = _parse_frontmatter(agent_file)
+        name = fields.get("name", agent_file.stem)
+        desc = fields.get("description", "")
+        print(f"| {name} | {desc} |")
+
+
+def _print_reuse_modes() -> None:
+    print("\n## Reuse Modes\n")
+    print("| Level | Behavior |")
+    print("|-------|----------|")
+    print("| lite | Build what's asked, name the lazier alternative in one line |")
+    print("| **full** | Enforce the reuse ladder. Stdlib and native first (default) |")
+    print("| ultra | Challenge the requirement. Deletion before addition |")
+    print("\nSwitch: `/reuse lite|full|ultra`  ·  Persist: `/reuse default <level>`")
+
+
+def main() -> None:
+    _print_skills()
+    _print_agents()
+    _print_reuse_modes()
+
+
+if __name__ == "__main__":
+    main()

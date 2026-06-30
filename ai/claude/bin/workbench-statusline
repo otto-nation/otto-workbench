@@ -1,80 +1,104 @@
-#!/usr/bin/env bash
-# Workbench status line — reuse level + PR state.
-# Called by Claude Code statusline; receives session JSON on stdin.
-#
-# Usage: workbench-statusline
-#   Reads session JSON on stdin (from Claude Code statusline hook).
-#   Outputs compact status: reuse level (if non-default) and PR state.
-set -e
+#!/usr/bin/env python3
+"""Workbench status line — reuse level + PR state.
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  # ceiling: duplicated help pattern, extract to shared helper if a third script needs it
-  sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# *//p; }' "$0"
-  exit 0
-fi
+Called by Claude Code statusline; receives session JSON on stdin.
 
-# ceiling: reuse resolution logic duplicated from _reuse_levels.py to avoid Python startup
-# on every 10-s refresh; mirror changes to read_level()/read_default() here if logic changes
-read_reuse_piece() {
-  local level_file="$HOME/.config/workbench/reuse-level"
-  local default_file="$HOME/.config/workbench/reuse-default"
-  local level="" default_level="full"
+Usage: workbench-statusline
+  Reads session JSON on stdin (from Claude Code statusline hook).
+  Outputs compact status: reuse level (if non-default) and PR state.
+"""
 
-  if [[ -n "${REUSE_DEFAULT_MODE:-}" ]]; then
-    default_level="${REUSE_DEFAULT_MODE}"
-  elif [[ -f "$default_file" ]]; then
-    default_level=$(< "$default_file")
-  fi
-  [[ -f "$level_file" ]] && level=$(< "$level_file")
+from __future__ import annotations
 
-  level="${level:-$default_level}"
-  [[ "$level" != "$default_level" ]] && printf "reuse:%s" "$level"
-  return 0
-}
+import json
+import subprocess
+import sys
+from pathlib import Path
 
-read_pr_piece() {
-  local repo_root state_file pr_number
-  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
-  state_file="$repo_root/.workbench/state.json"
-  [[ -f "$state_file" ]] || return 0
+if "--help" in sys.argv or "-h" in sys.argv:
+    for line in (__doc__ or "").strip().splitlines():
+        print(line)
+    sys.exit(0)
 
-  pr_number=$(jq -r '.identity.pr_number // empty' "$state_file" 2>/dev/null)
-  [[ -n "$pr_number" ]] || return 0
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _reuse_levels import read_default, read_level
 
-  local label="PR#${pr_number}"
-  local details
-  details=$(read_pr_details "$state_file")
-  [[ -n "$details" ]] && label="$label $details"
-  printf "%s" "$label"
-}
 
-read_pr_details() {
-  local state_file="$1" parts=()
+def _reuse_piece() -> str:
+    level = read_level()
+    default = read_default()
+    if level != default:
+        return f"reuse:{level}"
+    return ""
 
-  local vals ci_conclusion ci_failures verdict open_threads
-  vals=$(jq -r '[.ci.conclusion // "", .ci.failure_count // 0, .review.verdict // "", .comments.by_state.open // 0] | @tsv' "$state_file" 2>/dev/null) || return 0
-  IFS=$'\t' read -r ci_conclusion ci_failures verdict open_threads <<< "$vals"
 
-  if [[ "$ci_conclusion" == "failure" && "$ci_failures" -gt 0 ]]; then
-    parts+=("CI:${ci_failures}F")
-  elif [[ "$ci_conclusion" == "success" ]]; then
-    parts+=("CI:ok")
-  elif [[ -n "$ci_conclusion" ]]; then
-    parts+=("CI:$ci_conclusion")
-  fi
+def _pr_piece() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return ""
+        repo_root = result.stdout.strip()
+    except Exception:
+        return ""
 
-  [[ -n "$verdict" ]] && parts+=("review:$verdict")
-  [[ "$open_threads" -gt 0 ]] && parts+=("${open_threads}open")
+    state_file = Path(repo_root) / ".workbench" / "state.json"
+    if not state_file.is_file():
+        return ""
 
-  [[ ${#parts[@]} -gt 0 ]] && printf "%s" "${parts[*]}"
-  return 0
-}
+    try:
+        state = json.loads(state_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return ""
 
-pieces=()
-reuse=$(read_reuse_piece)
-[[ -n "$reuse" ]] && pieces+=("$reuse")
-pr=$(read_pr_piece)
-[[ -n "$pr" ]] && pieces+=("$pr")
-if [[ ${#pieces[@]} -gt 0 ]]; then
-  printf "%s" "${pieces[*]}"
-fi
+    pr_number = (state.get("identity") or {}).get("pr_number")
+    if not pr_number:
+        return ""
+
+    label = f"PR#{pr_number}"
+    details = _pr_details(state)
+    if details:
+        label = f"{label} {details}"
+    return label
+
+
+def _pr_details(state: dict) -> str:
+    parts: list[str] = []
+
+    ci = state.get("ci") or {}
+    ci_conclusion = ci.get("conclusion") or ""
+    ci_failures = ci.get("failure_count") or 0
+    if ci_conclusion == "failure" and ci_failures > 0:
+        parts.append(f"CI:{ci_failures}F")
+    elif ci_conclusion == "success":
+        parts.append("CI:ok")
+    elif ci_conclusion:
+        parts.append(f"CI:{ci_conclusion}")
+
+    verdict = (state.get("review") or {}).get("verdict") or ""
+    if verdict:
+        parts.append(f"review:{verdict}")
+
+    open_threads = (state.get("comments") or {}).get("by_state", {}).get("open") or 0
+    if open_threads > 0:
+        parts.append(f"{open_threads}open")
+
+    return " ".join(parts)
+
+
+def main() -> None:
+    pieces: list[str] = []
+    reuse = _reuse_piece()
+    if reuse:
+        pieces.append(reuse)
+    pr = _pr_piece()
+    if pr:
+        pieces.append(pr)
+    if pieces:
+        print(" ".join(pieces), end="")
+
+
+if __name__ == "__main__":
+    main()

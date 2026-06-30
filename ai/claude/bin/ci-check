@@ -43,6 +43,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-template
 
 
 _SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
+_FAILURE_CONCLUSIONS = frozenset(("failure", "timed_out", "action_required", "stale", "startup_failure"))
 
 
 def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
@@ -203,8 +204,8 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     failures: dict[str, ci.FailureGroup] = {}
 
     for job in jobs:
-        conclusion = job.get("conclusion", "")
-        if conclusion in ("success", "skipped", "cancelled", "neutral"):
+        conclusion = job.get("conclusion")
+        if conclusion not in _FAILURE_CONCLUSIONS:
             continue
 
         job_name = job.get("name", "unknown")
@@ -237,9 +238,6 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     )
 
 
-_NON_FAILURE_CONCLUSIONS = ("success", "skipped", "cancelled", "neutral", None)
-
-
 def _merge_runs(run_data_list: list[dict]) -> dict | None:
     """Merge multiple workflow run dicts into a single combined run.
 
@@ -252,7 +250,7 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
     primary = run_data_list[0]
     all_jobs = []
     for rd in run_data_list:
-        if rd.get("conclusion") not in _NON_FAILURE_CONCLUSIONS:
+        if rd.get("conclusion") in _FAILURE_CONCLUSIONS:
             primary["conclusion"] = "failure"
         rid = rd.get("_run_id")
         for job in rd.get("jobs", []):

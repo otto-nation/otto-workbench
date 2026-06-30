@@ -26,8 +26,9 @@ Reuse ladder — stop at the first rung that solves the problem:
 1. **Already in this codebase?** Reuse it — check if the pattern exists elsewhere before writing a narrow fix
 2. **Stdlib / language built-in?** Use it
 3. **Already-installed dependency?** Use it
-4. **New utility function?** Write the minimum
-5. **New dependency?** Justify it
+4. **One line?** Write it inline — don't extract a function or file for what fits in one line
+5. **New utility function?** Write the minimum
+6. **New dependency?** Justify it
 
 - Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere
 - Never defer review findings to issues — fix them in the current PR or create separate PRs

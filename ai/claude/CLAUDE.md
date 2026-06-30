@@ -31,6 +31,26 @@ protocol before taking action. Agent files live at `~/.claude/agents/`.
 | Dependency upgrade or framework migration | `migrate.md` | Plan before changing |
 | Code review (PR or diff) | `reviewer.md` | Review before approving |
 
+## Reuse Level
+
+If `~/.config/workbench/reuse-level` exists, read it at session start — it controls
+how aggressively the reuse ladder (in `general.md`) is enforced:
+
+| Level | Behavior |
+|---|---|
+| **lite** | Build what's asked, name the lazier alternative in one line. User picks |
+| **full** | Enforce the reuse ladder. Stdlib and native first. Shortest diff (default) |
+| **ultra** | Challenge the requirement. Deletion before addition. Ship the one-liner |
+
+Default is `full` when no file exists. Change with `/reuse lite|full|ultra`.
+
+## Ceiling Debt
+
+If `.claude/ceiling-debt.md` exists in the project, read it at session start — it
+lists deliberate simplifications marked with `// ceiling:` comments. Each entry names
+the tradeoff and (ideally) the upgrade trigger. Entries flagged **no-trigger** are rot
+risk. Auto-regenerated via Stop hook; run `/ceiling-debt` to force a refresh.
+
 ## Output
 
 - Do not summarize changes at the end of a response — the diff speaks for itself

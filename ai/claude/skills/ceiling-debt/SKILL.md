@@ -6,7 +6,7 @@ invocation: "/ceiling-debt"
 trigger: "ceiling debt, show ceilings, what did we defer, list simplifications, ceiling markers"
 skip: "General tech debt discussion, architecture review, non-code requests"
 output: "ceiling debt ledger to stdout (manual); .claude/ceiling-debt.md (auto)"
-lifecycle_cadence: "every session exit"
+lifecycle_cadence: "on-stop"
 lifecycle_scope: per-project
 ---
 

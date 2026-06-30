@@ -13,6 +13,7 @@ Exit code is always 0 (informational).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -117,8 +118,13 @@ def format_ledger(markers: list[dict]) -> str:
 
 
 def format_summary(markers: list[dict]) -> str:
+    counts = marker_counts(markers)
+    return f"{counts['total']} ceiling marker(s), {counts['no_trigger']} with no trigger"
+
+
+def marker_counts(markers: list[dict]) -> dict:
     no_trigger = sum(1 for m in markers if m["trigger"] is None)
-    return f"{len(markers)} ceiling marker(s), {no_trigger} with no trigger"
+    return {"total": len(markers), "no_trigger": no_trigger}
 
 
 def main() -> None:
@@ -135,6 +141,17 @@ def main() -> None:
         "--summary-only",
         action="store_true",
         help="Output only the summary line",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output counts as JSON: {\"total\": N, \"no_trigger\": M}",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit 0 if markers found, 1 if none (for gating scripts)",
     )
     parser.add_argument(
         "--output",
@@ -154,6 +171,13 @@ def main() -> None:
         sys.exit(0)
 
     markers = scan_directory(root)
+
+    if args.check:
+        sys.exit(0 if markers else 1)
+
+    if args.json_output:
+        print(json.dumps(marker_counts(markers)))
+        return
 
     if args.summary_only:
         print(format_summary(markers))

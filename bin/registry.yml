@@ -70,24 +70,18 @@ tools:
 
   - name: wt-init
     permission: true
-    visibility: full
+    visibility: brief
     description: "Convert a regular git repo to a bare repo with worktrees"
-    when_to_use: "Setting up a repo for parallel worktree development with worktrunk"
-    usage: "wt-init  |  wt-init ~/code/myrepo  |  wt-init --dry-run"
 
   - name: lint-sweep
     permission: true
-    visibility: full
+    visibility: brief
     description: "Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches"
-    when_to_use: "Remediating a lint rule across many repos at once (e.g. no-stdlib-log, no-raw-getenv)"
-    usage: "lint-sweep --rule no-stdlib-log --repos 'svc-*'  |  lint-sweep --rule no-raw-getenv --repos ~/src/maximum/main/svc-* --fix  |  lint-sweep --rule <name> --repos . --dry-run"
 
   - name: validate-nesting
     permission: true
-    visibility: full
+    visibility: brief
     description: "Validate bash, Python, and Go script nesting depth to enforce flat control flow"
-    when_to_use: "After writing deeply nested conditionals or loops; runs automatically on pre-push for all repos"
-    usage: "validate-nesting [--quiet] [--max-depth N] [file...]"
 
   - name: gcloud-reauth
     permission: false

@@ -17,10 +17,8 @@ tools:
 
   - name: claude-rules
     permission: true
-    visibility: full
+    visibility: brief
     description: "Manages local Claude Code rule additions not tracked in the workbench"
-    when_to_use: "Adding machine-specific or project-specific Claude instructions"
-    usage: "claude-rules add <domain> \"rule\"  |  claude-rules list  |  claude-rules status"
 
   - name: review-rebuild
     permission: false

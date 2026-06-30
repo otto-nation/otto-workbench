@@ -276,6 +276,9 @@ SCOPE_PATHS[infra]='  - "**/Dockerfile*"
   - "**/*.tf"
   - "**/k8s/**"
   - "**/kubernetes/**"'
+SCOPE_PATHS[workbench]='  - "**/bin/local/**"
+  - "**/lib/*.sh"
+  - "**/install.components"'
 
 _tool_registries=()
 collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"

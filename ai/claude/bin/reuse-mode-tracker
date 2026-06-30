@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Track /reuse lite|full|ultra commands via UserPromptSubmit hook.
+
+Reads hook JSON from stdin, checks if the prompt matches /reuse <level>,
+writes the level to ~/.config/workbench/reuse-level, and emits context.
+
+Usage (called by settings.json UserPromptSubmit hook):
+  echo '{"prompt":"/reuse ultra"}' | reuse-mode-tracker
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+VALID_LEVELS = {"lite", "full", "ultra"}
+LEVEL_FILE = Path.home() / ".config" / "workbench" / "reuse-level"
+
+LEVEL_DESCRIPTIONS = {
+    "lite": "Build what's asked, name the lazier alternative in one line. User picks.",
+    "full": "Enforce the reuse ladder. Stdlib and native first. Shortest diff.",
+    "ultra": "Challenge the requirement. Deletion before addition. Ship the one-liner.",
+}
+
+
+def main() -> None:
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return
+
+    prompt = data.get("prompt", "").strip()
+    if not prompt.startswith("/reuse"):
+        return
+
+    parts = prompt.split(None, 1)
+    if len(parts) < 2:
+        print(f"Current reuse level: {_read_level()}")
+        return
+
+    level = parts[1].lower().strip()
+    if level not in VALID_LEVELS:
+        print(f"Unknown reuse level: {level}. Valid: lite, full, ultra")
+        return
+
+    LEVEL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LEVEL_FILE.write_text(level)
+    print(f"Reuse level set to: {level} — {LEVEL_DESCRIPTIONS[level]}")
+
+
+def _read_level() -> str:
+    try:
+        return LEVEL_FILE.read_text().strip()
+    except FileNotFoundError:
+        return "full"
+
+
+if __name__ == "__main__":
+    main()

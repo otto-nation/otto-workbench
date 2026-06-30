@@ -69,6 +69,28 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/bin/reuse-session-start 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/.claude/bin/reuse-mode-tracker 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -95,6 +117,10 @@
           },
           {
             "type": "command",
+            "command": "bash $HOME/.claude/skills/ceiling-debt/should-ceiling-scan.sh && python3 $HOME/.claude/bin/ceiling-scan --output .claude/ceiling-debt.md || true"
+          },
+          {
+            "type": "command",
             "command": "find $HOME/.claude/logs -name '*.log' -mtime +7 -delete 2>/dev/null || true"
           }
         ]
@@ -118,6 +144,7 @@
       "Bash(brew:*)",
       "Bash(cat:*)",
       "Bash(cd:*)",
+      "Bash(ceiling-scan:*)",
       "Bash(chmod:*)",
       "Bash(ci-check:*)",
       "Bash(claude-review:*)",
@@ -258,6 +285,7 @@
   "_generated_permissions": [
     "Bash(./gradlew:*)",
     "Bash(bats:*)",
+    "Bash(ceiling-scan:*)",
     "Bash(ci-check:*)",
     "Bash(claude-review:*)",
     "Bash(claude-rules:*)",

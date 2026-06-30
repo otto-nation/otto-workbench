@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""SessionStart hook: inject reuse level and ceiling scan nudge.
+
+Two responsibilities:
+1. Emit the active reuse level as session context
+2. Run ceiling-scan --summary-only; if no-trigger markers exist, nudge
+
+Usage (called by settings.json SessionStart hook):
+  reuse-session-start
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+LEVEL_FILE = Path.home() / ".config" / "workbench" / "reuse-level"
+
+LEVEL_DESCRIPTIONS = {
+    "lite": "Build what's asked, name the lazier alternative in one line. User picks.",
+    "full": "Enforce the reuse ladder. Stdlib and native first. Shortest diff.",
+    "ultra": "Challenge the requirement. Deletion before addition. Ship the one-liner.",
+}
+
+
+def _read_level() -> str:
+    try:
+        return LEVEL_FILE.read_text().strip()
+    except FileNotFoundError:
+        return "full"
+
+
+def _ceiling_summary() -> str | None:
+    ceiling_scan = Path(__file__).resolve().parent / "ceiling-scan"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ceiling_scan), "--summary-only"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def main() -> None:
+    lines: list[str] = []
+
+    level = _read_level()
+    if level != "full":
+        lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
+
+    summary = _ceiling_summary()
+    if summary and "with no trigger" in summary:
+        parts = summary.split(",")
+        for part in parts:
+            part = part.strip()
+            if "with no trigger" in part and not part.startswith("0 "):
+                lines.append(
+                    f"{summary} — run /ceiling-debt to review"
+                )
+                break
+
+    if lines:
+        print("\n".join(lines))
+
+
+if __name__ == "__main__":
+    main()

@@ -22,8 +22,19 @@ For each function the diff changes, find its callers (Grep for the symbol) and c
 ### Angle D — Reuse & convention fitness
 Flag new code that re-implements something the codebase already has. Grep shared/utility modules, base classes, and files adjacent to the change. Name the existing implementation and cite its location. Also check the inverse: if the existing implementation is itself an anti-pattern (stale API, accidental boilerplate, scale-broken switch/case), flag the convention as a should-fix rather than enforcing conformity — recommend the direction for improvement.
 
+Prefix each finding with a tag:
+- `stdlib:` — hand-rolled equivalent of a stdlib or language built-in
+- `yagni:` — single-implementation abstraction, unused config, speculative flexibility
+- `native:` — platform feature available that the code re-implements
+
 ### Angle E — Simplification
 Flag unnecessary complexity the diff adds: redundant or derivable state, copy-paste with slight variation, deep nesting, dead code left behind. Name the simpler form that does the same job.
+
+Prefix each finding with a tag:
+- `delete:` — dead code, unused flexibility, unreachable paths
+- `shrink:` — same logic achievable in fewer lines
+
+End the Simplification angle with `net: -N lines possible` if reductions were found.
 
 ### Angle F — Efficiency
 Flag wasted work the diff introduces: redundant computation or repeated I/O, independent operations run sequentially, blocking work added to startup or hot paths. Name the cheaper alternative.
@@ -55,8 +66,8 @@ Must-fix and should-fix findings must include an evidence block — a blockquote
 
 Classify findings by severity:
 - **Must fix (M)**: Correctness bugs from Angles A, B, C — real defects with concrete failure scenarios
-- **Should fix (S)**: Reuse (D) and altitude (G) findings — not bugs, but the code should be improved
-- **Nit (N)**: Simplification (E) and efficiency (F) findings — cleanup and optimization
+- **Should fix (S)**: Reuse (D), altitude (G), and `delete:` simplification (E) findings — not bugs, but the code should be improved
+- **Nit (N)**: `shrink:` simplification (E) and efficiency (F) findings — cleanup and optimization
 - **Idioms (I)**: Language or framework idiom violations found by any angle
 
 Omit empty severity sections entirely.

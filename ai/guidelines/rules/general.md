@@ -47,6 +47,7 @@ On failure, diagnose in this order — do NOT retry with variations:
 - Comments should be production-ready; place them above the line, never inline
 - Do not add comments that exist only to explain what a prompt change did
 - Silent fallbacks and defense-in-depth patterns require a comment explaining intent
+- Mark deliberate simplifications with a `// ceiling:` comment naming the tradeoff and upgrade trigger — e.g. `// ceiling: global lock, upgrade to per-account locks if throughput matters`
 - When adding docs, extend existing files rather than creating new ones
 - When adding CLI commands or changing command signatures, update `docs/ai-automation.md` and/or `README.md`
 

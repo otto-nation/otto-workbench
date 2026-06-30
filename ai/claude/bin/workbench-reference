@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # Print a reference card of all workbench skills, agents, and modes.
 # Discovers from SKILL.md frontmatter and agent .md files.
+#
+# Usage: workbench-reference
+#   Prints a markdown reference card of all available workbench skills,
+#   agents, and reuse modes. Auto-discovers from installed files.
 set -e
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# *//p; }' "$0"
+  exit 0
+fi
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 SKILLS_DIR="$CLAUDE_DIR/skills"

@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # Workbench status line — reuse level + PR state.
 # Called by Claude Code statusline; receives session JSON on stdin.
+#
+# Usage: workbench-statusline
+#   Reads session JSON on stdin (from Claude Code statusline hook).
+#   Outputs compact status: reuse level (if non-default) and PR state.
 set -e
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# *//p; }' "$0"
+  exit 0
+fi
 
 read_reuse_piece() {
   local level_file="$HOME/.config/workbench/reuse-level"

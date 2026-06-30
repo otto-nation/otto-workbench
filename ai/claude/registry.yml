@@ -99,6 +99,21 @@ tools:
     visibility: hidden
     description: "Fetch CI run data, classify failures, and output status dashboard"
 
+  - name: ceiling-scan
+    permission: true
+    visibility: brief
+    description: "Scan for ceiling: markers and produce a structured debt ledger"
+
+  - name: reuse-mode-tracker
+    permission: false
+    visibility: hidden
+    description: "Track /reuse lite|full|ultra commands via UserPromptSubmit hook"
+
+  - name: reuse-session-start
+    permission: false
+    visibility: hidden
+    description: "SessionStart hook — inject reuse level and ceiling scan nudge"
+
   - name: run-auto-task
     permission: false
     visibility: hidden

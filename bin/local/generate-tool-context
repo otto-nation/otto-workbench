@@ -460,7 +460,7 @@ _readme_lifecycle() {
   printf '\nAdditionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.\n'
   printf '\n### Manual triggers\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
-  printf 'All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.\n'
+  printf 'All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.\n'
 }
 
 # _readme_skill_reference — renders the Skill Reference section for ai-automation.md.

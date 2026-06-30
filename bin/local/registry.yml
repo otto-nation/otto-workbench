@@ -42,4 +42,4 @@ tools:
   - name: generate-tool-context
     permission: false
     visibility: brief
-    description: "Generates ai/guidelines/rules/tools.generated.md from the domain registries"
+    description: "Generates tools.generated*.md rule files from the domain registries"

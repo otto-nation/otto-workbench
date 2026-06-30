@@ -4,6 +4,7 @@
 
 meta:
   section: "Kubernetes Tools"
+  scope: infra
   install_check: true
   validation: brewfile
   source: brew/infra/kubernetes.Brewfile

@@ -566,6 +566,55 @@ def test_step_conflicts_fix_ai_unavailable():
     assert rc == 3
 
 
+def test_step_conflicts_continue_fails_but_rebase_in_progress():
+    """rebase --continue fails because next commit has conflicts — continue loop."""
+    all_resolved = []
+
+    def fake_run(cmd, **kwargs):
+        r = subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if "rebase" in cmd and "--continue" in cmd:
+            r.returncode = 1
+            r.stderr = "error: could not apply abc123... next commit"
+        return r
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], all_resolved)
+
+    assert rc is None
+    assert all_resolved == ["a.py"]
+
+
+def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
+    """rebase --continue fails and rebase is not in progress — abort."""
+    abort_called = []
+
+    def fake_run(cmd, **kwargs):
+        if "--abort" in cmd:
+            abort_called.append(True)
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if "rebase" in cmd and "--continue" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="fatal: error")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], [])
+
+    assert rc == 1
+    assert abort_called
+
+
 # ── _step_advance ────────────────────────────────────────────────────────
 
 
@@ -596,8 +645,23 @@ def test_step_advance_continue_succeeds():
     assert rc is None
 
 
+def test_step_advance_continue_fails_but_rebase_in_progress():
+    """--continue fails because next commit has conflicts — continue loop."""
+    def fake_run(cmd, **kwargs):
+        if "rebase" in cmd and "--continue" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="could not apply")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._step_advance("/fake")
+
+    assert rc is None
+
+
 def test_step_advance_continue_fails_aborts():
-    """--continue failure without conflicts aborts the rebase and returns 1."""
+    """--continue failure with rebase not in progress aborts and returns 1."""
     abort_called = []
 
     def fake_run(cmd, **kwargs):
@@ -607,6 +671,7 @@ def test_step_advance_continue_fails_aborts():
         return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="stuck state")
 
     with mock.patch.object(pr_rebase_cli, "_is_empty_patch", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch("subprocess.run", side_effect=fake_run):
         rc = pr_rebase_cli._step_advance("/fake")
 

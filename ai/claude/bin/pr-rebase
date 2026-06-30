@@ -650,7 +650,10 @@ def _force_push(cwd: str) -> int:
     if _trail:
         _trail.info("force_push", "committing regenerated files before retry", data={"files": modified})
     log.info("Committing regenerated files...")
-    subprocess.run(["git", "add", "-u"], cwd=cwd)
+    ar = subprocess.run(["git", "add", "-u"], cwd=cwd)
+    if ar.returncode != 0:
+        log.error("Failed to stage regenerated files.")
+        return r.returncode
     cr = subprocess.run(
         ["git", "commit", "-m", "chore(docs): regenerate after rebase"],
         capture_output=True, text=True, cwd=cwd,

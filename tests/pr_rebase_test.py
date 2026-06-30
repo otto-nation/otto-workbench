@@ -806,9 +806,14 @@ def test_force_push_commit_fails_returns_original_error():
 
 def test_force_push_retry_also_fails():
     """Push fails, retry after commit also fails — returns retry's error code."""
+    push_count = [0]
+
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="rejected")
+            push_count[0] += 1
+            if push_count[0] == 1:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="rejected")
+            return subprocess.CompletedProcess(args=cmd, returncode=128, stdout="", stderr="retry failed")
         if "--porcelain" in cmd:
             return subprocess.CompletedProcess(
                 args=cmd, returncode=0,
@@ -819,4 +824,4 @@ def test_force_push_retry_also_fails():
     with mock.patch("subprocess.run", side_effect=fake_run):
         rc = pr_rebase_cli._force_push("/fake")
 
-    assert rc == 1
+    assert rc == 128

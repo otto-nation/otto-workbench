@@ -7,45 +7,44 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 SKILLS_DIR="$CLAUDE_DIR/skills"
 AGENTS_DIR="$CLAUDE_DIR/agents"
 
+parse_frontmatter_field() {
+  local file="$1" field="$2"
+  grep "^${field}:" "$file" | head -1 | sed "s/^${field}: *//; s/^\"//; s/\"$//"
+}
+
+print_skill_row() {
+  local skill_file="$1"
+  local name invocation desc
+
+  name=$(parse_frontmatter_field "$skill_file" "name")
+  [[ -z "$name" ]] && return 0
+  invocation=$(parse_frontmatter_field "$skill_file" "invocation")
+  invocation="${invocation:-/$name}"
+  desc=$(parse_frontmatter_field "$skill_file" "description")
+  desc=$(echo "$desc" | sed 's/\. TRIGGER.*/./; s/\. SKIP.*/./; s/\. Use when.*/\./')
+  printf "| \`%s\` | %s |\n" "$invocation" "$desc"
+}
+
+print_agent_row() {
+  local agent_file="$1"
+  local name desc
+
+  name=$(parse_frontmatter_field "$agent_file" "name")
+  [[ -z "$name" ]] && name=$(basename "$agent_file" .md)
+  desc=$(parse_frontmatter_field "$agent_file" "description")
+  printf "| %s | %s |\n" "$name" "$desc"
+}
+
 # ── Skills ────────────────────────────────────────────────────────────────────
 
 printf "## Skills\n\n"
 printf "| Command | Description |\n"
 printf "|---------|-------------|\n"
 
-if [[ -d "$SKILLS_DIR" ]]; then
-    for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
-        [[ -f "$skill_file" ]] || continue
-        name=""
-        invocation=""
-        desc=""
-        in_frontmatter=false
-
-        while IFS= read -r line; do
-            if [[ "$line" == "---" ]]; then
-                if $in_frontmatter; then
-                    break
-                fi
-                in_frontmatter=true
-                continue
-            fi
-            if $in_frontmatter; then
-                case "$line" in
-                    name:*)      name=$(echo "$line" | sed 's/^name: *//; s/^"//; s/"$//') ;;
-                    invocation:*) invocation=$(echo "$line" | sed 's/^invocation: *//; s/^"//; s/"$//') ;;
-                esac
-            fi
-        done < "$skill_file"
-
-        # Extract first sentence of description field
-        desc=$(grep '^description:' "$skill_file" | head -1 | sed 's/^description: *"//; s/".*//')
-        # Truncate at first period followed by space or TRIGGER
-        desc=$(echo "$desc" | sed 's/\. TRIGGER.*/./; s/\. SKIP.*/./; s/\. Use when.*/\./')
-
-        invocation="${invocation:-/$name}"
-        [[ -n "$name" ]] && printf "| \`%s\` | %s |\n" "$invocation" "$desc"
-    done
-fi
+for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+  [[ -f "$skill_file" ]] || continue
+  print_skill_row "$skill_file"
+done
 
 # ── Agents ────────────────────────────────────────────────────────────────────
 
@@ -53,33 +52,10 @@ printf "\n## Agents\n\n"
 printf "| Agent | Description |\n"
 printf "|-------|-------------|\n"
 
-if [[ -d "$AGENTS_DIR" ]]; then
-    for agent_file in "$AGENTS_DIR"/*.md; do
-        [[ -f "$agent_file" ]] || continue
-        name=""
-        desc=""
-        in_frontmatter=false
-
-        while IFS= read -r line; do
-            if [[ "$line" == "---" ]]; then
-                if $in_frontmatter; then
-                    break
-                fi
-                in_frontmatter=true
-                continue
-            fi
-            if $in_frontmatter; then
-                case "$line" in
-                    name:*)        name=$(echo "$line" | sed 's/^name: *//; s/^"//; s/"$//') ;;
-                    description:*) desc=$(echo "$line" | sed 's/^description: *//; s/^"//; s/"$//') ;;
-                esac
-            fi
-        done < "$agent_file"
-
-        [[ -z "$name" ]] && name=$(basename "$agent_file" .md)
-        [[ -n "$name" ]] && printf "| %s | %s |\n" "$name" "$desc"
-    done
-fi
+for agent_file in "$AGENTS_DIR"/*.md; do
+  [[ -f "$agent_file" ]] || continue
+  print_agent_row "$agent_file"
+done
 
 # ── Reuse Modes ───────────────────────────────────────────────────────────────
 

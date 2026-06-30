@@ -3,68 +3,66 @@
 # Called by Claude Code statusline; receives session JSON on stdin.
 set -e
 
+read_reuse_piece() {
+  local level_file="$HOME/.config/workbench/reuse-level"
+  local default_file="$HOME/.config/workbench/reuse-default"
+  local level="" default_level="full"
+
+  [[ -f "$level_file" ]] && level=$(< "$level_file")
+  [[ -f "$default_file" ]] && default_level=$(< "$default_file")
+
+  level="${level:-$default_level}"
+  [[ "$level" != "$default_level" ]] && printf "reuse:%s" "$level"
+  return 0
+}
+
+read_pr_piece() {
+  local repo_root state_file pr_number
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  state_file="$repo_root/.workbench/state.json"
+  [[ -f "$state_file" ]] || return 0
+
+  pr_number=$(jq -r '.identity.pr_number // empty' "$state_file" 2>/dev/null)
+  [[ -n "$pr_number" ]] || return 0
+
+  local label="PR#${pr_number}"
+  local details
+  details=$(read_pr_details "$state_file")
+  [[ -n "$details" ]] && label="$label $details"
+  printf "%s" "$label"
+}
+
+read_pr_details() {
+  local state_file="$1" parts=()
+
+  local ci_conclusion ci_failures
+  ci_conclusion=$(jq -r '.ci.conclusion // empty' "$state_file" 2>/dev/null)
+  ci_failures=$(jq -r '.ci.failure_count // 0' "$state_file" 2>/dev/null)
+  if [[ "$ci_conclusion" == "failure" && "$ci_failures" -gt 0 ]]; then
+    parts+=("CI:${ci_failures}F")
+  elif [[ "$ci_conclusion" == "success" ]]; then
+    parts+=("CI:ok")
+  elif [[ -n "$ci_conclusion" ]]; then
+    parts+=("CI:$ci_conclusion")
+  fi
+
+  local verdict
+  verdict=$(jq -r '.review.verdict // empty' "$state_file" 2>/dev/null)
+  [[ -n "$verdict" ]] && parts+=("review:$verdict")
+
+  local open_threads
+  open_threads=$(jq -r '.comments.by_state.open // 0' "$state_file" 2>/dev/null)
+  [[ "$open_threads" -gt 0 ]] && parts+=("${open_threads}open")
+
+  [[ ${#parts[@]} -gt 0 ]] && printf "%s" "${parts[*]}"
+  return 0
+}
+
 pieces=()
-
-# Reuse level (only show if non-default)
-level_file="$HOME/.config/workbench/reuse-level"
-default_file="$HOME/.config/workbench/reuse-default"
-level=""
-default_level="full"
-
-if [[ -f "$level_file" ]]; then
-    level=$(< "$level_file")
-fi
-if [[ -f "$default_file" ]]; then
-    default_level=$(< "$default_file")
-fi
-
-level="${level:-$default_level}"
-if [[ "$level" != "$default_level" ]]; then
-    pieces+=("reuse:$level")
-fi
-
-# PR state from .workbench/state.json in current repo
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
-state_file="$repo_root/.workbench/state.json"
-
-if [[ -n "$repo_root" && -f "$state_file" ]]; then
-    pr_number=$(jq -r '.identity.pr_number // empty' "$state_file" 2>/dev/null)
-
-    if [[ -n "$pr_number" ]]; then
-        pr_parts=()
-
-        # CI status
-        ci_conclusion=$(jq -r '.ci.conclusion // empty' "$state_file" 2>/dev/null)
-        ci_failures=$(jq -r '.ci.failure_count // 0' "$state_file" 2>/dev/null)
-        if [[ "$ci_conclusion" == "failure" && "$ci_failures" -gt 0 ]]; then
-            pr_parts+=("CI:${ci_failures}F")
-        elif [[ "$ci_conclusion" == "success" ]]; then
-            pr_parts+=("CI:ok")
-        elif [[ -n "$ci_conclusion" ]]; then
-            pr_parts+=("CI:$ci_conclusion")
-        fi
-
-        # Review verdict
-        verdict=$(jq -r '.review.verdict // empty' "$state_file" 2>/dev/null)
-        if [[ -n "$verdict" ]]; then
-            pr_parts+=("review:$verdict")
-        fi
-
-        # Open comment threads
-        open_threads=$(jq -r '.comments.by_state.open // 0' "$state_file" 2>/dev/null)
-        if [[ "$open_threads" -gt 0 ]]; then
-            pr_parts+=("${open_threads}open")
-        fi
-
-        if [[ ${#pr_parts[@]} -gt 0 ]]; then
-            joined=$(printf " " ; printf "%s " "${pr_parts[@]}")
-            pieces+=("PR#${pr_number}${joined% }")
-        else
-            pieces+=("PR#${pr_number}")
-        fi
-    fi
-fi
-
+reuse=$(read_reuse_piece)
+[[ -n "$reuse" ]] && pieces+=("$reuse")
+pr=$(read_pr_piece)
+[[ -n "$pr" ]] && pieces+=("$pr")
 if [[ ${#pieces[@]} -gt 0 ]]; then
-    printf "%s" "${pieces[*]}"
+  printf "%s" "${pieces[*]}"
 fi

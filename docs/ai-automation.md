@@ -93,8 +93,8 @@ Scan for ceiling: markers and present the debt ledger. TRIGGER when: user asks a
 /ceiling-debt
 ```
 
-**Output:** `ceiling debt ledger to stdout`
-**Auto-trigger:** on-stop (via Stop hook)
+**Output:** `ceiling debt ledger to stdout (manual); .claude/ceiling-debt.md (auto)`
+**Auto-trigger:** every session exit (via Stop hook)
 **Trigger:** ceiling debt, show ceilings, what did we defer, list simplifications, ceiling markers
 **Skip:** General tech debt discussion, architecture review, non-code requests
 
@@ -204,7 +204,7 @@ Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale gi
 
 ### Manual triggers
 
-All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
+All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
 <!-- LIFECYCLE-END -->
 
 ## Task Automation

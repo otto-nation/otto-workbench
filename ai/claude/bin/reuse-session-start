@@ -15,27 +15,32 @@ import subprocess
 import sys
 from pathlib import Path
 
-LEVEL_FILE = Path.home() / ".config" / "workbench" / "reuse-level"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _reuse_levels import (  # noqa: E402
+    DEFAULT_LEVEL,
+    LEVEL_DESCRIPTIONS,
+    read_level,
+)
 
-LEVEL_DESCRIPTIONS = {
-    "lite": "Build what's asked, name the lazier alternative in one line. User picks.",
-    "full": "Enforce the reuse ladder. Stdlib and native first. Shortest diff.",
-    "ultra": "Challenge the requirement. Deletion before addition. Ship the one-liner.",
-}
 
-
-def _read_level() -> str:
+def _repo_root() -> str | None:
     try:
-        return LEVEL_FILE.read_text().strip()
-    except FileNotFoundError:
-        return "full"
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
 
 
-def _ceiling_summary() -> str | None:
+def _ceiling_summary(repo: str) -> str | None:
     ceiling_scan = Path(__file__).resolve().parent / "ceiling-scan"
     try:
         result = subprocess.run(
-            [sys.executable, str(ceiling_scan), "--summary-only"],
+            [sys.executable, str(ceiling_scan), "--summary-only", repo],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
@@ -48,20 +53,17 @@ def _ceiling_summary() -> str | None:
 def main() -> None:
     lines: list[str] = []
 
-    level = _read_level()
-    if level != "full":
+    level = read_level()
+    if level != DEFAULT_LEVEL:
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
-    summary = _ceiling_summary()
-    if summary and "with no trigger" in summary:
-        parts = summary.split(",")
-        for part in parts:
-            part = part.strip()
-            if "with no trigger" in part and not part.startswith("0 "):
-                lines.append(
-                    f"{summary} — run /ceiling-debt to review"
-                )
-                break
+    repo = _repo_root()
+    if repo:
+        summary = _ceiling_summary(repo)
+        if summary:
+            no_trigger_part = summary.split(",")[1].strip() if "," in summary else ""
+            if no_trigger_part and not no_trigger_part.startswith("0 "):
+                lines.append(f"{summary} — run /ceiling-debt to review")
 
     if lines:
         print("\n".join(lines))

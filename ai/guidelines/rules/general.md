@@ -1,49 +1,45 @@
 # General Coding Principles
 
-## Communication & Workflow
+## Workflow
 
 - For decisions with meaningful trade-offs, present alternatives with a recommendation and wait for approval
 - Always ask for confirmation before architectural decisions or significant changes
-- Never say "You're absolutely right"
-- Before starting implementation work, verify: target branch/worktree, what's in scope, and desired depth of investigation. If the user's prompt is ambiguous on any of these, ask before acting — a one-line clarification prevents a 20-minute redirect
 - When the user references a broken script, tool, or automation, fix the script's code — don't manually perform the action the script was supposed to automate
 - Implement the practical fix before deep-diving into upstream or third-party source code. Ask before spending time on root-cause analysis in code you don't own
 
 ## Planning
 
-- Before making any code changes, file edits, or multi-step modifications: present
-  a plan with options, pros/cons, and a recommendation — then explicitly wait for
-  approval. Never proceed to implementation until the user has chosen an option.
-- Plans describe *what* changes and *why* — keep implementation details minimal.
-  Specifics come from reading the actual codebase during implementation.
-- Each phase of a plan must be independently committable and leave the codebase
-  in a shippable state. If a phase is too large for one commit, split it.
-- After a plan is approved, verify every API, method signature, and constant
-  referenced before writing implementation code. Plans are written before the
-  codebase is read — their specifics will often be wrong.
-- Save all plan documents (including superpowers plans) to `ignore/plans/`
-- Save all spec/design documents (including superpowers specs) to `ignore/specs/`
+Before code changes, walk this ladder — stop at the first unmet gate:
+
+1. **Scope clear?** — target branch/worktree, what's in scope, and desired depth must all be unambiguous. If the user's prompt is ambiguous on any of these, ask before acting
+2. **Plan needed?** — for multi-step modifications, present options with pros/cons and a recommendation. Wait for approval. Never proceed without it
+3. **Plan verified?** — verify every API, method signature, and constant referenced against the actual codebase. Plans are written before reading code — specifics will be wrong
+4. **Build** — each phase independently committable, shippable state. If too large for one commit, split it
+
+Plans describe *what* and *why* — not implementation details.
+Save plans to `ignore/plans/`, specs to `ignore/specs/`.
 
 ## Code Quality
 
-- Prefer solutions that work for the general case, not just the immediate scenario — check if the pattern exists elsewhere before writing a narrow fix
-- Always check existing tooling before adding anything new
-- Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere. Changes that create a second source of truth introduce drift and must be reworked
-- Never defer review findings to issues — fix them in the current PR or create separate PRs. Do not suggest "track separately" as the response to review findings
-- When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic — simpler tools are easier to reason about and maintain
+Reuse ladder — stop at the first rung that solves the problem:
+
+1. **Already in this codebase?** Reuse it — check if the pattern exists elsewhere before writing a narrow fix
+2. **Stdlib / language built-in?** Use it
+3. **Already-installed dependency?** Use it
+4. **New utility function?** Write the minimum
+5. **New dependency?** Justify it
+
+- Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere
+- Never defer review findings to issues — fix them in the current PR or create separate PRs
+- When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic
 
 ## Debugging
 
-- Always fix root causes, not symptoms — if a process hits a resource limit, investigate why it consumed so much, don't just raise the limit
-- When diagnosing an issue, check if the diagnostic path itself was sufficient. If you had to manually reconstruct data that should have been persisted, add instrumentation as part of the fix
-- Persist diagnostic data that would help future investigations — structured files (JSON) over transient console output, surviving successful runs not just failures
-- Never retry a failing command with minor variations (different flags, piping stderr, adding `echo $?`). On first failure, stop and diagnose: check config, hooks, environment, and connectivity. Act on the diagnosis, not on hope that a slightly different invocation will work
+On failure, diagnose in this order — do NOT retry with variations:
 
-## Unknowns & Assumptions
-
-- Do not make assumptions about code without context
-- If there are unknowns, surface them before writing code
-- When suggesting third-party libraries, prioritize maintained, non-deprecated, recently updated ones
+1. **Root cause** — investigate why, not just what. Resource limit hit? Find the consumer, don't raise the limit
+2. **Diagnostics** — was the diagnostic path sufficient? If you manually reconstructed data that should have been persisted, add instrumentation as part of the fix
+3. **Persist** — structured files (JSON) over transient console output; surviving successful runs, not just failures
 
 ## Code Style
 
@@ -60,9 +56,6 @@
 - Tests are not complete until they run and all pass
 - Never disable a test as a fix for a failing test
 - Do not add tests that simply assert constant values
-- When a foundational method's contract changes, audit every test that asserts
-  the old behavior and update it before declaring the work done
+- When a foundational method's contract changes, audit every test that asserts the old behavior and update it
 - Prefer real dependencies over mocks when feasible — mocks hide integration bugs
-- Every bug fix and behavioral change must include a new or updated test that
-  would have caught the issue. No fix is complete without a regression test
-
+- Every bug fix and behavioral change must include a regression test

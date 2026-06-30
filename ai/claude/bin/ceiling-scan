@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Scan for ceiling: markers and produce a structured ledger.
+
+Usage:
+  ceiling-scan [--summary-only] [--output PATH] [DIR]
+
+Scans for deliberate simplification markers (// ceiling:, # ceiling:, etc.)
+across comment styles. Groups by file, flags missing upgrade triggers.
+
+Exit code is always 0 (informational).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _version import version_string as _version_string  # noqa: E402
+
+SKIP_DIRS = {
+    ".git", "node_modules", "vendor", "build", "dist", "out",
+    "__pycache__", "ignore",
+}
+
+SKIP_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".zip", ".tar", ".gz", ".bz2",
+    ".pdf", ".bin", ".exe", ".dll", ".so", ".dylib",
+    ".pyc", ".class", ".o",
+}
+
+CEILING_FULL_RE = re.compile(
+    r"^\s*(?:#|//|--|/\*)\s*ceiling:\s*(.+?)(?:\s*\*/)?$",
+    re.IGNORECASE,
+)
+
+CEILING_INLINE_RE = re.compile(
+    r"\S.*\s{2,}(?://|#|--)\s*ceiling:\s*(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _should_skip_dir(name: str) -> bool:
+    return name in SKIP_DIRS or name.startswith(".")
+
+
+def _should_skip_file(path: Path) -> bool:
+    return path.suffix.lower() in SKIP_EXTENSIONS
+
+
+def _parse_marker(text: str) -> tuple[str, str | None]:
+    parts = text.split(",", 1)
+    ceiling = parts[0].strip()
+    trigger = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+    return ceiling, trigger
+
+
+def _scan_file(fpath: Path, rel: str) -> list[dict]:
+    try:
+        lines = fpath.read_text(errors="replace").splitlines()
+    except (OSError, PermissionError):
+        return []
+    markers: list[dict] = []
+    for lineno, line in enumerate(lines, 1):
+        m = CEILING_FULL_RE.match(line) or CEILING_INLINE_RE.search(line)
+        if not m:
+            continue
+        ceiling, trigger = _parse_marker(m.group(1))
+        markers.append({"file": rel, "line": lineno, "ceiling": ceiling, "trigger": trigger})
+    return markers
+
+
+def _scan_dir_entry(dirpath: str, filenames: list[str], root: Path) -> list[dict]:
+    markers: list[dict] = []
+    for fname in filenames:
+        fpath = Path(dirpath) / fname
+        if _should_skip_file(fpath):
+            continue
+        markers.extend(_scan_file(fpath, str(fpath.relative_to(root))))
+    return markers
+
+
+def scan_directory(root: Path) -> list[dict]:
+    markers: list[dict] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+        markers.extend(_scan_dir_entry(dirpath, filenames, root))
+    return markers
+
+
+def format_ledger(markers: list[dict]) -> str:
+    by_file: dict[str, list[dict]] = {}
+    for m in markers:
+        by_file.setdefault(m["file"], []).append(m)
+
+    lines: list[str] = ["# Ceiling Debt Ledger", ""]
+    no_trigger = sum(1 for m in markers if m["trigger"] is None)
+    lines.append(f"{len(markers)} marker(s), {no_trigger} with no trigger")
+    lines.append("")
+
+    for filepath in sorted(by_file):
+        lines.append(f"## {filepath}")
+        lines.append("")
+        for m in sorted(by_file[filepath], key=lambda x: x["line"]):
+            trigger_str = m["trigger"] if m["trigger"] else "**no-trigger**"
+            lines.append(
+                f"- L{m['line']}: {m['ceiling']} — {trigger_str}"
+            )
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def format_summary(markers: list[dict]) -> str:
+    no_trigger = sum(1 for m in markers if m["trigger"] is None)
+    return f"{len(markers)} ceiling marker(s), {no_trigger} with no trigger"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Scan for ceiling: markers and produce a debt ledger.",
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory to scan (default: current directory)",
+    )
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Output only the summary line",
+    )
+    parser.add_argument(
+        "--output",
+        metavar="PATH",
+        help="Write ledger to file instead of stdout",
+    )
+    parser.add_argument(
+        "-V", "--version",
+        action="version",
+        version=_version_string("ceiling-scan"),
+    )
+    args = parser.parse_args()
+
+    root = Path(args.directory).resolve()
+    if not root.is_dir():
+        print(f"Not a directory: {root}", file=sys.stderr)
+        sys.exit(0)
+
+    markers = scan_directory(root)
+
+    if args.summary_only:
+        print(format_summary(markers))
+        return
+
+    ledger = format_ledger(markers)
+
+    if args.output:
+        out = Path(args.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(ledger)
+    else:
+        print(ledger)
+
+
+if __name__ == "__main__":
+    main()

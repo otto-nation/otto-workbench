@@ -31,7 +31,7 @@ This creates `~/.config/task/taskfile.env` with:
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ci-failures, dream, machine, pr-comments, pr-rebase, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -84,6 +84,19 @@ On-demand architecture.md refresh. Reads recent sessions and memory to identify 
 **Output:** `.claude/architecture.md`
 **Trigger:** Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints.
 **Skip:** Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead).
+
+### `/ceiling-debt`
+
+Scan for ceiling: markers and present the debt ledger. TRIGGER when: user asks about ceilings, deferred simplifications, or technical debt markers. SKIP: general tech debt discussion without ceiling markers.
+
+```
+/ceiling-debt
+```
+
+**Output:** `ceiling debt ledger to stdout (manual); .claude/ceiling-debt.md (auto)`
+**Auto-trigger:** every session exit (via Stop hook)
+**Trigger:** ceiling debt, show ceilings, what did we defer, list simplifications, ceiling markers
+**Skip:** General tech debt discussion, architecture review, non-code requests
 
 ### `/ci-failures [<pr_number_or_run_id_or_branch>]`
 
@@ -191,7 +204,7 @@ Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale gi
 
 ### Manual triggers
 
-All lifecycle skills can be run on demand: `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
+All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
 <!-- LIFECYCLE-END -->
 
 ## Task Automation

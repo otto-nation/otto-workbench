@@ -34,6 +34,9 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `otto-log` | Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
+| `ceiling-scan` | Scan for ceiling: markers and produce a structured debt ledger |
+| `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
+| `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |

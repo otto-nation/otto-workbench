@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""SessionStart hook: inject reuse level and ceiling scan nudge.
+
+Two responsibilities:
+1. Emit the active reuse level as session context
+2. Run ceiling-scan --summary-only; if no-trigger markers exist, nudge
+
+Usage (called by settings.json SessionStart hook):
+  reuse-session-start
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _reuse_levels import (  # noqa: E402
+    DEFAULT_LEVEL,
+    LEVEL_DESCRIPTIONS,
+    read_level,
+)
+
+
+def _repo_root() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def _ceiling_summary(repo: str) -> str | None:
+    ceiling_scan = Path(__file__).resolve().parent / "ceiling-scan"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ceiling_scan), "--summary-only", repo],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def _has_no_trigger_markers(summary: str) -> bool:
+    if "," not in summary:
+        return False
+    no_trigger_part = summary.split(",")[1].strip()
+    return bool(no_trigger_part) and not no_trigger_part.startswith("0 ")
+
+
+def main() -> None:
+    lines: list[str] = []
+
+    level = read_level()
+    if level != DEFAULT_LEVEL:
+        lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
+
+    repo = _repo_root()
+    summary = _ceiling_summary(repo) if repo else None
+    if summary and _has_no_trigger_markers(summary):
+        lines.append(f"{summary} — run /ceiling-debt to review")
+
+    if lines:
+        print("\n".join(lines))
+
+
+if __name__ == "__main__":
+    main()

@@ -65,9 +65,10 @@ def main() -> None:
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()
-    summary = _ceiling_summary(repo) if repo else None
-    if summary and _has_no_trigger_markers(summary):
-        lines.append(f"{summary} — run /ceiling-debt to review")
+    if repo:
+        summary = _ceiling_summary(repo)
+        if summary and _has_no_trigger_markers(summary):
+            lines.append(f"{summary} — run /ceiling-debt to review")
 
     if lines:
         print("\n".join(lines))

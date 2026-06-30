@@ -23,8 +23,7 @@ from _version import version_string as _version_string  # noqa: E402
 
 SKIP_DIRS = {
     ".git", "node_modules", "vendor", "build", "dist", "out",
-    "__pycache__", ".mypy_cache", ".pytest_cache", ".tox",
-    ".claude", "ignore",
+    "__pycache__", "ignore",
 }
 
 SKIP_EXTENSIONS = {

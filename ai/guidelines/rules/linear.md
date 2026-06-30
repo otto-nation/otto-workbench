@@ -1,3 +1,8 @@
+---
+description: "Linear issue tracker — creation conventions, CLI usage, sub-issues"
+alwaysApply: false
+---
+
 # Linear
 
 - When creating Linear issues, describe the problem and desired outcome — not implementation details. Structure as: Context (what prompted this), Problem (what's wrong), Goal (desired outcome). Keep specific files, code snippets, and implementation steps in the plan, not the issue.

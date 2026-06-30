@@ -43,7 +43,7 @@ promote-scan
 The report contains three sections:
 - **Memory State** — per-project summary: MEMORY.md line count, topic files with names/descriptions/types/ages, full body content (up to 500 chars), stale entries (>90 days), last promote timestamp
 - **Backed-Up Memories** — archived memory files from the workbench `ai/memory/` directory with the same detail
-- **Workbench Artifacts** — current inventory of rules (filename + heading), scripts, hooks (event + matcher + command), and agents (filename + heading)
+- **Workbench Artifacts** — current inventory of rules (filename, heading, and body content), scripts, hooks (event + matcher + command), and agents (filename + heading)
 
 Use this report as input for Phase 2. Note any memories that look like they're describing
 the same pattern across different projects.
@@ -118,6 +118,7 @@ The memory is valuable context but doesn't generalize into an artifact.
 The memory is stale, redundant, or already covered by an existing artifact.
 
 **Signs it belongs here:**
+- A rule in the Workbench Artifacts → Rules section already states the same guidance — compare the memory's body content against rule body content shown in the report
 - The rule/script/hook already exists
 - The memory describes something that changed and is no longer true
 - The memory is about a one-time task that's complete

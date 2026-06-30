@@ -25,7 +25,7 @@
 
 ### Description template
 
-- Always create PRs via `task pr:create` — never call `gh pr create` directly. The task auto-discovers the repo's PR template and handles push/assignee logic. When running from a different directory, pass `REPO_DIR=/path/to/repo`.
+- Always create PRs via `task pr:create` — see `git-operations.md` § PR Creation for the full invocation and flags.
 - When a repo has a PR template, its section headers are required — do not substitute or invent sections. The fallback template below is ONLY for repos with no project template:
 
 ```markdown

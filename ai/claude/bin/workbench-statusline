@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Workbench status line — reuse level + PR state.
+# Called by Claude Code statusline; receives session JSON on stdin.
+set -e
+
+pieces=()
+
+# Reuse level (only show if non-default)
+level_file="$HOME/.config/workbench/reuse-level"
+default_file="$HOME/.config/workbench/reuse-default"
+level=""
+default_level="full"
+
+if [[ -f "$level_file" ]]; then
+    level=$(< "$level_file")
+fi
+if [[ -f "$default_file" ]]; then
+    default_level=$(< "$default_file")
+fi
+
+level="${level:-$default_level}"
+if [[ "$level" != "$default_level" ]]; then
+    pieces+=("reuse:$level")
+fi
+
+# PR state from .workbench/state.json in current repo
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+state_file="$repo_root/.workbench/state.json"
+
+if [[ -n "$repo_root" && -f "$state_file" ]]; then
+    pr_number=$(jq -r '.identity.pr_number // empty' "$state_file" 2>/dev/null)
+
+    if [[ -n "$pr_number" ]]; then
+        pr_parts=()
+
+        # CI status
+        ci_conclusion=$(jq -r '.ci.conclusion // empty' "$state_file" 2>/dev/null)
+        ci_failures=$(jq -r '.ci.failure_count // 0' "$state_file" 2>/dev/null)
+        if [[ "$ci_conclusion" == "failure" && "$ci_failures" -gt 0 ]]; then
+            pr_parts+=("CI:${ci_failures}F")
+        elif [[ "$ci_conclusion" == "success" ]]; then
+            pr_parts+=("CI:ok")
+        elif [[ -n "$ci_conclusion" ]]; then
+            pr_parts+=("CI:$ci_conclusion")
+        fi
+
+        # Review verdict
+        verdict=$(jq -r '.review.verdict // empty' "$state_file" 2>/dev/null)
+        if [[ -n "$verdict" ]]; then
+            pr_parts+=("review:$verdict")
+        fi
+
+        # Open comment threads
+        open_threads=$(jq -r '.comments.by_state.open // 0' "$state_file" 2>/dev/null)
+        if [[ "$open_threads" -gt 0 ]]; then
+            pr_parts+=("${open_threads}open")
+        fi
+
+        if [[ ${#pr_parts[@]} -gt 0 ]]; then
+            joined=$(printf " " ; printf "%s " "${pr_parts[@]}")
+            pieces+=("PR#${pr_number}${joined% }")
+        else
+            pieces+=("PR#${pr_number}")
+        fi
+    fi
+fi
+
+if [[ ${#pieces[@]} -gt 0 ]]; then
+    printf "%s" "${pieces[*]}"
+fi

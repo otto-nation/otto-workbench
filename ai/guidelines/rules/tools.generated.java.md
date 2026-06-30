@@ -12,3 +12,4 @@ paths:
 
 ## Java Tools
 - **gradle** — Gradle build tool — build, test, and publish JVM projects
+- **mvn** — Apache Maven — build and dependency management for Java projects

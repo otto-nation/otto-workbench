@@ -60,29 +60,36 @@ def _parse_marker(text: str) -> tuple[str, str | None]:
     return ceiling, trigger
 
 
+def _scan_file(fpath: Path, rel: str) -> list[dict]:
+    try:
+        lines = fpath.read_text(errors="replace").splitlines()
+    except (OSError, PermissionError):
+        return []
+    markers: list[dict] = []
+    for lineno, line in enumerate(lines, 1):
+        m = CEILING_FULL_RE.match(line) or CEILING_INLINE_RE.search(line)
+        if not m:
+            continue
+        ceiling, trigger = _parse_marker(m.group(1))
+        markers.append({"file": rel, "line": lineno, "ceiling": ceiling, "trigger": trigger})
+    return markers
+
+
+def _scan_dir_entry(dirpath: str, filenames: list[str], root: Path) -> list[dict]:
+    markers: list[dict] = []
+    for fname in filenames:
+        fpath = Path(dirpath) / fname
+        if _should_skip_file(fpath):
+            continue
+        markers.extend(_scan_file(fpath, str(fpath.relative_to(root))))
+    return markers
+
+
 def scan_directory(root: Path) -> list[dict]:
     markers: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
-        for fname in filenames:
-            fpath = Path(dirpath) / fname
-            if _should_skip_file(fpath):
-                continue
-            try:
-                lines = fpath.read_text(errors="replace").splitlines()
-            except (OSError, PermissionError):
-                continue
-            for lineno, line in enumerate(lines, 1):
-                m = CEILING_FULL_RE.match(line) or CEILING_INLINE_RE.search(line)
-                if m:
-                    ceiling, trigger = _parse_marker(m.group(1))
-                    rel = fpath.relative_to(root)
-                    markers.append({
-                        "file": str(rel),
-                        "line": lineno,
-                        "ceiling": ceiling,
-                        "trigger": trigger,
-                    })
+        markers.extend(_scan_dir_entry(dirpath, filenames, root))
     return markers
 
 

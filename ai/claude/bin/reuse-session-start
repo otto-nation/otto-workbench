@@ -50,6 +50,13 @@ def _ceiling_summary(repo: str) -> str | None:
     return None
 
 
+def _has_no_trigger_markers(summary: str) -> bool:
+    if "," not in summary:
+        return False
+    no_trigger_part = summary.split(",")[1].strip()
+    return bool(no_trigger_part) and not no_trigger_part.startswith("0 ")
+
+
 def main() -> None:
     lines: list[str] = []
 
@@ -58,12 +65,9 @@ def main() -> None:
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()
-    if repo:
-        summary = _ceiling_summary(repo)
-        if summary:
-            no_trigger_part = summary.split(",")[1].strip() if "," in summary else ""
-            if no_trigger_part and not no_trigger_part.startswith("0 "):
-                lines.append(f"{summary} — run /ceiling-debt to review")
+    summary = _ceiling_summary(repo) if repo else None
+    if summary and _has_no_trigger_markers(summary):
+        lines.append(f"{summary} — run /ceiling-debt to review")
 
     if lines:
         print("\n".join(lines))

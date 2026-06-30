@@ -70,6 +70,7 @@ class FailureItem:
     fix_sha: str | None
     outcome: Outcome | None
     headline: str | None = None
+    source_run_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -285,6 +286,7 @@ def _carry_forward_item(
         fix_sha=prior.fix_sha if item.fix_sha is None else item.fix_sha,
         outcome=item.outcome,
         headline=item.headline,
+        source_run_id=item.source_run_id,
     )
 
 
@@ -332,9 +334,17 @@ _MAX_DASHBOARD_HEADLINES = 5
 _MAX_DASHBOARD_ANNOTATION = 120
 
 
-def render_dashboard(run: RunState, progression: dict[str, Outcome]) -> str:
+def render_dashboard(
+    run: RunState,
+    progression: dict[str, Outcome],
+    run_ids: list[int] | None = None,
+) -> str:
     """Render a human-readable dashboard string for stderr output."""
     lines = [f"## CI Run #{run.run_number} ({run.head_sha[:7]})", ""]
+
+    if run_ids and len(run_ids) > 1:
+        lines.append(f"Workflow runs: {', '.join(str(r) for r in run_ids)}")
+        lines.append("")
 
     if not run.failures:
         lines.append("All checks passed.")

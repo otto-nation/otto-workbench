@@ -148,7 +148,9 @@ def _build_failure_id(annotation: dict, job_name: str) -> str:
     return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
 
 
-def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.FailureItem]:
+def _annotations_to_items(
+    annotations: list[dict], job_name: str, source_run_id: int | None = None,
+) -> list[ci.FailureItem]:
     """Convert raw annotations to FailureItems, skipping notices."""
     items: list[ci.FailureItem] = []
     for ann in annotations:
@@ -165,11 +167,12 @@ def _annotations_to_items(annotations: list[dict], job_name: str) -> list[ci.Fai
             fix_sha=None,
             outcome=None,
             headline=ci.extract_headline(text),
+            source_run_id=source_run_id,
         ))
     return items
 
 
-def _fallback_item(job_name: str) -> ci.FailureItem:
+def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.FailureItem:
     """Create a placeholder item for a failed job with no annotations."""
     return ci.FailureItem(
         id=f"{job_name}-no-annotation",
@@ -179,6 +182,7 @@ def _fallback_item(job_name: str) -> ci.FailureItem:
         diagnosis=None,
         fix_sha=None,
         outcome=None,
+        source_run_id=source_run_id,
     )
 
 
@@ -210,6 +214,7 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
 
         job_name = job.get("name", "unknown")
         job_id = job.get("databaseId", 0)
+        source_run_id = job.get("_source_run_id") or run_data.get("databaseId")
 
         annotations = _fetch_annotations(repo, job_id) if job_id else []
         annotation_texts = [a.get("message", "") for a in annotations]
@@ -218,7 +223,7 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         if not annotations:
             annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
 
-        items = _annotations_to_items(annotations, job_name) if annotations else [_fallback_item(job_name)]
+        items = _annotations_to_items(annotations, job_name, source_run_id) if annotations else [_fallback_item(job_name, source_run_id)]
 
         if items:
             job_key = job_name.lower().replace(" ", "-").replace("/", "-")
@@ -330,7 +335,7 @@ def _run_ci(trail, args, ctx) -> dict:
     trail.info("sync_state", f"state synced, {len(ci_domain.runs)} runs retained")
 
     # Dashboard to stderr
-    dashboard = ci.render_dashboard(run_state, progression)
+    dashboard = ci.render_dashboard(run_state, progression, run_ids=run_ids)
     print(dashboard, file=sys.stderr)
 
     # JSON report to stdout
@@ -339,6 +344,7 @@ def _run_ci(trail, args, ctx) -> dict:
         "branch": branch,
         "pr_number": pr_number,
         "run_id": run_state.run_id,
+        "run_ids": run_ids,
         "run_number": run_state.run_number,
         "head_sha": run_state.head_sha,
         "conclusion": run_state.conclusion,
@@ -360,6 +366,7 @@ def _run_ci(trail, args, ctx) -> dict:
                 "diagnosis": item.diagnosis,
                 "fix_sha": item.fix_sha,
                 "outcome": progression.get(item.id, ci.Outcome.NEW).value,
+                "source_run_id": item.source_run_id,
             })
 
     if prior_run:

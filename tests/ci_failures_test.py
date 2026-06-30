@@ -541,3 +541,52 @@ def test_render_dashboard_no_headline_falls_back_to_annotation():
     )
     dashboard = render_dashboard(run, {"a": Outcome.NEW})
     assert "SC2086" in dashboard
+
+
+# ── source_run_id Tests ──────────────────────────────────────────────────
+
+
+def test_failure_item_source_run_id():
+    item = FailureItem(
+        id="x", annotation="y", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None,
+        source_run_id=42,
+    )
+    assert item.source_run_id == 42
+
+
+def test_failure_item_source_run_id_default():
+    item = FailureItem(
+        id="x", annotation="y", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None,
+    )
+    assert item.source_run_id is None
+
+
+# ── Multi-run Dashboard Tests ────────────────────────────────────────────
+
+
+def test_render_dashboard_shows_multiple_run_ids():
+    item = _make_item("a")
+    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"build": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW}, run_ids=[100, 200])
+    assert "100" in dashboard
+    assert "200" in dashboard
+    assert "Workflow runs:" in dashboard
+
+
+def test_render_dashboard_omits_run_ids_for_single_run():
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={},
+    )
+    dashboard = render_dashboard(run, {}, run_ids=[100])
+    assert "Workflow runs:" not in dashboard

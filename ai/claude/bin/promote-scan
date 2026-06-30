@@ -304,7 +304,8 @@ def _format_rules(rules: list[dict]) -> list[str]:
         lines.append(f"#### `{r['filename']}` — {r['heading']}")
         if r.get("body"):
             lines.append("")
-            lines.append(r["body"])
+            for body_line in r["body"].splitlines():
+                lines.append(f"> {body_line}")
         lines.append("")
     return lines
 

@@ -720,3 +720,108 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
 
     assert result == 0
     mock_drive.assert_called_once_with("/fake", ctx, True)
+
+
+# ── _force_push ────────────────────────────────────────────────────────────
+
+
+def test_force_push_succeeds_first_try():
+    """Push succeeds on first attempt — returns 0."""
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._force_push("/fake") == 0
+
+
+def test_force_push_fails_no_modified_files():
+    """Push fails with no modified files — returns failure code without retry."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="rejected")
+        if "--porcelain" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._force_push("/fake")
+
+    assert rc == 1
+    push_calls = [c for c in calls if c[:2] == ["git", "push"]]
+    assert len(push_calls) == 1
+
+
+def test_force_push_retries_after_regenerated_files():
+    """Push fails due to regenerated files — commits and retries successfully."""
+    push_count = [0]
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["git", "push"]:
+            push_count[0] += 1
+            if push_count[0] == 1:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if "--porcelain" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout=" M docs/ai-automation.md\n", stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._force_push("/fake")
+
+    assert rc == 0
+    push_calls = [c for c in calls if c[:2] == ["git", "push"]]
+    assert len(push_calls) == 2
+    assert ["git", "add", "-u"] in calls
+    commit_calls = [c for c in calls if c[:2] == ["git", "commit"]]
+    assert len(commit_calls) == 1
+
+
+def test_force_push_commit_fails_returns_original_error():
+    """Push fails, commit of regenerated files fails — returns original push error."""
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+        if "--porcelain" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout=" M docs/ai-automation.md\n", stderr="",
+            )
+        if cmd[:2] == ["git", "commit"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="commit error")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._force_push("/fake")
+
+    assert rc == 1
+
+
+def test_force_push_retry_also_fails():
+    """Push fails, retry after commit also fails — returns retry's error code."""
+    push_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            push_count[0] += 1
+            if push_count[0] == 1:
+                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="rejected")
+            return subprocess.CompletedProcess(args=cmd, returncode=128, stdout="", stderr="retry failed")
+        if "--porcelain" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout=" M docs/ai-automation.md\n", stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        rc = pr_rebase_cli._force_push("/fake")
+
+    assert rc == 128

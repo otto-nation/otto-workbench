@@ -53,9 +53,8 @@
 
 ## Branch Completion
 
-- Never present a menu of completion options — always create a PR when implementation is complete (see PR Creation for the full invocation)
-- When the user states a specific next step ("merge this", "push it", "just keep it"), execute that action directly
-- Never re-ask after the user has already chosen — if a chosen action fails, debug the failure, don't fall back to an options menu
+- When implementation is complete, create a PR — never present a menu of completion options (see PR Creation for the full invocation)
+- When the user states a specific next step ("merge this", "push it", "just keep it"), execute it directly. If it fails, debug the failure — don't fall back to an options menu
 
 ## Git Failure Debugging
 

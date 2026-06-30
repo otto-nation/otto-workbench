@@ -254,6 +254,62 @@ def test_tracking_file_handles_missing_file_and_line(tmp_path):
 # ── _count_checked / _count_unchecked ────────────────────────────────────
 
 
+# ── _parse_run ─────────────────────────────────────────────────────────
+
+
+def _make_run_data(jobs):
+    """Build minimal run data with given jobs."""
+    return {
+        "databaseId": 100,
+        "number": 1,
+        "headSha": "abc123",
+        "status": "completed",
+        "conclusion": "failure",
+        "jobs": jobs,
+    }
+
+
+def test_parse_run_skips_null_conclusion_jobs():
+    """Jobs with null conclusion (in-progress) should not be treated as failures."""
+    run_data = _make_run_data([
+        {"name": "Lint", "conclusion": "failure", "databaseId": 10},
+        {"name": "Build", "conclusion": None, "databaseId": 11},
+        {"name": "Test", "conclusion": None, "databaseId": 12},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    assert len(result.failures) == 1
+    assert "lint" in result.failures
+
+
+def test_parse_run_skips_success_and_neutral_jobs():
+    """Successful and neutral jobs should not appear as failures."""
+    run_data = _make_run_data([
+        {"name": "Lint", "conclusion": "failure", "databaseId": 10},
+        {"name": "Build", "conclusion": "success", "databaseId": 11},
+        {"name": "Deploy", "conclusion": "neutral", "databaseId": 12},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    assert len(result.failures) == 1
+
+
+def test_parse_run_includes_timed_out_jobs():
+    """Timed-out jobs should be treated as failures."""
+    run_data = _make_run_data([
+        {"name": "Slow Test", "conclusion": "timed_out", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    assert len(result.failures) == 1
+
+
+# ── _count_checked / _count_unchecked ────────────────────────────────────
+
+
 def test_count_checked_and_unchecked(tmp_path):
     tracking = tmp_path / "tracking.md"
     tracking.write_text("- [x] Done\n- [ ] Todo\n- [x] Also done\n- [ ] Also todo\n")

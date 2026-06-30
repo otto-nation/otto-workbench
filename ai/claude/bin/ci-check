@@ -43,6 +43,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-template
 
 
 _SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
+_FAILURE_CONCLUSIONS = frozenset(("failure", "timed_out", "action_required", "stale", "startup_failure"))
 
 
 def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
@@ -203,8 +204,8 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     failures: dict[str, ci.FailureGroup] = {}
 
     for job in jobs:
-        conclusion = job.get("conclusion", "")
-        if conclusion in ("success", "skipped", "cancelled", "neutral"):
+        conclusion = job.get("conclusion")
+        if conclusion not in _FAILURE_CONCLUSIONS:
             continue
 
         job_name = job.get("name", "unknown")

@@ -173,6 +173,17 @@ def test_merge_runs_collects_all_jobs():
     assert result["jobs"][1]["name"] == "lint"
 
 
+def test_merge_runs_tags_source_run_id():
+    """Each job should carry _source_run_id from its originating run."""
+    runs = [
+        {"_run_id": 100, "databaseId": 100, "conclusion": "success", "jobs": [{"name": "lint"}]},
+        {"_run_id": 200, "databaseId": 200, "conclusion": "failure", "jobs": [{"name": "build"}]},
+    ]
+    result = ci_check._merge_runs(runs)
+    assert result["jobs"][0]["_source_run_id"] == 100
+    assert result["jobs"][1]["_source_run_id"] == 200
+
+
 # ── _build_ci_tracking_file ─────────────────────────────────────────────
 
 
@@ -302,6 +313,37 @@ def test_parse_run_includes_timed_out_jobs():
         with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST)):
             result = ci_check._parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
+
+
+def test_parse_run_propagates_source_run_id():
+    """Failure items should carry source_run_id from merged jobs."""
+    run_data = {
+        "databaseId": 100,
+        "number": 1,
+        "headSha": "abc123",
+        "status": "completed",
+        "conclusion": "failure",
+        "jobs": [
+            {"name": "Build", "conclusion": "failure", "databaseId": 10, "_source_run_id": 200},
+        ],
+    }
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert group.items[0].source_run_id == 200
+
+
+def test_parse_run_defaults_source_run_id_to_primary():
+    """Without _source_run_id on the job, fall back to run's databaseId."""
+    run_data = _make_run_data([
+        {"name": "Lint", "conclusion": "failure", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert group.items[0].source_run_id == 100
 
 
 # ── _count_checked / _count_unchecked ────────────────────────────────────

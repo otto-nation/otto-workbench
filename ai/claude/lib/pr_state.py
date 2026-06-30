@@ -148,6 +148,7 @@ def _run_state_from_dict(d: dict):
                 fix_sha=item_data.get("fix_sha"),
                 outcome=Outcome(outcome_val) if outcome_val else None,
                 headline=item_data.get("headline"),
+                source_run_id=item_data.get("source_run_id"),
             ))
         failures[group_key] = FailureGroup(
             job=group_data.get("job", group_key),

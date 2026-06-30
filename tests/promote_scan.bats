@@ -75,13 +75,13 @@ _make_workbench() {
   mkdir -p "$wb/bin"
 }
 
-# Helper: create a rule file with a heading
+# Helper: create a rule file with a heading and optional body
 _make_rule() {
-  local wb="$1" filename="$2" heading="$3"
+  local wb="$1" filename="$2" heading="$3" body="${4:-- Some rule content here}"
   cat > "$wb/ai/guidelines/rules/$filename" <<EOF
 # $heading
 
-- Some rule content here
+$body
 EOF
 }
 
@@ -360,6 +360,17 @@ PY
   [[ "$output" == *"Bash / Shell"* ]]
   [[ "$output" == *"security.md"* ]]
   [[ "$output" == *"Security"* ]]
+}
+
+@test "scan: rules include body content" {
+  local wb="$TMPDIR/workbench"
+  _make_workbench "$wb"
+  _make_rule "$wb" "bash.md" "Bash / Shell" "- Scripts should be quiet on success"
+
+  run "$PROMOTE_SCAN" --home "$TMPDIR" --workbench "$wb"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"bash.md"* ]]
+  [[ "$output" == *"Scripts should be quiet on success"* ]]
 }
 
 @test "scan: reports scripts" {

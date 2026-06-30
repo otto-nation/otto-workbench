@@ -51,7 +51,7 @@ Use this report as input for Phase 3. Read the topic files referenced in the Mem
 
 ### Rules
 
-1. **Never duplicate.** Check if it already exists. If it does, update the existing entry.
+1. **Never duplicate — check rules first.** Before creating or keeping a memory, check if the same guidance already exists in a rule file under `ai/guidelines/rules/`. Read the relevant rule files (use filenames/headings to narrow down). If a rule already states the same thing, do not create the memory — the rule is the single source of truth. Also check if the memory duplicates an existing memory entry.
 
 2. **Convert relative dates to absolute.** "Yesterday" in a session from March 15 becomes "2026-03-14". Never store relative dates.
 
@@ -103,6 +103,7 @@ MEMORY.md is an **index file**, not a content store:
 ### Prune stale entries
 
 Remove or archive entries that are:
+- Already covered by a rule file in `ai/guidelines/rules/` — the rule is the SSOT, delete the memory
 - More than 90 days old with no references in recent sessions
 - Contradicted by newer entries
 - About projects that no longer exist in `~/.claude/projects/`

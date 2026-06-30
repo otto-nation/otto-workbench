@@ -7,8 +7,6 @@ paths:
 
 # Rules Authoring
 
-Coding guidelines load automatically from `~/.claude/rules/` based on file type.
-
 ## Where rules live
 
 | Location | Purpose |

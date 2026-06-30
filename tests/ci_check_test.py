@@ -251,9 +251,6 @@ def test_tracking_file_handles_missing_file_and_line(tmp_path):
     assert "— — gradle" in content
 
 
-# ── _count_checked / _count_unchecked ────────────────────────────────────
-
-
 # ── _parse_run ─────────────────────────────────────────────────────────
 
 

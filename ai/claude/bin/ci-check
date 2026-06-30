@@ -238,9 +238,6 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     )
 
 
-_NON_FAILURE_CONCLUSIONS = ("success", "skipped", "cancelled", "neutral", None)
-
-
 def _merge_runs(run_data_list: list[dict]) -> dict | None:
     """Merge multiple workflow run dicts into a single combined run.
 
@@ -253,7 +250,7 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
     primary = run_data_list[0]
     all_jobs = []
     for rd in run_data_list:
-        if rd.get("conclusion") not in _NON_FAILURE_CONCLUSIONS:
+        if rd.get("conclusion") in _FAILURE_CONCLUSIONS:
             primary["conclusion"] = "failure"
         rid = rd.get("_run_id")
         for job in rd.get("jobs", []):

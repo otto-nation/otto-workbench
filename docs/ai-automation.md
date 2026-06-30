@@ -94,7 +94,7 @@ Scan for ceiling: markers and present the debt ledger. TRIGGER when: user asks a
 ```
 
 **Output:** `ceiling debt ledger to stdout (manual); .claude/ceiling-debt.md (auto)`
-**Auto-trigger:** every session exit (via Stop hook)
+**Auto-trigger:** on-stop (via Stop hook)
 **Trigger:** ceiling debt, show ceilings, what did we defer, list simplifications, ceiling markers
 **Skip:** General tech debt discussion, architecture review, non-code requests
 

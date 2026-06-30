@@ -7,11 +7,12 @@
 set -e
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 1
+ceiling_scan="$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/../../bin/ceiling-scan"
 
-grep -rq 'ceiling:' "$repo_root" \
-  --include='*.py' --include='*.go' --include='*.js' --include='*.ts' \
-  --include='*.sh' --include='*.rb' --include='*.rs' --include='*.java' \
-  --include='*.sql' --include='*.yml' --include='*.yaml' \
-  --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='vendor' \
-  --exclude-dir='build' --exclude-dir='dist' --exclude-dir='ignore' \
-  2>/dev/null || exit 1
+summary=$(python3 "$ceiling_scan" --summary-only "$repo_root" 2>/dev/null) || exit 1
+
+if [[ "$summary" == "0 ceiling marker(s)"* ]]; then
+  exit 1
+fi
+
+exit 0

@@ -75,7 +75,14 @@ If the script fails (non-zero exit code), show the error and stop.
 
 ### Step 3: Report and handle results
 
-Parse the JSON output. The `fix_pass` object contains:
+Parse the JSON output. Top-level fields:
+
+| Field | Contents |
+|-------|----------|
+| `fix_pass` | Object with fix results (see below) |
+| `issue_comments` | Issue-level discussion comments from reviewers (not inline threads) |
+
+The `fix_pass` object contains:
 
 | Field | Contents |
 |-------|----------|
@@ -88,7 +95,7 @@ Parse the JSON output. The `fix_pass` object contains:
 
 **Report auto-fixes:** "Fixed N threads (commit SHA). M threads need your input. K skipped."
 
-**If `needs_human` is empty:** done — no further action needed.
+**If `needs_human` is empty and no `issue_comments`:** done — no further action needed.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
@@ -98,6 +105,11 @@ Ask the user what to do for each:
 
 **Do not** attempt to fix `skipped` threads — the agent already determined
 they require judgment.
+
+**Issue-level comments** (`issue_comments` array in the JSON output): these are
+general discussion comments from reviewers (not inline review threads). Present
+each with the author and a summary. These may require a reply or action — ask
+the user.
 
 ### Step 4: Handle remaining threads and resolve
 

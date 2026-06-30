@@ -598,11 +598,6 @@ def _run_comment_fix(
     }
 
     if not fixable:
-        if needs_human:
-            summary_url = _post_fix_summary(
-                [], needs_human, [], no_commit, ctx.repo, report["pr_number"],
-            )
-            empty_result["summary_url"] = summary_url
         return empty_result
 
     tracking_dir = wt_path / "ignore" / "pr-comments"
@@ -792,9 +787,11 @@ def _run_threads(trail, args, ctx) -> None:
                        data={"fixable": fixable_count, "skipped": skipped_count,
                              "commit_sha": fix_pass.get("commit_sha"),
                              "commit_status": fix_pass.get("commit_status")})
-            output = {**triage_result, "fix_pass": fix_pass}
+            output = {**triage_result, "fix_pass": fix_pass,
+                      "issue_comments": report.get("issue_comments", [])}
         else:
-            output = triage_result
+            output = {**triage_result,
+                      "issue_comments": report.get("issue_comments", [])}
 
         json.dump(output, sys.stdout, indent=2)
         print()

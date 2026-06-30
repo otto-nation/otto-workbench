@@ -296,6 +296,10 @@ def _format_backed_up(entries: list[dict]) -> list[str]:
     return lines
 
 
+def _format_rule_body(body: str) -> list[str]:
+    return ["", *(f"> {line}" for line in body.splitlines())]
+
+
 def _format_rules(rules: list[dict]) -> list[str]:
     if not rules:
         return ["No rules found.\n"]
@@ -303,9 +307,7 @@ def _format_rules(rules: list[dict]) -> list[str]:
     for r in rules:
         lines.append(f"#### `{r['filename']}` — {r['heading']}")
         if r.get("body"):
-            lines.append("")
-            for body_line in r["body"].splitlines():
-                lines.append(f"> {body_line}")
+            lines.extend(_format_rule_body(r["body"]))
         lines.append("")
     return lines
 

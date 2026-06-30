@@ -32,9 +32,9 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
     fields: dict[str, str] = {}
     in_frontmatter = False
     for line in path.read_text().splitlines():
+        if line.strip() == "---" and in_frontmatter:
+            break
         if line.strip() == "---":
-            if in_frontmatter:
-                break
             in_frontmatter = True
             continue
         if not in_frontmatter:

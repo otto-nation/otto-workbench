@@ -3,7 +3,7 @@
 
 Two responsibilities:
 1. Emit the active reuse level as session context
-2. Run ceiling-scan --summary-only; if no-trigger markers exist, nudge
+2. Run ceiling-scan --json; if no-trigger markers exist, nudge
 
 Usage (called by settings.json SessionStart hook):
   reuse-session-start
@@ -11,6 +11,7 @@ Usage (called by settings.json SessionStart hook):
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -36,25 +37,18 @@ def _repo_root() -> str | None:
     return None
 
 
-def _ceiling_summary(repo: str) -> str | None:
+def _ceiling_counts(repo: str) -> dict | None:
     ceiling_scan = Path(__file__).resolve().parent / "ceiling-scan"
     try:
         result = subprocess.run(
-            [sys.executable, str(ceiling_scan), "--summary-only", repo],
+            [sys.executable, str(ceiling_scan), "--json", repo],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+            return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
         pass
     return None
-
-
-def _has_no_trigger_markers(summary: str) -> bool:
-    if "," not in summary:
-        return False
-    no_trigger_part = summary.split(",")[1].strip()
-    return bool(no_trigger_part) and not no_trigger_part.startswith("0 ")
 
 
 def main() -> None:
@@ -65,9 +59,14 @@ def main() -> None:
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()
-    summary = _ceiling_summary(repo) if repo else None
-    if summary and _has_no_trigger_markers(summary):
-        lines.append(f"{summary} — run /ceiling-debt to review")
+    counts = _ceiling_counts(repo) if repo else None
+    if counts and counts.get("no_trigger", 0) > 0:
+        total = counts["total"]
+        no_trigger = counts["no_trigger"]
+        lines.append(
+            f"{total} ceiling marker(s), {no_trigger} with no trigger"
+            " — run /ceiling-debt to review"
+        )
 
     if lines:
         print("\n".join(lines))

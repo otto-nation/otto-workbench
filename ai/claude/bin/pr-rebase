@@ -619,6 +619,54 @@ def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     )
 
 
+# ── Push helper ─────────────────────────────────────────────────────────────
+
+
+def _force_push(cwd: str) -> int:
+    """Force-push, auto-committing if the pre-push hook regenerates files.
+
+    Pre-push hooks may run generators (e.g. generate-tool-context) that update
+    tracked files, causing the push to fail. When this happens, commit the
+    regenerated files and retry once.
+    """
+    r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
+    if r.returncode == 0:
+        return 0
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if not status.stdout.strip():
+        return r.returncode
+
+    modified = [
+        line[3:] for line in status.stdout.splitlines()
+        if line.startswith(" M ")
+    ]
+    if not modified:
+        return r.returncode
+
+    if _trail:
+        _trail.info("force_push", "committing regenerated files before retry", data={"files": modified})
+    log.info("Committing regenerated files...")
+    ar = subprocess.run(["git", "add", "-u"], cwd=cwd)
+    if ar.returncode != 0:
+        log.error("Failed to stage regenerated files.")
+        return r.returncode
+    cr = subprocess.run(
+        ["git", "commit", "-m", "chore(docs): regenerate after rebase"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if cr.returncode != 0:
+        log.error("Failed to commit regenerated files.")
+        return r.returncode
+
+    log.info("Retrying force-push...")
+    retry = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
+    return retry.returncode
+
+
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
@@ -642,10 +690,10 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
         return 1
 
     log.info("Force-pushing...")
-    r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
-    if r.returncode != 0:
-        _terr("push", "force-push failed", data={"exit_code": r.returncode})
-        return r.returncode
+    push_rc = _force_push(cwd)
+    if push_rc != 0:
+        _terr("push", "force-push failed", data={"exit_code": push_rc})
+        return push_rc
 
     state = _load_or_init(ctx)
     target_base = state.rebase.target_base or subprocess.run(
@@ -751,17 +799,17 @@ def _rebase_success(
             f"across {conflicts_resolved} commit(s)"
         )
         log.info(f"{label} — force-pushing...")
-        r = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
-        if r.returncode == 0:
+        push_rc = _force_push(cwd)
+        if push_rc == 0:
             _trail and _trail.info("force_push", "force-pushed to remote")
         else:
-            _terr("force_push", "force-push failed", data={"exit_code": r.returncode})
+            _terr("force_push", "force-push failed", data={"exit_code": push_rc})
         pr_state.update_rebase(state, pr_state.RebaseSummary(
             target_base=_TARGET_REF,
             commits_replayed=commits,
             conflicts_resolved=conflicts_resolved,
             files_resolved=files_resolved,
-            force_pushed=r.returncode == 0,
+            force_pushed=push_rc == 0,
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(ctx.worktree_root, state)
@@ -770,15 +818,15 @@ def _rebase_success(
             "commits_replayed": commits,
             "conflicts_resolved": conflicts_resolved,
             "files_resolved": files_resolved,
-            "force_pushed": r.returncode == 0,
+            "force_pushed": push_rc == 0,
         }
         json.dump(report, sys.stdout, indent=2)
         print()
-        if r.returncode == 0:
+        if push_rc == 0:
             log.ok("Force-pushed.")
         else:
             log.error("Force-push failed.")
-        return r.returncode
+        return push_rc
 
     pr_state.update_rebase(state, pr_state.RebaseSummary(
         target_base=_TARGET_REF,

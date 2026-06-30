@@ -450,6 +450,12 @@ def _step_conflicts(
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0:
+        # rebase --continue returns non-zero when the current commit is applied
+        # but the *next* commit has conflicts — that's normal, not a failure.
+        if _detect_rebase_in_progress(cwd):
+            if r.stderr.strip():
+                log.dim(r.stderr.strip())
+            return None
         if r.stderr.strip():
             log.dim(r.stderr.strip())
         _terr("step_conflicts", "rebase --continue failed after resolution", data={"stderr": r.stderr.strip()})
@@ -481,6 +487,12 @@ def _step_advance(cwd: str) -> int | None:
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode == 0:
+        return None
+
+    # rebase --continue can return non-zero when the next commit has conflicts
+    if _detect_rebase_in_progress(cwd):
+        if r.stderr.strip():
+            log.dim(r.stderr.strip())
         return None
 
     log.warn("rebase --continue failed without conflicts — aborting")

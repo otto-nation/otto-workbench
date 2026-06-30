@@ -75,7 +75,7 @@ jobs:
         run: |
           bash bin/local/generate-tool-context
           failed=false
-          for f in ai/guidelines/rules/tools.generated.md docs/tools.md docs/ai-automation.md docs/components.md README.md; do
+          for f in ai/guidelines/rules/tools.generated*.md docs/tools.md docs/ai-automation.md docs/components.md README.md; do
             if ! git diff --exit-code "$f"; then
               echo ""
               echo "$f is out of date."

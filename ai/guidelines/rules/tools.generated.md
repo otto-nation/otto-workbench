@@ -64,6 +64,11 @@ Unified PR lifecycle CLI — CI failures, code review, and review comments
 
 ## Dev Tools
 
+### jira
+Jira CLI (ankitpokhrel/jira-cli) — manage Jira tickets from the terminal
+- **When to use**: Viewing, moving, or commenting on Jira tickets; checking ticket status; assigning issues
+- **Usage**: `jira issue view PROJ-123 --plain  |  jira issue list -P PROJ --plain  |  jira issue move PROJ-123 "In Progress"`
+
 ### linear
 Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal
 - **When to use**: Listing, creating, or starting Linear issues; git-aware issue tracking

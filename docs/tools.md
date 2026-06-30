@@ -39,7 +39,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |
 | `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
-| `workbench-statusline` | Status line script — displays reuse level and PR state |
+| `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |

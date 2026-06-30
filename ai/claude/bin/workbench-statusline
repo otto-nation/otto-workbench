@@ -8,17 +8,24 @@
 set -e
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  # ceiling: duplicated help pattern, extract to shared helper if a third script needs it
   sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# *//p; }' "$0"
   exit 0
 fi
 
+# ceiling: reuse resolution logic duplicated from _reuse_levels.py to avoid Python startup
+# on every 10-s refresh; mirror changes to read_level()/read_default() here if logic changes
 read_reuse_piece() {
   local level_file="$HOME/.config/workbench/reuse-level"
   local default_file="$HOME/.config/workbench/reuse-default"
   local level="" default_level="full"
 
+  if [[ -n "${REUSE_DEFAULT_MODE:-}" ]]; then
+    default_level="${REUSE_DEFAULT_MODE}"
+  elif [[ -f "$default_file" ]]; then
+    default_level=$(< "$default_file")
+  fi
   [[ -f "$level_file" ]] && level=$(< "$level_file")
-  [[ -f "$default_file" ]] && default_level=$(< "$default_file")
 
   level="${level:-$default_level}"
   [[ "$level" != "$default_level" ]] && printf "reuse:%s" "$level"
@@ -44,9 +51,10 @@ read_pr_piece() {
 read_pr_details() {
   local state_file="$1" parts=()
 
-  local ci_conclusion ci_failures
-  ci_conclusion=$(jq -r '.ci.conclusion // empty' "$state_file" 2>/dev/null)
-  ci_failures=$(jq -r '.ci.failure_count // 0' "$state_file" 2>/dev/null)
+  local vals ci_conclusion ci_failures verdict open_threads
+  vals=$(jq -r '[.ci.conclusion // "", .ci.failure_count // 0, .review.verdict // "", .comments.by_state.open // 0] | @tsv' "$state_file" 2>/dev/null) || return 0
+  IFS=$'\t' read -r ci_conclusion ci_failures verdict open_threads <<< "$vals"
+
   if [[ "$ci_conclusion" == "failure" && "$ci_failures" -gt 0 ]]; then
     parts+=("CI:${ci_failures}F")
   elif [[ "$ci_conclusion" == "success" ]]; then
@@ -55,12 +63,7 @@ read_pr_details() {
     parts+=("CI:$ci_conclusion")
   fi
 
-  local verdict
-  verdict=$(jq -r '.review.verdict // empty' "$state_file" 2>/dev/null)
   [[ -n "$verdict" ]] && parts+=("review:$verdict")
-
-  local open_threads
-  open_threads=$(jq -r '.comments.by_state.open // 0' "$state_file" 2>/dev/null)
   [[ "$open_threads" -gt 0 ]] && parts+=("${open_threads}open")
 
   [[ ${#parts[@]} -gt 0 ]] && printf "%s" "${parts[*]}"

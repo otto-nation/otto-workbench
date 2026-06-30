@@ -125,7 +125,7 @@ tools:
   - name: workbench-statusline
     permission: false
     visibility: hidden
-    description: "Status line script — displays reuse level and PR state"
+    description: "Status line script — displays reuse level, ceiling debt count, and review status"
 
   - name: run-auto-task
     permission: false

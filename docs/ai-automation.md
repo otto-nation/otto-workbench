@@ -175,7 +175,7 @@ Show a reference card of all workbench skills, agents, and reuse modes. TRIGGER 
 /reference
 ```
 
-**Output:** `Formatted reference card to stdout`
+**Output:** `formatted reference card to stdout`
 **Trigger:** what skills are available, show commands, help, reference card, what can you do
 **Skip:** Detailed help on a specific skill — invoke that skill directly
 

@@ -5,7 +5,7 @@ source: otto-workbench/ai/claude/skills/reference/SKILL.md
 invocation: "/reference"
 trigger: "what skills are available, show commands, help, reference card, what can you do"
 skip: "Detailed help on a specific skill — invoke that skill directly"
-output: "Formatted reference card to stdout"
+output: "formatted reference card to stdout"
 ---
 
 # Reference

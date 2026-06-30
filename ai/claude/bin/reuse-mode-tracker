@@ -58,7 +58,7 @@ def main() -> None:
         return
 
     arg = parts[1].strip()
-    if arg.lower().startswith("default"):
+    if arg.lower() == "default" or arg.lower().startswith("default "):
         _handle_default(arg)
         return
 

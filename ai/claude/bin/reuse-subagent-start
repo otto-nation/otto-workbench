@@ -23,6 +23,12 @@ from _reuse_levels import (  # noqa: E402
 
 def main() -> None:
     level = read_level()
+    # Intentionally compare against DEFAULT_LEVEL ("full"), not read_default().
+    # Subagents don't receive SessionStart, so they won't discover a configured
+    # default unless we inject it here. We inject whenever the level differs from
+    # the universal baseline so a user-configured default (e.g. "lite") is not
+    # silently lost. reuse-session-start uses read_default() because a top-level
+    # session already ran at full before the default was applied.
     if level != DEFAULT_LEVEL:
         print(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 

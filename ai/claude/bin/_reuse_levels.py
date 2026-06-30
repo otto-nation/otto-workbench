@@ -34,7 +34,7 @@ def read_default() -> str:
 def read_level() -> str:
     """Read the active session level, falling back to the configured default."""
     try:
-        level = LEVEL_FILE.read_text().strip()
+        level = LEVEL_FILE.read_text().strip().lower()
         if level in VALID_LEVELS:
             return level
     except FileNotFoundError:

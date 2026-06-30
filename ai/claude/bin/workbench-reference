@@ -8,6 +8,7 @@
 set -e
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  # ceiling: duplicated help pattern, extract to shared helper if a third script needs it
   sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# *//p; }' "$0"
   exit 0
 fi

@@ -206,9 +206,9 @@ def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -
 def _has_conflict_markers(text: str) -> str | None:
     """Check for git conflict markers at the start of lines. Returns the marker found, or None."""
     for line in text.splitlines():
-        for marker in _CONFLICT_MARKER_PREFIXES:
-            if line.startswith(marker):
-                return marker
+        match = next((m for m in _CONFLICT_MARKER_PREFIXES if line.startswith(m)), None)
+        if match:
+            return match
     return None
 
 

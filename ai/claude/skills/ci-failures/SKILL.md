@@ -48,7 +48,7 @@ The script outputs:
 
 **Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
-If all checks pass (conclusion is "success" and no failures), report that CI is green and stop.
+**Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed (no JSON report in the output), report the result to the user and **stop — do not proceed to step 2**. The script only outputs the JSON failure report when there are actual failures to process.
 
 ### 2. Classify and group failures
 

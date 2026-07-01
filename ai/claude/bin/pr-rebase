@@ -162,7 +162,7 @@ def _is_empty_patch(cwd: str) -> bool:
 _RESOLVE_BEGIN = "<<<RESOLVED>>>"
 _RESOLVE_END = "<<<END_RESOLVED>>>"
 
-_CONFLICT_MARKER_RE = ("<<<<<<< ", "=======", ">>>>>>> ")
+_CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 
 
 def _is_binary(path: Path) -> bool:
@@ -206,7 +206,7 @@ def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -
 def _has_conflict_markers(text: str) -> str | None:
     """Check for git conflict markers at the start of lines. Returns the marker found, or None."""
     for line in text.splitlines():
-        for marker in _CONFLICT_MARKER_RE:
+        for marker in _CONFLICT_MARKER_PREFIXES:
             if line.startswith(marker):
                 return marker
     return None
@@ -612,6 +612,16 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
             continue
         resolved_content, failure_reason = _parse_resolved_content(stdout)
         if resolved_content is None:
+            _terr(
+                "resolve_stash_conflicts",
+                f"failed to parse stash resolution for {filepath}",
+                data={
+                    "filepath": filepath,
+                    "reason": failure_reason,
+                    "stdout_len": len(stdout),
+                    "stdout_tail": stdout[-200:] if stdout else "",
+                },
+            )
             log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")
             continue
         full_path.write_text(resolved_content)

@@ -283,6 +283,39 @@ EOF
   [ "$count" -eq 1 ]
 }
 
+@test "brief entries render before full entries across shared-section registries" {
+  cat > "$WORK_DIR/a.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: full-tool
+    permission: false
+    visibility: full
+    description: "Full entry"
+    when_to_use: "Always"
+    usage: "full-tool --run"
+EOF
+  cat > "$WORK_DIR/b.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: brief-tool
+    permission: false
+    visibility: brief
+    description: "Brief entry"
+EOF
+
+  bash "$GENERATOR"
+  local brief_line full_line
+  brief_line=$(grep -n "brief-tool" "$TOOL_CONTEXT_OUTPUT" | head -1 | cut -d: -f1)
+  full_line=$(grep -n "### full-tool" "$TOOL_CONTEXT_OUTPUT" | head -1 | cut -d: -f1)
+  [ "$brief_line" -lt "$full_line" ]
+}
+
 # ── Visibility tiers ─────────────────────────────────────────────────────────
 
 @test "visibility: full renders full entry" {

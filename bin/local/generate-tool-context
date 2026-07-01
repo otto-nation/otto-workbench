@@ -227,15 +227,16 @@ _tool_ref_entry() {
   printf -- '- **%s** — %s\n' "$name" "$description"
 }
 
-# Tracks which section headers have been printed — multiple registries with the
-# same meta.section merge under one header. Reset before each output file.
-declare -A _rendered_sections=()
+# Per-section buffers — multiple registries with the same meta.section accumulate
+# here, then _flush_sections renders each section once: brief entries first (under
+# the ## heading), then full entries (with ### headings). This prevents brief entries
+# from visually nesting under a preceding full entry's heading.
+declare -A _section_brief=()
+declare -A _section_full=()
+declare -a _section_order=()
 
-# _render_registry FILE
-# Reads meta.section from FILE, then renders tools by visibility tier.
-# Skips the section entirely if no tools are present. Deduplicates section
-# headers so multiple registries can share a section name.
-_render_registry() {
+# _collect_registry FILE — buffers tools into per-section accumulators.
+_collect_registry() {
   local file="$1"
   [[ -f "$file" ]] || return 0
   local count
@@ -251,13 +252,31 @@ _render_registry() {
 
   [[ -n "$full_content" || -n "$brief_content" ]] || return 0
 
-  if [[ -z "${_rendered_sections[$section]:-}" ]]; then
-    printf '\n## %s\n' "$section"
-    _rendered_sections[$section]=1
+  if [[ -z "${_section_brief[$section]+set}" ]]; then
+    _section_order+=("$section")
+    _section_brief[$section]=""
+    _section_full[$section]=""
   fi
-  [[ -n "$full_content" ]] && printf '%s\n' "$full_content"
-  [[ -n "$brief_content" ]] && printf '%s\n' "$brief_content"
+
+  [[ -n "$brief_content" ]] && _section_brief[$section]+="$brief_content"$'\n'
+  [[ -n "$full_content" ]] && _section_full[$section]+="$full_content"$'\n'
   return 0
+}
+
+# _flush_sections — renders all accumulated sections in discovery order, then resets.
+_flush_sections() {
+  local _sec
+  for _sec in "${_section_order[@]}"; do
+    local brief="${_section_brief[$_sec]}"
+    local full="${_section_full[$_sec]}"
+    [[ -n "$brief" || -n "$full" ]] || continue
+    printf '\n## %s\n' "$_sec"
+    [[ -n "$brief" ]] && printf '%s' "$brief"
+    [[ -n "$full" ]] && printf '%s' "$full"
+  done
+  _section_brief=()
+  _section_full=()
+  _section_order=()
 }
 
 # ── Scope → paths mapping ────────────────────────────────────────────────────
@@ -301,14 +320,15 @@ done
 OUTPUT_DIR="$(dirname "$OUTPUT")"
 
 # Core file — always loaded, no frontmatter.
-_rendered_sections=()
+_section_brief=(); _section_full=(); _section_order=()
 {
   printf '# Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
   printf '<!-- Regenerate: generate-tool-context -->\n'
   for _reg in "${_core_registries[@]}"; do
-    _render_registry "$_reg"
+    _collect_registry "$_reg"
   done
+  _flush_sections
 } > "$OUTPUT"
 $QUIET || success "Generated $(basename "$OUTPUT")"
 
@@ -323,7 +343,7 @@ for _scope in "${!_scope_registries[@]}"; do
     exit 1
   fi
 
-  _rendered_sections=()
+  _section_brief=(); _section_full=(); _section_order=()
   {
     printf -- '---\npaths:\n%s\n---\n' "$_paths"
     printf '# Tools — %s\n' "$_scope"
@@ -331,8 +351,9 @@ for _scope in "${!_scope_registries[@]}"; do
     printf '<!-- Regenerate: generate-tool-context -->\n'
     while IFS= read -r _reg; do
       [[ -z "$_reg" ]] && continue
-      _render_registry "$_reg"
+      _collect_registry "$_reg"
     done <<< "$_scope_regs"
+    _flush_sections
   } > "$_scope_output"
   $QUIET || success "Generated $(basename "$_scope_output")"
 done

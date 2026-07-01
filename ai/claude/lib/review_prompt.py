@@ -29,7 +29,7 @@ from review_preflight import (
     PRContext, PRMetadata, PreflightData, ReviewJob,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
-    _scope_diff, format_preflight_data,
+    _scope_diff, build_project_context, format_preflight_data,
 )
 
 # ── Template rendering ────────────────────────────────────────────────────────
@@ -466,6 +466,7 @@ def render_template(name: str, **kwargs) -> str:
 def _build_preflight_section(
     job: ReviewJob, file_filter: list[str] | None = None,
     skip_file_contents: bool = False,
+    skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
 ) -> str:
     if not job.preflight:
@@ -473,6 +474,7 @@ def _build_preflight_section(
     return format_preflight_data(
         job.preflight, file_filter=file_filter,
         skip_file_contents=skip_file_contents,
+        skip_project_context=skip_project_context,
         max_diff_bytes=max_diff_bytes,
     )
 
@@ -741,6 +743,7 @@ def _prompt_group(job, common, extra):
     pr_header = _build_pr_header(job.pr, job.ctx, file_filter=file_filter)
     delta_section = _build_delta_section(job.preflight, file_filter=file_filter)
     reply_threads = _build_reply_threads_section(job.reply_threads, file_filter=file_filter)
+    project_context = build_project_context(job.preflight) if job.preflight else ""
     sections = {
         "pr_header": pr_header,
         "holistic_block": holistic_block,
@@ -751,8 +754,10 @@ def _prompt_group(job, common, extra):
         "reply_threads": reply_threads,
     }
     diff_budget = _compute_diff_budget(job, sections, file_filter=file_filter)
+    sections["project_context"] = project_context
     group_preflight = _build_preflight_section(
-        job, file_filter=file_filter, max_diff_bytes=diff_budget,
+        job, file_filter=file_filter, skip_project_context=True,
+        max_diff_bytes=diff_budget,
     )
     sections["preflight_data"] = group_preflight
     kwargs = {
@@ -763,6 +768,7 @@ def _prompt_group(job, common, extra):
         "group_count": extra["group_count"],
         "group_name": extra["group_name"],
         "holistic_block": holistic_block,
+        "project_context": project_context,
         "group_files_formatted": extra["group_files_formatted"],
         "preflight_data": group_preflight,
         "delta_section": delta_section,

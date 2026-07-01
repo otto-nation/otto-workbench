@@ -1,19 +1,20 @@
-Review PR #${pr_number} in ${repo} — GROUP ${group_idx}/${group_count}: ${group_name}
-
-${pr_header}
 ${holistic_block}
 ${project_context}
+${issue_section}
 
-## Scope constraint
+${env_section}
+
+## Your Assignment — GROUP ${group_idx}/${group_count}: ${group_name}
+
+Review PR #${pr_number} in ${repo}.
+${pr_header}
+
 Review ONLY the following files. Do NOT read or comment on files outside this list:
 ${group_files_formatted}
 ${preflight_data}
 ${delta_section}
-
-Prior reviews exist and will be consulted during synthesis. Focus only on your assigned files.
-${issue_section}
-
-${env_section}
+${prior_section}
+${reply_threads}
 
 ## Output
 You MUST use the Write tool to write findings to: ${group_output}
@@ -28,5 +29,3 @@ Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write your findings file FIRST based on the diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.
-${prior_section}
-${reply_threads}

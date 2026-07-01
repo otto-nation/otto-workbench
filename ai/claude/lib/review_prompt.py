@@ -625,16 +625,11 @@ def _prompt_self_review(job, common, extra):
 def _prompt_self_synthesis(job, common, extra):
     holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
     merged_content = extra["merged_content"]
-    prior_ctx = _incremental_prior_ctx(job,
-        "Omit prior findings that have been fixed. Carry forward open ones.",
-    )
-    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     sections = {
         "pr_header": common["pr_header"],
         "holistic_content": holistic_content,
         "merged_content": merged_content,
         "delta_section": common["delta_section"],
-        "prior_section": prior_section,
         "reply_threads": common["reply_threads"],
     }
     diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
@@ -653,7 +648,7 @@ def _prompt_self_synthesis(job, common, extra):
         "review_file": job.review_file,
         "wt_path": job.wt_path,
         "today": common["today"],
-        "prior_section": prior_section,
+        "prior_section": "",
         "reply_threads": common["reply_threads"],
         "generator_version": common["generator_version"],
         "max_turns": common["max_turns"],
@@ -785,17 +780,12 @@ def _prompt_group(job, common, extra):
 def _prompt_synthesis(job, common, extra):
     holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
     merged_content = extra["merged_content"]
-    prior_ctx = _incremental_prior_ctx(job,
-        "Include a ## Resolved section noting which prior findings were fixed.",
-    )
-    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
     sections = {
         "pr_header": common["pr_header"],
         "holistic_content": holistic_content,
         "merged_content": merged_content,
         "delta_section": common["delta_section"],
         "reviews_section": common["reviews_section"],
-        "prior_section": prior_section,
         "reply_threads": common["reply_threads"],
     }
     diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
@@ -818,7 +808,7 @@ def _prompt_synthesis(job, common, extra):
         "review_file": job.review_file,
         "wt_path": job.wt_path,
         "today": common["today"],
-        "prior_section": prior_section,
+        "prior_section": "",
         "reply_threads": common["reply_threads"],
         "generator_version": common["generator_version"],
         "max_turns": common["max_turns"],

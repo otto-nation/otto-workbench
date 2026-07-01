@@ -507,10 +507,24 @@ def _format_file_contents(
     return parts
 
 
+def build_project_context(data: PreflightData) -> str:
+    parts: list[str] = []
+    if data.claude_md:
+        parts += ["### Project context", "", "#### CLAUDE.md", "", data.claude_md]
+    if data.architecture_md:
+        parts += ["", "#### .claude/architecture.md", "", data.architecture_md]
+    if data.review_checklists:
+        parts.append("\n#### Review checklists")
+        for name, content in data.review_checklists.items():
+            parts += [f"\n##### {name}", "", content]
+    return "\n".join(parts)
+
+
 def format_preflight_data(
     data: PreflightData,
     file_filter: list[str] | None = None,
     skip_file_contents: bool = False,
+    skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
 ) -> str:
     parts = [
@@ -538,14 +552,10 @@ def format_preflight_data(
         for path in diff_omitted:
             parts.append(f"- {path}")
 
-    if data.claude_md:
-        parts += ["", "### Project context", "", "#### CLAUDE.md", "", data.claude_md]
-    if data.architecture_md:
-        parts += ["", "#### .claude/architecture.md", "", data.architecture_md]
-    if data.review_checklists:
-        parts.append("\n#### Review checklists")
-        for name, content in data.review_checklists.items():
-            parts += [f"\n##### {name}", "", content]
+    if not skip_project_context:
+        project_ctx = build_project_context(data)
+        if project_ctx:
+            parts += ["", project_ctx]
 
     return "\n".join(parts)
 

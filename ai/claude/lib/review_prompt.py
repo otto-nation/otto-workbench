@@ -221,9 +221,11 @@ PR branch checked out at: {wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API."""
 
 
-def _build_omitted_guidance(preflight: "PreflightData | None") -> str:
+def _build_omitted_guidance(preflight: "PreflightData | None", skip_omitted: bool = False) -> str:
     if not preflight or not preflight.omitted_files:
         return ""
+    if skip_omitted:
+        return " Some large files were excluded — they are not reviewed at this effort level."
     return (
         ' First, read all files listed under "Files not pre-collected"'
         " in a single parallel batch."
@@ -857,7 +859,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
         "env_section": _build_env_section(job.wt_path, preflight=job.preflight),
         "issue_section": _build_issue_section(job.issue_link, job.issue_context),
         "delta_section": _build_delta_section(job.preflight),
-        "omitted_guidance": _build_omitted_guidance(job.preflight),
+        "omitted_guidance": _build_omitted_guidance(job.preflight, skip_omitted=(job.effort == "low")),
         "max_turns": max_turns,
     }
 

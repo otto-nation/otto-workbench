@@ -42,7 +42,8 @@ from review_preflight import (  # noqa: E402
     ReviewJob, collect_preflight_data, fetch_reply_threads,
 )
 from review_pipeline import (  # noqa: E402
-    _effort_default, _fetch_metadata, run_fix_pass, run_multi_phase, run_single_agent,
+    _effort_default, _effort_thinking, _fetch_metadata,
+    run_fix_pass, run_multi_phase, run_single_agent,
 )
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
@@ -172,7 +173,7 @@ def main():
     parser.add_argument("--model", default="",
                         help="Override model for all agents (e.g. sonnet, opus)")
     parser.add_argument("--effort", choices=["low", "medium", "high"], default="medium",
-                        help="Effort preset controlling model, thinking, budget (default: medium)")
+                        help="Effort preset controlling thinking, budget, phase skipping (default: medium)")
     parser.add_argument("--max-groups", type=int, default=None,
                         help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",

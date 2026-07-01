@@ -20,26 +20,15 @@ class TestEffortPresets:
             else:
                 assert set(preset.keys()) == keys, f"{tier} has different keys"
 
-    def test_medium_matches_existing_defaults(self):
-        medium = review_pipeline.EFFORT_PRESETS["medium"]
-        assert medium["group_model"] == review_pipeline.DEFAULT_MODEL_GROUP
-        assert medium["group_thinking"] == review_pipeline.DEFAULT_THINKING_GROUP
-        assert medium["holistic_model"] == review_pipeline.DEFAULT_MODEL_HOLISTIC
-        assert medium["synthesis_model"] == review_pipeline.DEFAULT_MODEL_SYNTHESIS
-        assert medium["single_model"] == review_pipeline.DEFAULT_MODEL_SINGLE
-        assert medium["angles_model"] == review_pipeline.DEFAULT_MODEL_ANGLES
-        assert medium["fix_model"] == review_pipeline.DEFAULT_MODEL_FIX
+    def test_no_model_keys(self):
+        for tier, preset in review_pipeline.EFFORT_PRESETS.items():
+            for key in preset:
+                assert not key.endswith("_model"), f"{tier} has model key: {key}"
 
-    def test_low_uses_cheaper_models(self):
-        low = review_pipeline.EFFORT_PRESETS["low"]
-        assert low["group_model"] == "haiku"
-        assert low["single_model"] == "sonnet"
-        assert low["fix_model"] == "haiku"
-
-    def test_high_uses_opus_for_groups(self):
-        high = review_pipeline.EFFORT_PRESETS["high"]
-        assert high["group_model"] == "opus"
-        assert high["group_thinking"] == "medium"
+    def test_thinking_override_values(self):
+        assert review_pipeline.EFFORT_PRESETS["low"]["thinking"] == "low"
+        assert review_pipeline.EFFORT_PRESETS["medium"]["thinking"] is None
+        assert review_pipeline.EFFORT_PRESETS["high"]["thinking"] == "high"
 
     def test_low_skips_phases(self):
         low = review_pipeline.EFFORT_PRESETS["low"]
@@ -72,25 +61,43 @@ class TestEffortPresets:
 
 class TestEffortDefault:
     def test_returns_preset_value(self):
-        assert review_pipeline._effort_default("low", "group_model", "fallback") == "haiku"
+        assert review_pipeline._effort_default("low", "agent_budget", 0) == 3.0
 
     def test_returns_fallback_for_unknown_effort(self):
-        assert review_pipeline._effort_default("unknown", "group_model", "fallback") == "fallback"
+        assert review_pipeline._effort_default("unknown", "agent_budget", 99) == 99
 
     def test_returns_fallback_for_unknown_key(self):
         assert review_pipeline._effort_default("low", "nonexistent_key", "fallback") == "fallback"
 
     def test_medium_returns_default_values(self):
-        assert review_pipeline._effort_default("medium", "group_model", "fallback") == "sonnet"
         assert review_pipeline._effort_default("medium", "agent_budget", 0) == 5.0
 
     def test_high_returns_high_values(self):
-        assert review_pipeline._effort_default("high", "group_model", "fallback") == "opus"
         assert review_pipeline._effort_default("high", "agent_budget", 0) == 8.0
 
     def test_boolean_keys(self):
         assert review_pipeline._effort_default("low", "skip_synthesis", False) is True
         assert review_pipeline._effort_default("medium", "skip_synthesis", True) is False
+
+
+class TestEffortThinking:
+    def test_low_overrides_phase_default(self):
+        assert review_pipeline._effort_thinking("low", "high") == "low"
+
+    def test_medium_uses_phase_default(self):
+        assert review_pipeline._effort_thinking("medium", "high") == "high"
+
+    def test_high_overrides_phase_default(self):
+        assert review_pipeline._effort_thinking("high", "low") == "high"
+
+    def test_unknown_effort_uses_phase_default(self):
+        assert review_pipeline._effort_thinking("unknown", "medium") == "medium"
+
+    def test_none_phase_default_with_override(self):
+        assert review_pipeline._effort_thinking("low", None) == "low"
+
+    def test_none_phase_default_without_override(self):
+        assert review_pipeline._effort_thinking("medium", None) is None
 
 
 class TestOmittedTurns:

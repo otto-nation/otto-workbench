@@ -2,6 +2,7 @@ Review PR #${pr_number} in ${repo} — GROUP ${group_idx}/${group_count}: ${grou
 
 ${pr_header}
 ${holistic_block}
+${project_context}
 
 ## Scope constraint
 Review ONLY the following files. Do NOT read or comment on files outside this list:

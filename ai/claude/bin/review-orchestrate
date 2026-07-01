@@ -42,7 +42,8 @@ from review_preflight import (  # noqa: E402
     ReviewJob, collect_preflight_data, fetch_reply_threads,
 )
 from review_pipeline import (  # noqa: E402
-    _fetch_metadata, run_fix_pass, run_multi_phase, run_single_agent,
+    _effort_default, _effort_thinking, _fetch_metadata,
+    run_fix_pass, run_multi_phase, run_single_agent,
 )
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
@@ -87,7 +88,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         issue_link=args.issue, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
-        model=args.model,
+        model=args.model, effort=args.effort,
     )
 
     log.info("Collecting file data...")
@@ -100,16 +101,18 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     else:
         job.preflight = collect_preflight_data(job)
 
+    line_threshold = _effort_default(job.effort, "multi_phase_line_threshold", MULTI_PHASE_LINE_THRESHOLD)
+    file_threshold = _effort_default(job.effort, "multi_phase_file_threshold", MULTI_PHASE_FILE_THRESHOLD)
     is_large = (
-        pr.total_lines > MULTI_PHASE_LINE_THRESHOLD
-        or pr.changed_files > MULTI_PHASE_FILE_THRESHOLD
+        pr.total_lines > line_threshold
+        or pr.changed_files > file_threshold
     )
     pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
     trail.decision(
         "select_pipeline",
         f"chose {pipeline}",
-        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={MULTI_PHASE_FILE_THRESHOLD} lines={MULTI_PHASE_LINE_THRESHOLD})",
+        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
         data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
     )
 
@@ -118,6 +121,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
             run_multi_phase(
                 job, max_parallel=args.max_parallel,
                 skip_holistic=args.no_holistic, max_cost=args.max_cost,
+                max_groups=args.max_groups,
             )
     else:
         with trail.span("single_agent"):
@@ -168,6 +172,10 @@ def main():
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
                         help="Override model for all agents (e.g. sonnet, opus)")
+    parser.add_argument("--effort", choices=["low", "medium", "high"], default="medium",
+                        help="Effort preset controlling thinking, budget, phase skipping (default: medium)")
+    parser.add_argument("--max-groups", type=int, default=None,
+                        help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
     add_trail_args(parser)

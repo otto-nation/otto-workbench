@@ -59,7 +59,7 @@ from review_prompt import (
     build_prompt,
 )
 from review_agent import (
-    CONSECUTIVE_FAIL_THRESHOLD,
+    CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
     DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG,
     _diagnose_missing_output, _is_model_error, _parse_session_cost,
     _resolve_model, _resolve_provider, _resolve_thinking_level,
@@ -94,8 +94,88 @@ DEFAULT_MAX_TURNS_ANGLES = 15
 DEFAULT_MAX_TURNS_FIX = 20
 MAX_TURNS_FIX_CAP = 60
 
-
 OMITTED_FILE_TURNS = 2
+
+# ── Effort presets ───────────────────────────────────────────────────────────
+
+EFFORT_PRESETS = {
+    "low": {
+        "group_model": "haiku",
+        "group_thinking": "low",
+        "holistic_model": None,
+        "holistic_thinking": None,
+        "synthesis_model": None,
+        "synthesis_thinking": None,
+        "single_model": "sonnet",
+        "single_thinking": "low",
+        "angles_model": None,
+        "angles_thinking": None,
+        "fix_model": "haiku",
+        "fix_thinking": "low",
+        "agent_budget": 3.0,
+        "max_groups": 8,
+        "multi_phase_line_threshold": 1000,
+        "multi_phase_file_threshold": 15,
+        "skip_synthesis": True,
+        "skip_angles": True,
+        "skip_holistic": True,
+        "skip_omitted_files": True,
+        "agent": "reviewer-lite",
+    },
+    "medium": {
+        "group_model": DEFAULT_MODEL_GROUP,
+        "group_thinking": DEFAULT_THINKING_GROUP,
+        "holistic_model": DEFAULT_MODEL_HOLISTIC,
+        "holistic_thinking": DEFAULT_THINKING_HOLISTIC,
+        "synthesis_model": DEFAULT_MODEL_SYNTHESIS,
+        "synthesis_thinking": DEFAULT_THINKING_SYNTHESIS,
+        "single_model": DEFAULT_MODEL_SINGLE,
+        "single_thinking": DEFAULT_THINKING_SINGLE,
+        "angles_model": DEFAULT_MODEL_ANGLES,
+        "angles_thinking": DEFAULT_THINKING_ANGLES,
+        "fix_model": DEFAULT_MODEL_FIX,
+        "fix_thinking": DEFAULT_THINKING_FIX,
+        "agent_budget": DEFAULT_MAX_BUDGET_PER_AGENT,
+        "max_groups": 12,
+        "multi_phase_line_threshold": 500,
+        "multi_phase_file_threshold": 10,
+        "skip_synthesis": False,
+        "skip_angles": False,
+        "skip_holistic": False,
+        "skip_omitted_files": False,
+        "agent": "reviewer",
+    },
+    "high": {
+        "group_model": "opus",
+        "group_thinking": "medium",
+        "holistic_model": "opus",
+        "holistic_thinking": "high",
+        "synthesis_model": "opus",
+        "synthesis_thinking": "high",
+        "single_model": "opus",
+        "single_thinking": "high",
+        "angles_model": "sonnet",
+        "angles_thinking": "medium",
+        "fix_model": "sonnet",
+        "fix_thinking": "low",
+        "agent_budget": 8.0,
+        "max_groups": 16,
+        "multi_phase_line_threshold": 500,
+        "multi_phase_file_threshold": 10,
+        "skip_synthesis": False,
+        "skip_angles": False,
+        "skip_holistic": False,
+        "skip_omitted_files": False,
+        "agent": "reviewer",
+    },
+}
+
+
+def _effort_default(effort: str, key: str, fallback):
+    preset = EFFORT_PRESETS.get(effort)
+    if preset and key in preset:
+        return preset[key]
+    return fallback
 
 
 def _touch(path: str) -> None:
@@ -242,10 +322,13 @@ def run_single_agent(job: ReviewJob):
     log.info(f"Running review agent on {label}...")
     log.blank()
     _touch(job.review_file)
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SINGLE_THINKING", DEFAULT_THINKING_SINGLE)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL",
+                           _effort_default(job.effort, "single_model", DEFAULT_MODEL_SINGLE))
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SINGLE_THINKING",
+                                       _effort_default(job.effort, "single_thinking", DEFAULT_THINKING_SINGLE))
     provider = _resolve_provider()
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
     log.blank()
 
     reason = ""
@@ -295,11 +378,14 @@ def _review_group(
         group_file_paths=grp.files,
         group_output=group_output, holistic_content=holistic_content,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", DEFAULT_THINKING_GROUP)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL",
+                           _effort_default(job.effort, "group_model", DEFAULT_MODEL_GROUP))
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING",
+                                       _effort_default(job.effort, "group_thinking", DEFAULT_THINKING_GROUP))
     provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
 
     failed = None
     if not _has_output(group_output):
@@ -329,12 +415,15 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_HOLISTIC_THINKING", DEFAULT_THINKING_HOLISTIC)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL",
+                           _effort_default(job.effort, "holistic_model", DEFAULT_MODEL_HOLISTIC))
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_HOLISTIC_THINKING",
+                                       _effort_default(job.effort, "holistic_thinking", DEFAULT_THINKING_HOLISTIC))
     provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
     log.blank()
 
     holistic_content = ""
@@ -358,11 +447,14 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
         TEMPLATE_ANGLES, job, max_turns=max_turns,
         angles_output=angles_output, holistic_content=holistic_content,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_ANGLES_MODEL", DEFAULT_MODEL_ANGLES)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_ANGLES_THINKING", DEFAULT_THINKING_ANGLES)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_ANGLES_MODEL",
+                           _effort_default(job.effort, "angles_model", DEFAULT_MODEL_ANGLES))
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_ANGLES_THINKING",
+                                       _effort_default(job.effort, "angles_thinking", DEFAULT_THINKING_ANGLES))
     provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info("Angles scan (7 review angles)...")
-    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
+    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
 
     angles_content = ""
     if _has_output(angles_output):
@@ -589,14 +681,17 @@ def run_fix_pass(job: ReviewJob):
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING", DEFAULT_THINKING_FIX)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL",
+                           _effort_default(job.effort, "fix_model", DEFAULT_MODEL_FIX))
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING",
+                                       _effort_default(job.effort, "fix_thinking", DEFAULT_THINKING_FIX))
     provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info("Fix pass — applying review findings...")
     log.blank()
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
                  review_file=job.review_file, model=model, thinking_level=thinking,
-                 provider=provider, max_turns=max_turns)
+                 provider=provider, max_turns=max_turns, max_budget=budget)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -908,12 +1003,15 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SYNTHESIS_THINKING", DEFAULT_THINKING_SYNTHESIS)
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL",
+                           _effort_default(job.effort, "synthesis_model", DEFAULT_MODEL_SYNTHESIS))
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SYNTHESIS_THINKING",
+                                       _effort_default(job.effort, "synthesis_thinking", DEFAULT_THINKING_SYNTHESIS))
     provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns)
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
     log.blank()
 
     if not _has_output(job.review_file):
@@ -1226,9 +1324,11 @@ def _run_synthesis_or_fallback(
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
+    max_groups: int | None = None,
 ):
     groups = group_files(job.pr)
-    groups = _merge_smallest_groups(groups, DEFAULT_MAX_GROUPS)
+    effective_max_groups = max_groups or _effort_default(job.effort, "max_groups", DEFAULT_MAX_GROUPS)
+    groups = _merge_smallest_groups(groups, effective_max_groups)
     group_count = len(groups)
 
     log.info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")

@@ -87,7 +87,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         issue_link=args.issue, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
-        model=args.model,
+        model=args.model, effort=args.effort,
     )
 
     log.info("Collecting file data...")
@@ -118,6 +118,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
             run_multi_phase(
                 job, max_parallel=args.max_parallel,
                 skip_holistic=args.no_holistic, max_cost=args.max_cost,
+                max_groups=args.max_groups,
             )
     else:
         with trail.span("single_agent"):
@@ -168,6 +169,10 @@ def main():
                         help=f"Max total review cost in USD (default: {DEFAULT_MAX_COST})")
     parser.add_argument("--model", default="",
                         help="Override model for all agents (e.g. sonnet, opus)")
+    parser.add_argument("--effort", choices=["low", "medium", "high"], default="medium",
+                        help="Effort preset controlling model, thinking, budget (default: medium)")
+    parser.add_argument("--max-groups", type=int, default=None,
+                        help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
     add_trail_args(parser)

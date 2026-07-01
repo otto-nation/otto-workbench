@@ -93,6 +93,7 @@ class ReviewJob:
     generator_version: str = ""
     preflight: "PreflightData | None" = None
     model: str = ""
+    effort: str = "medium"
     reply_threads: dict = field(default_factory=dict)
     verification: dict | None = None
 

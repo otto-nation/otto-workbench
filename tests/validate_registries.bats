@@ -39,7 +39,6 @@ _write_valid_brew() {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -58,7 +57,6 @@ _write_valid_bin() {
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Workbench Scripts"
-  install_check: false
   validation: bindir
   source: bin
 
@@ -82,7 +80,6 @@ _write_valid_zsh() {
   cat > "$TMPDIR/zsh/registry.yml" << 'EOF'
 meta:
   section: "Shell Aliases"
-  install_check: false
   validation: zsh-comments
   source: zsh
 
@@ -132,7 +129,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -154,7 +150,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -176,7 +171,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -207,7 +201,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -230,7 +223,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -252,7 +244,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 
@@ -275,7 +266,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Workbench Scripts"
-  install_check: false
   validation: bindir
   source: bin
 
@@ -297,7 +287,6 @@ EOF
   cat > "$TMPDIR/zsh/registry.yml" << 'EOF'
 meta:
   section: "Shell Aliases"
-  install_check: false
   validation: zsh-comments
   source: zsh
 
@@ -396,7 +385,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 env:
@@ -415,7 +403,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 env:
@@ -433,7 +420,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 env:
@@ -451,7 +437,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 env:
@@ -470,7 +455,6 @@ EOF
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: none
 
 env:
@@ -481,7 +465,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Bin Tools"
-  install_check: false
   validation: none
 
 env:
@@ -537,7 +520,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -557,7 +539,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -577,7 +558,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -597,7 +577,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -618,7 +597,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -640,7 +618,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -661,7 +638,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -681,7 +657,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -701,7 +676,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -721,7 +695,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -741,7 +714,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -761,7 +733,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -781,7 +752,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -801,7 +771,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -823,7 +792,6 @@ EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
 meta:
   section: "Test"
-  install_check: false
   validation: none
 
 tools:
@@ -848,7 +816,6 @@ EOF
 meta:
   section: "Tools"
   scope: go
-  install_check: false
   validation: none
 
 tools:
@@ -868,7 +835,6 @@ EOF
 meta:
   section: "Tools"
   scope: "Go Tools"
-  install_check: false
   validation: none
 
 tools:
@@ -889,7 +855,6 @@ EOF
 meta:
   section: "Tools"
   scope: "cloud-infra"
-  install_check: false
   validation: none
 
 tools:

@@ -92,8 +92,8 @@ _run_step "Validating skills"       "$REPO_ROOT/bin/local/validate-skills" --qui
 
 _step "Regenerating tool context"
 "$REPO_ROOT/bin/local/generate-tool-context" --quiet
+"$REPO_ROOT/git/bin/local/generate-git-rules" --quiet
 _tool_gen_files=(
-  "$TOOLS_GENERATED_RELPATH"
   docs/tools.md
   docs/ai-automation.md
   docs/components.md
@@ -109,17 +109,6 @@ if [[ ${#_stale_files[@]} -gt 0 ]]; then
   for _f in "${_stale_files[@]}"; do
     echo "  $_f"
   done
-  exit 1
-fi
-_pass
-
-_step "Regenerating git rules"
-"$REPO_ROOT/git/bin/local/generate-git-rules" --quiet
-if ! git -C "$REPO_ROOT" diff --quiet "$GIT_GENERATED_RELPATH"; then
-  printf "${RED}✗${NC}\n" >&2
-  err "git.generated.md was updated — commit it before pushing:"
-  echo "  git add $GIT_GENERATED_RELPATH"
-  echo "  git commit -m \"chore: regenerate git rules\""
   exit 1
 fi
 _pass

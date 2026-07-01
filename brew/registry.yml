@@ -4,7 +4,6 @@
 
 meta:
   section: "Brew Tools"
-  install_check: false
   validation: brewfile
   source: brew/Brewfile
 

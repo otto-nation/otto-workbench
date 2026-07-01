@@ -5,7 +5,6 @@
 meta:
   section: "Terraform Tools"
   scope: infra
-  install_check: false
   validation: brewfile
   source: brew/infra/terraform.Brewfile
 

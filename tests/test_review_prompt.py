@@ -1,7 +1,6 @@
 """Tests for review_prompt: scoped prompt section builders."""
 
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

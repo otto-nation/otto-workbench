@@ -37,7 +37,7 @@ Git worktree manager — create, switch, list, merge, and remove worktrees with 
 - **tree** — Recursive directory listing tool — visualizes folder structure as a tree
 - **gitleaks** — Secret scanner — detects committed credentials, tokens, and keys
 
-## Claude Scripts
+## AI Tooling
 
 ### claude-review
 Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support
@@ -56,11 +56,7 @@ Unified PR lifecycle CLI — CI failures, code review, and review comments
 - **otto-log** — Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors
 - **ceiling-scan** — Scan for ceiling: markers and produce a structured debt ledger
 - **workbench-reference** — Reference card — lists all workbench skills, agents, and reuse modes
-
-## AI Tooling
 - **rtk** — CLI proxy that compresses command output to reduce LLM token consumption — auto-active via PreToolUse hook
-
-## Serena Scripts
 - **serena-mcp** — Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence
 
 ## Dev Tools

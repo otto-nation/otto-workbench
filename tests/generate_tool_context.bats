@@ -247,6 +247,42 @@ EOF
   grep -q "### tool-b" "$TOOL_CONTEXT_OUTPUT"
 }
 
+# ── Section deduplication ────────────────────────────────────────────────────
+
+@test "multiple registries with same section share one header" {
+  cat > "$WORK_DIR/a.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: tool-a
+    permission: false
+    visibility: full
+    description: "Tool A"
+    when_to_use: "Always"
+    usage: "tool-a --help"
+EOF
+  cat > "$WORK_DIR/b.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: tool-b
+    permission: false
+    visibility: brief
+    description: "Tool B"
+EOF
+
+  bash "$GENERATOR"
+  grep -q "### tool-a" "$TOOL_CONTEXT_OUTPUT"
+  grep -q "tool-b" "$TOOL_CONTEXT_OUTPUT"
+  local count
+  count=$(grep -c "## Shared Section" "$TOOL_CONTEXT_OUTPUT")
+  [ "$count" -eq 1 ]
+}
+
 # ── Visibility tiers ─────────────────────────────────────────────────────────
 
 @test "visibility: full renders full entry" {

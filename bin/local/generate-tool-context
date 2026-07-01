@@ -227,9 +227,14 @@ _tool_ref_entry() {
   printf -- '- **%s** — %s\n' "$name" "$description"
 }
 
+# Tracks which section headers have been printed — multiple registries with the
+# same meta.section merge under one header. Reset before each output file.
+declare -A _rendered_sections=()
+
 # _render_registry FILE
 # Reads meta.section from FILE, then renders tools by visibility tier.
-# Skips the section entirely if no tools are present.
+# Skips the section entirely if no tools are present. Deduplicates section
+# headers so multiple registries can share a section name.
 _render_registry() {
   local file="$1"
   [[ -f "$file" ]] || return 0
@@ -246,7 +251,10 @@ _render_registry() {
 
   [[ -n "$full_content" || -n "$brief_content" ]] || return 0
 
-  printf '\n## %s\n' "$section"
+  if [[ -z "${_rendered_sections[$section]:-}" ]]; then
+    printf '\n## %s\n' "$section"
+    _rendered_sections[$section]=1
+  fi
   [[ -n "$full_content" ]] && printf '%s\n' "$full_content"
   [[ -n "$brief_content" ]] && printf '%s\n' "$brief_content"
   return 0
@@ -293,6 +301,7 @@ done
 OUTPUT_DIR="$(dirname "$OUTPUT")"
 
 # Core file — always loaded, no frontmatter.
+_rendered_sections=()
 {
   printf '# Tools\n'
   printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
@@ -314,6 +323,7 @@ for _scope in "${!_scope_registries[@]}"; do
     exit 1
   fi
 
+  _rendered_sections=()
   {
     printf -- '---\npaths:\n%s\n---\n' "$_paths"
     printf '# Tools — %s\n' "$_scope"

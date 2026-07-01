@@ -2,7 +2,7 @@
 # Regenerate: generate-tool-context
 
 meta:
-  section: "Serena Scripts"
+  section: "AI Tooling"
   validation: bindir
   source: ai/serena/bin
 

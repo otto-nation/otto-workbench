@@ -2,7 +2,7 @@
 # Regenerate: generate-tool-context
 
 meta:
-  section: "Claude Scripts"
+  section: "AI Tooling"
   validation: bindir
   source: ai/claude/bin
 

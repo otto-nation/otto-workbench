@@ -186,36 +186,73 @@ def test_build_resolve_prompt_includes_context():
 
 def test_parse_resolved_content_with_markers():
     stdout = "Some preamble\n<<<RESOLVED>>>\nline1\nline2\n<<<END_RESOLVED>>>\nSome epilogue"
-    result = pr_rebase_cli._parse_resolved_content(stdout)
-    assert result == "line1\nline2\n"
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content == "line1\nline2\n"
+    assert reason == ""
 
 
 def test_parse_resolved_content_preserves_internal_blank_lines():
     stdout = "<<<RESOLVED>>>\nline1\n\nline3\n<<<END_RESOLVED>>>"
-    result = pr_rebase_cli._parse_resolved_content(stdout)
-    assert result == "line1\n\nline3\n"
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content == "line1\n\nline3\n"
+    assert reason == ""
 
 
 def test_parse_resolved_content_no_markers_returns_none():
     stdout = "resolved content without markers\n"
-    result = pr_rebase_cli._parse_resolved_content(stdout)
-    assert result is None
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content is None
+    assert reason == "missing_both_markers"
 
 
 def test_parse_resolved_content_rejects_unresolved():
-    stdout = "<<<<<<< HEAD\nbase\n=======\nbranch\n>>>>>>> abc123\n"
-    result = pr_rebase_cli._parse_resolved_content(stdout)
-    assert result is None
+    stdout = "<<<RESOLVED>>>\n<<<<<<< HEAD\nbase\n=======\nbranch\n>>>>>>> abc123\n<<<END_RESOLVED>>>\n"
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content is None
+    assert "surviving_conflict_marker" in reason
 
 
 def test_parse_resolved_content_empty_stdout():
-    result = pr_rebase_cli._parse_resolved_content("")
-    assert result is None
+    content, reason = pr_rebase_cli._parse_resolved_content("")
+    assert content is None
+    assert reason == "missing_both_markers"
 
 
 def test_parse_resolved_content_whitespace_only():
-    result = pr_rebase_cli._parse_resolved_content("   \n  \n")
-    assert result is None
+    content, reason = pr_rebase_cli._parse_resolved_content("   \n  \n")
+    assert content is None
+    assert reason == "missing_both_markers"
+
+
+def test_parse_resolved_content_missing_end_marker():
+    stdout = "<<<RESOLVED>>>\npartial content that got truncated..."
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content is None
+    assert reason == "missing_end_marker"
+
+
+def test_parse_resolved_content_allows_comment_dividers():
+    """Comment dividers with many equals signs should pass (don't start with =======)."""
+    stdout = "<<<RESOLVED>>>\n// ========================================\ncode\n<<<END_RESOLVED>>>"
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content == "// ========================================\ncode\n"
+    assert reason == ""
+
+
+def test_parse_resolved_content_rejects_bare_equals_line():
+    """A bare ======= line (git conflict marker) should be rejected."""
+    stdout = "<<<RESOLVED>>>\ncode above\n=======\ncode below\n<<<END_RESOLVED>>>"
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content is None
+    assert "surviving_conflict_marker" in reason
+
+
+def test_parse_resolved_content_allows_equals_mid_line():
+    """Equals signs mid-line (e.g. in assertions) should pass."""
+    stdout = "<<<RESOLVED>>>\nassert x == \"=======\"\ncode\n<<<END_RESOLVED>>>"
+    content, reason = pr_rebase_cli._parse_resolved_content(stdout)
+    assert content == "assert x == \"=======\"\ncode\n"
+    assert reason == ""
 
 
 # ── _resolve_file_conflicts ───────────────────────────────────────────────

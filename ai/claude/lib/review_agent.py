@@ -169,6 +169,7 @@ def invoke_agent(
     model: str | None = None,
     thinking_level: str | None = None,
     provider: str | None = None,
+    agent: str = "reviewer",
 ) -> int:
     add_dirs = [reviews_dir, wt_path]
     if review_file:
@@ -177,7 +178,7 @@ def invoke_agent(
             add_dirs.append(review_dir)
     return ai_backend.invoke_agent(
         prompt, session_log,
-        add_dirs=add_dirs, agent="reviewer",
+        add_dirs=add_dirs, agent=agent,
         max_turns=max_turns, max_budget=max_budget,
         model=model, thinking_level=thinking_level,
         provider=provider, label=label,

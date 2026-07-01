@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.38.0](https://github.com/otto-nation/otto-workbench/compare/v1.37.3...v1.38.0) (2026-06-30)
+
+
+### Features
+
+* **ai:** add ceiling convention, debt tracking, and reuse hooks ([#427](https://github.com/otto-nation/otto-workbench/issues/427)) ([555aedd](https://github.com/otto-nation/otto-workbench/commit/555aedd42160101657d810fd6b1acba1a7dc77b5))
+* **ai:** add statusline, reference card, and subagent reuse injection ([#435](https://github.com/otto-nation/otto-workbench/issues/435)) ([7caf27a](https://github.com/otto-nation/otto-workbench/commit/7caf27addb072dcf6db0878febc2437c91734385))
+* **ai:** ceiling convention, reuse levels, subagent propagation ([#428](https://github.com/otto-nation/otto-workbench/issues/428)) ([8c09249](https://github.com/otto-nation/otto-workbench/commit/8c092493856afd9b60bdc2030e84d0f4f2eb185e))
+* **brew:** replace headroom with rtk for token compression ([#417](https://github.com/otto-nation/otto-workbench/issues/417)) ([6355781](https://github.com/otto-nation/otto-workbench/commit/63557810a133b325ac05f62f0e5614b4d7e58efc))
+* **ci-check:** add --fix flag for AI-driven CI failure fixes ([#414](https://github.com/otto-nation/otto-workbench/issues/414)) ([a713c82](https://github.com/otto-nation/otto-workbench/commit/a713c82ea62c2bd1de1e00232e3559560376b064))
+
+
+### Bug Fixes
+
+* **ai:** auto-commit regenerated files when pr rebase push fails ([#433](https://github.com/otto-nation/otto-workbench/issues/433)) ([35ac22e](https://github.com/otto-nation/otto-workbench/commit/35ac22ea1dd13c773d35907c7a5847c9fa873eb1))
+* **ai:** improve review-threads error handling for commit/push failures ([#423](https://github.com/otto-nation/otto-workbench/issues/423)) ([0d93f3f](https://github.com/otto-nation/otto-workbench/commit/0d93f3f6e33f51ed12216866b9c7cd6d3257c293))
+* **ai:** prevent pr-rebase from aborting when next commit has conflicts ([#432](https://github.com/otto-nation/otto-workbench/issues/432)) ([a510a4e](https://github.com/otto-nation/otto-workbench/commit/a510a4ee642e6f9f11caee0445e6e57a26e6d6fc))
+* **ai:** skip non-failure jobs in ci-check ([#429](https://github.com/otto-nation/otto-workbench/issues/429)) ([a3ba315](https://github.com/otto-nation/otto-workbench/commit/a3ba31512caa4d03e931df7996ced9d01932e15f))
+* **ai:** track source_run_id per failure in ci-check multi-run merging ([#434](https://github.com/otto-nation/otto-workbench/issues/434)) ([7e3435b](https://github.com/otto-nation/otto-workbench/commit/7e3435b2830eb6734e5f8ca94f08d602d5884cd1))
+* **rules:** add branch analysis rule; fix two-dot diff bug ([#418](https://github.com/otto-nation/otto-workbench/issues/418)) ([c258e9c](https://github.com/otto-nation/otto-workbench/commit/c258e9c6e55b016a11d61da9968897a0e6c7fcde))
+* **state:** detect sub-tool drift; fix AI sync dispatch ([#422](https://github.com/otto-nation/otto-workbench/issues/422)) ([dc3c6d8](https://github.com/otto-nation/otto-workbench/commit/dc3c6d820c834dff96a19b593f46874464fa4846))
+
+
+### Code Refactoring
+
+* **ai:** rename context skill and file to architecture ([#420](https://github.com/otto-nation/otto-workbench/issues/420)) ([1908959](https://github.com/otto-nation/otto-workbench/commit/190895900a6618f87bad8582d3a44b9883b71084))
+* **ai:** restructure rules with decision ladders; remove system-prompt overlap ([#425](https://github.com/otto-nation/otto-workbench/issues/425)) ([3c0756e](https://github.com/otto-nation/otto-workbench/commit/3c0756efed3208f7a1232479d86a305fb3f8d805))
+
 ## [1.37.3](https://github.com/otto-nation/otto-workbench/compare/v1.37.2...v1.37.3) (2026-06-29)
 
 

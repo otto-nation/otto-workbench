@@ -162,7 +162,7 @@ def _is_empty_patch(cwd: str) -> bool:
 _RESOLVE_BEGIN = "<<<RESOLVED>>>"
 _RESOLVE_END = "<<<END_RESOLVED>>>"
 
-_CONFLICT_MARKER_HEADS = ("<<<<<<< ", "=======", ">>>>>>> ")
+_CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 
 
 def _is_binary(path: Path) -> bool:
@@ -203,12 +203,30 @@ def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -
     )
 
 
-def _parse_resolved_content(stdout: str) -> str | None:
-    """Extract resolved file content from AI output."""
+def _has_conflict_markers(text: str) -> str | None:
+    """Check for git conflict markers at the start of lines. Returns the marker found, or None."""
+    for line in text.splitlines():
+        match = next((m for m in _CONFLICT_MARKER_PREFIXES if line.startswith(m)), None)
+        if match:
+            return match
+    return None
+
+
+def _parse_resolved_content(stdout: str) -> tuple[str | None, str]:
+    """Extract resolved file content from AI output.
+
+    Returns (resolved_content, failure_reason). failure_reason is empty on success.
+    """
     begin = stdout.find(_RESOLVE_BEGIN)
     end = stdout.find(_RESOLVE_END)
-    if begin == -1 or end == -1 or end <= begin:
-        return None
+    if begin == -1 and end == -1:
+        return None, "missing_both_markers"
+    if begin == -1:
+        return None, "missing_begin_marker"
+    if end == -1:
+        return None, "missing_end_marker"
+    if end <= begin:
+        return None, "end_before_begin"
 
     resolved = stdout[begin + len(_RESOLVE_BEGIN):end]
     if resolved.startswith("\n"):
@@ -216,12 +234,11 @@ def _parse_resolved_content(stdout: str) -> str | None:
     if resolved.endswith("\n"):
         resolved = resolved[:-1]
 
-    # Reject if conflict markers survived
-    for marker in _CONFLICT_MARKER_HEADS:
-        if marker in resolved:
-            return None
+    surviving = _has_conflict_markers(resolved)
+    if surviving:
+        return None, f"surviving_conflict_marker:{surviving.strip()}"
 
-    return resolved + "\n"
+    return resolved + "\n", ""
 
 
 def _git_add(filepath: str, cwd: str) -> bool:
@@ -261,10 +278,19 @@ def _resolve_single_file(
         log.error(f"ai prompt failed for {filepath} (exit {rc})")
         return None
 
-    resolved_content = _parse_resolved_content(stdout)
+    resolved_content, failure_reason = _parse_resolved_content(stdout)
     if resolved_content is None:
-        _terr("resolve_conflicts", f"failed to parse resolution for {filepath}", data={"filepath": filepath})
-        log.error(f"Failed to parse resolution for {filepath}")
+        _terr(
+            "resolve_conflicts",
+            f"failed to parse resolution for {filepath}",
+            data={
+                "filepath": filepath,
+                "reason": failure_reason,
+                "stdout_len": len(stdout),
+                "stdout_tail": stdout[-200:] if stdout else "",
+            },
+        )
+        log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
         return None
 
     full_path.write_text(resolved_content)
@@ -584,9 +610,19 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
         if rc != 0:
             log.error(f"AI resolution failed for stash conflict: {filepath}")
             continue
-        resolved_content = _parse_resolved_content(stdout)
+        resolved_content, failure_reason = _parse_resolved_content(stdout)
         if resolved_content is None:
-            log.error(f"Failed to parse stash resolution for {filepath}")
+            _terr(
+                "resolve_stash_conflicts",
+                f"failed to parse stash resolution for {filepath}",
+                data={
+                    "filepath": filepath,
+                    "reason": failure_reason,
+                    "stdout_len": len(stdout),
+                    "stdout_tail": stdout[-200:] if stdout else "",
+                },
+            )
+            log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")
             continue
         full_path.write_text(resolved_content)
         if not _git_add(filepath, cwd):

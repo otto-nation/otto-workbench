@@ -295,6 +295,40 @@ class TestBuildReplyThreadsSection:
         assert "### Author replied" in section
         assert "@bob: Let me look into this" in section
 
+    def test_file_filter_scopes_to_matching_paths(self):
+        data = {"threads": [
+            {"state": THREAD_CONTESTED, "finding_id": "M1", "path": "a.py",
+             "line": 10, "root_body": "issue", "replies": [
+                 {"author": "alice", "body": "I disagree"},
+             ]},
+            {"state": THREAD_CONTESTED, "finding_id": "M2", "path": "b.py",
+             "line": 5, "root_body": "issue", "replies": [
+                 {"author": "alice", "body": "Also disagree"},
+             ]},
+        ]}
+        section = _build_reply_threads_section(data, file_filter=["a.py"])
+        assert "[M1]" in section
+        assert "[M2]" not in section
+
+    def test_file_filter_none_includes_all(self):
+        data = {"threads": [
+            {"state": THREAD_ACKNOWLEDGED, "finding_id": "S1", "path": "a.py",
+             "line": 1, "root_body": "issue", "replies": []},
+            {"state": THREAD_ACKNOWLEDGED, "finding_id": "S2", "path": "b.py",
+             "line": 2, "root_body": "issue", "replies": []},
+        ]}
+        section = _build_reply_threads_section(data, file_filter=None)
+        assert "[S1]" in section
+        assert "[S2]" in section
+
+    def test_file_filter_no_matches_returns_empty(self):
+        data = {"threads": [
+            {"state": THREAD_CONTESTED, "finding_id": "M1", "path": "a.py",
+             "line": 10, "root_body": "issue", "replies": []},
+        ]}
+        section = _build_reply_threads_section(data, file_filter=["other.py"])
+        assert section == ""
+
 
 # ── _annotate_with_thread_state ──────────────────────────────────────────────
 

@@ -16,7 +16,7 @@ from string import Template
 import json
 import log
 from review_common import (
-    FILENAME_PROMPT_STATS,
+    FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     TEMPLATE_DIR_REL,
     TEMPLATE_ANGLES, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
@@ -29,7 +29,7 @@ from review_preflight import (
     PRContext, PRMetadata, PreflightData, ReviewJob,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
-    format_preflight_data,
+    _scope_diff, format_preflight_data,
 )
 
 # ── Template rendering ────────────────────────────────────────────────────────
@@ -38,12 +38,25 @@ def _template_dir() -> Path:
     return Path(__file__).resolve().parent.parent / TEMPLATE_DIR_REL
 
 
-def _build_pr_header(pr: PRMetadata, ctx: PRContext) -> str:
+def _build_pr_header(
+    pr: PRMetadata, ctx: PRContext,
+    file_filter: list[str] | None = None,
+) -> str:
+    if file_filter:
+        filter_set = set(file_filter)
+        scoped_files = [f for f in pr.files if f["path"] in filter_set]
+        additions = sum(f["additions"] for f in scoped_files)
+        deletions = sum(f["deletions"] for f in scoped_files)
+        size_line = f"- **Size:** +{additions} -{deletions} across {len(scoped_files)} files (of {pr.changed_files} total)"
+    else:
+        scoped_files = None
+        size_line = f"- **Size:** +{pr.additions} -{pr.deletions} across {pr.changed_files} files"
+
     lines = [
         "## PR metadata",
         f"- **Title:** {pr.title}",
         f"- **Branch:** {pr.head} → {pr.base}",
-        f"- **Size:** +{pr.additions} -{pr.deletions} across {pr.changed_files} files",
+        size_line,
         "",
         "### Description",
         pr.body or "_No description provided._",
@@ -51,8 +64,15 @@ def _build_pr_header(pr: PRMetadata, ctx: PRContext) -> str:
         "### Commits",
         ctx.commits or "_No commits._",
     ]
-    if pr.file_stats:
+
+    if scoped_files is not None:
+        sorted_files = sorted(scoped_files, key=lambda f: f["additions"] + f["deletions"], reverse=True)
+        file_stats = "\n".join(FILE_STAT_FMT.format(**f) for f in sorted_files)
+        if file_stats:
+            lines += ["", "### File breakdown (sorted by churn)", file_stats]
+    elif pr.file_stats:
         lines += ["", "### File breakdown (sorted by churn)", pr.file_stats]
+
     return "\n".join(lines)
 
 
@@ -175,8 +195,14 @@ def _format_thread_item(t: dict, state: str) -> list[str]:
     return lines
 
 
-def _build_reply_threads_section(reply_threads: dict) -> str:
+def _build_reply_threads_section(
+    reply_threads: dict,
+    file_filter: list[str] | None = None,
+) -> str:
     threads = reply_threads.get("threads", [])
+    if file_filter:
+        filter_set = set(file_filter)
+        threads = [t for t in threads if t.get("path", "") in filter_set]
     if not threads:
         return ""
 
@@ -244,13 +270,21 @@ def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
     )
 
 
-def _build_delta_section(preflight: PreflightData | None) -> str:
+def _build_delta_section(
+    preflight: PreflightData | None,
+    file_filter: list[str] | None = None,
+) -> str:
     if not preflight or not preflight.prior_head_sha:
         return ""
     prior = preflight.prior_head_sha[:7]
     delta_files = preflight.delta_files
-    all_pr_files = set(preflight.file_contents.keys()) | set(preflight.omitted_files)
-    unchanged = sorted(all_pr_files - set(delta_files))
+    if file_filter:
+        filter_set = set(file_filter)
+        delta_files = [f for f in delta_files if f in filter_set]
+        unchanged = sorted(filter_set - set(delta_files))
+    else:
+        all_pr_files = set(preflight.file_contents.keys()) | set(preflight.omitted_files)
+        unchanged = sorted(all_pr_files - set(delta_files))
 
     parts = [
         "## Incremental review context",
@@ -262,7 +296,7 @@ def _build_delta_section(preflight: PreflightData | None) -> str:
         "carry them forward unless you have evidence they were fixed.",
     ]
 
-    if preflight.delta_commit_log:
+    if preflight.delta_commit_log and not file_filter:
         parts += [
             "",
             "### New commits since prior review",
@@ -273,14 +307,16 @@ def _build_delta_section(preflight: PreflightData | None) -> str:
         ]
 
     if preflight.delta_diff:
-        parts += [
-            "",
-            "### Delta diff",
-            "",
-            "```diff",
-            preflight.delta_diff,
-            "```",
-        ]
+        diff_text = _scope_diff(preflight.delta_diff, file_filter) if file_filter else preflight.delta_diff
+        if diff_text:
+            parts += [
+                "",
+                "### Delta diff",
+                "",
+                "```diff",
+                diff_text,
+                "```",
+            ]
 
     if delta_files:
         parts += ["", "### Files modified since prior review"]
@@ -693,6 +729,7 @@ def _prompt_holistic(job, common, extra):
 
 def _prompt_group(job, common, extra):
     group_files = extra.get("group_file_paths", [])
+    file_filter = group_files or None
     prior_ctx = _incremental_prior_ctx(job, (
         "This is a re-review. Below are the prior findings. "
         "Carry forward findings relevant to YOUR files only. "
@@ -700,42 +737,45 @@ def _prompt_group(job, common, extra):
     ))
     prior_section = _build_prior_section(
         job.prior_review, prior_ctx,
-        file_filter=group_files or None,
+        file_filter=file_filter,
         reply_threads=job.reply_threads,
     )
     holistic_block = _build_holistic_block(
         extra.get("holistic_content", ""), job.pr.changed_files,
     )
+    pr_header = _build_pr_header(job.pr, job.ctx, file_filter=file_filter)
+    delta_section = _build_delta_section(job.preflight, file_filter=file_filter)
+    reply_threads = _build_reply_threads_section(job.reply_threads, file_filter=file_filter)
     sections = {
-        "pr_header": common["pr_header"],
+        "pr_header": pr_header,
         "holistic_block": holistic_block,
         "issue_section": common["issue_section"],
         "env_section": common["env_section"],
-        "delta_section": common["delta_section"],
+        "delta_section": delta_section,
         "prior_section": prior_section,
-        "reply_threads": common["reply_threads"],
+        "reply_threads": reply_threads,
     }
-    diff_budget = _compute_diff_budget(job, sections, file_filter=group_files or None)
+    diff_budget = _compute_diff_budget(job, sections, file_filter=file_filter)
     group_preflight = _build_preflight_section(
-        job, file_filter=group_files or None, max_diff_bytes=diff_budget,
+        job, file_filter=file_filter, max_diff_bytes=diff_budget,
     )
     sections["preflight_data"] = group_preflight
     kwargs = {
         "pr_number": job.pr_number,
         "repo": job.repo,
-        "pr_header": common["pr_header"],
+        "pr_header": pr_header,
         "group_idx": extra["group_idx"],
         "group_count": extra["group_count"],
         "group_name": extra["group_name"],
         "holistic_block": holistic_block,
         "group_files_formatted": extra["group_files_formatted"],
         "preflight_data": group_preflight,
-        "delta_section": common["delta_section"],
+        "delta_section": delta_section,
         "issue_section": common["issue_section"],
         "env_section": common["env_section"],
         "group_output": extra["group_output"],
         "prior_section": prior_section,
-        "reply_threads": common["reply_threads"],
+        "reply_threads": reply_threads,
         "omitted_guidance": common["omitted_guidance"],
         "max_turns": common["max_turns"],
     }

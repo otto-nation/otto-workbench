@@ -1199,11 +1199,14 @@ def _identify_incremental_skips(
 
 def _holistic_skip_reason(
     skip_holistic: bool, incremental: bool, group_count: int,
+    effort: str = "medium",
 ) -> str | None:
     if incremental:
         return "incremental review"
     if skip_holistic:
         return "--no-holistic"
+    if _effort_default(effort, "skip_holistic", False):
+        return f"effort={effort}"
     if group_count < HOLISTIC_MIN_GROUPS:
         return f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
     return None
@@ -1217,7 +1220,7 @@ def _run_holistic_phase(
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
     holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
-    reason = _holistic_skip_reason(skip_holistic, incremental, group_count)
+    reason = _holistic_skip_reason(skip_holistic, incremental, group_count, effort=job.effort)
     if reason:
         log.info(f"Holistic phase skipped ({reason})")
         return _empty
@@ -1238,7 +1241,11 @@ def _run_groups_and_angles(
     holistic_content: str, max_parallel: int,
     skip_groups: "set[int] | None", state: PipelineState,
 ) -> tuple[list[str], "list[tuple[str, str]]", str, str, float]:
-    run_angles = job.mode == MODE_SELF and not getattr(state, "angles_done", False)
+    run_angles = (
+        job.mode == MODE_SELF
+        and not getattr(state, "angles_done", False)
+        and not _effort_default(job.effort, "skip_angles", False)
+    )
     angles_output, angles_log = "", ""
     cost = 0.0
 
@@ -1297,6 +1304,15 @@ def _run_synthesis_or_fallback(
         _write_review_sidecar(job)
         state.synthesis_done = True
         state.synthesis_failed = "all groups failed"
+        _write_pipeline_state(job, state)
+        return ""
+
+    if _effort_default(job.effort, "skip_synthesis", False):
+        log.info("Synthesis skipped (effort=low) — using mechanical merge")
+        Path(job.review_file).write_text(merged_content)
+        _post_process_review(job)
+        _write_review_sidecar(job)
+        state.synthesis_done = True
         _write_pipeline_state(job, state)
         return ""
 

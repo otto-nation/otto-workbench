@@ -91,3 +91,33 @@ class TestEffortDefault:
     def test_boolean_keys(self):
         assert review_pipeline._effort_default("low", "skip_synthesis", False) is True
         assert review_pipeline._effort_default("medium", "skip_synthesis", True) is False
+
+
+class TestHolisticSkipReason:
+    def test_incremental_skips(self):
+        reason = review_pipeline._holistic_skip_reason(False, True, 10)
+        assert reason == "incremental review"
+
+    def test_no_holistic_flag_skips(self):
+        reason = review_pipeline._holistic_skip_reason(True, False, 10)
+        assert reason == "--no-holistic"
+
+    def test_low_effort_skips(self):
+        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort="low")
+        assert reason == "effort=low"
+
+    def test_medium_effort_does_not_skip(self):
+        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort="medium")
+        assert reason is None
+
+    def test_high_effort_does_not_skip(self):
+        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort="high")
+        assert reason is None
+
+    def test_few_groups_skips(self):
+        reason = review_pipeline._holistic_skip_reason(False, False, 2)
+        assert "threshold" in reason
+
+    def test_enough_groups_does_not_skip(self):
+        reason = review_pipeline._holistic_skip_reason(False, False, 10)
+        assert reason is None

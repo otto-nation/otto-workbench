@@ -273,6 +273,7 @@ _flush_sections() {
     printf '\n## %s\n' "$_sec"
     [[ -n "$brief" ]] && printf '%s' "$brief"
     [[ -n "$full" ]] && printf '%s' "$full"
+    :
   done
   _section_brief=()
   _section_full=()

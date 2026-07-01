@@ -42,7 +42,7 @@ from review_preflight import (  # noqa: E402
     ReviewJob, collect_preflight_data, fetch_reply_threads,
 )
 from review_pipeline import (  # noqa: E402
-    _fetch_metadata, run_fix_pass, run_multi_phase, run_single_agent,
+    _effort_default, _fetch_metadata, run_fix_pass, run_multi_phase, run_single_agent,
 )
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
@@ -100,16 +100,18 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     else:
         job.preflight = collect_preflight_data(job)
 
+    line_threshold = _effort_default(job.effort, "multi_phase_line_threshold", MULTI_PHASE_LINE_THRESHOLD)
+    file_threshold = _effort_default(job.effort, "multi_phase_file_threshold", MULTI_PHASE_FILE_THRESHOLD)
     is_large = (
-        pr.total_lines > MULTI_PHASE_LINE_THRESHOLD
-        or pr.changed_files > MULTI_PHASE_FILE_THRESHOLD
+        pr.total_lines > line_threshold
+        or pr.changed_files > file_threshold
     )
     pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
 
     trail.decision(
         "select_pipeline",
         f"chose {pipeline}",
-        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={MULTI_PHASE_FILE_THRESHOLD} lines={MULTI_PHASE_LINE_THRESHOLD})",
+        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
         data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
     )
 

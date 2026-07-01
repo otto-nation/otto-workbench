@@ -93,6 +93,46 @@ class TestEffortDefault:
         assert review_pipeline._effort_default("medium", "skip_synthesis", True) is False
 
 
+class TestOmittedTurns:
+    def _make_job(self, effort="medium", omitted_files=None):
+        from review_preflight import PreflightData, PRContext, PRMetadata, ReviewJob
+        pr = PRMetadata(
+            title="test", body="", head="main", base="main",
+            head_sha="abc", additions=10, deletions=5,
+            changed_files=1, files=[],
+        )
+        preflight = PreflightData(
+            diff="", commit_log="", file_contents={},
+            file_permissions={}, claude_md="", architecture_md="",
+            omitted_files=omitted_files or [],
+        )
+        return ReviewJob(
+            repo="test/repo", pr_number="1", pr=pr,
+            ctx=PRContext(), wt_path="/tmp", review_file="/tmp/review.md",
+            session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+            effort=effort, preflight=preflight,
+        )
+
+    def test_medium_adds_turns_for_omitted(self):
+        job = self._make_job(effort="medium", omitted_files=["big.py", "huge.py"])
+        turns = review_pipeline._omitted_turns(job)
+        assert turns == 2 * review_pipeline.OMITTED_FILE_TURNS
+
+    def test_low_skips_omitted_turns(self):
+        job = self._make_job(effort="low", omitted_files=["big.py", "huge.py"])
+        turns = review_pipeline._omitted_turns(job)
+        assert turns == 0
+
+    def test_high_adds_turns_for_omitted(self):
+        job = self._make_job(effort="high", omitted_files=["big.py"])
+        turns = review_pipeline._omitted_turns(job)
+        assert turns == review_pipeline.OMITTED_FILE_TURNS
+
+    def test_no_omitted_files_returns_zero(self):
+        job = self._make_job(effort="medium")
+        assert review_pipeline._omitted_turns(job) == 0
+
+
 class TestHolisticSkipReason:
     def test_incremental_skips(self):
         reason = review_pipeline._holistic_skip_reason(False, True, 10)

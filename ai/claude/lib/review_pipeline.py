@@ -190,6 +190,8 @@ def _has_output(path: str) -> bool:
 
 
 def _omitted_turns(job: "ReviewJob") -> int:
+    if _effort_default(job.effort, "skip_omitted_files", False):
+        return 0
     if not job.preflight or not job.preflight.omitted_files:
         return 0
     return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS

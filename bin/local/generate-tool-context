@@ -167,18 +167,16 @@ AWK
   fi
 }
 
-# _iter_tools FILE CALLBACK [FILTER]
+# _iter_tools FILE CALLBACK
 # Calls CALLBACK name description when_to_use usage docs for each tool in FILE.
-# If FILTER is provided (a function name), skips tools for which FILTER NAME fails.
 _iter_tools() {
-  local file="$1" cb="$2" filter="${3:-}"
+  local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
   local count i
   count=$(yq '.tools | length' "$file")
   for (( i=0; i<count; i++ )); do
     local name
     name=$(yq ".tools[$i].name" "$file")
-    if [[ -n "$filter" ]] && ! "$filter" "$name"; then continue; fi
     "$cb" \
       "$name" \
       "$(yq ".tools[$i].description"   "$file")" \
@@ -188,10 +186,10 @@ _iter_tools() {
   done
 }
 
-# _iter_tools_by_visibility FILE VISIBILITY CALLBACK [FILTER]
+# _iter_tools_by_visibility FILE VISIBILITY CALLBACK
 # Like _iter_tools but only calls CALLBACK for tools matching VISIBILITY (full|brief|hidden).
 _iter_tools_by_visibility() {
-  local file="$1" target_vis="$2" cb="$3" filter="${4:-}"
+  local file="$1" target_vis="$2" cb="$3"
   [[ -f "$file" ]] || return 0
   local count i
   count=$(yq '.tools | length' "$file")
@@ -200,7 +198,6 @@ _iter_tools_by_visibility() {
     name=$(yq ".tools[$i].name" "$file")
     vis=$(yq ".tools[$i].visibility" "$file")
     [[ "$vis" == "$target_vis" ]] || continue
-    if [[ -n "$filter" ]] && ! "$filter" "$name"; then continue; fi
     "$cb" \
       "$name" \
       "$(yq ".tools[$i].description"   "$file")" \
@@ -231,8 +228,8 @@ _tool_ref_entry() {
 }
 
 # _render_registry FILE
-# Reads meta.section and meta.install_check from FILE, then renders tools by visibility tier.
-# Skips the section entirely if no tools pass the filter.
+# Reads meta.section from FILE, then renders tools by visibility tier.
+# Skips the section entirely if no tools are present.
 _render_registry() {
   local file="$1"
   [[ -f "$file" ]] || return 0
@@ -240,14 +237,12 @@ _render_registry() {
   count=$(yq '.tools | length' "$file")
   [[ "$count" -gt 0 ]] || return 0
 
-  local section install_check filter=""
+  local section
   section=$(yq '.meta.section // "Tools"' "$file")
-  install_check=$(yq '.meta.install_check // false' "$file")
-  [[ "$install_check" == "true" ]] && filter="is_installed"
 
   local full_content brief_content
-  full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry "$filter")
-  brief_content=$(_iter_tools_by_visibility "$file" "brief" _tool_ref_entry "$filter")
+  full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry)
+  brief_content=$(_iter_tools_by_visibility "$file" "brief" _tool_ref_entry)
 
   [[ -n "$full_content" || -n "$brief_content" ]] || return 0
 

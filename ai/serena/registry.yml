@@ -3,7 +3,6 @@
 
 meta:
   section: "Serena Scripts"
-  install_check: false
   validation: bindir
   source: ai/serena/bin
 

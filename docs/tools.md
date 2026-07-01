@@ -391,7 +391,6 @@ serena-mcp <command>
 
 | Tool | Description |
 |------|-------------|
-| [jira](https://github.com/ankitpokhrel/jira-cli) | Jira CLI (ankitpokhrel/jira-cli) — manage Jira tickets from the terminal |
 | [linear](https://github.com/schpet/linear-cli) | Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal |
 | [mas](https://github.com/mas-cli/mas) | Mac App Store CLI — search, install, and update App Store apps from the terminal |
 <!-- TOOLS-TABLE-END -->

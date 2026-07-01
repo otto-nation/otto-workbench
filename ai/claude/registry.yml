@@ -3,7 +3,6 @@
 
 meta:
   section: "Claude Scripts"
-  install_check: false
   validation: bindir
   source: ai/claude/bin
 

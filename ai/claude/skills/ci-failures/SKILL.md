@@ -48,7 +48,10 @@ The script outputs:
 
 **Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
-If all checks pass (conclusion is "success" and no failures), report that CI is green and stop.
+**Early exit — check these BEFORE proceeding to step 2:**
+
+1. **Command failed** (non-zero exit code, e.g. "No workflow runs found"): report the error to the user and **stop — do not proceed to step 2**.
+2. **All checks passed** (dashboard says "All checks passed", or conclusion is "success" with no failures in the JSON): report that CI is green and **stop — do not proceed to step 2**.
 
 ### 2. Classify and group failures
 

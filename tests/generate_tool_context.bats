@@ -42,7 +42,6 @@ _write_registry() {
   cat > "$file" << EOF
 meta:
   section: "$section"
-  install_check: false
   validation: none
 
 tools:
@@ -62,7 +61,6 @@ _write_minimal_registry() {
   cat > "$file" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 tools:
@@ -75,32 +73,12 @@ tools:
 EOF
 }
 
-# _write_install_checked_registry FILE TOOL_NAME — writes a registry with install_check: true
-_write_install_checked_registry() {
-  local file="$1" tool_name="$2"
-  cat > "$file" << EOF
-meta:
-  section: "Work Tools"
-  install_check: true
-  validation: none
-
-tools:
-  - name: $tool_name
-    permission: false
-    visibility: full
-    description: "An install-checked tool"
-    when_to_use: "When installed"
-    usage: "$tool_name --help"
-EOF
-}
-
 # _write_visibility_registry FILE SECTION — writes a registry with tools at different visibility tiers
 _write_visibility_registry() {
   local file="$1" section="${2:-Visibility Tools}"
   cat > "$file" << EOF
 meta:
   section: "$section"
-  install_check: false
   validation: none
 
 tools:
@@ -203,7 +181,6 @@ EOF
   cat > "$BREW_REGISTRY" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 tools:
@@ -224,39 +201,6 @@ EOF
   bash "$GENERATOR"
   run grep "Docs" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
-}
-
-# ── install_check filtering ───────────────────────────────────────────────────
-
-@test "includes install-checked tool when it is in PATH" {
-  # sh is always available; use it as the tool name so command -v succeeds
-  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "sh"
-
-  bash "$GENERATOR"
-  grep -q "### sh" "$TOOL_CONTEXT_OUTPUT"
-}
-
-@test "excludes install-checked tool when it is not in PATH" {
-  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "definitely-not-a-real-tool-xyzzy"
-
-  bash "$GENERATOR"
-  run grep "### definitely-not-a-real-tool-xyzzy" "$TOOL_CONTEXT_OUTPUT"
-  [ "$status" -ne 0 ]
-}
-
-@test "omits section header when all install-checked tools are absent" {
-  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "definitely-not-a-real-tool-xyzzy"
-
-  bash "$GENERATOR"
-  run grep "## Work Tools" "$TOOL_CONTEXT_OUTPUT"
-  [ "$status" -ne 0 ]
-}
-
-@test "renders work registry section when tool is installed" {
-  _write_install_checked_registry "$WORK_DIR/test.registry.yml" "sh"
-
-  bash "$GENERATOR"
-  grep -q "## Work Tools" "$TOOL_CONTEXT_OUTPUT"
 }
 
 # ── Missing registries ────────────────────────────────────────────────────────
@@ -281,7 +225,6 @@ EOF
   cat > "$BREW_REGISTRY" << 'EOF'
 meta:
   section: "Tools"
-  install_check: false
   validation: none
 
 tools:
@@ -302,6 +245,75 @@ EOF
   bash "$GENERATOR"
   grep -q "### tool-a" "$TOOL_CONTEXT_OUTPUT"
   grep -q "### tool-b" "$TOOL_CONTEXT_OUTPUT"
+}
+
+# ── Section deduplication ────────────────────────────────────────────────────
+
+@test "multiple registries with same section share one header" {
+  cat > "$WORK_DIR/a.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: tool-a
+    permission: false
+    visibility: full
+    description: "Tool A"
+    when_to_use: "Always"
+    usage: "tool-a --help"
+EOF
+  cat > "$WORK_DIR/b.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: tool-b
+    permission: false
+    visibility: brief
+    description: "Tool B"
+EOF
+
+  bash "$GENERATOR"
+  grep -q "### tool-a" "$TOOL_CONTEXT_OUTPUT"
+  grep -q "tool-b" "$TOOL_CONTEXT_OUTPUT"
+  local count
+  count=$(grep -c "## Shared Section" "$TOOL_CONTEXT_OUTPUT")
+  [ "$count" -eq 1 ]
+}
+
+@test "brief entries render before full entries across shared-section registries" {
+  cat > "$WORK_DIR/a.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: full-tool
+    permission: false
+    visibility: full
+    description: "Full entry"
+    when_to_use: "Always"
+    usage: "full-tool --run"
+EOF
+  cat > "$WORK_DIR/b.registry.yml" << 'EOF'
+meta:
+  section: "Shared Section"
+  validation: none
+
+tools:
+  - name: brief-tool
+    permission: false
+    visibility: brief
+    description: "Brief entry"
+EOF
+
+  bash "$GENERATOR"
+  local brief_line full_line
+  brief_line=$(grep -n "brief-tool" "$TOOL_CONTEXT_OUTPUT" | head -1 | cut -d: -f1)
+  full_line=$(grep -n "### full-tool" "$TOOL_CONTEXT_OUTPUT" | head -1 | cut -d: -f1)
+  [ "$brief_line" -lt "$full_line" ]
 }
 
 # ── Visibility tiers ─────────────────────────────────────────────────────────
@@ -348,7 +360,6 @@ _write_scoped_registry() {
 meta:
   section: "$section"
   scope: "$scope"
-  install_check: false
   validation: none
 
 tools:
@@ -397,7 +408,6 @@ EOF
 meta:
   section: "Kubernetes Tools"
   scope: infra
-  install_check: false
   validation: none
 
 tools:
@@ -437,7 +447,6 @@ EOF
 meta:
   section: "Core Extra"
   scope: core
-  install_check: false
   validation: none
 
 tools:

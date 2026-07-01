@@ -26,13 +26,15 @@ meta:
   validation: brewfile               # cross-validation mode (see below)
   source: brew/Brewfile              # relative path for cross-validation
   loading: scoped                    # "always" or "scoped" (default: scoped)
-  install_check: false               # filter tools by installed state (default: false)
+  install_check: true                # gate entire registry on install state (optional)
   install_check_command: colima      # check if command exists in PATH
   install_check_symlink: ~/.docker   # check if symlink exists
   install_check_symlink_contains: x  # check if symlink target contains string
 ```
 
 `loading` controls AI context generation: `always` puts tools in every Claude session; `scoped` (default) loads only when editing related files.
+
+`install_check` gates the entire registry at runtime — when true, the registry is skipped by summary and env-var rendering if the check command/symlink is absent. Used for optional components (Docker, AWS). Omit for registries that are always active.
 
 ### Tool entries
 

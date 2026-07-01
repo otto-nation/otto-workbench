@@ -3,7 +3,6 @@
 
 meta:
   section: "Workbench Scripts"
-  install_check: false
   validation: bindir
   source: bin
 

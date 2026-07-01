@@ -41,7 +41,6 @@ _write_registry() {
 @test "permission: true generates Bash(name:*) from tool name" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
-  install_check: false
   validation: none
 tools:
   - name: mytool
@@ -61,7 +60,6 @@ tools:
 @test "permission: false generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
-  install_check: false
   validation: none
 tools:
   - name: mytool
@@ -80,7 +78,6 @@ tools:
 @test "omitted permission generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
-  install_check: false
   validation: none
 tools:
   - name: mytool
@@ -98,7 +95,6 @@ tools:
 @test "permission: string generates Bash(cmd:*) with the string value" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
-  install_check: false
   validation: none
 tools:
   - name: bats-core
@@ -118,7 +114,6 @@ tools:
 @test "permission: array uses verbatim entries" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
-  install_check: false
   validation: none
 tools:
   - name: gh
@@ -141,7 +136,6 @@ tools:
 @test "accumulates permissions from multiple tools across registries" {
   _write_registry "$TMPDIR/comp1" 'meta:
   section: First
-  install_check: false
   validation: none
 tools:
   - name: tool-a
@@ -156,7 +150,6 @@ tools:
 
   _write_registry "$TMPDIR/comp2" 'meta:
   section: Second
-  install_check: false
   validation: none
 tools:
   - name: tool-c
@@ -184,7 +177,6 @@ tools:
 @test "permission: empty string generates nothing" {
   _write_registry "$TMPDIR/comp" 'meta:
   section: Test
-  install_check: false
   validation: none
 tools:
   - name: mytool

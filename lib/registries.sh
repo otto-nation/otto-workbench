@@ -45,7 +45,6 @@
 #   iter_registry_auth FILE CALLBACK
 #                                 — calls CALLBACK name env_var setup_url prefix
 #                                   for each tool with an auth block in FILE
-#                                   (respects install_check: skips uninstalled tools)
 
 # Known tool entry fields — used by validate-registries to reject unknown keys
 # shellcheck disable=SC2034
@@ -165,13 +164,9 @@ iter_registry_env() {
 
 # iter_registry_auth FILE CALLBACK
 # Calls CALLBACK name env_var setup_url prefix for each tool with an auth block.
-# Respects install_check: skips tools not in PATH when install_check is true.
 iter_registry_auth() {
   local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
-  local install_check filter=""
-  install_check=$(yq '.meta.install_check // false' "$file")
-  [[ "$install_check" == "true" ]] && filter="is_installed"
 
   local count i
   count=$(yq '.tools | length' "$file")
@@ -182,7 +177,6 @@ iter_registry_auth() {
 
     local name
     name=$(yq ".tools[$i].name" "$file")
-    if [[ -n "$filter" ]] && ! "$filter" "$name"; then continue; fi
 
     local setup_url prefix
     setup_url=$(yq ".tools[$i].auth.setup_url // \"\"" "$file")

@@ -91,7 +91,6 @@ teardown() {
 meta:
   section: "Test Tools"
   validation: none
-  install_check: false
 env:
   - var: TEST_NEW_VAR
     comment: a test variable

@@ -3,7 +3,6 @@
 
 meta:
   section: "Ghostty Scripts"
-  install_check: false
   validation: bindir
   source: terminals/ghostty/bin
 

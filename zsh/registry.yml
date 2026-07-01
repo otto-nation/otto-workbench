@@ -4,7 +4,6 @@
 
 meta:
   section: "Shell Aliases"
-  install_check: false
   validation: zsh-comments
   source: zsh
 

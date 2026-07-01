@@ -3,7 +3,6 @@
 
 meta:
   section: "AI Tooling"
-  install_check: false
   validation: none
 
 tools:

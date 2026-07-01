@@ -264,15 +264,23 @@ step_claude_agents() {
   done
 }
 
-# step_generate_tools — regenerates the AI tool context markdown from registries.
+# step_generate_tools — regenerates AI context markdown from registries and conventions.
 step_generate_tools() {
-  local generator="$BIN_SRC_DIR/local/generate-tool-context"
-  if [[ ! -x "$generator" ]]; then
+  local tool_gen="$BIN_SRC_DIR/local/generate-tool-context"
+  if [[ -x "$tool_gen" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating tool context" || true
+    bash "$tool_gen"
+  else
     warn "generate-tool-context not found — skipping tool context generation"
-    return
   fi
-  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating tool context" || true
-  bash "$generator"
+
+  local git_gen="$WORKBENCH_DIR/git/bin/local/generate-git-rules"
+  if [[ -x "$git_gen" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating git rules" || true
+    bash "$git_gen"
+  else
+    warn "generate-git-rules not found — skipping git rules generation"
+  fi
 }
 
 # step_claude_machine_profile — generates ~/.claude/machine/machine.md unconditionally.

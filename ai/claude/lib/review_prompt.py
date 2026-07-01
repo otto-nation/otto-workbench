@@ -747,7 +747,6 @@ def _prompt_group(job, common, extra):
     sections = {
         "pr_header": pr_header,
         "holistic_block": holistic_block,
-        "project_context": project_context,
         "issue_section": common["issue_section"],
         "env_section": common["env_section"],
         "delta_section": delta_section,
@@ -755,6 +754,7 @@ def _prompt_group(job, common, extra):
         "reply_threads": reply_threads,
     }
     diff_budget = _compute_diff_budget(job, sections, file_filter=file_filter)
+    sections["project_context"] = project_context
     group_preflight = _build_preflight_section(
         job, file_filter=file_filter, skip_project_context=True,
         max_diff_bytes=diff_budget,

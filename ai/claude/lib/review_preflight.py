@@ -508,9 +508,12 @@ def _format_file_contents(
 
 
 def build_project_context(data: PreflightData) -> str:
-    parts: list[str] = []
+    has_content = data.claude_md or data.architecture_md or data.review_checklists
+    if not has_content:
+        return ""
+    parts: list[str] = ["### Project context"]
     if data.claude_md:
-        parts += ["### Project context", "", "#### CLAUDE.md", "", data.claude_md]
+        parts += ["", "#### CLAUDE.md", "", data.claude_md]
     if data.architecture_md:
         parts += ["", "#### .claude/architecture.md", "", data.architecture_md]
     if data.review_checklists:

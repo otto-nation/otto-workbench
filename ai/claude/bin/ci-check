@@ -395,8 +395,9 @@ def _run_ci(trail, args, ctx) -> dict:
             trail.error("state_update", f"state update failed: {exc}")
             log.error(f"ci-check: state update failed: {exc}")
 
-    json.dump(report, sys.stdout, indent=2)
-    print()
+    if report["failures"]:
+        json.dump(report, sys.stdout, indent=2)
+        print()
 
     return report
 

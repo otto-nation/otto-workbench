@@ -466,6 +466,9 @@ _CUSTOM = {
     "gc":       cmd_gc,
 }
 
+# Commands that do not need a remote fetch before dispatch.
+_NO_UPDATE_COMMANDS = {"status", "gc"}
+
 
 def _build_usage() -> str:
     max_name = max(len(n) for n in _COMMANDS)
@@ -540,6 +543,9 @@ def main():
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
     )
+
+    if args.command not in _NO_UPDATE_COMMANDS:
+        ctx = pr_context.update_to_remote(ctx)
 
     trail = Trail.start(
         script="pr",

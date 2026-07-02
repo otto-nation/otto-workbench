@@ -11,7 +11,8 @@ if str(LIB_DIR) not in sys.path:
 
 from pr_context import (
     _parse_pr_input, _resolve_branch, resolve_bare_repo_worktree,
-    find_worktree_for_branch, ResolvedContext,
+    find_worktree_for_branch, ResolvedContext, update_to_remote,
+    fetch_and_reset,
 )
 
 
@@ -52,6 +53,119 @@ def test_resolved_context_fields():
     assert ctx.branch == "feat/auth"
     assert ctx.pr_number is None
     assert ctx.head_sha == "def"
+
+
+# ── fetch_and_reset ────────────────────────────────────────────────────────
+
+
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_runs_fetch_then_reset(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    fetch_and_reset("/wt", "feat/x")
+    assert mock_run.call_count == 2
+    fetch_call = mock_run.call_args_list[0].args[0]
+    assert "fetch" in fetch_call
+    assert "origin" in fetch_call
+    assert "feat/x" in fetch_call
+    reset_call = mock_run.call_args_list[1].args[0]
+    assert "reset" in reset_call
+    assert "--hard" in reset_call
+    assert "origin/feat/x" in reset_call
+
+
+@patch("pr_context.subprocess.run", side_effect=Exception("network error"))
+def test_fetch_and_reset_survives_fetch_exception(mock_run):
+    fetch_and_reset("/wt", "feat/x")
+
+
+# ── update_to_remote ───────────────────────────────────────────────────────
+
+
+def _make_ctx(**overrides):
+    defaults = dict(
+        repo="owner/repo", branch="feat/x",
+        pr_number=1, worktree_root=Path("/wt"), head_sha="aaa",
+    )
+    defaults.update(overrides)
+    return ResolvedContext(**defaults)
+
+
+def test_update_to_remote_noop_without_worktree():
+    ctx = _make_ctx(worktree_root=None)
+    assert update_to_remote(ctx) is ctx
+
+
+def test_update_to_remote_noop_without_branch():
+    ctx = _make_ctx(branch="", pr_number=None)
+    assert update_to_remote(ctx) is ctx
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log):
+    mock_run.return_value = MagicMock(returncode=0, stdout="M dirty.py\n")
+    ctx = _make_ctx()
+    assert update_to_remote(ctx) is ctx
+    mock_log.warn.assert_called_once()
+    assert "uncommitted" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_on_fetch_failure(mock_run):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),       # status --porcelain (clean)
+        MagicMock(returncode=1),                   # fetch fails
+    ]
+    ctx = _make_ctx()
+    assert update_to_remote(ctx) is ctx
+
+
+@patch("pr_context._head_sha", return_value="aaa111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_when_already_current(mock_run, mock_sha):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),           # status --porcelain (clean)
+        MagicMock(returncode=0),                       # fetch
+        MagicMock(returncode=0, stdout="aaa111\n"),    # rev-parse origin/branch
+    ]
+    ctx = _make_ctx(head_sha="aaa111")
+    assert update_to_remote(ctx) is ctx
+
+
+@patch("pr_context.log")
+@patch("pr_context._head_sha", return_value="local111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="remote222\n"),  # rev-parse origin/branch
+        MagicMock(returncode=0, stdout="2\n"),          # rev-list (2 unpushed)
+    ]
+    ctx = _make_ctx(head_sha="local111")
+    assert update_to_remote(ctx) is ctx
+    mock_log.warn.assert_called_once()
+    assert "unpushed" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context._head_sha", return_value="old111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="new222\n"),     # rev-parse origin/branch
+        MagicMock(returncode=0, stdout="0\n"),          # rev-list (0 unpushed)
+        MagicMock(returncode=0),                        # reset --hard
+    ]
+    ctx = _make_ctx(head_sha="old111")
+    result = update_to_remote(ctx)
+    assert result.head_sha == "new222"
+    assert result.branch == "feat/x"
+    reset_call = mock_run.call_args_list[4].args[0]
+    assert "reset" in reset_call
+    assert "--hard" in reset_call
 
 
 # ── Branch resolution ──────────────────────────────────────────────────────

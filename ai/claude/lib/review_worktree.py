@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 
 import log
+import pr_context
 
 
 WORKTREE_FALLBACK_DIR = ".worktrees"
@@ -35,7 +36,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
     wt_path = _wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
         if pr_head:
-            _fetch_and_reset(wt_path, pr_head)
+            pr_context.fetch_and_reset(wt_path, pr_head)
         return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
 
     log.info("Branch deleted, fetching via PR ref...")
@@ -186,18 +187,3 @@ def _wt_switch(ref: str, repo_dir: str) -> str | None:
     return None
 
 
-def _fetch_and_reset(wt_path: str, branch: str) -> None:
-    try:
-        subprocess.run(
-            ["git", "-C", wt_path, "fetch", "origin", branch],
-            capture_output=True, text=True,
-        )
-    except Exception:
-        pass
-    try:
-        subprocess.run(
-            ["git", "-C", wt_path, "reset", "--hard", f"origin/{branch}"],
-            capture_output=True, text=True,
-        )
-    except Exception:
-        pass

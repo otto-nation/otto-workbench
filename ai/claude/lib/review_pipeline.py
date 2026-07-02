@@ -324,12 +324,19 @@ def run_single_agent(job: ReviewJob):
     _write_review_sidecar(job)
 
 
+_RETRY_HINT = (
+    "IMPORTANT: A previous attempt ran out of turns before writing output. "
+    "Write your findings file IMMEDIATELY as your first action, then verify.\n\n"
+)
+
+
 def _review_group(
     i: int, grp: Group, job: ReviewJob,
     group_count: int, holistic_content: str,
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
     max_turns: int = DEFAULT_MAX_TURNS_GROUP,
+    retry_hint: bool = False,
 ) -> tuple[int, str, "tuple[str, str] | None"]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
@@ -355,6 +362,8 @@ def _review_group(
         group_file_paths=grp.files,
         group_output=group_output, holistic_content=holistic_content,
     )
+    if retry_hint:
+        group_prompt = _RETRY_HINT + group_prompt
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL",
                            DEFAULT_MODEL_GROUP)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING",
@@ -802,11 +811,13 @@ def _retry_failed_groups(
             continue
         idx, grp = group_by_name[name]
         turns = _retry_turns(reason, job)
+        is_max_turns = reason == _MAX_TURNS_REASON
         log.info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
             max_turns=turns,
+            retry_hint=is_max_turns,
         )
         if failure:
             still_failed.append(failure)

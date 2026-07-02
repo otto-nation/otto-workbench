@@ -144,38 +144,37 @@ class TestVerificationDetail:
 
 class TestVerifyFindings:
     def test_returns_verification_summary(self, ro, tmp_path):
-        review = tmp_path / "review.md"
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tresult := db.Query(q)\n}\n")
-        review.write_text(
+        text = (
             "## Should fix\n"
             "- [ ] **[S1]** **`handler.go:42`** — desc\n"
             "  > ```go\n"
             "  > result := db.Query(q)\n"
             "  > ```\n"
         )
-        result = ro.verify_findings(str(review), str(tmp_path))
+        out_text, result = ro.verify_findings(text, str(tmp_path))
         assert result["dropped"] == []
         assert result["findings_checked"] == 1
         assert result["findings_passed"] == 1
         assert result["findings_dropped"] == 0
-        assert not (tmp_path / "verification.json").exists()
+        assert out_text == text
 
     def test_drops_unverified_and_returns_details(self, ro, tmp_path):
-        review = tmp_path / "review.md"
         src = tmp_path / "handler.go"
         src.write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
-        review.write_text(
+        text = (
             "## Should fix\n"
             "- [ ] **[S1]** **`handler.go:42`** — desc\n"
             "  > ```go\n"
             "  > result := db.Query(q)\n"
             "  > ```\n"
         )
-        result = ro.verify_findings(str(review), str(tmp_path))
+        out_text, result = ro.verify_findings(text, str(tmp_path))
         assert result["dropped"] == ["S1"]
         assert result["findings_dropped"] == 1
         assert result["details"][0]["match_result"] is False
+        assert "S1" not in out_text
 
 
 class TestParseVerificationStripsLine:
@@ -196,9 +195,8 @@ class TestParseVerificationStripsLine:
 
 
 class TestStripEvidenceBlocks:
-    def test_strips_evidence_preserves_finding(self, ro, tmp_path):
-        review = tmp_path / "review.md"
-        review.write_text(
+    def test_strips_evidence_preserves_finding(self, ro):
+        text = (
             "## Must fix\n"
             "- **[M1]** **`file.go:42`** — missing error check\n"
             "  > ```go\n"
@@ -207,23 +205,18 @@ class TestStripEvidenceBlocks:
             "## Nit\n"
             "- **[N1]** **`file.go:10`** — rename var\n"
         )
-        ro.strip_evidence_blocks(str(review))
-        result = review.read_text()
+        result = ro.strip_evidence_blocks(text)
         assert "```go" not in result
         assert "result := db.Query" not in result
         assert "**[M1]**" in result
         assert "missing error check" in result
         assert "**[N1]**" in result
 
-    def test_no_evidence_blocks_unchanged(self, ro, tmp_path):
-        review = tmp_path / "review.md"
+    def test_no_evidence_blocks_unchanged(self, ro):
         content = "## Must fix\n- **[M1]** **`file.go:42`** — finding\n"
-        review.write_text(content)
-        ro.strip_evidence_blocks(str(review))
-        assert review.read_text() == content
+        assert ro.strip_evidence_blocks(content) == content
 
-    def test_top_level_blockquote_preserved(self, ro, tmp_path):
-        review = tmp_path / "review.md"
+    def test_top_level_blockquote_preserved(self, ro):
         content = (
             "## Summary\n"
             "> ```go\n"
@@ -232,28 +225,20 @@ class TestStripEvidenceBlocks:
             "## Must fix\n"
             "- **[M1]** **`file.go:42`** — finding\n"
         )
-        review.write_text(content)
-        ro.strip_evidence_blocks(str(review))
-        assert "> ```go" in review.read_text()
+        result = ro.strip_evidence_blocks(content)
+        assert "> ```go" in result
 
 
 class TestStripStableIds:
-    def test_removes_sid_comments(self, ro, tmp_path):
-        review = tmp_path / "review.md"
-        review.write_text(
-            '- **[M1]** <!-- sid:abc12345 --> **`file.go:42`** — desc\n'
-        )
-        ro.strip_stable_ids(str(review))
-        result = review.read_text()
+    def test_removes_sid_comments(self, ro):
+        text = '- **[M1]** <!-- sid:abc12345 --> **`file.go:42`** — desc\n'
+        result = ro.strip_stable_ids(text)
         assert "<!-- sid:" not in result
         assert "**[M1]** **`file.go:42`**" in result
 
-    def test_no_sids_unchanged(self, ro, tmp_path):
-        review = tmp_path / "review.md"
+    def test_no_sids_unchanged(self, ro):
         content = "- **[M1]** **`file.go:42`** — desc\n"
-        review.write_text(content)
-        ro.strip_stable_ids(str(review))
-        assert review.read_text() == content
+        assert ro.strip_stable_ids(content) == content
 
 
 class TestFindingPathReCheckbox:
@@ -576,11 +561,9 @@ class TestRenumberPrefix:
 
 
 class TestRenumberFindings:
-    def test_renumbers_gaps(self, ro, tmp_path):
-        review = tmp_path / "review.md"
-        review.write_text("[M1] first\n[M3] third\n[S1] s1\n[S5] s5\n")
-        ro.renumber_findings(str(review))
-        result = review.read_text()
+    def test_renumbers_gaps(self, ro):
+        text = "[M1] first\n[M3] third\n[S1] s1\n[S5] s5\n"
+        result = ro.renumber_findings(text)
         assert "[M1]" in result
         assert "[M2]" in result
         assert "[M3]" not in result
@@ -588,16 +571,12 @@ class TestRenumberFindings:
         assert "[S2]" in result
         assert "[S5]" not in result
 
-    def test_nonexistent_file(self, ro, tmp_path):
-        # Should not raise
-        ro.renumber_findings(str(tmp_path / "nonexistent.md"))
+    def test_empty_text(self, ro):
+        assert ro.renumber_findings("") == ""
 
-    def test_no_findings_unchanged(self, ro, tmp_path):
-        review = tmp_path / "review.md"
+    def test_no_findings_unchanged(self, ro):
         content = "No findings here.\n"
-        review.write_text(content)
-        ro.renumber_findings(str(review))
-        assert review.read_text() == content
+        assert ro.renumber_findings(content) == content
 
 
 # ── 6. _extract_section ─────────────────────────────────────────────────────

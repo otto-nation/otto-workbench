@@ -276,8 +276,6 @@ def _write_review_sidecar(job: ReviewJob):
     }
     if job.generator_version:
         meta["generator_version"] = job.generator_version
-    if job.preflight and job.preflight.diff:
-        meta["diff"] = job.preflight.diff
 
     incremental = _is_incremental(job)
     meta["review_type"] = "incremental" if incremental else "full"

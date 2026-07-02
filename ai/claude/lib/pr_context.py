@@ -138,10 +138,13 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
         return ctx
 
-    subprocess.run(
+    r = subprocess.run(
         ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
         capture_output=True, text=True,
     )
+    if r.returncode != 0:
+        log.warn(f"reset --hard failed — keeping existing worktree state")
+        return ctx
 
     log.info(f"Updated worktree to origin/{ctx.branch}")
     return ResolvedContext(

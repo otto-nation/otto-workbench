@@ -7,6 +7,7 @@ file contents, permissions, and organizing files into review groups.
 from __future__ import annotations
 
 import json
+import os
 import re
 import stat
 import sys
@@ -641,17 +642,31 @@ def group_files(pr: PRMetadata) -> list[Group]:
     return groups
 
 
+def _merge_score(a: Group, b: Group) -> tuple[int, int]:
+    shared = len(os.path.commonprefix([a.name, b.name]))
+    return (-shared, a.lines + b.lines)
+
+
 def _merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
     groups = list(groups)
     while len(groups) > max_groups:
-        groups.sort(key=lambda g: g.lines)
-        a, b = groups[0], groups[1]
+        best_score = None
+        best_pair = (0, 1)
+        for i in range(len(groups)):
+            for j in range(i + 1, len(groups)):
+                score = _merge_score(groups[i], groups[j])
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_pair = (i, j)
+        i, j = best_pair
+        a, b = groups[i], groups[j]
         merged = Group(
             name=f"{a.name}+{b.name}",
             files=a.files + b.files,
             lines=a.lines + b.lines,
         )
-        groups = [merged] + groups[2:]
+        groups = [g for k, g in enumerate(groups) if k not in (i, j)]
+        groups.append(merged)
     return groups
 
 

@@ -78,7 +78,7 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
     try:
         subprocess.run(
             ["git", "-C", wt_path, "fetch", "origin", branch],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=True,
         )
     except Exception:
         return

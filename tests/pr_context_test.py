@@ -55,9 +55,6 @@ def test_resolved_context_fields():
     assert ctx.head_sha == "def"
 
 
-# ── Branch resolution ──────────────────────────────────────────────────────
-
-
 # ── fetch_and_reset ────────────────────────────────────────────────────────
 
 

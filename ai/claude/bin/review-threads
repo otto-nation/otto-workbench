@@ -746,11 +746,16 @@ def _run_threads(trail, args, ctx) -> None:
             v.get("state") == "APPROVED" for v in report.get("verdicts", [])
         )
         st = pr_state.load_or_init(**ctx_args)
+        prior_seen_ids = set(st.comments.seen_issue_comment_ids)
+        current_ids = [c["id"] for c in issue_comments]
+        for c in issue_comments:
+            c["seen"] = c["id"] in prior_seen_ids
         pr_state.update_comments(st, pr_state.CommentsSummary(
             total_threads=len(report["threads"]),
             by_state=thread_states,
             blocking_reviewers=blocking,
             has_approvals=has_approvals,
+            seen_issue_comment_ids=current_ids,
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(toplevel, st)

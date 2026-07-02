@@ -297,8 +297,11 @@ def fetch_issue_comments(
     result = []
     my_login_lower = my_login.lower()
     for c in comments:
-        user = c.get("user", {}).get("login", "")
+        user_obj = c.get("user", {})
+        user = user_obj.get("login", "")
         if user.lower() == my_login_lower:
+            continue
+        if user_obj.get("type") == "Bot":
             continue
         result.append({
             "id": c.get("id"),

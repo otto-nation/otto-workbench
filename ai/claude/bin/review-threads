@@ -429,12 +429,38 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     return "Fix pending"
 
 
+def _thread_permalink(
+    entry: dict, threads_by_id: dict, repo: str, pr_number: int,
+) -> str | None:
+    """Build a GitHub permalink for a review thread, or None if unavailable."""
+    tid = entry.get("thread_id", "")
+    thread = threads_by_id.get(tid, {})
+    comments = thread.get("comments", [])
+    if not comments:
+        return None
+    db_id = comments[0].get("databaseId")
+    if not db_id:
+        return None
+    return f"https://github.com/{repo}/pull/{pr_number}#discussion_r{db_id}"
+
+
+def _summary_cell(entry: dict, threads_by_id: dict, repo: str, pr_number: int) -> str:
+    """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
+    summary = entry.get("summary", "—")
+    url = _thread_permalink(entry, threads_by_id, repo, pr_number)
+    if url:
+        return f"[{summary}]({url})"
+    return summary
+
+
 def _build_summary_body(
     fixed: list[dict],
     needs_human: list[dict],
     skipped: list[dict],
     cp: CommitPushResult,
     repo: str,
+    pr_number: int,
+    threads_by_id: dict,
 ) -> str:
     """Build the markdown body for the fix summary comment."""
     fixed_count = len(fixed)
@@ -455,16 +481,16 @@ def _build_summary_body(
     rows = []
     status = _fixed_status_text(cp, repo)
     for entry in fixed:
-        summary = entry.get("summary", "—")
+        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
         rows.append(f"| {summary} | {file_loc} | {status} |")
     for entry in needs_human:
-        summary = entry.get("summary", "—")
+        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
         reason = entry.get("reason", "needs discussion")
         rows.append(f"| {summary} | {file_loc} | {reason} |")
     for entry in skipped:
-        summary = entry.get("summary", "—")
+        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
         rows.append(f"| {summary} | {file_loc} | Skipped |")
 
@@ -484,11 +510,14 @@ def _post_fix_summary(
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
+    threads_by_id: dict,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     if not fixed and not needs_human and not skipped:
         return None
-    body = _build_summary_body(fixed, needs_human, skipped, cp, repo)
+    body = _build_summary_body(
+        fixed, needs_human, skipped, cp, repo, pr_number, threads_by_id,
+    )
     url = pc.post_issue_comment(repo, pr_number, body)
     if url:
         log.info(f"Posted fix summary: {url}")
@@ -643,6 +672,7 @@ def _run_comment_fix(
 
     summary_url = _post_fix_summary(
         fixed, needs_human, skipped, cp, ctx.repo, report["pr_number"],
+        threads_by_id,
     )
 
     return {

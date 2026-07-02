@@ -1392,6 +1392,30 @@ class TestMergeSmallestGroups:
         assert "b" in result[0].name
         assert set(result[0].files) == {"f1", "f2"}
 
+    def test_prefers_shared_directory_prefix(self, ro):
+        groups = [
+            ro.Group("src/api", ["api.go"], 100),
+            ro.Group("src/auth", ["auth.go"], 100),
+            ro.Group("tests/unit", ["test.go"], 50),
+        ]
+        result = ro._merge_smallest_groups(groups, 2)
+        assert len(result) == 2
+        merged = [g for g in result if "+" in g.name][0]
+        assert "src/api" in merged.name
+        assert "src/auth" in merged.name
+
+    def test_falls_back_to_size_without_shared_prefix(self, ro):
+        groups = [
+            ro.Group("alpha", ["a.go"], 500),
+            ro.Group("beta", ["b.go"], 10),
+            ro.Group("gamma", ["c.go"], 20),
+        ]
+        result = ro._merge_smallest_groups(groups, 2)
+        assert len(result) == 2
+        merged = [g for g in result if "+" in g.name][0]
+        assert "beta" in merged.name
+        assert "gamma" in merged.name
+
 
 # ── 30. _validate_group_output ──────────────────────────────────────────────
 

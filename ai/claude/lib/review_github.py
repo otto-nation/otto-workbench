@@ -259,7 +259,7 @@ query($owner: String!, $name: String!, $pr: Int!) {{
       comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
         nodes {{
           databaseId
-          author {{ login }}
+          author {{ login __typename }}
           body
           createdAt
         }}
@@ -361,18 +361,23 @@ class PRData:
         return list(by_user.values())
 
     def non_self_issue_comments(self, my_login: str) -> list[dict]:
-        """Issue-level comments excluding my_login, as [{id, user, body, created_at}]."""
+        """Issue-level comments excluding my_login and bots, as [{id, user, body, created_at}]."""
         my_lower = my_login.lower()
-        return [
-            {
+        results = []
+        for c in self.issue_comments:
+            author = c.get("author") or {}
+            login = author.get("login", "")
+            if login.lower() == my_lower:
+                continue
+            if author.get("__typename") == "Bot":
+                continue
+            results.append({
                 "id": c.get("databaseId"),
-                "user": (c.get("author") or {}).get("login", ""),
+                "user": login,
                 "body": c.get("body", ""),
                 "created_at": c.get("createdAt", ""),
-            }
-            for c in self.issue_comments
-            if (c.get("author") or {}).get("login", "").lower() != my_lower
-        ]
+            })
+        return results
 
 
 def fetch_pr_data(repo: str, pr: str) -> PRData:

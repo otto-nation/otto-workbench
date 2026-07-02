@@ -258,11 +258,7 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
         cwd=job.wt_path,
     )
     delta_log = _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
-    delta_names = _run(
-        ["git", "diff", "--name-only", f"{prior_sha}..HEAD"],
-        cwd=job.wt_path,
-    )
-    delta_files = [f for f in delta_names.split("\n") if f.strip()]
+    delta_files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(raw_diff)]
     log.info(
         f"Incremental review: {len(delta_files)} files changed since "
         f"prior review ({prior_sha[:7]}..{job.pr.head_sha[:7]})"

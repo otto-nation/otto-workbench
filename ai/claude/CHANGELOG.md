@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.33.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.32.0...otto-ai-tools-v1.33.0) (2026-07-02)
+
+
+### Features
+
+* **ai:** add --effort and --max-groups flags to claude-review ([#442](https://github.com/otto-nation/otto-workbench/issues/442)) ([313bf9a](https://github.com/otto-nation/otto-workbench/commit/313bf9a1c650b07b97ebd609c87a5b084aa4b2a6))
+* **ai:** add retry hint when group agent hits max turns ([#450](https://github.com/otto-nation/otto-workbench/issues/450)) ([90ce0c3](https://github.com/otto-nation/otto-workbench/commit/90ce0c39f2e6bfdf7cedb4b1403e757c645fc39e))
+* **ai:** add reviewer-lite agent for group/angles/fix phases ([#447](https://github.com/otto-nation/otto-workbench/issues/447)) ([5a6bfc6](https://github.com/otto-nation/otto-workbench/commit/5a6bfc6e143f4e96b7cb3278216ca056409a6eae))
+* **ai:** drop prior review from synthesis prompts ([#444](https://github.com/otto-nation/otto-workbench/issues/444)) ([9c2a422](https://github.com/otto-nation/otto-workbench/commit/9c2a4224fbf44214d78e9dc26ecd0be9650ada3b))
+* **ai:** extract project context from preflight into template variable ([#445](https://github.com/otto-nation/otto-workbench/issues/445)) ([3bdd879](https://github.com/otto-nation/otto-workbench/commit/3bdd8792847a44b44d831625c14d6ef793da6817))
+* **ai:** prefer merging review groups with shared directory prefix ([#451](https://github.com/otto-nation/otto-workbench/issues/451)) ([8f1a502](https://github.com/otto-nation/otto-workbench/commit/8f1a50297ca4335e8f65422101bc2717a1cf5602))
+* **ai:** reorder group template for prompt cache alignment ([#446](https://github.com/otto-nation/otto-workbench/issues/446)) ([736349b](https://github.com/otto-nation/otto-workbench/commit/736349b809f11a269a8a64451de89bda204c523e))
+* **ai:** scope delta, reply threads, and PR header per group ([#443](https://github.com/otto-nation/otto-workbench/issues/443)) ([8fe5693](https://github.com/otto-nation/otto-workbench/commit/8fe56930f35e518daad587f712bad40cc4de5f1b))
+
+
+### Bug Fixes
+
+* **ai:** add early-exit to ci-failures skill for no-failure cases ([#438](https://github.com/otto-nation/otto-workbench/issues/438)) ([11273a3](https://github.com/otto-nation/otto-workbench/commit/11273a3bebe68a95e5e919e011b7bb008c011f99))
+* **ai:** improve pr-rebase conflict resolution parse diagnostics ([#440](https://github.com/otto-nation/otto-workbench/issues/440)) ([61b6868](https://github.com/otto-nation/otto-workbench/commit/61b6868f25067a14cba08e19caaa9442e85ec2a8))
+* **ai:** remove dead diff from review sidecar meta.json ([#448](https://github.com/otto-nation/otto-workbench/issues/448)) ([032a393](https://github.com/otto-nation/otto-workbench/commit/032a393531250a9b6ad8faa3ac3f46c1483404c4))
+
+
+### Code Refactoring
+
+* **ai:** parse delta file names from diff headers instead of separate git call ([#449](https://github.com/otto-nation/otto-workbench/issues/449)) ([a8020e9](https://github.com/otto-nation/otto-workbench/commit/a8020e9ca66d9e018f0c0dfa998cebf5c61631e8))
+* **ai:** reduce post-processing file re-reads to single read/write ([#452](https://github.com/otto-nation/otto-workbench/issues/452)) ([9d05339](https://github.com/otto-nation/otto-workbench/commit/9d05339e564eab22d788766239321542c36c254f))
+
 ## [1.32.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.31.3...otto-ai-tools-v1.32.0) (2026-07-01)
 
 

@@ -643,6 +643,9 @@ def group_files(pr: PRMetadata) -> list[Group]:
 
 
 def _merge_score(a: Group, b: Group) -> tuple[int, int]:
+    """Lower score = better merge: longest shared name prefix, then smallest combined size."""
+    # os.path.commonprefix is character-based (not path-component-based), which is
+    # intentional here — we want a quick name-similarity heuristic, not strict path ancestry.
     shared = len(os.path.commonprefix([a.name, b.name]))
     return (-shared, a.lines + b.lines)
 

@@ -81,49 +81,91 @@ def test_fetch_and_reset_survives_fetch_exception(mock_run):
 # ── update_to_remote ───────────────────────────────────────────────────────
 
 
-def test_update_to_remote_noop_without_worktree():
-    ctx = ResolvedContext(
+def _make_ctx(**overrides):
+    defaults = dict(
         repo="owner/repo", branch="feat/x",
-        pr_number=1, worktree_root=None, head_sha="aaa",
+        pr_number=1, worktree_root=Path("/wt"), head_sha="aaa",
     )
-    result = update_to_remote(ctx)
-    assert result is ctx
+    defaults.update(overrides)
+    return ResolvedContext(**defaults)
+
+
+def test_update_to_remote_noop_without_worktree():
+    ctx = _make_ctx(worktree_root=None)
+    assert update_to_remote(ctx) is ctx
 
 
 def test_update_to_remote_noop_without_branch():
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="",
-        pr_number=None, worktree_root=Path("/wt"), head_sha="aaa",
-    )
-    result = update_to_remote(ctx)
-    assert result is ctx
-
-
-@patch("pr_context.fetch_and_reset")
-@patch("pr_context._head_sha", return_value="aaa111")
-def test_update_to_remote_skips_when_already_current(mock_sha, mock_far):
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="feat/x",
-        pr_number=1, worktree_root=Path("/wt"), head_sha="aaa111",
-    )
-    result = update_to_remote(ctx)
-    assert result is ctx
-    mock_far.assert_called_once_with("/wt", "feat/x")
+    ctx = _make_ctx(branch="", pr_number=None)
+    assert update_to_remote(ctx) is ctx
 
 
 @patch("pr_context.log")
-@patch("pr_context.fetch_and_reset")
-@patch("pr_context._head_sha", side_effect=["old111", "new222"])
-def test_update_to_remote_returns_new_context_when_sha_changes(mock_sha, mock_far, mock_log):
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="feat/x",
-        pr_number=1, worktree_root=Path("/wt"), head_sha="old111",
-    )
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log):
+    mock_run.return_value = MagicMock(returncode=0, stdout="M dirty.py\n")
+    ctx = _make_ctx()
+    assert update_to_remote(ctx) is ctx
+    mock_log.warn.assert_called_once()
+    assert "uncommitted" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_on_fetch_failure(mock_run):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),       # status --porcelain (clean)
+        MagicMock(returncode=1),                   # fetch fails
+    ]
+    ctx = _make_ctx()
+    assert update_to_remote(ctx) is ctx
+
+
+@patch("pr_context._head_sha", return_value="aaa111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_when_already_current(mock_run, mock_sha):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),           # status --porcelain (clean)
+        MagicMock(returncode=0),                       # fetch
+        MagicMock(returncode=0, stdout="aaa111\n"),    # rev-parse origin/branch
+    ]
+    ctx = _make_ctx(head_sha="aaa111")
+    assert update_to_remote(ctx) is ctx
+
+
+@patch("pr_context.log")
+@patch("pr_context._head_sha", return_value="local111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="remote222\n"),  # rev-parse origin/branch
+        MagicMock(returncode=0, stdout="2\n"),          # rev-list (2 unpushed)
+    ]
+    ctx = _make_ctx(head_sha="local111")
+    assert update_to_remote(ctx) is ctx
+    mock_log.warn.assert_called_once()
+    assert "unpushed" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context._head_sha", return_value="old111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="new222\n"),     # rev-parse origin/branch
+        MagicMock(returncode=0, stdout="0\n"),          # rev-list (0 unpushed)
+        MagicMock(returncode=0),                        # reset --hard
+    ]
+    ctx = _make_ctx(head_sha="old111")
     result = update_to_remote(ctx)
     assert result.head_sha == "new222"
     assert result.branch == "feat/x"
-    assert result.repo == "owner/repo"
-    mock_far.assert_called_once_with("/wt", "feat/x")
+    reset_call = mock_run.call_args_list[4].args[0]
+    assert "reset" in reset_call
+    assert "--hard" in reset_call
 
 
 # ── Branch resolution ──────────────────────────────────────────────────────

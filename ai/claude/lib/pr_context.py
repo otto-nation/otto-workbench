@@ -92,22 +92,56 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
 
 
 def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
-    """Fetch branch from remote and hard-reset worktree to match.
+    """Fetch branch from remote and reset worktree to match, safely.
 
-    Returns a new context with the updated head_sha.
-    No-op when there is no worktree or no branch to update.
+    Skips when the worktree has uncommitted changes or unpushed commits.
+    Returns a new context with the updated head_sha when reset succeeds.
     """
     if not ctx.worktree_root or not ctx.branch:
         return ctx
 
     cwd = str(ctx.worktree_root)
-    local_sha = _head_sha(cwd)
 
-    fetch_and_reset(cwd, ctx.branch)
-
-    new_sha = _head_sha(cwd)
-    if new_sha == local_sha:
+    r = subprocess.run(
+        ["git", "-C", cwd, "status", "--porcelain"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        log.warn("Worktree has uncommitted changes — skipping update to remote")
         return ctx
+
+    r = subprocess.run(
+        ["git", "-C", cwd, "fetch", "origin", ctx.branch],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return ctx
+
+    r = subprocess.run(
+        ["git", "-C", cwd, "rev-parse", "--verify", f"origin/{ctx.branch}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return ctx
+    remote_sha = r.stdout.strip()
+
+    local_sha = _head_sha(cwd)
+    if local_sha == remote_sha:
+        return ctx
+
+    r = subprocess.run(
+        ["git", "-C", cwd, "rev-list", f"origin/{ctx.branch}..HEAD", "--count"],
+        capture_output=True, text=True,
+    )
+    unpushed = int(r.stdout.strip()) if r.returncode == 0 else 0
+    if unpushed > 0:
+        log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
+        return ctx
+
+    subprocess.run(
+        ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
+        capture_output=True, text=True,
+    )
 
     log.info(f"Updated worktree to origin/{ctx.branch}")
     return ResolvedContext(
@@ -115,7 +149,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         branch=ctx.branch,
         pr_number=ctx.pr_number,
         worktree_root=ctx.worktree_root,
-        head_sha=new_sha,
+        head_sha=remote_sha,
     )
 
 

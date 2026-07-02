@@ -306,14 +306,10 @@ def _renumber_prefix(text: str, prefix: str) -> str:
     return text.replace("\x00", "")
 
 
-def renumber_findings(review_file: str) -> None:
-    path = Path(review_file)
-    if not path.exists():
-        return
-    text = path.read_text()
+def renumber_findings(text: str) -> str:
     for _, prefix in _FINDING_SECTIONS:
         text = _renumber_prefix(text, prefix)
-    path.write_text(text)
+    return text
 
 
 # ── Triage and deduplication ─────────────────────────────────────────────────
@@ -626,11 +622,7 @@ def _drop_reason(detail: dict) -> str:
     return reason
 
 
-def verify_findings(review_file: str, wt_path: str) -> dict:
-    path = Path(review_file)
-    if not path.exists():
-        return {"findings_checked": 0, "findings_passed": 0, "findings_dropped": 0, "dropped": [], "details": []}
-    text = path.read_text()
+def verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
     details: list[dict] = []
@@ -651,18 +643,15 @@ def verify_findings(review_file: str, wt_path: str) -> dict:
         "details": details,
     }
     if dropped:
-        path.write_text(_remove_dropped_findings(text, dropped))
-    return result
+        text = _remove_dropped_findings(text, dropped)
+    return text, result
 
 
 _EVIDENCE_BLOCK_START_RE = re.compile(r"^ {2,}>\s*```")
 
 
-def strip_evidence_blocks(review_file: str) -> None:
-    path = Path(review_file)
-    if not path.exists():
-        return
-    lines = path.read_text().split("\n")
+def strip_evidence_blocks(text: str) -> str:
+    lines = text.split("\n")
     kept: list[str] = []
     in_evidence = False
     for line in lines:
@@ -674,7 +663,7 @@ def strip_evidence_blocks(review_file: str) -> None:
             in_evidence = not is_fence
             continue
         kept.append(line)
-    path.write_text("\n".join(kept))
+    return "\n".join(kept)
 
 
 # ── Stable IDs for carry-forward ─────────────────────────────────────────────
@@ -728,14 +717,8 @@ def _check_orphaned_prior_ids(prior_text: str, review_text: str) -> list[str]:
     return sorted(prior_ids - review_ids)
 
 
-def strip_stable_ids(review_file: str) -> None:
-    path = Path(review_file)
-    if not path.exists():
-        return
-    text = path.read_text()
-    cleaned = re.sub(r" <!-- sid:\w+ -->", "", text)
-    if cleaned != text:
-        path.write_text(cleaned)
+def strip_stable_ids(text: str) -> str:
+    return re.sub(r" <!-- sid:\w+ -->", "", text)
 
 
 # ── Mechanical verdict and review assembly ──────────────────────────────────
@@ -768,22 +751,27 @@ def post_process_findings(
     wt_path: str = "",
     prior_review: str = "",
 ) -> dict | None:
+    path = Path(review_file)
+    if not path.exists():
+        return None
+    text = path.read_text()
     if prior_review:
         orphaned = _check_orphaned_prior_ids(
             annotate_prior_with_stable_ids(prior_review),
-            Path(review_file).read_text(),
+            text,
         )
         if orphaned:
             log.warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
     verification: dict | None = None
     if wt_path:
-        verification = verify_findings(review_file, wt_path)
+        text, verification = verify_findings(text, wt_path)
         dropped = verification["dropped"]
         if dropped:
             log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
-    strip_evidence_blocks(review_file)
-    strip_stable_ids(review_file)
-    renumber_findings(review_file)
+    text = strip_evidence_blocks(text)
+    text = strip_stable_ids(text)
+    text = renumber_findings(text)
+    path.write_text(text)
     return verification
 
 

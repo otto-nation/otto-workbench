@@ -95,7 +95,7 @@ The `fix_pass` object contains:
 
 **Report auto-fixes:** "Fixed N threads (commit SHA). M threads need your input. K skipped."
 
-**If `needs_human` is empty and no `issue_comments`:** done — no further action needed.
+**If `needs_human` is empty and no unseen `issue_comments`:** done — no further action needed.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
@@ -107,9 +107,12 @@ Ask the user what to do for each:
 they require judgment.
 
 **Issue-level comments** (`issue_comments` array in the JSON output): these are
-general discussion comments from reviewers (not inline review threads). Present
-each with the author and a summary. These may require a reply or action — ask
-the user.
+general discussion comments from reviewers (not inline review threads). Each
+comment has a `"seen"` boolean — `true` means it was present in a prior run
+and has already been shown to the user. Only present comments where
+`"seen": false`; skip the rest. If all issue comments are seen, treat them
+as handled. For unseen comments, present each with the author and a summary.
+These may require a reply or action — ask the user.
 
 ### Step 4: Handle remaining threads and resolve
 

@@ -664,7 +664,7 @@ class TestBuildSummaryBody:
     def test_pushed_shows_commit_link(self, rt):
         cp = rt.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
-            [self._fixed_entry()], [], [], cp, "owner/repo",
+            [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
         assert "abc1234" in body
         assert "push failed" not in body
@@ -672,21 +672,21 @@ class TestBuildSummaryBody:
     def test_no_changes_shows_no_commit_needed(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
-            [self._fixed_entry()], [], [], cp, "owner/repo",
+            [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
         assert "no commit needed" in body
 
     def test_commit_failed_shows_precommit_hint(self, rt):
         cp = rt.CommitPushResult(None, "commit_failed", "hook error")
         body = rt._build_summary_body(
-            [self._fixed_entry()], [], [], cp, "owner/repo",
+            [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
         assert "commit failed" in body
 
     def test_push_failed_shows_sha_and_warning(self, rt):
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         body = rt._build_summary_body(
-            [self._fixed_entry()], [], [], cp, "owner/repo",
+            [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
         assert "abc1234" in body
         assert "push failed" in body
@@ -695,11 +695,25 @@ class TestBuildSummaryBody:
         cp = rt.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             [], [{"summary": "question", "file": "a.py", "line": 1, "reason": "contested"}],
-            [], cp, "owner/repo",
+            [], cp, "owner/repo", 1, {},
         )
         assert "contested" in body
 
     def test_empty_returns_no_table(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
-        body = rt._build_summary_body([], [], [], cp, "owner/repo")
+        body = rt._build_summary_body([], [], [], cp, "owner/repo", 1, {})
         assert "Thread" not in body
+
+    def test_thread_permalink_in_summary(self, rt):
+        """Fixed entries with matching thread data render as links."""
+        tid = "PRRT_abc123"
+        entry = self._fixed_entry(thread_id=tid)
+        threads_by_id = {
+            tid: {"comments": [{"databaseId": 999}]},
+        }
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [entry], [], [], cp, "owner/repo", 42, threads_by_id,
+        )
+        assert "#discussion_r999" in body
+        assert "[fix regex]" in body

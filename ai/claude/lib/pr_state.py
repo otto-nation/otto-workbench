@@ -83,6 +83,7 @@ class CommentsSummary:
     by_state: dict[str, int] = field(default_factory=dict)
     blocking_reviewers: list[str] = field(default_factory=list)
     has_approvals: bool = False
+    seen_issue_comment_ids: list[int] = field(default_factory=list)
     updated_at: str = ""
 
 

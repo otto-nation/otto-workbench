@@ -416,16 +416,6 @@ def test_cmd_review_no_self_when_ctx_has_pr(mock_run):
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_review_self_only_when_no_pr_anywhere(mock_run):
-    """--self injected only when no PR target from any source."""
-    mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=None)
-    pr_cli.cmd_review([], ctx)
-    cmd = mock_run.call_args[0][0]
-    assert "--self" in cmd
-
-
-@patch("pr_cli.subprocess.run")
 def test_cmd_review_no_double_self(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()

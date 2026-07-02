@@ -541,6 +541,10 @@ def main():
         repo_dir=getattr(args, "repo_dir", None),
     )
 
+    _NO_UPDATE_COMMANDS = {"status", "gc"}
+    if args.command not in _NO_UPDATE_COMMANDS:
+        ctx = pr_context.update_to_remote(ctx)
+
     trail = Trail.start(
         script="pr",
         artifact_dir=str(ctx.worktree_root / pr_state.STATE_DIR) if ctx.worktree_root else "/tmp",

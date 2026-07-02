@@ -73,6 +73,52 @@ def resolve(
     )
 
 
+def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
+    """Fetch branch from remote and hard-reset worktree to match.
+
+    Returns a new context with the updated head_sha.
+    No-op when there is no worktree or no branch to update.
+    """
+    if not ctx.worktree_root or not ctx.branch:
+        return ctx
+
+    cwd = str(ctx.worktree_root)
+
+    r = subprocess.run(
+        ["git", "-C", cwd, "fetch", "origin", ctx.branch],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return ctx
+
+    r = subprocess.run(
+        ["git", "-C", cwd, "rev-parse", "--verify", f"origin/{ctx.branch}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return ctx
+
+    remote_sha = r.stdout.strip()
+    local_sha = _head_sha(cwd)
+
+    if local_sha == remote_sha:
+        return ctx
+
+    log.info(f"Updating worktree to origin/{ctx.branch}")
+    subprocess.run(
+        ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
+        capture_output=True, text=True,
+    )
+
+    return ResolvedContext(
+        repo=ctx.repo,
+        branch=ctx.branch,
+        pr_number=ctx.pr_number,
+        worktree_root=ctx.worktree_root,
+        head_sha=remote_sha,
+    )
+
+
 def _current_branch_quiet(cwd: str | None = None) -> str | None:
     """Return current branch name, or None on failure (e.g. detached HEAD)."""
     r = subprocess.run(

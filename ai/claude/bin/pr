@@ -279,7 +279,11 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
 
     has_self = "--self" in argv
     positionals, _ = _split_argv(argv)
-    has_pr_target = any(_is_pr_target(p) for p in positionals)
+    has_pr_target = (
+        any(_is_pr_target(p) for p in positionals)
+        or _is_pr_target(original_pr)
+        or ctx.pr_number is not None
+    )
     inject = ["--self"] if not has_self and not has_pr_target else []
     rc = _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
                        original_pr=original_pr,

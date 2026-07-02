@@ -370,7 +370,7 @@ def test_run_delegate_returns_exit_code(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_injects_self_when_no_target(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = _make_ctx(pr_number=None)
     pr_cli.cmd_review([], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--self" in cmd
@@ -391,6 +391,26 @@ def test_cmd_review_no_self_when_pr_url(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
     pr_cli.cmd_review(["https://github.com/owner/repo/pull/99"], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert "--self" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_review_no_self_when_original_pr(mock_run):
+    """--pr consumed by global parser still prevents --self injection."""
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx()
+    pr_cli.cmd_review([], ctx, original_pr="1206")
+    cmd = mock_run.call_args[0][0]
+    assert "--self" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_review_no_self_when_ctx_has_pr(mock_run):
+    """Auto-detected PR number in context prevents --self injection."""
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(pr_number=99)
+    pr_cli.cmd_review([], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--self" not in cmd
 

@@ -306,7 +306,8 @@ def run_single_agent(job: ReviewJob):
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SINGLE))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
+    agent = _effort_default(job.effort, "agent", "reviewer")
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
     log.blank()
 
     reason = ""
@@ -363,7 +364,7 @@ def _review_group(
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
 
     failed = None
     if not _has_output(group_output):
@@ -399,9 +400,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
                                        _effort_thinking(job.effort, DEFAULT_THINKING_HOLISTIC))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    agent = _effort_default(job.effort, "agent", "reviewer")
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
     log.blank()
 
     holistic_content = ""
@@ -432,7 +434,7 @@ def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info("Angles scan (7 review angles)...")
-    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
+    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
 
     angles_content = ""
     if _has_output(angles_output):
@@ -669,7 +671,8 @@ def run_fix_pass(job: ReviewJob):
     log.blank()
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
                  review_file=job.review_file, model=model, thinking_level=thinking,
-                 provider=provider, max_turns=max_turns, max_budget=budget)
+                 provider=provider, max_turns=max_turns, max_budget=budget,
+                 agent="reviewer-lite")
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -989,7 +992,8 @@ def _phase_synthesis(
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget)
+    agent = _effort_default(job.effort, "agent", "reviewer")
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
     log.blank()
 
     if not _has_output(job.review_file):

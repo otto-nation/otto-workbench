@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 from pr_context import (
     _parse_pr_input, _resolve_branch, resolve_bare_repo_worktree,
     find_worktree_for_branch, ResolvedContext, update_to_remote,
+    fetch_and_reset,
 )
 
 
@@ -57,6 +58,29 @@ def test_resolved_context_fields():
 # ── Branch resolution ──────────────────────────────────────────────────────
 
 
+# ── fetch_and_reset ────────────────────────────────────────────────────────
+
+
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_runs_fetch_then_reset(mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    fetch_and_reset("/wt", "feat/x")
+    assert mock_run.call_count == 2
+    fetch_call = mock_run.call_args_list[0].args[0]
+    assert "fetch" in fetch_call
+    assert "origin" in fetch_call
+    assert "feat/x" in fetch_call
+    reset_call = mock_run.call_args_list[1].args[0]
+    assert "reset" in reset_call
+    assert "--hard" in reset_call
+    assert "origin/feat/x" in reset_call
+
+
+@patch("pr_context.subprocess.run", side_effect=Exception("network error"))
+def test_fetch_and_reset_survives_fetch_exception(mock_run):
+    fetch_and_reset("/wt", "feat/x")
+
+
 # ── update_to_remote ───────────────────────────────────────────────────────
 
 
@@ -78,27 +102,22 @@ def test_update_to_remote_noop_without_branch():
     assert result is ctx
 
 
+@patch("pr_context.fetch_and_reset")
 @patch("pr_context._head_sha", return_value="aaa111")
-@patch("pr_context.subprocess.run")
-def test_update_to_remote_skips_when_already_current(mock_run, mock_sha):
-    mock_run.return_value = MagicMock(returncode=0, stdout="aaa111\n")
+def test_update_to_remote_skips_when_already_current(mock_sha, mock_far):
     ctx = ResolvedContext(
         repo="owner/repo", branch="feat/x",
         pr_number=1, worktree_root=Path("/wt"), head_sha="aaa111",
     )
     result = update_to_remote(ctx)
     assert result is ctx
+    mock_far.assert_called_once_with("/wt", "feat/x")
 
 
 @patch("pr_context.log")
-@patch("pr_context._head_sha", return_value="old111")
-@patch("pr_context.subprocess.run")
-def test_update_to_remote_resets_when_behind(mock_run, mock_sha, mock_log):
-    mock_run.side_effect = [
-        MagicMock(returncode=0),                      # fetch
-        MagicMock(returncode=0, stdout="new222\n"),    # rev-parse --verify
-        MagicMock(returncode=0),                       # reset --hard
-    ]
+@patch("pr_context.fetch_and_reset")
+@patch("pr_context._head_sha", side_effect=["old111", "new222"])
+def test_update_to_remote_returns_new_context_when_sha_changes(mock_sha, mock_far, mock_log):
     ctx = ResolvedContext(
         repo="owner/repo", branch="feat/x",
         pr_number=1, worktree_root=Path("/wt"), head_sha="old111",
@@ -107,37 +126,7 @@ def test_update_to_remote_resets_when_behind(mock_run, mock_sha, mock_log):
     assert result.head_sha == "new222"
     assert result.branch == "feat/x"
     assert result.repo == "owner/repo"
-    assert mock_run.call_count == 3
-    reset_call = mock_run.call_args_list[2]
-    assert "reset" in reset_call.args[0]
-    assert "--hard" in reset_call.args[0]
-
-
-@patch("pr_context._head_sha", return_value="aaa111")
-@patch("pr_context.subprocess.run")
-def test_update_to_remote_noop_on_fetch_failure(mock_run, mock_sha):
-    mock_run.return_value = MagicMock(returncode=1, stdout="")
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="feat/x",
-        pr_number=1, worktree_root=Path("/wt"), head_sha="aaa111",
-    )
-    result = update_to_remote(ctx)
-    assert result is ctx
-
-
-@patch("pr_context._head_sha", return_value="aaa111")
-@patch("pr_context.subprocess.run")
-def test_update_to_remote_noop_when_remote_branch_missing(mock_run, mock_sha):
-    mock_run.side_effect = [
-        MagicMock(returncode=0),                      # fetch succeeds
-        MagicMock(returncode=1, stdout=""),            # rev-parse --verify fails
-    ]
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="feat/x",
-        pr_number=1, worktree_root=Path("/wt"), head_sha="aaa111",
-    )
-    result = update_to_remote(ctx)
-    assert result is ctx
+    mock_far.assert_called_once_with("/wt", "feat/x")
 
 
 # ── Branch resolution ──────────────────────────────────────────────────────

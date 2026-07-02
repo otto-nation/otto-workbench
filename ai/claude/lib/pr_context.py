@@ -73,6 +73,24 @@ def resolve(
     )
 
 
+def fetch_and_reset(wt_path: str, branch: str) -> None:
+    """Fetch branch from origin and hard-reset worktree to match."""
+    try:
+        subprocess.run(
+            ["git", "-C", wt_path, "fetch", "origin", branch],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", wt_path, "reset", "--hard", f"origin/{branch}"],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        pass
+
+
 def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
     """Fetch branch from remote and hard-reset worktree to match.
 
@@ -83,39 +101,21 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         return ctx
 
     cwd = str(ctx.worktree_root)
-
-    r = subprocess.run(
-        ["git", "-C", cwd, "fetch", "origin", ctx.branch],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        return ctx
-
-    r = subprocess.run(
-        ["git", "-C", cwd, "rev-parse", "--verify", f"origin/{ctx.branch}"],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        return ctx
-
-    remote_sha = r.stdout.strip()
     local_sha = _head_sha(cwd)
 
-    if local_sha == remote_sha:
+    fetch_and_reset(cwd, ctx.branch)
+
+    new_sha = _head_sha(cwd)
+    if new_sha == local_sha:
         return ctx
 
-    log.info(f"Updating worktree to origin/{ctx.branch}")
-    subprocess.run(
-        ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
-        capture_output=True, text=True,
-    )
-
+    log.info(f"Updated worktree to origin/{ctx.branch}")
     return ResolvedContext(
         repo=ctx.repo,
         branch=ctx.branch,
         pr_number=ctx.pr_number,
         worktree_root=ctx.worktree_root,
-        head_sha=remote_sha,
+        head_sha=new_sha,
     )
 
 

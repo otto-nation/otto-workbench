@@ -752,6 +752,8 @@ def post_process_findings(
     prior_review: str = "",
 ) -> dict | None:
     path = Path(review_file)
+    # Guard covers all sub-steps (verify, strip, renumber, write) — callers
+    # receive None rather than a partial result when the file is missing.
     if not path.exists():
         return None
     text = path.read_text()

@@ -133,12 +133,10 @@ def test_setup_pr_worktree_unshallows_if_needed(mock_run):
     assert len(unshallow_calls) == 1
 
 
+@patch("review_worktree.pr_context.fetch_and_reset")
 @patch("review_worktree.subprocess.run")
-def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run):
-    calls_made = []
-
+def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
     def side_effect(cmd, **kwargs):
-        calls_made.append(cmd)
         m = MagicMock()
         if cmd[0] == "git" and "--is-shallow-repository" in cmd:
             m.returncode = 0
@@ -149,12 +147,6 @@ def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run):
             m.returncode = 0
             m.stdout = wt_json + "\n"
             return m
-        if cmd[0] == "git" and "fetch" in cmd:
-            m.returncode = 0
-            return m
-        if cmd[0] == "git" and "reset" in cmd:
-            m.returncode = 0
-            return m
         m.returncode = 0
         m.stdout = ""
         return m
@@ -162,10 +154,7 @@ def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run):
     mock_run.side_effect = side_effect
     result = setup_pr_worktree("owner/repo", 10, "/repos/repo", pr_head="feat/thing")
 
-    fetch_calls = [c for c in calls_made if c[0] == "git" and "fetch" in c and "origin" in c]
-    assert len(fetch_calls) >= 1
-    reset_calls = [c for c in calls_made if c[0] == "git" and "reset" in c and "--hard" in c]
-    assert len(reset_calls) == 1
+    mock_far.assert_called_once_with("/repos/repo/pr-10", "feat/thing")
 
 
 @patch("review_worktree.subprocess.run")

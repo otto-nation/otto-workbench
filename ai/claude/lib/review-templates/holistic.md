@@ -15,6 +15,7 @@ Then assess:
 2. Is the scope focused or does it mix unrelated concerns?
 3. Are there cross-module design issues (inconsistent patterns, missing integrations, API mismatches)?
 4. Flag specific things that detailed per-file reviewers should watch for.
+5. Is this the right approach? Could the stated goal be achieved with a fundamentally simpler or safer design? If the direction is wrong, say so explicitly — the synthesis step can recommend disapproval.
 
 ${reviews_section}
 ${issue_section}

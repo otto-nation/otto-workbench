@@ -45,6 +45,7 @@ Rules:
 - No-scrutiny entries need a one-line reason
 - If nothing looks suspicious, write "No investigation leads." under ## Investigation Leads
 - Do NOT write per-file findings — those come from the detailed review phase
+- If the overall approach looks wrong — not just buggy but fundamentally misguided — add a `## Direction Concern` section explaining why and what the alternative should be
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write your leads file within the first few turns. For files listed under "Files not pre-collected," read only those critical to spotting concerns.

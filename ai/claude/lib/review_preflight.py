@@ -24,6 +24,9 @@ from review_common import (
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
 from review_github import PRData
+from review_profiles import (
+    format_profiles_section, load_profiles, match_profiles,
+)
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -108,6 +111,7 @@ class PreflightData:
     claude_md: str
     architecture_md: str
     review_checklists: dict[str, str] = field(default_factory=dict)
+    review_profiles: list = field(default_factory=list)
     omitted_files: list[str] = field(default_factory=list)
     delta_diff: str = ""
     delta_commit_log: str = ""
@@ -286,7 +290,7 @@ def _collect_git_data(
 
 def _collect_project_context(
     wt: Path,
-) -> tuple[str, str, dict[str, str]]:
+) -> tuple[str, str, dict[str, str], list]:
     claude_md = ""
     for name in ("CLAUDE.md", ".claude/CLAUDE.md"):
         p = wt / name
@@ -305,7 +309,9 @@ def _collect_project_context(
         for checklist in sorted(review_dir.glob("*.md")):
             review_checklists[checklist.name] = _read_file_safe(checklist)
 
-    return claude_md, architecture_md, review_checklists
+    profiles = load_profiles(str(wt))
+
+    return claude_md, architecture_md, review_checklists, profiles
 
 
 def _collect_file_data(
@@ -375,7 +381,7 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
     base = job.pr.base or DEFAULT_BASE_BRANCH
 
     diff, commit_log = _collect_git_data(job.wt_path, base, job.pr.files)
-    claude_md, architecture_md, review_checklists = _collect_project_context(wt)
+    claude_md, architecture_md, review_checklists, profiles = _collect_project_context(wt)
     all_contents, all_permissions, file_changes = _collect_file_data(wt, job.pr.files)
 
     base_size = (
@@ -400,6 +406,7 @@ def collect_preflight_data(job: "ReviewJob") -> PreflightData:
         claude_md=claude_md,
         architecture_md=architecture_md,
         review_checklists=review_checklists,
+        review_profiles=profiles,
         omitted_files=omitted,
         delta_diff=delta_diff,
         delta_commit_log=delta_commit_log,
@@ -504,8 +511,11 @@ def _format_file_contents(
     return parts
 
 
-def build_project_context(data: PreflightData) -> str:
-    has_content = data.claude_md or data.architecture_md or data.review_checklists
+def build_project_context(
+    data: PreflightData,
+    file_filter: list[str] | None = None,
+) -> str:
+    has_content = data.claude_md or data.architecture_md or data.review_checklists or data.review_profiles
     if not has_content:
         return ""
     parts: list[str] = ["### Project context"]
@@ -517,6 +527,13 @@ def build_project_context(data: PreflightData) -> str:
         parts.append("\n#### Review checklists")
         for name, content in data.review_checklists.items():
             parts += [f"\n##### {name}", "", content]
+    if data.review_profiles:
+        matched = match_profiles(data.review_profiles, file_filter or [])
+        if not matched and not file_filter:
+            matched = data.review_profiles
+        profiles_section = format_profiles_section(matched)
+        if profiles_section:
+            parts += ["", profiles_section]
     return "\n".join(parts)
 
 

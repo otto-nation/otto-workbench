@@ -14,6 +14,7 @@ The prompt contains a `## Pre-collected data` section with file contents, diffs,
 - Do NOT re-run `git diff` or `git log` — the diff and commit history are included
 - Do NOT re-fetch PR reviews via `gh api` — they are in the prompt's reviews section
 - Do NOT re-read CLAUDE.md, architecture.md, or review checklists — they are included
+- If the prompt includes a "Review profiles" section, treat each rule as a review criterion at the stated severity
 
 ## Efficiency
 - **Batch independent tool calls** — if you need to check 3 unrelated files, make all 3 calls in one turn. Never make sequential calls that have no dependency between them.

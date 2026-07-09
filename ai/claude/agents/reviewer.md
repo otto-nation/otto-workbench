@@ -42,6 +42,7 @@ Write the triage as a `## File Triage` section in the review output, listing eve
 - Use architecture.md Known Constraints to avoid findings that contradict known project constraints
 - If dependency files are modified, flag for breaking-change analysis in Phase 3
 - If no `.claude/review/` directory exists or no checklists match, proceed normally — checklists are optional
+- If the prompt includes a "Review profiles" section, treat each rule as a review criterion at the stated severity (must-fix, should-fix, nit). These are domain-specific rules derived from incident history and team conventions
 - **When reviewing a PR** (not a local diff), use existing reviews and comments to avoid duplicating what's already been discussed. If the prompt includes an "Existing reviews and comments" section, use that data directly — do NOT re-fetch via `gh api`. Otherwise, fetch:
   1. Fetch submitted reviews and their verdicts:
      ```bash

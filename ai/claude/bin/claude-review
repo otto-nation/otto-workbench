@@ -579,6 +579,7 @@ def _build_orchestrate_args(
     max_cost: float | None, model: str | None, mode: str = "",
     fix_pass: bool = False, effort: str = "medium",
     max_groups: int | None = None,
+    no_scout: bool = False, disprove: bool | None = None,
 ) -> list[str]:
     args = [
         str(BIN_DIR / "review-orchestrate"),
@@ -612,6 +613,12 @@ def _build_orchestrate_args(
         args += ["--effort", effort]
     if max_groups is not None:
         args += ["--max-groups", str(max_groups)]
+    if no_scout:
+        args.append("--no-scout")
+    if disprove is True:
+        args.append("--disprove")
+    elif disprove is False:
+        args.append("--no-disprove")
     return args
 
 
@@ -620,6 +627,7 @@ def _run_review_body(
     session_log, prior_review_path, issue_link, issue_context,
     max_parallel, no_holistic, max_cost, model, no_post, auto_post,
     auto_submit, pr_url, effort="medium", max_groups=None,
+    no_scout=False, disprove=None,
 ) -> None:
     orchestrate_args = _build_orchestrate_args(
         pr_number=pr_number, repo=repo, review_file=review_file,
@@ -628,6 +636,7 @@ def _run_review_body(
         issue_context=issue_context, max_parallel=max_parallel,
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         effort=effort, max_groups=max_groups,
+        no_scout=no_scout, disprove=disprove,
     )
     rc = subprocess.run(orchestrate_args).returncode
     if rc != 0:
@@ -675,6 +684,7 @@ def _run_review_pr(
     issue_link, no_post, auto_post, auto_submit,
     force, repo_dir, max_parallel, no_holistic, max_cost, model,
     effort="medium", max_groups=None,
+    no_scout=False, disprove=None,
 ) -> None:
     trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
                data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
@@ -756,6 +766,7 @@ def _run_review_pr(
             session_log, prior_review_path, issue_link, issue_context,
             max_parallel, no_holistic, max_cost, model, no_post, auto_post,
             auto_submit, pr_url, effort=effort, max_groups=max_groups,
+            no_scout=no_scout, disprove=disprove,
         )
     finally:
         review_worktree.cleanup_worktree(wt_result, repo_root)
@@ -770,6 +781,8 @@ def _run_review(args) -> None:
     max_parallel = args.max_parallel
     force = args.force
     no_holistic = args.no_holistic
+    no_scout = args.no_scout
+    disprove = args.disprove
     max_cost = args.max_cost
     model = args.model
     repo_dir = args.repo_dir or ""
@@ -802,6 +815,7 @@ def _run_review(args) -> None:
             issue_link, no_post, auto_post, auto_submit,
             force, repo_dir, max_parallel, no_holistic, max_cost, model,
             effort=effort, max_groups=max_groups,
+            no_scout=no_scout, disprove=disprove,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -829,6 +843,7 @@ def _run_self_review_body(
     repo, pr_number, wt_path, issue_link, max_parallel,
     no_holistic, max_cost, model, fix_pass, args,
     self_review_dir, branch_name, effort="medium", max_groups=None,
+    no_scout=False, disprove=None,
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)
@@ -855,6 +870,7 @@ def _run_self_review_body(
         issue_context=issue_context, max_parallel=max_parallel,
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         mode="self", fix_pass=fix_pass, effort=effort, max_groups=max_groups,
+        no_scout=no_scout, disprove=disprove,
     )
 
     rc = subprocess.run(orchestrate_args).returncode
@@ -914,6 +930,8 @@ def _run_self_review(args) -> None:
     skip_user_verification = args.skip_user_verification
     force = args.force
     no_holistic = args.no_holistic
+    no_scout = args.no_scout
+    disprove = args.disprove
     max_cost = args.max_cost
     model = args.model
     repo_dir = args.repo_dir or ""
@@ -978,6 +996,7 @@ def _run_self_review(args) -> None:
             self_review_dir=self_review_dir,
             branch_name=ctx.branch or "",
             effort=effort, max_groups=max_groups,
+            no_scout=no_scout, disprove=disprove,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -1006,6 +1025,9 @@ def main() -> None:
     parser.add_argument("--skip-user-verification", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-holistic", action="store_true")
+    parser.add_argument("--no-scout", action="store_true")
+    parser.add_argument("--disprove", action="store_true", default=None)
+    parser.add_argument("--no-disprove", action="store_true")
     parser.add_argument("--json-summary", action="store_true")
     parser.add_argument("--issue")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
@@ -1021,6 +1043,11 @@ def main() -> None:
     add_trail_args(parser)
 
     parsed = parser.parse_args()
+
+    if parsed.no_disprove:
+        parsed.disprove = False
+    elif parsed.disprove is None:
+        parsed.disprove = None
 
     if parsed.version:
         print(version_string("claude-review"))

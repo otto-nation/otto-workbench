@@ -24,6 +24,8 @@ _spec.loader.exec_module(pr_cli)
 # Register so @patch("pr_cli.subprocess.run") can resolve the module
 sys.modules.setdefault("pr_cli", pr_cli)
 
+import pr_state  # noqa: E402
+
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
 
@@ -31,14 +33,14 @@ sys.modules.setdefault("pr_cli", pr_cli)
 def test_parse_review_summary_valid():
     output = 'REVIEW_SUMMARY:{"repo":"owner/repo","verdict":"approve","findings":{"M":0,"S":1,"total":1}}'
     result = pr_cli._parse_review_summary(output)
-    assert result["verdict"] == "approve"
+    assert result["verdict"] == pr_state.ReviewVerdict.APPROVE.value
     assert result["findings"]["S"] == 1
 
 
 def test_parse_review_summary_multiline():
     output = "Some output\nMore output\nREVIEW_SUMMARY:{\"verdict\":\"changes_requested\"}\nTrailing"
     result = pr_cli._parse_review_summary(output)
-    assert result["verdict"] == "changes_requested"
+    assert result["verdict"] == pr_state.ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_parse_review_summary_missing():
@@ -80,7 +82,7 @@ def test_merge_readiness_all_green():
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.update_ci_domain(state, pr_state.CIDomain(conclusion="success", updated_at="t"))
     pr_state.update_review(state, pr_state.ReviewSummary(
-        finding_counts={"S": 1}, verdict="approve", updated_at="t",
+        finding_counts={"S": 1}, verdict=pr_state.ReviewVerdict.APPROVE.value, updated_at="t",
     ))
     pr_state.update_comments(state, pr_state.CommentsSummary(
         blocking_reviewers=[], updated_at="t",
@@ -719,7 +721,7 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
     import pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.update_review(state, pr_state.ReviewSummary(
-        finding_counts={"M": 1}, verdict="changes_requested", updated_at="t",
+        finding_counts={"M": 1}, verdict=pr_state.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
     ))
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
@@ -738,7 +740,7 @@ def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
     import pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.update_review(state, pr_state.ReviewSummary(
-        finding_counts={}, verdict="approve", updated_at="t",
+        finding_counts={}, verdict=pr_state.ReviewVerdict.APPROVE.value, updated_at="t",
     ))
     mock_load.return_value = state
     ctx = _make_ctx()
@@ -753,7 +755,7 @@ def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
 def test_render_review_section_error_status():
     import pr_state
     rev = pr_state.ReviewSummary(
-        review_type="full", verdict="approve",
+        review_type="full", verdict=pr_state.ReviewVerdict.APPROVE.value,
         status=pr_state.ReviewStatus.ERROR.value, updated_at="t",
     )
     lines = pr_cli._render_review_section(rev)
@@ -763,7 +765,7 @@ def test_render_review_section_error_status():
 def test_render_review_section_completed_status():
     import pr_state
     rev = pr_state.ReviewSummary(
-        review_type="full", verdict="approve",
+        review_type="full", verdict=pr_state.ReviewVerdict.APPROVE.value,
         status=pr_state.ReviewStatus.COMPLETED.value, updated_at="t",
     )
     lines = pr_cli._render_review_section(rev)
@@ -773,7 +775,7 @@ def test_render_review_section_completed_status():
 def test_render_review_section_empty_status():
     import pr_state
     rev = pr_state.ReviewSummary(
-        review_type="full", verdict="approve", updated_at="t",
+        review_type="full", verdict=pr_state.ReviewVerdict.APPROVE.value, updated_at="t",
     )
     lines = pr_cli._render_review_section(rev)
     assert "[ERROR]" not in lines[0]

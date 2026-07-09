@@ -325,8 +325,9 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
         counts[key] = c
         total += c
 
+    from pr_state import ReviewVerdict
     must_count = counts.get("must_fix", 0)
-    verdict = "changes_requested" if must_count > 0 else "approve"
+    verdict = ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0 else ReviewVerdict.APPROVE.value
 
     review_dir = Path(review_file).parent if review_file else None
     usage = aggregate_session_usage(review_dir)

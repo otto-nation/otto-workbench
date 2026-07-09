@@ -14,7 +14,7 @@ SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-from pr_state import ReviewStatus
+from pr_state import ReviewStatus, ReviewVerdict
 from review_common import count_severity, json_summary, read_pipeline_status, review_file_path
 import review_gc
 
@@ -271,7 +271,7 @@ def test_json_summary_with_findings(cr, tmp_path):
     assert data["findings"]["nit"] == 1
     assert data["findings"]["idiom"] == 2
     assert data["findings"]["total"] == 6
-    assert data["verdict"] == "changes_requested"
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_json_summary_approve_no_must_fix(cr, tmp_path):
@@ -282,7 +282,7 @@ def test_json_summary_approve_no_must_fix(cr, tmp_path):
     )
     result = json_summary("org/repo", "10", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
-    assert data["verdict"] == "approve"
+    assert data["verdict"] == ReviewVerdict.APPROVE.value
     assert data["findings"]["total"] == 2
 
 
@@ -321,7 +321,7 @@ def test_json_summary_missing_review_file(cr, tmp_path):
     result = json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["findings"]["total"] == 0
-    assert data["verdict"] == "approve"
+    assert data["verdict"] == ReviewVerdict.APPROVE.value
 
 
 def test_json_summary_self_review_no_pr(cr, tmp_path):
@@ -330,7 +330,7 @@ def test_json_summary_self_review_no_pr(cr, tmp_path):
     result = json_summary("org/repo", "", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["pr_number"] is None
-    assert data["verdict"] == "changes_requested"
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_json_summary_includes_session_costs(cr, tmp_path):

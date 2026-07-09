@@ -65,6 +65,11 @@ class CIDomain:
     latest_run_id: int | None = None
 
 
+class ReviewVerdict(Enum):
+    APPROVE = "approve"
+    CHANGES_REQUESTED = "changes_requested"
+
+
 class ReviewStatus(Enum):
     COMPLETED = "completed"
     ERROR = "error"

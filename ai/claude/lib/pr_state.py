@@ -15,6 +15,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 import log
@@ -62,6 +63,11 @@ class CIDomain:
     # Detailed run tracking (formerly in CIState)
     runs: dict = field(default_factory=dict)
     latest_run_id: int | None = None
+
+
+class ReviewStatus(Enum):
+    COMPLETED = "completed"
+    ERROR = "error"
 
 
 @dataclass

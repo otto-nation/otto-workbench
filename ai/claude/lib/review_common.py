@@ -300,18 +300,19 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
 
 def read_pipeline_status(review_dir: Path | None) -> str:
     """Derive review status from pipeline state: 'error' if synthesis failed, else 'completed'."""
+    from pr_state import ReviewStatus
     if not review_dir:
-        return "completed"
+        return ReviewStatus.COMPLETED.value
     pipeline_path = review_dir / FILENAME_PIPELINE_STATE
     if not pipeline_path.is_file():
-        return "completed"
+        return ReviewStatus.COMPLETED.value
     try:
         data = json.loads(pipeline_path.read_text())
         if data.get("synthesis_failed"):
-            return "error"
+            return ReviewStatus.ERROR.value
     except (json.JSONDecodeError, OSError):
         pass
-    return "completed"
+    return ReviewStatus.COMPLETED.value
 
 
 def json_summary(repo: str, pr_number: str, review_file: str) -> str:

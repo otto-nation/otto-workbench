@@ -12,8 +12,8 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 from pr_state import (
-    PRIdentity, CIDomain, ReviewSummary, CommentsSummary, TriageSummary,
-    RebaseSummary,
+    PRIdentity, CIDomain, ReviewSummary, ReviewStatus, CommentsSummary,
+    TriageSummary, RebaseSummary,
     PRState, load_state, save_state, new_state, update_identity, update_ci_domain,
     update_review, update_comments, update_triage, update_rebase,
     state_to_dict, state_from_dict,
@@ -378,21 +378,21 @@ def test_review_summary_status_default():
 def test_review_summary_status_roundtrip():
     state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
     update_review(state, ReviewSummary(
-        verdict="approve", status="error", updated_at="t1",
+        verdict="approve", status=ReviewStatus.ERROR.value, updated_at="t1",
     ))
     d = state_to_dict(state)
     restored = state_from_dict(d)
-    assert restored.review.status == "error"
+    assert restored.review.status == ReviewStatus.ERROR.value
 
 
 def test_review_summary_status_completed_roundtrip():
     state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
     update_review(state, ReviewSummary(
-        verdict="approve", status="completed", updated_at="t1",
+        verdict="approve", status=ReviewStatus.COMPLETED.value, updated_at="t1",
     ))
     d = state_to_dict(state)
     restored = state_from_dict(d)
-    assert restored.review.status == "completed"
+    assert restored.review.status == ReviewStatus.COMPLETED.value
 
 
 def test_update_comments_replaces():

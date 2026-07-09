@@ -14,6 +14,7 @@ SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+from pr_state import ReviewStatus
 from review_common import count_severity, json_summary, read_pipeline_status, review_file_path
 import review_gc
 
@@ -353,11 +354,11 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
 
 
 def test_read_pipeline_status_no_dir(cr):
-    assert read_pipeline_status(None) == "completed"
+    assert read_pipeline_status(None) == ReviewStatus.COMPLETED.value
 
 
 def test_read_pipeline_status_no_file(cr, tmp_path):
-    assert read_pipeline_status(tmp_path) == "completed"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
 
 
 def test_read_pipeline_status_synthesis_ok(cr, tmp_path):
@@ -366,7 +367,7 @@ def test_read_pipeline_status_synthesis_ok(cr, tmp_path):
         "head_sha": "abc", "group_names": ["g1"],
         "synthesis_done": True, "synthesis_failed": "",
     }))
-    assert read_pipeline_status(tmp_path) == "completed"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
 
 
 def test_read_pipeline_status_synthesis_failed(cr, tmp_path):
@@ -375,7 +376,7 @@ def test_read_pipeline_status_synthesis_failed(cr, tmp_path):
         "head_sha": "abc", "group_names": ["g1"],
         "synthesis_done": True, "synthesis_failed": "all groups failed",
     }))
-    assert read_pipeline_status(tmp_path) == "error"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
 
 
 def test_read_pipeline_status_mechanical_fallback(cr, tmp_path):
@@ -384,7 +385,7 @@ def test_read_pipeline_status_mechanical_fallback(cr, tmp_path):
         "head_sha": "abc", "group_names": ["g1"],
         "synthesis_done": True, "synthesis_failed": "mechanical fallback",
     }))
-    assert read_pipeline_status(tmp_path) == "error"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
 
 
 def test_read_pipeline_status_budget_exceeded(cr, tmp_path):
@@ -393,13 +394,13 @@ def test_read_pipeline_status_budget_exceeded(cr, tmp_path):
         "head_sha": "abc", "group_names": ["g1"],
         "synthesis_done": True, "synthesis_failed": "budget exceeded",
     }))
-    assert read_pipeline_status(tmp_path) == "error"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
 
 
 def test_read_pipeline_status_corrupt_json(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text("not valid json")
-    assert read_pipeline_status(tmp_path) == "completed"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
 
 
 def test_json_summary_status_completed_no_pipeline(cr, tmp_path):
@@ -407,7 +408,7 @@ def test_json_summary_status_completed_no_pipeline(cr, tmp_path):
     review.write_text("## Nit\n- **[N1]** path:1 — style\n")
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
-    assert data["status"] == "completed"
+    assert data["status"] == ReviewStatus.COMPLETED.value
 
 
 def test_json_summary_status_error_synthesis_failed(cr, tmp_path):
@@ -422,7 +423,7 @@ def test_json_summary_status_error_synthesis_failed(cr, tmp_path):
     }))
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
-    assert data["status"] == "error"
+    assert data["status"] == ReviewStatus.ERROR.value
 
 
 # ── _archive_review ───────────────────────────────────────────────────────────

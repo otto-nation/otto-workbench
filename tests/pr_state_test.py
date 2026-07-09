@@ -370,6 +370,31 @@ def test_update_review_replaces():
     assert state.review.verdict == "approve"
 
 
+def test_review_summary_status_default():
+    rev = ReviewSummary()
+    assert rev.status == ""
+
+
+def test_review_summary_status_roundtrip():
+    state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
+    update_review(state, ReviewSummary(
+        verdict="approve", status="error", updated_at="t1",
+    ))
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+    assert restored.review.status == "error"
+
+
+def test_review_summary_status_completed_roundtrip():
+    state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
+    update_review(state, ReviewSummary(
+        verdict="approve", status="completed", updated_at="t1",
+    ))
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+    assert restored.review.status == "completed"
+
+
 def test_update_comments_replaces():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     update_comments(state, CommentsSummary(total_threads=3, updated_at="t1"))

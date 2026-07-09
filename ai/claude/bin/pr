@@ -120,6 +120,7 @@ def _update_review_state_from_output(output: str,
         head_sha=summary_data.get("head_sha", ""),
         finding_counts=finding_counts,
         verdict=summary_data.get("verdict", ""),
+        status=summary_data.get("status", "completed"),
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))
@@ -156,7 +157,8 @@ def _render_ci_section(ci: pr_state.CIDomain) -> list[str]:
 def _render_review_section(rev: pr_state.ReviewSummary) -> list[str]:
     if not rev.updated_at:
         return ["**Review**: not run yet"]
-    lines = [f"**Review** ({rev.review_type}): {rev.verdict}"]
+    status_suffix = " [ERROR]" if rev.status == "error" else ""
+    lines = [f"**Review** ({rev.review_type}): {rev.verdict}{status_suffix}"]
     if rev.finding_counts:
         parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
         lines.append(f"  findings: {', '.join(parts)}")

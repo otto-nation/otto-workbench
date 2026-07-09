@@ -745,3 +745,33 @@ def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
     rc = pr_cli.cmd_fix([], ctx)
     assert rc == 0
     assert not mock_run.called
+
+
+# ── _render_review_section ────────────────────────────────────────────────────
+
+
+def test_render_review_section_error_status():
+    import pr_state
+    rev = pr_state.ReviewSummary(
+        review_type="full", verdict="approve", status="error", updated_at="t",
+    )
+    lines = pr_cli._render_review_section(rev)
+    assert "[ERROR]" in lines[0]
+
+
+def test_render_review_section_completed_status():
+    import pr_state
+    rev = pr_state.ReviewSummary(
+        review_type="full", verdict="approve", status="completed", updated_at="t",
+    )
+    lines = pr_cli._render_review_section(rev)
+    assert "[ERROR]" not in lines[0]
+
+
+def test_render_review_section_empty_status():
+    import pr_state
+    rev = pr_state.ReviewSummary(
+        review_type="full", verdict="approve", updated_at="t",
+    )
+    lines = pr_cli._render_review_section(rev)
+    assert "[ERROR]" not in lines[0]

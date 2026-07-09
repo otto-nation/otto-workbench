@@ -32,8 +32,8 @@ from review_common import (
     FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
     ReviewMeta, SessionUsage, aggregate_session_usage, count_severity,
-    detect_repo, json_summary, parse_session_log, read_review_meta,
-    review_file_path, review_meta_from_dict,
+    detect_repo, json_summary, parse_session_log, read_pipeline_status,
+    read_review_meta, review_file_path, review_meta_from_dict,
 )
 import review_gc
 import review_issue
@@ -244,12 +244,15 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
     meta = read_review_meta(review_dir)
     usage = aggregate_session_usage(review_dir)
 
+    status = read_pipeline_status(review_dir)
+
     summary = pr_state.ReviewSummary(
         review_file=review_file,
         review_type=meta.review_type or review_type,
         head_sha=meta.head_sha,
         finding_counts=finding_counts,
         verdict=verdict,
+        status=status,
         cost_usd=usage.cost,
         updated_at=pr_state.now_iso(),
     )

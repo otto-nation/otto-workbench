@@ -298,6 +298,22 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     )
 
 
+def read_pipeline_status(review_dir: Path | None) -> str:
+    """Derive review status from pipeline state: 'error' if synthesis failed, else 'completed'."""
+    if not review_dir:
+        return "completed"
+    pipeline_path = review_dir / FILENAME_PIPELINE_STATE
+    if not pipeline_path.is_file():
+        return "completed"
+    try:
+        data = json.loads(pipeline_path.read_text())
+        if data.get("synthesis_failed"):
+            return "error"
+    except (json.JSONDecodeError, OSError):
+        pass
+    return "completed"
+
+
 def json_summary(repo: str, pr_number: str, review_file: str) -> str:
     """Build a REVIEW_SUMMARY:{json} string for a review."""
     counts = {}
@@ -323,6 +339,8 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
 
     meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
 
+    status = read_pipeline_status(review_dir)
+
     data = {
         "repo": repo,
         "pr_number": int(pr_number) if pr_number else None,
@@ -334,6 +352,7 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
         "review_content": review_content,
         "findings": {**counts, "total": total},
         "verdict": verdict,
+        "status": status,
         "cost_usd": usage.cost,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,

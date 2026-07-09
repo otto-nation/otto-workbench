@@ -72,6 +72,7 @@ class ReviewSummary:
     head_sha: str = ""
     finding_counts: dict[str, int] = field(default_factory=dict)
     verdict: str = ""
+    status: str = ""
     cost_usd: float = 0.0
     updated_at: str = ""
 

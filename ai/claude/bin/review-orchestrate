@@ -122,10 +122,11 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
                 job, max_parallel=args.max_parallel,
                 skip_holistic=args.no_holistic, max_cost=args.max_cost,
                 max_groups=args.max_groups,
+                skip_scout=args.no_scout, disprove=args.disprove,
             )
     else:
         with trail.span("single_agent"):
-            run_single_agent(job)
+            run_single_agent(job, disprove=args.disprove)
 
     if job.verification:
         v = job.verification
@@ -164,6 +165,12 @@ def main():
                         help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
     parser.add_argument("--no-holistic", action="store_true",
                         help="Skip holistic phase in multi-phase reviews")
+    parser.add_argument("--no-scout", action="store_true",
+                        help="Use classic holistic phase instead of scout")
+    parser.add_argument("--disprove", action="store_true", default=None,
+                        help="Enable disprove-it gate (default: effort-based)")
+    parser.add_argument("--no-disprove", action="store_true",
+                        help="Disable disprove-it gate")
     parser.add_argument("--generator-version", default="",
                         help="Version string to embed in review metadata")
     parser.add_argument("--mode", choices=[MODE_PR, MODE_SELF], default=MODE_PR,
@@ -180,6 +187,11 @@ def main():
                         help="Run fix pass after review to apply findings")
     add_trail_args(parser)
     args = parser.parse_args()
+
+    if args.no_disprove:
+        args.disprove = False
+    elif args.disprove is None:
+        args.disprove = None
 
     if args.mode == MODE_PR and not args.pr:
         log.error("--pr is required in pr mode")

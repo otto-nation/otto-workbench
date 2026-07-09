@@ -18,12 +18,16 @@ import log
 from review_common import (
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     TEMPLATE_DIR_REL,
-    TEMPLATE_ANGLES, TEMPLATE_FIX,
-    TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
+    TEMPLATE_ANGLES, TEMPLATE_DISPROVE, TEMPLATE_FIX,
+    TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
 )
 from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
+from review_scout import (
+    filter_leads_for_group, format_leads_block,
+    is_scout_output, parse_scout_output,
+)
 from review_preflight import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
     PRContext, PRMetadata, PreflightData, ReviewJob,
@@ -258,9 +262,20 @@ def _build_omitted_guidance(preflight: "PreflightData | None", skip_omitted: boo
     )
 
 
-def _build_holistic_block(holistic_content: str, changed_files: int) -> str:
+def _build_holistic_block(
+    holistic_content: str, changed_files: int,
+    group_files: list[str] | None = None,
+) -> str:
     if not holistic_content:
         return ""
+
+    if is_scout_output(holistic_content) and group_files:
+        leads, no_scrutiny = parse_scout_output(holistic_content)
+        block = format_leads_block(leads, no_scrutiny, group_files=group_files)
+        if block:
+            return f"\n## Scout context\n{block}"
+        return ""
+
     return (
         f"\n## Holistic context\n"
         f"The following assessment was produced by scanning all "
@@ -739,11 +754,12 @@ def _prompt_group(job, common, extra):
     )
     holistic_block = _build_holistic_block(
         extra.get("holistic_content", ""), job.pr.changed_files,
+        group_files=group_files or None,
     )
     pr_header = _build_pr_header(job.pr, job.ctx, file_filter=file_filter)
     delta_section = _build_delta_section(job.preflight, file_filter=file_filter)
     reply_threads = _build_reply_threads_section(job.reply_threads, file_filter=file_filter)
-    project_context = build_project_context(job.preflight) if job.preflight else ""
+    project_context = build_project_context(job.preflight, file_filter=group_files or None) if job.preflight else ""
     sections = {
         "pr_header": pr_header,
         "holistic_block": holistic_block,
@@ -868,13 +884,57 @@ def _prompt_fix(job, common, extra):
     return sections, kwargs, ""
 
 
+def _prompt_scout(job, common, extra):
+    sections = {
+        "pr_header": common["pr_header"],
+        "all_files_formatted": job.pr.all_files_formatted,
+        "reviews_section": common["reviews_section"],
+        "issue_section": common["issue_section"],
+        "env_section": common["env_section"],
+        "delta_section": common["delta_section"],
+    }
+    diff_budget = _compute_diff_budget(job, sections)
+    preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
+    sections["preflight_data"] = preflight
+    kwargs = {
+        "pr_number": job.pr_number,
+        "repo": job.repo,
+        "pr_header": common["pr_header"],
+        "all_files_formatted": job.pr.all_files_formatted,
+        "preflight_data": preflight,
+        "delta_section": common["delta_section"],
+        "reviews_section": common["reviews_section"],
+        "issue_section": common["issue_section"],
+        "env_section": common["env_section"],
+        "scout_output": extra["scout_output"],
+        "omitted_guidance": common["omitted_guidance"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
+def _prompt_disprove(job, common, extra):
+    review_content = extra.get("review_content", "")
+    sections = {
+        "review_content": review_content,
+    }
+    kwargs = {
+        "review_content": review_content,
+        "disprove_output": extra["disprove_output"],
+        "max_turns": common["max_turns"],
+    }
+    return sections, kwargs, ""
+
+
 _PROMPT_HANDLERS = {
     TEMPLATE_SELF_REVIEW: _prompt_self_review,
     TEMPLATE_SELF_SYNTHESIS: _prompt_self_synthesis,
     TEMPLATE_SINGLE: _prompt_single,
     TEMPLATE_HOLISTIC: _prompt_holistic,
+    TEMPLATE_SCOUT: _prompt_scout,
     TEMPLATE_GROUP: _prompt_group,
     TEMPLATE_SYNTHESIS: _prompt_synthesis,
+    TEMPLATE_DISPROVE: _prompt_disprove,
     TEMPLATE_ANGLES: _prompt_angles,
     TEMPLATE_FIX: _prompt_fix,
 }

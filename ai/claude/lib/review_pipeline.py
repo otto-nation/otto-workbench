@@ -22,16 +22,18 @@ import log
 from review_common import (
     FILE_STAT_FMT,
     FILENAME_ANGLES, FILENAME_ANGLES_LOG,
+    FILENAME_DISPROVE, FILENAME_DISPROVE_LOG,
     FILENAME_FIX_LOG,
     FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
     FILENAME_HOLISTIC_LOG, FILENAME_META, FILENAME_PIPELINE_STATE,
-    FILENAME_PROMPT_STATS, FILENAME_SYNTHESIS_LOG,
+    FILENAME_PROMPT_STATS, FILENAME_SCOUT, FILENAME_SCOUT_LOG,
+    FILENAME_SYNTHESIS_LOG,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     MODE_SELF,
     PRIOR_DATE_RE,
-    TEMPLATE_ANGLES, TEMPLATE_FIX,
-    TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SELF_REVIEW,
+    TEMPLATE_ANGLES, TEMPLATE_DISPROVE, TEMPLATE_FIX,
+    TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
 )
@@ -58,6 +60,8 @@ from review_prompt import (
     _is_incremental, _scope_prior_review,
     build_prompt,
 )
+from review_disprove import apply_disprove_results, parse_disprove_output
+from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
     DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG,
@@ -78,18 +82,24 @@ _MAX_TURNS_REASON = "agent hit max turns"
 
 DEFAULT_MODEL_GROUP = "sonnet"
 DEFAULT_MODEL_HOLISTIC = "opus"
+DEFAULT_MODEL_SCOUT = "sonnet"
 DEFAULT_MODEL_SYNTHESIS = "opus"
+DEFAULT_MODEL_DISPROVE = "sonnet"
 DEFAULT_MODEL_SINGLE = "opus"
 DEFAULT_MODEL_ANGLES = "sonnet"
 DEFAULT_MODEL_FIX = "sonnet"
 
 DEFAULT_THINKING_GROUP = "low"
 DEFAULT_THINKING_HOLISTIC = "medium"
+DEFAULT_THINKING_SCOUT = "low"
 DEFAULT_THINKING_SYNTHESIS = "high"
+DEFAULT_THINKING_DISPROVE = "medium"
 DEFAULT_THINKING_SINGLE = "medium"
 DEFAULT_THINKING_ANGLES = "low"
 DEFAULT_THINKING_FIX = "low"
 
+DEFAULT_MAX_TURNS_SCOUT = 10
+DEFAULT_MAX_TURNS_DISPROVE = 15
 DEFAULT_MAX_TURNS_ANGLES = 15
 DEFAULT_MAX_TURNS_FIX = 20
 MAX_TURNS_FIX_CAP = 60
@@ -108,6 +118,8 @@ EFFORT_PRESETS = {
         "skip_synthesis": True,
         "skip_angles": True,
         "skip_holistic": True,
+        "skip_scout": True,
+        "skip_disprove": True,
         "skip_omitted_files": True,
         "agent": "reviewer-lite",
     },
@@ -120,6 +132,8 @@ EFFORT_PRESETS = {
         "skip_synthesis": False,
         "skip_angles": False,
         "skip_holistic": False,
+        "skip_scout": False,
+        "skip_disprove": True,
         "skip_omitted_files": False,
         "agent": "reviewer",
     },
@@ -132,6 +146,8 @@ EFFORT_PRESETS = {
         "skip_synthesis": False,
         "skip_angles": False,
         "skip_holistic": False,
+        "skip_scout": False,
+        "skip_disprove": False,
         "skip_omitted_files": False,
         "agent": "reviewer",
     },
@@ -288,7 +304,7 @@ def _write_review_sidecar(job: ReviewJob):
     Path(sidecar_path).write_text(json.dumps(meta))
 
 
-def run_single_agent(job: ReviewJob):
+def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     template = TEMPLATE_SELF_REVIEW if job.mode == MODE_SELF else TEMPLATE_SINGLE
     max_turns = DEFAULT_MAX_TURNS_SINGLE + _omitted_turns(job)
     prompt = build_prompt(
@@ -319,6 +335,9 @@ def run_single_agent(job: ReviewJob):
         log.error(f"review agent {detail} and produced no review file ({reason})")
         log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
+
+    if _should_disprove(job, disprove):
+        _phase_disprove(job)
 
     _post_process_review(job)
     _write_review_sidecar(job)
@@ -421,6 +440,97 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         log.warn(f"Holistic scan produced no output ({reason}) — continuing without it")
 
     return holistic_content, holistic_output, holistic_log
+
+
+def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
+    scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
+    scout_log = _derive_path(job.review_file, FILENAME_SCOUT_LOG)
+
+    _touch(scout_output)
+
+    max_turns = DEFAULT_MAX_TURNS_SCOUT + _omitted_turns(job)
+    prompt = build_prompt(
+        TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
+    )
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_SCOUT_MODEL",
+                           DEFAULT_MODEL_SCOUT)
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SCOUT_THINKING",
+                                       _effort_thinking(job.effort, DEFAULT_THINKING_SCOUT))
+    provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    log.info(f"Phase 1/{group_count}: Lead scout scan...")
+    log.blank()
+    invoke_agent(prompt, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
+    log.blank()
+
+    if _has_output(scout_output):
+        raw = Path(scout_output).read_text()
+        leads, no_scrutiny = parse_scout_output(raw)
+        log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
+        return format_leads_block(leads, no_scrutiny), scout_output, scout_log
+
+    reason = _diagnose_missing_output(scout_log)
+    log.warn(f"Scout produced no output ({reason}) — continuing without leads")
+    return "", scout_output, scout_log
+
+
+def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
+    review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
+    counts = _count_findings(review_content)
+    ms_count = counts.get("M", 0) + counts.get("S", 0)
+    if ms_count == 0:
+        log.info("Disprove gate skipped — no must-fix or should-fix findings")
+        return "", 0.0
+
+    disprove_output = _derive_path(job.review_file, FILENAME_DISPROVE)
+    disprove_log = _derive_path(job.review_file, FILENAME_DISPROVE_LOG)
+
+    _touch(disprove_output)
+
+    max_turns = DEFAULT_MAX_TURNS_DISPROVE
+    prompt = build_prompt(
+        TEMPLATE_DISPROVE, job, max_turns=max_turns,
+        disprove_output=disprove_output, review_content=review_content,
+    )
+    model = _resolve_model(job.model, "CLAUDE_REVIEW_DISPROVE_MODEL",
+                           DEFAULT_MODEL_DISPROVE)
+    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_DISPROVE_THINKING",
+                                       _effort_thinking(job.effort, DEFAULT_THINKING_DISPROVE))
+    provider = _resolve_provider()
+    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
+    log.blank()
+    invoke_agent(prompt, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
+    log.blank()
+
+    cost = _parse_session_cost(disprove_log) if disprove_log else 0.0
+
+    if _has_output(disprove_output):
+        raw = Path(disprove_output).read_text()
+        results = parse_disprove_output(raw)
+        updated_text, summary = apply_disprove_results(review_content, results)
+        falsified = summary.get("falsified", 0)
+        if falsified > 0:
+            Path(job.review_file).write_text(updated_text)
+            log.info(f"Disprove gate: {summary['survived']} survived, {falsified} falsified")
+            for fid in summary.get("falsified_ids", []):
+                reason = summary.get("reasons", {}).get(fid, "")
+                log.dim(f"  Falsified [{fid}]: {reason}")
+        else:
+            log.info(f"Disprove gate: all {summary['survived']} findings survived")
+    else:
+        reason = _diagnose_missing_output(disprove_log)
+        log.warn(f"Disprove gate produced no output ({reason}) — keeping all findings")
+
+    return disprove_log, cost
+
+
+def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> bool:
+    if explicit_disprove is True:
+        return True
+    if explicit_disprove is False:
+        return False
+    return not _effort_default(job.effort, "skip_disprove", True)
 
 
 def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]:
@@ -1038,7 +1148,7 @@ def _read_existing_logs(log_paths: list[str]) -> str:
 def _consolidate_logs(
     job: ReviewJob,
     holistic_log: str, group_count: int, synthesis_log: str,
-    angles_log: str = "",
+    angles_log: str = "", disprove_log: str = "",
 ):
     group_logs = _group_log_paths(job, group_count)
     all_logs = group_logs[:]
@@ -1048,6 +1158,8 @@ def _consolidate_logs(
         all_logs.append(angles_log)
     if synthesis_log:
         all_logs.append(synthesis_log)
+    if disprove_log:
+        all_logs.append(disprove_log)
 
     try:
         Path(job.session_log).write_text(_read_existing_logs(all_logs))
@@ -1203,19 +1315,44 @@ def _holistic_skip_reason(
     return None
 
 
+def _use_scout(job: ReviewJob, skip_scout: bool) -> bool:
+    if skip_scout:
+        return False
+    return not _effort_default(job.effort, "skip_scout", False)
+
+
 def _run_holistic_phase(
     job: ReviewJob, group_count: int, state: PipelineState,
     skip_holistic: bool, resume_exists: bool, incremental: bool,
+    skip_scout: bool = False,
 ) -> tuple[str, str, str, float]:
     _empty = ("", "", "", 0.0)
-    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
-    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     reason = _holistic_skip_reason(skip_holistic, incremental, group_count, effort=job.effort)
     if reason:
-        log.info(f"Holistic phase skipped ({reason})")
+        log.info(f"Holistic/scout phase skipped ({reason})")
         return _empty
 
+    use_scout = _use_scout(job, skip_scout)
+
+    if use_scout:
+        scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
+        scout_log = _derive_path(job.review_file, FILENAME_SCOUT_LOG)
+        if resume_exists and _has_output(scout_output):
+            raw = Path(scout_output).read_text()
+            leads, no_scrutiny = parse_scout_output(raw)
+            content = format_leads_block(leads, no_scrutiny)
+            log.info("Phase 1: Scout scan skipped (exists)")
+            return content, scout_output, scout_log, 0.0
+
+        content, output, log_path = _phase_scout(job, group_count)
+        cost = _parse_session_cost(log_path) if log_path else 0.0
+        state.holistic_done = True
+        _write_pipeline_state(job, state)
+        return content, output, log_path, cost
+
+    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
     if resume_exists and _has_output(holistic_output):
         log.info("Phase 1: Holistic scan skipped (exists)")
         return Path(holistic_output).read_text(), holistic_output, holistic_log, 0.0
@@ -1332,6 +1469,7 @@ def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
     max_groups: int | None = None,
+    skip_scout: bool = False, disprove: bool | None = None,
 ):
     groups = group_files(job.pr)
     effective_max_groups = max_groups or _effort_default(job.effort, "max_groups", DEFAULT_MAX_GROUPS)
@@ -1382,9 +1520,10 @@ def run_multi_phase(
     elif incremental_skips:
         skip_groups = skip_groups | incremental_skips
 
-    # ── Phase 1: Holistic ────────────────────────────────────────────────────
+    # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
     holistic_content, holistic_output, holistic_log, holistic_cost = _run_holistic_phase(
         job, group_count, state, skip_holistic, skip_holistic_phase, incremental,
+        skip_scout=skip_scout,
     )
     cost_so_far += holistic_cost
 
@@ -1417,8 +1556,14 @@ def run_multi_phase(
         merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
     )
 
+    # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────
+    disprove_log = ""
+    if _should_disprove(job, disprove) and cost_so_far <= max_cost:
+        disprove_log, disprove_cost = _phase_disprove(job)
+        cost_so_far += disprove_cost
+
     # ── Cleanup ──────────────────────────────────────────────────────────────
-    _consolidate_logs(job, holistic_log, group_count, synthesis_log, angles_log=angles_log)
+    _consolidate_logs(job, holistic_log, group_count, synthesis_log, angles_log=angles_log, disprove_log=disprove_log)
 
     if not failed_groups:
         _cleanup_intermediates(

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.40.0](https://github.com/otto-nation/otto-workbench/compare/v1.39.0...v1.40.0) (2026-07-09)
+
+
+### Features
+
+* **pr:** fetch and reset worktree to remote before pr commands ([#456](https://github.com/otto-nation/otto-workbench/issues/456)) ([5beede8](https://github.com/otto-nation/otto-workbench/commit/5beede8b8327f7a399dfd71f335b3b5f5e505060))
+* **review:** add lead scout, disprove gate, and review profiles ([#458](https://github.com/otto-nation/otto-workbench/issues/458)) ([ffbe6d2](https://github.com/otto-nation/otto-workbench/commit/ffbe6d238c5ba49bd53e03ac86685b4aa741face))
+
+
+### Bug Fixes
+
+* **pr-comments:** track seen issue-level discussion comments in state ([#453](https://github.com/otto-nation/otto-workbench/issues/453)) ([ef75eb5](https://github.com/otto-nation/otto-workbench/commit/ef75eb5403366510eb7f3f17cb0071a697ff1c6d))
+* **pr:** prevent --self injection when PR target comes from global flag or context ([#457](https://github.com/otto-nation/otto-workbench/issues/457)) ([52f19c0](https://github.com/otto-nation/otto-workbench/commit/52f19c00eb9253a2cc355ce52ce91d07f40a2cf7))
+
 ## [1.39.0](https://github.com/otto-nation/otto-workbench/compare/v1.38.0...v1.39.0) (2026-07-02)
 
 

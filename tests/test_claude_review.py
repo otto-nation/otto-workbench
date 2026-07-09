@@ -14,7 +14,11 @@ SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-from review_common import count_severity, json_summary, review_file_path
+from pr_state import ReviewStatus, ReviewVerdict
+from review_common import (
+    count_severity, json_summary, parse_review_verdict,
+    read_pipeline_status, review_file_path,
+)
 import review_gc
 
 
@@ -270,7 +274,7 @@ def test_json_summary_with_findings(cr, tmp_path):
     assert data["findings"]["nit"] == 1
     assert data["findings"]["idiom"] == 2
     assert data["findings"]["total"] == 6
-    assert data["verdict"] == "changes_requested"
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_json_summary_approve_no_must_fix(cr, tmp_path):
@@ -281,7 +285,7 @@ def test_json_summary_approve_no_must_fix(cr, tmp_path):
     )
     result = json_summary("org/repo", "10", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
-    assert data["verdict"] == "approve"
+    assert data["verdict"] == ReviewVerdict.APPROVE.value
     assert data["findings"]["total"] == 2
 
 
@@ -320,7 +324,7 @@ def test_json_summary_missing_review_file(cr, tmp_path):
     result = json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["findings"]["total"] == 0
-    assert data["verdict"] == "approve"
+    assert data["verdict"] == ReviewVerdict.APPROVE.value
 
 
 def test_json_summary_self_review_no_pr(cr, tmp_path):
@@ -329,7 +333,7 @@ def test_json_summary_self_review_no_pr(cr, tmp_path):
     result = json_summary("org/repo", "", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["pr_number"] is None
-    assert data["verdict"] == "changes_requested"
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_json_summary_includes_session_costs(cr, tmp_path):
@@ -347,6 +351,148 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
     assert data["input_tokens"] == 1000
     assert data["output_tokens"] == 2000
     assert data["duration_ms"] == 90000
+
+
+# ── parse_review_verdict ──────────────────────────────────────────────────────
+
+
+def test_parse_review_verdict_disapprove(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Summary\nSome text\n\n## Verdict\nDisapprove — wrong approach entirely.\n")
+    assert parse_review_verdict(review) == ReviewVerdict.DISAPPROVE.value
+
+
+def test_parse_review_verdict_disapprove_lowercase(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\ndisapprove — this should be a config change.\n")
+    assert parse_review_verdict(review) == ReviewVerdict.DISAPPROVE.value
+
+
+def test_parse_review_verdict_approve_returns_empty(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\nApprove — looks good.\n")
+    assert parse_review_verdict(review) == ""
+
+
+def test_parse_review_verdict_request_changes_returns_empty(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\nRequest changes — 2 must-fix.\n")
+    assert parse_review_verdict(review) == ""
+
+
+def test_parse_review_verdict_no_verdict_section(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n")
+    assert parse_review_verdict(review) == ""
+
+
+def test_parse_review_verdict_no_file(cr, tmp_path):
+    assert parse_review_verdict(tmp_path / "nonexistent.md") == ""
+
+
+def test_parse_review_verdict_none_path(cr):
+    assert parse_review_verdict(None) == ""
+
+
+def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
+    review_dir = tmp_path / "reviews" / "test-42"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "review.md"
+    review.write_text(
+        "## Must fix\n- **[M1]** path:1 — bug\n\n"
+        "## Verdict\nDisapprove — fundamentally wrong approach.\n"
+    )
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["verdict"] == ReviewVerdict.DISAPPROVE.value
+
+
+def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
+    """When review says Approve, mechanical verdict (from counts) still wins."""
+    review = tmp_path / "review.md"
+    review.write_text(
+        "## Must fix\n- **[M1]** path:1 — bug\n\n"
+        "## Verdict\nApprove — looks fine.\n"
+    )
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
+
+
+# ── read_pipeline_status ──────────────────────────────────────────────────────
+
+
+def test_read_pipeline_status_no_dir(cr):
+    assert read_pipeline_status(None) == ReviewStatus.COMPLETED.value
+
+
+def test_read_pipeline_status_no_file(cr, tmp_path):
+    assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
+
+
+def test_read_pipeline_status_synthesis_ok(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "synthesis_done": True, "synthesis_failed": "",
+    }))
+    assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
+
+
+def test_read_pipeline_status_synthesis_failed(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "synthesis_done": True, "synthesis_failed": "all groups failed",
+    }))
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
+
+
+def test_read_pipeline_status_mechanical_fallback(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "synthesis_done": True, "synthesis_failed": "mechanical fallback",
+    }))
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
+
+
+def test_read_pipeline_status_budget_exceeded(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "synthesis_done": True, "synthesis_failed": "budget exceeded",
+    }))
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
+
+
+def test_read_pipeline_status_corrupt_json(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text("not valid json")
+    assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
+
+
+def test_json_summary_status_completed_no_pipeline(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Nit\n- **[N1]** path:1 — style\n")
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["status"] == ReviewStatus.COMPLETED.value
+
+
+def test_json_summary_status_error_synthesis_failed(cr, tmp_path):
+    review_dir = tmp_path / "reviews" / "test-42"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "review.md"
+    review.write_text("## Nit\n- **[N1]** path:1 — style\n")
+    pipeline = review_dir / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "synthesis_done": True, "synthesis_failed": "all groups failed",
+    }))
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["status"] == ReviewStatus.ERROR.value
 
 
 # ── _archive_review ───────────────────────────────────────────────────────────

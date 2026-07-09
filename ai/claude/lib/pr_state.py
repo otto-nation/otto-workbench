@@ -15,6 +15,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 import log
@@ -64,6 +65,17 @@ class CIDomain:
     latest_run_id: int | None = None
 
 
+class ReviewVerdict(Enum):
+    APPROVE = "approve"
+    CHANGES_REQUESTED = "changes_requested"
+    DISAPPROVE = "disapprove"
+
+
+class ReviewStatus(Enum):
+    COMPLETED = "completed"
+    ERROR = "error"
+
+
 @dataclass
 class ReviewSummary:
     """Snapshot written by ``pr review``."""
@@ -72,6 +84,7 @@ class ReviewSummary:
     head_sha: str = ""
     finding_counts: dict[str, int] = field(default_factory=dict)
     verdict: str = ""
+    status: str = ""
     cost_usd: float = 0.0
     updated_at: str = ""
 

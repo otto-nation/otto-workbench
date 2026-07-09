@@ -315,6 +315,34 @@ def read_pipeline_status(review_dir: Path | None) -> str:
     return ReviewStatus.COMPLETED.value
 
 
+def parse_review_verdict(review_path: Path | None) -> str:
+    """Extract verdict from review markdown's ## Verdict section.
+
+    Returns the ReviewVerdict value if Disapprove is found, empty string otherwise
+    (caller falls back to mechanical count-based verdict).
+    """
+    if not review_path or not review_path.is_file():
+        return ""
+    try:
+        text = review_path.read_text()
+    except OSError:
+        return ""
+    from pr_state import ReviewVerdict
+    in_verdict = False
+    for line in text.splitlines():
+        if line.strip().lower().startswith("## verdict"):
+            in_verdict = True
+            continue
+        if in_verdict:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.lower().startswith("disapprove"):
+                return ReviewVerdict.DISAPPROVE.value
+            return ""
+    return ""
+
+
 def json_summary(repo: str, pr_number: str, review_file: str) -> str:
     """Build a REVIEW_SUMMARY:{json} string for a review."""
     counts = {}
@@ -326,8 +354,12 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
         total += c
 
     from pr_state import ReviewVerdict
-    must_count = counts.get("must_fix", 0)
-    verdict = ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0 else ReviewVerdict.APPROVE.value
+    parsed_verdict = parse_review_verdict(review_path)
+    if parsed_verdict:
+        verdict = parsed_verdict
+    else:
+        must_count = counts.get("must_fix", 0)
+        verdict = ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0 else ReviewVerdict.APPROVE.value
 
     review_dir = Path(review_file).parent if review_file else None
     usage = aggregate_session_usage(review_dir)

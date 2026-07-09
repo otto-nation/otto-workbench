@@ -15,7 +15,10 @@ LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_state import ReviewStatus, ReviewVerdict
-from review_common import count_severity, json_summary, read_pipeline_status, review_file_path
+from review_common import (
+    count_severity, json_summary, parse_review_verdict,
+    read_pipeline_status, review_file_path,
+)
 import review_gc
 
 
@@ -348,6 +351,72 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
     assert data["input_tokens"] == 1000
     assert data["output_tokens"] == 2000
     assert data["duration_ms"] == 90000
+
+
+# ── parse_review_verdict ──────────────────────────────────────────────────────
+
+
+def test_parse_review_verdict_disapprove(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Summary\nSome text\n\n## Verdict\nDisapprove — wrong approach entirely.\n")
+    assert parse_review_verdict(review) == ReviewVerdict.DISAPPROVE.value
+
+
+def test_parse_review_verdict_disapprove_lowercase(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\ndisapprove — this should be a config change.\n")
+    assert parse_review_verdict(review) == ReviewVerdict.DISAPPROVE.value
+
+
+def test_parse_review_verdict_approve_returns_empty(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\nApprove — looks good.\n")
+    assert parse_review_verdict(review) == ""
+
+
+def test_parse_review_verdict_request_changes_returns_empty(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\nRequest changes — 2 must-fix.\n")
+    assert parse_review_verdict(review) == ""
+
+
+def test_parse_review_verdict_no_verdict_section(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n")
+    assert parse_review_verdict(review) == ""
+
+
+def test_parse_review_verdict_no_file(cr, tmp_path):
+    assert parse_review_verdict(tmp_path / "nonexistent.md") == ""
+
+
+def test_parse_review_verdict_none_path(cr):
+    assert parse_review_verdict(None) == ""
+
+
+def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
+    review_dir = tmp_path / "reviews" / "test-42"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "review.md"
+    review.write_text(
+        "## Must fix\n- **[M1]** path:1 — bug\n\n"
+        "## Verdict\nDisapprove — fundamentally wrong approach.\n"
+    )
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["verdict"] == ReviewVerdict.DISAPPROVE.value
+
+
+def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
+    """When review says Approve, mechanical verdict (from counts) still wins."""
+    review = tmp_path / "review.md"
+    review.write_text(
+        "## Must fix\n- **[M1]** path:1 — bug\n\n"
+        "## Verdict\nApprove — looks fine.\n"
+    )
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
 
 
 # ── read_pipeline_status ──────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ ${reviews_section}
 6. Group agents already verified findings against source code. Do NOT re-read files to re-verify individual findings — a programmatic verification pass runs after you write. Instead, check for cross-group inconsistencies: does one group's finding contradict another group's analysis of the same code? Drop findings only when you can identify the contradiction from the merged content itself
 7. Check for cross-file concerns — do findings in one group imply issues in files from another group? Deduplicate: if the same issue appears in multiple group reviews (same file, same concern), keep the most complete version and drop the rest
 8. Add any cross-cutting findings
-9. Write ## Verdict (Approve / Request changes / Needs discussion) — Idioms findings do not affect the verdict
+9. Write ## Verdict (Approve / Request changes / Disapprove / Needs discussion) — Idioms findings do not affect the verdict. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead
 10. You MUST use the Write tool to write the COMPLETE review file to: ${review_file}
     Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
     The output file and its directory already exist — do NOT create directories or empty files.

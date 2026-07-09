@@ -779,3 +779,24 @@ def test_render_review_section_empty_status():
     )
     lines = pr_cli._render_review_section(rev)
     assert "[ERROR]" not in lines[0]
+
+
+def test_render_review_section_disapprove_verdict():
+    import pr_state
+    rev = pr_state.ReviewSummary(
+        review_type="full", verdict=pr_state.ReviewVerdict.DISAPPROVE.value,
+        updated_at="t",
+    )
+    lines = pr_cli._render_review_section(rev)
+    assert "[DISAPPROVED]" in lines[0]
+
+
+def test_render_review_section_disapprove_and_error():
+    import pr_state
+    rev = pr_state.ReviewSummary(
+        review_type="full", verdict=pr_state.ReviewVerdict.DISAPPROVE.value,
+        status=pr_state.ReviewStatus.ERROR.value, updated_at="t",
+    )
+    lines = pr_cli._render_review_section(rev)
+    assert "[ERROR]" in lines[0]
+    assert "[DISAPPROVED]" in lines[0]

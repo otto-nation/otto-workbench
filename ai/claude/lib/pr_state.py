@@ -68,6 +68,7 @@ class CIDomain:
 class ReviewVerdict(Enum):
     APPROVE = "approve"
     CHANGES_REQUESTED = "changes_requested"
+    DISAPPROVE = "disapprove"
 
 
 class ReviewStatus(Enum):

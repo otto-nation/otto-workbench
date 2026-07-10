@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.41.0](https://github.com/otto-nation/otto-workbench/compare/v1.40.0...v1.41.0) (2026-07-10)
+
+
+### Features
+
+* **review:** separate cache tokens from fresh in usage summary ([#464](https://github.com/otto-nation/otto-workbench/issues/464)) ([9d5f08e](https://github.com/otto-nation/otto-workbench/commit/9d5f08ef018f29d6796e35620e73e3d70e5e1392))
+* **review:** set review status to error when synthesis agent fails ([#459](https://github.com/otto-nation/otto-workbench/issues/459)) ([15e1b49](https://github.com/otto-nation/otto-workbench/commit/15e1b491dd992bcb16417b40cfdb5d9ba806c36e))
+
+
+### Bug Fixes
+
+* **review:** inject custom agent definitions in --bare mode ([#462](https://github.com/otto-nation/otto-workbench/issues/462)) ([b0e003f](https://github.com/otto-nation/otto-workbench/commit/b0e003f79ac2fd17ecb4963752c4f7df93ab0c10))
+* **review:** stop auto-injecting --self for branch positionals and add review discovery fallback ([#463](https://github.com/otto-nation/otto-workbench/issues/463)) ([1d14547](https://github.com/otto-nation/otto-workbench/commit/1d145479e5918b10a6d842b7e96813dae4fea740))
+
 ## [1.40.0](https://github.com/otto-nation/otto-workbench/compare/v1.39.0...v1.40.0) (2026-07-09)
 
 

@@ -51,8 +51,6 @@ GITHUB_BASE_URL = "https://github.com"
 
 ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
-PR_URL_RE = re.compile(r"/pull/(\d+)")
-PR_NUMBER_RE = re.compile(r"^\d+$")
 
 
 # ── Startup migrations ──────────────────────────────────────────────────────
@@ -153,7 +151,7 @@ def _prompt_optional(prompt: str) -> str:
 
 
 def _is_pr_ref(s: str) -> bool:
-    return bool(PR_URL_RE.search(s) or PR_NUMBER_RE.match(s))
+    return pr_context.is_pr_ref(s)
 
 
 def _post_review(repo: str, pr_number: str, review_file: str, submit: bool) -> None:
@@ -809,7 +807,8 @@ def _run_review(args) -> None:
 
     review_gc.prune_merged_reviews()
 
-    ctx = pr_context.resolve(pr=pr_input or None, repo_dir=repo_dir or None)
+    pr_arg, branch_arg = pr_context.classify_target(pr_input) if pr_input else (None, None)
+    ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=repo_dir or None)
     pr_number = str(ctx.pr_number)
     repo = ctx.repo
 
@@ -1114,7 +1113,8 @@ def main() -> None:
         log.error(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
         sys.exit(1)
 
-    ctx = pr_context.resolve(pr=command, repo_dir=parsed.repo_dir)
+    pr_arg, branch_arg = pr_context.classify_target(command)
+    ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
     pr_num = str(ctx.pr_number)
     review_file = review_file_path(ctx.repo, pr_num)
     _run_review(parsed)

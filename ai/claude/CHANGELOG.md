@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.35.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.34.0...otto-ai-tools-v1.35.0) (2026-07-10)
+
+
+### Features
+
+* **review:** separate cache tokens from fresh in usage summary ([#464](https://github.com/otto-nation/otto-workbench/issues/464)) ([9d5f08e](https://github.com/otto-nation/otto-workbench/commit/9d5f08ef018f29d6796e35620e73e3d70e5e1392))
+* **review:** set review status to error when synthesis agent fails ([#459](https://github.com/otto-nation/otto-workbench/issues/459)) ([15e1b49](https://github.com/otto-nation/otto-workbench/commit/15e1b491dd992bcb16417b40cfdb5d9ba806c36e))
+
+
+### Bug Fixes
+
+* **comments:** post dismissal replies for invalid suggestion threads ([#465](https://github.com/otto-nation/otto-workbench/issues/465)) ([c13e33e](https://github.com/otto-nation/otto-workbench/commit/c13e33e3fbc56d1dca480892d4121cba98e5ed2b))
+* **review:** inject custom agent definitions in --bare mode ([#462](https://github.com/otto-nation/otto-workbench/issues/462)) ([b0e003f](https://github.com/otto-nation/otto-workbench/commit/b0e003f79ac2fd17ecb4963752c4f7df93ab0c10))
+* **review:** stop auto-injecting --self for branch positionals and add review discovery fallback ([#463](https://github.com/otto-nation/otto-workbench/issues/463)) ([1d14547](https://github.com/otto-nation/otto-workbench/commit/1d145479e5918b10a6d842b7e96813dae4fea740))
+
 ## [1.34.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.33.0...otto-ai-tools-v1.34.0) (2026-07-09)
 
 

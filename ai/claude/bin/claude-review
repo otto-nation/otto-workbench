@@ -176,6 +176,14 @@ def _display_review(path: Path) -> None:
     print()
 
 
+def _format_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1000:
+        return f"{n // 1000}k"
+    return str(n)
+
+
 def _format_usage(*log_paths: str) -> str:
     logs = [p for p in log_paths if p and os.path.isfile(p)]
     if not logs:
@@ -183,25 +191,23 @@ def _format_usage(*log_paths: str) -> str:
 
     usages = [parse_session_log(p) for p in logs]
     cost = sum(u.cost for u in usages)
-    tokens = sum(u.total_tokens for u in usages)
+    fresh = sum(u.input_tokens + u.cache_write_tokens + u.output_tokens for u in usages)
+    cached = sum(u.cache_read_tokens for u in usages)
     duration_ms = sum(u.duration_ms for u in usages)
 
-    if cost == 0.0 and tokens == 0 and duration_ms == 0:
+    if cost == 0.0 and fresh == 0 and cached == 0 and duration_ms == 0:
         return ""
 
-    if tokens >= 1_000_000:
-        tokens_fmt = f"{tokens / 1_000_000:.1f}M"
-    elif tokens >= 1000:
-        tokens_fmt = f"{tokens // 1000}k"
-    else:
-        tokens_fmt = str(tokens)
+    tokens_part = f"{_format_tokens(fresh)} tokens"
+    if cached > 0:
+        tokens_part += f" ({_format_tokens(cached)} cached)"
 
     duration_s = duration_ms // 1000
     mins, secs = divmod(duration_s, 60)
     duration_fmt = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
     cost_fmt = f"${cost:.2f}"
 
-    return f"  Usage:           {cost_fmt} · {tokens_fmt} tokens · {duration_fmt}"
+    return f"  Usage:           {cost_fmt} · {tokens_part} · {duration_fmt}"
 
 
 def _print_summary(

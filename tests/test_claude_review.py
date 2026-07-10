@@ -174,7 +174,8 @@ def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
         duration_ms=300000, cache_read=100000, cache_create=50000,
     )
     result = cr._format_usage(log)
-    assert "M tokens" in result
+    assert "1.1M tokens" in result
+    assert "(100k cached)" in result
 
 
 def test_format_usage_duration_seconds_only(cr, tmp_path):
@@ -198,14 +199,23 @@ def test_format_usage_cost_rounds_to_2_decimals(cr, tmp_path):
     assert "$3.46" in result
 
 
-def test_format_usage_includes_cache_tokens(cr, tmp_path):
+def test_format_usage_separates_cache_from_fresh(cr, tmp_path):
     log = str(tmp_path / "cache.jsonl")
     _make_session_log(
         log, cost=1.00, input_tokens=100, output_tokens=200,
         duration_ms=10000, cache_read=5000, cache_create=3000,
     )
     result = cr._format_usage(log)
-    assert "8k tokens" in result
+    assert "3k tokens" in result
+    assert "(5k cached)" in result
+
+
+def test_format_usage_no_cache_omits_parenthetical(cr, tmp_path):
+    log = str(tmp_path / "no-cache.jsonl")
+    _make_session_log(log, cost=1.00, input_tokens=100, output_tokens=200, duration_ms=10000)
+    result = cr._format_usage(log)
+    assert "300 tokens" in result
+    assert "cached" not in result
 
 
 # ── count_severity ────────────────────────────────────────────────────────────

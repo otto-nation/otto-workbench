@@ -254,6 +254,26 @@ def review_file_path(repo: str, pr_number: str) -> Path:
     return REVIEWS_DIR / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
 
+def find_review_file(repo: str, pr_number: str) -> Path | None:
+    """Find a review file by repo and PR, checking canonical path then scanning meta."""
+    canonical = review_file_path(repo, pr_number)
+    if canonical.is_file():
+        return canonical
+    if not REVIEWS_DIR.is_dir():
+        return None
+    repo_name = repo.split("/")[-1]
+    for entry in REVIEWS_DIR.iterdir():
+        if not entry.is_dir() or not entry.name.startswith(repo_name):
+            continue
+        review = entry / f"review{REVIEW_EXT}"
+        if not review.is_file():
+            continue
+        meta = read_review_meta(entry)
+        if meta.repo == repo and str(meta.pr_number) == str(pr_number):
+            return review
+    return None
+
+
 def read_review_meta(review_dir: Path) -> ReviewMeta:
     """Read meta.json from a review directory."""
     meta_file = review_dir / FILENAME_META

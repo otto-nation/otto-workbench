@@ -427,6 +427,17 @@ def test_cmd_review_no_double_self(mock_run):
 
 
 @patch("pr_cli.subprocess.run")
+def test_cmd_review_no_self_when_branch_positional(mock_run):
+    """A branch name positional should not trigger --self injection."""
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(pr_number=None)
+    pr_cli.cmd_review(["kgn/go-update"], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert "--self" not in cmd
+    assert "kgn/go-update" in cmd
+
+
+@patch("pr_cli.subprocess.run")
 def test_cmd_review_passes_flags_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
@@ -481,6 +492,27 @@ def test_cmd_review_post_fails_without_review_file(tmp_path):
         ctx = _make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--post"], ctx)
     assert rc == 1
+
+
+@patch("pr_cli.subprocess.run")
+def test_cmd_review_post_finds_review_via_meta(mock_run, tmp_path):
+    """--post discovers a review stored under a non-canonical directory name."""
+    mock_run.return_value = MagicMock(returncode=0)
+    import review_common
+    reviews_dir = tmp_path / "reviews"
+    alt_dir = reviews_dir / "repo-self-some-branch"
+    alt_dir.mkdir(parents=True)
+    (alt_dir / "review.md").write_text("# Review")
+    (alt_dir / "meta.json").write_text(json.dumps({
+        "repo": "owner/repo", "pr_number": "42",
+    }))
+    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
+        ctx = _make_ctx(pr_number=42)
+        rc = pr_cli.cmd_review(["--post"], ctx)
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/review-post")
+    assert str(alt_dir / "review.md") in cmd
 
 
 # ── _run_delegate branch/pr injection ────────────────────────────────────────

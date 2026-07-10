@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -386,17 +387,16 @@ def _commit_and_push(
     return CommitPushResult(sha, "push_failed", err)
 
 
-def _post_fix_replies(
-    fixed: list[dict],
+def _post_thread_replies(
+    entries: list[dict],
     threads_by_id: dict,
     repo: str,
     pr_number: int,
-    commit_sha: str,
+    body_fn: Callable[[dict], str],
 ) -> int:
-    """Post replies to each fixed thread. Returns count of replies posted."""
+    """Post a reply to each thread entry using body_fn to build the message body."""
     posted = 0
-    commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
-    for entry in fixed:
+    for entry in entries:
         tid = entry.get("thread_id", "")
         thread = threads_by_id.get(tid, {})
         comments = thread.get("comments", [])
@@ -405,10 +405,26 @@ def _post_fix_replies(
         database_id = comments[0].get("databaseId")
         if not database_id:
             continue
-        summary = entry.get("summary", "")
-        body = f"Applied: {summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
-        if pc.post_thread_reply(repo, pr_number, database_id, body):
+        if pc.post_thread_reply(repo, pr_number, database_id, body_fn(entry)):
             posted += 1
+    return posted
+
+
+def _post_fix_replies(
+    fixed: list[dict],
+    threads_by_id: dict,
+    repo: str,
+    pr_number: int,
+    commit_sha: str,
+) -> int:
+    """Post replies to each fixed thread. Returns count of replies posted."""
+    commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
+
+    def body_fn(entry: dict) -> str:
+        summary = entry.get("summary", "")
+        return f"Applied: {summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
+
+    posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Posted {posted} thread replies")
     return posted
@@ -421,20 +437,13 @@ def _post_dismissed_replies(
     pr_number: int,
 ) -> int:
     """Post replies to invalid suggestion threads. Returns count posted."""
-    posted = 0
-    for entry in dismissed:
-        tid = entry.get("thread_id", "")
-        thread = threads_by_id.get(tid, {})
-        comments = thread.get("comments", [])
-        if not comments:
-            continue
-        database_id = comments[0].get("databaseId")
-        if not database_id:
-            continue
+    def body_fn(entry: dict) -> str:
         reasoning = entry.get("reasoning", "")
-        body = f"Suggestion reviewed and determined to be inapplicable: {reasoning}"
-        if pc.post_thread_reply(repo, pr_number, database_id, body):
-            posted += 1
+        if reasoning:
+            return f"Suggestion reviewed and determined to be inapplicable: {reasoning}"
+        return "Suggestion reviewed and determined to be inapplicable."
+
+    posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Dismissed {posted} invalid suggestion(s)")
     return posted
@@ -479,6 +488,15 @@ def _summary_cell(entry: dict, threads_by_id: dict, repo: str, pr_number: int) -
     return summary
 
 
+def _build_row(
+    entry: dict, status: str, threads_by_id: dict, repo: str, pr_number: int,
+) -> str:
+    """Build a single summary table row for a thread entry."""
+    summary = _summary_cell(entry, threads_by_id, repo, pr_number)
+    file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
+    return f"| {summary} | {file_loc} | {status} |"
+
+
 def _build_summary_body(
     fixed: list[dict],
     needs_human: list[dict],
@@ -510,24 +528,16 @@ def _build_summary_body(
     parts.append("")
 
     rows = []
-    status = _fixed_status_text(cp, repo)
+    fixed_status = _fixed_status_text(cp, repo)
     for entry in fixed:
-        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
-        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
-        rows.append(f"| {summary} | {file_loc} | {status} |")
+        rows.append(_build_row(entry, fixed_status, threads_by_id, repo, pr_number))
     for entry in dismissed:
-        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
-        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
-        rows.append(f"| {summary} | {file_loc} | Dismissed (invalid) |")
+        rows.append(_build_row(entry, "Dismissed (invalid)", threads_by_id, repo, pr_number))
     for entry in needs_human:
-        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
-        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
         reason = entry.get("reason", "needs discussion")
-        rows.append(f"| {summary} | {file_loc} | {reason} |")
+        rows.append(_build_row(entry, reason, threads_by_id, repo, pr_number))
     for entry in skipped:
-        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
-        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
-        rows.append(f"| {summary} | {file_loc} | Skipped |")
+        rows.append(_build_row(entry, "Skipped", threads_by_id, repo, pr_number))
 
     if rows:
         parts.append("| Thread | File | Action |")
@@ -632,7 +642,6 @@ def _run_comment_fix(
             "line": tt.get("line", 0),
             "reviewer": tt.get("reviewer", ""),
             "summary": tt.get("summary", ""),
-            "reasoning": tt.get("reasoning", ""),
         }
         classification = tt.get("classification", "")
         verification = tt.get("verification", "")
@@ -658,7 +667,7 @@ def _run_comment_fix(
         elif verification == "needs_discussion":
             needs_human.append({**entry, "reason": "needs_discussion"})
         elif verification == "invalid":
-            dismissed.append(entry)
+            dismissed.append({**entry, "reasoning": tt.get("reasoning", "")})
 
     no_commit = CommitPushResult(None, "no_changes", "")
 

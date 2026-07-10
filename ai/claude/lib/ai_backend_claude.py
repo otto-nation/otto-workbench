@@ -6,11 +6,45 @@ Implements prompt(), invoke_agent(), and invoke_fix() by building
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+from pathlib import Path
 
 from ai_backend_events import _log_stderr_on_failure, parse_claude_event
 from log import ANSI_DIM, ANSI_RESET, _print_lock
+
+
+# ── Agent resolution ─────────────────────────────────────────────────────────
+
+_AGENTS_DIR = Path.home() / ".claude" / "agents"
+
+
+def _load_agent_def(name: str) -> dict | None:
+    """Load a custom agent definition from ~/.claude/agents/{name}.md.
+
+    --bare mode skips auto-discovery of custom agents, so we read the file
+    and pass it via --agents JSON to make it available to the CLI.
+    """
+    path = _AGENTS_DIR / f"{name}.md"
+    if not path.exists():
+        return None
+
+    content = path.read_text()
+    if not content.startswith("---"):
+        return {"description": name, "prompt": content}
+
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {"description": name, "prompt": content}
+
+    description = name
+    for line in parts[1].strip().splitlines():
+        if line.startswith("description:"):
+            description = line.split(":", 1)[1].strip()
+            break
+
+    return {"description": description, "prompt": parts[2].strip()}
 
 
 # ── Stream progress ───────────────────────────────────────────────────────────
@@ -63,6 +97,9 @@ def _build_agent_cmd(
         add_dir_args += ["--add-dir", d]
     cmd = [*_base_cmd(), "--output-format", "stream-json", *add_dir_args]
     if agent:
+        agent_def = _load_agent_def(agent)
+        if agent_def:
+            cmd += ["--agents", json.dumps({agent: agent_def})]
         cmd += ["--agent", agent]
     if max_turns is not None:
         cmd += ["--max-turns", str(max_turns)]

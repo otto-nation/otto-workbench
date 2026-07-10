@@ -21,7 +21,7 @@ import pr_state
 from pr_state import ReviewStatus, ReviewVerdict
 import review_gc
 import log
-from review_common import json_summary, review_file_path
+from review_common import find_review_file, json_summary, review_file_path
 from trail import Trail, add_trail_args
 
 
@@ -292,15 +292,15 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
         or _is_pr_target(original_pr)
         or ctx.pr_number is not None
     )
-    inject = ["--self"] if not has_self and not has_pr_target else []
+    inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
     rc = _run_delegate(_COMMANDS["review"], inject + list(argv), ctx,
                        original_pr=original_pr,
                        original_branch=original_branch)
     if rc != 0 or not ctx.pr_number:
         return rc
     pr_num = str(ctx.pr_number)
-    review = review_file_path(ctx.repo, pr_num)
-    if review.is_file():
+    review = find_review_file(ctx.repo, pr_num)
+    if review:
         output = json_summary(ctx.repo, pr_num, str(review))
         print(output)
         _update_review_state_from_output(output, ctx)
@@ -314,9 +314,9 @@ def _review_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
         log.error("Cannot determine PR number")
         return 1
 
-    review = review_file_path(ctx.repo, pr_num)
-    if not review.is_file():
-        log.error(f"No review file found: {review}")
+    review = find_review_file(ctx.repo, pr_num)
+    if not review:
+        log.error(f"No review file found for {ctx.repo}#{pr_num}")
         log.dim("Run: pr review")
         return 1
 
@@ -335,15 +335,15 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
         log.error("Cannot determine PR number")
         return 1
 
-    review = review_file_path(ctx.repo, pr_num)
-    if review.is_file():
+    review = find_review_file(ctx.repo, pr_num)
+    if review:
         output = json_summary(ctx.repo, pr_num, str(review))
         print(output)
         _update_review_state_from_output(output, ctx)
         return 0
 
     log.info("No review file found, trying rebuild...")
-    review_dir = review.parent
+    review_dir = review_file_path(ctx.repo, pr_num).parent
     if not review_dir.is_dir():
         log.error(f"No review directory found: {review_dir}")
         return 1
@@ -367,9 +367,9 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
         log.error("Cannot determine PR number")
         return 1
 
-    review = review_file_path(ctx.repo, pr_num)
-    if not review.is_file():
-        log.error(f"No review file found: {review}")
+    review = find_review_file(ctx.repo, pr_num)
+    if not review:
+        log.error(f"No review file found for {ctx.repo}#{pr_num}")
         return 1
 
     print(json_summary(ctx.repo, pr_num, str(review)))

@@ -414,6 +414,32 @@ def _post_fix_replies(
     return posted
 
 
+def _post_dismissed_replies(
+    dismissed: list[dict],
+    threads_by_id: dict,
+    repo: str,
+    pr_number: int,
+) -> int:
+    """Post replies to invalid suggestion threads. Returns count posted."""
+    posted = 0
+    for entry in dismissed:
+        tid = entry.get("thread_id", "")
+        thread = threads_by_id.get(tid, {})
+        comments = thread.get("comments", [])
+        if not comments:
+            continue
+        database_id = comments[0].get("databaseId")
+        if not database_id:
+            continue
+        reasoning = entry.get("reasoning", "")
+        body = f"Suggestion reviewed and determined to be inapplicable: {reasoning}"
+        if pc.post_thread_reply(repo, pr_number, database_id, body):
+            posted += 1
+    if posted:
+        log.info(f"Dismissed {posted} invalid suggestion(s)")
+    return posted
+
+
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha:
@@ -461,16 +487,21 @@ def _build_summary_body(
     repo: str,
     pr_number: int,
     threads_by_id: dict,
+    dismissed: list[dict] | None = None,
 ) -> str:
     """Build the markdown body for the fix summary comment."""
+    dismissed = dismissed or []
     fixed_count = len(fixed)
     skipped_count = len(skipped)
     human_count = len(needs_human)
+    dismissed_count = len(dismissed)
 
     parts = ["## Review Comments Addressed", ""]
     counts = []
     if fixed_count:
         counts.append(f"**{fixed_count} fixed**")
+    if dismissed_count:
+        counts.append(f"{dismissed_count} dismissed")
     if skipped_count:
         counts.append(f"{skipped_count} skipped")
     if human_count:
@@ -484,6 +515,10 @@ def _build_summary_body(
         summary = _summary_cell(entry, threads_by_id, repo, pr_number)
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
         rows.append(f"| {summary} | {file_loc} | {status} |")
+    for entry in dismissed:
+        summary = _summary_cell(entry, threads_by_id, repo, pr_number)
+        file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
+        rows.append(f"| {summary} | {file_loc} | Dismissed (invalid) |")
     for entry in needs_human:
         summary = _summary_cell(entry, threads_by_id, repo, pr_number)
         file_loc = f"`{entry.get('file', '')}:{entry.get('line', '')}`"
@@ -511,12 +546,15 @@ def _post_fix_summary(
     repo: str,
     pr_number: int,
     threads_by_id: dict,
+    dismissed: list[dict] | None = None,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
-    if not fixed and not needs_human and not skipped:
+    dismissed = dismissed or []
+    if not fixed and not needs_human and not skipped and not dismissed:
         return None
     body = _build_summary_body(
         fixed, needs_human, skipped, cp, repo, pr_number, threads_by_id,
+        dismissed=dismissed,
     )
     url = pc.post_issue_comment(repo, pr_number, body)
     if url:
@@ -585,6 +623,7 @@ def _run_comment_fix(
 
     fixable = []
     needs_human = []
+    dismissed = []
 
     for tt in triage_threads:
         entry = {
@@ -593,6 +632,7 @@ def _run_comment_fix(
             "line": tt.get("line", 0),
             "reviewer": tt.get("reviewer", ""),
             "summary": tt.get("summary", ""),
+            "reasoning": tt.get("reasoning", ""),
         }
         classification = tt.get("classification", "")
         verification = tt.get("verification", "")
@@ -617,16 +657,30 @@ def _run_comment_fix(
             fixable.append(tt)
         elif verification == "needs_discussion":
             needs_human.append({**entry, "reason": "needs_discussion"})
+        elif verification == "invalid":
+            dismissed.append(entry)
 
     no_commit = CommitPushResult(None, "no_changes", "")
+
+    dismissed_replies = 0
+    if dismissed:
+        dismissed_replies = _post_dismissed_replies(
+            dismissed, threads_by_id, ctx.repo, report["pr_number"],
+        )
+
     empty_result = {
-        "fixed": [], "needs_human": needs_human,
+        "fixed": [], "needs_human": needs_human, "dismissed": dismissed,
         "skipped": [], "commit_sha": None,
         "commit_status": "no_changes",
-        "replies_posted": 0, "summary_url": None,
+        "replies_posted": dismissed_replies, "summary_url": None,
     }
 
     if not fixable:
+        summary_url = _post_fix_summary(
+            [], needs_human, [], no_commit, ctx.repo, report["pr_number"],
+            threads_by_id, dismissed=dismissed,
+        ) if dismissed or needs_human else None
+        empty_result["summary_url"] = summary_url
         return empty_result
 
     tracking_dir = wt_path / "ignore" / "pr-comments"
@@ -664,20 +718,21 @@ def _run_comment_fix(
     if cp.status == "no_changes":
         cp = _recover_agent_commit(wt_path, head_before, trail)
 
-    replies_posted = 0
+    replies_posted = dismissed_replies
     if cp.sha and fixed:
-        replies_posted = _post_fix_replies(
+        replies_posted += _post_fix_replies(
             fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
         )
 
     summary_url = _post_fix_summary(
         fixed, needs_human, skipped, cp, ctx.repo, report["pr_number"],
-        threads_by_id,
+        threads_by_id, dismissed=dismissed,
     )
 
     return {
         "fixed": fixed,
         "needs_human": needs_human,
+        "dismissed": dismissed,
         "skipped": skipped,
         "commit_sha": cp.sha,
         "commit_status": cp.status,
@@ -818,8 +873,10 @@ def _run_threads(trail, args, ctx) -> None:
             )
             fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx, trail=trail)
             skipped_count = len(fix_pass.get("skipped", []))
+            dismissed_count = len(fix_pass.get("dismissed", []))
             trail.info("fix_result", "fix pass complete",
                        data={"fixable": fixable_count, "skipped": skipped_count,
+                             "dismissed": dismissed_count,
                              "commit_sha": fix_pass.get("commit_sha"),
                              "commit_status": fix_pass.get("commit_status")})
             output = {**triage_result, "fix_pass": fix_pass,

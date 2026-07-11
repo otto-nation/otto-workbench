@@ -132,11 +132,7 @@ def _is_pr_target(target: str | None) -> bool:
     """Check if target looks like a PR URL or number (not a branch name)."""
     if not target:
         return False
-    if target.isdigit():
-        return True
-    if "github.com" in target and "/pull/" in target:
-        return True
-    return False
+    return pr_context.is_pr_ref(target)
 
 
 
@@ -549,6 +545,15 @@ def main():
 
     original_pr = getattr(args, "pr", None)
     original_branch = getattr(args, "branch", None)
+
+    # Classify the first positional (if any) as PR or branch when
+    # no explicit --pr/--branch flag was given.
+    if original_pr is None and original_branch is None:
+        first_pos = next((a for a in extra if not a.startswith("-")), None)
+        if first_pos:
+            pos_pr, pos_branch = pr_context.classify_target(first_pos)
+            original_pr = pos_pr
+            original_branch = pos_branch
 
     ctx = pr_context.resolve(
         pr=original_pr,

@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -29,6 +31,16 @@ def test_parse_pr_input_url():
 
 def test_parse_pr_input_url_trailing_slash():
     assert _parse_pr_input("https://github.com/owner/repo/pull/456/") == 456
+
+
+def test_parse_pr_input_branch_name_raises():
+    with pytest.raises(ValueError, match="Cannot parse PR number"):
+        _parse_pr_input("ibarsi/ENG-2239/migration-stream-jsonl")
+
+
+def test_parse_pr_input_simple_branch_raises():
+    with pytest.raises(ValueError, match="Cannot parse PR number"):
+        _parse_pr_input("feat-auth")
 
 
 # ── ResolvedContext ─────────────────────────────────────────────────────────

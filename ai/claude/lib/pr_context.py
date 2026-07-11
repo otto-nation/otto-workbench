@@ -7,6 +7,7 @@ review-threads, and review_common.detect_repo().
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -14,7 +15,26 @@ from pathlib import Path
 
 import log
 
+_PR_URL_RE = re.compile(r"/pull/(\d+)")
+_PR_NUMBER_RE = re.compile(r"^\d+$")
+
 RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / "resolve-branch"
+
+
+def is_pr_ref(s: str) -> bool:
+    """True if *s* looks like a PR number or GitHub PR URL."""
+    return bool(_PR_URL_RE.search(s) or _PR_NUMBER_RE.match(s))
+
+
+def classify_target(target: str) -> tuple[str | None, str | None]:
+    """Classify an ambiguous positional as (pr, branch).
+
+    Returns a 2-tuple where exactly one element is the input string
+    and the other is None.
+    """
+    if is_pr_ref(target):
+        return target, None
+    return None, target
 
 
 @dataclass(frozen=True)
@@ -298,10 +318,14 @@ def _head_sha(cwd: str | None = None) -> str:
 
 def _parse_pr_input(pr_input: str) -> int:
     """Extract PR number from URL or raw number."""
-    if "/" in pr_input:
-        parts = pr_input.rstrip("/").split("/")
-        return int(parts[-1])
-    return int(pr_input)
+    m = _PR_URL_RE.search(pr_input)
+    if m:
+        return int(m.group(1))
+    if _PR_NUMBER_RE.match(pr_input):
+        return int(pr_input)
+    raise ValueError(
+        f"Cannot parse PR number from {pr_input!r} — expected a number or GitHub PR URL"
+    )
 
 
 def _pr_from_current(cwd: str | None = None) -> int | None:

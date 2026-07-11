@@ -208,3 +208,54 @@ def test_detached_head_skips_worktree_redirect(
     """When CWD is in detached HEAD, skip worktree redirect (can't compare branches)."""
     ctx = pr_context.resolve(branch="feat/branch")
     assert ctx.worktree_root == Path("/repo/main")
+
+
+# ── is_pr_ref / classify_target ──────────────────────────────────────────
+
+
+def test_is_pr_ref_number():
+    assert pr_context.is_pr_ref("42") is True
+
+
+def test_is_pr_ref_pr_url():
+    assert pr_context.is_pr_ref("https://github.com/owner/repo/pull/123") is True
+
+
+def test_is_pr_ref_pr_url_trailing_slash():
+    assert pr_context.is_pr_ref("https://github.com/owner/repo/pull/456/") is True
+
+
+def test_is_pr_ref_branch_with_slashes():
+    assert pr_context.is_pr_ref("ibarsi/ENG-2239/migration-stream-jsonl") is False
+
+
+def test_is_pr_ref_simple_branch():
+    assert pr_context.is_pr_ref("feat-auth") is False
+
+
+def test_is_pr_ref_branch_with_numbers():
+    assert pr_context.is_pr_ref("isaac/ENG-1234/fix-thing") is False
+
+
+def test_classify_target_number():
+    pr, branch = pr_context.classify_target("42")
+    assert pr == "42"
+    assert branch is None
+
+
+def test_classify_target_url():
+    pr, branch = pr_context.classify_target("https://github.com/o/r/pull/99")
+    assert pr == "https://github.com/o/r/pull/99"
+    assert branch is None
+
+
+def test_classify_target_branch():
+    pr, branch = pr_context.classify_target("ibarsi/ENG-2239/migration-stream-jsonl")
+    assert pr is None
+    assert branch == "ibarsi/ENG-2239/migration-stream-jsonl"
+
+
+def test_classify_target_simple_branch():
+    pr, branch = pr_context.classify_target("feat-auth")
+    assert pr is None
+    assert branch == "feat-auth"

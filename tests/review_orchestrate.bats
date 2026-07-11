@@ -4,6 +4,7 @@
 
 setup_file() {
   load 'test_helper'
+  # warm .pyc cache; errors caught at import
   python3 -c "
 import py_compile, os
 for d in ['$REPO_ROOT/ai/claude/lib', '$REPO_ROOT/ai/claude/bin']:

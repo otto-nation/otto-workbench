@@ -2,15 +2,26 @@
 # Tests for review-orchestrate Python script — tier classification, file grouping,
 # review merging, template rendering, and CLI interface.
 
+setup_file() {
+  load 'test_helper'
+  python3 -c "
+import py_compile, os
+for d in ['$REPO_ROOT/ai/claude/lib', '$REPO_ROOT/ai/claude/bin']:
+    for f in os.listdir(d):
+        path = os.path.join(d, f)
+        if os.path.isfile(path) and (f.endswith('.py') or f == 'review-orchestrate'):
+            py_compile.compile(path, doraise=False)
+" 2>/dev/null || true
+  export ORCHESTRATE="$REPO_ROOT/ai/claude/bin/review-orchestrate"
+}
+
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
-  ORCHESTRATE="$REPO_ROOT/ai/claude/bin/review-orchestrate"
+  TMPDIR="$BATS_TEST_TMPDIR"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

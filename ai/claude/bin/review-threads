@@ -559,12 +559,10 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
     for raw_line in body.splitlines():
         stripped = raw_line.strip()
         if in_html_comment:
-            if "-->" in stripped:
-                in_html_comment = False
+            in_html_comment = "-->" not in stripped
             continue
         if stripped.startswith("<!--"):
-            if "-->" not in stripped:
-                in_html_comment = True
+            in_html_comment = "-->" not in stripped
             continue
         line = stripped.lstrip("#").strip()
         if not line:

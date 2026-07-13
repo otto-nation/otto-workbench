@@ -112,10 +112,13 @@ def test_update_to_remote_noop_without_branch():
     assert update_to_remote(ctx) is ctx
 
 
+@patch("pr_context.log")
 @patch("pr_context._current_branch_quiet", return_value="other-branch")
-def test_update_to_remote_skips_on_branch_mismatch(mock_branch):
+def test_update_to_remote_skips_on_branch_mismatch(mock_branch, mock_log):
     ctx = _make_ctx()
     assert update_to_remote(ctx) is ctx
+    mock_log.info.assert_called_once()
+    assert "other-branch" in mock_log.info.call_args.args[0]
 
 
 @patch("pr_context._current_branch_quiet", return_value="feat/x")

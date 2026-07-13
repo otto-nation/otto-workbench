@@ -124,6 +124,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
 
     current = _current_branch_quiet(cwd)
     if current != ctx.branch:
+        log.info(f"Worktree is on {current}, not {ctx.branch} — skipping update to remote")
         return ctx
 
     r = subprocess.run(

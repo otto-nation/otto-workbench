@@ -92,6 +92,7 @@ The `fix_pass` object contains:
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the summary issue comment, or null |
+| `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist |
 
 **Report auto-fixes:** "Fixed N threads (commit SHA). M threads need your input. K skipped."
 
@@ -117,7 +118,9 @@ These may require a reply or action — ask the user.
 ### Step 4: Handle remaining threads and resolve
 
 The script automatically posts per-thread replies (with summary and commit link)
-and a summary issue comment after fixing and pushing. No manual reply posting needed.
+after fixing and pushing. When `summary_deferred` is true, the summary issue
+comment is posted by `--resolve` after all discussion is complete — not during
+the fix pass. No manual reply posting needed.
 
 For manual replies to `needs_human` threads, use the `databaseId` from the thread's first comment:
 

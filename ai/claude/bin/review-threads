@@ -357,13 +357,16 @@ def _commit_regen_and_retry_push(
     if trail:
         trail.info("push", "committing regenerated files before retry",
                     data={"files": modified})
-    subprocess.run(
+    ar = subprocess.run(
         ["git", "-C", str(wt_path), "add", "-u"],
-        capture_output=True, check=True,
+        capture_output=True,
     )
+    if ar.returncode != 0:
+        log.error("Failed to stage regenerated files.")
+        return None
     rc = subprocess.run(
         ["git", "-C", str(wt_path), "commit", "-m",
-         "fix: regenerate after review comment fixes"],
+         "chore: regenerate after review comment fixes"],
         capture_output=True, text=True,
     )
     if rc.returncode != 0:

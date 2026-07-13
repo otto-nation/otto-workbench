@@ -123,7 +123,7 @@ jobs:
         run: task --list
 
       - name: Run bats tests
-        run: bats tests/ --recursive --timing --jobs 4 --no-parallelize-within-files
+        run: bats tests/ --recursive --timing --jobs 4
 
       - name: Check tests did not pollute repo config
         run: |

@@ -2,19 +2,11 @@
 # Tests for wt-cleanup — merge detection, age-based removal, dry-run mode,
 # quiet mode, and worktree protection (main/current).
 
-setup() {
+setup_file() {
   load 'test_helper'
-  common_setup
-  TMPDIR="$(mktemp -d)"
-  WT_CLEANUP="$REPO_ROOT/bin/wt-cleanup"
-
-  # Create mock bin directory with fake wt
-  MOCK_BIN="$TMPDIR/bin"
+  MOCK_BIN="$BATS_FILE_TMPDIR/bin"
   mkdir -p "$MOCK_BIN"
 
-  # Fake wt that reads JSON from a file and logs remove calls
-  WT_JSON="$TMPDIR/wt-list.json"
-  WT_REMOVE_LOG="$TMPDIR/wt-removes.log"
   cat > "$MOCK_BIN/wt" <<'FAKEWT'
 #!/usr/bin/env bash
 if [[ "$1" == "list" ]]; then
@@ -25,10 +17,6 @@ fi
 FAKEWT
   chmod +x "$MOCK_BIN/wt"
 
-  # Fake gh — branches in GH_PR_MERGED_FILE return "MERGED", in GH_PR_OPEN_FILE return "OPEN"
-  GH_PR_MERGED="$TMPDIR/gh-pr-merged.txt"
-  GH_PR_OPEN="$TMPDIR/gh-pr-open.txt"
-  GH_PR_CLOSED="$TMPDIR/gh-pr-closed.txt"
   cat > "$MOCK_BIN/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
@@ -51,6 +39,21 @@ fi
 exit 1
 FAKEGH
   chmod +x "$MOCK_BIN/gh"
+
+  export MOCK_BIN
+  export WT_CLEANUP="$REPO_ROOT/bin/wt-cleanup"
+}
+
+setup() {
+  load 'test_helper'
+  common_setup
+  TMPDIR="$(mktemp -d)"
+
+  WT_JSON="$TMPDIR/wt-list.json"
+  WT_REMOVE_LOG="$TMPDIR/wt-removes.log"
+  GH_PR_MERGED="$TMPDIR/gh-pr-merged.txt"
+  GH_PR_OPEN="$TMPDIR/gh-pr-open.txt"
+  GH_PR_CLOSED="$TMPDIR/gh-pr-closed.txt"
 }
 
 teardown() {

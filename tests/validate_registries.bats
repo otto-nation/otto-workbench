@@ -2,6 +2,7 @@
 
 setup_file() {
   load 'test_helper'
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   SHARED_DIR="$BATS_FILE_TMPDIR/validate"
   mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/brew/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
 

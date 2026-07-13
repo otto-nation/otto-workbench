@@ -360,6 +360,32 @@ class PRData:
                 by_user[user] = {"user": user, "state": state, "submitted_at": submitted}
         return list(by_user.values())
 
+    def review_body_comments(self, my_login: str) -> list[dict]:
+        """Non-self reviews with substantive body text, as [{id, user, body, state, submitted_at}]."""
+        my_lower = my_login.lower()
+        results = []
+        for r in self.reviews:
+            author = r.get("author") or {}
+            login = author.get("login", "")
+            if login.lower() == my_lower:
+                continue
+            state = r.get("state", "")
+            if state == "PENDING":
+                continue
+            if r.get("minimizedReason"):
+                continue
+            body = (r.get("body") or "").strip()
+            if not body:
+                continue
+            results.append({
+                "id": r.get("databaseId"),
+                "user": login,
+                "body": body,
+                "state": state,
+                "submitted_at": r.get("submittedAt", ""),
+            })
+        return results
+
     def non_self_issue_comments(self, my_login: str) -> list[dict]:
         """Issue-level comments excluding my_login and bots, as [{id, user, body, created_at}]."""
         my_lower = my_login.lower()

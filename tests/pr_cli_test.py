@@ -8,6 +8,8 @@ import types
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
@@ -850,5 +852,8 @@ def test_main_installs_sigint_handler(mock_resolve, mock_run):
         handler = signal.getsignal(signal.SIGINT)
         assert handler is not original
         assert handler is not signal.SIG_DFL
+        with pytest.raises(SystemExit) as exc_info:
+            handler(None, None)
+        assert exc_info.value.code == 130
     finally:
         signal.signal(signal.SIGINT, original)

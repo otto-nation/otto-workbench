@@ -502,7 +502,7 @@ Run 'pr <command> -h' for details on a specific command."""
 
 
 def main():
-    signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
+    signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
 
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so

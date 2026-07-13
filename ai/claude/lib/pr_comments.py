@@ -312,6 +312,47 @@ def fetch_issue_comments(
     return result
 
 
+def fetch_review_body_comments(
+    repo: str, pr_number: int, my_login: str,
+    pr_data: PRData | None = None,
+) -> list[dict]:
+    """Fetch review-level body comments (reviews with substantive body text).
+
+    These are top-level review bodies — distinct from inline code comments
+    (review threads) and issue-level discussion comments.
+    """
+    if pr_data is not None:
+        return pr_data.review_body_comments(my_login)
+
+    code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100")
+    if code != 0:
+        return []
+    try:
+        reviews = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    result = []
+    my_login_lower = my_login.lower()
+    for r in reviews:
+        user = r.get("user", {}).get("login", "")
+        if user.lower() == my_login_lower:
+            continue
+        state = r.get("state", "")
+        if state == "PENDING":
+            continue
+        body = (r.get("body") or "").strip()
+        if not body:
+            continue
+        result.append({
+            "id": r.get("id"),
+            "user": user,
+            "body": body,
+            "state": state,
+            "submitted_at": r.get("submitted_at", ""),
+        })
+    return result
+
+
 def resolve_thread(thread_id: str) -> bool:
     """Resolve a review thread on GitHub via GraphQL mutation."""
     query = json.dumps({
@@ -394,8 +435,10 @@ def render_dashboard(
     threads: dict,
     verdicts: list[dict],
     issue_comments: list[dict],
+    review_body_comments: list[dict] | None = None,
 ) -> str:
     """Render the status dashboard as a string."""
+    review_body_comments = review_body_comments or []
     lines = [f"## PR #{pr_number} Review Status", ""]
 
     lines.append("Reviewers:")
@@ -424,6 +467,8 @@ def render_dashboard(
     if counts[STATE_NEW]:
         lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
 
+    if review_body_comments:
+        lines.append(f"  📝 {len(review_body_comments)} review-level comments")
     if issue_comments:
         lines.append(f"  💬 {len(issue_comments)} discussion comments")
     lines.append("")

@@ -9,7 +9,7 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_comments import load_state, save_state, empty_state, compute_thread_state, sync_threads, STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED
+from pr_comments import load_state, save_state, empty_state, compute_thread_state, sync_threads, render_dashboard, STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED
 
 
 def test_empty_state_has_required_fields():
@@ -267,3 +267,28 @@ def test_sync_resolved_on_github_overrides():
     }
     result = sync_threads(threads, prior_threads, "isaacg")
     assert result["T_abc"]["state"] == STATE_RESOLVED
+
+
+def test_dashboard_shows_review_body_comments():
+    threads = {"T_1": {"state": STATE_NEW}}
+    verdicts = [{"user": "alice", "state": "COMMENTED", "submitted_at": "2026-01-01T00:00:00Z"}]
+    review_body = [
+        {"id": 1, "user": "alice", "body": "Overlaps with #2284", "state": "COMMENTED"},
+        {"id": 2, "user": "bot", "body": "Acronym bug", "state": "COMMENTED"},
+    ]
+    dashboard = render_dashboard(42, threads, verdicts, [], review_body_comments=review_body)
+    assert "2 review-level comments" in dashboard
+
+
+def test_dashboard_omits_review_body_when_empty():
+    threads = {"T_1": {"state": STATE_NEW}}
+    verdicts = []
+    dashboard = render_dashboard(42, threads, verdicts, [], review_body_comments=[])
+    assert "review-level" not in dashboard
+
+
+def test_dashboard_backward_compatible_without_review_body():
+    threads = {"T_1": {"state": STATE_NEW}}
+    verdicts = []
+    dashboard = render_dashboard(42, threads, verdicts, [])
+    assert "review-level" not in dashboard

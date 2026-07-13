@@ -772,6 +772,9 @@ def _run_threads(trail, args, ctx) -> None:
     threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
     verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
     issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
+    review_body_comments = pc.fetch_review_body_comments(
+        repo, pr_number, my_login, pr_data,
+    )
     trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
                data={"count": len(threads_raw)})
 
@@ -794,7 +797,10 @@ def _run_threads(trail, args, ctx) -> None:
     pc.save_state(state_path, state)
 
     # Dashboard to stderr
-    dashboard = pc.render_dashboard(pr_number, threads, verdicts, issue_comments)
+    dashboard = pc.render_dashboard(
+        pr_number, threads, verdicts, issue_comments,
+        review_body_comments=review_body_comments,
+    )
     print(dashboard, file=sys.stderr)
 
     # JSON report to stdout
@@ -804,6 +810,7 @@ def _run_threads(trail, args, ctx) -> None:
         "my_login": my_login,
         "threads": [],
         "issue_comments": issue_comments,
+        "review_body_comments": review_body_comments,
         "verdicts": verdicts,
     }
     for thread_data in threads_raw:
@@ -844,12 +851,17 @@ def _run_threads(trail, args, ctx) -> None:
         current_ids = [c["id"] for c in issue_comments]
         for c in issue_comments:
             c["seen"] = c["id"] in prior_seen_ids
+        prior_seen_review_ids = set(st.comments.seen_review_body_comment_ids)
+        current_review_ids = [c["id"] for c in review_body_comments]
+        for c in review_body_comments:
+            c["seen"] = c["id"] in prior_seen_review_ids
         pr_state.update_comments(st, pr_state.CommentsSummary(
             total_threads=len(report["threads"]),
             by_state=thread_states,
             blocking_reviewers=blocking,
             has_approvals=has_approvals,
             seen_issue_comment_ids=current_ids,
+            seen_review_body_comment_ids=current_review_ids,
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(toplevel, st)
@@ -889,10 +901,12 @@ def _run_threads(trail, args, ctx) -> None:
                              "commit_sha": fix_pass.get("commit_sha"),
                              "commit_status": fix_pass.get("commit_status")})
             output = {**triage_result, "fix_pass": fix_pass,
-                      "issue_comments": report.get("issue_comments", [])}
+                      "issue_comments": report.get("issue_comments", []),
+                      "review_body_comments": report.get("review_body_comments", [])}
         else:
             output = {**triage_result,
-                      "issue_comments": report.get("issue_comments", [])}
+                      "issue_comments": report.get("issue_comments", []),
+                      "review_body_comments": report.get("review_body_comments", [])}
 
         json.dump(output, sys.stdout, indent=2)
         print()

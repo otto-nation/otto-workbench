@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.35.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.35.0...otto-ai-tools-v1.35.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **comments:** defer fix summary comment until discussion is complete ([#470](https://github.com/otto-nation/otto-workbench/issues/470)) ([64330e6](https://github.com/otto-nation/otto-workbench/commit/64330e674e06ab573d2248c955e7c68688212417))
+* **comments:** surface review-level body comments in pr-comments ([#472](https://github.com/otto-nation/otto-workbench/issues/472)) ([41b471b](https://github.com/otto-nation/otto-workbench/commit/41b471bc20c500ff51cf400f9149b4ee041b6164))
+* **rebase:** include base-side context for AI conflict resolution ([#471](https://github.com/otto-nation/otto-workbench/issues/471)) ([121cfd7](https://github.com/otto-nation/otto-workbench/commit/121cfd72d2d3d561b96ab264a76ebafcecd1ab1d))
+* **review-threads:** commit regenerated files and surface non-inline comments ([#473](https://github.com/otto-nation/otto-workbench/issues/473)) ([0260dd7](https://github.com/otto-nation/otto-workbench/commit/0260dd75ade1ad3432b0afe3aebe59af500cc040))
+* **review:** classify positional targets as PR or branch before resolving context ([#466](https://github.com/otto-nation/otto-workbench/issues/466)) ([060e2a3](https://github.com/otto-nation/otto-workbench/commit/060e2a3e2134548f14b5d50add7fb9765aedd842))
+
 ## [1.35.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.34.0...otto-ai-tools-v1.35.0) (2026-07-10)
 
 

@@ -574,6 +574,19 @@ def _post_fix_summary(
     return url
 
 
+def _post_pending_comments(
+    state: pr_state.PRState, repo: str, pr_number: int,
+) -> None:
+    """Post any pending comments saved from a prior fix pass."""
+    pending = pr_state.pop_pending_comments(state, source="fix_summary")
+    for comment in pending:
+        url = pc.post_issue_comment(repo, pr_number, comment.body)
+        if url:
+            log.info(f"Posted deferred fix summary: {url}")
+        else:
+            log.error("failed to post deferred fix summary")
+
+
 def _post_or_defer_summary(
     fixed: list[dict],
     needs_human: list[dict],
@@ -903,13 +916,7 @@ def _run_threads(trail, args, ctx) -> None:
             updated_at=pr_state.now_iso(),
         ))
         if args.resolve:
-            pending = pr_state.pop_pending_comments(st, source="fix_summary")
-            for comment in pending:
-                url = pc.post_issue_comment(repo, pr_number, comment.body)
-                if url:
-                    log.info(f"Posted deferred fix summary: {url}")
-                else:
-                    log.error("failed to post deferred fix summary")
+            _post_pending_comments(st, repo, pr_number)
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")

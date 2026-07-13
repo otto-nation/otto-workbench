@@ -165,6 +165,33 @@ _RESOLVE_END = "<<<END_RESOLVED>>>"
 _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 
 
+def _get_ours_content(filepath: str, cwd: str) -> str | None:
+    """Get the target-side (HEAD) version of a file from git index stage 2.
+
+    During a rebase conflict, stage 2 holds the 'ours' side — the target branch
+    state before the conflicting commit is applied. Returns None if unavailable
+    (e.g. file is new on the branch).
+    """
+    r = subprocess.run(
+        ["git", "show", f":2:{filepath}"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    return r.stdout if r.returncode == 0 else None
+
+
+def _get_commit_diff(filepath: str, cwd: str) -> str | None:
+    """Get the diff of REBASE_HEAD for a specific file.
+
+    Shows what the commit being replayed intended to change, helping the AI
+    understand the branch's intent separately from the conflict markers.
+    """
+    r = subprocess.run(
+        ["git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", filepath],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
 def _is_binary(path: Path) -> bool:
     """Check if a file is binary by looking for null bytes in the first 8KB."""
     try:
@@ -174,33 +201,62 @@ def _is_binary(path: Path) -> bool:
         return False
 
 
-def _build_resolve_prompt(filepath: str, content: str, sha: str, subject: str) -> str:
+def _build_resolve_prompt(
+    filepath: str, content: str, sha: str, subject: str,
+    *, ours_content: str | None = None, commit_diff: str | None = None,
+) -> str:
     """Build a prompt to resolve a merge conflict."""
-    return (
-        f"You are resolving a merge conflict during a git rebase onto {_TARGET_REF}.\n"
-        "\n"
-        f"File: {filepath}\n"
-        f"Commit being applied: {sha} — {subject}\n"
-        "\n"
-        "In a rebase, conflict markers mean:\n"
-        f"- <<<<<<< HEAD = the base side ({_TARGET_REF} or previously rebased commits)\n"
-        "- ======= separates the two sides\n"
-        f"- >>>>>>> {sha} = the branch's changes being replayed\n"
-        "\n"
-        "Merge both sides, preserving the intent of both. If both sides add "
-        "non-overlapping content, keep both. If they modify the same lines, "
-        "combine them sensibly.\n"
-        "\n"
-        f"Output the resolved file between {_RESOLVE_BEGIN} and {_RESOLVE_END} markers.\n"
+    parts = [
+        f"You are resolving a merge conflict during a git rebase onto {_TARGET_REF}.\n",
+        f"\nFile: {filepath}\n",
+        f"Commit being applied: {sha} — {subject}\n",
+        "\nIn a rebase, conflict markers mean:\n",
+        f"- <<<<<<< HEAD = the base side ({_TARGET_REF} or previously rebased commits)\n",
+        "- ======= separates the two sides\n",
+        f"- >>>>>>> {sha} = the branch's changes being replayed\n",
+    ]
+
+    if ours_content is not None:
+        parts.append(
+            "\n--- BASE VERSION (target side before this commit) ---\n"
+            f"{ours_content}"
+            "--- END BASE VERSION ---\n"
+        )
+
+    if commit_diff is not None:
+        parts.append(
+            "\n--- COMMIT DIFF (what this commit intended to change) ---\n"
+            f"{commit_diff}\n"
+            "--- END COMMIT DIFF ---\n"
+        )
+
+    merge_instructions = (
+        "\nMerge both sides, preserving the intent of the commit being applied "
+        "onto the current base-side structure."
+    )
+    if ours_content is not None:
+        merge_instructions += (
+            " The base version above shows the current state of identifiers, "
+            "types, and structure — if anything was renamed or restructured on "
+            "the base side, use the base-side names."
+        )
+    merge_instructions += (
+        " If both sides add non-overlapping content, keep both. "
+        "If they modify the same lines, combine them sensibly.\n"
+    )
+    parts.append(merge_instructions)
+
+    parts.append(
+        f"\nOutput the resolved file between {_RESOLVE_BEGIN} and {_RESOLVE_END} markers.\n"
         "No explanation, no markdown fencing, no commentary outside the markers.\n"
-        "\n"
-        f"{_RESOLVE_BEGIN}\n"
+        f"\n{_RESOLVE_BEGIN}\n"
         "(your resolved content here)\n"
         f"{_RESOLVE_END}\n"
-        "\n"
-        "--- FILE CONTENT WITH CONFLICT MARKERS ---\n"
+        "\n--- FILE CONTENT WITH CONFLICT MARKERS ---\n"
         f"{content}"
     )
+
+    return "".join(parts)
 
 
 def _has_conflict_markers(text: str) -> str | None:
@@ -271,7 +327,12 @@ def _resolve_single_file(
         log.error(f"Cannot read {filepath}: {e}")
         return None
 
-    prompt = _build_resolve_prompt(filepath, content, sha, subject)
+    ours_content = _get_ours_content(filepath, cwd)
+    commit_diff = _get_commit_diff(filepath, cwd)
+    prompt = _build_resolve_prompt(
+        filepath, content, sha, subject,
+        ours_content=ours_content, commit_diff=commit_diff,
+    )
     stdout, rc = ai_backend.prompt(prompt)
     if rc != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})

@@ -61,6 +61,7 @@ def test_comments_summary_defaults():
     assert c.blocking_reviewers == []
     assert c.has_approvals is False
     assert c.seen_issue_comment_ids == []
+    assert c.seen_review_body_comment_ids == []
 
 
 def test_comments_summary_with_seen_ids():
@@ -174,6 +175,18 @@ def test_state_roundtrip_with_seen_issue_comment_ids():
     d = state_to_dict(state)
     restored = state_from_dict(d)
     assert restored.comments.seen_issue_comment_ids == [111, 222, 333]
+
+
+def test_state_roundtrip_with_seen_review_body_comment_ids():
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    update_comments(state, CommentsSummary(
+        total_threads=3, by_state={"new": 1, "addressed": 2},
+        seen_review_body_comment_ids=[444, 555, 666],
+        updated_at="2026-07-13T00:00:00+00:00",
+    ))
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+    assert restored.comments.seen_review_body_comment_ids == [444, 555, 666]
 
 
 def test_state_roundtrip_with_triage_data():
@@ -528,6 +541,22 @@ def test_load_state_without_seen_ids_defaults_empty():
         loaded = load_state(root)
         assert loaded is not None
         assert loaded.comments.seen_issue_comment_ids == []
+
+
+def test_load_state_without_seen_review_body_comment_ids_defaults_empty():
+    """Old state files without seen_review_body_comment_ids should deserialize with []."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        save_state(root, state)
+        path = root / ".workbench" / "state.json"
+        import json
+        data = json.loads(path.read_text())
+        del data["comments"]["seen_review_body_comment_ids"]
+        path.write_text(json.dumps(data))
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.comments.seen_review_body_comment_ids == []
 
 
 # ── load_or_init ───────────────────────────────────────────────────────────

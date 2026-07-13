@@ -81,6 +81,7 @@ Parse the JSON output. Top-level fields:
 |-------|----------|
 | `fix_pass` | Object with fix results (see below) |
 | `issue_comments` | Issue-level discussion comments from reviewers (not inline threads) |
+| `review_body_comments` | Review-level body comments — substantive feedback in the review body text, distinct from inline code comments |
 
 The `fix_pass` object contains:
 
@@ -96,7 +97,7 @@ The `fix_pass` object contains:
 
 **Report auto-fixes:** "Fixed N threads (commit SHA). M threads need your input. K skipped."
 
-**If `needs_human` is empty and no unseen `issue_comments`:** done — no further action needed.
+**If `needs_human` is empty and no unseen `issue_comments` or `review_body_comments`:** done — no further action needed.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
@@ -114,6 +115,14 @@ and has already been shown to the user. Only present comments where
 `"seen": false`; skip the rest. If all issue comments are seen, treat them
 as handled. For unseen comments, present each with the author and a summary.
 These may require a reply or action — ask the user.
+
+**Review body comments** (`review_body_comments` array in the JSON output):
+these are substantive text in the review body — not inline code comments, and
+not issue-level discussion. A reviewer can submit a review with body text but
+no inline comments (e.g., a general question or high-level feedback). These
+follow the same `"seen"` boolean pattern as issue comments. Present unseen
+ones with the author, review state, and a summary. These may require a reply
+or action — ask the user.
 
 ### Step 4: Handle remaining threads and resolve
 

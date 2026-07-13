@@ -97,6 +97,7 @@ class CommentsSummary:
     blocking_reviewers: list[str] = field(default_factory=list)
     has_approvals: bool = False
     seen_issue_comment_ids: list[int] = field(default_factory=list)
+    seen_review_body_comment_ids: list[int] = field(default_factory=list)
     updated_at: str = ""
 
 

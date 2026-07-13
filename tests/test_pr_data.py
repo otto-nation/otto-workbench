@@ -315,6 +315,73 @@ class TestNonSelfIssueComments:
         assert result[0]["user"] == ""
 
 
+# ── review_body_comments ────────────────────────────────────────────────────
+
+class TestReviewBodyComments:
+    def test_empty(self):
+        assert _make_pr_data().review_body_comments("me") == []
+
+    def test_returns_non_self_reviews_with_body(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="reviewer", state="COMMENTED",
+                         body="This PR overlaps with #2284"),
+            _make_review(database_id=2, login="me", state="COMMENTED",
+                         body="My own review"),
+        ])
+        result = pd.review_body_comments("me")
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+        assert result[0]["user"] == "reviewer"
+        assert result[0]["body"] == "This PR overlaps with #2284"
+        assert result[0]["state"] == "COMMENTED"
+
+    def test_excludes_empty_body(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="reviewer", state="APPROVED", body=""),
+            _make_review(database_id=2, login="reviewer", state="APPROVED", body="   "),
+        ])
+        assert pd.review_body_comments("me") == []
+
+    def test_excludes_pending(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="reviewer", state="PENDING",
+                         body="draft review"),
+        ])
+        assert pd.review_body_comments("me") == []
+
+    def test_excludes_minimized(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="reviewer", state="COMMENTED",
+                         body="outdated", minimized_reason="outdated"),
+        ])
+        assert pd.review_body_comments("me") == []
+
+    def test_case_insensitive_self_filter(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="MyUser", state="COMMENTED",
+                         body="review text"),
+        ])
+        assert pd.review_body_comments("myuser") == []
+
+    def test_null_author(self):
+        pd = _make_pr_data(reviews=[
+            {"databaseId": 1, "state": "COMMENTED", "body": "ghost review",
+             "author": None, "submittedAt": "2026-01-01T00:00:00Z"},
+        ])
+        result = pd.review_body_comments("me")
+        assert len(result) == 1
+        assert result[0]["user"] == ""
+
+    def test_includes_all_non_pending_states(self):
+        pd = _make_pr_data(reviews=[
+            _make_review(database_id=1, login="r", state="COMMENTED", body="a"),
+            _make_review(database_id=2, login="r", state="APPROVED", body="b"),
+            _make_review(database_id=3, login="r", state="CHANGES_REQUESTED", body="c"),
+        ])
+        result = pd.review_body_comments("me")
+        assert len(result) == 3
+
+
 # ── fetch_pr_data ────────────────────────────────────────────────────────────
 
 class TestFetchPrData:

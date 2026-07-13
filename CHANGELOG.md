@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.2](https://github.com/otto-nation/otto-workbench/compare/v1.41.1...v1.41.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* **review-threads:** commit regenerated files and surface non-inline comments ([#473](https://github.com/otto-nation/otto-workbench/issues/473)) ([0260dd7](https://github.com/otto-nation/otto-workbench/commit/0260dd75ade1ad3432b0afe3aebe59af500cc040))
+
 ## [1.41.1](https://github.com/otto-nation/otto-workbench/compare/v1.41.0...v1.41.1) (2026-07-13)
 
 

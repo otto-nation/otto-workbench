@@ -369,7 +369,8 @@ def update_rebase(state: PRState, summary: RebaseSummary) -> None:
 
 
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:
-    """Append a deferred comment to the pending queue."""
+    """Add a deferred comment, replacing any existing entry with the same source."""
+    state.pending_comments = [c for c in state.pending_comments if c.source != comment.source]
     state.pending_comments.append(comment)
 
 

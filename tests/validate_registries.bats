@@ -1,37 +1,52 @@
 #!/usr/bin/env bats
 
+setup_file() {
+  load 'test_helper'
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+  SHARED_DIR="$BATS_FILE_TMPDIR/validate"
+  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/brew/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
+
+  cp "$REPO_ROOT/lib/ui.sh" "$SHARED_DIR/lib/ui.sh"
+  cp "$REPO_ROOT/lib/output.sh" "$SHARED_DIR/lib/output.sh"
+  cp "$REPO_ROOT/lib/prompts.sh" "$SHARED_DIR/lib/prompts.sh"
+  cp "$REPO_ROOT/lib/files.sh" "$SHARED_DIR/lib/files.sh"
+  cp "$REPO_ROOT/lib/setup.sh" "$SHARED_DIR/lib/setup.sh"
+  cp "$REPO_ROOT/lib/constants.sh" "$SHARED_DIR/lib/constants.sh"
+  cp "$REPO_ROOT/lib/registries.sh" "$SHARED_DIR/lib/registries.sh"
+  cp "$REPO_ROOT/lib/state.sh" "$SHARED_DIR/lib/state.sh"
+  cp "$REPO_ROOT/lib/commands.sh" "$SHARED_DIR/lib/commands.sh"
+
+  touch "$SHARED_DIR/bin/mytool" && chmod +x "$SHARED_DIR/bin/mytool"
+  touch "$SHARED_DIR/bin/othertool" && chmod +x "$SHARED_DIR/bin/othertool"
+
+  VALIDATOR="$SHARED_DIR/validate-registries"
+  sed "s|REPO_ROOT=.*|REPO_ROOT=\"$SHARED_DIR\"|" \
+    "$REPO_ROOT/bin/local/validate-registries" > "$VALIDATOR"
+  chmod +x "$VALIDATOR"
+
+  export SHARED_DIR VALIDATOR
+}
+
 setup() {
   load 'test_helper'
   common_setup
   ORIG_DIR="$PWD"
-  TMPDIR="$(mktemp -d)"
+  TMPDIR="$SHARED_DIR"
 
-  # Mirror minimum required repo structure in TMPDIR
-  mkdir -p "$TMPDIR/bin" "$TMPDIR/brew/work" "$TMPDIR/zsh/config.d" "$TMPDIR/lib"
-  cp "$REPO_ROOT/lib/ui.sh" "$TMPDIR/lib/ui.sh"
-  cp "$REPO_ROOT/lib/output.sh" "$TMPDIR/lib/output.sh"
-  cp "$REPO_ROOT/lib/prompts.sh" "$TMPDIR/lib/prompts.sh"
-  cp "$REPO_ROOT/lib/files.sh" "$TMPDIR/lib/files.sh"
-  cp "$REPO_ROOT/lib/setup.sh" "$TMPDIR/lib/setup.sh"
-  cp "$REPO_ROOT/lib/constants.sh" "$TMPDIR/lib/constants.sh"
-  cp "$REPO_ROOT/lib/registries.sh" "$TMPDIR/lib/registries.sh"
-  cp "$REPO_ROOT/lib/state.sh" "$TMPDIR/lib/state.sh"
-  cp "$REPO_ROOT/lib/commands.sh" "$TMPDIR/lib/commands.sh"
-
-  # Stub bin scripts referenced in tests
-  touch "$TMPDIR/bin/mytool" && chmod +x "$TMPDIR/bin/mytool"
-  touch "$TMPDIR/bin/othertool" && chmod +x "$TMPDIR/bin/othertool"
-
-  # Install validator pointing at TMPDIR via a wrapper that overrides REPO_ROOT
-  VALIDATOR="$TMPDIR/validate-registries"
-  sed "s|REPO_ROOT=.*|REPO_ROOT=\"$TMPDIR\"|" \
-    "$REPO_ROOT/bin/local/validate-registries" > "$VALIDATOR"
-  chmod +x "$VALIDATOR"
+  # Clean mutable state from previous test
+  rm -f "$TMPDIR/brew/registry.yml" "$TMPDIR/brew/Brewfile"
+  rm -f "$TMPDIR/bin/registry.yml"
+  rm -f "$TMPDIR/zsh/registry.yml"
+  rm -f "$TMPDIR/zsh/config.d/"*
+  rm -f "$TMPDIR/brew/work/"*.registry.yml "$TMPDIR/brew/work/"*.Brewfile
+  for f in "$TMPDIR/bin/"*; do
+    [[ -e "$f" ]] || continue
+    case "${f##*/}" in mytool|othertool) ;; *) rm -f "$f" ;; esac
+  done
 }
 
 teardown() {
   cd "$ORIG_DIR"
-  rm -rf "$TMPDIR"
   common_teardown
 }
 

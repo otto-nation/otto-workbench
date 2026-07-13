@@ -165,6 +165,58 @@ def test_is_binary_missing_file():
     assert pr_rebase_cli._is_binary(Path("/nonexistent/file.bin")) is False
 
 
+# ── _get_ours_content ──────────────────────────────────────────────────────
+
+
+def test_get_ours_content_returns_stage2():
+    fake_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="base version content\n",
+    )
+    with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
+        result = pr_rebase_cli._get_ours_content("src/file.py", "/fake")
+    assert result == "base version content\n"
+    mock_run.assert_called_once_with(
+        ["git", "show", ":2:src/file.py"],
+        capture_output=True, text=True, cwd="/fake",
+    )
+
+
+def test_get_ours_content_returns_none_on_failure():
+    fake_result = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="not found")
+    with mock.patch("subprocess.run", return_value=fake_result):
+        result = pr_rebase_cli._get_ours_content("new_file.py", "/fake")
+    assert result is None
+
+
+# ── _get_commit_diff ──────────────────────────────────────────────────────
+
+
+def test_get_commit_diff_returns_diff():
+    diff_text = "diff --git a/file.py b/file.py\n--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n"
+    fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout=diff_text)
+    with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
+        result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
+    assert result == diff_text.strip()
+    mock_run.assert_called_once_with(
+        ["git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", "file.py"],
+        capture_output=True, text=True, cwd="/fake",
+    )
+
+
+def test_get_commit_diff_returns_none_on_failure():
+    fake_result = subprocess.CompletedProcess(args=[], returncode=128, stdout="")
+    with mock.patch("subprocess.run", return_value=fake_result):
+        result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
+    assert result is None
+
+
+def test_get_commit_diff_returns_none_on_empty_output():
+    fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="  \n")
+    with mock.patch("subprocess.run", return_value=fake_result):
+        result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
+    assert result is None
+
+
 # ── _build_resolve_prompt ──────────────────────────────────────────────────
 
 
@@ -179,6 +231,44 @@ def test_build_resolve_prompt_includes_context():
     assert "<<<RESOLVED>>>" in prompt
     assert "<<<END_RESOLVED>>>" in prompt
     assert "<<<<<<< HEAD" in prompt
+    assert "BASE VERSION" not in prompt
+    assert "COMMIT DIFF" not in prompt
+
+
+def test_build_resolve_prompt_includes_ours_content():
+    prompt = pr_rebase_cli._build_resolve_prompt(
+        "src/auth.py", "conflict content",
+        "abc123", "fix: auth refresh",
+        ours_content="base side content\n",
+    )
+    assert "--- BASE VERSION (target side before this commit) ---" in prompt
+    assert "base side content" in prompt
+    assert "--- END BASE VERSION ---" in prompt
+    assert "base-side names" in prompt
+
+
+def test_build_resolve_prompt_includes_commit_diff():
+    diff = "--- a/src/auth.py\n+++ b/src/auth.py\n@@ -1 +1 @@\n-old\n+new"
+    prompt = pr_rebase_cli._build_resolve_prompt(
+        "src/auth.py", "conflict content",
+        "abc123", "fix: auth refresh",
+        commit_diff=diff,
+    )
+    assert "--- COMMIT DIFF (what this commit intended to change) ---" in prompt
+    assert diff in prompt
+    assert "--- END COMMIT DIFF ---" in prompt
+
+
+def test_build_resolve_prompt_includes_both_contexts():
+    prompt = pr_rebase_cli._build_resolve_prompt(
+        "src/auth.py", "conflict content",
+        "abc123", "fix: auth refresh",
+        ours_content="base content\n",
+        commit_diff="diff content",
+    )
+    assert "BASE VERSION" in prompt
+    assert "COMMIT DIFF" in prompt
+    assert "base-side names" in prompt
 
 
 # ── _parse_resolved_content ───────────────────────────────────────────────
@@ -309,6 +399,16 @@ def test_resolve_file_conflicts_calls_claude():
                     args=cmd, returncode=0,
                     stdout=resolved_output, stderr="",
                 )
+            if cmd[:2] == ["git", "show"] and ":2:" in cmd[2]:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0,
+                    stdout="base version\n", stderr="",
+                )
+            if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0,
+                    stdout="diff output\n", stderr="",
+                )
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run):
@@ -322,6 +422,26 @@ def test_resolve_file_conflicts_calls_claude():
         git_add_calls = [(c, w) for c, w in calls if c == ["git", "add", "main.go"]]
         assert len(git_add_calls) == 1
         assert git_add_calls[0][1] == tmpdir
+        # Verify context-fetching git calls were made
+        ours_calls = [c for c, _ in calls if c[:2] == ["git", "show"] and ":2:" in str(c)]
+        assert len(ours_calls) == 1
+        diff_calls = [c for c, _ in calls if "REBASE_HEAD^" in str(c)]
+        assert len(diff_calls) == 1
+
+
+def _fake_run_with_context(extra_handler=None):
+    """Return a fake subprocess.run that handles context-fetching git calls."""
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
+        if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
+        if extra_handler:
+            result = extra_handler(cmd, **kwargs)
+            if result is not None:
+                return result
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    return fake_run
 
 
 def test_resolve_file_conflicts_claude_failure_returns_none():
@@ -329,14 +449,13 @@ def test_resolve_file_conflicts_claude_failure_returns_none():
         conflict_file = Path(tmpdir) / "main.go"
         conflict_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
 
-        def fake_run(cmd, **kwargs):
+        def handler(cmd, **kwargs):
             if cmd[:3] == ["claude", "-p", "--bare"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=1, stdout="", stderr="error",
                 )
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch("subprocess.run", side_effect=_fake_run_with_context(handler)):
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["main.go"], tmpdir, "abc123", "feat: refactor",
             )
@@ -352,14 +471,13 @@ def test_resolve_file_conflicts_claude_exit0_with_conflict_markers():
 
         bad_output = "<<<RESOLVED>>>\n<<<<<<< HEAD\nstill broken\n=======\nstill bad\n>>>>>>> abc\n<<<END_RESOLVED>>>\n"
 
-        def fake_run(cmd, **kwargs):
+        def handler(cmd, **kwargs):
             if cmd[:3] == ["claude", "-p", "--bare"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0, stdout=bad_output, stderr="",
                 )
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch("subprocess.run", side_effect=_fake_run_with_context(handler)):
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["main.go"], tmpdir, "abc123", "feat: refactor",
             )
@@ -375,16 +493,15 @@ def test_resolve_file_conflicts_git_add_failure_returns_none():
 
         resolved_output = "<<<RESOLVED>>>\nmerged\n<<<END_RESOLVED>>>\n"
 
-        def fake_run(cmd, **kwargs):
+        def handler(cmd, **kwargs):
             if cmd[:3] == ["claude", "-p", "--bare"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0, stdout=resolved_output, stderr="",
                 )
             if cmd == ["git", "add", "main.go"]:
                 return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch("subprocess.run", side_effect=_fake_run_with_context(handler)):
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["main.go"], tmpdir, "abc123", "feat: refactor",
             )
@@ -409,6 +526,10 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
                     args=cmd, returncode=0,
                     stdout=resolved_output, stderr="",
                 )
+            if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
+            if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run):

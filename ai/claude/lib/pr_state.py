@@ -122,6 +122,14 @@ class RebaseSummary:
 
 
 @dataclass
+class PendingComment:
+    """A PR comment deferred until a blocking condition clears."""
+    body: str = ""
+    source: str = ""
+    updated_at: str = ""
+
+
+@dataclass
 class PRState:
     """Unified PR state — envelope over domain summaries."""
     identity: PRIdentity
@@ -130,6 +138,7 @@ class PRState:
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
     rebase: RebaseSummary = field(default_factory=RebaseSummary)
+    pending_comments: list[PendingComment] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 
@@ -227,6 +236,8 @@ def state_to_dict(state: PRState) -> dict:
 
 
 def state_from_dict(d: dict) -> PRState:
+    pending_raw = d.get("pending_comments", [])
+    pending = [_serde_from_dict(PendingComment, p) for p in pending_raw]
     return PRState(
         identity=_identity_from_dict(d["identity"]),
         ci=_ci_from_dict(d.get("ci", {})),
@@ -234,6 +245,7 @@ def state_from_dict(d: dict) -> PRState:
         comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
         triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
         rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
+        pending_comments=pending,
         created_at=d.get("created_at", ""),
         updated_at=d.get("updated_at", ""),
     )
@@ -354,6 +366,26 @@ def update_triage(state: PRState, summary: TriageSummary) -> None:
 def update_rebase(state: PRState, summary: RebaseSummary) -> None:
     """Replace rebase summary."""
     state.rebase = summary
+
+
+def add_pending_comment(state: PRState, comment: PendingComment) -> None:
+    """Append a deferred comment to the pending queue."""
+    state.pending_comments.append(comment)
+
+
+def pop_pending_comments(
+    state: PRState, source: str | None = None,
+) -> list[PendingComment]:
+    """Remove and return pending comments, optionally filtered by source."""
+    if source is None:
+        comments = state.pending_comments
+        state.pending_comments = []
+        return comments
+    kept, popped = [], []
+    for c in state.pending_comments:
+        (popped if c.source == source else kept).append(c)
+    state.pending_comments = kept
+    return popped
 
 
 # ── Convenience ────────────────────────────────────────────────────────────

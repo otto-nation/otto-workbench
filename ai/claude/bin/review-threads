@@ -574,6 +574,51 @@ def _post_fix_summary(
     return url
 
 
+def _post_or_defer_summary(
+    fixed: list[dict],
+    needs_human: list[dict],
+    skipped: list[dict],
+    cp: CommitPushResult,
+    repo: str,
+    pr_number: int,
+    threads_by_id: dict,
+    wt_path: Path,
+    ctx: pr_context.ResolvedContext,
+    dismissed: list[dict] | None = None,
+) -> str | None:
+    """Post summary immediately or defer to state when discussion is pending.
+
+    Returns the comment URL if posted, None if deferred or nothing to post.
+    """
+    dismissed = dismissed or []
+    if not needs_human:
+        return _post_fix_summary(
+            fixed, needs_human, skipped, cp, repo, pr_number,
+            threads_by_id, dismissed=dismissed,
+        )
+
+    # Defer: build body without needs_human entries and save to state
+    if not fixed and not skipped and not dismissed:
+        return None
+    body = _build_summary_body(
+        fixed, [], skipped, cp, repo, pr_number, threads_by_id,
+        dismissed=dismissed,
+    )
+    try:
+        st = pr_state.load_or_init(
+            worktree_root=wt_path, repo=ctx.repo, branch=ctx.branch,
+            pr_number=ctx.pr_number, head_sha=ctx.head_sha,
+        )
+        pr_state.add_pending_comment(st, pr_state.PendingComment(
+            body=body, source="fix_summary", updated_at=pr_state.now_iso(),
+        ))
+        pr_state.save_state(wt_path, st)
+        log.info("Deferred fix summary — will post on resolve")
+    except Exception as exc:
+        log.error(f"failed to defer summary: {exc}")
+    return None
+
+
 def _get_head_sha(wt_path: Path) -> str:
     return subprocess.run(
         ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
@@ -685,11 +730,15 @@ def _run_comment_fix(
     }
 
     if not fixable:
-        summary_url = _post_fix_summary(
-            [], needs_human, [], no_commit, ctx.repo, report["pr_number"],
-            threads_by_id, dismissed=dismissed,
-        ) if dismissed or needs_human else None
+        if dismissed or needs_human:
+            summary_url = _post_or_defer_summary(
+                [], needs_human, [], no_commit, ctx.repo, report["pr_number"],
+                threads_by_id, wt_path, ctx, dismissed=dismissed,
+            )
+        else:
+            summary_url = None
         empty_result["summary_url"] = summary_url
+        empty_result["summary_deferred"] = summary_url is None and bool(needs_human)
         return empty_result
 
     tracking_dir = wt_path / "ignore" / "pr-comments"
@@ -733,9 +782,9 @@ def _run_comment_fix(
             fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
         )
 
-    summary_url = _post_fix_summary(
+    summary_url = _post_or_defer_summary(
         fixed, needs_human, skipped, cp, ctx.repo, report["pr_number"],
-        threads_by_id, dismissed=dismissed,
+        threads_by_id, wt_path, ctx, dismissed=dismissed,
     )
 
     return {
@@ -747,6 +796,7 @@ def _run_comment_fix(
         "commit_status": cp.status,
         "replies_posted": replies_posted,
         "summary_url": summary_url,
+        "summary_deferred": summary_url is None and bool(needs_human),
     }
 
 
@@ -852,6 +902,14 @@ def _run_threads(trail, args, ctx) -> None:
             seen_issue_comment_ids=current_ids,
             updated_at=pr_state.now_iso(),
         ))
+        if args.resolve:
+            pending = pr_state.pop_pending_comments(st, source="fix_summary")
+            for comment in pending:
+                url = pc.post_issue_comment(repo, pr_number, comment.body)
+                if url:
+                    log.info(f"Posted deferred fix summary: {url}")
+                else:
+                    log.error("failed to post deferred fix summary")
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")

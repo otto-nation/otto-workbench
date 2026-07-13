@@ -112,9 +112,16 @@ def test_update_to_remote_noop_without_branch():
     assert update_to_remote(ctx) is ctx
 
 
+@patch("pr_context._current_branch_quiet", return_value="other-branch")
+def test_update_to_remote_skips_on_branch_mismatch(mock_branch):
+    ctx = _make_ctx()
+    assert update_to_remote(ctx) is ctx
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context.subprocess.run")
-def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log):
+def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log, _mock_branch):
     mock_run.return_value = MagicMock(returncode=0, stdout="M dirty.py\n")
     ctx = _make_ctx()
     assert update_to_remote(ctx) is ctx
@@ -122,8 +129,9 @@ def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log):
     assert "uncommitted" in mock_log.warn.call_args.args[0]
 
 
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
 @patch("pr_context.subprocess.run")
-def test_update_to_remote_skips_on_fetch_failure(mock_run):
+def test_update_to_remote_skips_on_fetch_failure(mock_run, _mock_branch):
     mock_run.side_effect = [
         MagicMock(returncode=0, stdout=""),       # status --porcelain (clean)
         MagicMock(returncode=1),                   # fetch fails
@@ -132,9 +140,10 @@ def test_update_to_remote_skips_on_fetch_failure(mock_run):
     assert update_to_remote(ctx) is ctx
 
 
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
 @patch("pr_context._head_sha", return_value="aaa111")
 @patch("pr_context.subprocess.run")
-def test_update_to_remote_skips_when_already_current(mock_run, mock_sha):
+def test_update_to_remote_skips_when_already_current(mock_run, mock_sha, _mock_branch):
     mock_run.side_effect = [
         MagicMock(returncode=0, stdout=""),           # status --porcelain (clean)
         MagicMock(returncode=0),                       # fetch
@@ -144,10 +153,11 @@ def test_update_to_remote_skips_when_already_current(mock_run, mock_sha):
     assert update_to_remote(ctx) is ctx
 
 
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context._head_sha", return_value="local111")
 @patch("pr_context.subprocess.run")
-def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log):
+def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log, _mock_branch):
     mock_run.side_effect = [
         MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
         MagicMock(returncode=0),                        # fetch
@@ -160,10 +170,11 @@ def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log
     assert "unpushed" in mock_log.warn.call_args.args[0]
 
 
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
 @patch("pr_context.log")
 @patch("pr_context._head_sha", return_value="old111")
 @patch("pr_context.subprocess.run")
-def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log):
+def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log, _mock_branch):
     mock_run.side_effect = [
         MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
         MagicMock(returncode=0),                        # fetch

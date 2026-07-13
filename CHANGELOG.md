@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.41.1](https://github.com/otto-nation/otto-workbench/compare/v1.41.0...v1.41.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **comments:** surface review-level body comments in pr-comments ([#472](https://github.com/otto-nation/otto-workbench/issues/472)) ([41b471b](https://github.com/otto-nation/otto-workbench/commit/41b471bc20c500ff51cf400f9149b4ee041b6164))
+* **rebase:** include base-side context for AI conflict resolution ([#471](https://github.com/otto-nation/otto-workbench/issues/471)) ([121cfd7](https://github.com/otto-nation/otto-workbench/commit/121cfd72d2d3d561b96ab264a76ebafcecd1ab1d))
+* **review:** classify positional targets as PR or branch before resolving context ([#466](https://github.com/otto-nation/otto-workbench/issues/466)) ([060e2a3](https://github.com/otto-nation/otto-workbench/commit/060e2a3e2134548f14b5d50add7fb9765aedd842))
+
+
+### Performance Improvements
+
+* **tests:** use setup_file() to reduce test suite runtime by ~37s ([#469](https://github.com/otto-nation/otto-workbench/issues/469)) ([72be09d](https://github.com/otto-nation/otto-workbench/commit/72be09d9229350b09b7f4c2b3fc099d185ee03a9))
+
 ## [1.41.0](https://github.com/otto-nation/otto-workbench/compare/v1.40.0...v1.41.0) (2026-07-10)
 
 

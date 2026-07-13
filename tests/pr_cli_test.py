@@ -832,3 +832,23 @@ def test_render_review_section_disapprove_and_error():
     lines = pr_cli._render_review_section(rev)
     assert "[ERROR]" in lines[0]
     assert "[DISAPPROVED]" in lines[0]
+
+
+# ── SIGINT handling ──────────────────────────────────────────────────────────
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_installs_sigint_handler(mock_resolve, mock_run):
+    """main() installs a SIGINT handler so Ctrl+C exits cleanly without a traceback."""
+    import signal
+    mock_resolve.return_value = _make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    original = signal.getsignal(signal.SIGINT)
+    try:
+        _run_main("--repo-dir", "/path", "rebase")
+        handler = signal.getsignal(signal.SIGINT)
+        assert handler is not original
+        assert handler is not signal.SIG_DFL
+    finally:
+        signal.signal(signal.SIGINT, original)

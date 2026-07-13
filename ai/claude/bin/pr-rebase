@@ -217,9 +217,10 @@ def _build_resolve_prompt(
     ]
 
     if ours_content is not None:
+        normalized = ours_content if ours_content.endswith("\n") else ours_content + "\n"
         parts.append(
             "\n--- BASE VERSION (target side before this commit) ---\n"
-            f"{ours_content}"
+            f"{normalized}"
             "--- END BASE VERSION ---\n"
         )
 

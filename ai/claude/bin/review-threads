@@ -335,6 +335,55 @@ class CommitPushResult:
     error: str
 
 
+def _commit_regen_and_retry_push(
+    wt_path: Path, trail: Trail | None,
+) -> CommitPushResult | None:
+    """If pre-push hooks left regenerated files uncommitted, commit and retry.
+
+    Returns a successful CommitPushResult on retry success, None otherwise.
+    """
+    status = subprocess.run(
+        ["git", "-C", str(wt_path), "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True, text=True,
+    )
+    modified = [
+        line[3:] for line in status.stdout.splitlines()
+        if line.startswith(" M ")
+    ]
+    if not modified:
+        return None
+
+    log.info("Committing regenerated files...")
+    if trail:
+        trail.info("push", "committing regenerated files before retry",
+                    data={"files": modified})
+    ar = subprocess.run(
+        ["git", "-C", str(wt_path), "add", "-u"],
+        capture_output=True,
+    )
+    if ar.returncode != 0:
+        log.error("Failed to stage regenerated files.")
+        return None
+    rc = subprocess.run(
+        ["git", "-C", str(wt_path), "commit", "-m",
+         "chore: regenerate after review comment fixes"],
+        capture_output=True, text=True,
+    )
+    if rc.returncode != 0:
+        return None
+
+    sha = _get_head_sha(wt_path)
+    retry = subprocess.run(
+        ["git", "-C", str(wt_path), "push"],
+        capture_output=True, text=True,
+    )
+    if retry.returncode != 0:
+        return None
+
+    log.info("Pushed fixes (with regenerated files)")
+    return CommitPushResult(sha, "pushed", "")
+
+
 def _commit_and_push(
     wt_path: Path, fixed: int, skipped: int, trail: Trail | None = None,
 ) -> CommitPushResult:
@@ -377,6 +426,12 @@ def _commit_and_push(
     if push.returncode == 0:
         log.info("Pushed fixes")
         return CommitPushResult(sha, "pushed", "")
+
+    # Pre-push hooks may regenerate files (e.g. proto → .pb.go, OpenAPI specs),
+    # leaving uncommitted changes that cause the push to fail. Commit and retry.
+    retried = _commit_regen_and_retry_push(wt_path, trail)
+    if retried:
+        return retried
 
     err = push.stderr.strip()
     log.error(
@@ -498,6 +553,26 @@ def _build_row(
     return f"| {summary} | {file_loc} | {status} |"
 
 
+def _summarize_comment_body(body: str, max_len: int = 120) -> str:
+    """Extract first meaningful line from a comment body, truncated."""
+    in_html_comment = False
+    for raw_line in body.splitlines():
+        stripped = raw_line.strip()
+        if in_html_comment:
+            in_html_comment = "-->" not in stripped
+            continue
+        if stripped.startswith("<!--"):
+            in_html_comment = "-->" not in stripped
+            continue
+        line = stripped.lstrip("#").strip()
+        if not line:
+            continue
+        if len(line) > max_len:
+            return line[:max_len - 1] + "…"
+        return line
+    return "(empty)"
+
+
 def _build_summary_body(
     fixed: list[dict],
     needs_human: list[dict],
@@ -507,9 +582,13 @@ def _build_summary_body(
     pr_number: int,
     threads_by_id: dict,
     dismissed: list[dict] | None = None,
+    issue_comments: list[dict] | None = None,
+    review_body_comments: list[dict] | None = None,
 ) -> str:
     """Build the markdown body for the fix summary comment."""
     dismissed = dismissed or []
+    issue_comments = issue_comments or []
+    review_body_comments = review_body_comments or []
     fixed_count = len(fixed)
     skipped_count = len(skipped)
     human_count = len(needs_human)
@@ -546,6 +625,28 @@ def _build_summary_body(
         parts.extend(rows)
         parts.append("")
 
+    unseen_reviews = [c for c in review_body_comments if not c.get("seen")]
+    if unseen_reviews:
+        parts.append("### Review-Level Comments")
+        parts.append("")
+        for c in unseen_reviews:
+            user = c.get("user", "unknown")
+            state = c.get("state", "")
+            summary = _summarize_comment_body(c.get("body", ""))
+            state_badge = f" ({state})" if state else ""
+            parts.append(f"- **@{user}**{state_badge}: {summary}")
+        parts.append("")
+
+    unseen_issue = [c for c in issue_comments if not c.get("seen")]
+    if unseen_issue:
+        parts.append("### Discussion Comments")
+        parts.append("")
+        for c in unseen_issue:
+            user = c.get("user", "unknown")
+            summary = _summarize_comment_body(c.get("body", ""))
+            parts.append(f"- **@{user}**: {summary}")
+        parts.append("")
+
     return "\n".join(parts)
 
 
@@ -558,14 +659,24 @@ def _post_fix_summary(
     pr_number: int,
     threads_by_id: dict,
     dismissed: list[dict] | None = None,
+    issue_comments: list[dict] | None = None,
+    review_body_comments: list[dict] | None = None,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     dismissed = dismissed or []
-    if not fixed and not needs_human and not skipped and not dismissed:
+    issue_comments = issue_comments or []
+    review_body_comments = review_body_comments or []
+    has_unseen = (
+        any(not c.get("seen") for c in issue_comments)
+        or any(not c.get("seen") for c in review_body_comments)
+    )
+    if not fixed and not needs_human and not skipped and not dismissed and not has_unseen:
         return None
     body = _build_summary_body(
         fixed, needs_human, skipped, cp, repo, pr_number, threads_by_id,
         dismissed=dismissed,
+        issue_comments=issue_comments,
+        review_body_comments=review_body_comments,
     )
     url = pc.post_issue_comment(repo, pr_number, body)
     if url:
@@ -600,24 +711,36 @@ def _post_or_defer_summary(
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
     dismissed: list[dict] | None = None,
+    issue_comments: list[dict] | None = None,
+    review_body_comments: list[dict] | None = None,
 ) -> str | None:
     """Post summary immediately or defer to state when discussion is pending.
 
     Returns the comment URL if posted, None if deferred or nothing to post.
     """
     dismissed = dismissed or []
+    issue_comments = issue_comments or []
+    review_body_comments = review_body_comments or []
     if not needs_human:
         return _post_fix_summary(
             fixed, needs_human, skipped, cp, repo, pr_number,
             threads_by_id, dismissed=dismissed,
+            issue_comments=issue_comments,
+            review_body_comments=review_body_comments,
         )
 
     # Defer: build body without needs_human entries and save to state
-    if not fixed and not skipped and not dismissed:
+    has_unseen = (
+        any(not c.get("seen") for c in issue_comments)
+        or any(not c.get("seen") for c in review_body_comments)
+    )
+    if not fixed and not skipped and not dismissed and not has_unseen:
         return None
     body = _build_summary_body(
         fixed, [], skipped, cp, repo, pr_number, threads_by_id,
         dismissed=dismissed,
+        issue_comments=issue_comments,
+        review_body_comments=review_body_comments,
     )
     try:
         st = pr_state.load_or_init(
@@ -749,6 +872,8 @@ def _run_comment_fix(
             summary_url = _post_or_defer_summary(
                 [], needs_human, [], no_commit, ctx.repo, report["pr_number"],
                 threads_by_id, wt_path, ctx, dismissed=dismissed,
+                issue_comments=report.get("issue_comments"),
+                review_body_comments=report.get("review_body_comments"),
             )
         else:
             summary_url = None
@@ -800,6 +925,8 @@ def _run_comment_fix(
     summary_url = _post_or_defer_summary(
         fixed, needs_human, skipped, cp, ctx.repo, report["pr_number"],
         threads_by_id, wt_path, ctx, dismissed=dismissed,
+        issue_comments=report.get("issue_comments"),
+        review_body_comments=report.get("review_body_comments"),
     )
 
     return {

@@ -717,3 +717,84 @@ class TestBuildSummaryBody:
         )
         assert "#discussion_r999" in body
         assert "[fix regex]" in body
+
+    def test_unseen_issue_comments_render_discussion_section(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        issue_comments = [
+            {"user": "alice", "body": "Can we add tests?", "seen": False},
+        ]
+        body = rt._build_summary_body(
+            [], [], [], cp, "owner/repo", 1, {},
+            issue_comments=issue_comments,
+        )
+        assert "### Discussion Comments" in body
+        assert "@alice" in body
+        assert "Can we add tests?" in body
+
+    def test_seen_issue_comments_not_rendered(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        issue_comments = [
+            {"user": "alice", "body": "Old comment", "seen": True},
+        ]
+        body = rt._build_summary_body(
+            [], [], [], cp, "owner/repo", 1, {},
+            issue_comments=issue_comments,
+        )
+        assert "Discussion Comments" not in body
+
+    def test_unseen_review_body_comments_render_review_level_section(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        review_body_comments = [
+            {"user": "bob", "state": "CHANGES_REQUESTED", "body": "Needs refactor", "seen": False},
+        ]
+        body = rt._build_summary_body(
+            [], [], [], cp, "owner/repo", 1, {},
+            review_body_comments=review_body_comments,
+        )
+        assert "### Review-Level Comments" in body
+        assert "@bob" in body
+        assert "(CHANGES_REQUESTED)" in body
+        assert "Needs refactor" in body
+
+    def test_seen_review_body_comments_not_rendered(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        review_body_comments = [
+            {"user": "bob", "state": "APPROVED", "body": "Looks good", "seen": True},
+        ]
+        body = rt._build_summary_body(
+            [], [], [], cp, "owner/repo", 1, {},
+            review_body_comments=review_body_comments,
+        )
+        assert "Review-Level Comments" not in body
+
+
+# ── _summarize_comment_body ─────────────────────────────────────────────────
+
+
+class TestSummarizeCommentBody:
+    def test_plain_text(self, rt):
+        assert rt._summarize_comment_body("Hello world") == "Hello world"
+
+    def test_markdown_header_stripped(self, rt):
+        assert rt._summarize_comment_body("## Section Title") == "Section Title"
+
+    def test_single_line_html_comment_skipped(self, rt):
+        body = "<!-- metadata -->\nActual content"
+        assert rt._summarize_comment_body(body) == "Actual content"
+
+    def test_multiline_html_comment_skipped(self, rt):
+        body = "<!-- head_sha: abc\ndate: 2026-07-13\n-->\nActual content"
+        assert rt._summarize_comment_body(body) == "Actual content"
+
+    def test_empty_body(self, rt):
+        assert rt._summarize_comment_body("") == "(empty)"
+
+    def test_only_html_comments_returns_empty(self, rt):
+        body = "<!-- comment -->\n<!-- another -->"
+        assert rt._summarize_comment_body(body) == "(empty)"
+
+    def test_truncates_long_line(self, rt):
+        long = "x" * 200
+        result = rt._summarize_comment_body(long, max_len=120)
+        assert len(result) == 120
+        assert result.endswith("…")

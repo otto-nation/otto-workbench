@@ -555,9 +555,19 @@ def _build_row(
 
 def _summarize_comment_body(body: str, max_len: int = 120) -> str:
     """Extract first meaningful line from a comment body, truncated."""
-    for line in body.splitlines():
-        line = line.strip().lstrip("#").strip()
-        if not line or line.startswith("<!--"):
+    in_html_comment = False
+    for raw_line in body.splitlines():
+        stripped = raw_line.strip()
+        if in_html_comment:
+            if "-->" in stripped:
+                in_html_comment = False
+            continue
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_html_comment = True
+            continue
+        line = stripped.lstrip("#").strip()
+        if not line:
             continue
         if len(line) > max_len:
             return line[:max_len - 1] + "…"

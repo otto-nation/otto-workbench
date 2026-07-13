@@ -133,7 +133,7 @@ EFFORT_PRESETS = {
         "skip_angles": False,
         "skip_holistic": False,
         "skip_scout": False,
-        "skip_disprove": True,
+        "skip_disprove": False,
         "skip_omitted_files": False,
         "agent": "reviewer",
     },

@@ -913,7 +913,7 @@ def _run_comment_fix(
 
     cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
 
-    if cp.status == "no_changes":
+    if cp.status in ("no_changes", "commit_failed"):
         cp = _recover_agent_commit(wt_path, head_before, trail)
 
     replies_posted = dismissed_replies

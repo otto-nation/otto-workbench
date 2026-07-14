@@ -104,12 +104,9 @@ def _parse_review_summary(output: str) -> dict | None:
         return None
 
 
-def _update_review_state_from_output(output: str,
-                                     ctx: pr_context.ResolvedContext) -> None:
-    """Parse REVIEW_SUMMARY from output and update pr_state."""
-    summary_data = _parse_review_summary(output)
-    if not summary_data:
-        return
+def _update_review_state(summary_data: dict,
+                         ctx: pr_context.ResolvedContext) -> None:
+    """Update pr_state from a parsed review summary dict."""
     findings = summary_data.get("findings", {})
     finding_counts = {
         k: v for k, v in findings.items()
@@ -127,6 +124,15 @@ def _update_review_state_from_output(output: str,
         updated_at=pr_state.now_iso(),
     ))
     pr_state.save_state(ctx.worktree_root, state)
+
+
+def _update_review_state_from_output(output: str,
+                                     ctx: pr_context.ResolvedContext) -> None:
+    """Parse REVIEW_SUMMARY from output and update pr_state."""
+    summary_data = _parse_review_summary(output)
+    if not summary_data:
+        return
+    _update_review_state(summary_data, ctx)
 
 
 def _is_pr_target(target: str | None) -> bool:
@@ -298,9 +304,8 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     pr_num = str(ctx.pr_number)
     review = find_review_file(ctx.repo, pr_num)
     if review:
-        output = json_summary(ctx.repo, pr_num, str(review))
-        print(output)
-        _update_review_state_from_output(output, ctx)
+        data = json.loads(json_summary(ctx.repo, pr_num, str(review)).removeprefix("REVIEW_SUMMARY:"))
+        _update_review_state(data, ctx)
     return rc
 
 
@@ -334,9 +339,8 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 
     review = find_review_file(ctx.repo, pr_num)
     if review:
-        output = json_summary(ctx.repo, pr_num, str(review))
-        print(output)
-        _update_review_state_from_output(output, ctx)
+        data = json.loads(json_summary(ctx.repo, pr_num, str(review)).removeprefix("REVIEW_SUMMARY:"))
+        _update_review_state(data, ctx)
         return 0
 
     log.info("No review file found, trying rebuild...")

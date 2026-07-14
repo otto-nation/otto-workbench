@@ -346,14 +346,15 @@ def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
     data = _read_pipeline_data(review_dir)
     if data is None:
         return []
+    synthesis_done = data.get("synthesis_done", False)
     warnings = []
-    if not data.get("holistic_done", False):
+    if not data.get("holistic_done", False) and not synthesis_done:
         warnings.append("holistic phase")
     groups_failed = data.get("groups_failed", {})
     if groups_failed:
         n = len(groups_failed)
         warnings.append(f"{n} group{'s' if n != 1 else ''} failed")
-    if not data.get("angles_done", False):
+    if not data.get("angles_done", False) and not synthesis_done:
         warnings.append("angles phase")
     if data.get("synthesis_failed"):
         warnings.append("synthesis")

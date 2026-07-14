@@ -659,7 +659,7 @@ def test_cmd_comments_resolve_passes_flag(mock_run):
 # ── cmd_review --repair ────────────────────────────────────────────────────
 
 
-@patch("pr_cli._update_review_state_from_output")
+@patch("pr_cli._update_review_state")
 def test_cmd_review_repair_succeeds_with_review_file(mock_update, tmp_path):
     import review_common
     reviews_dir = tmp_path / "reviews"

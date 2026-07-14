@@ -1331,6 +1331,9 @@ def _run_holistic_phase(
     reason = _holistic_skip_reason(skip_holistic, incremental, group_count, effort=job.effort)
     if reason:
         log.info(f"Holistic/scout phase skipped ({reason})")
+        if not state.holistic_done:
+            state.holistic_done = True
+            _write_pipeline_state(job, state)
         return _empty
 
     use_scout = _use_scout(job, skip_scout)
@@ -1392,6 +1395,9 @@ def _run_groups_and_angles(
         if angles_log:
             cost += _parse_session_cost(angles_log)
     else:
+        if not state.angles_done:
+            state.angles_done = True
+            _write_pipeline_state(job, state)
         group_outputs, failed_groups = _phase_group_reviews(
             groups, job, group_count, holistic_content, max_parallel,
             skip_groups=skip_groups, pipeline_state=state,

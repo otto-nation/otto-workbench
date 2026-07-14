@@ -118,11 +118,21 @@ def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:
 
 def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | None:
     if provider in ("linear", "jira"):
-        return _search_jira_linear_id(branch, pr_body)
+        issue_id = _search_jira_linear_id(branch, pr_body)
+        if issue_id:
+            return issue_id
+        searched = [f"branch '{branch}'"]
+        if pr_body:
+            searched.append("PR body")
+        log.dim(f"No {provider} issue ID found in {' or '.join(searched)}")
+        return None
 
     if provider == "github" and pr_body:
         m = _GITHUB_CLOSE_PATTERN.search(pr_body)
-        return m.group(2) if m else None
+        if m:
+            return m.group(2)
+        log.dim("No closes/fixes/resolves keyword found in PR body")
+        return None
 
     return None
 
@@ -145,6 +155,8 @@ def _fetch_linear(issue_id: str) -> IssueContext:
     )
     if context:
         log.ok(f"Found Linear issue: {issue_id}")
+    else:
+        log.dim(f"Linear issue {issue_id} not found or linear CLI unavailable")
     return IssueContext(context=context)
 
 
@@ -156,6 +168,8 @@ def _fetch_github(issue_id: str, repo: str) -> IssueContext:
     )
     if context:
         log.ok(f"Found GitHub issue: #{issue_id}")
+    else:
+        log.dim(f"GitHub issue #{issue_id} not found in {repo}")
     return IssueContext(link=link, context=context)
 
 

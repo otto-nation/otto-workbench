@@ -26,8 +26,9 @@ def test_linear_provider_falls_back_to_pr_body():
     assert extract_issue_id("linear", "feat/no-issue-here", "Fixes ABC-456 in production") == "ABC-456"
 
 
-def test_linear_provider_returns_none_when_no_match():
+def test_linear_provider_returns_none_when_no_match(capsys):
     assert extract_issue_id("linear", "feat/no-issue", "no issue here either") is None
+    assert "No linear issue ID found in branch 'feat/no-issue' or PR body" in capsys.readouterr().err
 
 
 def test_jira_provider_same_pattern_as_linear():
@@ -46,8 +47,9 @@ def test_github_provider_extracts_from_resolves():
     assert extract_issue_id("github", "feat/something", "resolves #1") == "1"
 
 
-def test_github_provider_returns_none_without_closing_keyword():
+def test_github_provider_returns_none_without_closing_keyword(capsys):
     assert extract_issue_id("github", "feat/something", "see issue #42 for details") is None
+    assert "No closes/fixes/resolves keyword found in PR body" in capsys.readouterr().err
 
 
 def test_none_provider_always_returns_none():
@@ -214,6 +216,7 @@ def test_fetch_issue_context_linear_subprocess_failure(capsys):
 
     assert result.link == ""
     assert result.context == ""
+    assert "Linear issue ABC-123 not found or linear CLI unavailable" in capsys.readouterr().err
 
 
 def test_fetch_issue_context_github_subprocess_failure(capsys):
@@ -226,3 +229,4 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
 
     assert result.link == "https://github.com/owner/repo/issues/42"
     assert result.context == ""
+    assert "GitHub issue #42 not found in owner/repo" in capsys.readouterr().err

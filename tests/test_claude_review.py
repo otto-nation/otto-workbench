@@ -476,6 +476,16 @@ def test_read_pipeline_status_budget_exceeded(cr, tmp_path):
     assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
 
 
+def test_read_pipeline_status_groups_failed(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1", "g2"],
+        "synthesis_done": True, "synthesis_failed": "",
+        "groups_failed": {"1": "no result record in session log"},
+    }))
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
+
+
 def test_read_pipeline_status_corrupt_json(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text("not valid json")

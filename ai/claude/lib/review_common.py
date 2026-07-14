@@ -331,12 +331,12 @@ def _read_pipeline_data(review_dir: Path | None) -> dict | None:
 
 
 def read_pipeline_status(review_dir: Path | None) -> str:
-    """Derive review status from pipeline state: 'error' if synthesis failed, else 'completed'."""
+    """Derive review status from pipeline state: 'error' if any agent failed, else 'completed'."""
     from pr_state import ReviewStatus
     data = _read_pipeline_data(review_dir)
     if data is None:
         return ReviewStatus.COMPLETED.value
-    if data.get("synthesis_failed"):
+    if data.get("synthesis_failed") or data.get("groups_failed"):
         return ReviewStatus.ERROR.value
     return ReviewStatus.COMPLETED.value
 

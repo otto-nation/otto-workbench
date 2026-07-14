@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.36.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.35.1...otto-ai-tools-v1.36.0) (2026-07-14)
+
+
+### Features
+
+* **review:** show findings, verdict, and phase warnings in summary ([#481](https://github.com/otto-nation/otto-workbench/issues/481)) ([26c68f2](https://github.com/otto-nation/otto-workbench/commit/26c68f239723527ecf545782351bae32b80a69da))
+
+
+### Bug Fixes
+
+* **pr-context:** skip update_to_remote when worktree is on a different branch ([#475](https://github.com/otto-nation/otto-workbench/issues/475)) ([5db16f5](https://github.com/otto-nation/otto-workbench/commit/5db16f583b40569b2ce9ac02554af01a5f98a467))
+* **pr:** handle SIGINT to prevent traceback on Ctrl+C ([#478](https://github.com/otto-nation/otto-workbench/issues/478)) ([a87522b](https://github.com/otto-nation/otto-workbench/commit/a87522b6ce51c974c08046321f2352a4d5ede7fc))
+* **review:** enable disprove phase at medium effort ([#479](https://github.com/otto-nation/otto-workbench/issues/479)) ([4ad9dc8](https://github.com/otto-nation/otto-workbench/commit/4ad9dc892871820341f9e2a973c73d247ce5fc58))
+* **review:** log issue detection attempts before prompting ([#480](https://github.com/otto-nation/otto-workbench/issues/480)) ([8ee3401](https://github.com/otto-nation/otto-workbench/commit/8ee3401a1815d98d94c97c8f922f5f9423a6223e))
+* **review:** mark review as error when group agents fail ([#482](https://github.com/otto-nation/otto-workbench/issues/482)) ([c1cf672](https://github.com/otto-nation/otto-workbench/commit/c1cf672d9a0e5a3edb4827a9f19ce126383281b3))
+
 ## [1.35.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.35.0...otto-ai-tools-v1.35.1) (2026-07-13)
 
 

@@ -17,7 +17,7 @@ if LIB_DIR not in sys.path:
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
     count_severity, json_summary, parse_review_verdict,
-    read_pipeline_status, review_file_path,
+    read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
 
@@ -480,6 +480,148 @@ def test_read_pipeline_status_corrupt_json(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text("not valid json")
     assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
+
+
+# ── read_pipeline_warnings ────────────────────────────────────────────────────
+
+
+def test_read_pipeline_warnings_no_dir(cr):
+    assert read_pipeline_warnings(None) == []
+
+
+def test_read_pipeline_warnings_no_file(cr, tmp_path):
+    assert read_pipeline_warnings(tmp_path) == []
+
+
+def test_read_pipeline_warnings_all_complete(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "holistic_done": True, "groups_done": [1],
+        "groups_failed": {}, "angles_done": True,
+        "synthesis_done": True, "synthesis_failed": "",
+    }))
+    assert read_pipeline_warnings(tmp_path) == []
+
+
+def test_read_pipeline_warnings_holistic_incomplete(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "holistic_done": False, "angles_done": True,
+    }))
+    assert read_pipeline_warnings(tmp_path) == ["holistic phase"]
+
+
+def test_read_pipeline_warnings_angles_incomplete(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "holistic_done": True, "angles_done": False,
+    }))
+    assert read_pipeline_warnings(tmp_path) == ["angles phase"]
+
+
+def test_read_pipeline_warnings_groups_failed(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1", "g2"],
+        "holistic_done": True, "angles_done": True,
+        "groups_failed": {"1": "max turns", "2": "model error"},
+    }))
+    assert read_pipeline_warnings(tmp_path) == ["2 groups failed"]
+
+
+def test_read_pipeline_warnings_single_group_failed(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "holistic_done": True, "angles_done": True,
+        "groups_failed": {"1": "max turns"},
+    }))
+    assert read_pipeline_warnings(tmp_path) == ["1 group failed"]
+
+
+def test_read_pipeline_warnings_multiple(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "holistic_done": False, "angles_done": False,
+        "synthesis_failed": "all groups failed",
+    }))
+    warnings = read_pipeline_warnings(tmp_path)
+    assert "holistic phase" in warnings
+    assert "angles phase" in warnings
+    assert "synthesis" in warnings
+
+
+def test_read_pipeline_warnings_corrupt_json(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text("not valid json")
+    assert read_pipeline_warnings(tmp_path) == []
+
+
+# ── _format_findings_line / _format_verdict ───────────────────────────────────
+
+
+def test_format_findings_line_no_findings(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove\n")
+    assert cr._format_findings_line(str(review)) == ""
+
+
+def test_format_findings_line_nits_only(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text(
+        "## Nit\n"
+        "- **[N1]** `file.py:10` — style\n"
+        "- **[N2]** `file.py:20` — naming\n"
+        "\n## Verdict\nApprove\n"
+    )
+    assert cr._format_findings_line(str(review)) == "2 nit"
+
+
+def test_format_findings_line_mixed(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text(
+        "## Must fix\n"
+        "- **[M1]** `file.py:10` — bug\n"
+        "\n## Should fix\n"
+        "- **[S1]** `file.py:20` — cleanup\n"
+        "\n## Nit\n"
+        "- **[N1]** `file.py:30` — style\n"
+        "- **[N2]** `file.py:40` — style\n"
+        "\n## Verdict\nChanges requested\n"
+    )
+    assert cr._format_findings_line(str(review)) == "1 must fix, 1 should fix, 2 nit"
+
+
+def test_format_findings_line_nonexistent_file(cr):
+    assert cr._format_findings_line("/nonexistent/review.md") == ""
+
+
+def test_format_verdict_approve(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\nApprove\n")
+    assert cr._format_verdict(str(review)) == "Approve"
+
+
+def test_format_verdict_with_must_fix(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text(
+        "## Must fix\n- **[M1]** `file.py:10` — bug\n\n## Verdict\nApprove\n"
+    )
+    assert cr._format_verdict(str(review)) == "Changes requested"
+
+
+def test_format_verdict_explicit_disapprove(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Verdict\nDisapprove\n")
+    assert cr._format_verdict(str(review)) == "Disapprove"
+
+
+def test_format_verdict_nonexistent_file(cr):
+    assert cr._format_verdict("/nonexistent/review.md") == ""
 
 
 def test_json_summary_status_completed_no_pipeline(cr, tmp_path):

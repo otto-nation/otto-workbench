@@ -31,10 +31,11 @@ from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
+    SEVERITIES,
     ReviewMeta, SessionUsage, aggregate_session_usage, count_severity,
     detect_repo, json_summary, parse_review_verdict, parse_session_log,
-    read_pipeline_status, read_review_meta, review_file_path,
-    review_meta_from_dict,
+    read_pipeline_status, read_pipeline_warnings, read_review_meta,
+    review_file_path, review_meta_from_dict,
 )
 import review_gc
 import review_issue
@@ -208,6 +209,29 @@ def _format_usage(*log_paths: str) -> str:
     return f"  Usage:           {cost_fmt} · {tokens_part} · {duration_fmt}"
 
 
+def _format_findings_line(review_file: str) -> str:
+    review_path = Path(review_file) if review_file else None
+    if not review_path or not review_path.is_file():
+        return ""
+    parts = []
+    for sev in SEVERITIES:
+        c = count_severity(review_path, sev.key)
+        if c > 0:
+            parts.append(f"{c} {sev.section.lower()}")
+    return ", ".join(parts)
+
+
+def _format_verdict(review_file: str) -> str:
+    review_path = Path(review_file) if review_file else None
+    parsed = parse_review_verdict(review_path)
+    if parsed:
+        return parsed.capitalize()
+    if not review_path or not review_path.is_file():
+        return ""
+    must = count_severity(review_path, "M")
+    return "Changes requested" if must > 0 else "Approve"
+
+
 def _print_summary(
     review_file: str,
     session_log: str,
@@ -217,6 +241,20 @@ def _print_summary(
 ) -> None:
     log.blank()
     log.info("─── Summary ───")
+
+    findings = _format_findings_line(review_file)
+    if findings:
+        log.dim(f"Findings:        {findings}")
+
+    verdict = _format_verdict(review_file)
+    if verdict:
+        log.dim(f"Verdict:         {verdict}")
+
+    review_dir = Path(review_file).parent if review_file else None
+    warnings = read_pipeline_warnings(review_dir)
+    if warnings:
+        log.warn(f"Incomplete:    {', '.join(warnings)}")
+
     log.dim(f"Review:          {review_file}")
     log.dim(f"Session log:     {session_log}")
     if post_session_log and os.path.isfile(post_session_log):
@@ -662,7 +700,7 @@ def _run_review_body(
 
     if no_post:
         _print_summary(str(review_file), session_log, pr_url)
-        log.dim("To post later: pr review --post")
+        log.dim("Post to GitHub:  pr review --post")
         return
 
     if auto_post:
@@ -673,12 +711,13 @@ def _run_review_body(
 
     if not _confirm("Satisfied with the review?"):
         _print_summary(str(review_file), session_log, pr_url)
-        log.dim("Edit the file, then run: pr review --post")
+        log.dim("Edit the review:  $EDITOR " + str(review_file))
+        log.dim("Post to GitHub:   pr review --post")
         sys.exit(0)
 
     if not _confirm("Post review to GitHub?"):
         _print_summary(str(review_file), session_log, pr_url)
-        log.dim("To post later: pr review --post")
+        log.dim("Post to GitHub:  pr review --post")
         return
 
     _post_review(repo, pr_number, str(review_file), False)

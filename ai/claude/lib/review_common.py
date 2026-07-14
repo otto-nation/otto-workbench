@@ -318,21 +318,46 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     )
 
 
+def _read_pipeline_data(review_dir: Path | None) -> dict | None:
+    if not review_dir:
+        return None
+    pipeline_path = review_dir / FILENAME_PIPELINE_STATE
+    if not pipeline_path.is_file():
+        return None
+    try:
+        return json.loads(pipeline_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def read_pipeline_status(review_dir: Path | None) -> str:
     """Derive review status from pipeline state: 'error' if synthesis failed, else 'completed'."""
     from pr_state import ReviewStatus
-    if not review_dir:
+    data = _read_pipeline_data(review_dir)
+    if data is None:
         return ReviewStatus.COMPLETED.value
-    pipeline_path = review_dir / FILENAME_PIPELINE_STATE
-    if not pipeline_path.is_file():
-        return ReviewStatus.COMPLETED.value
-    try:
-        data = json.loads(pipeline_path.read_text())
-        if data.get("synthesis_failed"):
-            return ReviewStatus.ERROR.value
-    except (json.JSONDecodeError, OSError):
-        pass
+    if data.get("synthesis_failed"):
+        return ReviewStatus.ERROR.value
     return ReviewStatus.COMPLETED.value
+
+
+def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
+    """Return human-readable warnings for incomplete pipeline phases."""
+    data = _read_pipeline_data(review_dir)
+    if data is None:
+        return []
+    warnings = []
+    if not data.get("holistic_done", False):
+        warnings.append("holistic phase")
+    groups_failed = data.get("groups_failed", {})
+    if groups_failed:
+        n = len(groups_failed)
+        warnings.append(f"{n} group{'s' if n != 1 else ''} failed")
+    if not data.get("angles_done", False):
+        warnings.append("angles phase")
+    if data.get("synthesis_failed"):
+        warnings.append("synthesis")
+    return warnings
 
 
 def parse_review_verdict(review_path: Path | None) -> str:

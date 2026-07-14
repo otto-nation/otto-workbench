@@ -8,6 +8,7 @@ registry.  Flags pass through to the backing script untouched; run
 
 import argparse
 import json
+import signal
 import shutil
 import subprocess
 import sys
@@ -501,6 +502,8 @@ Run 'pr <command> -h' for details on a specific command."""
 
 
 def main():
+    signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
+
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so
     # `pr rebase --repo-dir /path` would lose --repo-dir without this.

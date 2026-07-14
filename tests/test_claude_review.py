@@ -565,6 +565,16 @@ def test_read_pipeline_warnings_multiple(cr, tmp_path):
     assert "synthesis" in warnings
 
 
+def test_read_pipeline_warnings_skipped_phases_no_warning_when_synthesis_done(cr, tmp_path):
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "holistic_done": False, "angles_done": False,
+        "synthesis_done": True, "synthesis_failed": "",
+    }))
+    assert read_pipeline_warnings(tmp_path) == []
+
+
 def test_read_pipeline_warnings_corrupt_json(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text("not valid json")

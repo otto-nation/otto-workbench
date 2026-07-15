@@ -91,6 +91,8 @@ For persisting/regressed failures, include context from prior attempts:
 
 ### 4. Apply fixes and push
 
+**Worktree check:** If invoked with `--branch` and CWD is not the branch's worktree, switch to the worktree first using `wt switch -c <branch>` before applying fixes.
+
 For each confirmed diagnosis:
 1. Edit the files to address the failure
 2. After all edits, stage and commit:

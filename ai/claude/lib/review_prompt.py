@@ -279,32 +279,40 @@ def _build_state_context_section(job: ReviewJob) -> str:
 
     state = job.pr_state_data
     if state is not None:
-        ci = state.ci
-        if ci.updated_at and ci.conclusion and ci.conclusion != "success":
-            ci_line = f"- **CI: {ci.conclusion}**"
-            if ci.failure_count:
-                kinds = ", ".join(f"{k}: {v}" for k, v in ci.failure_kinds.items())
-                ci_line += f" — {ci.failure_count} failure(s)"
-                if kinds:
-                    ci_line += f" ({kinds})"
-            parts.append(ci_line)
-            parts.extend(_build_ci_failure_items(ci, job.pr))
-
-        comments = state.comments
-        if comments.updated_at:
-            contested = comments.by_state.get("contested", 0)
-            new_threads = comments.by_state.get("new", 0)
-            if contested or new_threads:
-                parts.append(f"- **Open review threads:** {new_threads} new, {contested} contested")
-            if comments.blocking_reviewers:
-                reviewers = ", ".join(f"@{r}" for r in comments.blocking_reviewers)
-                parts.append(f"- **Blocking reviewers:** {reviewers}")
-            if comments.has_approvals:
-                parts.append("- **Has approvals**")
+        parts.extend(_state_ci_lines(state.ci, job.pr))
+        parts.extend(_state_comment_lines(state.comments))
 
     if not parts:
         return ""
     return "\n## PR context\n" + "\n".join(parts)
+
+
+def _state_ci_lines(ci, pr: PRMetadata) -> list[str]:
+    if not ci.updated_at or not ci.conclusion or ci.conclusion == "success":
+        return []
+    ci_line = f"- **CI: {ci.conclusion}**"
+    if ci.failure_count:
+        kinds = ", ".join(f"{k}: {v}" for k, v in ci.failure_kinds.items())
+        ci_line += f" — {ci.failure_count} failure(s)"
+        if kinds:
+            ci_line += f" ({kinds})"
+    return [ci_line] + _build_ci_failure_items(ci, pr)
+
+
+def _state_comment_lines(comments) -> list[str]:
+    if not comments.updated_at:
+        return []
+    parts: list[str] = []
+    contested = comments.by_state.get("contested", 0)
+    new_threads = comments.by_state.get("new", 0)
+    if contested or new_threads:
+        parts.append(f"- **Open review threads:** {new_threads} new, {contested} contested")
+    if comments.blocking_reviewers:
+        reviewers = ", ".join(f"@{r}" for r in comments.blocking_reviewers)
+        parts.append(f"- **Blocking reviewers:** {reviewers}")
+    if comments.has_approvals:
+        parts.append("- **Has approvals**")
+    return parts
 
 
 _CI_ITEM_CAP = 10
@@ -324,23 +332,32 @@ def _build_ci_failure_items(ci, pr: PRMetadata) -> list[str]:
     for group in run.failures.values():
         if group.kind.value in ("infra", "flaky"):
             continue
-        for item in group.items:
-            if not item.file:
-                continue
-            loc = f"{item.file}:{item.line}" if item.line else item.file
-            headline = item.headline or item.annotation[:80]
-            outcome = item.outcome.value if item.outcome else "new"
-            entry = f"  - `{loc}` — {headline} [{group.kind.value}, {outcome}]"
-            if item.file in pr_files:
-                in_pr.append(entry)
-            else:
-                outside_count += 1
+        in_group, out_group = _classify_failure_items(group, pr_files)
+        in_pr.extend(in_group)
+        outside_count += out_group
 
     items = in_pr[:_CI_ITEM_CAP]
     remainder = len(in_pr) - _CI_ITEM_CAP + outside_count
     if remainder > 0:
         items.append(f"  - +{remainder} more failure(s) not shown")
     return items
+
+
+def _classify_failure_items(group, pr_files: set[str]) -> tuple[list[str], int]:
+    in_pr: list[str] = []
+    outside = 0
+    for item in group.items:
+        if not item.file:
+            continue
+        loc = f"{item.file}:{item.line}" if item.line else item.file
+        headline = item.headline or item.annotation[:80]
+        outcome = item.outcome.value if item.outcome else "new"
+        entry = f"  - `{loc}` — {headline} [{group.kind.value}, {outcome}]"
+        if item.file in pr_files:
+            in_pr.append(entry)
+        else:
+            outside += 1
+    return in_pr, outside
 
 
 def _build_holistic_block(

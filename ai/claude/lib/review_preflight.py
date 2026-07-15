@@ -13,6 +13,7 @@ import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import log
@@ -81,6 +82,12 @@ class Group:
     files: list[str]
     lines: int
 
+
+
+class ViewerRole(StrEnum):
+    AUTHOR = "author"
+    REQUESTED = "requested reviewer"
+    REVIEWER = "reviewer"
 
 
 @dataclass

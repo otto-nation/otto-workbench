@@ -145,7 +145,6 @@ LOG_MARKERS: list[LogMarker] = [
 
 _HEADLINE_EXTRA: list[re.Pattern] = [
     re.compile(r"(?:Error|FAILED|panic):", re.IGNORECASE),
-    re.compile(r"locally and commit"),
 ]
 
 _HEADLINE_INDICATORS: list[re.Pattern] = [

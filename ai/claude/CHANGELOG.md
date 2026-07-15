@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.37.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.36.0...otto-ai-tools-v1.37.0) (2026-07-15)
+
+
+### Features
+
+* **ci-check:** extract failed step name, add drift log markers ([#491](https://github.com/otto-nation/otto-workbench/issues/491)) ([4747fb7](https://github.com/otto-nation/otto-workbench/commit/4747fb791d80ac16f1308388c5c633eb262cdc31))
+* **pr-comments:** deferred thread tracking, issue lifecycle, and thread resolution ([#488](https://github.com/otto-nation/otto-workbench/issues/488)) ([c0fc5b8](https://github.com/otto-nation/otto-workbench/commit/c0fc5b81dbd0e9b14729f2224b3c00c8c069cd50))
+* **review:** integrate PR state and role awareness into review prompts ([#489](https://github.com/otto-nation/otto-workbench/issues/489)) ([6d0dfc2](https://github.com/otto-nation/otto-workbench/commit/6d0dfc2d5137e00c5c4d7955f30a4fc72850dfbf))
+
+
+### Bug Fixes
+
+* **pr-comments:** recover agent commit SHA when script commit fails ([#486](https://github.com/otto-nation/otto-workbench/issues/486)) ([fdf2c33](https://github.com/otto-nation/otto-workbench/commit/fdf2c3388cd0d529088bf02b0ce7538295653b9f))
+* **review:** skip incremental delta when prior SHA equals HEAD ([#487](https://github.com/otto-nation/otto-workbench/issues/487)) ([517a3d5](https://github.com/otto-nation/otto-workbench/commit/517a3d591001c491e43ab570e0c2dbb8c5fceb91))
+* **review:** stop printing JSON summary to stdout, suppress false incomplete warnings ([#483](https://github.com/otto-nation/otto-workbench/issues/483)) ([d9edafb](https://github.com/otto-nation/otto-workbench/commit/d9edafb06b903e2cc7d511b0c4956fe005b23017))
+
 ## [1.36.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.35.1...otto-ai-tools-v1.36.0) (2026-07-14)
 
 

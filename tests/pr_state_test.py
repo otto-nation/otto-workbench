@@ -14,8 +14,9 @@ import pytest
 from pr_state import (
     PRIdentity, CIDomain, ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
+    FixThreadOutcome, FixSummary,
     PRState, load_state, save_state, new_state, update_identity, update_ci_domain,
-    update_review, update_comments, update_triage, update_rebase,
+    update_review, update_comments, update_triage, update_rebase, update_fix,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
     STATE_VERSION,
@@ -643,3 +644,157 @@ def test_apply_state_update_unknown_domain():
                 worktree_root=root, repo="r", branch="b",
                 head_sha="a", domain="bogus", data={},
             )
+
+
+# ── FixSummary ─────────────────────────────────────────────────────────────
+
+
+def test_fix_thread_outcome_defaults():
+    t = FixThreadOutcome()
+    assert t.thread_id == ""
+    assert t.file == ""
+    assert t.line == 0
+    assert t.action == ""
+    assert t.reason == ""
+
+
+def test_fix_summary_defaults():
+    f = FixSummary()
+    assert f.threads == []
+    assert f.commit_sha == ""
+    assert f.commit_status == ""
+    assert f.replies_posted == 0
+    assert f.summary_url == ""
+    assert f.summary_deferred is False
+    assert f.reconciled_count == 0
+    assert f.updated_at == ""
+
+
+def test_pr_state_has_fix_field():
+    ident = PRIdentity(
+        repo="r", branch="b", pr_number=None,
+        head_sha="", worktree_root="",
+    )
+    state = PRState(identity=ident)
+    assert state.fix.threads == []
+    assert state.fix.commit_sha == ""
+
+
+def test_update_fix_replaces():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        threads=[FixThreadOutcome(thread_id="t1", action="fixed")],
+        commit_sha="abc", commit_status="pushed",
+        updated_at="t1",
+    ))
+    assert state.fix.commit_sha == "abc"
+    assert len(state.fix.threads) == 1
+    assert state.fix.threads[0].action == "fixed"
+    update_fix(state, FixSummary(
+        threads=[], commit_sha="", commit_status="no_changes",
+        updated_at="t2",
+    ))
+    assert state.fix.threads == []
+    assert state.fix.commit_status == "no_changes"
+
+
+def test_state_roundtrip_with_fix_data():
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        threads=[
+            FixThreadOutcome(
+                thread_id="t1", file="src/foo.go", line=10,
+                reviewer="alice", summary="fix the thing",
+                action="fixed",
+            ),
+            FixThreadOutcome(
+                thread_id="t2", file="src/bar.go", line=20,
+                reviewer="bob", summary="add validation",
+                action="skipped", reason="agent could not auto-fix",
+            ),
+            FixThreadOutcome(
+                thread_id="t3", file="src/baz.go", line=30,
+                reviewer="charlie", summary="needs design",
+                action="needs_human", reason="contested",
+            ),
+        ],
+        commit_sha="abc1234", commit_status="pushed",
+        replies_posted=2, summary_url="https://github.com/r/p/issues/1#comment",
+        reconciled_count=1, updated_at="2026-07-14T00:00:00+00:00",
+    ))
+
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+
+    assert len(restored.fix.threads) == 3
+    assert restored.fix.threads[0].thread_id == "t1"
+    assert restored.fix.threads[0].action == "fixed"
+    assert restored.fix.threads[0].file == "src/foo.go"
+    assert restored.fix.threads[1].action == "skipped"
+    assert restored.fix.threads[1].reason == "agent could not auto-fix"
+    assert restored.fix.threads[2].action == "needs_human"
+    assert restored.fix.commit_sha == "abc1234"
+    assert restored.fix.commit_status == "pushed"
+    assert restored.fix.replies_posted == 2
+    assert restored.fix.reconciled_count == 1
+
+
+def test_save_preserves_fix_data():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        update_fix(state, FixSummary(
+            threads=[
+                FixThreadOutcome(thread_id="t1", file="a.go", action="fixed"),
+                FixThreadOutcome(thread_id="t2", file="b.go", action="dismissed", reason="invalid"),
+            ],
+            commit_sha="def456", commit_status="pushed",
+            replies_posted=1, reconciled_count=1,
+            updated_at="2026-07-14T00:00:00+00:00",
+        ))
+        save_state(root, state)
+        loaded = load_state(root)
+        assert loaded is not None
+        assert len(loaded.fix.threads) == 2
+        assert loaded.fix.threads[0].action == "fixed"
+        assert loaded.fix.threads[1].reason == "invalid"
+        assert loaded.fix.commit_sha == "def456"
+        assert loaded.fix.reconciled_count == 1
+
+
+def test_load_state_without_fix_defaults_empty():
+    """Old state files without fix key should deserialize with empty FixSummary."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        save_state(root, state)
+        path = root / ".workbench" / "state.json"
+        import json
+        data = json.loads(path.read_text())
+        del data["fix"]
+        path.write_text(json.dumps(data))
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.fix.threads == []
+        assert loaded.fix.commit_sha == ""
+
+
+def test_apply_state_update_fix():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        apply_state_update(
+            worktree_root=root, repo="owner/repo", branch="feat",
+            pr_number=1, head_sha="abc", domain="fix",
+            data={
+                "threads": [
+                    {"thread_id": "t1", "file": "f.go", "action": "fixed"},
+                ],
+                "commit_sha": "xyz", "commit_status": "pushed",
+                "reconciled_count": 1, "updated_at": "t",
+            },
+        )
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.fix.commit_sha == "xyz"
+        assert len(loaded.fix.threads) == 1
+        assert loaded.fix.threads[0].action == "fixed"

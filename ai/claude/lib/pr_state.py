@@ -123,6 +123,31 @@ class RebaseSummary:
 
 
 @dataclass
+class FixThreadOutcome:
+    """Per-thread outcome from a comment fix pass."""
+    thread_id: str = ""
+    file: str = ""
+    line: int = 0
+    reviewer: str = ""
+    summary: str = ""
+    action: str = ""  # "fixed", "skipped", "needs_human", "dismissed"
+    reason: str = ""
+
+
+@dataclass
+class FixSummary:
+    """Snapshot written by comment fix pass."""
+    threads: list[FixThreadOutcome] = field(default_factory=list)
+    commit_sha: str = ""
+    commit_status: str = ""
+    replies_posted: int = 0
+    summary_url: str = ""
+    summary_deferred: bool = False
+    reconciled_count: int = 0
+    updated_at: str = ""
+
+
+@dataclass
 class PendingComment:
     """A PR comment deferred until a blocking condition clears."""
     body: str = ""
@@ -139,6 +164,7 @@ class PRState:
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
     rebase: RebaseSummary = field(default_factory=RebaseSummary)
+    fix: FixSummary = field(default_factory=FixSummary)
     pending_comments: list[PendingComment] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
@@ -216,6 +242,10 @@ def _rebase_from_dict(d: dict) -> RebaseSummary:
     return _serde_from_dict(RebaseSummary, d)
 
 
+def _fix_from_dict(d: dict) -> FixSummary:
+    return _serde_from_dict(FixSummary, d)
+
+
 def _ci_to_dict(ci: CIDomain) -> dict:
     """Serialize CIDomain, handling nested RunState objects in runs dict."""
     d = _serde_to_dict(ci)
@@ -246,6 +276,7 @@ def state_from_dict(d: dict) -> PRState:
         comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
         triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
         rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
+        fix=_fix_from_dict(d.get("fix", {})),
         pending_comments=pending,
         created_at=d.get("created_at", ""),
         updated_at=d.get("updated_at", ""),
@@ -369,6 +400,11 @@ def update_rebase(state: PRState, summary: RebaseSummary) -> None:
     state.rebase = summary
 
 
+def update_fix(state: PRState, summary: FixSummary) -> None:
+    """Replace fix summary."""
+    state.fix = summary
+
+
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:
     """Add a deferred comment, replacing any existing entry with the same source."""
     state.pending_comments = [c for c in state.pending_comments if c.source != comment.source]
@@ -421,6 +457,7 @@ _DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
     "comments": (_comments_from_dict, update_comments),
     "triage": (_triage_from_dict, update_triage),
     "rebase": (_rebase_from_dict, update_rebase),
+    "fix": (_fix_from_dict, update_fix),
 }
 
 

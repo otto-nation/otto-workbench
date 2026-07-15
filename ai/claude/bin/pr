@@ -22,7 +22,7 @@ import pr_state
 from pr_state import ReviewStatus, ReviewVerdict
 import review_gc
 import log
-from review_common import find_review_file, json_summary, review_file_path
+from review_common import build_review_summary, find_review_file, json_summary, review_file_path
 from trail import Trail, add_trail_args
 
 
@@ -195,6 +195,30 @@ def _render_triage_section(t: pr_state.TriageSummary) -> list[str]:
     return lines
 
 
+def _render_fix_section(f: pr_state.FixSummary) -> list[str]:
+    if not f.updated_at:
+        return ["**Fix**: not run yet"]
+    by_action: dict[str, int] = {}
+    for t in f.threads:
+        by_action[t.action] = by_action.get(t.action, 0) + 1
+    parts = []
+    if by_action.get("fixed", 0):
+        parts.append(f"**{by_action['fixed']} fixed**")
+    if by_action.get("skipped", 0):
+        parts.append(f"{by_action['skipped']} skipped")
+    if by_action.get("needs_human", 0):
+        parts.append(f"{by_action['needs_human']} need discussion")
+    if by_action.get("dismissed", 0):
+        parts.append(f"{by_action['dismissed']} dismissed")
+    summary = " · ".join(parts) if parts else "no threads"
+    lines = [f"**Fix**: {summary}"]
+    if f.commit_sha:
+        lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
+    if f.reconciled_count:
+        lines.append(f"  reconciled {f.reconciled_count} thread(s) via diff")
+    return lines
+
+
 def _render_rebase_section(r: pr_state.RebaseSummary) -> list[str]:
     if not r.updated_at:
         return ["**Rebase**: not run yet"]
@@ -229,6 +253,8 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     lines += _render_comments_section(state.comments)
     lines.append("")
     lines += _render_triage_section(state.triage)
+    lines.append("")
+    lines += _render_fix_section(state.fix)
     lines.append("")
     lines += _render_rebase_section(state.rebase)
     lines.append("")
@@ -304,7 +330,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     pr_num = str(ctx.pr_number)
     review = find_review_file(ctx.repo, pr_num)
     if review:
-        data = json.loads(json_summary(ctx.repo, pr_num, str(review)).removeprefix("REVIEW_SUMMARY:"))
+        data = build_review_summary(ctx.repo, pr_num, str(review))
         _update_review_state(data, ctx)
     return rc
 
@@ -339,7 +365,7 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 
     review = find_review_file(ctx.repo, pr_num)
     if review:
-        data = json.loads(json_summary(ctx.repo, pr_num, str(review)).removeprefix("REVIEW_SUMMARY:"))
+        data = build_review_summary(ctx.repo, pr_num, str(review))
         _update_review_state(data, ctx)
         return 0
 

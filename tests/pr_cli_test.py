@@ -836,6 +836,75 @@ def test_render_review_section_disapprove_and_error():
     assert "[DISAPPROVED]" in lines[0]
 
 
+# ── _render_fix_section ──────────────────────────────────────────────────────
+
+
+def test_render_fix_section_not_run():
+    f = pr_state.FixSummary()
+    lines = pr_cli._render_fix_section(f)
+    assert lines == ["**Fix**: not run yet"]
+
+
+def test_render_fix_section_with_data():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(thread_id="t1", action=pr_state.ThreadAction.FIXED.value),
+            pr_state.ThreadOutcome(thread_id="t2", action=pr_state.ThreadAction.FIXED.value),
+            pr_state.ThreadOutcome(thread_id="t3", action=pr_state.ThreadAction.DEFERRED.value),
+            pr_state.ThreadOutcome(thread_id="t4", action=pr_state.ThreadAction.DISMISSED.value),
+        ],
+        commit_sha="abc1234", commit_status="pushed",
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = pr_cli._render_fix_section(f)
+    assert "**2 fixed**" in lines[0]
+    assert "1 deferred" in lines[0]
+    assert "1 dismissed" in lines[0]
+    assert "abc1234" in lines[0]
+    assert "pushed" in lines[0]
+
+
+def test_render_fix_section_with_reconciled():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(thread_id="t1", action=pr_state.ThreadAction.FIXED.value),
+        ],
+        commit_sha="abc", commit_status="pushed",
+        reconciled_count=1,
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = pr_cli._render_fix_section(f)
+    assert any("reconciled" in line for line in lines)
+    assert any("reconciled 1" in line for line in lines)
+
+
+def test_render_fix_section_needs_human():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(thread_id="t1", action=pr_state.ThreadAction.NEEDS_HUMAN.value),
+            pr_state.ThreadOutcome(thread_id="t2", action=pr_state.ThreadAction.NEEDS_HUMAN.value),
+        ],
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = pr_cli._render_fix_section(f)
+    assert "2 need discussion" in lines[0]
+
+
+def test_render_fix_section_deferred_issue():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(thread_id="t1", action=pr_state.ThreadAction.DEFERRED.value),
+        ],
+        commit_sha="abc", commit_status="pushed",
+        deferred_issue_id="ENG-456",
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = pr_cli._render_fix_section(f)
+    assert any("ENG-456" in line for line in lines)
+    assert any("tracked in" in line for line in lines)
+
+
+
 # ── SIGINT handling ──────────────────────────────────────────────────────────
 
 

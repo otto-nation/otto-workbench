@@ -13,6 +13,7 @@ import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import log
@@ -41,6 +42,9 @@ class PRMetadata:
     deletions: int
     changed_files: int
     files: list[dict]
+    is_draft: bool = False
+    labels: list[str] = field(default_factory=list)
+    author: str = ""
 
     @property
     def total_lines(self):
@@ -80,6 +84,12 @@ class Group:
 
 
 
+class ViewerRole(StrEnum):
+    AUTHOR = "author"
+    REQUESTED = "requested reviewer"
+    REVIEWER = "reviewer"
+
+
 @dataclass
 class ReviewJob:
     repo: str
@@ -100,6 +110,8 @@ class ReviewJob:
     effort: str = "medium"
     reply_threads: dict = field(default_factory=dict)
     verification: dict | None = None
+    pr_state_data: "PRState | None" = None
+    viewer_role: str = ""
 
 
 @dataclass
@@ -672,18 +684,15 @@ def _merge_score(a: Group, b: Group) -> tuple[int, int]:
     return (-shared, a.lines + b.lines)
 
 
+def _find_best_merge_pair(groups: list[Group]) -> tuple[int, int]:
+    pairs = [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
+    return min(pairs, key=lambda p: _merge_score(groups[p[0]], groups[p[1]]))
+
+
 def _merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
     groups = list(groups)
     while len(groups) > max_groups:
-        best_score = None
-        best_pair = (0, 1)
-        for i in range(len(groups)):
-            for j in range(i + 1, len(groups)):
-                score = _merge_score(groups[i], groups[j])
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best_pair = (i, j)
-        i, j = best_pair
+        i, j = _find_best_merge_pair(groups)
         a, b = groups[i], groups[j]
         merged = Group(
             name=f"{a.name}+{b.name}",
@@ -751,7 +760,8 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
     raw = _run([
         "gh", "pr", "view", pr_number, "--repo", repo,
         "--json", "title,body,headRefName,baseRefName,headRefOid,"
-                  "additions,deletions,changedFiles,files",
+                  "additions,deletions,changedFiles,files,"
+                  "isDraft,labels,author",
     ])
     if not raw:
         log.error(f"failed to fetch PR #{pr_number} from {repo}")
@@ -770,6 +780,9 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
             {"path": f["path"], "additions": f["additions"], "deletions": f["deletions"]}
             for f in data["files"]
         ],
+        is_draft=data.get("isDraft", False),
+        labels=[l["name"] for l in data.get("labels", [])],
+        author=(data.get("author") or {}).get("login", ""),
     )
 
 

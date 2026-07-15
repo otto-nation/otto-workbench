@@ -1,6 +1,7 @@
 You are completing the final self-review of changes on branch ${branch_name} in ${repo}.
 
 ${pr_header}
+${state_context}
 
 ## Holistic assessment (from Phase 1)
 ${holistic_content}

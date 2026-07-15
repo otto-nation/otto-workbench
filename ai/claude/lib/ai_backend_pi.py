@@ -100,11 +100,10 @@ def _build_agent_cmd(
         skill_path = _resolve_skill_path(agent)
         if skill_path:
             cmd += ["--skill", str(skill_path)]
-        else:
-            agent_prompt = _read_agent_prompt(agent)
-            if agent_prompt is None:
-                raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
+        elif (agent_prompt := _read_agent_prompt(agent)) is not None:
             cmd += ["--append-system-prompt", agent_prompt]
+        else:
+            raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
     if provider:
         cmd += ["--provider", provider]
     if model:
@@ -264,11 +263,8 @@ def _consume_stream(
 
         if event_type == "turn_end":
             turn_count += 1
-            if not aborted:
-                stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered)
-                if stop:
-                    stop_reason = stop
-                    aborted = True
+            stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered) if not aborted else (None, steered)
+            stop_reason, aborted = (stop, True) if stop else (stop_reason, aborted)
 
         if event_type == "agent_end":
             break

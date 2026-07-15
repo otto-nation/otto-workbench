@@ -1,6 +1,7 @@
 You are doing a holistic scan of PR #${pr_number} in ${repo}.
 
 ${pr_header}
+${state_context}
 
 ## All files in this PR
 ${all_files_formatted}

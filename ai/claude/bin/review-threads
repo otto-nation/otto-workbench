@@ -1339,7 +1339,7 @@ def _run_threads(trail, args, ctx) -> None:
             s = t.get("state", "new")
             thread_states[s] = thread_states.get(s, 0) + 1
         blocking = [
-            v.get("author", {}).get("login", "unknown")
+            v.get("user", "unknown")
             for v in report.get("verdicts", [])
             if v.get("state") == "CHANGES_REQUESTED"
         ]

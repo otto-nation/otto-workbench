@@ -45,6 +45,7 @@ def _template_dir() -> Path:
 def _build_pr_header(
     pr: PRMetadata, ctx: PRContext,
     file_filter: list[str] | None = None,
+    viewer_role: str = "",
 ) -> str:
     if file_filter:
         filter_set = set(file_filter)
@@ -56,11 +57,17 @@ def _build_pr_header(
         scoped_files = None
         size_line = f"- **Size:** +{pr.additions} -{pr.deletions} across {pr.changed_files} files"
 
+    role_line = f"- **Your role:** {viewer_role}" if viewer_role else ""
+
     lines = [
         "## PR metadata",
         f"- **Title:** {pr.title}",
         f"- **Branch:** {pr.head} → {pr.base}",
         size_line,
+    ]
+    if role_line:
+        lines.append(role_line)
+    lines += [
         "",
         "### Description",
         pr.body or "_No description provided._",
@@ -260,6 +267,80 @@ def _build_omitted_guidance(preflight: "PreflightData | None", skip_omitted: boo
         ' First, read all files listed under "Files not pre-collected"'
         " in a single parallel batch."
     )
+
+
+def _build_state_context_section(job: ReviewJob) -> str:
+    parts: list[str] = []
+
+    if getattr(job.pr, "is_draft", False):
+        parts.append("- **Draft PR** — focus on design and approach, not polish")
+    if getattr(job.pr, "labels", None):
+        parts.append(f"- **Labels:** {', '.join(job.pr.labels)}")
+
+    state = job.pr_state_data
+    if state is not None:
+        ci = state.ci
+        if ci.updated_at and ci.conclusion and ci.conclusion != "success":
+            ci_line = f"- **CI: {ci.conclusion}**"
+            if ci.failure_count:
+                kinds = ", ".join(f"{k}: {v}" for k, v in ci.failure_kinds.items())
+                ci_line += f" — {ci.failure_count} failure(s)"
+                if kinds:
+                    ci_line += f" ({kinds})"
+            parts.append(ci_line)
+            parts.extend(_build_ci_failure_items(ci, job.pr))
+
+        comments = state.comments
+        if comments.updated_at:
+            contested = comments.by_state.get("contested", 0)
+            new_threads = comments.by_state.get("new", 0)
+            if contested or new_threads:
+                parts.append(f"- **Open review threads:** {new_threads} new, {contested} contested")
+            if comments.blocking_reviewers:
+                reviewers = ", ".join(f"@{r}" for r in comments.blocking_reviewers)
+                parts.append(f"- **Blocking reviewers:** {reviewers}")
+            if comments.has_approvals:
+                parts.append("- **Has approvals**")
+
+    if not parts:
+        return ""
+    return "\n## PR context\n" + "\n".join(parts)
+
+
+_CI_ITEM_CAP = 10
+
+
+def _build_ci_failure_items(ci, pr: PRMetadata) -> list[str]:
+    latest_run_id = ci.latest_run_id or ci.last_run_id
+    if not latest_run_id or not ci.runs:
+        return []
+    run = ci.runs.get(str(latest_run_id))
+    if not run or not hasattr(run, "failures"):
+        return []
+
+    pr_files = {f["path"] for f in pr.files}
+    in_pr = []
+    outside_count = 0
+    for group in run.failures.values():
+        if group.kind.value in ("infra", "flaky"):
+            continue
+        for item in group.items:
+            if not item.file:
+                continue
+            loc = f"{item.file}:{item.line}" if item.line else item.file
+            headline = item.headline or item.annotation[:80]
+            outcome = item.outcome.value if item.outcome else "new"
+            entry = f"  - `{loc}` — {headline} [{group.kind.value}, {outcome}]"
+            if item.file in pr_files:
+                in_pr.append(entry)
+            else:
+                outside_count += 1
+
+    items = in_pr[:_CI_ITEM_CAP]
+    remainder = len(in_pr) - _CI_ITEM_CAP + outside_count
+    if remainder > 0:
+        items.append(f"  - +{remainder} more failure(s) not shown")
+    return items
 
 
 def _build_holistic_block(
@@ -616,6 +697,7 @@ def _prompt_self_review(job, common, extra):
     preflight = _build_preflight_section(job)
     sections = {
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "preflight_data": preflight,
         "delta_section": common["delta_section"],
         "prior_section": prior_section,
@@ -625,6 +707,7 @@ def _prompt_self_review(job, common, extra):
         "branch_name": extra.get("branch_name", job.pr.head),
         "repo": job.repo,
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "preflight_data": preflight,
         "delta_section": common["delta_section"],
         "env_section": common["env_section"],
@@ -644,6 +727,7 @@ def _prompt_self_synthesis(job, common, extra):
     merged_content = extra["merged_content"]
     sections = {
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "holistic_content": holistic_content,
         "merged_content": merged_content,
         "delta_section": common["delta_section"],
@@ -656,6 +740,7 @@ def _prompt_self_synthesis(job, common, extra):
         "branch_name": extra.get("branch_name", job.pr.head),
         "repo": job.repo,
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "pr_head_sha": job.pr.head_sha,
         "holistic_content": holistic_content,
         "group_count": extra["group_count"],
@@ -685,6 +770,7 @@ def _prompt_single(job, common, extra):
     preflight = _build_preflight_section(job)
     sections = {
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "preflight_data": preflight,
         "delta_section": common["delta_section"],
         "reviews_section": common["reviews_section"],
@@ -695,6 +781,7 @@ def _prompt_single(job, common, extra):
         "pr_number": job.pr_number,
         "repo": job.repo,
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "preflight_data": preflight,
         "delta_section": common["delta_section"],
         "reviews_section": common["reviews_section"],
@@ -713,6 +800,7 @@ def _prompt_single(job, common, extra):
 def _prompt_holistic(job, common, extra):
     sections = {
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "all_files_formatted": job.pr.all_files_formatted,
         "reviews_section": common["reviews_section"],
         "issue_section": common["issue_section"],
@@ -726,6 +814,7 @@ def _prompt_holistic(job, common, extra):
         "pr_number": job.pr_number,
         "repo": job.repo,
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "all_files_formatted": job.pr.all_files_formatted,
         "preflight_data": preflight,
         "delta_section": common["delta_section"],
@@ -804,6 +893,7 @@ def _prompt_synthesis(job, common, extra):
     merged_content = extra["merged_content"]
     sections = {
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "holistic_content": holistic_content,
         "merged_content": merged_content,
         "delta_section": common["delta_section"],
@@ -819,6 +909,7 @@ def _prompt_synthesis(job, common, extra):
         "pr_number": job.pr_number,
         "repo": job.repo,
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "pr_title": job.pr.title,
         "pr_head_sha": job.pr.head_sha,
         "holistic_content": holistic_content,
@@ -887,6 +978,7 @@ def _prompt_fix(job, common, extra):
 def _prompt_scout(job, common, extra):
     sections = {
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "all_files_formatted": job.pr.all_files_formatted,
         "reviews_section": common["reviews_section"],
         "issue_section": common["issue_section"],
@@ -900,6 +992,7 @@ def _prompt_scout(job, common, extra):
         "pr_number": job.pr_number,
         "repo": job.repo,
         "pr_header": common["pr_header"],
+        "state_context": common["state_context"],
         "all_files_formatted": job.pr.all_files_formatted,
         "preflight_data": preflight,
         "delta_section": common["delta_section"],
@@ -949,7 +1042,8 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     common = {
         "today": date.today().isoformat(),
         "generator_version": job.generator_version,
-        "pr_header": _build_pr_header(job.pr, job.ctx),
+        "pr_header": _build_pr_header(job.pr, job.ctx, viewer_role=job.viewer_role),
+        "state_context": _build_state_context_section(job),
         "reviews_section": _build_reviews_section(job.ctx),
         "reply_threads": reply_threads_section,
         "env_section": _build_env_section(job.wt_path, preflight=job.preflight),

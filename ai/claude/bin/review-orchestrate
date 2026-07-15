@@ -31,6 +31,7 @@ import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
 
 import log  # noqa: E402
+import pr_state  # noqa: E402
 
 from review_common import (  # noqa: E402
     FILENAME_SESSION, MODE_PR, MODE_SELF, PIPELINE_MULTI, PIPELINE_SINGLE,
@@ -90,6 +91,18 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         generator_version=args.generator_version,
         model=args.model, effort=args.effort,
     )
+
+    job.pr_state_data = pr_state.load_state(Path(args.repo_dir))
+
+    if pr_data and args.mode != MODE_SELF:
+        viewer = pr_data.viewer_login
+        pr_author = getattr(pr, "author", "")
+        if pr_author and pr_author.lower() == viewer.lower():
+            job.viewer_role = "author"
+        elif viewer in getattr(pr_data, "requested_reviewers", []):
+            job.viewer_role = "requested reviewer"
+        else:
+            job.viewer_role = "reviewer"
 
     log.info("Collecting file data...")
     if prior_review and args.pr:

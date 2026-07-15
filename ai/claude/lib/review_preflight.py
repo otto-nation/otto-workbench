@@ -41,6 +41,9 @@ class PRMetadata:
     deletions: int
     changed_files: int
     files: list[dict]
+    is_draft: bool = False
+    labels: list[str] = field(default_factory=list)
+    author: str = ""
 
     @property
     def total_lines(self):
@@ -100,6 +103,8 @@ class ReviewJob:
     effort: str = "medium"
     reply_threads: dict = field(default_factory=dict)
     verification: dict | None = None
+    pr_state_data: "PRState | None" = None
+    viewer_role: str = ""
 
 
 @dataclass
@@ -746,7 +751,8 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
     raw = _run([
         "gh", "pr", "view", pr_number, "--repo", repo,
         "--json", "title,body,headRefName,baseRefName,headRefOid,"
-                  "additions,deletions,changedFiles,files",
+                  "additions,deletions,changedFiles,files,"
+                  "isDraft,labels,author",
     ])
     if not raw:
         log.error(f"failed to fetch PR #{pr_number} from {repo}")
@@ -765,6 +771,9 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
             {"path": f["path"], "additions": f["additions"], "deletions": f["deletions"]}
             for f in data["files"]
         ],
+        is_draft=data.get("isDraft", False),
+        labels=[l["name"] for l in data.get("labels", [])],
+        author=(data.get("author") or {}).get("login", ""),
     )
 
 

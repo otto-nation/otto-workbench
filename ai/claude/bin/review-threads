@@ -567,6 +567,24 @@ def _post_deferred_replies(
     return posted
 
 
+def _resolve_fixed_threads(
+    fixed: list[dict],
+    threads_by_id: dict,
+) -> int:
+    """Resolve fixed threads on GitHub. Returns count resolved."""
+    resolved = 0
+    for entry in fixed:
+        tid = entry.get("thread_id", "")
+        thread = threads_by_id.get(tid, {})
+        if thread.get("is_resolved"):
+            continue
+        if pc.resolve_thread(tid):
+            resolved += 1
+    if resolved:
+        log.info(f"Resolved {resolved} fixed thread(s)")
+    return resolved
+
+
 def _build_deferred_issue_body(
     deferred: list[dict],
     repo: str,
@@ -594,6 +612,49 @@ def _build_deferred_issue_body(
     return "\n".join(parts)
 
 
+def _update_deferred_issue(
+    provider: str, issue_id: str, body: str, repo: str, opts: dict | None,
+) -> tuple[str, str]:
+    ok = review_issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
+    if not ok:
+        log.error(f"Failed to update deferred issue {issue_id}")
+        return issue_id, ""
+    url = review_issue._get_linear_issue_url(issue_id) if provider == "linear" else ""
+    return issue_id, url
+
+
+def _create_deferred_issue(
+    provider: str,
+    body: str,
+    ctx: pr_context.ResolvedContext,
+    repo: str,
+    pr_number: int,
+    opts: dict | None,
+    trail: Trail | None,
+) -> tuple[str, str]:
+    parent_id = review_issue.extract_issue_id(provider, ctx.branch)
+    team = parent_id.split("-", 1)[0] if parent_id and "-" in parent_id else ""
+    if not team:
+        log.dim("Cannot determine team key for issue creation — skipping")
+        if trail:
+            trail.info("deferred_issue", "skipped — no team key")
+        return "", ""
+
+    title = f"fix(review): deferred review comments — PR #{pr_number}"
+    created = review_issue.create_issue(
+        provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
+    )
+    if not created:
+        log.error("Failed to create deferred tracking issue")
+        if trail:
+            trail.error("deferred_issue", "creation failed")
+        return "", ""
+
+    if trail:
+        trail.info("deferred_issue", f"created {created.id}", data={"url": created.url})
+    return created.id, created.url
+
+
 def _create_or_update_deferred_issue(
     deferred: list[dict],
     repo: str,
@@ -616,40 +677,9 @@ def _create_or_update_deferred_issue(
     body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
 
     if existing_issue_id:
-        ok = review_issue.update_issue(provider, existing_issue_id, body, repo=repo, opts=provider_info.options)
-        if ok:
-            url = ""
-            if provider == "linear":
-                url = review_issue._get_linear_issue_url(existing_issue_id)
-            return existing_issue_id, url
-        log.error(f"Failed to update deferred issue {existing_issue_id}")
-        return existing_issue_id, ""
+        return _update_deferred_issue(provider, existing_issue_id, body, repo, provider_info.options)
 
-    parent_id = review_issue.extract_issue_id(provider, ctx.branch)
-    team = ""
-    if parent_id and "-" in parent_id:
-        team = parent_id.split("-", 1)[0]
-
-    if not team:
-        log.dim("Cannot determine team key for issue creation — skipping")
-        if trail:
-            trail.info("deferred_issue", "skipped — no team key")
-        return "", ""
-
-    title = f"fix(review): deferred review comments — PR #{pr_number}"
-    created = review_issue.create_issue(
-        provider, team, title, body,
-        parent_id=parent_id, repo=repo, opts=provider_info.options,
-    )
-    if not created:
-        log.error("Failed to create deferred tracking issue")
-        if trail:
-            trail.error("deferred_issue", "creation failed")
-        return "", ""
-
-    if trail:
-        trail.info("deferred_issue", f"created {created.id}", data={"url": created.url})
-    return created.id, created.url
+    return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
 
 
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
@@ -1143,6 +1173,7 @@ def _run_comment_fix(
         replies_posted += _post_fix_replies(
             fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
         )
+        _resolve_fixed_threads(fixed, threads_by_id)
 
     existing_state = pr_state.load_state(wt_path)
     existing_issue_id = existing_state.fix.deferred_issue_id if existing_state else ""

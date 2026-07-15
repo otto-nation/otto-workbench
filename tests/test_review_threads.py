@@ -985,3 +985,42 @@ class TestPostDeferredReplies:
             )
         assert count == 0
         mock_reply.assert_not_called()
+
+
+# ── _resolve_fixed_threads ────────────────────────────────────────────────
+
+
+class TestResolveFixedThreads:
+
+    def test_resolves_unresolved_threads(self, rt):
+        fixed = [{"thread_id": "t1"}, {"thread_id": "t2"}]
+        threads_by_id = {
+            "t1": {"is_resolved": False},
+            "t2": {"is_resolved": False},
+        }
+        with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            count = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert count == 2
+        assert mock_resolve.call_count == 2
+
+    def test_skips_already_resolved(self, rt):
+        fixed = [{"thread_id": "t1"}]
+        threads_by_id = {"t1": {"is_resolved": True}}
+        with patch("pr_comments.resolve_thread") as mock_resolve:
+            count = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert count == 0
+        mock_resolve.assert_not_called()
+
+    def test_skips_missing_thread(self, rt):
+        fixed = [{"thread_id": "t1"}]
+        with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            count = rt._resolve_fixed_threads(fixed, {})
+        assert count == 1
+        mock_resolve.assert_called_once_with("t1")
+
+    def test_counts_only_successful_resolves(self, rt):
+        fixed = [{"thread_id": "t1"}, {"thread_id": "t2"}]
+        threads_by_id = {"t1": {}, "t2": {}}
+        with patch("pr_comments.resolve_thread", side_effect=[True, False]):
+            count = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert count == 1

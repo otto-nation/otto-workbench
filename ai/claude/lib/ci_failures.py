@@ -78,6 +78,7 @@ class FailureGroup:
     job: str
     kind: FailureKind
     items: tuple[FailureItem, ...]
+    failed_step: str | None = None
 
 
 @dataclass
@@ -138,6 +139,8 @@ LOG_MARKERS: list[LogMarker] = [
     LogMarker("error-prefix", re.compile(r"^error:", re.IGNORECASE), FailureKind.BUILD),
     LogMarker("fatal-prefix", re.compile(r"^fatal:", re.IGNORECASE), FailureKind.BUILD),
     LogMarker("test-failed", re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
+    LogMarker("codegen-drift", re.compile(r"locally and commit"), FailureKind.BUILD, before=5, after=20),
+    LogMarker("diff-stat-summary", re.compile(r"\d+ files? changed"), FailureKind.BUILD, before=30, after=5),
 ]
 
 _HEADLINE_EXTRA: list[re.Pattern] = [
@@ -306,6 +309,7 @@ def sync_ci_domain(domain, run: RunState):
         synced_failures[group_key] = FailureGroup(
             job=group.job, kind=group.kind,
             items=tuple(synced_items),
+            failed_step=group.failed_step,
         )
 
     synced_run = RunState(
@@ -378,7 +382,8 @@ def render_dashboard(
             overflow += len(group_headlines)
             continue
 
-        lines.append(f"  {group.job}:")
+        job_label = f"{group.job} → {group.failed_step}" if group.failed_step else group.job
+        lines.append(f"  {job_label}:")
         for text, count in list(group_headlines.items())[:remaining]:
             suffix = f" (×{count})" if count > 1 else ""
             lines.append(f"    ▸ {text}{suffix}")

@@ -227,6 +227,7 @@ def _run_state_from_dict(d: dict):
             job=group_data.get("job", group_key),
             kind=FailureKind(group_data["kind"]),
             items=tuple(items),
+            failed_step=group_data.get("failed_step"),
         )
     return RunState(
         run_id=d["run_id"],

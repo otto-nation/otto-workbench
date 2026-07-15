@@ -521,9 +521,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         if falsified > 0:
             Path(job.review_file).write_text(updated_text)
             log.info(f"Disprove gate: {summary['survived']} survived, {falsified} falsified")
-            for fid in summary.get("falsified_ids", []):
-                reason = summary.get("reasons", {}).get(fid, "")
-                log.dim(f"  Falsified [{fid}]: {reason}")
+            _log_disprove_falsified(summary)
         else:
             log.info(f"Disprove gate: all {summary['survived']} findings survived")
     else:
@@ -531,6 +529,12 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         log.warn(f"Disprove gate produced no output ({reason}) — keeping all findings")
 
     return disprove_log, cost
+
+
+def _log_disprove_falsified(summary: dict) -> None:
+    for fid in summary.get("falsified_ids", []):
+        reason = summary.get("reasons", {}).get(fid, "")
+        log.dim(f"  Falsified [{fid}]: {reason}")
 
 
 def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> bool:
@@ -712,12 +716,11 @@ def _reconcile_checkboxes(review_file: str, wt_path: str) -> None:
     for f in findings:
         if f.checked or not f.path:
             continue
-        if f.path in changed:
-            old = f"- [ ] **[{f.id}]**"
-            new = f"- [x] **[{f.id}]**"
-            if old in text:
-                text = text.replace(old, new, 1)
-                updated = True
+        old = f"- [ ] **[{f.id}]**"
+        new = f"- [x] **[{f.id}]**"
+        if f.path in changed and old in text:
+            text = text.replace(old, new, 1)
+            updated = True
 
     if updated:
         Path(review_file).write_text(text)

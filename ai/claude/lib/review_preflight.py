@@ -679,18 +679,15 @@ def _merge_score(a: Group, b: Group) -> tuple[int, int]:
     return (-shared, a.lines + b.lines)
 
 
+def _find_best_merge_pair(groups: list[Group]) -> tuple[int, int]:
+    pairs = [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
+    return min(pairs, key=lambda p: _merge_score(groups[p[0]], groups[p[1]]))
+
+
 def _merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
     groups = list(groups)
     while len(groups) > max_groups:
-        best_score = None
-        best_pair = (0, 1)
-        for i in range(len(groups)):
-            for j in range(i + 1, len(groups)):
-                score = _merge_score(groups[i], groups[j])
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best_pair = (i, j)
-        i, j = best_pair
+        i, j = _find_best_merge_pair(groups)
         a, b = groups[i], groups[j]
         merged = Group(
             name=f"{a.name}+{b.name}",

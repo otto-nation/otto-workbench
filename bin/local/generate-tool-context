@@ -168,7 +168,7 @@ AWK
 }
 
 # _iter_tools FILE CALLBACK
-# Calls CALLBACK name description when_to_use usage docs for each tool in FILE.
+# Calls CALLBACK name description when_to_use usage docs commands_json for each tool in FILE.
 _iter_tools() {
   local file="$1" cb="$2"
   [[ -f "$file" ]] || return 0
@@ -182,7 +182,8 @@ _iter_tools() {
       "$(yq ".tools[$i].description"   "$file")" \
       "$(yq ".tools[$i].when_to_use"   "$file")" \
       "$(yq ".tools[$i].usage // \"\""  "$file")" \
-      "$(yq ".tools[$i].docs  // \"\""  "$file")"
+      "$(yq ".tools[$i].docs  // \"\""  "$file")" \
+      "$(yq -o=json ".tools[$i].commands // \"\""  "$file")"
   done
 }
 
@@ -203,14 +204,31 @@ _iter_tools_by_visibility() {
       "$(yq ".tools[$i].description"   "$file")" \
       "$(yq ".tools[$i].when_to_use // \"\""   "$file")" \
       "$(yq ".tools[$i].usage // \"\""  "$file")" \
-      "$(yq ".tools[$i].docs  // \"\""  "$file")"
+      "$(yq ".tools[$i].docs  // \"\""  "$file")" \
+      "$(yq -o=json ".tools[$i].commands // \"\""  "$file")"
   done
 }
 
 # ── tools.generated.md ────────────────────────────────────────────────────────
 
+_render_subcommands() {
+  local commands_json="$1"
+  [[ -n "$commands_json" && "$commands_json" != "null" && "$commands_json" != '""' ]] || return 0
+  local cmd_count cmd_i cmd_name cmd_desc
+  cmd_count=$(printf '%s' "$commands_json" | jq 'length')
+  [[ "$cmd_count" -gt 0 ]] || return 0
+  printf -- '- **Subcommands**:\n'
+  for (( cmd_i=0; cmd_i<cmd_count; cmd_i++ )); do
+    cmd_name=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].name")
+    cmd_desc=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].description")
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '  - `%s` — %s\n' "$cmd_name" "$cmd_desc"
+  done
+}
+
 _tool_md_entry() {
   local name="$1" description="$2" when_to_use="$3" usage="$4"
+  local commands_json="${6:-}"
   printf '\n### %s\n' "$name"
   printf '%s\n' "$description"
   printf -- '- **When to use**: %s\n' "$when_to_use"
@@ -220,6 +238,7 @@ _tool_md_entry() {
   fi
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   if [[ -n "$usage" && "$usage" != "null" ]]; then printf -- '- **Usage**: `%s`\n' "$usage"; fi
+  _render_subcommands "$commands_json"
 }
 
 _tool_ref_entry() {
@@ -664,16 +683,10 @@ _readme_workbench_commands() {
   printf '|---------|-------|-------------|\n'
   local i
   for (( i=0; i<count; i++ )); do
-    local cmd scope when detail desc
+    local cmd scope desc
     cmd=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].name" "$BIN_REGISTRY")
     scope=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].scope" "$BIN_REGISTRY")
-    when=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].when" "$BIN_REGISTRY")
-    detail=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].detail // \"\"" "$BIN_REGISTRY")
-    if [[ -n "$detail" && "$detail" != "null" ]]; then
-      desc="$detail"
-    else
-      desc="$when"
-    fi
+    desc=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].description" "$BIN_REGISTRY")
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '| `otto-workbench %s` | %s | %s |\n' "$cmd" "$scope" "$desc"
   done

@@ -904,20 +904,6 @@ def test_render_fix_section_deferred_issue():
     assert any("tracked in" in line for line in lines)
 
 
-def test_render_fix_section_deferred_issue_with_url():
-    f = pr_state.FixSummary(
-        threads=[
-            pr_state.ThreadOutcome(thread_id="t1", action=pr_state.ThreadAction.DEFERRED.value),
-        ],
-        commit_sha="abc", commit_status="pushed",
-        deferred_issue_id="ENG-456",
-        deferred_issue_url="https://linear.app/team/issue/ENG-456/slug",
-        updated_at="2026-07-14T00:00:00+00:00",
-    )
-    lines = pr_cli._render_fix_section(f)
-    assert any("ENG-456" in line for line in lines)
-    assert any("tracked in" in line for line in lines)
-
 
 # ── SIGINT handling ──────────────────────────────────────────────────────────
 

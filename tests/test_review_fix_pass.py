@@ -435,3 +435,166 @@ class TestTurnBudgetScaling:
     def test_very_large_review_caps(self):
         turns = review_pipeline._fix_turn_budget(100)
         assert turns == review_pipeline.MAX_TURNS_FIX_CAP
+
+
+class TestFixRetryBudget:
+    def test_small_budget_gets_minimum_retry(self):
+        assert review_pipeline._fix_retry_budget(20) == 40
+
+    def test_medium_budget_adds_headroom(self):
+        assert review_pipeline._fix_retry_budget(30) == 50
+
+    def test_large_budget_caps_at_max(self):
+        assert review_pipeline._fix_retry_budget(50) == 60
+
+    def test_already_at_cap_stays_at_cap(self):
+        assert review_pipeline._fix_retry_budget(60) == 60
+
+
+class TestFixPassMadeProgress:
+    def _finding(self, fid, checked=False, skip_reason=""):
+        sev = fid[0]
+        seq = int(fid[1:])
+        return Finding(
+            id=fid, severity=sev, seq=seq, path="file.go",
+            line=1, end_line=None, body="body",
+            checked=checked, skip_reason=skip_reason,
+        )
+
+    def test_fixed_finding_is_progress(self):
+        result = review_pipeline.FixPassResult(
+            fixed=[self._finding("M1", checked=True)],
+            skipped=[], unchanged=[],
+        )
+        assert review_pipeline._fix_pass_made_progress(result) is True
+
+    def test_annotated_skip_is_progress(self):
+        result = review_pipeline.FixPassResult(
+            fixed=[],
+            skipped=[self._finding("S1", skip_reason="needs design")],
+            unchanged=[],
+        )
+        assert review_pipeline._fix_pass_made_progress(result) is True
+
+    def test_unannotated_skip_is_no_progress(self):
+        result = review_pipeline.FixPassResult(
+            fixed=[],
+            skipped=[self._finding("N1")],
+            unchanged=[],
+        )
+        assert review_pipeline._fix_pass_made_progress(result) is False
+
+    def test_empty_result_is_no_skips(self):
+        result = review_pipeline.FixPassResult(fixed=[], skipped=[], unchanged=[])
+        assert review_pipeline._fix_pass_made_progress(result) is False
+
+    def test_mixed_annotated_and_unannotated_is_progress(self):
+        result = review_pipeline.FixPassResult(
+            fixed=[],
+            skipped=[
+                self._finding("S1", skip_reason="design choice"),
+                self._finding("N1"),
+            ],
+            unchanged=[],
+        )
+        assert review_pipeline._fix_pass_made_progress(result) is True
+
+
+class TestRunFixPassRetry:
+    REVIEW_CONTENT = (
+        "## Should fix\n"
+        "- [ ] **[S1]** `src/auth.go:10` — Missing nil check\n"
+        "## Nit\n"
+        "- [ ] **[N1]** `src/config.go:5` — Style issue\n"
+    )
+
+    def _make_job(self, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(self.REVIEW_CONTENT)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(tmp_path)
+        job.reviews_dir = str(tmp_path)
+        job.model = None
+        job.effort = None
+        return job
+
+    @patch("review_pipeline._commit_fixes")
+    @patch("review_pipeline._reconcile_checkboxes")
+    @patch("review_pipeline._diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.invoke_agent")
+    @patch("review_pipeline.build_prompt", return_value="prompt")
+    def test_retries_on_zero_progress_max_turns(
+        self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
+    ):
+        job = self._make_job(tmp_path)
+        assert mock_invoke.call_count == 0
+        review_pipeline.run_fix_pass(job)
+        assert mock_invoke.call_count == 2
+        retry_call = mock_invoke.call_args_list[1]
+        assert retry_call[0][0].startswith("IMPORTANT: A previous attempt")
+
+    @patch("review_pipeline._commit_fixes")
+    @patch("review_pipeline._reconcile_checkboxes")
+    @patch("review_pipeline.invoke_agent")
+    @patch("review_pipeline.build_prompt", return_value="prompt")
+    def test_no_retry_when_fixes_applied(
+        self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
+    ):
+        job = self._make_job(tmp_path)
+
+        def apply_fix(*args, **kwargs):
+            text = Path(job.review_file).read_text()
+            Path(job.review_file).write_text(text.replace("- [ ] **[S1]**", "- [x] **[S1]**"))
+
+        mock_invoke.side_effect = apply_fix
+        review_pipeline.run_fix_pass(job)
+        assert mock_invoke.call_count == 1
+
+    @patch("review_pipeline._commit_fixes")
+    @patch("review_pipeline._reconcile_checkboxes")
+    @patch("review_pipeline.invoke_agent")
+    @patch("review_pipeline.build_prompt", return_value="prompt")
+    def test_no_retry_when_skip_reasons_annotated(
+        self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
+    ):
+        job = self._make_job(tmp_path)
+
+        def annotate_skips(*args, **kwargs):
+            text = Path(job.review_file).read_text()
+            text = text.replace(
+                "— Missing nil check\n",
+                "— Missing nil check *(skipped — needs design)*\n",
+            )
+            Path(job.review_file).write_text(text)
+
+        mock_invoke.side_effect = annotate_skips
+        review_pipeline.run_fix_pass(job)
+        assert mock_invoke.call_count == 1
+
+    @patch("review_pipeline._commit_fixes")
+    @patch("review_pipeline._reconcile_checkboxes")
+    @patch("review_pipeline._diagnose_missing_output", return_value="agent error: overloaded")
+    @patch("review_pipeline.invoke_agent")
+    @patch("review_pipeline.build_prompt", return_value="prompt")
+    def test_no_retry_on_non_retryable_reason(
+        self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
+    ):
+        job = self._make_job(tmp_path)
+        review_pipeline.run_fix_pass(job)
+        assert mock_invoke.call_count == 1
+
+    @patch("review_pipeline._commit_fixes")
+    @patch("review_pipeline._reconcile_checkboxes")
+    @patch("review_pipeline._diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.invoke_agent")
+    @patch("review_pipeline.build_prompt", return_value="prompt")
+    def test_retry_uses_increased_turns(
+        self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
+    ):
+        job = self._make_job(tmp_path)
+        review_pipeline.run_fix_pass(job)
+        retry_call = mock_invoke.call_args_list[1]
+        assert retry_call[1]["max_turns"] == review_pipeline._fix_retry_budget(
+            review_pipeline._fix_turn_budget(2),
+        )

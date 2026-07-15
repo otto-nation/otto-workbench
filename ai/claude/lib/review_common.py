@@ -399,15 +399,19 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
         counts[key] = c
         total += c
 
+    review_dir = Path(review_file).parent if review_file else None
+    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
+
     from pr_state import ReviewVerdict
     parsed_verdict = parse_review_verdict(review_path)
     if parsed_verdict:
         verdict = parsed_verdict
+    elif meta.review_type == "self":
+        verdict = ""
     else:
         must_count = counts.get("must_fix", 0)
         verdict = ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0 else ReviewVerdict.APPROVE.value
 
-    review_dir = Path(review_file).parent if review_file else None
     usage = aggregate_session_usage(review_dir)
 
     review_content = None
@@ -416,8 +420,6 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
             review_content = review_path.read_text()
         except OSError:
             pass
-
-    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
 
     status = read_pipeline_status(review_dir)
 

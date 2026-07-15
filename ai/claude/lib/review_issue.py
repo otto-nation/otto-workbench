@@ -213,17 +213,11 @@ def fetch_issue_context(
 # ── Issue creation / update ────────────────────────────────────────────────
 
 
-def _write_description_file(description: str) -> str:
-    """Write description to a temp file and return the path."""
+@contextlib.contextmanager
+def _description_file(description: str):
     fd, path = tempfile.mkstemp(suffix=".md", prefix="issue-desc-")
     with os.fdopen(fd, "w") as f:
         f.write(description)
-    return path
-
-
-@contextlib.contextmanager
-def _description_file(description: str):
-    path = _write_description_file(description)
     try:
         yield path
     finally:
@@ -270,6 +264,13 @@ def _get_linear_issue_url(issue_id: str) -> str:
         return data.get("url", "")
     except json.JSONDecodeError:
         return ""
+
+
+def get_issue_url(provider: str, issue_id: str) -> str:
+    """Fetch the URL for an issue from the given provider."""
+    if provider == "linear":
+        return _get_linear_issue_url(issue_id)
+    return ""
 
 
 def _update_linear(issue_id: str, description: str) -> bool:

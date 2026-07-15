@@ -41,6 +41,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-template
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 _SOURCE_FIX_SUMMARY = "fix_summary"
+_DEFERRED_REPLY_PREFIX = "Deferred:"
 
 
 def _extract_json(text: str) -> str:
@@ -547,9 +548,9 @@ def _post_dismissed_replies(
 
 
 def _has_deferred_reply(thread: dict) -> bool:
-    """Check if a thread already has a 'Deferred:' reply posted."""
+    """Check if a thread already has a deferred reply posted."""
     for comment in thread.get("comments", []):
-        if comment.get("body", "").startswith("Deferred:"):
+        if comment.get("body", "").startswith(_DEFERRED_REPLY_PREFIX):
             return True
     return False
 
@@ -574,7 +575,7 @@ def _post_deferred_replies(
 
     def body_fn(entry: dict) -> str:
         summary = entry.get("summary", "")
-        return f"Deferred: {summary}\n\nTracked in {issue_ref}."
+        return f"{_DEFERRED_REPLY_PREFIX} {summary}\n\nTracked in {issue_ref}."
 
     posted = _post_thread_replies(new_deferred, threads_by_id, repo, pr_number, body_fn)
     if posted:
@@ -634,7 +635,7 @@ def _update_deferred_issue(
     if not ok:
         log.error(f"Failed to update deferred issue {issue_id}")
         return issue_id, ""
-    url = review_issue._get_linear_issue_url(issue_id) if provider == "linear" else ""
+    url = review_issue.get_issue_url(provider, issue_id)
     return issue_id, url
 
 

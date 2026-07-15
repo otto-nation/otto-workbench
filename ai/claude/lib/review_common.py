@@ -389,8 +389,8 @@ def parse_review_verdict(review_path: Path | None) -> str:
     return ""
 
 
-def json_summary(repo: str, pr_number: str, review_file: str) -> str:
-    """Build a REVIEW_SUMMARY:{json} string for a review."""
+def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
+    """Build a review summary dict for a review."""
     counts = {}
     total = 0
     review_path = Path(review_file) if review_file else None
@@ -399,15 +399,19 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
         counts[key] = c
         total += c
 
+    review_dir = Path(review_file).parent if review_file else None
+    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
+
     from pr_state import ReviewVerdict
     parsed_verdict = parse_review_verdict(review_path)
     if parsed_verdict:
         verdict = parsed_verdict
+    elif meta.review_type == "self":
+        verdict = ""
     else:
         must_count = counts.get("must_fix", 0)
         verdict = ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0 else ReviewVerdict.APPROVE.value
 
-    review_dir = Path(review_file).parent if review_file else None
     usage = aggregate_session_usage(review_dir)
 
     review_content = None
@@ -417,11 +421,9 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
         except OSError:
             pass
 
-    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
-
     status = read_pipeline_status(review_dir)
 
-    data = {
+    return {
         "repo": repo,
         "pr_number": int(pr_number) if pr_number else None,
         "head_sha": meta.head_sha or None,
@@ -440,4 +442,9 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
         "cache_write_tokens": usage.cache_write_tokens,
         "duration_ms": usage.duration_ms,
     }
+
+
+def json_summary(repo: str, pr_number: str, review_file: str) -> str:
+    """Build a REVIEW_SUMMARY:{json} string for a review."""
+    data = build_review_summary(repo, pr_number, review_file)
     return f"REVIEW_SUMMARY:{json.dumps(data)}"

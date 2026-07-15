@@ -103,6 +103,7 @@ DEFAULT_MAX_TURNS_DISPROVE = 15
 DEFAULT_MAX_TURNS_ANGLES = 15
 DEFAULT_MAX_TURNS_FIX = 20
 MAX_TURNS_FIX_CAP = 60
+RETRY_MAX_TURNS_FIX = 40
 
 OMITTED_FILE_TURNS = 2
 
@@ -346,6 +347,13 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 _RETRY_HINT = (
     "IMPORTANT: A previous attempt ran out of turns before writing output. "
     "Write your findings file IMMEDIATELY as your first action, then verify.\n\n"
+)
+
+_FIX_RETRY_HINT = (
+    "IMPORTANT: A previous attempt ran out of turns reading files without applying any fixes. "
+    "Start with the highest-severity fixable findings and apply edits IMMEDIATELY. "
+    "Skip findings that require design decisions — annotate them with *(skipped — reason)* "
+    "and move on.\n\n"
 )
 
 
@@ -759,6 +767,16 @@ def _fix_turn_budget(unchecked: int) -> int:
     return min(max(DEFAULT_MAX_TURNS_FIX, unchecked * 2), MAX_TURNS_FIX_CAP)
 
 
+def _fix_retry_budget(original_budget: int) -> int:
+    return min(max(RETRY_MAX_TURNS_FIX, original_budget + 20), MAX_TURNS_FIX_CAP)
+
+
+def _fix_pass_made_progress(result: FixPassResult) -> bool:
+    if result.fixed_count > 0:
+        return True
+    return any(f.skip_reason for f in result.skipped)
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         log.warn("No review file to fix — skipping fix pass")
@@ -799,6 +817,28 @@ def run_fix_pass(job: ReviewJob):
     extract_skip_reasons(after_findings)
 
     result = _diff_findings(before_findings, after_findings)
+
+    if not _fix_pass_made_progress(result) and result.skipped_count > 0:
+        reason = _diagnose_missing_output(fix_log)
+        log.warn(f"Fix pass made no progress ({reason})")
+        if _is_retryable(reason):
+            retry_turns = _fix_retry_budget(max_turns)
+            retry_prompt = _FIX_RETRY_HINT + build_prompt(
+                TEMPLATE_FIX, job, max_turns=retry_turns,
+            )
+            log.info(f"Retrying fix pass (max_turns={retry_turns})...")
+            log.blank()
+            invoke_agent(retry_prompt, fix_log, job.wt_path, job.reviews_dir,
+                         review_file=job.review_file, model=model,
+                         thinking_level=thinking, provider=provider,
+                         max_turns=retry_turns, max_budget=budget,
+                         agent="reviewer-lite")
+            log.blank()
+            _reconcile_checkboxes(job.review_file, job.wt_path)
+            after_text = Path(job.review_file).read_text()
+            after_findings = parse_findings(after_text)
+            extract_skip_reasons(after_findings)
+            result = _diff_findings(before_findings, after_findings)
 
     summary = _format_fix_summary(result)
     if summary:

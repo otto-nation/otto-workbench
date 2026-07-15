@@ -683,16 +683,10 @@ _readme_workbench_commands() {
   printf '|---------|-------|-------------|\n'
   local i
   for (( i=0; i<count; i++ )); do
-    local cmd scope when detail desc
+    local cmd scope desc
     cmd=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].name" "$BIN_REGISTRY")
     scope=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].scope" "$BIN_REGISTRY")
-    when=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].when" "$BIN_REGISTRY")
-    detail=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].detail // \"\"" "$BIN_REGISTRY")
-    if [[ -n "$detail" && "$detail" != "null" ]]; then
-      desc="$detail"
-    else
-      desc="$when"
-    fi
+    desc=$(yq ".tools[] | select(.name == \"otto-workbench\") | .commands[$i].description" "$BIN_REGISTRY")
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '| `otto-workbench %s` | %s | %s |\n' "$cmd" "$scope" "$desc"
   done

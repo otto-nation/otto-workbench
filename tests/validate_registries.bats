@@ -1056,6 +1056,28 @@ EOF
   [[ "$output" == *"field 'commands' is not allowed"* ]]
 }
 
+@test "fails when commands on visibility: hidden entry" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  install_check: false
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "A script"
+    commands:
+      - name: sub1
+        description: "First"
+EOF
+
+  run "$VALIDATOR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'commands' is not allowed"* ]]
+}
+
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds and warns when registries are missing" {

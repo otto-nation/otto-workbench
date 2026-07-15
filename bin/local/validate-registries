@@ -209,6 +209,10 @@ _check_commands_field() {
   local cmd_count j
   cmd_count=$(yq ".tools[$i].commands | length" "$file")
 
+  for (( j=0; j<cmd_count; j++ )); do
+    _check_single_command "$file" "$i" "$j" "$name"
+  done
+
   local dupes
   dupes=$(yq ".tools[$i].commands[].name" "$file" | sort | uniq -d)
   if [[ -n "$dupes" ]]; then
@@ -216,10 +220,6 @@ _check_commands_field() {
       _fail "$(basename "$file") entry '$name': duplicate command name: $dup"
     done <<< "$dupes"
   fi
-
-  for (( j=0; j<cmd_count; j++ )); do
-    _check_single_command "$file" "$i" "$j" "$name"
-  done
 }
 
 # _validate_schema FILE

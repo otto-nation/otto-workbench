@@ -767,6 +767,27 @@ class TestBuildSummaryBody:
         )
         assert "Review-Level Comments" not in body
 
+    def test_deferred_with_issue_link(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        deferred = [self._fixed_entry(thread_id="t1")]
+        body = rt._build_summary_body(
+            [], [], deferred, cp, "owner/repo", 1, {},
+            deferred_issue_id="ENG-456",
+            deferred_issue_url="https://linear.app/team/issue/ENG-456",
+        )
+        assert "ENG-456" in body
+        assert "Deferred →" in body
+        assert "linear.app" in body
+
+    def test_deferred_without_issue(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        deferred = [self._fixed_entry(thread_id="t1")]
+        body = rt._build_summary_body(
+            [], [], deferred, cp, "owner/repo", 1, {},
+        )
+        assert "Deferred" in body
+        assert "→" not in body
+
 
 # ── _summarize_comment_body ─────────────────────────────────────────────────
 
@@ -804,7 +825,7 @@ class TestSummarizeCommentBody:
 
 
 class TestReconcileFixResults:
-    """Test diff-based reconciliation of skipped → fixed threads."""
+    """Test diff-based reconciliation of deferred → fixed threads."""
 
     def _entry(self, file="src/foo.go", **kw):
         return {"thread_id": "t1", "file": file, "line": 10,
@@ -816,13 +837,13 @@ class TestReconcileFixResults:
     def _cp_none(self, rt):
         return rt.CommitPushResult(None, "no_changes", "")
 
-    def test_reclassifies_skipped_when_file_modified(self, rt):
-        skipped = [self._entry(reason="agent could not auto-fix")]
+    def test_reclassifies_deferred_when_file_modified(self, rt):
+        deferred = [self._entry(reason="agent could not auto-fix")]
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "src/foo.go\n"
             fixed, remaining, count = rt._reconcile_fix_results(
-                [], skipped, Path("/wt"), self._cp(rt),
+                [], deferred, Path("/wt"), self._cp(rt),
             )
         assert len(fixed) == 1
         assert len(remaining) == 0
@@ -830,15 +851,15 @@ class TestReconcileFixResults:
         assert "reason" not in fixed[0]
 
     def test_no_sha_returns_unchanged(self, rt):
-        skipped = [self._entry(reason="agent could not auto-fix")]
+        deferred = [self._entry(reason="agent could not auto-fix")]
         fixed, remaining, count = rt._reconcile_fix_results(
-            [], skipped, Path("/wt"), self._cp_none(rt),
+            [], deferred, Path("/wt"), self._cp_none(rt),
         )
         assert len(fixed) == 0
         assert len(remaining) == 1
         assert count == 0
 
-    def test_no_skipped_returns_unchanged(self, rt):
+    def test_no_deferred_returns_unchanged(self, rt):
         fixed_in = [self._entry()]
         fixed, remaining, count = rt._reconcile_fix_results(
             fixed_in, [], Path("/wt"), self._cp(rt),
@@ -847,20 +868,20 @@ class TestReconcileFixResults:
         assert len(remaining) == 0
         assert count == 0
 
-    def test_no_matching_files_stays_skipped(self, rt):
-        skipped = [self._entry(file="src/bar.go", reason="agent could not auto-fix")]
+    def test_no_matching_files_stays_deferred(self, rt):
+        deferred = [self._entry(file="src/bar.go", reason="agent could not auto-fix")]
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "src/foo.go\n"
             fixed, remaining, count = rt._reconcile_fix_results(
-                [], skipped, Path("/wt"), self._cp(rt),
+                [], deferred, Path("/wt"), self._cp(rt),
             )
         assert len(fixed) == 0
         assert len(remaining) == 1
         assert count == 0
 
     def test_mixed_some_reconciled_some_not(self, rt):
-        skipped = [
+        deferred = [
             self._entry(file="src/foo.go", thread_id="t1", reason="r"),
             self._entry(file="src/bar.go", thread_id="t2", reason="r"),
         ]
@@ -868,7 +889,7 @@ class TestReconcileFixResults:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "src/foo.go\nsrc/baz.go\n"
             fixed, remaining, count = rt._reconcile_fix_results(
-                [], skipped, Path("/wt"), self._cp(rt),
+                [], deferred, Path("/wt"), self._cp(rt),
             )
         assert count == 1
         assert len(fixed) == 1
@@ -878,12 +899,12 @@ class TestReconcileFixResults:
 
     def test_appends_to_existing_fixed(self, rt):
         existing_fixed = [self._entry(thread_id="t0", file="src/already.go")]
-        skipped = [self._entry(thread_id="t1", file="src/foo.go", reason="r")]
+        deferred = [self._entry(thread_id="t1", file="src/foo.go", reason="r")]
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "src/foo.go\n"
             fixed, remaining, count = rt._reconcile_fix_results(
-                existing_fixed, skipped, Path("/wt"), self._cp(rt),
+                existing_fixed, deferred, Path("/wt"), self._cp(rt),
             )
         assert len(fixed) == 2
         assert fixed[0]["thread_id"] == "t0"
@@ -891,13 +912,76 @@ class TestReconcileFixResults:
         assert count == 1
 
     def test_git_failure_returns_unchanged(self, rt):
-        skipped = [self._entry(reason="r")]
+        deferred = [self._entry(reason="r")]
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 128
             mock_run.return_value.stdout = ""
             fixed, remaining, count = rt._reconcile_fix_results(
-                [], skipped, Path("/wt"), self._cp(rt),
+                [], deferred, Path("/wt"), self._cp(rt),
             )
         assert len(fixed) == 0
         assert len(remaining) == 1
         assert count == 0
+
+
+# ── _build_deferred_issue_body ────────────────────────────────────────────
+
+
+class TestBuildDeferredIssueBody:
+
+    def test_basic_body(self, rt):
+        deferred = [
+            {"thread_id": "t1", "file": "src/foo.go", "line": 10,
+             "summary": "fix it", "reason": "agent could not auto-fix"},
+        ]
+        threads_by_id = {
+            "t1": {"comments": [{"databaseId": 12345}]},
+        }
+        body = rt._build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
+        assert "PR #42" in body
+        assert "src/foo.go:10" in body
+        assert "fix it" in body
+        assert "agent could not auto-fix" in body
+        assert "#discussion_r12345" in body
+
+    def test_no_permalink(self, rt):
+        deferred = [
+            {"thread_id": "t1", "file": "a.go", "line": 1,
+             "summary": "do thing", "reason": "r"},
+        ]
+        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        assert "do thing" in body
+        assert "a.go:1" in body
+
+
+# ── _post_deferred_replies ────────────────────────────────────────────────
+
+
+class TestPostDeferredReplies:
+
+    def test_posts_replies_with_issue_link(self, rt):
+        deferred = [
+            {"thread_id": "t1", "summary": "fix it"},
+        ]
+        threads_by_id = {
+            "t1": {"comments": [{"databaseId": 111}]},
+        }
+        with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+            count = rt._post_deferred_replies(
+                deferred, threads_by_id, "owner/repo", 42,
+                "ENG-456", "https://linear.app/team/issue/ENG-456",
+            )
+        assert count == 1
+        body = mock_reply.call_args[0][3]
+        assert "ENG-456" in body
+        assert "linear.app" in body
+        assert "Deferred" in body
+
+    def test_no_comments_skips(self, rt):
+        deferred = [{"thread_id": "t1", "summary": "fix it"}]
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            count = rt._post_deferred_replies(
+                deferred, {}, "owner/repo", 42, "ENG-456", "",
+            )
+        assert count == 0
+        mock_reply.assert_not_called()

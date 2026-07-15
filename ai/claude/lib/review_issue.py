@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 
 import log
@@ -25,6 +26,12 @@ _CONFIG_FILE = "review.yml"
 class IssueProvider:
     name: str = _PROVIDER_DEFAULT
     options: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CreatedIssue:
+    id: str = ""
+    url: str = ""
 
 
 @dataclass(frozen=True)
@@ -200,3 +207,151 @@ def fetch_issue_context(
         return _fetch_jira(issue_id, opts)
 
     return IssueContext()
+
+
+# ── Issue creation / update ────────────────────────────────────────────────
+
+
+def _write_description_file(description: str) -> str:
+    """Write description to a temp file and return the path."""
+    fd, path = tempfile.mkstemp(suffix=".md", prefix="issue-desc-")
+    with os.fdopen(fd, "w") as f:
+        f.write(description)
+    return path
+
+
+def _create_linear(
+    team: str,
+    title: str,
+    description: str,
+    parent_id: str | None = None,
+) -> CreatedIssue | None:
+    desc_file = _write_description_file(description)
+    try:
+        cmd = [
+            "linear", "issue", "create",
+            "--team", team,
+            "--assignee", "self",
+            "--title", title,
+            "--description-file", desc_file,
+            "--no-interactive",
+        ]
+        if parent_id:
+            cmd.extend(["--parent", parent_id])
+        output = _run_issue_cli(cmd)
+        if not output:
+            return None
+        m = _ISSUE_PATTERN_JIRA_LINEAR.search(output)
+        if not m:
+            log.error(f"Could not parse issue ID from linear output: {output[:200]}")
+            return None
+        issue_id = m.group(0)
+        url = _get_linear_issue_url(issue_id)
+        log.ok(f"Created Linear issue: {issue_id}")
+        return CreatedIssue(id=issue_id, url=url)
+    finally:
+        os.unlink(desc_file)
+
+
+def _get_linear_issue_url(issue_id: str) -> str:
+    """Fetch the URL for a Linear issue via JSON view."""
+    raw = _run_issue_cli(["linear", "issue", "view", issue_id, "--json", "--no-comments"])
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw)
+        return data.get("url", "")
+    except json.JSONDecodeError:
+        return ""
+
+
+def _update_linear(issue_id: str, description: str) -> bool:
+    desc_file = _write_description_file(description)
+    try:
+        result = subprocess.run(
+            ["linear", "issue", "update", issue_id, "--description-file", desc_file],
+            capture_output=True, text=True, timeout=30,
+        )
+        ok = result.returncode == 0
+        if ok:
+            log.ok(f"Updated Linear issue: {issue_id}")
+        return ok
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        os.unlink(desc_file)
+
+
+def _create_github(
+    repo: str, title: str, description: str,
+) -> CreatedIssue | None:
+    desc_file = _write_description_file(description)
+    try:
+        output = _run_issue_cli([
+            "gh", "issue", "create",
+            "--repo", repo,
+            "--title", title,
+            "--body-file", desc_file,
+        ])
+        if not output:
+            return None
+        url = output.strip().splitlines()[-1].strip()
+        m = re.search(r"/issues/(\d+)", url)
+        issue_id = f"#{m.group(1)}" if m else url
+        log.ok(f"Created GitHub issue: {issue_id}")
+        return CreatedIssue(id=issue_id, url=url)
+    finally:
+        os.unlink(desc_file)
+
+
+def _update_github(repo: str, issue_id: str, description: str) -> bool:
+    desc_file = _write_description_file(description)
+    try:
+        num = issue_id.lstrip("#")
+        result = subprocess.run(
+            ["gh", "issue", "edit", num,
+             "--repo", repo, "--body-file", desc_file],
+            capture_output=True, text=True, timeout=30,
+        )
+        ok = result.returncode == 0
+        if ok:
+            log.ok(f"Updated GitHub issue: {issue_id}")
+        return ok
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        os.unlink(desc_file)
+
+
+def create_issue(
+    provider: str,
+    team: str,
+    title: str,
+    description: str,
+    parent_id: str | None = None,
+    repo: str = "",
+    opts: dict | None = None,
+) -> CreatedIssue | None:
+    """Create an issue in the configured tracker. Returns None on failure."""
+    if provider == "linear":
+        return _create_linear(team, title, description, parent_id)
+    if provider == "github":
+        return _create_github(repo, title, description)
+    log.dim(f"Issue creation not supported for provider: {provider}")
+    return None
+
+
+def update_issue(
+    provider: str,
+    issue_id: str,
+    description: str,
+    repo: str = "",
+    opts: dict | None = None,
+) -> bool:
+    """Update an existing issue's description. Returns True on success."""
+    if provider == "linear":
+        return _update_linear(issue_id, description)
+    if provider == "github":
+        return _update_github(repo, issue_id, description)
+    log.dim(f"Issue update not supported for provider: {provider}")
+    return False

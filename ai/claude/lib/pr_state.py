@@ -122,28 +122,51 @@ class RebaseSummary:
     updated_at: str = ""
 
 
+class ThreadAction(Enum):
+    FIXED = "fixed"
+    DEFERRED = "deferred"
+    NEEDS_HUMAN = "needs_human"
+    DISMISSED = "dismissed"
+
+
 @dataclass
-class FixThreadOutcome:
-    """Per-thread outcome from a comment fix pass."""
+class ThreadOutcome:
+    """Per-thread outcome from a comment processing pass."""
     thread_id: str = ""
     file: str = ""
     line: int = 0
     reviewer: str = ""
     summary: str = ""
-    action: str = ""  # "fixed", "skipped", "needs_human", "dismissed"
+    action: str = ""
     reason: str = ""
+
+    @classmethod
+    def from_entry(
+        cls, entry: dict, action: ThreadAction, reason_key: str = "reason",
+    ) -> "ThreadOutcome":
+        return cls(
+            thread_id=entry.get("thread_id", ""),
+            file=entry.get("file", ""),
+            line=entry.get("line", 0),
+            reviewer=entry.get("reviewer", ""),
+            summary=entry.get("summary", ""),
+            action=action.value,
+            reason=entry.get(reason_key, ""),
+        )
 
 
 @dataclass
 class FixSummary:
     """Snapshot written by comment fix pass."""
-    threads: list[FixThreadOutcome] = field(default_factory=list)
+    threads: list[ThreadOutcome] = field(default_factory=list)
     commit_sha: str = ""
     commit_status: str = ""
     replies_posted: int = 0
     summary_url: str = ""
     summary_deferred: bool = False
     reconciled_count: int = 0
+    deferred_issue_id: str = ""
+    deferred_issue_url: str = ""
     updated_at: str = ""
 
 

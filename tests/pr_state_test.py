@@ -14,7 +14,7 @@ import pytest
 from pr_state import (
     PRIdentity, CIDomain, ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
-    FixThreadOutcome, FixSummary,
+    ThreadAction, ThreadOutcome, FixSummary,
     PRState, load_state, save_state, new_state, update_identity, update_ci_domain,
     update_review, update_comments, update_triage, update_rebase, update_fix,
     state_to_dict, state_from_dict,
@@ -650,11 +650,32 @@ def test_apply_state_update_unknown_domain():
 
 
 def test_fix_thread_outcome_defaults():
-    t = FixThreadOutcome()
+    t = ThreadOutcome()
     assert t.thread_id == ""
     assert t.file == ""
     assert t.line == 0
     assert t.action == ""
+    assert t.reason == ""
+
+
+def test_fix_thread_outcome_from_entry():
+    entry = {
+        "thread_id": "t1", "file": "src/foo.go", "line": 42,
+        "reviewer": "alice", "summary": "fix it", "reasoning": "not applicable",
+    }
+    t = ThreadOutcome.from_entry(entry, ThreadAction.DISMISSED, reason_key="reasoning")
+    assert t.thread_id == "t1"
+    assert t.file == "src/foo.go"
+    assert t.line == 42
+    assert t.action == ThreadAction.DISMISSED.value
+    assert t.reason == "not applicable"
+
+
+def test_fix_thread_outcome_from_entry_defaults():
+    t = ThreadOutcome.from_entry({}, ThreadAction.FIXED)
+    assert t.thread_id == ""
+    assert t.file == ""
+    assert t.action == ThreadAction.FIXED.value
     assert t.reason == ""
 
 
@@ -667,6 +688,8 @@ def test_fix_summary_defaults():
     assert f.summary_url == ""
     assert f.summary_deferred is False
     assert f.reconciled_count == 0
+    assert f.deferred_issue_id == ""
+    assert f.deferred_issue_url == ""
     assert f.updated_at == ""
 
 
@@ -683,7 +706,7 @@ def test_pr_state_has_fix_field():
 def test_update_fix_replaces():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     update_fix(state, FixSummary(
-        threads=[FixThreadOutcome(thread_id="t1", action="fixed")],
+        threads=[ThreadOutcome(thread_id="t1", action=ThreadAction.FIXED.value)],
         commit_sha="abc", commit_status="pushed",
         updated_at="t1",
     ))
@@ -702,25 +725,28 @@ def test_state_roundtrip_with_fix_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     update_fix(state, FixSummary(
         threads=[
-            FixThreadOutcome(
+            ThreadOutcome(
                 thread_id="t1", file="src/foo.go", line=10,
                 reviewer="alice", summary="fix the thing",
-                action="fixed",
+                action=ThreadAction.FIXED.value,
             ),
-            FixThreadOutcome(
+            ThreadOutcome(
                 thread_id="t2", file="src/bar.go", line=20,
                 reviewer="bob", summary="add validation",
-                action="skipped", reason="agent could not auto-fix",
+                action=ThreadAction.DEFERRED.value, reason="agent could not auto-fix",
             ),
-            FixThreadOutcome(
+            ThreadOutcome(
                 thread_id="t3", file="src/baz.go", line=30,
                 reviewer="charlie", summary="needs design",
-                action="needs_human", reason="contested",
+                action=ThreadAction.NEEDS_HUMAN.value, reason="contested",
             ),
         ],
         commit_sha="abc1234", commit_status="pushed",
         replies_posted=2, summary_url="https://github.com/r/p/issues/1#comment",
-        reconciled_count=1, updated_at="2026-07-14T00:00:00+00:00",
+        reconciled_count=1,
+        deferred_issue_id="ENG-456",
+        deferred_issue_url="https://linear.app/team/issue/ENG-456/slug",
+        updated_at="2026-07-14T00:00:00+00:00",
     ))
 
     d = state_to_dict(state)
@@ -730,13 +756,15 @@ def test_state_roundtrip_with_fix_data():
     assert restored.fix.threads[0].thread_id == "t1"
     assert restored.fix.threads[0].action == "fixed"
     assert restored.fix.threads[0].file == "src/foo.go"
-    assert restored.fix.threads[1].action == "skipped"
+    assert restored.fix.threads[1].action == "deferred"
     assert restored.fix.threads[1].reason == "agent could not auto-fix"
     assert restored.fix.threads[2].action == "needs_human"
     assert restored.fix.commit_sha == "abc1234"
     assert restored.fix.commit_status == "pushed"
     assert restored.fix.replies_posted == 2
     assert restored.fix.reconciled_count == 1
+    assert restored.fix.deferred_issue_id == "ENG-456"
+    assert restored.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456/slug"
 
 
 def test_save_preserves_fix_data():
@@ -745,8 +773,8 @@ def test_save_preserves_fix_data():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         update_fix(state, FixSummary(
             threads=[
-                FixThreadOutcome(thread_id="t1", file="a.go", action="fixed"),
-                FixThreadOutcome(thread_id="t2", file="b.go", action="dismissed", reason="invalid"),
+                ThreadOutcome(thread_id="t1", file="a.go", action=ThreadAction.FIXED.value),
+                ThreadOutcome(thread_id="t2", file="b.go", action=ThreadAction.DISMISSED.value, reason="invalid"),
             ],
             commit_sha="def456", commit_status="pushed",
             replies_posted=1, reconciled_count=1,

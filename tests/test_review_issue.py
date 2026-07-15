@@ -10,8 +10,9 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_issue import (
-    IssueContext, IssueProvider, load_issue_provider, extract_issue_id,
-    fetch_issue_context,
+    IssueContext, IssueProvider, CreatedIssue,
+    load_issue_provider, extract_issue_id,
+    fetch_issue_context, create_issue, update_issue,
 )
 
 
@@ -230,3 +231,119 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
     assert result.link == "https://github.com/owner/repo/issues/42"
     assert result.context == ""
     assert "GitHub issue #42 not found in owner/repo" in capsys.readouterr().err
+
+
+# ── create_issue ──────────────────────────────────────────────────────────
+
+
+def test_create_issue_linear(capsys):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        r = MagicMock()
+        r.returncode = 0
+        if "create" in cmd:
+            r.stdout = "Created ENG-456: fix(review): deferred"
+        else:
+            r.stdout = '{"url": "https://linear.app/team/issue/ENG-456/slug"}'
+        return r
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = create_issue("linear", "ENG", "title", "description", parent_id="ENG-123")
+
+    assert result is not None
+    assert result.id == "ENG-456"
+    assert result.url == "https://linear.app/team/issue/ENG-456/slug"
+    create_cmd = calls[0]
+    assert "--team" in create_cmd
+    assert "--parent" in create_cmd
+    assert "ENG-123" in create_cmd
+    assert "--description-file" in create_cmd
+
+
+def test_create_issue_linear_no_parent(capsys):
+    def fake_run(cmd, **kwargs):
+        r = MagicMock()
+        r.returncode = 0
+        if "create" in cmd:
+            r.stdout = "Created ENG-456"
+        else:
+            r.stdout = '{"url": "https://linear.app/team/issue/ENG-456/slug"}'
+        return r
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = create_issue("linear", "ENG", "title", "description")
+
+    assert result is not None
+    assert result.id == "ENG-456"
+
+
+def test_create_issue_linear_failure():
+    r = MagicMock()
+    r.returncode = 1
+    r.stdout = ""
+
+    with patch("subprocess.run", return_value=r):
+        result = create_issue("linear", "ENG", "title", "description")
+
+    assert result is None
+
+
+def test_create_issue_github(capsys):
+    r = MagicMock()
+    r.returncode = 0
+    r.stdout = "https://github.com/owner/repo/issues/42\n"
+
+    with patch("subprocess.run", return_value=r):
+        result = create_issue("github", "", "title", "description", repo="owner/repo")
+
+    assert result is not None
+    assert result.id == "#42"
+    assert result.url == "https://github.com/owner/repo/issues/42"
+
+
+def test_create_issue_unsupported_provider(capsys):
+    result = create_issue("jira", "PROJ", "title", "description")
+    assert result is None
+
+
+# ── update_issue ──────────────────────────────────────────────────────────
+
+
+def test_update_issue_linear(capsys):
+    r = MagicMock()
+    r.returncode = 0
+    r.stdout = ""
+
+    with patch("subprocess.run", return_value=r):
+        ok = update_issue("linear", "ENG-456", "new description")
+
+    assert ok is True
+
+
+def test_update_issue_linear_failure():
+    r = MagicMock()
+    r.returncode = 1
+    r.stdout = ""
+
+    with patch("subprocess.run", return_value=r):
+        ok = update_issue("linear", "ENG-456", "new description")
+
+    assert ok is False
+
+
+def test_update_issue_github(capsys):
+    r = MagicMock()
+    r.returncode = 0
+    r.stdout = ""
+
+    with patch("subprocess.run", return_value=r):
+        ok = update_issue("github", "#42", "new description", repo="owner/repo")
+
+    assert ok is True
+
+
+def test_update_issue_unsupported_provider(capsys):
+    ok = update_issue("jira", "PROJ-42", "description")
+    assert ok is False

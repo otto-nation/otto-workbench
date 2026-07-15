@@ -360,3 +360,77 @@ def test_count_on_missing_file(tmp_path):
     missing = tmp_path / "nope.md"
     assert ci_check._count_checked(missing) == 0
     assert ci_check._count_unchecked(missing) == 0
+
+
+# ── _extract_failed_step ────────────────────────────────────────────────
+
+
+def test_extract_failed_step_from_steps():
+    job = {
+        "name": "Generate & verify",
+        "steps": [
+            {"name": "Checkout", "conclusion": "success"},
+            {"name": "Setup Node", "conclusion": "success"},
+            {"name": "Generate & check drift", "conclusion": "failure"},
+            {"name": "Post Checkout", "conclusion": "skipped"},
+        ],
+    }
+    assert ci_check._extract_failed_step(job) == "Generate & check drift"
+
+
+def test_extract_failed_step_no_steps():
+    job = {"name": "Build"}
+    assert ci_check._extract_failed_step(job) is None
+
+
+def test_extract_failed_step_all_success():
+    job = {
+        "name": "Lint",
+        "steps": [
+            {"name": "Checkout", "conclusion": "success"},
+            {"name": "Run lint", "conclusion": "success"},
+        ],
+    }
+    assert ci_check._extract_failed_step(job) is None
+
+
+def test_extract_failed_step_timed_out():
+    job = {
+        "name": "Slow tests",
+        "steps": [
+            {"name": "Run tests", "conclusion": "timed_out"},
+        ],
+    }
+    assert ci_check._extract_failed_step(job) == "Run tests"
+
+
+def test_parse_run_includes_failed_step():
+    """_parse_run should extract failed_step from job steps data."""
+    run_data = _make_run_data([
+        {
+            "name": "Generate & verify",
+            "conclusion": "failure",
+            "databaseId": 10,
+            "steps": [
+                {"name": "Checkout", "conclusion": "success"},
+                {"name": "Generate & check drift", "conclusion": "failure"},
+            ],
+        },
+    ])
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert group.failed_step == "Generate & check drift"
+
+
+def test_parse_run_failed_step_none_without_steps():
+    """Jobs without steps data should have failed_step=None."""
+    run_data = _make_run_data([
+        {"name": "Lint", "conclusion": "failure", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert group.failed_step is None

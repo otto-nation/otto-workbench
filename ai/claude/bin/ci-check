@@ -202,6 +202,14 @@ def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) ->
     return annotations, [context], ci.classify_job(job.get("name", "unknown"), [context])
 
 
+def _extract_failed_step(job: dict) -> str | None:
+    """Return the name of the first failed step in a job, if available."""
+    for step in job.get("steps", []):
+        if step.get("conclusion") in _FAILURE_CONCLUSIONS:
+            return step.get("name")
+    return None
+
+
 def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
     jobs = run_data.get("jobs", [])
@@ -215,6 +223,8 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         job_name = job.get("name", "unknown")
         job_id = job.get("databaseId", 0)
         source_run_id = job.get("_source_run_id") or run_data.get("databaseId")
+
+        failed_step = _extract_failed_step(job)
 
         annotations = _fetch_annotations(repo, job_id) if job_id else []
         annotation_texts = [a.get("message", "") for a in annotations]
@@ -230,6 +240,7 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
             prior_items = failures[job_key].items if job_key in failures else ()
             failures[job_key] = ci.FailureGroup(
                 job=job_name, kind=kind, items=prior_items + tuple(items),
+                failed_step=failed_step,
             )
 
     return ci.RunState(
@@ -358,6 +369,7 @@ def _run_ci(trail, args, ctx) -> dict:
             report["failures"].append({
                 "id": item.id,
                 "job": group.job,
+                "failed_step": group.failed_step,
                 "kind": group.kind.value,
                 "annotation": item.annotation,
                 "headline": item.headline,

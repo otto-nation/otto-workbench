@@ -1024,3 +1024,44 @@ class TestResolveFixedThreads:
         with patch("pr_comments.resolve_thread", side_effect=[True, False]):
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
         assert count == 1
+
+
+# ── Blocking reviewers ────────────────────────────────────────────────────────
+
+
+class TestBlockingReviewers:
+    """Verify blocking_reviewers extracts actual logins from verdict data.
+
+    Verdicts from PRData.reviewer_verdicts() use the key "user", not "author".
+    Regression test for a bug where v.get("author", {}).get("login") was used.
+    """
+
+    def _extract_blocking(self, verdicts):
+        return [
+            v.get("user", "unknown")
+            for v in verdicts
+            if v.get("state") == "CHANGES_REQUESTED"
+        ]
+
+    def test_extracts_login_from_user_key(self):
+        verdicts = [
+            {"user": "alice", "state": "CHANGES_REQUESTED", "submitted_at": "2026-01-01T00:00:00Z"},
+        ]
+        assert self._extract_blocking(verdicts) == ["alice"]
+
+    def test_multiple_blocking_reviewers(self):
+        verdicts = [
+            {"user": "alice", "state": "CHANGES_REQUESTED", "submitted_at": "2026-01-01T00:00:00Z"},
+            {"user": "bob", "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"},
+            {"user": "carol", "state": "CHANGES_REQUESTED", "submitted_at": "2026-01-01T00:00:00Z"},
+        ]
+        assert self._extract_blocking(verdicts) == ["alice", "carol"]
+
+    def test_no_blocking_reviewers(self):
+        verdicts = [
+            {"user": "alice", "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"},
+        ]
+        assert self._extract_blocking(verdicts) == []
+
+    def test_empty_verdicts(self):
+        assert self._extract_blocking([]) == []

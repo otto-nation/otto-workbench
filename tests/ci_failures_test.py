@@ -590,3 +590,99 @@ def test_render_dashboard_omits_run_ids_for_single_run():
     )
     dashboard = render_dashboard(run, {}, run_ids=[100])
     assert "Workflow runs:" not in dashboard
+
+
+# ── failed_step Tests ───────────────────────────────────────────────────
+
+
+def test_failure_group_failed_step():
+    item = _make_item("a")
+    group = FailureGroup(
+        job="Generate & verify", kind=FailureKind.BUILD,
+        items=(item,), failed_step="Generate & check drift",
+    )
+    assert group.failed_step == "Generate & check drift"
+
+
+def test_failure_group_failed_step_default():
+    item = _make_item("a")
+    group = FailureGroup(job="lint", kind=FailureKind.LINT, items=(item,))
+    assert group.failed_step is None
+
+
+def test_render_dashboard_shows_failed_step():
+    item = _make_item("a", headline="Run 'mise run generate' locally and commit the changes.")
+    group = FailureGroup(
+        job="Generate & verify", kind=FailureKind.BUILD,
+        items=(item,), failed_step="Generate & check drift",
+    )
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"generate-verify": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW})
+    assert "Generate & verify → Generate & check drift:" in dashboard
+
+
+def test_render_dashboard_omits_arrow_without_failed_step():
+    item = _make_item("a", headline="SC2086: Double quote")
+    group = FailureGroup(job="shellcheck", kind=FailureKind.LINT, items=(item,))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"shellcheck": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW})
+    assert "shellcheck:" in dashboard
+    assert "→" not in dashboard
+
+
+# ── Drift/Codegen Marker Tests ──────────────────────────────────────────
+
+
+def test_extract_failure_context_codegen_drift():
+    log = "\n".join([
+        "Step 1: Generating protos...",
+        "Step 2: Checking drift...",
+        "The following files are out of date:",
+        "  lib-proto/gen/ts/account/v1/account_pb.ts",
+        "  lib-proto/gen/ts/auth/v1/auth_pb.ts",
+        " 105 files changed, 105 insertions(+), 105 deletions(-)",
+        "",
+        "  Run 'mise run generate' locally and commit the changes.",
+    ])
+    result = extract_failure_context(log, FailureKind.BUILD)
+    assert "locally and commit" in result
+    assert "mise run generate" in result
+
+
+def test_extract_failure_context_diff_stat():
+    log = "\n".join([
+        "Checking generated files...",
+        " file1.go | 5 ++---",
+        " file2.go | 3 ++-",
+        " 2 files changed, 5 insertions(+), 3 deletions(-)",
+        "Generated code is out of date.",
+    ])
+    result = extract_failure_context(log, FailureKind.BUILD)
+    assert "2 files changed" in result
+
+
+def test_extract_headline_codegen_drift():
+    context = "\n".join([
+        "  lib-proto/gen/ts/account/v1/account_pb.ts",
+        " 105 files changed, 105 insertions(+), 105 deletions(-)",
+        "",
+        "  Run 'mise run generate' locally and commit the changes.",
+    ])
+    headline = extract_headline(context)
+    assert "105 files changed" in headline
+
+
+def test_extract_headline_codegen_action_line():
+    context = "  Run 'mise run generate' locally and commit the changes."
+    headline = extract_headline(context)
+    assert "locally and commit" in headline

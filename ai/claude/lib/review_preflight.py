@@ -246,9 +246,11 @@ def _file_permissions(path: Path) -> str:
 def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
     empty = ("", "", [], "")
     if not job.prior_review:
+        log.debug("No prior review — running full review")
         return empty
     prior_sha_match = PRIOR_SHA_RE.search(job.prior_review)
     if not prior_sha_match:
+        log.debug("Prior review has no SHA marker — running full review")
         return empty
     prior_sha = prior_sha_match.group(1)
     if prior_sha == job.pr.head_sha:

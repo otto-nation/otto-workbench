@@ -163,6 +163,33 @@ _check_permission_field() {
   esac
 }
 
+
+# _check_known_command_field KEY FILE TOOL_NAME CMD_NAME
+_check_known_command_field() {
+  local key="$1" file="$2" name="$3" cmd_name="$4"
+  local field
+  for field in $KNOWN_COMMAND_FIELDS; do
+    if [[ "$key" == "$field" ]]; then return 0; fi
+  done
+  _fail "$(basename "$file") entry '$name' command '$cmd_name': unknown field '$key'"
+}
+
+# _check_single_command FILE TOOL_INDEX CMD_INDEX TOOL_NAME
+_check_single_command() {
+  local file="$1" i="$2" j="$3" name="$4"
+  local cmd_name cmd_desc
+  cmd_name=$(yq ".tools[$i].commands[$j].name // \"\"" "$file")
+  cmd_desc=$(yq ".tools[$i].commands[$j].description // \"\"" "$file")
+
+  [[ -n "$cmd_name" && "$cmd_name" != "null" ]] || _fail "$(basename "$file") entry '$name' commands[$j]: missing required field: name"
+  [[ -n "$cmd_desc" && "$cmd_desc" != "null" ]] || _fail "$(basename "$file") entry '$name' command '$cmd_name': missing required field: description"
+
+  local key
+  while IFS= read -r key; do
+    _check_known_command_field "$key" "$file" "$name" "$cmd_name"
+  done < <(yq ".tools[$i].commands[$j] | keys | .[]" "$file")
+}
+
 # _check_commands_field FILE INDEX
 _check_commands_field() {
   local file="$1" i="$2"
@@ -191,23 +218,7 @@ _check_commands_field() {
   fi
 
   for (( j=0; j<cmd_count; j++ )); do
-    local cmd_name cmd_desc
-    cmd_name=$(yq ".tools[$i].commands[$j].name // \"\"" "$file")
-    cmd_desc=$(yq ".tools[$i].commands[$j].description // \"\"" "$file")
-
-    [[ -n "$cmd_name" && "$cmd_name" != "null" ]] || _fail "$(basename "$file") entry '$name' commands[$j]: missing required field: name"
-    [[ -n "$cmd_desc" && "$cmd_desc" != "null" ]] || _fail "$(basename "$file") entry '$name' command '$cmd_name': missing required field: description"
-
-    local key
-    while IFS= read -r key; do
-      local known=false field
-      for field in $KNOWN_COMMAND_FIELDS; do
-        if [[ "$key" == "$field" ]]; then known=true; break; fi
-      done
-      if ! $known; then
-        _fail "$(basename "$file") entry '$name' command '$cmd_name': unknown field '$key'"
-      fi
-    done < <(yq ".tools[$i].commands[$j] | keys | .[]" "$file")
+    _check_single_command "$file" "$i" "$j" "$name"
   done
 }
 

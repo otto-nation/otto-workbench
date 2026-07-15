@@ -211,6 +211,21 @@ _iter_tools_by_visibility() {
 
 # ── tools.generated.md ────────────────────────────────────────────────────────
 
+_render_subcommands() {
+  local commands_json="$1"
+  [[ -n "$commands_json" && "$commands_json" != "null" && "$commands_json" != '""' ]] || return 0
+  local cmd_count cmd_i cmd_name cmd_desc
+  cmd_count=$(printf '%s' "$commands_json" | jq 'length')
+  [[ "$cmd_count" -gt 0 ]] || return 0
+  printf -- '- **Subcommands**:\n'
+  for (( cmd_i=0; cmd_i<cmd_count; cmd_i++ )); do
+    cmd_name=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].name")
+    cmd_desc=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].description")
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '  - `%s` — %s\n' "$cmd_name" "$cmd_desc"
+  done
+}
+
 _tool_md_entry() {
   local name="$1" description="$2" when_to_use="$3" usage="$4"
   local commands_json="${6:-}"
@@ -223,19 +238,7 @@ _tool_md_entry() {
   fi
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
   if [[ -n "$usage" && "$usage" != "null" ]]; then printf -- '- **Usage**: `%s`\n' "$usage"; fi
-  if [[ -n "$commands_json" && "$commands_json" != "null" && "$commands_json" != '""' ]]; then
-    local cmd_count cmd_i cmd_name cmd_desc
-    cmd_count=$(printf '%s' "$commands_json" | jq 'length')
-    if [[ "$cmd_count" -gt 0 ]]; then
-      printf -- '- **Subcommands**:\n'
-      for (( cmd_i=0; cmd_i<cmd_count; cmd_i++ )); do
-        cmd_name=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].name")
-        cmd_desc=$(printf '%s' "$commands_json" | jq -r ".[$cmd_i].description")
-        # shellcheck disable=SC2016  # backticks are markdown literals
-        printf '  - `%s` — %s\n' "$cmd_name" "$cmd_desc"
-      done
-    fi
-  fi
+  _render_subcommands "$commands_json"
 }
 
 _tool_ref_entry() {

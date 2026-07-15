@@ -167,7 +167,8 @@ def _render_review_section(rev: pr_state.ReviewSummary) -> list[str]:
     if rev.verdict == ReviewVerdict.DISAPPROVE.value:
         suffixes.append("[DISAPPROVED]")
     suffix = " " + " ".join(suffixes) if suffixes else ""
-    lines = [f"**Review** ({rev.review_type}): {rev.verdict}{suffix}"]
+    verdict_part = f": {rev.verdict}" if rev.verdict else ""
+    lines = [f"**Review** ({rev.review_type}){verdict_part}{suffix}"]
     if rev.finding_counts:
         parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
         lines.append(f"  findings: {', '.join(parts)}")

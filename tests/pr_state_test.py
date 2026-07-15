@@ -764,6 +764,7 @@ def test_state_roundtrip_with_fix_data():
     assert restored.fix.replies_posted == 2
     assert restored.fix.reconciled_count == 1
     assert restored.fix.deferred_issue_id == "ENG-456"
+    assert restored.fix.summary_url == "https://github.com/r/p/issues/1#comment"
     assert restored.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456/slug"
 
 

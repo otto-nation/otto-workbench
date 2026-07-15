@@ -236,7 +236,7 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
 # ── create_issue ──────────────────────────────────────────────────────────
 
 
-def test_create_issue_linear(capsys):
+def test_create_issue_linear():
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -262,7 +262,7 @@ def test_create_issue_linear(capsys):
     assert "--description-file" in create_cmd
 
 
-def test_create_issue_linear_no_parent(capsys):
+def test_create_issue_linear_no_parent():
     def fake_run(cmd, **kwargs):
         r = MagicMock()
         r.returncode = 0
@@ -290,7 +290,7 @@ def test_create_issue_linear_failure():
     assert result is None
 
 
-def test_create_issue_github(capsys):
+def test_create_issue_github():
     r = MagicMock()
     r.returncode = 0
     r.stdout = "https://github.com/owner/repo/issues/42\n"
@@ -303,7 +303,7 @@ def test_create_issue_github(capsys):
     assert result.url == "https://github.com/owner/repo/issues/42"
 
 
-def test_create_issue_unsupported_provider(capsys):
+def test_create_issue_unsupported_provider():
     result = create_issue("jira", "PROJ", "title", "description")
     assert result is None
 
@@ -311,7 +311,7 @@ def test_create_issue_unsupported_provider(capsys):
 # ── update_issue ──────────────────────────────────────────────────────────
 
 
-def test_update_issue_linear(capsys):
+def test_update_issue_linear():
     r = MagicMock()
     r.returncode = 0
     r.stdout = ""
@@ -333,7 +333,7 @@ def test_update_issue_linear_failure():
     assert ok is False
 
 
-def test_update_issue_github(capsys):
+def test_update_issue_github():
     r = MagicMock()
     r.returncode = 0
     r.stdout = ""
@@ -344,6 +344,6 @@ def test_update_issue_github(capsys):
     assert ok is True
 
 
-def test_update_issue_unsupported_provider(capsys):
+def test_update_issue_unsupported_provider():
     ok = update_issue("jira", "PROJ-42", "description")
     assert ok is False

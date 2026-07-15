@@ -546,6 +546,14 @@ def _post_dismissed_replies(
     return posted
 
 
+def _has_deferred_reply(thread: dict) -> bool:
+    """Check if a thread already has a 'Deferred:' reply posted."""
+    for comment in thread.get("comments", []):
+        if comment.get("body", "").startswith("Deferred:"):
+            return True
+    return False
+
+
 def _post_deferred_replies(
     deferred: list[dict],
     threads_by_id: dict,
@@ -555,13 +563,20 @@ def _post_deferred_replies(
     issue_url: str,
 ) -> int:
     """Post replies to deferred threads linking the tracking issue."""
+    new_deferred = [
+        e for e in deferred
+        if not _has_deferred_reply(threads_by_id.get(e.get("thread_id", ""), {}))
+    ]
+    if not new_deferred:
+        return 0
+
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
 
     def body_fn(entry: dict) -> str:
         summary = entry.get("summary", "")
         return f"Deferred: {summary}\n\nTracked in {issue_ref}."
 
-    posted = _post_thread_replies(deferred, threads_by_id, repo, pr_number, body_fn)
+    posted = _post_thread_replies(new_deferred, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Posted {posted} deferred thread replies")
     return posted
@@ -663,6 +678,7 @@ def _create_or_update_deferred_issue(
     ctx: pr_context.ResolvedContext,
     existing_issue_id: str,
     trail: Trail | None,
+    existing_issue_url: str = "",
 ) -> tuple[str, str]:
     """Create or update the deferred threads tracking issue.
 
@@ -671,13 +687,17 @@ def _create_or_update_deferred_issue(
     if not deferred:
         return existing_issue_id, ""
 
-    provider_info = review_issue.load_issue_provider(str(ctx.worktree_root) if ctx.worktree_root else None)
+    root_path = str(ctx.worktree_root) if ctx.worktree_root else None
+    provider_info = review_issue.load_issue_provider(root_path)
     provider = provider_info.name
 
     body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
 
     if existing_issue_id:
-        return _update_deferred_issue(provider, existing_issue_id, body, repo, provider_info.options)
+        issue_id, url = _update_deferred_issue(
+            provider, existing_issue_id, body, repo, provider_info.options,
+        )
+        return issue_id, url or existing_issue_url
 
     return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
 
@@ -1155,6 +1175,8 @@ def _run_comment_fix(
 
     fixed, deferred = _parse_tracking_results(tracking_file, fixable)
 
+    # ceiling: commit-message counts are pre-reconciliation; reconciliation needs
+    # the commit SHA, so it must run after. Counts may diverge from final state.
     cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
 
     if cp.status in ("no_changes", "commit_failed"):
@@ -1177,10 +1199,11 @@ def _run_comment_fix(
 
     existing_state = pr_state.load_state(wt_path)
     existing_issue_id = existing_state.fix.deferred_issue_id if existing_state else ""
+    existing_issue_url = existing_state.fix.deferred_issue_url if existing_state else ""
 
     deferred_issue_id, deferred_issue_url = _create_or_update_deferred_issue(
         deferred, ctx.repo, report["pr_number"], threads_by_id,
-        ctx, existing_issue_id, trail,
+        ctx, existing_issue_id, trail, existing_issue_url,
     )
 
     if deferred and deferred_issue_id:

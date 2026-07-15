@@ -1011,7 +1011,7 @@ class TestResolveFixedThreads:
         assert count == 0
         mock_resolve.assert_not_called()
 
-    def test_skips_missing_thread(self, rt):
+    def test_resolves_thread_absent_from_threads_by_id(self, rt):
         fixed = [{"thread_id": "t1"}]
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, {})

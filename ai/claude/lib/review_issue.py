@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -220,14 +221,22 @@ def _write_description_file(description: str) -> str:
     return path
 
 
+@contextlib.contextmanager
+def _description_file(description: str):
+    path = _write_description_file(description)
+    try:
+        yield path
+    finally:
+        os.unlink(path)
+
+
 def _create_linear(
     team: str,
     title: str,
     description: str,
     parent_id: str | None = None,
 ) -> CreatedIssue | None:
-    desc_file = _write_description_file(description)
-    try:
+    with _description_file(description) as desc_file:
         cmd = [
             "linear", "issue", "create",
             "--team", team,
@@ -249,8 +258,6 @@ def _create_linear(
         url = _get_linear_issue_url(issue_id)
         log.ok(f"Created Linear issue: {issue_id}")
         return CreatedIssue(id=issue_id, url=url)
-    finally:
-        os.unlink(desc_file)
 
 
 def _get_linear_issue_url(issue_id: str) -> str:
@@ -266,27 +273,24 @@ def _get_linear_issue_url(issue_id: str) -> str:
 
 
 def _update_linear(issue_id: str, description: str) -> bool:
-    desc_file = _write_description_file(description)
-    try:
-        result = subprocess.run(
-            ["linear", "issue", "update", issue_id, "--description-file", desc_file],
-            capture_output=True, text=True, timeout=30,
-        )
-        ok = result.returncode == 0
-        if ok:
-            log.ok(f"Updated Linear issue: {issue_id}")
-        return ok
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    finally:
-        os.unlink(desc_file)
+    with _description_file(description) as desc_file:
+        try:
+            result = subprocess.run(
+                ["linear", "issue", "update", issue_id, "--description-file", desc_file],
+                capture_output=True, text=True, timeout=30,
+            )
+            ok = result.returncode == 0
+            if ok:
+                log.ok(f"Updated Linear issue: {issue_id}")
+            return ok
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
 
 
 def _create_github(
     repo: str, title: str, description: str,
 ) -> CreatedIssue | None:
-    desc_file = _write_description_file(description)
-    try:
+    with _description_file(description) as desc_file:
         output = _run_issue_cli([
             "gh", "issue", "create",
             "--repo", repo,
@@ -300,27 +304,23 @@ def _create_github(
         issue_id = f"#{m.group(1)}" if m else url
         log.ok(f"Created GitHub issue: {issue_id}")
         return CreatedIssue(id=issue_id, url=url)
-    finally:
-        os.unlink(desc_file)
 
 
 def _update_github(repo: str, issue_id: str, description: str) -> bool:
-    desc_file = _write_description_file(description)
-    try:
-        num = issue_id.lstrip("#")
-        result = subprocess.run(
-            ["gh", "issue", "edit", num,
-             "--repo", repo, "--body-file", desc_file],
-            capture_output=True, text=True, timeout=30,
-        )
-        ok = result.returncode == 0
-        if ok:
-            log.ok(f"Updated GitHub issue: {issue_id}")
-        return ok
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    finally:
-        os.unlink(desc_file)
+    with _description_file(description) as desc_file:
+        try:
+            num = issue_id.lstrip("#")
+            result = subprocess.run(
+                ["gh", "issue", "edit", num,
+                 "--repo", repo, "--body-file", desc_file],
+                capture_output=True, text=True, timeout=30,
+            )
+            ok = result.returncode == 0
+            if ok:
+                log.ok(f"Updated GitHub issue: {issue_id}")
+            return ok
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
 
 
 def create_issue(

@@ -38,22 +38,14 @@ remote_main=$(git -C "$MAIN_WORKTREE" rev-parse origin/main)
 
 if [[ "$local_main" == "$remote_main" ]]; then
   log "Already up-to-date (${local_main:0:7})"
-  log "Cleaning stale worktrees"
-  if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
-    log "Worktree cleanup complete"
-  else
-    log "WARNING: worktree cleanup failed (non-fatal)"
+else
+  log "Updating ${local_main:0:7} -> ${remote_main:0:7}"
+
+  # Fast-forward main to fetched origin/main (no second network call)
+  if ! git -C "$MAIN_WORKTREE" merge --ff-only origin/main 2>&1; then
+    log "ERROR: fast-forward of main failed (may have diverged)"
+    exit 1
   fi
-  date '+%s' > "$LAST_RUN_FILE"
-  exit 0
-fi
-
-log "Updating ${local_main:0:7} -> ${remote_main:0:7}"
-
-# Fast-forward main to fetched origin/main (no second network call)
-if ! git -C "$MAIN_WORKTREE" merge --ff-only origin/main 2>&1; then
-  log "ERROR: fast-forward of main failed (may have diverged)"
-  exit 1
 fi
 
 log "Running sync"

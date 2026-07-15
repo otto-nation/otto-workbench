@@ -1,6 +1,7 @@
 Review PR #${pr_number} in ${repo}.
 
 ${pr_header}
+${state_context}
 ${preflight_data}
 ${delta_section}
 ${reviews_section}

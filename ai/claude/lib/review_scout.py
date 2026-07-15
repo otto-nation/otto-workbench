@@ -38,6 +38,47 @@ def _parse_path_line(path_str: str) -> tuple[str, int | None]:
     return path_str, None
 
 
+def _parse_header(stripped: str, pending_lead: Lead | None, leads: list[Lead]) -> tuple[str, Lead | None]:
+    if pending_lead:
+        leads.append(pending_lead)
+    header = stripped[3:].strip().lower()
+    if "investigation" in header or "lead" in header:
+        return "leads", None
+    if "no scrutiny" in header or "no-scrutiny" in header:
+        return "no_scrutiny", None
+    return "", None
+
+
+def _apply_lead_detail(pending_lead: Lead, stripped: str) -> None:
+    lower = stripped.lower()
+    if lower.startswith("severity hint:"):
+        pending_lead.severity_hint = stripped.split(":", 1)[1].strip().rstrip(".")
+    elif lower.startswith("why:"):
+        pending_lead.why = stripped.split(":", 1)[1].strip()
+    elif not pending_lead.why:
+        pending_lead.why = stripped
+    else:
+        pending_lead.why += " " + stripped
+
+
+def _process_leads_line(stripped: str, pending_lead: Lead | None, leads: list[Lead]) -> Lead | None:
+    m = _LEAD_RE.match(stripped)
+    if m:
+        if pending_lead:
+            leads.append(pending_lead)
+        path, line_num = _parse_path_line(m.group(1))
+        return Lead(file=path, line=line_num, concern=m.group(2).strip(), severity_hint="", why="")
+    if pending_lead and stripped:
+        _apply_lead_detail(pending_lead, stripped)
+    return pending_lead
+
+
+def _process_no_scrutiny_line(stripped: str, no_scrutiny: list[str]) -> None:
+    m = _NO_SCRUTINY_RE.match(stripped)
+    if m:
+        no_scrutiny.append(m.group(1))
+
+
 def parse_scout_output(text: str) -> tuple[list[Lead], list[str]]:
     leads: list[Lead] = []
     no_scrutiny: list[str] = []
@@ -47,44 +88,12 @@ def parse_scout_output(text: str) -> tuple[list[Lead], list[str]]:
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("## "):
-            if pending_lead:
-                leads.append(pending_lead)
-                pending_lead = None
-            header = stripped[3:].strip().lower()
-            if "investigation" in header or "lead" in header:
-                section = "leads"
-            elif "no scrutiny" in header or "no-scrutiny" in header:
-                section = "no_scrutiny"
-            else:
-                section = ""
+            section, pending_lead = _parse_header(stripped, pending_lead, leads)
             continue
-
         if section == "leads":
-            m = _LEAD_RE.match(stripped)
-            if m:
-                if pending_lead:
-                    leads.append(pending_lead)
-                path, line_num = _parse_path_line(m.group(1))
-                pending_lead = Lead(
-                    file=path, line=line_num,
-                    concern=m.group(2).strip(),
-                    severity_hint="", why="",
-                )
-            elif pending_lead and stripped:
-                lower = stripped.lower()
-                if lower.startswith("severity hint:"):
-                    pending_lead.severity_hint = stripped.split(":", 1)[1].strip().rstrip(".")
-                elif lower.startswith("why:"):
-                    pending_lead.why = stripped.split(":", 1)[1].strip()
-                elif not pending_lead.why:
-                    pending_lead.why = stripped
-                else:
-                    pending_lead.why += " " + stripped
-
+            pending_lead = _process_leads_line(stripped, pending_lead, leads)
         elif section == "no_scrutiny":
-            m = _NO_SCRUTINY_RE.match(stripped)
-            if m:
-                no_scrutiny.append(m.group(1))
+            _process_no_scrutiny_line(stripped, no_scrutiny)
 
     if pending_lead:
         leads.append(pending_lead)
@@ -123,15 +132,7 @@ def format_leads_block(
         parts.append("confirm it is real or dismiss it with evidence.")
         parts.append("")
         for lead in filtered_leads:
-            loc = f"{lead.file}:{lead.line}" if lead.line else lead.file
-            parts.append(f"- **`{loc}`** — {lead.concern}")
-            detail_parts: list[str] = []
-            if lead.severity_hint:
-                detail_parts.append(f"Severity hint: {lead.severity_hint}")
-            if lead.why:
-                detail_parts.append(lead.why)
-            if detail_parts:
-                parts.append(f"  {'. '.join(detail_parts)}")
+            parts.extend(_format_lead_lines(lead))
         parts.append("")
 
     if filtered_no_scrutiny:
@@ -142,6 +143,19 @@ def format_leads_block(
         parts.append("")
 
     return "\n".join(parts)
+
+
+def _format_lead_lines(lead: Lead) -> list[str]:
+    loc = f"{lead.file}:{lead.line}" if lead.line else lead.file
+    lines = [f"- **`{loc}`** — {lead.concern}"]
+    detail_parts: list[str] = []
+    if lead.severity_hint:
+        detail_parts.append(f"Severity hint: {lead.severity_hint}")
+    if lead.why:
+        detail_parts.append(lead.why)
+    if detail_parts:
+        lines.append(f"  {'. '.join(detail_parts)}")
+    return lines
 
 
 _SCOUT_SENTINEL = "### Investigation leads from scout scan"

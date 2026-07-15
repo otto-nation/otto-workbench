@@ -66,18 +66,12 @@ def apply_disprove_results(
         m = _FINDING_LINE_RE.match(line)
         if m:
             fid = m.group(2)
-            if fid in falsified_ids:
-                dropping = True
-                dropped.append(fid)
-                continue
-            else:
-                dropping = False
+            dropping = fid in falsified_ids
+            dropped.extend([fid] if dropping else [])
+        elif dropping and not (line.startswith("- ") or line.startswith("## ")):
+            continue
         elif dropping:
-            if line.startswith("- ") or line.startswith("## "):
-                dropping = False
-            else:
-                continue
-
+            dropping = False
         if not dropping:
             kept.append(line)
 

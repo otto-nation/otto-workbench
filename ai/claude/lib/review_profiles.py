@@ -34,6 +34,19 @@ class ReviewProfile:
     rules: list[ReviewRule] = field(default_factory=list)
 
 
+def _parse_rules(data: dict) -> list[ReviewRule]:
+    rules: list[ReviewRule] = []
+    for r in data.get("rules", []):
+        if not isinstance(r, dict) or "rule" not in r:
+            continue
+        rules.append(ReviewRule(
+            severity=r.get("severity", "should-fix"),
+            rule=r["rule"],
+            evidence=r.get("evidence", ""),
+        ))
+    return rules
+
+
 def load_profiles(wt_path: str) -> list[ReviewProfile]:
     if yaml is None:
         return []
@@ -51,21 +64,11 @@ def load_profiles(wt_path: str) -> list[ReviewProfile]:
         if not isinstance(data, dict):
             continue
 
-        rules: list[ReviewRule] = []
-        for r in data.get("rules", []):
-            if not isinstance(r, dict) or "rule" not in r:
-                continue
-            rules.append(ReviewRule(
-                severity=r.get("severity", "should-fix"),
-                rule=r["rule"],
-                evidence=r.get("evidence", ""),
-            ))
-
         profiles.append(ReviewProfile(
             name=data.get("name", path.stem),
             description=data.get("description", ""),
             paths=data.get("paths", []),
-            rules=rules,
+            rules=_parse_rules(data),
         ))
     return profiles
 
@@ -78,10 +81,8 @@ def match_profiles(
         if not profile.paths:
             matched.append(profile)
             continue
-        for pattern in profile.paths:
-            if any(fnmatch.fnmatch(f, pattern) for f in changed_files):
-                matched.append(profile)
-                break
+        if any(any(fnmatch.fnmatch(f, p) for f in changed_files) for p in profile.paths):
+            matched.append(profile)
     return matched
 
 
@@ -117,9 +118,14 @@ def format_profiles_section(profiles: list[ReviewProfile]) -> str:
             key=lambda r: _SEVERITY_ORDER.get(r.severity, 9),
         )
         for rule in sorted_rules:
-            parts.append(f"- [{rule.severity}] {rule.rule}")
-            if rule.evidence:
-                parts.append(f"  Evidence: {rule.evidence}")
+            parts.extend(_format_rule_lines(rule))
         parts.append("")
 
     return "\n".join(parts)
+
+
+def _format_rule_lines(rule: ReviewRule) -> list[str]:
+    lines = [f"- [{rule.severity}] {rule.rule}"]
+    if rule.evidence:
+        lines.append(f"  Evidence: {rule.evidence}")
+    return lines

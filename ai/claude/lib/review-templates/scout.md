@@ -1,6 +1,7 @@
 You are a lead scout scanning PR #${pr_number} in ${repo}.
 
 ${pr_header}
+${state_context}
 
 ## All files in this PR
 ${all_files_formatted}

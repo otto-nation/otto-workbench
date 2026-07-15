@@ -379,13 +379,12 @@ def parse_review_verdict(review_path: Path | None) -> str:
         if line.strip().lower().startswith("## verdict"):
             in_verdict = True
             continue
-        if in_verdict:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.lower().startswith("disapprove"):
-                return ReviewVerdict.DISAPPROVE.value
-            return ""
+        if not in_verdict:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return ReviewVerdict.DISAPPROVE.value if stripped.lower().startswith("disapprove") else ""
     return ""
 
 

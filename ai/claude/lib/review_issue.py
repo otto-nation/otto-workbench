@@ -273,19 +273,26 @@ def get_issue_url(provider: str, issue_id: str) -> str:
     return ""
 
 
-def _update_linear(issue_id: str, description: str) -> bool:
+def _run_issue_cmd(cmd_prefix: list[str], description: str) -> bool:
     with _description_file(description) as desc_file:
         try:
             result = subprocess.run(
-                ["linear", "issue", "update", issue_id, "--description-file", desc_file],
+                cmd_prefix + [desc_file],
                 capture_output=True, text=True, timeout=30,
             )
-            ok = result.returncode == 0
-            if ok:
-                log.ok(f"Updated Linear issue: {issue_id}")
-            return ok
+            return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
+
+
+def _update_linear(issue_id: str, description: str) -> bool:
+    ok = _run_issue_cmd(
+        ["linear", "issue", "update", issue_id, "--description-file"],
+        description,
+    )
+    if ok:
+        log.ok(f"Updated Linear issue: {issue_id}")
+    return ok
 
 
 def _create_github(
@@ -308,20 +315,14 @@ def _create_github(
 
 
 def _update_github(repo: str, issue_id: str, description: str) -> bool:
-    with _description_file(description) as desc_file:
-        try:
-            num = issue_id.lstrip("#")
-            result = subprocess.run(
-                ["gh", "issue", "edit", num,
-                 "--repo", repo, "--body-file", desc_file],
-                capture_output=True, text=True, timeout=30,
-            )
-            ok = result.returncode == 0
-            if ok:
-                log.ok(f"Updated GitHub issue: {issue_id}")
-            return ok
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
+    num = issue_id.lstrip("#")
+    ok = _run_issue_cmd(
+        ["gh", "issue", "edit", num, "--repo", repo, "--body-file"],
+        description,
+    )
+    if ok:
+        log.ok(f"Updated GitHub issue: {issue_id}")
+    return ok
 
 
 def create_issue(

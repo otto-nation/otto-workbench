@@ -227,6 +227,11 @@ query($owner: String!, $name: String!, $pr: Int!) {{
       headRefOid
       headRefName
       baseRefName
+      author {{ login }}
+      isDraft
+      labels(first: 20) {{ nodes {{ name }} }}
+      reviewDecision
+      reviewRequests(first: 20) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} ... on Team {{ name slug }} }} }} }}
       reviews(last: {GQL_REVIEWS_LIMIT}) {{
         nodes {{
           databaseId
@@ -294,6 +299,11 @@ class PRData:
     review_threads: list[dict] = field(default_factory=list)
     issue_comments: list[dict] = field(default_factory=list)
     commits: list[dict] = field(default_factory=list)
+    author: str = ""
+    is_draft: bool = False
+    labels: list[str] = field(default_factory=list)
+    review_decision: str = ""
+    requested_reviewers: list[str] = field(default_factory=list)
 
     @property
     def pending_review_id(self) -> int | None:
@@ -447,4 +457,13 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
         review_threads=threads,
         issue_comments=pr_node.get("comments", {}).get("nodes", []),
         commits=pr_node.get("commits", {}).get("nodes", []),
+        author=(pr_node.get("author") or {}).get("login", ""),
+        is_draft=pr_node.get("isDraft", False),
+        labels=[n["name"] for n in pr_node.get("labels", {}).get("nodes", [])],
+        review_decision=pr_node.get("reviewDecision") or "",
+        requested_reviewers=[
+            (n.get("requestedReviewer") or {}).get("login", "")
+            for n in pr_node.get("reviewRequests", {}).get("nodes", [])
+            if (n.get("requestedReviewer") or {}).get("login")
+        ],
     )

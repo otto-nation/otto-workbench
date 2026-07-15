@@ -2,7 +2,7 @@ import re
 
 from nesting.bash import BashChecker
 from nesting.go import GoChecker
-from nesting.python import PythonChecker
+from nesting.python import PYTHON_SHEBANG_RE, PythonChecker
 
 _CHECKERS = [BashChecker(), PythonChecker(), GoChecker()]
 
@@ -16,6 +16,7 @@ _SHEBANG_PATTERNS: list[tuple[re.Pattern[bytes], object]] = [
     for _checker in _CHECKERS
     if _checker.SHEBANG_RE is not None
 ]
+_SHEBANG_PATTERNS.append((PYTHON_SHEBANG_RE, PythonChecker()))
 
 
 def get_checker_for_extension(ext: str):

@@ -26,7 +26,7 @@
 # Optional:
 #   docs          string          URL to external documentation
 #   brew_name     string          Brewfile formula name when it differs from tool name
-#   commands      object[]        Subcommand definitions (otto-workbench only)
+#   commands      object[]        Subcommand definitions (name + description required)
 #   auth          object          Auth block with env_var, setup_url, prefix
 #
 # ── Functions ─────────────────────────────────────────────────────────────
@@ -49,6 +49,9 @@
 # Known tool entry fields — used by validate-registries to reject unknown keys
 # shellcheck disable=SC2034
 KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs brew_name commands auth"
+# Known command entry fields (within a tool's commands[] array)
+# shellcheck disable=SC2034
+KNOWN_COMMAND_FIELDS="name description scope when detail"
 
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }

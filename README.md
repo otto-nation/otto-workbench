@@ -42,14 +42,14 @@ Secrets and machine-specific env vars go in `~/.env.local` — sourced first by 
 <!-- WORKBENCH-COMMANDS-START -->
 | Command | Scope | Description |
 |---------|-------|-------------|
-| `otto-workbench sync` | All components | Re-applies all workbench config — runs pending migrations, re-symlinks scripts and configs, regenerates tool context, and syncs AI settings. Safe to re-run at any time. |
-| `otto-workbench discover` | Environment overview | Shows installed components, available bin scripts (from registry), and launchd agent status. |
-| `otto-workbench discover regenerate` | Component state | Re-detecting installed components after manual changes |
-| `otto-workbench ai init` | Project | Scaffolds a `.claude/` directory in the current git repo with stack-detected rules and a project anatomy file. |
-| `otto-workbench ai init --force` | Project | Re-scaffolding an existing project's `.claude/` |
-| `otto-workbench ai sync` | Machine | Syncs machine-level AI config (settings, rules, skills, agents, MCPs). AI-only subset of 'otto-workbench sync'. |
-| `otto-workbench ai override` | Machine | Manage user overrides — add, disable, enable, list, and show status of overrides for agents, skills, and rules. |
-| `otto-workbench changelog` | Git history | Reviewing recent changes from conventional commits |
+| `otto-workbench sync` | All components | Re-apply all workbench config — migrations, symlinks, tool context, AI settings |
+| `otto-workbench discover` | Environment overview | Show installed components, available scripts, and agent status |
+| `otto-workbench discover regenerate` | Component state | Re-detect installed components after manual changes |
+| `otto-workbench ai init` | Project | Scaffold .claude/ in the current repo with stack-detected rules |
+| `otto-workbench ai init --force` | Project | Re-scaffold an existing project's .claude/ directory |
+| `otto-workbench ai sync` | Machine | Sync machine-level AI config (settings, rules, skills, agents, MCPs) |
+| `otto-workbench ai override` | Machine | Manage user overrides for AI agents, skills, and rules |
+| `otto-workbench changelog` | Git history | Show recent changes from conventional commits |
 <!-- WORKBENCH-COMMANDS-END -->
 
 ## What's Included

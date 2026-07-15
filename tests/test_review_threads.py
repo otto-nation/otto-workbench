@@ -1028,6 +1028,7 @@ class TestResolveFixedThreads:
 
 # ── Blocking reviewers ────────────────────────────────────────────────────────
 
+
 class TestBlockingReviewers:
     """Verify blocking_reviewers extracts actual logins from verdict data.
 

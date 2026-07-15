@@ -99,7 +99,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         pr_author = getattr(pr, "author", "")
         if pr_author and pr_author.lower() == viewer.lower():
             job.viewer_role = "author"
-        elif viewer in getattr(pr_data, "requested_reviewers", []):
+        elif viewer.lower() in [r.lower() for r in getattr(pr_data, "requested_reviewers", [])]:
             job.viewer_role = "requested reviewer"
         else:
             job.viewer_role = "reviewer"

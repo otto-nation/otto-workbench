@@ -49,6 +49,21 @@ class TestExtractJson:
         result = json.loads(rt._extract_json(text))
         assert result == {"threads": [], "stats": {}}
 
+    def test_preamble_before_bare_json(self, rt):
+        text = 'Here is the classification:\n{"a": 1}'
+        result = json.loads(rt._extract_json(text))
+        assert result == {"a": 1}
+
+    def test_preamble_and_trailing_text(self, rt):
+        text = 'Sure, here you go:\n{"threads": [], "stats": {}}\nHope this helps!'
+        result = json.loads(rt._extract_json(text))
+        assert result == {"threads": [], "stats": {}}
+
+    def test_multiline_preamble_before_json(self, rt):
+        text = 'I analyzed the threads.\nHere are the results:\n{\n  "a": 1\n}'
+        result = json.loads(rt._extract_json(text))
+        assert result == {"a": 1}
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

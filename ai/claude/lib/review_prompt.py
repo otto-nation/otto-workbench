@@ -557,8 +557,9 @@ def _build_prior_section(
     default = (
         "This is a re-review. Each prior finding has a stable ID (<!-- sid:XXXXXXXX -->).\n"
         "For each prior finding:\n"
-        "- If fixed: omit from new review\n"
-        "- If still open: carry forward, preserving the stable ID comment\n"
+        "- If fixed: note as fixed in the Prior findings section\n"
+        "- If still open: reference in the Prior findings section with disposition and thread link — do not repeat in severity sections\n"
+        "- Severity sections (Must fix, Should fix, etc.) are for genuinely new findings only\n"
         "- New findings get no stable ID — one will be assigned automatically"
     )
     return f"""

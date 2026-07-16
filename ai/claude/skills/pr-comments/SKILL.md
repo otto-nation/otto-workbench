@@ -105,6 +105,12 @@ Ask the user what to do for each:
 - **Skip** — move on
 - **Reply** — compose a reply to the reviewer
 
+When investigating `needs_human` threads, use the main worktree as a
+read-only reference for code outside the PR diff — imports, callers,
+existing patterns, or shared utilities. The script updates the main
+worktree to `origin/main` before the fix pass, so it reflects the
+current baseline. Find it via `wt switch main --no-cd --format json --no-hooks`.
+
 **Do not** attempt to fix `skipped` threads — the agent already determined
 they require judgment.
 

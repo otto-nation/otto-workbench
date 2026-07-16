@@ -242,9 +242,8 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
         if not annotations:
             annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
         elif kind == ci.FailureKind.BUILD and _annotations_uninformative(annotations):
-            log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
-            if log_ann:
-                annotations, annotation_texts, kind = log_ann, log_texts, log_kind
+            result = _log_fallback(repo, job, run_data, kind)
+            annotations, annotation_texts, kind = result if result[0] else (annotations, annotation_texts, kind)
 
         items = _annotations_to_items(annotations, job_name, source_run_id) if annotations else [_fallback_item(job_name, source_run_id)]
 

@@ -69,6 +69,12 @@ Write the triage as a `## File Triage` section in the review output, listing eve
      - If the reply says a follow-up ticket was filed, check whether the ticket description is adequate (has specific files, approach, and what to remove — not just "move to config")
      - Only mark a finding as resolved if the code change is verified — "Fixed" replies without corresponding code changes are still open
      - Classify each reply thread: "verified fix" (strikethrough), "claimed but not fixed" (still open), "filed follow-up" (note ticket quality), "disagreed" (re-evaluate), "asked question" (flag for response)
+  6. **Re-review: verify prior findings.** When the prompt includes a `## Prior review` section, this is a re-review — verifying prior findings takes priority over raising new ones:
+     - Check each prior finding against the current code to determine if it was addressed
+     - Use thread state annotations (`[CONTESTED]`, `[ACKNOWLEDGED]`, `[RESOLVED]`) as signals, but verify against the actual diff — a `[RESOLVED]` thread still needs code verification, and an `[ACKNOWLEDGED]` response without a corresponding code change is still open
+     - Carry forward unresolved findings with their stable IDs. Omit findings verified as fixed
+     - When the author contested a finding, re-evaluate: if their argument is valid, drop it with a note in the summary; if the finding still holds, carry it forward with a response to their point
+     - Summarize prior finding disposition (how many fixed, carried forward, dropped after re-evaluation) in the `## Summary` section so reviewers can see progress between rounds
 
 ### 1. Context
 - If CLAUDE.md is provided in pre-collected data, use it directly. Otherwise read the repo's CLAUDE.md (and any sub-CLAUDE.md files it references). Use project-specific rules as review criteria throughout

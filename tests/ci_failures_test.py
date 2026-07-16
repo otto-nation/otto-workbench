@@ -563,6 +563,26 @@ def test_failure_item_source_run_id_default():
     assert item.source_run_id is None
 
 
+# ── context Tests ──────────────────────────────────────────────────────
+
+
+def test_failure_item_context():
+    item = FailureItem(
+        id="x", annotation="Process completed with exit code 1", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None,
+        context="Run 'mise run generate' locally and commit",
+    )
+    assert item.context == "Run 'mise run generate' locally and commit"
+
+
+def test_failure_item_context_default():
+    item = FailureItem(
+        id="x", annotation="y", file=None, line=None,
+        diagnosis=None, fix_sha=None, outcome=None,
+    )
+    assert item.context is None
+
+
 # ── Multi-run Dashboard Tests ────────────────────────────────────────────
 
 

@@ -262,6 +262,38 @@ def test_tracking_file_handles_missing_file_and_line(tmp_path):
     assert "— — gradle" in content
 
 
+# ── _fetch_job_failure ──────────────────────────────────────────────────
+
+
+def test_fetch_job_failure_returns_correct_structure():
+    """_fetch_job_failure returns dict with expected keys."""
+    annotations = [
+        {"annotation_level": "failure", "message": "SC2086: Double quote", "path": "bin/foo.sh", "start_line": 42},
+    ]
+    job = {"name": "shellcheck", "conclusion": "failure", "databaseId": 10}
+    run_data = {"databaseId": 100}
+    with patch("ci_check._fetch_annotations", return_value=annotations):
+        result = ci_check._fetch_job_failure("owner/repo", job, run_data)
+    assert result is not None
+    assert result["job_name"] == "shellcheck"
+    assert result["kind"] == ci_check.ci.FailureKind.LINT
+    assert len(result["items"]) == 1
+    assert result["items"][0].file == "bin/foo.sh"
+    assert result["failed_step"] is None
+
+
+def test_fetch_job_failure_with_no_annotations():
+    """_fetch_job_failure falls back when no annotations exist."""
+    job = {"name": "Build", "conclusion": "failure", "databaseId": 10}
+    run_data = {"databaseId": 100}
+    with patch("ci_check._fetch_annotations", return_value=[]):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._fetch_job_failure("owner/repo", job, run_data)
+    assert result is not None
+    assert result["job_name"] == "Build"
+    assert "no-annotation" in result["items"][0].id
+
+
 # ── _parse_run ─────────────────────────────────────────────────────────
 
 
@@ -434,3 +466,113 @@ def test_parse_run_failed_step_none_without_steps():
             result = ci_check._parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.failed_step is None
+
+
+# ── _annotations_uninformative ─────────────────────────────────────────
+
+
+def test_uninformative_no_paths():
+    """Annotations without file paths are uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": ""},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_with_path():
+    """Annotations with file paths are informative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "SC2086: Double quote", "path": "bin/foo.sh", "start_line": 42},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is False
+
+
+def test_uninformative_ignores_notices():
+    """Notice-level annotations are ignored when checking informativeness."""
+    annotations = [
+        {"annotation_level": "notice", "message": "some notice", "path": "README.md"},
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": ""},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_mixed_informative_and_not():
+    """If any non-notice annotation has a path, annotations are informative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": ""},
+        {"annotation_level": "failure", "message": "error TS2304: Cannot find name 'foo'", "path": "src/app.ts", "start_line": 10},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is False
+
+
+# ── _parse_run log enrichment for BUILD failures ──────────────────────
+
+
+def test_parse_run_enriches_uninformative_build_annotations():
+    """BUILD failures with uninformative annotations should be enriched via log fallback."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": "", "start_line": 0},
+    ]
+    log_context = "Run 'mise run generate' locally and commit\ndev-ci/configs/lib-imports.json: 7 lines to delete"
+    log_annotations = [{"message": log_context, "path": "", "start_line": 0, "title": ""}]
+
+    run_data = _make_run_data([
+        {"name": "Generate & verify", "conclusion": "failure", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback", return_value=(log_annotations, [log_context], ci_check.ci.FailureKind.BUILD)) as mock_fallback:
+            result = ci_check._parse_run("owner/repo", run_data)
+    mock_fallback.assert_called_once()
+    group = list(result.failures.values())[0]
+    assert "exit code 1" in group.items[0].annotation
+    assert "mise run generate" in group.items[0].context
+
+
+def test_parse_run_keeps_uninformative_annotations_when_log_fallback_empty():
+    """If log fallback returns nothing, keep the original annotations with no context."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": "", "start_line": 0},
+    ]
+    run_data = _make_run_data([
+        {"name": "Generate & verify", "conclusion": "failure", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+            result = ci_check._parse_run("owner/repo", run_data)
+    group = list(result.failures.values())[0]
+    assert "exit code 1" in group.items[0].annotation
+    assert group.items[0].context is None
+
+
+def test_parse_run_enriches_uninformative_test_annotations():
+    """TEST failures with uninformative annotations get log context."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": "", "start_line": 0},
+    ]
+    log_context = "--- FAIL: TestInvoiceCreate (0.05s)\n    invoice_test.go:42: expected 200, got 500"
+    log_annotations = [{"message": log_context, "path": "", "start_line": 0, "title": ""}]
+
+    run_data = _make_run_data([
+        {"name": "pytest unit", "conclusion": "failure", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback", return_value=(log_annotations, [log_context], ci_check.ci.FailureKind.TEST)) as mock_fallback:
+            result = ci_check._parse_run("owner/repo", run_data)
+    mock_fallback.assert_called_once()
+    group = list(result.failures.values())[0]
+    assert "exit code 1" in group.items[0].annotation
+    assert "FAIL: TestInvoiceCreate" in group.items[0].context
+
+
+def test_parse_run_does_not_enrich_lint_with_uninformative_annotations():
+    """LINT failures should not trigger log enrichment even with uninformative annotations."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": "", "start_line": 0},
+    ]
+    run_data = _make_run_data([
+        {"name": "shellcheck", "conclusion": "failure", "databaseId": 10},
+    ])
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback") as mock_fallback:
+            ci_check._parse_run("owner/repo", run_data)
+    mock_fallback.assert_not_called()

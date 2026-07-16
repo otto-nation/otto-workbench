@@ -242,6 +242,32 @@ def test_state_roundtrip_with_ci_runs():
     assert restored_group.items[0].outcome == Outcome.FIXED
     assert restored_group.items[0].fix_sha == "abc123"
     assert restored_group.items[0].headline == "SC2086: Double quote to prevent globbing"
+    assert restored_group.items[0].context is None
+
+
+def test_state_roundtrip_ci_with_context():
+    """FailureItem context field survives round-trip."""
+    item = FailureItem(
+        id="drift-gen-verify", annotation="Process completed with exit code 1",
+        file=None, line=None, diagnosis=None, fix_sha=None, outcome=None,
+        context="Run 'mise run generate' locally and commit\n7 lines to delete",
+    )
+    group = FailureGroup(job="Generate & verify", kind=FailureKind.BUILD, items=(item,))
+    run = RunState(
+        run_id=200, run_number=3, head_sha="bbb",
+        status="completed", conclusion="failure",
+        fetched_at="2026-07-16T00:00:00+00:00",
+        failures={"generate-verify": group},
+    )
+    state = new_state("owner/repo", "feat", pr_number=2, head_sha="bbb", worktree_root="/wt")
+    state.ci.runs["200"] = run
+    state.ci.latest_run_id = 200
+
+    d = state_to_dict(state)
+    restored = state_from_dict(d)
+    restored_item = restored.ci.runs["200"].failures["generate-verify"].items[0]
+    assert restored_item.context == "Run 'mise run generate' locally and commit\n7 lines to delete"
+    assert restored_item.annotation == "Process completed with exit code 1"
 
 
 def test_state_roundtrip_ci_runs_without_headline():

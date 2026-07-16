@@ -187,6 +187,40 @@ def _append_details_findings(
     parts.append("")
 
 
+def _append_demoted_findings(
+    parts: list[str], by_sev: dict[str, list[Finding]],
+    has_inline: bool, has_body_only: bool,
+) -> None:
+    """Append by-severity findings (demoted must-fix/should-fix) to body."""
+    parts.append("")
+    if has_inline:
+        parts.append("**Findings outside the diff:**")
+        parts.append("")
+
+    sev_order = [s.key for s in SEVERITIES if s.body_group == "by_severity"]
+    active_sevs = [s for s in sev_order if s in by_sev]
+    needs_sev_headers = len(active_sevs) > 1 or has_body_only
+
+    for sev in active_sevs:
+        if needs_sev_headers:
+            parts.append(f"### {severity_by_key(sev).section}")
+            parts.append("")
+        for f in by_sev[sev]:
+            parts.append(_format_finding_line(f))
+        parts.append("")
+
+
+def _append_body_only_findings(
+    parts: list[str], by_file: dict[str, list[Finding]],
+) -> None:
+    """Append body-only severity findings (nits/idioms) as details blocks."""
+    parts.append("")
+    sev_order = [s.key for s in SEVERITIES if s.body_group == "by_file"]
+    for sev in sev_order:
+        if sev in by_file:
+            _append_details_findings(parts, sev, by_file[sev])
+
+
 def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
@@ -230,29 +264,10 @@ def format_body_text(
             by_sev.setdefault(f.severity, []).append(f)
 
     if by_sev:
-        parts.append("")
-        if has_inline:
-            parts.append("**Findings outside the diff:**")
-            parts.append("")
-
-        sev_order = [s.key for s in SEVERITIES if s.body_group == "by_severity"]
-        active_sevs = [s for s in sev_order if s in by_sev]
-        needs_sev_headers = len(active_sevs) > 1 or bool(by_file)
-
-        for sev in active_sevs:
-            if needs_sev_headers:
-                parts.append(f"### {severity_by_key(sev).section}")
-                parts.append("")
-            for f in by_sev[sev]:
-                parts.append(_format_finding_line(f))
-            parts.append("")
+        _append_demoted_findings(parts, by_sev, has_inline, bool(by_file))
 
     if by_file:
-        parts.append("")
-        sev_order = [s.key for s in SEVERITIES if s.body_group == "by_file"]
-        for sev in sev_order:
-            if sev in by_file:
-                _append_details_findings(parts, sev, by_file[sev])
+        _append_body_only_findings(parts, by_file)
 
     return "\n".join(parts).rstrip("\n")
 

@@ -159,50 +159,65 @@ def _format_path_ref(f: Finding) -> str:
     return f"`{ref}`"
 
 
-def _format_finding_line(f: Finding) -> str:
+def _format_finding_line(f: Finding, include_label: bool = True) -> str:
     """Format a single body finding as a markdown list item."""
-    label = f"**[{f.posted_id}] [{severity_by_key(f.severity).label}]**"
+    if include_label:
+        tag = f"**[{f.posted_id}] [{severity_by_key(f.severity).label}]**"
+    else:
+        tag = f"**[{f.posted_id}]**"
     if f.path:
-        return f"- {label} {_format_path_ref(f)} — {f.body}"
-    return f"- {label} {f.body}"
+        return f"- {tag} {_format_path_ref(f)} — {f.body}"
+    return f"- {tag} {f.body}"
 
 
-def _append_file_grouped_findings(
-    parts: list[str], by_file: dict[str, list[Finding]],
+def _append_details_findings(
+    parts: list[str], severity_key: str, findings: list[Finding],
 ) -> None:
-    pathless = by_file.pop("", [])
-    for file_path in sorted(by_file.keys()):
-        parts.append(f"### {file_path}")
-        parts.append("")
-        for f in sorted(by_file[file_path], key=lambda f: f.line or 0):
-            parts.append(_format_finding_line(f))
-        parts.append("")
-    for f in pathless:
-        parts.append(_format_finding_line(f))
-    if pathless:
-        parts.append("")
+    """Wrap body-only severity findings in a collapsible <details open> block."""
+    config = severity_by_key(severity_key)
+    count = len(findings)
+    parts.append("<details open>")
+    parts.append(f"<summary>{config.section} ({count})</summary>")
+    parts.append("")
+    sorted_findings = sorted(findings, key=lambda f: (not f.path, f.path or "", f.line or 0))
+    for f in sorted_findings:
+        parts.append(_format_finding_line(f, include_label=False))
+    parts.append("")
+    parts.append("</details>")
+    parts.append("")
 
 
 def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
     severity_filter: set[str],
+    summary: str = "",
+    verdict: str = "",
 ) -> str:
     """Format the review body text with body/skipped findings."""
+    parts: list[str] = []
+
+    if summary:
+        parts.append("## Summary")
+        parts.append("")
+        parts.append(summary)
+        parts.append("")
+        if verdict:
+            parts.append("### Verdict")
+            parts.append(verdict)
+            parts.append("")
+        parts.append("---")
+        parts.append("")
+
     labels = [s.label for s in SEVERITIES if s.key in severity_filter]
 
     if has_inline:
-        parts = [f"Have some comments marked as {', '.join(labels)}."]
+        parts.append(f"Have some comments marked as {', '.join(labels)}.")
     else:
-        parts = [f"Review findings ({', '.join(labels)}):"]
+        parts.append(f"Review findings ({', '.join(labels)}):")
 
     if not body_findings:
         return "\n".join(parts)
-
-    parts.append("")
-    if has_inline:
-        parts.append("**Findings not in the diff (file-level):**")
-        parts.append("")
 
     by_sev: dict[str, list[Finding]] = {}
     by_file: dict[str, list[Finding]] = {}
@@ -210,25 +225,34 @@ def format_body_text(
     for f in body_findings:
         config = severity_by_key(f.severity)
         if config.body_group == "by_file":
-            file_key = f.path or ""
-            by_file.setdefault(file_key, []).append(f)
+            by_file.setdefault(f.severity, []).append(f)
         else:
             by_sev.setdefault(f.severity, []).append(f)
 
-    sev_order = [s.key for s in SEVERITIES if s.body_group == "by_severity"]
-    active_sevs = [s for s in sev_order if s in by_sev]
-    needs_sev_headers = len(active_sevs) > 1 or bool(by_file)
-
-    for sev in active_sevs:
-        if needs_sev_headers:
-            parts.append(f"### {severity_by_key(sev).section}")
-            parts.append("")
-        for f in by_sev[sev]:
-            parts.append(_format_finding_line(f))
+    if by_sev:
         parts.append("")
+        if has_inline:
+            parts.append("**Findings outside the diff:**")
+            parts.append("")
+
+        sev_order = [s.key for s in SEVERITIES if s.body_group == "by_severity"]
+        active_sevs = [s for s in sev_order if s in by_sev]
+        needs_sev_headers = len(active_sevs) > 1 or bool(by_file)
+
+        for sev in active_sevs:
+            if needs_sev_headers:
+                parts.append(f"### {severity_by_key(sev).section}")
+                parts.append("")
+            for f in by_sev[sev]:
+                parts.append(_format_finding_line(f))
+            parts.append("")
 
     if by_file:
-        _append_file_grouped_findings(parts, by_file)
+        parts.append("")
+        sev_order = [s.key for s in SEVERITIES if s.body_group == "by_file"]
+        for sev in sev_order:
+            if sev in by_file:
+                _append_details_findings(parts, sev, by_file[sev])
 
     return "\n".join(parts).rstrip("\n")
 

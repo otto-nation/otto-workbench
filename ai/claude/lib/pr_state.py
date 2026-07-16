@@ -222,6 +222,7 @@ def _run_state_from_dict(d: dict):
                 outcome=Outcome(outcome_val) if outcome_val else None,
                 headline=item_data.get("headline"),
                 source_run_id=item_data.get("source_run_id"),
+                context=item_data.get("context"),
             ))
         failures[group_key] = FailureGroup(
             job=group_data.get("job", group_key),

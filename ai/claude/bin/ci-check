@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Template
@@ -150,6 +151,7 @@ def _build_failure_id(annotation: dict, job_name: str) -> str:
 
 def _annotations_to_items(
     annotations: list[dict], job_name: str, source_run_id: int | None = None,
+    context: str | None = None,
 ) -> list[ci.FailureItem]:
     """Convert raw annotations to FailureItems, skipping notices."""
     items: list[ci.FailureItem] = []
@@ -168,6 +170,7 @@ def _annotations_to_items(
             outcome=None,
             headline=ci.extract_headline(text),
             source_run_id=source_run_id,
+            context=context,
         ))
     return items
 
@@ -183,6 +186,15 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
         fix_sha=None,
         outcome=None,
         source_run_id=source_run_id,
+    )
+
+
+def _annotations_uninformative(annotations: list[dict]) -> bool:
+    """True when non-notice annotations carry no actionable file context."""
+    return all(
+        not a.get("path")
+        for a in annotations
+        if a.get("annotation_level") != "notice"
     )
 
 
@@ -210,38 +222,50 @@ def _extract_failed_step(job: dict) -> str | None:
     return None
 
 
+def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> dict | None:
+    """Fetch annotations/logs for a single failed job. Thread-safe."""
+    job_name = job.get("name", "unknown")
+    job_id = job.get("databaseId", 0)
+    source_run_id = job.get("_source_run_id") or run_data.get("databaseId")
+    failed_step = _extract_failed_step(job)
+
+    annotations = _fetch_annotations(repo, job_id) if job_id else []
+    annotation_texts = [a.get("message", "") for a in annotations]
+    kind = ci.classify_job(job_name, annotation_texts)
+    log_context = None
+
+    if not annotations:
+        annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
+    elif kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST) and _annotations_uninformative(annotations):
+        log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
+        if log_ann:
+            log_context = log_texts[0]
+            kind = log_kind
+
+    items = _annotations_to_items(annotations, job_name, source_run_id, context=log_context) if annotations else [_fallback_item(job_name, source_run_id)]
+    if not items:
+        return None
+
+    return {"job_name": job_name, "kind": kind, "items": items, "failed_step": failed_step}
+
+
 def _parse_run(repo: str, run_data: dict) -> ci.RunState:
     """Parse gh run data into a RunState with classified failures."""
-    jobs = run_data.get("jobs", [])
+    failed_jobs = [j for j in run_data.get("jobs", []) if j.get("conclusion") in _FAILURE_CONCLUSIONS]
     failures: dict[str, ci.FailureGroup] = {}
 
-    for job in jobs:
-        conclusion = job.get("conclusion")
-        if conclusion not in _FAILURE_CONCLUSIONS:
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = list(pool.map(lambda j: _fetch_job_failure(repo, j, run_data), failed_jobs))
+
+    for r in results:
+        if not r:
             continue
-
-        job_name = job.get("name", "unknown")
-        job_id = job.get("databaseId", 0)
-        source_run_id = job.get("_source_run_id") or run_data.get("databaseId")
-
-        failed_step = _extract_failed_step(job)
-
-        annotations = _fetch_annotations(repo, job_id) if job_id else []
-        annotation_texts = [a.get("message", "") for a in annotations]
-        kind = ci.classify_job(job_name, annotation_texts)
-
-        if not annotations:
-            annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
-
-        items = _annotations_to_items(annotations, job_name, source_run_id) if annotations else [_fallback_item(job_name, source_run_id)]
-
-        if items:
-            job_key = job_name.lower().replace(" ", "-").replace("/", "-")
-            prior_items = failures[job_key].items if job_key in failures else ()
-            failures[job_key] = ci.FailureGroup(
-                job=job_name, kind=kind, items=prior_items + tuple(items),
-                failed_step=failed_step,
-            )
+        job_key = r["job_name"].lower().replace(" ", "-").replace("/", "-")
+        prior_items = failures[job_key].items if job_key in failures else ()
+        failures[job_key] = ci.FailureGroup(
+            job=r["job_name"], kind=r["kind"], items=prior_items + tuple(r["items"]),
+            failed_step=r["failed_step"],
+        )
 
     return ci.RunState(
         run_id=run_data["databaseId"],
@@ -294,9 +318,10 @@ def _run_ci(trail, args, ctx) -> dict:
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
 
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        fetched = list(pool.map(lambda rid: (rid, _fetch_run_data(repo, rid)), run_ids))
     run_data_list = []
-    for rid in run_ids:
-        rd = _fetch_run_data(repo, rid)
+    for rid, rd in fetched:
         if rd is not None:
             rd["_run_id"] = rid
             run_data_list.append(rd)
@@ -379,6 +404,7 @@ def _run_ci(trail, args, ctx) -> dict:
                 "fix_sha": item.fix_sha,
                 "outcome": progression.get(item.id, ci.Outcome.NEW).value,
                 "source_run_id": item.source_run_id,
+                "context": item.context,
             })
 
     if prior_run:
@@ -434,6 +460,8 @@ def _build_ci_tracking_file(
             section += f"**Error:** {f['headline']}\n"
         if f.get("annotation") and f["annotation"] != f.get("headline"):
             section += f"**Details:** {f['annotation']}\n"
+        if f.get("context"):
+            section += f"**Context:** {f['context']}\n"
         if f.get("outcome") and f["outcome"] != "new":
             section += f"**Progression:** {f['outcome']}\n"
         section += "\n- [ ] Apply fix\n"

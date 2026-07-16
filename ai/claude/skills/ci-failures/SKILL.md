@@ -58,7 +58,7 @@ From the JSON report, present failures grouped by kind in priority order:
 2. **Persisting** — failures from prior run that survived a fix attempt
 3. **New** — first-time failures
 
-Present the classification table for user confirmation:
+Present the classification table and proceed immediately to diagnosis:
 
 ```
 ## CI Failures — Run #7 (abc1234)
@@ -68,11 +68,10 @@ Present the classification table for user confirmation:
 | 1 | lint | shellcheck | bin/foo.sh | 42 | new | SC2086: Double quote |
 | 2 | test | pytest | tests/auth.py | 18 | persisting | AssertionError |
 | 3 | infra | docker | — | — | new | connection refused |
-
-Proceed with this classification? Override any kinds?
 ```
 
-Allow the user to override classifications (e.g. "that test failure is flaky").
+Do not ask for confirmation — proceed to diagnosis and fix. The user can interrupt
+to override classifications at any point (e.g. "that test failure is flaky").
 
 ### 3. Diagnose
 
@@ -84,16 +83,17 @@ For each non-infra, non-flaky failure group:
 - **infra:** Flag to user with the raw error. Do not attempt a fix.
 - **flaky:** Flag to user. Suggest re-running the workflow.
 
-Present diagnosis per group. User confirms before fixing.
+Present diagnosis per group and proceed directly to fixing.
 
 For persisting/regressed failures, include context from prior attempts:
 > "Previously diagnosed as X, fix Y was applied at commit Z — still failing. The prior fix may have been incomplete or targeted the wrong root cause."
 
 ### 4. Apply fixes and push
 
-**Worktree check:** If invoked with `--branch` and CWD is not the branch's worktree, switch to the worktree first using `wt switch -c <branch>` before applying fixes.
+**Worktree switch:** If CWD is not the branch's worktree, switch immediately
+using `wt switch -c <branch>` — do not ask, just switch and proceed with fixes.
 
-For each confirmed diagnosis:
+For each diagnosis:
 1. Edit the files to address the failure
 2. After all edits, stage and commit:
 
@@ -147,7 +147,8 @@ Print:
 
 ## Constraints
 
-- NEVER apply fixes without user confirmation of diagnosis
+- Present classification + diagnosis, then proceed to fix without waiting for confirmation — the user can interrupt to override
+- Do not manually fetch CI logs (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes failure context. Only call GitHub directly if the JSON context field is empty or clearly insufficient for a specific failure
 - NEVER auto-fix infra or flaky failures
 - Persisting failures on re-invocation include context of prior fix attempts
 - Single commit per fix cycle

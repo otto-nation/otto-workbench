@@ -71,6 +71,7 @@ class FailureItem:
     outcome: Outcome | None
     headline: str | None = None
     source_run_id: int | None = None
+    context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -290,6 +291,7 @@ def _carry_forward_item(
         outcome=item.outcome,
         headline=item.headline,
         source_run_id=item.source_run_id,
+        context=item.context,
     )
 
 

@@ -267,10 +267,11 @@ def _build_tracking_file(
 def _render_fix_template(
     branch: str, repo: str, threads_content: str,
     tracking_file: str, wt_path: str, max_turns: int,
+    main_wt_path: str = "",
 ) -> str:
     """Render the fix-comments.md template."""
     tmpl = Template((TEMPLATE_DIR / review_common.TEMPLATE_FIX_COMMENTS).read_text())
-    return tmpl.safe_substitute(
+    result = tmpl.safe_substitute(
         branch_name=branch,
         repo=repo,
         threads_content=threads_content,
@@ -278,13 +279,49 @@ def _render_fix_template(
         wt_path=wt_path,
         max_turns=str(max_turns),
     )
+    if main_wt_path:
+        result += (
+            "\n## Main branch (read-only reference)\n"
+            f"Checked out at: {main_wt_path}\n\n"
+            "When a reviewer comment references code outside the PR diff — imports, "
+            "callers, existing patterns, or shared utilities — read from this path "
+            "to understand the baseline. Do not modify files in this worktree.\n"
+        )
+    return result
 
 
-def _invoke_fix_agent(prompt: str, wt_path: Path) -> int:
+def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
+    """Find the default-branch worktree and update it to match origin."""
+    default_branch = "main"
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(wt_path), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True,
+        )
+        ref = r.stdout.strip()
+        if ref:
+            default_branch = ref.replace("refs/remotes/origin/", "")
+    except Exception:
+        pass
+
+    main_wt = pr_context.find_worktree_for_branch(default_branch, str(wt_path))
+    if not main_wt:
+        return None
+
+    pr_context.fetch_and_reset(str(main_wt), default_branch)
+    return main_wt
+
+
+def _invoke_fix_agent(
+    prompt: str, wt_path: Path, main_wt_path: Path | None = None,
+) -> int:
     """Run AI agent to apply fixes. Returns exit code."""
+    dirs = [str(wt_path)]
+    if main_wt_path:
+        dirs.append(str(main_wt_path))
     return ai_backend.invoke_fix(
         prompt,
-        add_dirs=[str(wt_path)],
+        add_dirs=dirs,
         max_turns=FIX_MAX_TURNS,
         max_budget=FIX_MAX_BUDGET,
         model=FIX_MODEL,
@@ -1164,6 +1201,8 @@ def _run_comment_fix(
 
     head_before = _get_head_sha(wt_path)
 
+    main_wt = _find_and_update_main_worktree(wt_path)
+
     prompt = _render_fix_template(
         branch=ctx.branch,
         repo=ctx.repo,
@@ -1171,10 +1210,11 @@ def _run_comment_fix(
         tracking_file=str(tracking_file),
         wt_path=str(wt_path),
         max_turns=FIX_MAX_TURNS,
+        main_wt_path=str(main_wt) if main_wt else "",
     )
 
     log.info("Fix pass — applying review comment suggestions...")
-    _invoke_fix_agent(prompt, wt_path)
+    _invoke_fix_agent(prompt, wt_path, main_wt)
     log.blank()
 
     after = _count_unchecked(tracking_file)

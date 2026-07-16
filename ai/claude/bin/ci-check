@@ -237,10 +237,8 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> dict | None:
     if not annotations:
         annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
     elif kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST) and _annotations_uninformative(annotations):
-        log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
-        if log_ann:
-            log_context = log_texts[0]
-            kind = log_kind
+        result = _log_fallback(repo, job, run_data, kind)
+        log_context, kind = (result[1][0], result[2]) if result[0] else (None, kind)
 
     items = _annotations_to_items(annotations, job_name, source_run_id, context=log_context) if annotations else [_fallback_item(job_name, source_run_id)]
     if not items:

@@ -45,11 +45,17 @@ _DEFERRED_REPLY_PREFIX = "Deferred:"
 
 
 def _extract_json(text: str) -> str:
-    """Strip markdown code fences from AI output before JSON parsing."""
+    """Strip markdown code fences or preamble from AI output before JSON parsing."""
     m = _FENCE_RE.search(text)
     if m:
         return m.group(1).strip()
-    return text.strip()
+    stripped = text.strip()
+    start = stripped.find("{")
+    if start > 0:
+        end = stripped.rfind("}")
+        if end > start:
+            return stripped[start:end + 1]
+    return stripped
 
 
 def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:

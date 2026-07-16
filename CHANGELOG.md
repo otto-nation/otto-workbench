@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.44.0](https://github.com/otto-nation/otto-workbench/compare/v1.43.0...v1.44.0) (2026-07-16)
+
+
+### Features
+
+* **review-post:** add summary/verdict to body and improve nit formatting ([#496](https://github.com/otto-nation/otto-workbench/issues/496)) ([d5dfb1a](https://github.com/otto-nation/otto-workbench/commit/d5dfb1afa37994ba814285b0cb0ddcd5f6c10bc7))
+
+
+### Bug Fixes
+
+* **maintenance:** run sync unconditionally ([#492](https://github.com/otto-nation/otto-workbench/issues/492)) ([ffec584](https://github.com/otto-nation/otto-workbench/commit/ffec5849d98483d48ddb2112bd4d8b5ff5ebd4e3))
+* **pr-comments:** handle AI preamble text before JSON in triage output ([#494](https://github.com/otto-nation/otto-workbench/issues/494)) ([687ab02](https://github.com/otto-nation/otto-workbench/commit/687ab02de9f003c290a42fb46d5c486974a5f2fa))
+
 ## [1.43.0](https://github.com/otto-nation/otto-workbench/compare/v1.42.0...v1.43.0) (2026-07-15)
 
 

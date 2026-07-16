@@ -32,7 +32,7 @@ import log  # noqa: E402
 from review_common import SEVERITIES  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
-    Finding, parse_findings,
+    Finding, parse_findings, _extract_section,
     _close_previous, _extract_body_text, _extract_path,
     _finalize_finding, _is_section_boundary, _match_severity_header,
     _parse_finding_line, parse_diff_hunks,
@@ -100,6 +100,9 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     sha_match = HEAD_SHA_RE.search(text)
     review_sha = sha_match.group(1) if sha_match else None
 
+    summary = _extract_section(text, "Summary")
+    verdict = _extract_section(text, "Verdict")
+
     all_findings = parse_findings(text)
     log.info(f"Parsed {len(all_findings)} findings from review file")
     trail.info("parse_findings", f"parsed {len(all_findings)} findings",
@@ -145,6 +148,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
         _post_as_comment(
             args, findings, severity_filter, review_sha, head_sha,
             head_ref, base_ref, pr_data,
+            summary=summary, verdict=verdict,
         )
         return
 
@@ -176,7 +180,10 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     inline, body_findings = renumber_for_posting(inline, body_findings)
 
     inline_comments = [format_inline_comment(f) for f in inline]
-    body_text = format_body_text(body_findings, len(inline) > 0, severity_filter)
+    body_text = format_body_text(
+        body_findings, len(inline) > 0, severity_filter,
+        summary=summary, verdict=verdict,
+    )
 
     commit_id = head_sha
     chunk_size = args.chunk_size
@@ -199,6 +206,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
         args, inline_comments, body_text,
         inline, body_findings, skipped,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
+        summary=summary, verdict=verdict,
     )
 
 

@@ -610,7 +610,8 @@ class TestFormatBodyText:
         )
         result = rp.format_body_text([f], has_inline=True, severity_filter={"I"})
         assert "``" not in result
-        assert "**[I1] [idiom]** Good pattern" in result
+        assert "**[I1]** Good pattern" in result
+        assert "<details open>" in result
 
     def test_mixed_severities_grouped_with_headers(self, rp):
         findings = [
@@ -623,14 +624,14 @@ class TestFormatBodyText:
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
         assert "### Should fix" in result
-        assert "### b.go" in result
+        assert "<summary>Nit (1)</summary>" in result
         s_idx = result.index("### Should fix")
-        n_idx = result.index("### b.go")
+        n_idx = result.index("<details open>")
         assert s_idx < n_idx
         assert result.index("S1") < result.index("N1")
         assert result.index("S2") < result.index("N1")
 
-    def test_single_severity_nits_grouped_by_file(self, rp):
+    def test_single_severity_nits_in_details(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
                        end_line=None, body="Nit one", posted_id="N1"),
@@ -638,28 +639,87 @@ class TestFormatBodyText:
                        end_line=None, body="Nit two", posted_id="N2"),
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
-        assert "### a.go" in result
-        assert "### b.go" in result
+        assert "<details open>" in result
+        assert "<summary>Nit (2)</summary>" in result
+        assert "</details>" in result
         assert "N1" in result
         assert "N2" in result
 
+    def test_summary_and_verdict_prepended(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Clean refactor.", verdict="Approve.",
+        )
+        assert result.startswith("## Summary")
+        assert "Clean refactor." in result
+        assert "### Verdict" in result
+        assert "Approve." in result
+        assert "---" in result
+        assert result.index("## Summary") < result.index("---")
+        assert result.index("---") < result.index("Have some comments")
 
-class TestFormatBodyTextByFile:
-    def test_nits_grouped_by_file(self, rp):
+    def test_summary_without_verdict(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Clean refactor.",
+        )
+        assert result.startswith("## Summary")
+        assert "Clean refactor." in result
+        assert "### Verdict" not in result
+        assert "---" in result
+        assert result.index("## Summary") < result.index("---")
+
+    def test_empty_summary_omitted(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="", verdict="",
+        )
+        assert "## Summary" not in result
+        assert "### Verdict" not in result
+        assert "---" not in result
+
+    def test_outside_diff_header_only_for_demoted_findings(self, rp):
+        findings = [
+            rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
+                       end_line=None, body="Should fix", posted_id="S1"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"S"})
+        assert "**Findings outside the diff:**" in result
+        assert "Findings not in the diff" not in result
+
+    def test_no_outside_diff_header_for_nits_only(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
-                       end_line=None, body="Style issue", posted_id="N1"),
-            rp.Finding(id="N2", severity="N", seq=2, path="b.go", line=20,
-                       end_line=None, body="Naming issue", posted_id="N2"),
-            rp.Finding(id="N3", severity="N", seq=3, path="a.go", line=30,
-                       end_line=None, body="Another style", posted_id="N3"),
+                       end_line=None, body="Nit issue", posted_id="N1"),
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
-        assert "### a.go" in result
-        assert "### b.go" in result
-        a_idx = result.index("### a.go")
-        b_idx = result.index("### b.go")
-        assert a_idx < b_idx
+        assert "Findings outside the diff" not in result
+        assert "<details open>" in result
+
+    def test_nits_drop_severity_label(self, rp):
+        f = rp.Finding(
+            id="N1", severity="N", seq=1, path="a.go", line=10,
+            end_line=None, body="Style issue", posted_id="N1",
+        )
+        result = rp.format_body_text([f], has_inline=True, severity_filter={"N"})
+        assert "**[N1]**" in result
+        assert "[nit]" not in result
+
+
+class TestFormatBodyTextDetails:
+    def test_nits_sorted_by_path_then_line(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
+                       end_line=None, body="Naming issue", posted_id="N1"),
+            rp.Finding(id="N2", severity="N", seq=2, path="a.go", line=30,
+                       end_line=None, body="Another style", posted_id="N2"),
+            rp.Finding(id="N3", severity="N", seq=3, path="a.go", line=10,
+                       end_line=None, body="Style issue", posted_id="N3"),
+        ]
+        result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
+        assert "<summary>Nit (3)</summary>" in result
+        assert result.index("Style issue") < result.index("Another style")
+        assert result.index("Another style") < result.index("Naming issue")
 
     def test_nits_within_file_sorted_by_line(self, rp):
         findings = [
@@ -671,7 +731,7 @@ class TestFormatBodyTextByFile:
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"N"})
         assert result.index("Earlier") < result.index("Later")
 
-    def test_mixed_severity_body_shows_severity_then_file_groups(self, rp):
+    def test_mixed_severity_body_shows_severity_then_details(self, rp):
         findings = [
             rp.Finding(id="S1", severity="S", seq=1, path="a.go", line=10,
                        end_line=None, body="Should fix this", posted_id="S1"),
@@ -680,10 +740,10 @@ class TestFormatBodyTextByFile:
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"S", "N"})
         assert "### Should fix" in result
-        assert "### b.go" in result
-        assert result.index("### Should fix") < result.index("### b.go")
+        assert "<summary>Nit (1)</summary>" in result
+        assert result.index("### Should fix") < result.index("<details open>")
 
-    def test_idioms_and_nits_share_file_groups(self, rp):
+    def test_nits_and_idioms_in_separate_details(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
                        end_line=None, body="Nit", posted_id="N1"),
@@ -691,11 +751,12 @@ class TestFormatBodyTextByFile:
                        end_line=None, body="Idiom", posted_id="I1"),
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"N", "I"})
-        assert result.count("### a.go") == 1
+        assert "<summary>Nit (1)</summary>" in result
+        assert "<summary>Idioms (1)</summary>" in result
         assert "Nit" in result
         assert "Idiom" in result
 
-    def test_pathless_body_only_finding_at_end(self, rp):
+    def test_pathless_body_only_finding_in_details(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
                        end_line=None, body="File nit", posted_id="N1"),
@@ -703,10 +764,11 @@ class TestFormatBodyTextByFile:
                        end_line=None, body="General pattern", posted_id="I1"),
         ]
         result = rp.format_body_text(findings, has_inline=True, severity_filter={"N", "I"})
-        assert "### a.go" in result
-        assert "General pattern" in result
-        # Pathless finding appears after file-grouped findings
-        assert result.index("### a.go") < result.index("General pattern")
+        assert "<summary>Nit (1)</summary>" in result
+        assert "<summary>Idioms (1)</summary>" in result
+        nit_idx = result.index("<summary>Nit")
+        idiom_idx = result.index("<summary>Idioms")
+        assert nit_idx < idiom_idx
 
 
 class TestFormatPathRef:

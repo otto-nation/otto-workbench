@@ -186,6 +186,15 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
     )
 
 
+def _annotations_uninformative(annotations: list[dict]) -> bool:
+    """True when non-notice annotations carry no actionable file context."""
+    return all(
+        not a.get("path")
+        for a in annotations
+        if a.get("annotation_level") != "notice"
+    )
+
+
 def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> tuple[list[dict], list[str], ci.FailureKind]:
     """Fetch job logs and extract failure context as synthetic annotations."""
     job_id = job.get("databaseId", 0)
@@ -232,6 +241,10 @@ def _parse_run(repo: str, run_data: dict) -> ci.RunState:
 
         if not annotations:
             annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
+        elif kind == ci.FailureKind.BUILD and _annotations_uninformative(annotations):
+            log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
+            if log_ann:
+                annotations, annotation_texts, kind = log_ann, log_texts, log_kind
 
         items = _annotations_to_items(annotations, job_name, source_run_id) if annotations else [_fallback_item(job_name, source_run_id)]
 

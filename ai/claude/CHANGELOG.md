@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.38.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.37.0...otto-ai-tools-v1.38.0) (2026-07-16)
+
+
+### Features
+
+* **review-post:** add summary/verdict to body and improve nit formatting ([#496](https://github.com/otto-nation/otto-workbench/issues/496)) ([d5dfb1a](https://github.com/otto-nation/otto-workbench/commit/d5dfb1afa37994ba814285b0cb0ddcd5f6c10bc7))
+
+
+### Bug Fixes
+
+* **pr-comments:** handle AI preamble text before JSON in triage output ([#494](https://github.com/otto-nation/otto-workbench/issues/494)) ([687ab02](https://github.com/otto-nation/otto-workbench/commit/687ab02de9f003c290a42fb46d5c486974a5f2fa))
+
 ## [1.37.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.36.0...otto-ai-tools-v1.37.0) (2026-07-15)
 
 

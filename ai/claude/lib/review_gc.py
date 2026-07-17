@@ -1,7 +1,6 @@
 """Garbage collection for review artifacts.
 
-Extracted from claude-review so both claude-review (startup prune) and
-pr gc (broad cleanup) can share the logic.
+Used by pr gc for explicit cleanup of stale and merged reviews.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ GC_STALE_DAYS = 7
 PRUNE_MAX_FILES = 10
 
 
-def gc_dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
+def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
     """Return True if every file in *d* is older than *stale_days*."""
     try:
         files = [f for f in d.rglob("*") if f.is_file()]
@@ -36,7 +35,7 @@ def gc_dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
     return all((now - f.stat().st_mtime) / 86400 > stale_days for f in files)
 
 
-def gc_clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
+def _clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
     """Remove stale intermediate files from a completed review directory."""
     count = 0
     patterns = [
@@ -67,7 +66,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
 
         has_review = (review_dir / f"review{REVIEW_EXT}").is_file()
 
-        if not has_review and gc_dir_is_all_stale(review_dir):
+        if not has_review and _dir_is_all_stale(review_dir):
             shutil.rmtree(review_dir, ignore_errors=True)
             log.info(f"GC: removed orphaned {review_dir.name}")
             cleaned += 1
@@ -75,7 +74,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
 
         has_pipeline = (review_dir / FILENAME_PIPELINE_STATE).is_file()
         if has_review and not has_pipeline:
-            cleaned += gc_clean_intermediates(review_dir)
+            cleaned += _clean_intermediates(review_dir)
 
     return cleaned
 

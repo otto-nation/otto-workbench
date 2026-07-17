@@ -1,5 +1,6 @@
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -92,7 +93,7 @@ class TestBuildAgentCmd:
 
 class TestPromptStderr:
     def test_stderr_logged_on_failure(self, monkeypatch, capsys):
-        fake_result = type("R", (), {"stdout": "", "returncode": 1, "stderr": "API rate limit exceeded"})()
+        fake_result = types.SimpleNamespace(stdout="", returncode=1, stderr="API rate limit exceeded")
         monkeypatch.setattr(
             ai_backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,

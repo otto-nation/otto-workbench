@@ -407,10 +407,11 @@ def resolve_bare_repo_worktree(
 ) -> Path | None:
     """Best-effort worktree discovery for bare repos.
 
-    Tries the requested branch first, then the default branch.
+    Tries the requested branch first (with fuzzy resolution),
+    then the default branch.
     """
     if branch:
-        wt = find_worktree_for_branch(branch, cwd)
+        wt = _find_worktree_by_branch(branch, cwd)
         if wt:
             return wt
 

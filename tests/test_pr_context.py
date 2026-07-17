@@ -87,6 +87,25 @@ def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
 
 
 @patch.object(pr_context, "_git_toplevel", return_value=None)
+@patch.object(pr_context, "is_bare_repo", return_value=True)
+@patch.object(pr_context, "_find_worktree_by_branch",
+              return_value=Path("/wt/isaac-improve-ci-failures-skill"))
+@patch.object(pr_context, "_detect_repo", return_value="owner/repo")
+@patch.object(pr_context, "_head_sha", return_value="abc123")
+@patch.object(pr_context, "_resolve_branch", return_value="isaac/improve-ci-failures-skill")
+@patch.object(pr_context, "_pr_from_branch", return_value=42)
+def test_bare_repo_fuzzy_branch_resolves_worktree(
+    mock_pr, mock_resolve, mock_sha, mock_repo,
+    mock_find_wt, mock_bare, mock_top,
+):
+    """Bare repo with dash-separated branch hint finds slash-separated worktree."""
+    ctx = pr_context.resolve(branch="isaac-improve-ci-failures-skill")
+    assert ctx.worktree_root == Path("/wt/isaac-improve-ci-failures-skill")
+    assert ctx.branch == "isaac/improve-ci-failures-skill"
+    mock_find_wt.assert_called_once_with("isaac-improve-ci-failures-skill", None)
+
+
+@patch.object(pr_context, "_git_toplevel", return_value=None)
 @patch.object(pr_context, "is_bare_repo", return_value=False)
 def test_not_git_repo_exits(mock_bare, mock_top):
     with pytest.raises(SystemExit):

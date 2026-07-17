@@ -381,8 +381,11 @@ def invoke_agent(
         accumulated_cost, duration_ms, stats,
     )
 
-    # Close stdin to terminate the RPC process
-    proc.stdin.close()
+    # Close stdin to terminate the RPC process — tolerate early exit
+    try:
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
     proc.wait()
     _log_stderr_on_failure(proc, session_log)
     return proc.returncode
@@ -440,7 +443,10 @@ def invoke_fix(
             accumulated_cost, duration_ms, stats,
         )
 
-    proc.stdin.close()
+    try:
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
     proc.wait()
     _log_stderr_on_failure(proc, session_log)
     return proc.returncode

@@ -2,7 +2,7 @@ from nesting.go import GoChecker
 from nesting.types import Violation
 
 
-def _check(code: str, max_depth: int = 3) -> list[Violation]:
+def _check(code: str, max_depth: int = 2) -> list[Violation]:
     return GoChecker().check_nesting(code.splitlines(keepends=True), max_depth)
 
 
@@ -26,7 +26,7 @@ func main() {
 '''
         assert _check(code) == []
 
-    def test_double_nesting_passes_depth_3(self):
+    def test_double_nesting_passes(self):
         code = '''\
 func process() {
     for _, item := range items {
@@ -38,7 +38,7 @@ func process() {
 '''
         assert _check(code) == []
 
-    def test_triple_nesting_passes_depth_3(self):
+    def test_triple_nesting_violates(self):
         code = '''\
 func process() {
     for _, item := range items {
@@ -50,9 +50,26 @@ func process() {
     }
 }
 '''
-        assert _check(code) == []
+        violations = _check(code)
+        assert len(violations) == 1
+        assert violations[0].depth == 3
+        assert violations[0].function_name == "process"
 
-    def test_quadruple_nesting_violates_depth_3(self):
+    def test_triple_nesting_passes_with_override(self):
+        code = '''\
+func process() {
+    for _, item := range items {
+        if err := validate(item); err != nil {
+            if item.Required {
+                return err
+            }
+        }
+    }
+}
+'''
+        assert _check(code, max_depth=3) == []
+
+    def test_quadruple_nesting_violates(self):
         code = '''\
 func process() {
     for _, item := range items {
@@ -67,24 +84,10 @@ func process() {
 }
 '''
         violations = _check(code)
-        assert len(violations) == 1
-        assert violations[0].depth == 4
+        assert len(violations) == 2
+        assert violations[0].depth == 3
+        assert violations[1].depth == 4
         assert violations[0].function_name == "process"
-
-    def test_custom_max_depth_2(self):
-        code = '''\
-func foo() {
-    if x > 0 {
-        for i := range items {
-            if i > 5 {
-                fmt.Println(i)
-            }
-        }
-    }
-}
-'''
-        violations = _check(code, max_depth=2)
-        assert len(violations) > 0
 
 
 class TestScopeBoundaries:
@@ -93,9 +96,7 @@ class TestScopeBoundaries:
 func funcA() {
     for _, item := range items {
         if item.Valid {
-            if item.Active {
-                fmt.Println(item)
-            }
+            fmt.Println(item)
         }
     }
 }
@@ -113,9 +114,7 @@ func funcB() {
 func (s *Server) handleA() {
     for _, r := range requests {
         if r.Valid {
-            if r.Auth {
-                process(r)
-            }
+            process(r)
         }
     }
 }
@@ -167,9 +166,7 @@ func foo() {
         select {
         case msg := <-ch:
             if msg.Important {
-                for _, r := range msg.Recipients {
-                    send(r, msg)
-                }
+                fmt.Println(msg)
             }
         }
     }
@@ -209,17 +206,17 @@ func foo() {
 func deepFunc() {
     for _, item := range items {
         if item.Valid {
+            fmt.Println(item)
             if item.Active {
-                for _, sub := range item.Subs {
-                    fmt.Println(sub)
-                }
+                fmt.Println("too deep")
             }
         }
     }
 }
 '''
         violations = _check(code)
-        assert len(violations) > 0
+        assert len(violations) == 1
+        assert violations[0].depth == 3
         assert violations[0].function_name == "deepFunc"
 
 

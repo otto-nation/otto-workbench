@@ -124,7 +124,7 @@ def _count_keyword_nesting(
 class GoChecker:
     EXTENSIONS: set[str] = {'.go'}
     SHEBANG_RE: re.Pattern[bytes] | None = None
-    DEFAULT_MAX_DEPTH: int = 3
+    DEFAULT_MAX_DEPTH: int = 2
 
     def check_nesting(self, lines: list[str], max_depth: int) -> list[Violation]:
         violations: list[Violation] = []

@@ -918,11 +918,7 @@ def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
     cmd = mock_run.call_args[0][0]
     assert "--branch" in cmd
     assert cmd[cmd.index("--branch") + 1] == "my-branch"
-    bare_positionals = [a for a in cmd[1:] if not a.startswith("-")
-                        and cmd[cmd.index(a) - 1].startswith("-")]
-    leftover = [a for a in cmd[1:] if a == "my-branch"
-                and cmd[cmd.index(a) - 1] != "--branch"]
-    assert leftover == [], f"Branch name leaked as bare positional: {cmd}"
+    assert cmd.count("my-branch") == 1, f"Branch appeared {cmd.count('my-branch')} times: {cmd}"
 
 
 @patch("pr_cli.subprocess.run")
@@ -935,9 +931,7 @@ def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run
     cmd = mock_run.call_args[0][0]
     assert "--pr" in cmd
     assert cmd[cmd.index("--pr") + 1] == "42"
-    leftover = [a for a in cmd[1:] if a == "42"
-                and cmd[cmd.index(a) - 1] != "--pr"]
-    assert leftover == [], f"PR number leaked as bare positional: {cmd}"
+    assert cmd.count("42") == 1, f"PR number appeared {cmd.count('42')} times: {cmd}"
 
 
 # ── SIGINT handling ──────────────────────────────────────────────────────────

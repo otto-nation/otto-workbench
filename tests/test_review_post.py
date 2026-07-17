@@ -668,7 +668,7 @@ class TestFormatBodyText:
         assert "M1 and M2 are blockers." in result
         assert "Request changes" not in result
 
-    def test_verdict_action_prefix_stripped_em_dash(self, rp):
+    def test_verdict_approve_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
             summary="Summary text.",
@@ -677,6 +677,16 @@ class TestFormatBodyText:
         assert "### Verdict" in result
         assert "clean code." in result
         assert "Approve" not in result
+
+    def test_verdict_action_prefix_stripped_plain_hyphen(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Summary text.",
+            verdict="Needs discussion - looks good.",
+        )
+        assert "### Verdict" in result
+        assert "looks good." in result
+        assert "Needs discussion" not in result
 
     def test_verdict_without_action_prefix_unchanged(self, rp):
         result = rp.format_body_text(

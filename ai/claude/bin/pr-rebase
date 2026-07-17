@@ -187,11 +187,8 @@ def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
     for line in r.stdout.strip().splitlines():
         # Format: <mode> <hash> <stage>\t<filepath>
         parts = line.split("\t")[0].split()
-        if len(parts) >= 3:
-            try:
-                stages.add(int(parts[2]))
-            except ValueError:
-                pass
+        if len(parts) >= 3 and parts[2].isdigit():
+            stages.add(int(parts[2]))
 
     if 2 not in stages:
         return "ours_deleted"

@@ -254,3 +254,15 @@ def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
     result = resolve_bare_repo_worktree(None, None)
     assert result is None
+
+
+@patch("pr_context.find_worktree_for_branch")
+@patch("pr_context._resolve_branch", return_value="isaac/improve-ci-failures-skill")
+def test_resolve_bare_repo_worktree_fuzzy_resolves_branch(mock_resolve, mock_find):
+    """Bare repo resolution uses fuzzy matching when exact branch hint doesn't match."""
+    mock_find.side_effect = [None, Path("/wt/isaac-improve-ci-failures-skill")]
+    result = resolve_bare_repo_worktree(None, "isaac-improve-ci-failures-skill")
+    assert result == Path("/wt/isaac-improve-ci-failures-skill")
+    assert mock_find.call_count == 2
+    mock_find.assert_any_call("isaac-improve-ci-failures-skill", None)
+    mock_find.assert_any_call("isaac/improve-ci-failures-skill", None)

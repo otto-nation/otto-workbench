@@ -345,6 +345,153 @@ def test_parse_resolved_content_allows_equals_mid_line():
     assert reason == ""
 
 
+# ── _detect_delete_conflict ───────────────────────────────────────────────
+
+
+def test_detect_delete_conflict_normal_conflict():
+    """Both stages present — normal content conflict, returns None."""
+    stdout = (
+        "100644 aaa111 1\tfile.tsx\n"
+        "100644 bbb222 2\tfile.tsx\n"
+        "100644 ccc333 3\tfile.tsx\n"
+    )
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
+    with mock.patch("subprocess.run", return_value=fake):
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is None
+
+
+def test_detect_delete_conflict_theirs_deleted():
+    """Stage 3 missing — branch commit deletes the file."""
+    stdout = (
+        "100644 aaa111 1\tfile.tsx\n"
+        "100644 bbb222 2\tfile.tsx\n"
+    )
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
+    with mock.patch("subprocess.run", return_value=fake):
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") == "theirs_deleted"
+
+
+def test_detect_delete_conflict_ours_deleted():
+    """Stage 2 missing — target deleted the file, branch modifies it."""
+    stdout = (
+        "100644 aaa111 1\tfile.tsx\n"
+        "100644 ccc333 3\tfile.tsx\n"
+    )
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
+    with mock.patch("subprocess.run", return_value=fake):
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") == "ours_deleted"
+
+
+def test_detect_delete_conflict_empty_output():
+    """No unmerged entries — returns None."""
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with mock.patch("subprocess.run", return_value=fake):
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is None
+
+
+def test_detect_delete_conflict_git_failure():
+    """Git command fails — returns None."""
+    fake = subprocess.CompletedProcess(args=[], returncode=128, stdout="")
+    with mock.patch("subprocess.run", return_value=fake):
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is None
+
+
+# ── _resolve_delete_conflict ──────────────────────────────────────────────
+
+
+def test_resolve_delete_conflict_theirs_deleted():
+    """Branch deletes file — git rm succeeds."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        result = pr_rebase_cli._resolve_delete_conflict("file.tsx", "abc123", "/fake", "theirs_deleted")
+
+    assert result is True
+    assert ["git", "rm", "--force", "file.tsx"] in calls
+
+
+def test_resolve_delete_conflict_ours_deleted():
+    """Target deletes file — git rm succeeds."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        result = pr_rebase_cli._resolve_delete_conflict("file.tsx", "abc123", "/fake", "ours_deleted")
+
+    assert result is True
+    assert ["git", "rm", "--force", "file.tsx"] in calls
+
+
+def test_resolve_delete_conflict_git_rm_fails():
+    """git rm failure returns False."""
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "rm"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        result = pr_rebase_cli._resolve_delete_conflict("file.tsx", "abc123", "/fake", "theirs_deleted")
+
+    assert result is False
+
+
+# ── _resolve_one (delete conflicts) ──────────────────────────────────────
+
+
+def test_resolve_one_delete_conflict_skips_ai():
+    """Modify/delete conflict is resolved via git rm without calling AI."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = "KanbanOverlay.tsx"
+        full_path = Path(tmpdir) / filepath
+        full_path.write_text("some content without conflict markers\n")
+        go_dirs: set[Path] = set()
+
+        with mock.patch.object(
+            pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted",
+        ), mock.patch.object(
+            pr_rebase_cli, "_resolve_delete_conflict", return_value=True,
+        ) as mock_delete, mock.patch.object(
+            pr_rebase_cli, "_resolve_single_file",
+        ) as mock_ai:
+            result = pr_rebase_cli._resolve_one(
+                filepath, full_path, "e3e2fdf", "refactor(web): remove components",
+                tmpdir, go_dirs,
+            )
+
+        assert result is True
+        mock_delete.assert_called_once_with(filepath, "e3e2fdf", tmpdir, "theirs_deleted")
+        mock_ai.assert_not_called()
+
+
+def test_resolve_one_normal_conflict_falls_through_to_ai():
+    """Normal content conflict (no delete) falls through to AI resolution."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = "main.go"
+        full_path = Path(tmpdir) / filepath
+        full_path.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+        go_dirs: set[Path] = set()
+
+        with mock.patch.object(
+            pr_rebase_cli, "_detect_delete_conflict", return_value=None,
+        ), mock.patch.object(
+            pr_rebase_cli, "_resolve_single_file", return_value=filepath,
+        ) as mock_ai:
+            result = pr_rebase_cli._resolve_one(
+                filepath, full_path, "abc123", "feat: change",
+                tmpdir, go_dirs,
+            )
+
+        assert result is True
+        mock_ai.assert_called_once()
+
+
 # ── _resolve_file_conflicts ───────────────────────────────────────────────
 
 

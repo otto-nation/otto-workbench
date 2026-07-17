@@ -927,6 +927,30 @@ print('has_stderr=' + str('agent-error-msg' in content))
   [ "$result" = "has_stderr=True" ]
 }
 
+@test "invoke_agent: tolerates subprocess that exits before reading stdin" {
+  result=$(_py "
+import ai_backend_claude as abc
+original = abc._build_agent_cmd
+abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'exit 7']
+rc = mod.invoke_agent('a]long prompt that the subprocess never reads', '$TMPDIR/pipe_test.jsonl', '/tmp', '/tmp')
+abc._build_agent_cmd = original
+print(rc)
+")
+  [ "$result" = "7" ]
+}
+
+@test "invoke_fix: tolerates subprocess that exits before reading stdin" {
+  result=$(_py "
+import ai_backend_claude as abc
+original = abc._build_fix_cmd
+abc._build_fix_cmd = lambda *a, **kw: ['bash', '-c', 'exit 13']
+rc = abc.invoke_fix('a long prompt that the subprocess never reads', add_dirs=['/tmp'])
+abc._build_fix_cmd = original
+print(rc)
+")
+  [ "$result" = "13" ]
+}
+
 @test "PipelineState: rejects group_count as constructor arg" {
   result=$(_py "
 try:

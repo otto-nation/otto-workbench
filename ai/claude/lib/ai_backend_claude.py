@@ -140,6 +140,21 @@ def _build_prompt_cmd(model: str | None = None) -> list[str]:
     return cmd
 
 
+# ── Subprocess helpers ───────────────────────────────────────────────────────
+
+
+def _send_stdin(proc: subprocess.Popen, text: str) -> None:
+    """Write text to subprocess stdin and close, tolerating early exit."""
+    try:
+        proc.stdin.write(text)
+    except BrokenPipeError:
+        pass
+    try:
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
@@ -178,8 +193,7 @@ def invoke_agent(
         stderr=subprocess.PIPE,
         text=True,
     )
-    proc.stdin.write(prompt)
-    proc.stdin.close()
+    _send_stdin(proc, prompt)
     stream_progress(proc, session_log, label=label)
     proc.wait()
     _log_stderr_on_failure(proc, session_log)
@@ -212,8 +226,7 @@ def invoke_fix(
         stderr=sys.stderr,
         text=True,
     )
-    proc.stdin.write(prompt)
-    proc.stdin.close()
+    _send_stdin(proc, prompt)
     for line in proc.stdout:
         print(line, end="", file=sys.stderr)
     proc.wait()

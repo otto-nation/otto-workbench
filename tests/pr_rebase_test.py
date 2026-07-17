@@ -983,3 +983,45 @@ def test_force_push_retry_also_fails():
         rc = pr_rebase_cli._force_push("/fake")
 
     assert rc == 128
+
+
+# ── cmd_start ──────────────────────────────────────────────────────────────
+
+
+def test_cmd_start_skips_stash_when_rebase_in_progress():
+    """Mid-rebase resume must not attempt stash (git index is locked during rebase)."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_auto_stash") as mock_stash, \
+         mock.patch.object(pr_rebase_cli, "_drive_to_completion", return_value=0):
+        result = pr_rebase_cli.cmd_start("/fake", ctx, True)
+
+    assert result == 0
+    mock_stash.assert_not_called()
+
+
+def test_cmd_start_stashes_before_fresh_rebase():
+    """Fresh rebase stashes uncommitted changes before starting."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_auto_stash", return_value=False) as mock_stash, \
+         mock.patch.object(pr_rebase_cli, "_fresh", return_value=0):
+        result = pr_rebase_cli.cmd_start("/fake", ctx, False)
+
+    assert result == 0
+    mock_stash.assert_called_once()
+
+
+def test_cmd_start_stash_failure_aborts():
+    """When stash fails on a fresh rebase, cmd_start returns 1 without starting."""
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_auto_stash", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_fresh") as mock_fresh:
+        result = pr_rebase_cli.cmd_start("/fake", ctx, False)
+
+    assert result == 1
+    mock_fresh.assert_not_called()

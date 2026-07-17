@@ -815,12 +815,6 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 
 def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Start or resume a rebase onto origin/main."""
-    stashed = _auto_stash(cwd)
-    if stashed is None:
-        # Tree was dirty but stash failed — abort rather than letting git rebase
-        # fail with a cryptic "uncommitted changes" error.
-        return 1
-
     if _detect_rebase_in_progress(cwd):
         if _trail:
             _trail.decision(
@@ -829,15 +823,19 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
                 reason="rebase-merge or rebase-apply directory exists",
             )
         log.info("Detected in-progress rebase — resuming...")
-        rc = _drive_to_completion(cwd, ctx, fix)
-    else:
-        if _trail:
-            _trail.decision(
-                "rebase_state",
-                "starting fresh rebase",
-                reason="no in-progress rebase detected",
-            )
-        rc = _fresh(cwd, ctx, fix)
+        return _drive_to_completion(cwd, ctx, fix)
+
+    stashed = _auto_stash(cwd)
+    if stashed is None:
+        return 1
+
+    if _trail:
+        _trail.decision(
+            "rebase_state",
+            "starting fresh rebase",
+            reason="no in-progress rebase detected",
+        )
+    rc = _fresh(cwd, ctx, fix)
 
     if stashed:
         _auto_unstash(cwd, fix)

@@ -591,6 +591,7 @@ def main():
             pos_pr, pos_branch = pr_context.classify_target(first_pos)
             original_pr = pos_pr
             original_branch = pos_branch
+            extra.remove(first_pos)
 
     ctx = pr_context.resolve(
         pr=original_pr,

@@ -905,6 +905,35 @@ def test_render_fix_section_deferred_issue():
 
 
 
+# ── positional target forwarding ────────────────────────────────────────────
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
+    """Regression: 'pr rebase my-branch' must not pass my-branch as a bare positional."""
+    mock_resolve.return_value = _make_ctx(branch="my-branch", pr_number=None)
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("rebase", "my-branch")
+    cmd = mock_run.call_args[0][0]
+    assert "--branch" in cmd
+    assert cmd[cmd.index("--branch") + 1] == "my-branch"
+    assert cmd.count("my-branch") == 1, f"Branch appeared {cmd.count('my-branch')} times: {cmd}"
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run):
+    """Regression: 'pr ci 42' must not pass 42 as a bare positional."""
+    mock_resolve.return_value = _make_ctx(pr_number=42)
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("ci", "42")
+    cmd = mock_run.call_args[0][0]
+    assert "--pr" in cmd
+    assert cmd[cmd.index("--pr") + 1] == "42"
+    assert cmd.count("42") == 1, f"PR number appeared {cmd.count('42')} times: {cmd}"
+
+
 # ── SIGINT handling ──────────────────────────────────────────────────────────
 
 

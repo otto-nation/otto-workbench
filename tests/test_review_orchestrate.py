@@ -228,6 +228,25 @@ class TestStripEvidenceBlocks:
         result = ro.strip_evidence_blocks(content)
         assert "> ```go" in result
 
+    def test_strips_unfenced_blockquote_evidence(self, ro):
+        text = (
+            "## Should fix\n"
+            "- **[S1]** **`docs/overview.md:511`** — stale config section\n"
+            "  > # Team roster\n"
+            "  > team:\n"
+            "  >   - first_name: David\n"
+            "  >\n"
+            "  > docker run maximus daemon\n"
+            "## Nit\n"
+            "- **[N1]** **`file.go:10`** — rename var\n"
+        )
+        result = ro.strip_evidence_blocks(text)
+        assert "Team roster" not in result
+        assert "docker run" not in result
+        assert "**[S1]**" in result
+        assert "stale config section" in result
+        assert "**[N1]**" in result
+
 
 class TestStripStableIds:
     def test_removes_sid_comments(self, ro):

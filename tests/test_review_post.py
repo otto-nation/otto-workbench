@@ -658,6 +658,34 @@ class TestFormatBodyText:
         assert result.index("## Summary") < result.index("---")
         assert result.index("---") < result.index("Have some comments")
 
+    def test_verdict_action_prefix_stripped(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Summary text.",
+            verdict="Request changes — M1 and M2 are blockers.",
+        )
+        assert "### Verdict" in result
+        assert "M1 and M2 are blockers." in result
+        assert "Request changes" not in result
+
+    def test_verdict_action_prefix_stripped_em_dash(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Summary text.",
+            verdict="Approve — clean code.",
+        )
+        assert "### Verdict" in result
+        assert "clean code." in result
+        assert "Approve" not in result
+
+    def test_verdict_without_action_prefix_unchanged(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Summary text.", verdict="Looks good overall.",
+        )
+        assert "### Verdict" in result
+        assert "Looks good overall." in result
+
     def test_summary_without_verdict(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},

@@ -208,17 +208,15 @@ SCRIPT
 
 # ── CLI: Go support ────────────────────────────────────────────────────────
 
-@test "validate-nesting: go file within default depth 3 exits 0" {
+@test "validate-nesting: go file within default depth 2 exits 0" {
   local f
   f=$(_write_script "good.go" <<'SCRIPT'
 package main
 
 func process() {
     for _, item := range items {
-        if err := validate(item); err != nil {
-            if item.Required {
-                fmt.Println("depth 3 — within Go default")
-            }
+        if item.Valid {
+            fmt.Println("depth 2 — within Go default")
         }
     }
 }
@@ -228,7 +226,7 @@ SCRIPT
   [ "$status" -eq 0 ]
 }
 
-@test "validate-nesting: go file depth 4 violates default" {
+@test "validate-nesting: go file depth 3 violates default" {
   local f
   f=$(_write_script "bad.go" <<'SCRIPT'
 package main
@@ -237,9 +235,7 @@ func process() {
     for _, item := range items {
         if err := validate(item); err != nil {
             if item.Required {
-                for _, sub := range item.Subs {
-                    fmt.Println("depth 4")
-                }
+                fmt.Println("depth 3")
             }
         }
     }
@@ -259,16 +255,14 @@ func process() {
     for _, item := range items {
         if err := validate(item); err != nil {
             if item.Required {
-                for _, sub := range item.Subs {
-                    fmt.Println("depth 4 — allowed by override")
-                }
+                fmt.Println("depth 3 — allowed by override")
             }
         }
     }
 }
 SCRIPT
   )
-  run "$VALIDATE_NESTING" --max-depth 4 "$f"
+  run "$VALIDATE_NESTING" --max-depth 3 "$f"
   [ "$status" -eq 0 ]
 }
 

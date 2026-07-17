@@ -146,6 +146,9 @@ def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
     """Stateless text-in/text-out via claude -p."""
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True)
+    if result.returncode != 0 and result.stderr:
+        import log as _log
+        _log.dim(result.stderr.strip())
     return result.stdout, result.returncode
 
 

@@ -190,6 +190,9 @@ def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
         if len(parts) >= 3 and parts[2].isdigit():
             stages.add(int(parts[2]))
 
+    if not stages:
+        return None
+
     if 2 not in stages:
         return "ours_deleted"
     if 3 not in stages:

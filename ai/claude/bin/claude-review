@@ -37,7 +37,6 @@ from review_common import (
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
 )
-import review_gc
 import review_issue
 import review_worktree
 
@@ -849,8 +848,6 @@ def _run_review(args) -> None:
     if no_post or auto_post:
         force = True
 
-    review_gc.prune_merged_reviews()
-
     pr_arg, branch_arg = pr_context.classify_target(pr_input) if pr_input else (None, None)
     ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=repo_dir or None)
     pr_number = str(ctx.pr_number)
@@ -996,8 +993,6 @@ def _run_self_review(args) -> None:
     fix_pass = args.fix
     effort = args.effort
     max_groups = args.max_groups
-
-    review_gc.prune_merged_reviews()
 
     is_pr = False
     is_branch = False

@@ -1011,7 +1011,7 @@ def test_argparse_json_summary_not_positional(cr):
     assert parsed.args == ["42"]
 
 
-# ── gc_dir_is_all_stale ──────────────────────────────────────────────────────
+# ── _dir_is_all_stale ────────────────────────────────────────────────────────
 
 
 def test_gc_dir_all_stale(cr, tmp_path):
@@ -1020,7 +1020,7 @@ def test_gc_dir_all_stale(cr, tmp_path):
     f = d / "old.jsonl"
     f.write_text("{}")
     os.utime(str(f), (1622505600, 1622505600))
-    assert review_gc.gc_dir_is_all_stale(d) is True
+    assert review_gc._dir_is_all_stale(d) is True
 
 
 def test_gc_dir_has_recent_files(cr, tmp_path):
@@ -1030,16 +1030,16 @@ def test_gc_dir_has_recent_files(cr, tmp_path):
     old.write_text("{}")
     os.utime(str(old), (1622505600, 1622505600))
     (d / "new.jsonl").write_text("{}")
-    assert review_gc.gc_dir_is_all_stale(d) is False
+    assert review_gc._dir_is_all_stale(d) is False
 
 
 def test_gc_dir_empty(cr, tmp_path):
     d = tmp_path / "empty-dir"
     d.mkdir()
-    assert review_gc.gc_dir_is_all_stale(d) is True
+    assert review_gc._dir_is_all_stale(d) is True
 
 
-# ── gc_clean_intermediates ───────────────────────────────────────────────────
+# ── _clean_intermediates ─────────────────────────────────────────────────────
 
 
 def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
@@ -1051,7 +1051,7 @@ def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
         os.utime(str(f), (1622505600, 1622505600))
     (d / "meta.json").write_text("{}")
 
-    count = review_gc.gc_clean_intermediates(d)
+    count = review_gc._clean_intermediates(d)
     assert count == 3
     assert not (d / "group-1.md").exists()
     assert (d / "meta.json").exists()
@@ -1063,7 +1063,7 @@ def test_gc_clean_intermediates_preserves_recent(cr, tmp_path):
     for name in ("group-1.md", "holistic.jsonl"):
         (d / name).write_text("{}")
 
-    count = review_gc.gc_clean_intermediates(d)
+    count = review_gc._clean_intermediates(d)
     assert count == 0
     assert (d / "group-1.md").exists()
 

@@ -648,6 +648,7 @@ def verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
 
 
 _EVIDENCE_BLOCK_START_RE = re.compile(r"^ {2,}>\s*```")
+_EVIDENCE_BLOCKQUOTE_RE = re.compile(r"^ {2,}>")
 
 
 def strip_evidence_blocks(text: str) -> str:
@@ -661,6 +662,8 @@ def strip_evidence_blocks(text: str) -> str:
             continue
         if in_evidence:
             in_evidence = not is_fence
+            continue
+        if _EVIDENCE_BLOCKQUOTE_RE.match(line):
             continue
         kept.append(line)
     return "\n".join(kept)

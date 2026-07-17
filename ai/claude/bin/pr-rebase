@@ -165,6 +165,63 @@ _RESOLVE_END = "<<<END_RESOLVED>>>"
 _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 
 
+def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
+    """Detect modify/delete conflicts by checking git index stages.
+
+    During a rebase, stage 2 = ours (target), stage 3 = theirs (branch commit).
+    A missing stage means that side deleted the file.
+
+    Returns:
+        "ours_deleted" if target deleted the file, branch modifies it
+        "theirs_deleted" if branch commit deletes the file, target has it
+        None if both stages present (normal content conflict)
+    """
+    r = subprocess.run(
+        ["git", "ls-files", "-u", "--stage", "--", filepath],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+
+    stages = set()
+    for line in r.stdout.strip().splitlines():
+        # Format: <mode> <hash> <stage>\t<filepath>
+        parts = line.split("\t")[0].split()
+        if len(parts) >= 3:
+            try:
+                stages.add(int(parts[2]))
+            except ValueError:
+                pass
+
+    if 2 not in stages:
+        return "ours_deleted"
+    if 3 not in stages:
+        return "theirs_deleted"
+    return None
+
+
+def _resolve_delete_conflict(filepath: str, sha: str, cwd: str, delete_type: str) -> bool:
+    """Resolve a modify/delete conflict by accepting the deletion."""
+    if delete_type == "theirs_deleted":
+        reason = f"commit {sha} deletes this file"
+    else:
+        reason = f"deleted on target, commit {sha} modifies stale version"
+
+    if _trail:
+        _trail.decision(
+            "delete_conflict",
+            f"accepting deletion for {filepath}",
+            reason=f"{reason} (modify/delete conflict)",
+        )
+
+    r = subprocess.run(["git", "rm", "--force", filepath], cwd=cwd)
+    if r.returncode != 0:
+        log.error(f"git rm failed for {filepath}")
+        return False
+    log.info(f"Accepted deletion: {filepath} ({reason})")
+    return True
+
+
 def _get_ours_content(filepath: str, cwd: str) -> str | None:
     """Get the target-side (HEAD) version of a file from git index stage 2.
 
@@ -378,6 +435,10 @@ def _resolve_one(
         if ok:
             go_dirs.add(full_path.parent)
         return ok
+
+    delete_type = _detect_delete_conflict(filepath, cwd)
+    if delete_type is not None:
+        return _resolve_delete_conflict(filepath, sha, cwd, delete_type)
 
     result = _resolve_single_file(filepath, full_path, sha, subject, cwd)
     if result is None:

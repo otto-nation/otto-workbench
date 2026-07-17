@@ -55,14 +55,26 @@ _exact_match() {
   return 1
 }
 
+_rebase_branch() {
+  local wt_path="$1"
+  local git_dir head_name branch
+  git_dir=$(git -C "$wt_path" rev-parse --git-dir 2>/dev/null) || return 1
+  [[ "$git_dir" = /* ]] || git_dir="$wt_path/$git_dir"
+  head_name="$git_dir/rebase-merge/head-name"
+  [[ -f "$head_name" ]] || return 1
+  branch=$(cat "$head_name")
+  echo "${branch#refs/heads/}"
+}
+
 _worktree_match() {
   local input="$1"
-  local line basename branch
+  local line wt_path basename branch
   while IFS= read -r line; do
-    basename=$(echo "$line" | awk '{print $1}')
-    basename="${basename##*/}"
+    wt_path=$(echo "$line" | awk '{print $1}')
+    basename="${wt_path##*/}"
     [[ "$basename" == "$input" ]] || continue
     branch=$(echo "$line" | grep -o '\[.*\]' | tr -d '[]') || true
+    [[ -n "$branch" ]] || branch=$(_rebase_branch "$wt_path") || true
     [[ -n "$branch" ]] || continue
     echo "$branch"
     return 0

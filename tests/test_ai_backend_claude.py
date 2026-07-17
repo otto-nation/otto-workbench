@@ -1,5 +1,6 @@
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -88,3 +89,28 @@ class TestBuildAgentCmd:
         cmd = ai_backend_claude._build_agent_cmd(add_dirs=["/a", "/b"])
         pairs = [(cmd[i], cmd[i + 1]) for i in range(len(cmd) - 1) if cmd[i] == "--add-dir"]
         assert pairs == [("--add-dir", "/a"), ("--add-dir", "/b")]
+
+
+class TestPromptStderr:
+    def test_stderr_logged_on_failure(self, monkeypatch, capsys):
+        fake_result = types.SimpleNamespace(stdout="", returncode=1, stderr="API rate limit exceeded")
+        monkeypatch.setattr(
+            ai_backend_claude.subprocess, "run",
+            lambda *a, **kw: fake_result,
+        )
+        stdout, rc = ai_backend_claude.prompt("test prompt")
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "API rate limit exceeded" in captured.err
+
+    def test_stderr_not_logged_on_success(self, monkeypatch, capsys):
+        fake_result = type("R", (), {"stdout": "response", "returncode": 0, "stderr": ""})()
+        monkeypatch.setattr(
+            ai_backend_claude.subprocess, "run",
+            lambda *a, **kw: fake_result,
+        )
+        stdout, rc = ai_backend_claude.prompt("test prompt")
+        assert rc == 0
+        assert stdout == "response"
+        captured = capsys.readouterr()
+        assert captured.err == ""

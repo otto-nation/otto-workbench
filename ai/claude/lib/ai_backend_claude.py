@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import log
 from ai_backend_events import _log_stderr_on_failure, parse_claude_event
 from log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -146,6 +147,8 @@ def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
     """Stateless text-in/text-out via claude -p."""
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True)
+    if result.returncode != 0 and result.stderr:
+        log.dim(result.stderr.strip())
     return result.stdout, result.returncode
 
 

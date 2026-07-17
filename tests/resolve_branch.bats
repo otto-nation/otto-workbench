@@ -77,6 +77,28 @@ teardown() {
   git worktree remove "$wt_dir" --force 2>/dev/null || true
 }
 
+@test "resolves worktree directory during in-progress rebase (detached HEAD)" {
+  local wt_dir="$TMPDIR/isaac-fix-devhub_error_handling"
+  git worktree add "$wt_dir" "isaac/fix/devhub_error_handling" --quiet
+
+  # Simulate rebase-in-progress: detach HEAD and create rebase-merge/head-name
+  git -C "$wt_dir" checkout --detach --quiet
+  local git_dir
+  git_dir=$(git -C "$wt_dir" rev-parse --git-dir)
+  [[ "$git_dir" = /* ]] || git_dir="$wt_dir/$git_dir"
+  mkdir -p "$git_dir/rebase-merge"
+  echo "refs/heads/isaac/fix/devhub_error_handling" > "$git_dir/rebase-merge/head-name"
+
+  run "$SCRIPT" "isaac-fix-devhub_error_handling"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "isaac/fix/devhub_error_handling" ]]
+
+  # Clean up rebase state before removing worktree
+  rm -rf "$git_dir/rebase-merge"
+  git -C "$wt_dir" checkout "isaac/fix/devhub_error_handling" --quiet 2>/dev/null || true
+  git worktree remove "$wt_dir" --force 2>/dev/null || true
+}
+
 # ── Separator normalization ──────────────────────────────────────────────────
 
 @test "resolves dash-separated input to slash-separated branch" {

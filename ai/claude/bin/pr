@@ -510,7 +510,7 @@ _CUSTOM = {
 }
 
 # Commands that do not need a remote fetch before dispatch.
-_NO_UPDATE_COMMANDS = {"status", "gc"}
+_NO_UPDATE_COMMANDS = {"status", "gc", "rebase"}
 
 
 def _build_usage() -> str:

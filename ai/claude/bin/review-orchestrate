@@ -90,6 +90,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
         model=args.model, effort=args.effort,
+        include_generated=args.generated,
     )
 
     job.pr_state_data = pr_state.load_state(Path(args.repo_dir))
@@ -198,6 +199,8 @@ def main():
                         help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
+    parser.add_argument("--generated", action="store_true",
+                        help="Include tier3-generated files (skipped by default)")
     add_trail_args(parser)
     args = parser.parse_args()
 

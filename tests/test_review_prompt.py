@@ -8,8 +8,11 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_preflight import PRContext, PRMetadata, PreflightData
-from review_prompt import _build_delta_section, _build_pr_header
+from review_preflight import (
+    PRContext, PRMetadata, PreflightData, ReviewJob,
+    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+)
+from review_prompt import _build_delta_section, _build_pr_header, _compute_diff_budget
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────
@@ -126,3 +129,55 @@ class TestBuildPrHeaderScoped:
         header = _build_pr_header(_make_pr(), _make_ctx(), file_filter=["a.py"])
         assert "Description" in header
         assert "feat: stuff" in header
+
+
+# ── _compute_diff_budget ────────────────────────────────────────────────────
+
+
+def _make_job(preflight=None):
+    pr = PRMetadata(
+        title="T", body="B", head="h", base="main", head_sha="abc",
+        additions=10, deletions=5, changed_files=1,
+        files=[{"path": "a.py", "additions": 10, "deletions": 5}],
+    )
+    ctx = PRContext(commits="abc feat")
+    return ReviewJob(
+        repo="r", pr_number="1", pr=pr, ctx=ctx,
+        wt_path="/tmp/w", review_file="/tmp/r.md",
+        session_log="/tmp/l.jsonl", reviews_dir="/tmp/reviews",
+        preflight=preflight,
+    )
+
+
+class TestComputeDiffBudget:
+    def test_returns_remaining_when_within_budget(self):
+        job = _make_job(_make_preflight(claude_md="", architecture_md=""))
+        sections = {"header": "small"}
+        result = _compute_diff_budget(job, sections)
+        assert result > MIN_DIFF_BYTES
+
+    def test_clamps_to_min_diff_by_default(self):
+        huge = "x" * (MAX_PROMPT_BYTES + 1000)
+        job = _make_job(_make_preflight(claude_md=huge))
+        sections = {"header": "small"}
+        result = _compute_diff_budget(job, sections)
+        assert result == MIN_DIFF_BYTES
+
+    def test_min_diff_zero_allows_zero_budget(self):
+        huge = "x" * (MAX_PROMPT_BYTES + 1000)
+        job = _make_job(_make_preflight(claude_md=huge))
+        sections = {"header": "small"}
+        result = _compute_diff_budget(job, sections, min_diff=0)
+        assert result == 0
+
+    def test_skip_file_contents_frees_budget(self):
+        big_content = "y" * 200_000
+        pf = _make_preflight(file_contents={"gen.pb.go": big_content})
+        job = _make_job(pf)
+        sections = {"header": "small"}
+        with_fc = _compute_diff_budget(job, sections, file_filter=["gen.pb.go"])
+        without_fc = _compute_diff_budget(
+            job, sections, file_filter=["gen.pb.go"], skip_file_contents=True,
+        )
+        assert without_fc > with_fc
+        assert without_fc - with_fc >= 200_000

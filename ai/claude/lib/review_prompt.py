@@ -598,6 +598,7 @@ def _compute_diff_budget(
     known_sections: dict[str, str],
     skip_file_contents: bool = False,
     file_filter: list[str] | None = None,
+    min_diff: int = MIN_DIFF_BYTES,
 ) -> int:
     known_bytes = sum(len(v.encode()) for v in known_sections.values())
 
@@ -619,12 +620,12 @@ def _compute_diff_budget(
 
     non_diff_total = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + non_diff_preflight
     remaining = MAX_PROMPT_BYTES - non_diff_total
-    if remaining < MIN_DIFF_BYTES:
+    if remaining < min_diff:
         log.warn(
             f"Prompt budget tight: {non_diff_total // 1024}KB non-diff vs "
-            f"{MAX_PROMPT_BYTES // 1024}KB limit — diff capped to {MIN_DIFF_BYTES // 1024}KB"
+            f"{MAX_PROMPT_BYTES // 1024}KB limit — diff capped to {min_diff // 1024}KB"
         )
-    return max(MIN_DIFF_BYTES, remaining)
+    return max(min_diff, remaining)
 
 
 def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: ReviewJob, label: str = "") -> str:
@@ -751,7 +752,7 @@ def _prompt_self_synthesis(job, common, extra):
         "delta_section": common["delta_section"],
         "reply_threads": common["reply_threads"],
     }
-    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
+    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True, min_diff=0)
     preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
     sections["preflight_data"] = preflight
     kwargs = {
@@ -877,9 +878,27 @@ def _prompt_group(job, common, extra):
         "reply_threads": reply_threads,
     }
     diff_budget = _compute_diff_budget(job, sections, file_filter=file_filter)
+
+    # When file contents blow the budget (common for generated-code groups),
+    # drop them so the diff gets adequate space.
+    skip_file_contents = False
+    if diff_budget <= MIN_DIFF_BYTES and job.preflight:
+        filter_set = set(file_filter) if file_filter else None
+        fc_bytes = sum(
+            len(v.encode()) for k, v in job.preflight.file_contents.items()
+            if filter_set is None or k in filter_set
+        )
+        if fc_bytes > 0:
+            log.info(f"Dropping {fc_bytes // 1024}KB file contents for group to fit diff budget")
+            skip_file_contents = True
+            diff_budget = _compute_diff_budget(
+                job, sections, file_filter=file_filter, skip_file_contents=True,
+            )
+
     sections["project_context"] = project_context
     group_preflight = _build_preflight_section(
         job, file_filter=file_filter, skip_project_context=True,
+        skip_file_contents=skip_file_contents,
         max_diff_bytes=diff_budget,
     )
     sections["preflight_data"] = group_preflight
@@ -918,7 +937,9 @@ def _prompt_synthesis(job, common, extra):
         "reviews_section": common["reviews_section"],
         "reply_threads": common["reply_threads"],
     }
-    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True)
+    # Synthesis has all findings in merged_content — diff is supplementary,
+    # so allow it to shrink to 0 rather than blowing the budget.
+    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True, min_diff=0)
     preflight = _build_preflight_section(
         job, skip_file_contents=True, max_diff_bytes=diff_budget,
     )

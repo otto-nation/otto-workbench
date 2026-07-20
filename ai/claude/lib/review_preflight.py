@@ -108,6 +108,7 @@ class ReviewJob:
     preflight: "PreflightData | None" = None
     model: str = ""
     effort: str = "medium"
+    include_generated: bool = False
     reply_threads: dict = field(default_factory=dict)
     verification: dict | None = None
     pr_state_data: "PRState | None" = None

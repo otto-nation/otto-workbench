@@ -50,7 +50,7 @@ from review_findings import (
 from review_github import PRData, fetch_pr_data
 from review_preflight import (
     DEFAULT_MAX_GROUPS, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
-    HOLISTIC_MIN_GROUPS,
+    GROUP_TIER3, HOLISTIC_MIN_GROUPS,
     Group, PRContext, PRMetadata, PipelineState, ReviewJob,
     _merge_smallest_groups,
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
@@ -1523,6 +1523,13 @@ def run_multi_phase(
     groups = group_files(job.pr)
     effective_max_groups = max_groups or _effort_default(job.effort, "max_groups", DEFAULT_MAX_GROUPS)
     groups = _merge_smallest_groups(groups, effective_max_groups)
+
+    if not job.include_generated:
+        before = len(groups)
+        groups = [g for g in groups if g.name != GROUP_TIER3]
+        if len(groups) < before:
+            log.info("Skipping tier3-generated group (use --generated to include)")
+
     group_count = len(groups)
 
     log.info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")

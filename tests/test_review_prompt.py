@@ -10,7 +10,7 @@ if str(LIB_DIR) not in sys.path:
 
 from review_preflight import (
     PRContext, PRMetadata, PreflightData, ReviewJob,
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+    MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
 )
 from review_prompt import _build_delta_section, _build_pr_header, _compute_diff_budget
 

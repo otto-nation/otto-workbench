@@ -752,6 +752,8 @@ def _prompt_self_synthesis(job, common, extra):
         "delta_section": common["delta_section"],
         "reply_threads": common["reply_threads"],
     }
+    # Synthesis has all findings in merged_content — diff is supplementary,
+    # so allow it to shrink to 0 rather than blowing the budget.
     diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True, min_diff=0)
     preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
     sections["preflight_data"] = preflight

@@ -149,6 +149,7 @@
       "Bash(* --help)",
       "Bash(./gradlew:*)",
       "Bash(/Users/isaacg/.claude/plugins/cache/claude-plugins-official/**:*)",
+      "Bash(~/.claude/skills/**:*)",
       "Bash([:*)",
       "Bash([[:*)",
       "Bash(awk:*)",

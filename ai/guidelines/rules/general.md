@@ -44,10 +44,12 @@ On failure, diagnose in this order — do NOT retry with variations:
 
 ## Code Style
 
+### Error Handling
+- Never swallow errors silently — propagate them or return an explicit error. Silent fallbacks and defense-in-depth patterns require a comment explaining intent
+
 ### Comments & Documentation
 - Comments should be production-ready; place them above the line, never inline
 - Do not add comments that exist only to explain what a prompt change did
-- Silent fallbacks and defense-in-depth patterns require a comment explaining intent
 - Mark deliberate simplifications with a `// ceiling:` comment naming the tradeoff and upgrade trigger — e.g. `// ceiling: global lock, upgrade to per-account locks if throughput matters`
 - When adding docs, extend existing files rather than creating new ones
 - When adding CLI commands or changing command signatures, update `docs/ai-automation.md` and/or `README.md`
@@ -57,7 +59,9 @@ On failure, diagnose in this order — do NOT retry with variations:
 - Write tests the same way as existing tests in the project
 - Tests are not complete until they run and all pass
 - Never disable a test as a fix for a failing test
-- Do not add tests that simply assert constant values
+- Do not add tests that assert trivially true outcomes — constant values, zero-value-in/zero-value-out, or conditions guaranteed by the type system. Seed non-default state to verify the function actually preserves or transforms it
+- Never assert specific ordering when the sort tiebreaker is non-deterministic (e.g., random UUID, auto-increment ID, concurrent inserts with identical timestamps) — use order-independent assertions (map lookup, set membership, `ElementsMatch`)
 - When a foundational method's contract changes, audit every test that asserts the old behavior and update it
 - Prefer real dependencies over mocks when feasible — mocks hide integration bugs
 - Every bug fix and behavioral change must include a regression test
+- When adding or modifying a query with new filter predicates, sort orders, or pagination patterns, verify a covering index exists for the access pattern — queries without matching indexes degrade silently under load

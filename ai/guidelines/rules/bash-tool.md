@@ -29,6 +29,10 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
   - Use a glob when files share a pattern: `grep -rE "pattern" activities/*.go`
   - Use `find ... | xargs` for more complex selections
 
+## Avoid Shell Variable Expansion
+
+- Never use `echo "$VAR"` or `$VAR` in Bash tool commands — Claude Code's static analyzer flags shell variable references as "simple_expansion", triggering a permission prompt. Use `printenv VAR` instead, which reads the variable without shell expansion. If the value is already in CLAUDE.md or conversation context, don't run a command at all
+
 ## Avoid `find -exec`
 
 - Never use `find ... -exec` — Claude Code blocks `-exec` even with `Bash(find:*)` allowed because `-exec` can run arbitrary commands. Use piped alternatives instead:

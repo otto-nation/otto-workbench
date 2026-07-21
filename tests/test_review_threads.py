@@ -1002,6 +1002,33 @@ class TestPostDeferredReplies:
         mock_reply.assert_not_called()
 
 
+# ── _post_already_addressed_replies ───────────────────────────────────────
+
+
+class TestPostAlreadyAddressedReplies:
+
+    def test_posts_replies(self, rt):
+        fixed = [{"thread_id": "t1", "summary": "use helper"}]
+        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+            count = rt._post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42,
+            )
+        assert count == 1
+        body = mock_reply.call_args[0][3]
+        assert "Already addressed" in body
+        assert "use helper" in body
+
+    def test_no_comments_skips(self, rt):
+        fixed = [{"thread_id": "t1", "summary": "use helper"}]
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            count = rt._post_already_addressed_replies(
+                fixed, {}, "owner/repo", 42,
+            )
+        assert count == 0
+        mock_reply.assert_not_called()
+
+
 # ── _resolve_fixed_threads ────────────────────────────────────────────────
 
 

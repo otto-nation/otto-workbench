@@ -571,6 +571,23 @@ def _post_fix_replies(
     return posted
 
 
+def _post_already_addressed_replies(
+    fixed: list[dict],
+    threads_by_id: dict,
+    repo: str,
+    pr_number: int,
+) -> int:
+    """Post replies to threads already addressed in the current code. Returns count posted."""
+    def body_fn(entry: dict) -> str:
+        summary = entry.get("summary", "")
+        return f"Already addressed in the current implementation: {summary}"
+
+    posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
+    if posted:
+        log.info(f"Posted {posted} already-addressed replies")
+    return posted
+
+
 def _post_dismissed_replies(
     dismissed: list[dict],
     threads_by_id: dict,
@@ -1238,10 +1255,15 @@ def _run_comment_fix(
                    data={"reconciled": reconciled_count})
 
     replies_posted = dismissed_replies
-    if cp.sha and fixed:
-        replies_posted += _post_fix_replies(
-            fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
-        )
+    if fixed:
+        if cp.sha:
+            replies_posted += _post_fix_replies(
+                fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
+            )
+        else:
+            replies_posted += _post_already_addressed_replies(
+                fixed, threads_by_id, ctx.repo, report["pr_number"],
+            )
         _resolve_fixed_threads(fixed, threads_by_id)
 
     existing_state = pr_state.load_state(wt_path)

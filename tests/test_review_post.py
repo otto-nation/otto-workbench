@@ -688,6 +688,16 @@ class TestFormatBodyText:
         assert "looks good." in result
         assert "Needs discussion" not in result
 
+    def test_verdict_bold_action_prefix_stripped(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            summary="Summary text.",
+            verdict="**Request changes** — M1 and M2 are blockers.",
+        )
+        assert "### Verdict" in result
+        assert "M1 and M2 are blockers." in result
+        assert "Request changes" not in result
+
     def test_verdict_without_action_prefix_unchanged(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},

@@ -840,7 +840,7 @@ class TestSummarizeCommentBody:
 
 
 class TestReconcileFixResults:
-    """Test diff-based reconciliation of deferred → fixed threads."""
+    """Reconciliation is a no-op — the agent's checkboxes are the source of truth."""
 
     def _entry(self, file="src/foo.go", **kw):
         return {"thread_id": "t1", "file": file, "line": 10,
@@ -852,18 +852,14 @@ class TestReconcileFixResults:
     def _cp_none(self, rt):
         return rt.CommitPushResult(None, "no_changes", "")
 
-    def test_reclassifies_deferred_when_file_modified(self, rt):
+    def test_deferred_stays_deferred_even_when_file_modified(self, rt):
         deferred = [self._entry(reason="agent could not auto-fix")]
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "src/foo.go\n"
-            fixed, remaining, count = rt._reconcile_fix_results(
-                [], deferred, Path("/wt"), self._cp(rt),
-            )
-        assert len(fixed) == 1
-        assert len(remaining) == 0
-        assert count == 1
-        assert "reason" not in fixed[0]
+        fixed, remaining, count = rt._reconcile_fix_results(
+            [], deferred, Path("/wt"), self._cp(rt),
+        )
+        assert len(fixed) == 0
+        assert len(remaining) == 1
+        assert count == 0
 
     def test_no_sha_returns_unchanged(self, rt):
         deferred = [self._entry(reason="agent could not auto-fix")]
@@ -874,7 +870,7 @@ class TestReconcileFixResults:
         assert len(remaining) == 1
         assert count == 0
 
-    def test_no_deferred_returns_unchanged(self, rt):
+    def test_fixed_passed_through(self, rt):
         fixed_in = [self._entry()]
         fixed, remaining, count = rt._reconcile_fix_results(
             fixed_in, [], Path("/wt"), self._cp(rt),
@@ -883,59 +879,19 @@ class TestReconcileFixResults:
         assert len(remaining) == 0
         assert count == 0
 
-    def test_no_matching_files_stays_deferred(self, rt):
-        deferred = [self._entry(file="src/bar.go", reason="agent could not auto-fix")]
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "src/foo.go\n"
-            fixed, remaining, count = rt._reconcile_fix_results(
-                [], deferred, Path("/wt"), self._cp(rt),
-            )
-        assert len(fixed) == 0
-        assert len(remaining) == 1
-        assert count == 0
-
-    def test_mixed_some_reconciled_some_not(self, rt):
+    def test_multiple_threads_same_file_partial_fix(self, rt):
+        """Regression: multiple threads in one file, agent fixes only some."""
+        fixed_in = [self._entry(thread_id="t1", file="src/big.tsx")]
         deferred = [
-            self._entry(file="src/foo.go", thread_id="t1", reason="r"),
-            self._entry(file="src/bar.go", thread_id="t2", reason="r"),
+            self._entry(thread_id="t2", file="src/big.tsx", reason="design decision"),
+            self._entry(thread_id="t3", file="src/big.tsx", reason="needs discussion"),
         ]
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "src/foo.go\nsrc/baz.go\n"
-            fixed, remaining, count = rt._reconcile_fix_results(
-                [], deferred, Path("/wt"), self._cp(rt),
-            )
-        assert count == 1
+        fixed, remaining, count = rt._reconcile_fix_results(
+            fixed_in, deferred, Path("/wt"), self._cp(rt),
+        )
         assert len(fixed) == 1
         assert fixed[0]["thread_id"] == "t1"
-        assert len(remaining) == 1
-        assert remaining[0]["thread_id"] == "t2"
-
-    def test_appends_to_existing_fixed(self, rt):
-        existing_fixed = [self._entry(thread_id="t0", file="src/already.go")]
-        deferred = [self._entry(thread_id="t1", file="src/foo.go", reason="r")]
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "src/foo.go\n"
-            fixed, remaining, count = rt._reconcile_fix_results(
-                existing_fixed, deferred, Path("/wt"), self._cp(rt),
-            )
-        assert len(fixed) == 2
-        assert fixed[0]["thread_id"] == "t0"
-        assert fixed[1]["thread_id"] == "t1"
-        assert count == 1
-
-    def test_git_failure_returns_unchanged(self, rt):
-        deferred = [self._entry(reason="r")]
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 128
-            mock_run.return_value.stdout = ""
-            fixed, remaining, count = rt._reconcile_fix_results(
-                [], deferred, Path("/wt"), self._cp(rt),
-            )
-        assert len(fixed) == 0
-        assert len(remaining) == 1
+        assert len(remaining) == 2
         assert count == 0
 
 

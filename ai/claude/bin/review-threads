@@ -373,44 +373,14 @@ def _parse_tracking_results(
     return fixed, deferred
 
 
-def _get_modified_files(wt_path: Path, sha: str) -> set[str]:
-    """Return set of files modified in a commit."""
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "diff-tree",
-         "--no-commit-id", "--name-only", "-r", sha],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return set()
-    return {f for f in result.stdout.strip().splitlines() if f}
-
-
 def _reconcile_fix_results(
     fixed: list[dict],
     deferred: list[dict],
     wt_path: Path,
     cp: "CommitPushResult",
 ) -> tuple[list[dict], list[dict], int]:
-    """Reclassify deferred threads as fixed if their file was modified in the commit."""
-    if not cp.sha or not deferred:
-        return fixed, deferred, 0
-
-    modified = _get_modified_files(wt_path, cp.sha)
-    if not modified:
-        return fixed, deferred, 0
-
-    new_fixed = list(fixed)
-    new_deferred = []
-    reconciled = 0
-    for entry in deferred:
-        if entry.get("file", "") in modified:
-            reclassified = {k: v for k, v in entry.items() if k != "reason"}
-            new_fixed.append(reclassified)
-            reconciled += 1
-        else:
-            new_deferred.append(entry)
-
-    return new_fixed, new_deferred, reconciled
+    """Trust the agent's tracking checkboxes — no automatic reclassification."""
+    return fixed, deferred, 0
 
 
 @dataclass
@@ -1263,20 +1233,10 @@ def _run_comment_fix(
 
     fixed, deferred = _parse_tracking_results(tracking_file, fixable)
 
-    # ceiling: commit-message counts are pre-reconciliation; reconciliation needs
-    # the commit SHA, so it must run after. Counts may diverge from final state.
     cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
 
     if cp.status in ("no_changes", "commit_failed"):
         cp = _recover_agent_commit(wt_path, head_before, trail)
-
-    fixed, deferred, reconciled_count = _reconcile_fix_results(
-        fixed, deferred, wt_path, cp,
-    )
-    if reconciled_count and trail:
-        trail.info("reconcile",
-                   f"reclassified {reconciled_count} thread(s) as fixed via diff",
-                   data={"reconciled": reconciled_count})
 
     replies_posted = dismissed_replies
     if fixed:
@@ -1321,7 +1281,7 @@ def _run_comment_fix(
         replies_posted=replies_posted,
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and bool(needs_human),
-        reconciled_count=reconciled_count,
+        reconciled_count=0,
         deferred_issue_id=deferred_issue_id,
         deferred_issue_url=deferred_issue_url,
         updated_at=pr_state.now_iso(),

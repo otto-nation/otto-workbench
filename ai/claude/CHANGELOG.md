@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.2](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.39.1...otto-ai-tools-v1.39.2) (2026-07-21)
+
+
+### Bug Fixes
+
+* **review:** strip bold-wrapped verdict action prefix before posting ([#520](https://github.com/otto-nation/otto-workbench/issues/520)) ([58cdd25](https://github.com/otto-nation/otto-workbench/commit/58cdd2556bd7223ab365fbeda996451defc883d5))
+
 ## [1.39.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.39.0...otto-ai-tools-v1.39.1) (2026-07-21)
 
 

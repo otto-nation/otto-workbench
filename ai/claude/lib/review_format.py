@@ -12,7 +12,7 @@ from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
 
 _VERDICT_ACTION_RE = re.compile(
-    r"^(?:Request changes|Needs discussion|Approve|Disapprove)\s*[—–\-]\s*",
+    r"^\*{0,2}(?:Request changes|Needs discussion|Approve|Disapprove)\*{0,2}\s*[—–\-]\s*",
     re.IGNORECASE,
 )
 

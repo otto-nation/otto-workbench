@@ -123,19 +123,19 @@ def _confirm(prompt: str) -> bool:
     try:
         is_tty = sys.stdin.isatty()
     except (EOFError, OSError):
-        return True
+        return False
     if is_tty:
         try:
             answer = input(f"{prompt} [Y/n] ")
         except (EOFError, OSError):
-            return True
+            return False
         return answer.lower() in ("", "y", "yes")
     try:
         with open("/dev/tty") as tty:
             print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
             answer = tty.readline().strip()
     except (EOFError, OSError):
-        return True
+        return False
     return answer.lower() in ("", "y", "yes")
 
 

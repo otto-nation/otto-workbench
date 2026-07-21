@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.39.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.38.0...otto-ai-tools-v1.39.0) (2026-07-20)
+
+
+### Features
+
+* **ci-check:** enrich failure context; parallelize API calls; remove confirmation gates ([#504](https://github.com/otto-nation/otto-workbench/issues/504)) ([1f7ffde](https://github.com/otto-nation/otto-workbench/commit/1f7ffdef2444e34ff65a7ed91d2a75331dc2c0f9))
+* **ci-failures:** auto-fix without confirmation and enrich BUILD failure context ([#501](https://github.com/otto-nation/otto-workbench/issues/501)) ([f4fc928](https://github.com/otto-nation/otto-workbench/commit/f4fc928fbe84530df0a8a82d72b33bb2e63e3ed9))
+* **pr-comments:** give fix agent access to main worktree for baseline context ([#499](https://github.com/otto-nation/otto-workbench/issues/499)) ([1cacbc5](https://github.com/otto-nation/otto-workbench/commit/1cacbc53b5957098d78fb86c5730c4c5ae4c4bd4))
+* **reviewer:** add re-review verification with thread-based resolution ([#502](https://github.com/otto-nation/otto-workbench/issues/502)) ([95d4958](https://github.com/otto-nation/otto-workbench/commit/95d495899e3a3394ae34c581ed2c4105f629b395))
+
+
+### Bug Fixes
+
+* **ai:** handle BrokenPipeError in subprocess stdin write ([#511](https://github.com/otto-nation/otto-workbench/issues/511)) ([a229135](https://github.com/otto-nation/otto-workbench/commit/a229135e81d905fadc83305be0afc32aa39c7e2a))
+* **pr-context:** use fuzzy resolution for bare-repo worktree lookup ([#503](https://github.com/otto-nation/otto-workbench/issues/503)) ([0a9b57c](https://github.com/otto-nation/otto-workbench/commit/0a9b57c8180128dddd3ba3636872579d62d8580b))
+* **pr-rebase:** handle modify/delete conflicts without AI ([#509](https://github.com/otto-nation/otto-workbench/issues/509)) ([be1b833](https://github.com/otto-nation/otto-workbench/commit/be1b8335b68805e4325a29a684919f9ba5ff9110))
+* **pr-rebase:** resolve branch during rebase; surface AI prompt errors ([#506](https://github.com/otto-nation/otto-workbench/issues/506)) ([63b5f9d](https://github.com/otto-nation/otto-workbench/commit/63b5f9d8e6a55ab8be82cad50d10d25b939907bf))
+* **pr:** remove consumed positional from extra; skip stash mid-rebase ([#505](https://github.com/otto-nation/otto-workbench/issues/505)) ([3f6ebca](https://github.com/otto-nation/otto-workbench/commit/3f6ebcaa4df2b20d46089e81dd92e508829d61e5))
+* **review:** configurable diff floor; drop file contents on overflow ([#515](https://github.com/otto-nation/otto-workbench/issues/515)) ([25cf7a0](https://github.com/otto-nation/otto-workbench/commit/25cf7a0a2109dd60fb23a691f9412f22be1d8c6b))
+* **review:** stop pruning merged reviews on every run ([#507](https://github.com/otto-nation/otto-workbench/issues/507)) ([d05cb4a](https://github.com/otto-nation/otto-workbench/commit/d05cb4a1219c8768822421fedac17dc94e80d281))
+* **review:** strip unfenced blockquote evidence from review output ([#508](https://github.com/otto-nation/otto-workbench/issues/508)) ([eb7e201](https://github.com/otto-nation/otto-workbench/commit/eb7e201d7b867f7c94ee119981855b0221b4becd))
+* **review:** strip verdict action prefix from posted review body ([#510](https://github.com/otto-nation/otto-workbench/issues/510)) ([0cbfb97](https://github.com/otto-nation/otto-workbench/commit/0cbfb97475549db4056157d68100c8924ada0b9e))
+* **settings:** add permission for skill scripts; document $VAR expansion ([#514](https://github.com/otto-nation/otto-workbench/issues/514)) ([8f9ada7](https://github.com/otto-nation/otto-workbench/commit/8f9ada760ae0875d96f3eb80e6ada60473c489ea))
+
 ## [1.38.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.37.0...otto-ai-tools-v1.38.0) (2026-07-16)
 
 

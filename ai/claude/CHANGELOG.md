@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.39.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.39.0...otto-ai-tools-v1.39.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **pr-comments:** post replies for already-addressed threads ([#519](https://github.com/otto-nation/otto-workbench/issues/519)) ([a934e04](https://github.com/otto-nation/otto-workbench/commit/a934e043b037192a91a3bbcdafa7a0801775292f))
+* **review:** default _confirm to False when stdin is not interactive ([#516](https://github.com/otto-nation/otto-workbench/issues/516)) ([f6e1cdc](https://github.com/otto-nation/otto-workbench/commit/f6e1cdc19123760fd19d9a72377b35954453c70d))
+
 ## [1.39.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.38.0...otto-ai-tools-v1.39.0) (2026-07-20)
 
 

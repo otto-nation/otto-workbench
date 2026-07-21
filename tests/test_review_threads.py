@@ -1002,6 +1002,53 @@ class TestPostDeferredReplies:
         mock_reply.assert_not_called()
 
 
+# ── _post_already_addressed_replies ───────────────────────────────────────
+
+
+class TestPostAlreadyAddressedReplies:
+
+    def test_posts_replies_with_commit_ref(self, rt, tmp_path):
+        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
+        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        with (
+            patch("pr_comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(rt, "_find_addressing_commit", return_value="abc1234def5678"),
+        ):
+            count = rt._post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        assert count == 1
+        body = mock_reply.call_args[0][3]
+        assert "Already addressed" in body
+        assert "use helper" in body
+        assert "abc1234" in body
+        assert "owner/repo/commit/abc1234def5678" in body
+
+    def test_fallback_when_no_commit_found(self, rt, tmp_path):
+        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
+        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        with (
+            patch("pr_comments.post_thread_reply", return_value=True) as mock_reply,
+            patch.object(rt, "_find_addressing_commit", return_value=None),
+        ):
+            count = rt._post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        assert count == 1
+        body = mock_reply.call_args[0][3]
+        assert "Already addressed" in body
+        assert "commit" not in body
+
+    def test_no_comments_skips(self, rt, tmp_path):
+        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            count = rt._post_already_addressed_replies(
+                fixed, {}, "owner/repo", 42, tmp_path,
+            )
+        assert count == 0
+        mock_reply.assert_not_called()
+
+
 # ── _resolve_fixed_threads ────────────────────────────────────────────────
 
 

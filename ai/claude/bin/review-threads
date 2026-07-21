@@ -373,44 +373,14 @@ def _parse_tracking_results(
     return fixed, deferred
 
 
-def _get_modified_files(wt_path: Path, sha: str) -> set[str]:
-    """Return set of files modified in a commit."""
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "diff-tree",
-         "--no-commit-id", "--name-only", "-r", sha],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return set()
-    return {f for f in result.stdout.strip().splitlines() if f}
-
-
 def _reconcile_fix_results(
     fixed: list[dict],
     deferred: list[dict],
     wt_path: Path,
     cp: "CommitPushResult",
 ) -> tuple[list[dict], list[dict], int]:
-    """Reclassify deferred threads as fixed if their file was modified in the commit."""
-    if not cp.sha or not deferred:
-        return fixed, deferred, 0
-
-    modified = _get_modified_files(wt_path, cp.sha)
-    if not modified:
-        return fixed, deferred, 0
-
-    new_fixed = list(fixed)
-    new_deferred = []
-    reconciled = 0
-    for entry in deferred:
-        if entry.get("file", "") in modified:
-            reclassified = {k: v for k, v in entry.items() if k != "reason"}
-            new_fixed.append(reclassified)
-            reconciled += 1
-        else:
-            new_deferred.append(entry)
-
-    return new_fixed, new_deferred, reconciled
+    """Trust the agent's tracking checkboxes — no automatic reclassification."""
+    return fixed, deferred, 0
 
 
 @dataclass
@@ -665,6 +635,49 @@ def _post_deferred_replies(
     if posted:
         log.info(f"Posted {posted} deferred thread replies")
     return posted
+
+
+def _finalize_deferred(
+    ctx: pr_context.ResolvedContext,
+    threads_by_id: dict,
+    trail: Trail | None = None,
+) -> None:
+    """Create tracking issue and post deferred replies for items held from fix pass."""
+    wt_path = ctx.worktree_root
+    if not wt_path:
+        return
+    state = pr_state.load_state(wt_path)
+    if not state or not state.fix.threads:
+        return
+
+    FA = pr_state.ThreadAction
+    deferred = [
+        {"thread_id": t.thread_id, "file": t.file, "line": t.line,
+         "reviewer": t.reviewer, "summary": t.summary}
+        for t in state.fix.threads if t.action == FA.DEFERRED.value
+    ]
+    if not deferred:
+        return
+
+    pr_number = ctx.pr_number
+    if not pr_number:
+        return
+
+    deferred_issue_id, deferred_issue_url = _create_or_update_deferred_issue(
+        deferred, ctx.repo, pr_number, threads_by_id,
+        ctx, state.fix.deferred_issue_id, trail,
+        state.fix.deferred_issue_url,
+    )
+
+    if deferred_issue_id:
+        _post_deferred_replies(
+            deferred, threads_by_id, ctx.repo, pr_number,
+            deferred_issue_id, deferred_issue_url,
+        )
+
+    state.fix.deferred_issue_id = deferred_issue_id
+    state.fix.deferred_issue_url = deferred_issue_url
+    pr_state.save_state(wt_path, state)
 
 
 def _resolve_fixed_threads(
@@ -1017,7 +1030,7 @@ def _post_or_defer_summary(
     dismissed = dismissed or []
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
-    if not needs_human:
+    if not needs_human and not deferred:
         return _post_fix_summary(
             fixed, needs_human, deferred, cp, repo, pr_number,
             threads_by_id, dismissed=dismissed,
@@ -1027,7 +1040,7 @@ def _post_or_defer_summary(
             deferred_issue_url=deferred_issue_url,
         )
 
-    # Defer: build body without needs_human entries and save to state
+    # Defer: build body without needs_human/deferred entries and save to state
     has_unseen = (
         any(not c.get("seen") for c in issue_comments)
         or any(not c.get("seen") for c in review_body_comments)
@@ -1263,20 +1276,10 @@ def _run_comment_fix(
 
     fixed, deferred = _parse_tracking_results(tracking_file, fixable)
 
-    # ceiling: commit-message counts are pre-reconciliation; reconciliation needs
-    # the commit SHA, so it must run after. Counts may diverge from final state.
     cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
 
     if cp.status in ("no_changes", "commit_failed"):
         cp = _recover_agent_commit(wt_path, head_before, trail)
-
-    fixed, deferred, reconciled_count = _reconcile_fix_results(
-        fixed, deferred, wt_path, cp,
-    )
-    if reconciled_count and trail:
-        trail.info("reconcile",
-                   f"reclassified {reconciled_count} thread(s) as fixed via diff",
-                   data={"reconciled": reconciled_count})
 
     replies_posted = dismissed_replies
     if fixed:
@@ -1290,28 +1293,16 @@ def _run_comment_fix(
             )
         _resolve_fixed_threads(fixed, threads_by_id)
 
-    existing_state = pr_state.load_state(wt_path)
-    existing_issue_id = existing_state.fix.deferred_issue_id if existing_state else ""
-    existing_issue_url = existing_state.fix.deferred_issue_url if existing_state else ""
-
-    deferred_issue_id, deferred_issue_url = _create_or_update_deferred_issue(
-        deferred, ctx.repo, report["pr_number"], threads_by_id,
-        ctx, existing_issue_id, trail, existing_issue_url,
-    )
-
-    if deferred and deferred_issue_id:
-        replies_posted += _post_deferred_replies(
-            deferred, threads_by_id, ctx.repo, report["pr_number"],
-            deferred_issue_id, deferred_issue_url,
-        )
+    # Deferred items are held — the user reviews the fix output and decides
+    # what to defer vs fix manually. Deferred replies and tracking issues
+    # are posted on `--resolve`.
+    pending_deferred = bool(deferred) or bool(needs_human)
 
     summary_url = _post_or_defer_summary(
         fixed, needs_human, deferred, cp, ctx.repo, report["pr_number"],
         threads_by_id, wt_path, ctx, dismissed=dismissed,
         issue_comments=report.get("issue_comments"),
         review_body_comments=report.get("review_body_comments"),
-        deferred_issue_id=deferred_issue_id,
-        deferred_issue_url=deferred_issue_url,
     )
 
     _persist_fix_state(pr_state.FixSummary(
@@ -1320,10 +1311,8 @@ def _run_comment_fix(
         commit_status=cp.status,
         replies_posted=replies_posted,
         summary_url=summary_url or "",
-        summary_deferred=summary_url is None and bool(needs_human),
-        reconciled_count=reconciled_count,
-        deferred_issue_id=deferred_issue_id,
-        deferred_issue_url=deferred_issue_url,
+        summary_deferred=summary_url is None and pending_deferred,
+        reconciled_count=0,
         updated_at=pr_state.now_iso(),
     ), wt_path, ctx, trail)
 
@@ -1336,9 +1325,7 @@ def _run_comment_fix(
         "commit_status": cp.status,
         "replies_posted": replies_posted,
         "summary_url": summary_url,
-        "summary_deferred": summary_url is None and bool(needs_human),
-        "deferred_issue_id": deferred_issue_id,
-        "deferred_issue_url": deferred_issue_url,
+        "summary_deferred": summary_url is None and pending_deferred,
     }
 
 
@@ -1458,6 +1445,8 @@ def _run_threads(trail, args, ctx) -> None:
         ))
         if args.resolve:
             _post_pending_comments(st, repo, pr_number)
+            threads_by_id = {t["id"]: t for t in report["threads"]}
+            _finalize_deferred(ctx, threads_by_id, trail=trail)
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")

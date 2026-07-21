@@ -983,10 +983,10 @@ def test_confirm_no(cr, monkeypatch):
     assert cr._confirm("Continue?") is False
 
 
-def test_confirm_eof_defaults_yes(cr, monkeypatch):
+def test_confirm_eof_defaults_no(cr, monkeypatch):
     monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
     monkeypatch.setattr("builtins.input", MagicMock(side_effect=EOFError))
-    assert cr._confirm("Continue?") is True
+    assert cr._confirm("Continue?") is False
 
 
 # ── CLI argument parsing ──────────────────────────────────────────────────────

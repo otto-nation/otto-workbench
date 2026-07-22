@@ -243,6 +243,19 @@ def test_render_dashboard_all_pass():
     assert "pass" in dashboard.lower() or "success" in dashboard.lower()
 
 
+def test_render_dashboard_in_progress_no_failures():
+    """In-progress runs with no failures yet should not say 'All checks passed'."""
+    run = RunState(
+        run_id=123, run_number=7, head_sha="abc1234",
+        status="in_progress", conclusion="",
+        fetched_at="2026-06-18T14:30:00+00:00",
+        failures={},
+    )
+    dashboard = render_dashboard(run, {})
+    assert "still running" in dashboard.lower()
+    assert "all checks passed" not in dashboard.lower()
+
+
 def test_render_dashboard_mixed_progression():
     items = [
         _make_item("a", file="a.sh", line=1),

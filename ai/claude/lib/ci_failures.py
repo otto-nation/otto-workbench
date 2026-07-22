@@ -353,7 +353,10 @@ def render_dashboard(
         lines.append("")
 
     if not run.failures:
-        lines.append("All checks passed.")
+        if run.status != "completed":
+            lines.append("Checks still running — results incomplete.")
+        else:
+            lines.append("All checks passed.")
         return "\n".join(lines)
 
     kind_counts: dict[FailureKind, int] = {}

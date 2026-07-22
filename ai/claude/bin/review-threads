@@ -1372,7 +1372,7 @@ def _run_comment_fix(
 
     # Classify comment items
     fixable_items, items_needs_human, items_dismissed = _classify_triage_entries(
-        triage_result.get("comment_items", []), id_key="id",
+        triage_result.get("comment_items", []),
     )
 
     all_needs_human = needs_human + items_needs_human
@@ -1387,7 +1387,7 @@ def _run_comment_fix(
         )
 
     all_fixable = bool(fixable) or bool(fixable_items)
-    _has_items = bool(fixable_items) or bool(items_needs_human) or bool(items_dismissed)
+    has_items = bool(fixable_items) or bool(items_needs_human) or bool(items_dismissed)
 
     empty_result = {
         "fixed": [], "needs_human": all_needs_human, "dismissed": all_dismissed,
@@ -1407,7 +1407,7 @@ def _run_comment_fix(
                 threads_by_id, wt_path, ctx, dismissed=all_dismissed,
                 issue_comments=report.get("issue_comments"),
                 review_body_comments=report.get("review_body_comments"),
-                has_comment_items=_has_items,
+                has_comment_items=has_items,
             )
         else:
             summary_url = None
@@ -1479,23 +1479,21 @@ def _run_comment_fix(
     # Merge item results into the overall lists for summary/state
     all_fixed = fixed + fixed_items
     all_deferred = deferred + deferred_items
-    all_needs_human_final = needs_human + items_needs_human
-    all_dismissed_final = dismissed + items_dismissed
 
-    pending_deferred = bool(all_deferred) or bool(all_needs_human_final)
+    pending_deferred = bool(all_deferred) or bool(all_needs_human)
 
     summary_url = _post_or_defer_summary(
-        all_fixed, all_needs_human_final, all_deferred, cp,
+        all_fixed, all_needs_human, all_deferred, cp,
         ctx.repo, report["pr_number"],
-        threads_by_id, wt_path, ctx, dismissed=all_dismissed_final,
+        threads_by_id, wt_path, ctx, dismissed=all_dismissed,
         issue_comments=report.get("issue_comments"),
         review_body_comments=report.get("review_body_comments"),
-        has_comment_items=_has_items,
+        has_comment_items=has_items,
     )
 
     _persist_fix_state(pr_state.FixSummary(
         threads=_build_thread_outcomes(
-            all_fixed, all_deferred, all_needs_human_final, all_dismissed_final,
+            all_fixed, all_deferred, all_needs_human, all_dismissed,
         ),
         commit_sha=cp.sha or "",
         commit_status=cp.status,
@@ -1508,8 +1506,8 @@ def _run_comment_fix(
 
     return {
         "fixed": all_fixed,
-        "needs_human": all_needs_human_final,
-        "dismissed": all_dismissed_final,
+        "needs_human": all_needs_human,
+        "dismissed": all_dismissed,
         "deferred": all_deferred,
         "commit_sha": cp.sha,
         "commit_status": cp.status,

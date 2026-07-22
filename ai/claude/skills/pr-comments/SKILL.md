@@ -90,7 +90,8 @@ The `fix_pass` object contains:
 |-------|----------|
 | `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
 | `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
-| `skipped` | Threads the agent could not auto-fix |
+| `dismissed` | Threads and items dismissed as non-actionable (approvals, duplicates, etc.) |
+| `deferred` | Threads the agent could not auto-fix in the current pass |
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the summary issue comment, or null |

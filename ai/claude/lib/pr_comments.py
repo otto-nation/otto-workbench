@@ -436,11 +436,9 @@ def render_dashboard(
     verdicts: list[dict],
     issue_comments: list[dict],
     review_body_comments: list[dict] | None = None,
-    comment_items: list[dict] | None = None,
 ) -> str:
     """Render the status dashboard as a string."""
     review_body_comments = review_body_comments or []
-    comment_items = comment_items or []
     lines = [f"## PR #{pr_number} Review Status", ""]
 
     lines.append("Reviewers:")
@@ -469,10 +467,7 @@ def render_dashboard(
     if counts[STATE_NEW]:
         lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
 
-    if comment_items:
-        lines.extend(_dashboard_comment_items(comment_items))
-    else:
-        lines.extend(_dashboard_raw_comments(review_body_comments, issue_comments))
+    lines.extend(_dashboard_raw_comments(review_body_comments, issue_comments))
     lines.append("")
 
     blockers = [v["user"] for v in verdicts if v["state"] == "CHANGES_REQUESTED"]
@@ -483,22 +478,6 @@ def render_dashboard(
     lines.append("")
 
     return "\n".join(lines)
-
-
-def _dashboard_comment_items(items: list[dict]) -> list[str]:
-    """Render comment items section for the dashboard."""
-    item_counts: dict[str, int] = {}
-    for it in items:
-        cls = it.get("classification", "unclassified")
-        item_counts[cls] = item_counts.get(cls, 0) + 1
-    lines = [f"Comment items: {len(items)} total"]
-    if item_counts.get("actionable_suggestion"):
-        lines.append(f"  → {item_counts['actionable_suggestion']} actionable")
-    if item_counts.get("question"):
-        lines.append(f"  ? {item_counts['question']} questions")
-    if item_counts.get("conflicting"):
-        lines.append(f"  ⚠ {item_counts['conflicting']} conflicting")
-    return lines
 
 
 def _dashboard_raw_comments(

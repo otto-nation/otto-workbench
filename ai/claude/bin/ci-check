@@ -306,6 +306,17 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
     return primary
 
 
+def _commits_behind_main(repo: str, branch: str) -> int:
+    """Count commits on origin/main not reachable from the branch."""
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/compare/{branch}...main",
+         "--jq", ".behind_by"],
+        capture_output=True, text=True,
+    )
+    val = result.stdout.strip()
+    return int(val) if result.returncode == 0 and val.isdigit() else 0
+
+
 def _run_ci(trail, args, ctx) -> dict:
     repo = ctx.repo
     branch = ctx.branch
@@ -380,6 +391,9 @@ def _run_ci(trail, args, ctx) -> dict:
     dashboard = ci.render_dashboard(run_state, progression, run_ids=run_ids)
     print(dashboard, file=sys.stderr)
 
+    # Check how far behind origin/main the branch is
+    behind_main = _commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
+
     # JSON report to stdout
     report = {
         "repo": repo,
@@ -390,6 +404,7 @@ def _run_ci(trail, args, ctx) -> dict:
         "run_number": run_state.run_number,
         "head_sha": run_state.head_sha,
         "conclusion": run_state.conclusion,
+        "behind_main": behind_main,
         "failures": [],
         "progression": {k: v.value for k, v in progression.items()},
         "resolved_since_prior": [],
@@ -554,12 +569,47 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
     return sha
 
 
+def _rebase_if_behind(trail, report: dict, ctx) -> bool:
+    """Rebase onto origin/main if branch is behind. Returns True if rebased and pushed."""
+    behind = report.get("behind_main", 0)
+    if behind <= 0:
+        return False
+
+    trail.decision(
+        "rebase_check",
+        f"branch is {behind} commit(s) behind main",
+        reason="stale branch may cause CI failures",
+    )
+    log.info(f"Branch is {behind} commit(s) behind main — rebasing first...")
+
+    bin_dir = Path(__file__).resolve().parent
+    cmd = [str(bin_dir / "pr-rebase"), "--fix",
+           "--repo-dir", str(ctx.worktree_root)]
+    if ctx.branch:
+        cmd += ["--branch", ctx.branch]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+
+    if r.returncode != 0:
+        trail.warn("rebase_failed", f"rebase failed (exit {r.returncode})")
+        log.warn("Rebase failed — continuing with CI fixes on current base")
+        if r.stderr.strip():
+            log.dim(r.stderr.strip())
+        return False
+
+    trail.info("rebase_done", "rebased and force-pushed")
+    log.ok("Rebased onto main and force-pushed — CI will re-run on new HEAD")
+    return True
+
+
 def _run_fix(trail, report: dict, ctx) -> int:
     """Apply AI-driven fixes for CI failures. Returns exit code."""
     toplevel = ctx.worktree_root
     if not toplevel:
         log.error("--fix requires a worktree (use --repo-dir)")
         return 1
+
+    if _rebase_if_behind(trail, report, ctx):
+        return 0
 
     failures = report.get("failures", [])
     if not failures:

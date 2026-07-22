@@ -1935,6 +1935,152 @@ class TestFormatCommentBody:
         assert "[M2]" in body
 
 
+class TestShaDriftReverify:
+    """SHA drift should re-verify positions against the current diff and post
+    inline, not fall back to a plain issue comment."""
+
+    DIFF = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    REVIEW_TEXT = (
+        "<!-- head_sha: aaa1111bbb2222 -->\n"
+        "## Summary\nOk\n\n"
+        "## Must fix\n"
+        "- **[M1]** **`file.go:5`** — Fix this bug\n"
+    )
+
+    def _make_args(self, tmp_path, repo="org/repo", pr="1"):
+        import argparse
+        review_dir = tmp_path / "review"
+        review_dir.mkdir(exist_ok=True)
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_TEXT)
+        args = argparse.Namespace()
+        args.repo = repo
+        args.pr = pr
+        args.review_file = str(review_file)
+        args.dry_run = False
+        args.submit = False
+        args.chunk_size = 30
+        args.severity = "M,S,N,I"
+        args.debug = False
+        return args, review_file
+
+    def test_drift_posts_inline_not_comment(self, rp, tmp_path):
+        args, review_file = self._make_args(tmp_path)
+        sidecar = {"repo": "org/repo"}
+        trail = MagicMock()
+
+        new_head = "ccc3333ddd4444"
+        pr_data = rp.PRData(
+            viewer_login="bot",
+            head_sha=new_head, head_ref="feat", base_ref="main",
+            reviews=[],
+        )
+
+        post_calls = []
+        def capture_post(endpoint, input_file, **kw):
+            post_calls.append(endpoint)
+            return {"id": 42}
+
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch.object(rp, "_get_diff", return_value=self.DIFF),
+            patch.object(rp, "dedup_against_posted", return_value=(
+                [rp.Finding(id="M1", severity="M", seq=1, path="file.go",
+                            line=5, end_line=None, body="Fix this bug",
+                            posted_id="M1", classification="inline",
+                            full_path="file.go")],
+                [],
+            )),
+            patch.object(rp, "fetch_bot_reviews", return_value=[]),
+            patch.object(rp, "check_review_already_posted", return_value=set()),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch.object(rp, "_post_with_retries", side_effect=capture_post),
+            patch.object(rp, "resolve_permalinks"),
+        ):
+            rp._run_post(trail, args, "org/repo", sidecar, review_file)
+
+        assert any("pulls" in c and "reviews" in c for c in post_calls), \
+            f"Expected review API call, got: {post_calls}"
+        assert not any("issues" in c for c in post_calls), \
+            "Should not fall back to issue comment API"
+
+    def test_drift_skips_sidecar_diff(self, rp, tmp_path):
+        args, review_file = self._make_args(tmp_path)
+        stale_diff = "stale"
+        sidecar = {"repo": "org/repo", "diff": stale_diff}
+        trail = MagicMock()
+
+        new_head = "ccc3333ddd4444"
+        pr_data = rp.PRData(
+            viewer_login="bot",
+            head_sha=new_head, head_ref="feat", base_ref="main",
+            reviews=[],
+        )
+
+        diff_calls = []
+        def capture_diff(repo, pr):
+            diff_calls.append(repo)
+            return self.DIFF
+
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch.object(rp, "_get_diff", side_effect=capture_diff),
+            patch.object(rp, "dedup_against_posted", return_value=([], [])),
+            patch.object(rp, "fetch_bot_reviews", return_value=[]),
+            patch.object(rp, "check_review_already_posted", return_value=set()),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch.object(rp, "_post_with_retries", return_value={"id": 42}),
+            patch.object(rp, "resolve_permalinks"),
+        ):
+            rp._run_post(trail, args, "org/repo", sidecar, review_file)
+
+        assert len(diff_calls) == 1, "Should fetch fresh diff, not use sidecar"
+
+    def test_drift_records_sha_in_tracking(self, rp, tmp_path):
+        args, review_file = self._make_args(tmp_path)
+        sidecar = {"repo": "org/repo"}
+        trail = MagicMock()
+
+        new_head = "ccc3333ddd4444"
+        pr_data = rp.PRData(
+            viewer_login="bot",
+            head_sha=new_head, head_ref="feat", base_ref="main",
+            reviews=[],
+        )
+
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch.object(rp, "_get_diff", return_value=self.DIFF),
+            patch.object(rp, "dedup_against_posted", return_value=(
+                [rp.Finding(id="M1", severity="M", seq=1, path="file.go",
+                            line=5, end_line=None, body="Fix",
+                            posted_id="M1", classification="inline",
+                            full_path="file.go")],
+                [],
+            )),
+            patch.object(rp, "fetch_bot_reviews", return_value=[]),
+            patch.object(rp, "check_review_already_posted", return_value=set()),
+            patch.object(rp, "_check_existing_pending", return_value=None),
+            patch.object(rp, "_post_with_retries", return_value={"id": 42}),
+            patch.object(rp, "resolve_permalinks"),
+        ):
+            rp._run_post(trail, args, "org/repo", sidecar, review_file)
+
+        post_file = review_file.parent / "post.jsonl"
+        data = json.loads(post_file.read_text())
+        assert data["review_sha"] == "aaa1111bbb2222"
+        assert data["head_sha_at_post"] == new_head
+        assert data["sha_drifted"] is True
+        assert data["posted_as"] == "review"
+
+
 class TestHandleChunkFailure:
     def test_exits_with_error(self, rp):
         with pytest.raises(SystemExit):

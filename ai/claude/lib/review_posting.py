@@ -1,7 +1,7 @@
 """High-level posting orchestration for review-post.
 
-Handles chunked review submission, SHA-drift fallback (posting as a
-comment), reclassification after LineResolutionError, dry-run display,
+Handles chunked review submission, SHA-drift re-verification,
+reclassification after LineResolutionError, dry-run display,
 and post-tracking metadata.
 """
 
@@ -433,6 +433,7 @@ def _post_and_track(
     chunk_size: int, severity_filter: set[str],
     pr_data: PRData | None = None,
     summary: str = "", verdict: str = "",
+    review_sha: str = "", sha_drifted: bool = False,
 ):
     submit = getattr(args, "submit", False)
 
@@ -487,8 +488,9 @@ def _post_and_track(
         len(inline_comments), len(body_findings), len(skipped),
         submitted=submit or is_chunked,
         chunk_count=len(results),
-        review_sha=head_sha,
+        review_sha=review_sha or head_sha,
         head_sha_at_post=head_sha,
+        sha_drifted=sha_drifted,
     )
 
 

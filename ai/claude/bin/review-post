@@ -135,26 +135,22 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     else:
         head_sha = head_sha or review_sha or "dry-run"
 
-    sha_drifted = review_sha and review_sha != head_sha
-    if sha_drifted and not args.dry_run:
+    sha_drifted = bool(review_sha and review_sha != head_sha)
+    if sha_drifted:
         log.warn(f"Review was written against {review_sha[:7]}, PR HEAD is now {head_sha[:7]}")
-        log.info("Posting as comment (inline positions may be inaccurate)")
-        trail.decision(
+        log.info("Re-verifying positions against current diff")
+        trail.info(
             "sha_drift",
             f"review SHA {review_sha[:7] if review_sha else '?'} != HEAD {head_sha[:7] if head_sha else '?'}",
-            reason="HEAD moved since review; posting as comment",
             data={"review_sha": review_sha, "head_sha": head_sha},
         )
-        _post_as_comment(
-            args, findings, severity_filter, review_sha, head_sha,
-            head_ref, base_ref, pr_data,
-            summary=summary, verdict=verdict,
-        )
-        return
 
     if args.dry_run:
         log.info("Fetching diff for classification...")
-    diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
+    if sha_drifted:
+        diff_text = _get_diff(repo, args.pr)
+    else:
+        diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
     trail.info("classify_findings",
@@ -207,6 +203,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
         inline, body_findings, skipped,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
         summary=summary, verdict=verdict,
+        review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
     )
 
 

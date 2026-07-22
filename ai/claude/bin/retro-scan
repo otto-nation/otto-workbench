@@ -74,8 +74,13 @@ import log
 def parse_project_registry(machine_md_path: str) -> list[dict]:
     path = Path(machine_md_path)
     if not path.exists():
+        log.warn(f"Machine profile not found: {path}")
         return []
     lines = path.read_text().splitlines()
+    has_table_header = any(
+        REGISTRY_TABLE_PATTERN.match(line) and REGISTRY_TABLE_PATTERN.match(line).group(1) == "Project"
+        for line in lines
+    )
     results = []
     for line in lines:
         if REGISTRY_SEPARATOR.match(line):
@@ -83,6 +88,10 @@ def parse_project_registry(machine_md_path: str) -> list[dict]:
         m = REGISTRY_TABLE_PATTERN.match(line)
         if m and m.group(1) != "Project":
             results.append({"name": m.group(1), "path": m.group(2)})
+    if has_table_header and not results:
+        log.warn(f"Registry table header found but no project rows in {path}")
+    elif not has_table_header:
+        log.warn(f"No Project Registry table in {path}")
     return results
 
 
@@ -200,7 +209,11 @@ def _read_last_retro(home: Path) -> int:
         return 0
     try:
         return int(stamp.read_text().strip())
-    except (ValueError, OSError):
+    except ValueError as e:
+        log.warn(f"Invalid last-retro timestamp in {stamp}: {e}")
+        return 0
+    except OSError as e:
+        log.warn(f"Cannot read last-retro stamp {stamp}: {e}")
         return 0
 
 
@@ -602,8 +615,15 @@ def _get_github_login() -> str:
             ["gh", "api", "user", "--jq", ".login"],
             capture_output=True, text=True, timeout=10,
         )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+        if result.returncode == 0:
+            return result.stdout.strip()
+        log.warn(f"gh api user failed: {result.stderr.strip()}")
+        return ""
+    except subprocess.TimeoutExpired:
+        log.warn("gh api user timed out")
+        return ""
+    except FileNotFoundError:
+        log.warn("gh CLI not found")
         return ""
 
 
@@ -846,13 +866,18 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     log.info(f"Home: {home}")
     log.info(f"Workbench: {workbench}")
 
+    if not (home / ".claude").is_dir():
+        log.warn(f"Home path has no .claude/ directory: {home}")
+        trail.warn("validate_home", f"no .claude/ in {home}")
+
     machine_md = home / MACHINE_MD_REL
     projects = parse_project_registry(str(machine_md))
-    log.info(f"Found {len(projects)} project(s) in registry")
-    registry_detail = f"found {len(projects)} projects in {machine_md}"
-    if not machine_md.exists():
-        registry_detail += " (file missing)"
-    trail.info("parse_registry", registry_detail)
+    if projects:
+        log.info(f"Found {len(projects)} project(s) in registry")
+        trail.info("parse_registry", f"found {len(projects)} projects in {machine_md}")
+    else:
+        log.warn(f"Found 0 projects in {machine_md} (exists={machine_md.exists()})")
+        trail.warn("parse_registry", f"found 0 projects in {machine_md} (exists={machine_md.exists()})")
 
     repos: list[dict] = []
     for proj in projects:
@@ -866,11 +891,19 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
             continue
         repos.append({**proj, "github": github_slug})
     log.info(f"Resolved {len(repos)} GitHub repo(s)")
-    trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
+    skipped = len(projects) - len(repos)
+    if skipped:
+        trail.warn("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects ({skipped} skipped)")
+    else:
+        trail.info("resolve_remotes", f"resolved {len(repos)} GitHub repos from {len(projects)} projects")
 
     rules = load_rules(workbench)
-    log.info(f"Loaded {len(rules)} rule file(s)")
-    trail.info("load_rules", f"loaded {len(rules)} rule files from workbench")
+    if rules:
+        log.info(f"Loaded {len(rules)} rule file(s)")
+        trail.info("load_rules", f"loaded {len(rules)} rule files from workbench")
+    else:
+        log.warn(f"No rule files found in {workbench / RULES_REL}")
+        trail.warn("load_rules", f"no rule files in {workbench / RULES_REL}")
 
     if since_override:
         last_retro_ts = _parse_since(since_override)
@@ -884,6 +917,8 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     trail.info("check_state", f"last retro timestamp: {last_retro_ts}")
 
     git_user = _get_github_login()
+    if not git_user:
+        trail.warn("github_login", "could not determine GitHub login — comment directions will be inaccurate")
 
     scan_repos: list[dict] = []
     rule_match_counts: dict[str, dict] = {r["filename"]: {"matched": 0} for r in rules}

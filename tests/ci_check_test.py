@@ -184,6 +184,28 @@ def test_merge_runs_tags_source_run_id():
     assert result["jobs"][1]["_source_run_id"] == 200
 
 
+def test_merge_runs_in_progress_clears_success():
+    """An in-progress run should prevent the merged result from reporting success."""
+    runs = [
+        {"_run_id": 1, "databaseId": 1, "status": "completed", "conclusion": "success", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
+    ]
+    result = ci_check._merge_runs(runs)
+    assert result["status"] == "in_progress"
+    assert result["conclusion"] != "success"
+
+
+def test_merge_runs_in_progress_preserves_failure():
+    """A real failure should still surface even when another run is in-progress."""
+    runs = [
+        {"_run_id": 1, "databaseId": 1, "status": "completed", "conclusion": "failure", "jobs": []},
+        {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
+    ]
+    result = ci_check._merge_runs(runs)
+    assert result["conclusion"] == "failure"
+    assert result["status"] == "in_progress"
+
+
 # ── _build_ci_tracking_file ─────────────────────────────────────────────
 
 

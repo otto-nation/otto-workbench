@@ -48,11 +48,25 @@ The script outputs:
 
 **Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
-**Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed (no JSON report in the output), report the result to the user and **stop — do not proceed to step 2**. The script only outputs the JSON failure report when there are actual failures to process.
+**Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed (no JSON report in the output), report the result to the user and **stop — do not proceed further**. The script only outputs the JSON failure report when there are actual failures to process.
 
-### 2. Classify and group failures
+### 2. Rebase if behind main
 
-From the JSON report, present failures grouped by kind in priority order:
+Check the `behind_main` field in the JSON report. If the branch is behind
+`origin/main`:
+
+1. Report to the user: "Branch is N commits behind main — rebasing first."
+2. Run `pr rebase --fix` (auto-resolves conflicts and force-pushes)
+3. After rebase completes, re-run `pr ci 2>&1` to get fresh status against the
+   rebased HEAD — some failures may resolve after rebase
+4. Continue to step 3 with the updated report
+
+If `behind_main` is 0, skip this step and proceed directly to step 3.
+
+### 3. Classify and group failures
+
+From the JSON report (or updated report after rebase), present failures grouped
+by kind in priority order:
 
 1. **Regressed** — failures that were fixed but came back (urgent)
 2. **Persisting** — failures from prior run that survived a fix attempt
@@ -73,7 +87,7 @@ Present the classification table and proceed immediately to diagnosis:
 Do not ask for confirmation — proceed to diagnosis and fix. The user can interrupt
 to override classifications at any point (e.g. "that test failure is flaky").
 
-### 3. Diagnose
+### 4. Diagnose
 
 For each non-infra, non-flaky failure group:
 
@@ -88,7 +102,7 @@ Present diagnosis per group and proceed directly to fixing.
 For persisting/regressed failures, include context from prior attempts:
 > "Previously diagnosed as X, fix Y was applied at commit Z — still failing. The prior fix may have been incomplete or targeted the wrong root cause."
 
-### 4. Apply fixes and push
+### 5. Apply fixes and push
 
 **Worktree switch:** If CWD is not the branch's worktree, switch immediately
 using `wt switch -c <branch>` — do not ask, just switch and proceed with fixes.
@@ -105,7 +119,7 @@ git push
 
 Group all fixes into a single commit. The state file is updated automatically on the next `pr ci` invocation.
 
-### 5. Monitor (on re-invocation)
+### 6. Monitor (on re-invocation)
 
 When re-invoked after a push:
 1. Fetch the new run triggered by the push
@@ -120,9 +134,9 @@ Persisting: 1 (pytest test_validate — was diagnosed as X, fix Y applied)
 New: 1 (bats test_cleanup)
 ```
 
-Re-enter Step 3 for persisting failures with context of what was already tried.
+Re-enter Step 4 for persisting failures with context of what was already tried.
 
-### 6. Report
+### 7. Report
 
 Print:
 - Number of fixes applied

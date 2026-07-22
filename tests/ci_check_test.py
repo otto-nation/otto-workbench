@@ -576,3 +576,83 @@ def test_parse_run_does_not_enrich_lint_with_uninformative_annotations():
         with patch("ci_check._log_fallback") as mock_fallback:
             ci_check._parse_run("owner/repo", run_data)
     mock_fallback.assert_not_called()
+
+
+# ── _commits_behind_main ────────────────────────────────────────────────
+
+
+def test_commits_behind_main_returns_count():
+    mock = MagicMock()
+    mock.returncode = 0
+    mock.stdout = "15\n"
+    with patch("ci_check.subprocess.run", return_value=mock):
+        result = ci_check._commits_behind_main("owner/repo", "feat/auth")
+    assert result == 15
+
+
+def test_commits_behind_main_returns_zero_on_error():
+    mock = MagicMock()
+    mock.returncode = 1
+    mock.stdout = ""
+    with patch("ci_check.subprocess.run", return_value=mock):
+        result = ci_check._commits_behind_main("owner/repo", "feat/auth")
+    assert result == 0
+
+
+def test_commits_behind_main_returns_zero_on_non_numeric():
+    mock = MagicMock()
+    mock.returncode = 0
+    mock.stdout = "null\n"
+    with patch("ci_check.subprocess.run", return_value=mock):
+        result = ci_check._commits_behind_main("owner/repo", "feat/auth")
+    assert result == 0
+
+
+# ── _rebase_if_behind ───────────────────────────────────────────────────
+
+
+def _mock_ctx(worktree_root="/tmp/wt", branch="feat/auth"):
+    ctx = MagicMock()
+    ctx.worktree_root = Path(worktree_root)
+    ctx.branch = branch
+    return ctx
+
+
+def test_rebase_if_behind_skips_when_not_behind():
+    trail = MagicMock()
+    report = {"behind_main": 0}
+    assert ci_check._rebase_if_behind(trail, report, _mock_ctx()) is False
+    trail.decision.assert_not_called()
+
+
+def test_rebase_if_behind_skips_when_field_missing():
+    trail = MagicMock()
+    report = {}
+    assert ci_check._rebase_if_behind(trail, report, _mock_ctx()) is False
+
+
+def test_rebase_if_behind_runs_rebase_on_success():
+    trail = MagicMock()
+    report = {"behind_main": 5}
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    with patch("ci_check.subprocess.run", return_value=mock_run) as mock_subrun:
+        result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
+    assert result is True
+    trail.info.assert_called()
+    called_cmd = mock_subrun.call_args[0][0]
+    assert "--fix" in called_cmd
+    assert "--repo-dir" in called_cmd
+    assert "--branch" in called_cmd
+
+
+def test_rebase_if_behind_continues_on_failure():
+    trail = MagicMock()
+    report = {"behind_main": 10}
+    mock_run = MagicMock()
+    mock_run.returncode = 1
+    mock_run.stderr = "conflict\n"
+    with patch("ci_check.subprocess.run", return_value=mock_run):
+        result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
+    assert result is False
+    trail.warn.assert_called()

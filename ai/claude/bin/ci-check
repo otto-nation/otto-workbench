@@ -295,14 +295,21 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
         return None
     primary = run_data_list[0]
     all_jobs = []
+    any_incomplete = False
     for rd in run_data_list:
         if rd.get("conclusion") in _FAILURE_CONCLUSIONS:
             primary["conclusion"] = "failure"
+        if rd.get("status") not in (None, "completed"):
+            any_incomplete = True
         rid = rd.get("_run_id")
         for job in rd.get("jobs", []):
             job["_source_run_id"] = rid
         all_jobs.extend(rd.get("jobs", []))
     primary["jobs"] = all_jobs
+    if any_incomplete:
+        primary["status"] = "in_progress"
+        if primary.get("conclusion") not in _FAILURE_CONCLUSIONS:
+            primary["conclusion"] = ""
     return primary
 
 

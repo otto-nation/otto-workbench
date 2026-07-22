@@ -21,6 +21,7 @@ paths:
 
 - Before using any GitHub Action, read its README — check what it does by default, what inputs control behavior, and whether it runs something automatically. Many actions install AND execute; some have breaking changes between major versions
 - When extracting a composite action, verify it works in all contexts it will be called from (matrix jobs vs single jobs, workspace root vs subdirectory)
+- When a CI job uses `git diff`, `git log`, or any ref-based comparison, set `fetch-depth: 0` on the checkout step — shallow clones silently fail to resolve base refs, and the error is often swallowed by downstream scripts
 
 ## Scripts
 

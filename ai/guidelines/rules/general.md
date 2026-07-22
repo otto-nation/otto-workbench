@@ -23,7 +23,7 @@ Save plans to `ignore/plans/`, specs to `ignore/specs/`.
 
 Reuse ladder — stop at the first rung that solves the problem:
 
-1. **Already in this codebase?** Reuse it — check if the pattern exists elsewhere before writing a narrow fix
+1. **Already in this codebase?** Reuse it — before writing new code, grep for existing implementations of the same logic. Check sibling files, shared libs, and format/helper directories
 2. **Stdlib / language built-in?** Use it
 3. **Already-installed dependency?** Use it
 4. **One line?** Write it inline — don't extract a function or file for what fits in one line
@@ -31,6 +31,9 @@ Reuse ladder — stop at the first rung that solves the problem:
 6. **New dependency?** Justify it
 
 - Never introduce changes that violate SSOT or DRY — if data or logic already has a single owner, reference it instead of duplicating. Before adding a constant, config value, or pattern, check if it already exists elsewhere
+- When renaming a service, endpoint, or wire format, audit all references — not just call sites. Check: doc comments, inline examples, container network aliases, Helm/Pkl defaults, env var values, test fixtures, and generated config
+- When changing a wire format (message subjects, event schemas, API contracts), document deployment ordering in the PR description — which services deploy first, whether simultaneous deploy is required, and what breaks during the rollout window
+- Never swallow errors silently — propagate them or return an explicit error. Key/map lookups on external data (DB, API, user input) must use safe-access patterns (comma-ok in Go, `.get()` in Python, `in` checks in JS) and handle the missing-key case
 - Never defer review findings to issues — fix them in the current PR or create separate PRs
 - When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic
 

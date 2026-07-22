@@ -849,7 +849,10 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     machine_md = home / MACHINE_MD_REL
     projects = parse_project_registry(str(machine_md))
     log.info(f"Found {len(projects)} project(s) in registry")
-    trail.info("parse_registry", f"found {len(projects)} projects in machine registry")
+    registry_detail = f"found {len(projects)} projects in {machine_md}"
+    if not machine_md.exists():
+        registry_detail += " (file missing)"
+    trail.info("parse_registry", registry_detail)
 
     repos: list[dict] = []
     for proj in projects:
@@ -948,7 +951,7 @@ def main() -> None:
         usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
-    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override")
+    parser.add_argument("--home", type=str, default=str(Path.home()), help="home directory override")
     parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
     parser.add_argument("--since", type=str, default=None, help="override scan window (e.g. 7d, 24h, 30m)")
     add_trail_args(parser)
@@ -964,7 +967,7 @@ def main() -> None:
     trail = Trail.start(
         script="retro-scan",
         artifact_dir=log_dir,
-        context={"workbench": args.workbench},
+        context={"workbench": args.workbench, "home": str(home)},
         debug=args.debug,
     )
 

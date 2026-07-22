@@ -81,7 +81,7 @@ For each comment in the scan report, assign exactly one category:
 | `rule-gap` | No existing rule covers this | Nearest rule is "none" or very weak match, and the comment identifies a generalizable pattern |
 | `rule-refinement` | Existing rule is too vague or narrow | Nearest rule matches but doesn't address the specific concern |
 | `false-negative` | Rule exists but wasn't followed | Nearest rule clearly covers this, but the code still violated it |
-| `project-rule` | Applies to one repo, not globally | Pattern is real and recurring but references project-internal packages, APIs, infra, or domain conventions |
+| `project-rule` | Applies to one repo, not globally | Pattern could recur in the same repo and references project-internal packages, APIs, infra, or domain conventions |
 | `one-off` | Context-specific, doesn't generalize | Feedback is about this specific PR's requirements or design choices |
 | `noise` | Not actionable | Remaining style nits, questions answered in-thread, approval-adjacent |
 
@@ -140,19 +140,23 @@ should note when one is needed.
   context (e.g., don't repeat the package path if the repo only has one pagination helper)
 - If the repo has no `CLAUDE.md`, note that one should be created first
 
-### For `rule-refinement`:
+### For `rule-refinement` / `false-negative`:
+
+These inherit placement from the existing rule — no placement decision needed.
+
+For `rule-refinement`:
 - Quote the current rule text
 - Show the proposed edit as old → new
 - Explain what the current wording misses
 
-### For `false-negative`:
+For `false-negative`:
 - Quote the rule that should have prevented this
 - Propose strengthening: add "MUST"/"NEVER", add an example, make language more specific
 - Consider whether the rule is in a file that might not be loaded for the relevant file type (path-scoped frontmatter issue)
 
 ### For `project-rule`:
 - Name the target repo
-- Draft the rule text as a `CLAUDE.md` convention bullet
+- Draft the rule text as a `CLAUDE.md` bullet under `## Conventions`
 - If the finding also has a weaker global analog (e.g., "check for indexes" is
   global, but "use keyset pagination via X" is project-specific), propose both
 
@@ -236,7 +240,7 @@ directories that were scanned by `retro-scan` (listed in
 
 Print a one-line summary:
 ```
-Retro complete: N PRs analyzed, N findings (N global, N project), N proposals written.
+Retro complete: N PRs analyzed, N findings, N proposals (N global, N project).
 Report: <workbench>/ai/memory/RETRO.md
 ```
 

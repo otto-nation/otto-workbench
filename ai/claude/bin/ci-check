@@ -310,7 +310,7 @@ def _commits_behind_main(repo: str, branch: str) -> int:
     """Count commits on origin/main not reachable from the branch."""
     result = subprocess.run(
         ["gh", "api", f"repos/{repo}/compare/{branch}...main",
-         "--jq", ".behind_by"],
+         "--jq", ".ahead_by"],
         capture_output=True, text=True,
     )
     val = result.stdout.strip()
@@ -391,7 +391,8 @@ def _run_ci(trail, args, ctx) -> dict:
     dashboard = ci.render_dashboard(run_state, progression, run_ids=run_ids)
     print(dashboard, file=sys.stderr)
 
-    # Check how far behind origin/main the branch is
+    # Check how far behind origin/main the branch is — runs on every invocation
+    # (not just --fix) because the JSON report includes behind_main for SKILL.md consumers
     behind_main = _commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
 
     # JSON report to stdout
@@ -609,6 +610,7 @@ def _run_fix(trail, report: dict, ctx) -> int:
         return 1
 
     if _rebase_if_behind(trail, report, ctx):
+        log.info("Re-run `ci-check --fix` after CI completes on the new HEAD")
         return 0
 
     failures = report.get("failures", [])

@@ -636,10 +636,14 @@ def test_rebase_if_behind_runs_rebase_on_success():
     report = {"behind_main": 5}
     mock_run = MagicMock()
     mock_run.returncode = 0
-    with patch("ci_check.subprocess.run", return_value=mock_run):
+    with patch("ci_check.subprocess.run", return_value=mock_run) as mock_subrun:
         result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
     assert result is True
     trail.info.assert_called()
+    called_cmd = mock_subrun.call_args[0][0]
+    assert "--fix" in called_cmd
+    assert "--repo-dir" in called_cmd
+    assert "--branch" in called_cmd
 
 
 def test_rebase_if_behind_continues_on_failure():

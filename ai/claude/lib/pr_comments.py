@@ -470,30 +470,9 @@ def render_dashboard(
         lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
 
     if comment_items:
-        item_counts: dict[str, int] = {}
-        for it in comment_items:
-            cls = it.get("classification", "unclassified")
-            item_counts[cls] = item_counts.get(cls, 0) + 1
-        lines.append(f"Comment items: {len(comment_items)} total")
-        if item_counts.get("actionable_suggestion"):
-            lines.append(f"  → {item_counts['actionable_suggestion']} actionable")
-        if item_counts.get("question"):
-            lines.append(f"  ? {item_counts['question']} questions")
-        if item_counts.get("conflicting"):
-            lines.append(f"  ⚠ {item_counts['conflicting']} conflicting")
+        lines.extend(_dashboard_comment_items(comment_items))
     else:
-        unseen_review = sum(1 for c in review_body_comments if not c.get("seen"))
-        unseen_issue = sum(1 for c in issue_comments if not c.get("seen"))
-        if review_body_comments:
-            label = f"  📝 {len(review_body_comments)} review-level comments"
-            if unseen_review:
-                label += f" ({unseen_review} new)"
-            lines.append(label)
-        if issue_comments:
-            label = f"  💬 {len(issue_comments)} discussion comments"
-            if unseen_issue:
-                label += f" ({unseen_issue} new)"
-            lines.append(label)
+        lines.extend(_dashboard_raw_comments(review_body_comments, issue_comments))
     lines.append("")
 
     blockers = [v["user"] for v in verdicts if v["state"] == "CHANGES_REQUESTED"]
@@ -504,3 +483,40 @@ def render_dashboard(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _dashboard_comment_items(items: list[dict]) -> list[str]:
+    """Render comment items section for the dashboard."""
+    item_counts: dict[str, int] = {}
+    for it in items:
+        cls = it.get("classification", "unclassified")
+        item_counts[cls] = item_counts.get(cls, 0) + 1
+    lines = [f"Comment items: {len(items)} total"]
+    if item_counts.get("actionable_suggestion"):
+        lines.append(f"  → {item_counts['actionable_suggestion']} actionable")
+    if item_counts.get("question"):
+        lines.append(f"  ? {item_counts['question']} questions")
+    if item_counts.get("conflicting"):
+        lines.append(f"  ⚠ {item_counts['conflicting']} conflicting")
+    return lines
+
+
+def _dashboard_raw_comments(
+    review_body_comments: list[dict],
+    issue_comments: list[dict],
+) -> list[str]:
+    """Render raw comment counts for the dashboard (fallback when items aren't available)."""
+    lines: list[str] = []
+    unseen_review = sum(1 for c in review_body_comments if not c.get("seen"))
+    unseen_issue = sum(1 for c in issue_comments if not c.get("seen"))
+    if review_body_comments:
+        label = f"  📝 {len(review_body_comments)} review-level comments"
+        if unseen_review:
+            label += f" ({unseen_review} new)"
+        lines.append(label)
+    if issue_comments:
+        label = f"  💬 {len(issue_comments)} discussion comments"
+        if unseen_issue:
+            label += f" ({unseen_issue} new)"
+        lines.append(label)
+    return lines

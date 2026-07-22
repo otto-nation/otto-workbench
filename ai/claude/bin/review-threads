@@ -465,37 +465,24 @@ def _parse_tracking_results(
             continue
         tid = tid_match.group(1)
         is_checked = bool(re.search(r"^- \[[xX]\] ", section, re.MULTILINE))
-
-        thread = fixable_by_id.get(tid)
-        if thread:
-            entry = {
-                "thread_id": tid,
-                "file": thread.get("file", ""),
-                "line": thread.get("line", 0),
-                "reviewer": thread.get("reviewer", ""),
-                "summary": thread.get("summary", ""),
-            }
-            if is_checked:
-                fixed.append(entry)
-            else:
-                entry["reason"] = "agent could not auto-fix"
-                deferred.append(entry)
+        source = fixable_by_id.get(tid) or items_by_id.get(tid)
+        if not source:
             continue
-
-        item = items_by_id.get(tid)
-        if item:
-            entry = {
-                "thread_id": tid,
-                "file": item.get("file", ""),
-                "line": int(item.get("line") or 0),
-                "reviewer": item.get("reviewer", ""),
-                "summary": item.get("summary", ""),
-            }
-            if is_checked:
-                fixed_items.append(entry)
-            else:
-                entry["reason"] = "agent could not auto-fix"
-                deferred_items.append(entry)
+        entry = {
+            "thread_id": tid,
+            "file": source.get("file", ""),
+            "line": int(source.get("line") or 0),
+            "reviewer": source.get("reviewer", ""),
+            "summary": source.get("summary", ""),
+        }
+        is_item = tid in items_by_id
+        target_fixed = fixed_items if is_item else fixed
+        target_deferred = deferred_items if is_item else deferred
+        if is_checked:
+            target_fixed.append(entry)
+        else:
+            entry["reason"] = "agent could not auto-fix"
+            target_deferred.append(entry)
 
     return fixed, deferred, fixed_items, deferred_items
 
@@ -1063,31 +1050,51 @@ def _build_summary_body(
         parts.extend(rows)
         parts.append("")
 
-    # Show raw comment sections only when items weren't decomposed during triage
     if not has_comment_items:
-        unseen_reviews = [c for c in review_body_comments if not c.get("seen")]
-        if unseen_reviews:
-            parts.append("### Review-Level Comments")
-            parts.append("")
-            for c in unseen_reviews:
-                user = c.get("user", "unknown")
-                state = c.get("state", "")
-                summary = _summarize_comment_body(c.get("body", ""))
-                state_badge = f" ({state})" if state else ""
-                parts.append(f"- **@{user}**{state_badge}: {summary}")
-            parts.append("")
-
-        unseen_issue = [c for c in issue_comments if not c.get("seen")]
-        if unseen_issue:
-            parts.append("### Discussion Comments")
-            parts.append("")
-            for c in unseen_issue:
-                user = c.get("user", "unknown")
-                summary = _summarize_comment_body(c.get("body", ""))
-                parts.append(f"- **@{user}**: {summary}")
-            parts.append("")
+        parts.extend(_render_raw_comment_sections(review_body_comments, issue_comments))
 
     return "\n".join(parts)
+
+
+def _render_raw_comment_sections(
+    review_body_comments: list[dict],
+    issue_comments: list[dict],
+) -> list[str]:
+    """Render unseen comments as summary sections (fallback when items weren't decomposed)."""
+    parts: list[str] = []
+    unseen_reviews = [c for c in review_body_comments if not c.get("seen")]
+    if unseen_reviews:
+        parts.extend(["### Review-Level Comments", ""])
+        parts.extend(_format_review_body_items(unseen_reviews))
+        parts.append("")
+
+    unseen_issue = [c for c in issue_comments if not c.get("seen")]
+    if unseen_issue:
+        parts.extend(["### Discussion Comments", ""])
+        parts.extend(_format_issue_comment_items(unseen_issue))
+        parts.append("")
+
+    return parts
+
+
+def _format_review_body_items(comments: list[dict]) -> list[str]:
+    lines = []
+    for c in comments:
+        user = c.get("user", "unknown")
+        state = c.get("state", "")
+        summary = _summarize_comment_body(c.get("body", ""))
+        state_badge = f" ({state})" if state else ""
+        lines.append(f"- **@{user}**{state_badge}: {summary}")
+    return lines
+
+
+def _format_issue_comment_items(comments: list[dict]) -> list[str]:
+    lines = []
+    for c in comments:
+        user = c.get("user", "unknown")
+        summary = _summarize_comment_body(c.get("body", ""))
+        lines.append(f"- **@{user}**: {summary}")
+    return lines
 
 
 def _post_fix_summary(

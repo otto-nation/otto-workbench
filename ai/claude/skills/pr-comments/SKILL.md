@@ -80,24 +80,46 @@ Parse the JSON output. Top-level fields:
 | Field | Contents |
 |-------|----------|
 | `fix_pass` | Object with fix results (see below) |
-| `issue_comments` | Issue-level discussion comments from reviewers (not inline threads) |
-| `review_body_comments` | Review-level body comments — substantive feedback in the review body text, distinct from inline code comments |
+| `comment_items` | Decomposed items from top-level comments (see below) |
+| `issue_comments` | Raw issue-level discussion comments (for fallback when items aren't available) |
+| `review_body_comments` | Raw review-level body comments (for fallback when items aren't available) |
 
 The `fix_pass` object contains:
 
 | Field | Contents |
 |-------|----------|
-| `fixed` | Threads the agent auto-fixed (committed + pushed) |
-| `needs_human` | Threads requiring user input (contested, conflicting, questions, needs_discussion) |
+| `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
+| `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
 | `skipped` | Threads the agent could not auto-fix |
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the summary issue comment, or null |
 | `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist |
+| `comment_items` | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
 
-**Report auto-fixes:** "Fixed N threads (commit SHA). M threads need your input. K skipped."
+**Comment items** (`comment_items` array at the top level): when top-level PR
+comments (issue comments or review body comments) contain multiple actionable
+points, the triage step decomposes them into individual items. Each item has:
 
-**If `needs_human` is empty and no unseen `issue_comments` or `review_body_comments`:** done — no further action needed.
+| Field | Contents |
+|-------|----------|
+| `id` | Synthetic ID (`ic-{comment_id}-{index}` or `rb-{review_id}-{index}`) |
+| `source_id` | Original comment ID |
+| `source_type` | `"issue_comment"` or `"review_body"` |
+| `classification` | Same as threads: `actionable_suggestion`, `question`, `approval`, `conflicting` |
+| `verification` | For actionable items: `valid`, `invalid`, `needs_discussion` |
+| `summary` | One-line summary of the specific item |
+| `file` | File path if referenced (empty string if not) |
+| `line` | Line number if referenced (0 if not) |
+| `reviewer` | Comment author |
+
+Present items the same way as threads — they flow through the same
+fix/needs_human/dismissed pipeline. Items with synthetic IDs (prefixed `ic-`
+or `rb-`) are comment items; regular thread IDs are inline review threads.
+
+**Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
+
+**If `needs_human` is empty and no unseen comments:** done — no further action needed.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
@@ -114,21 +136,9 @@ current baseline. Find it via `wt switch main --no-cd --format json --no-hooks`.
 **Do not** attempt to fix `skipped` threads — the agent already determined
 they require judgment.
 
-**Issue-level comments** (`issue_comments` array in the JSON output): these are
-general discussion comments from reviewers (not inline review threads). Each
-comment has a `"seen"` boolean — `true` means it was present in a prior run
-and has already been shown to the user. Only present comments where
-`"seen": false`; skip the rest. If all issue comments are seen, treat them
-as handled. For unseen comments, present each with the author and a summary.
-These may require a reply or action — ask the user.
-
-**Review body comments** (`review_body_comments` array in the JSON output):
-these are substantive text in the review body — not inline code comments, and
-not issue-level discussion. A reviewer can submit a review with body text but
-no inline comments (e.g., a general question or high-level feedback). These
-follow the same `"seen"` boolean pattern as issue comments. Present unseen
-ones with the author, review state, and a summary. These may require a reply
-or action — ask the user.
+**Fallback for raw comments**: if `comment_items` is empty but unseen
+`issue_comments` or `review_body_comments` exist (e.g., when running without
+`--fix`/`--triage`), present unseen ones with the author and a summary as before.
 
 ### Step 4: Handle remaining threads and resolve
 

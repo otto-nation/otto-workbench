@@ -436,9 +436,11 @@ def render_dashboard(
     verdicts: list[dict],
     issue_comments: list[dict],
     review_body_comments: list[dict] | None = None,
+    comment_items: list[dict] | None = None,
 ) -> str:
     """Render the status dashboard as a string."""
     review_body_comments = review_body_comments or []
+    comment_items = comment_items or []
     lines = [f"## PR #{pr_number} Review Status", ""]
 
     lines.append("Reviewers:")
@@ -467,10 +469,31 @@ def render_dashboard(
     if counts[STATE_NEW]:
         lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
 
-    if review_body_comments:
-        lines.append(f"  📝 {len(review_body_comments)} review-level comments")
-    if issue_comments:
-        lines.append(f"  💬 {len(issue_comments)} discussion comments")
+    if comment_items:
+        item_counts: dict[str, int] = {}
+        for it in comment_items:
+            cls = it.get("classification", "unclassified")
+            item_counts[cls] = item_counts.get(cls, 0) + 1
+        lines.append(f"Comment items: {len(comment_items)} total")
+        if item_counts.get("actionable_suggestion"):
+            lines.append(f"  → {item_counts['actionable_suggestion']} actionable")
+        if item_counts.get("question"):
+            lines.append(f"  ? {item_counts['question']} questions")
+        if item_counts.get("conflicting"):
+            lines.append(f"  ⚠ {item_counts['conflicting']} conflicting")
+    else:
+        unseen_review = sum(1 for c in review_body_comments if not c.get("seen"))
+        unseen_issue = sum(1 for c in issue_comments if not c.get("seen"))
+        if review_body_comments:
+            label = f"  📝 {len(review_body_comments)} review-level comments"
+            if unseen_review:
+                label += f" ({unseen_review} new)"
+            lines.append(label)
+        if issue_comments:
+            label = f"  💬 {len(issue_comments)} discussion comments"
+            if unseen_issue:
+                label += f" ({unseen_issue} new)"
+            lines.append(label)
     lines.append("")
 
     blockers = [v["user"] for v in verdicts if v["state"] == "CHANGES_REQUESTED"]

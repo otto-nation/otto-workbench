@@ -192,7 +192,7 @@ def test_merge_runs_in_progress_clears_success():
     ]
     result = ci_check._merge_runs(runs)
     assert result["status"] == "in_progress"
-    assert result["conclusion"] != "success"
+    assert result["conclusion"] == ""
 
 
 def test_merge_runs_in_progress_preserves_failure():

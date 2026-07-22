@@ -108,6 +108,8 @@ class TriageSummary:
     actionable: int = 0
     valid: int = 0
     questions: int = 0
+    comment_items_total: int = 0
+    comment_items_actionable: int = 0
     updated_at: str = ""
 
 

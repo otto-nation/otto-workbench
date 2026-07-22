@@ -13,8 +13,9 @@ lifecycle_scope: global
 # Retro — PR Review Feedback Loop
 
 Analyzes PR review comments (human and bot) to identify gaps, weaknesses, and
-false negatives in the coding rules at `ai/guidelines/rules/`. Proposes specific
-rule additions, refinements, and strengthening.
+false negatives in coding rules. Proposes rule changes at the right level: global
+rules in `ai/guidelines/rules/` for cross-project patterns, project rules in each
+repo's `CLAUDE.md` for repo-specific conventions.
 
 Run manually with `/retro`. Auto-triggers every 3 days via the Stop hook managed
 by `otto-workbench sync`.
@@ -80,8 +81,17 @@ For each comment in the scan report, assign exactly one category:
 | `rule-gap` | No existing rule covers this | Nearest rule is "none" or very weak match, and the comment identifies a generalizable pattern |
 | `rule-refinement` | Existing rule is too vague or narrow | Nearest rule matches but doesn't address the specific concern |
 | `false-negative` | Rule exists but wasn't followed | Nearest rule clearly covers this, but the code still violated it |
+| `project-rule` | Applies to one repo, not globally | Pattern is real and recurring but references project-internal packages, APIs, infra, or domain conventions |
 | `one-off` | Context-specific, doesn't generalize | Feedback is about this specific PR's requirements or design choices |
 | `noise` | Not actionable | Remaining style nits, questions answered in-thread, approval-adjacent |
+
+### Scope discipline
+
+"Repo-specific" is not "one-off." A comment is `one-off` only if the pattern
+cannot recur — a design decision unique to one PR, a question answered in-thread.
+If the feedback identifies a pattern that could recur in the same repo (e.g.,
+"use the pagination helper," "don't rename Temporal activities"), classify it as
+`project-rule` or `rule-gap`, not `one-off`.
 
 ### Priority elevation
 
@@ -89,6 +99,8 @@ For each comment in the scan report, assign exactly one category:
   elevated — these are patterns, not one-offs
 - `false-negative` findings are high-priority — they mean existing rules aren't
   working, which is worse than missing rules
+- `project-rule` findings with 2+ occurrences in the same repo are strong
+  candidates — they indicate a real gap in that project's conventions
 
 ---
 
@@ -96,12 +108,37 @@ For each comment in the scan report, assign exactly one category:
 
 **Goal:** Draft concrete rule changes for each actionable finding.
 
-For each non-skip finding, draft a proposal:
+### Rule placement
 
-### For `rule-gap`:
+Before drafting a proposal, determine where the rule belongs. Walk this decision
+tree for each finding — stop at the first match:
+
+1. **References project-internal packages, APIs, or infrastructure?** (e.g.,
+   `lib-go/pkg/pagination`, Temporal activities, specific DB schemas, internal
+   service names) → **Project rule** for that repo's `CLAUDE.md`
+2. **Language-general pattern observed only in one project's domain?** (e.g.,
+   "verify covering index exists for query access patterns") → **Project rule**
+   unless evidence spans 2+ repos, in which case promote to global
+3. **Universal language or workflow pattern?** (e.g., Go import ordering,
+   non-deterministic test assertions, error propagation) → **Global rule** in
+   `ai/guidelines/rules/`
+4. **Machine-specific tooling concern?** → **Machine-local rule** via
+   `claude-rules add`
+
+Project rules go in the target repo's `CLAUDE.md` under `## Conventions`. If the
+repo has no `CLAUDE.md`, flag it in the report — retro does not create files, but
+should note when one is needed.
+
+### For `rule-gap` (global):
 - Identify which rule file the new bullet should go in (or whether a new file is needed)
 - Draft the rule text: one actionable bullet with rationale
 - Specify where in the file it should be added (after which existing bullet)
+
+### For `rule-gap` (project):
+- Name the target repo and confirm placement is `CLAUDE.md` § Conventions
+- Draft the rule text, stripping project-internal references that are obvious in
+  context (e.g., don't repeat the package path if the repo only has one pagination helper)
+- If the repo has no `CLAUDE.md`, note that one should be created first
 
 ### For `rule-refinement`:
 - Quote the current rule text
@@ -113,8 +150,14 @@ For each non-skip finding, draft a proposal:
 - Propose strengthening: add "MUST"/"NEVER", add an example, make language more specific
 - Consider whether the rule is in a file that might not be loaded for the relevant file type (path-scoped frontmatter issue)
 
-Group proposals by target rule file. Include the source PR comment and PR number
-as evidence for each proposal.
+### For `project-rule`:
+- Name the target repo
+- Draft the rule text as a `CLAUDE.md` convention bullet
+- If the finding also has a weaker global analog (e.g., "check for indexes" is
+  global, but "use keyset pagination via X" is project-specific), propose both
+
+Group proposals by placement tier (global first, then by target repo). Include
+the source PR comment and PR number as evidence for each proposal.
 
 ---
 
@@ -131,9 +174,9 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 ```markdown
 # Retro Report
 <!-- generated: YYYY-MM-DD -->
-<!-- prs-analyzed: N | findings: N | proposals: N -->
+<!-- prs-analyzed: N | findings: N | proposals: N (N global, N project) -->
 
-## Proposals
+## Global Proposals
 
 ### Rule Gaps (new rules needed)
 
@@ -162,6 +205,19 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 - **Existing rule:** "<rule text>" in <file>
 - **Proposed strengthening:** "<stronger version>"
 
+## Project Proposals
+
+### <repo-name> (CLAUDE.md)
+
+#### N. <short description>
+- **Evidence:** PR #N (@reviewer): "<comment text>"
+- **Category:** project-rule | rule-gap
+- **Proposed convention:**
+  ```
+  - <rule text>
+  ```
+- **Note:** <repo> has no CLAUDE.md — create one before applying (if applicable)
+
 ## Skipped (one-off / noise)
 - PR #N: "<comment>" — <reason>
 ```
@@ -180,7 +236,7 @@ directories that were scanned by `retro-scan` (listed in
 
 Print a one-line summary:
 ```
-Retro complete: N PRs analyzed, N findings (N rule-gaps, N refinements, N false-negatives), N proposals written.
+Retro complete: N PRs analyzed, N findings (N global, N project), N proposals written.
 Report: <workbench>/ai/memory/RETRO.md
 ```
 

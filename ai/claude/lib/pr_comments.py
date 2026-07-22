@@ -467,10 +467,7 @@ def render_dashboard(
     if counts[STATE_NEW]:
         lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
 
-    if review_body_comments:
-        lines.append(f"  📝 {len(review_body_comments)} review-level comments")
-    if issue_comments:
-        lines.append(f"  💬 {len(issue_comments)} discussion comments")
+    lines.extend(_dashboard_raw_comments(review_body_comments, issue_comments))
     lines.append("")
 
     blockers = [v["user"] for v in verdicts if v["state"] == "CHANGES_REQUESTED"]
@@ -481,3 +478,24 @@ def render_dashboard(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _dashboard_raw_comments(
+    review_body_comments: list[dict],
+    issue_comments: list[dict],
+) -> list[str]:
+    """Render raw comment counts for the dashboard (fallback when items aren't available)."""
+    lines: list[str] = []
+    unseen_review = sum(1 for c in review_body_comments if not c.get("seen"))
+    unseen_issue = sum(1 for c in issue_comments if not c.get("seen"))
+    if review_body_comments:
+        label = f"  📝 {len(review_body_comments)} review-level comments"
+        if unseen_review:
+            label += f" ({unseen_review} new)"
+        lines.append(label)
+    if issue_comments:
+        label = f"  💬 {len(issue_comments)} discussion comments"
+        if unseen_issue:
+            label += f" ({unseen_issue} new)"
+        lines.append(label)
+    return lines

@@ -719,3 +719,57 @@ def test_extract_headline_codegen_action_line():
     context = "  Run 'mise run generate' locally and commit the changes."
     headline = extract_headline(context)
     assert "locally and commit" in headline
+
+
+# ── ANSI Stripping Tests ─────────────────────────────────────────────────
+
+
+def test_extract_failure_context_strips_ansi():
+    log = "\x1b[31mFAIL\x1b[0m\tgithub.com/foo/bar\t0.3s\n"
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "FAIL" in result
+    assert "\x1b[" not in result
+
+
+def test_extract_headline_after_ansi_strip():
+    # extract_headline matches through ANSI codes — callers should pre-clean via extract_failure_context
+    context = "\x1b[31m--- FAIL:\x1b[0m TestFoo (0.01s)"
+    headline = extract_headline(context)
+    assert headline is not None
+    assert "FAIL:" in headline
+
+
+# ── Go Test Pattern Fix Tests ────────────────────────────────────────────
+
+
+def test_extract_failure_context_go_fail_spaces():
+    log = "\n".join([
+        "ok  \tsvc-foo/pkg/a\t0.5s",
+        "FAIL    svc-foo/pkg/b    0.3s",
+        "ok  \tsvc-foo/pkg/c\t0.1s",
+    ])
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "FAIL" in result
+    assert "svc-foo/pkg/b" in result
+
+
+def test_extract_failure_context_go_testsum_fail():
+    log = "\n".join([
+        "=== RUN   TestFoo",
+        "    foo_test.go:42: expected 1, got 2",
+        "=== FAIL: TestFoo (0.01s)",
+    ])
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "=== FAIL" in result
+    assert "expected 1, got 2" in result
+
+
+def test_extract_failure_context_service_error():
+    log = "\n".join([
+        "[heartbeat] container startup (6/10m)...",
+        "[authz-postgres] 2026-07-23 17:54:24.198 UTC [99] ERROR:  permission denied to reassign objects",
+        "[vault] lease revocation failed",
+        "FAIL\tgithub.com/foo/tests\t284.560s",
+    ])
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "ERROR:" in result or "FAIL" in result

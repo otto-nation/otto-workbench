@@ -304,6 +304,17 @@ class _JobFailure(TypedDict):
     failed_step: str | None
 
 
+def _make_result(job_name, kind, annotations, source_run_id, failed_step, context=None):
+    """Build the _JobFailure dict from resolved annotations."""
+    if annotations:
+        items = _annotations_to_items(annotations, job_name, source_run_id, context=context)
+    else:
+        items = [_fallback_item(job_name, source_run_id)]
+    if not items:
+        return None
+    return {"job_name": job_name, "kind": kind, "items": items, "failed_step": failed_step}
+
+
 def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | None:
     """Fetch annotations/logs for a single failed job. Thread-safe."""
     job_name = job.get("name", "unknown")
@@ -314,31 +325,24 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | No
     annotations = _fetch_annotations(repo, job_id) if job_id else []
     annotation_texts = [a.get("message", "") for a in annotations]
     kind = ci.classify_job(job_name, annotation_texts)
-    log_context = None
 
-    need_artifact = kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST)
+    if kind not in (ci.FailureKind.BUILD, ci.FailureKind.TEST):
+        return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
-    if not annotations:
-        annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
-        if not annotations and need_artifact and (ctx := _fetch_test_artifact(repo, source_run_id, job_name)):
-            annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
-            annotation_texts = [ctx]
-            kind = ci.classify_job(job_name, [ctx])
-    elif need_artifact and _annotations_uninformative(annotations):
-        result = _log_fallback(repo, job, run_data, kind)
-        if result[0]:
-            log_context, kind = result[1][0], result[2]
-        elif (ctx := _fetch_test_artifact(repo, source_run_id, job_name)):
-            log_context = ctx
+    if annotations and not _annotations_uninformative(annotations):
+        return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
-    if annotations:
-        items = _annotations_to_items(annotations, job_name, source_run_id, context=log_context)
-    else:
-        items = [_fallback_item(job_name, source_run_id)]
-    if not items:
-        return None
+    # Annotations absent or uninformative — try logs, then artifact
+    have_original = bool(annotations)
+    log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
+    ctx = log_texts[0] if log_ann else _fetch_test_artifact(repo, source_run_id, job_name)
 
-    return {"job_name": job_name, "kind": kind, "items": items, "failed_step": failed_step}
+    if ctx and have_original:
+        return _make_result(job_name, log_kind if log_ann else kind, annotations, source_run_id, failed_step, context=ctx)
+    if ctx:
+        annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
+        kind = ci.classify_job(job_name, [ctx])
+    return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
 
 def _parse_run(repo: str, run_data: dict) -> ci.RunState:

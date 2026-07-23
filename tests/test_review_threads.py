@@ -850,31 +850,34 @@ class TestReconcileFixResults:
     def test_deferred_promoted_when_file_changed(self, mock_changed, rt):
         mock_changed.return_value = {"src/foo.go"}
         deferred = [self._entry(reason="agent could not auto-fix")]
-        fixed, remaining = rt._reconcile_fix_results(
+        fixed, remaining, count = rt._reconcile_fix_results(
             [], deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 1
         assert len(remaining) == 0
+        assert count == 1
 
     @patch("review_threads._changed_source_files")
     def test_deferred_stays_when_no_changes(self, mock_changed, rt):
         mock_changed.return_value = set()
         deferred = [self._entry(reason="agent could not auto-fix")]
-        fixed, remaining = rt._reconcile_fix_results(
+        fixed, remaining, count = rt._reconcile_fix_results(
             [], deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 0
         assert len(remaining) == 1
+        assert count == 0
 
     @patch("review_threads._changed_source_files")
     def test_fixed_passed_through(self, mock_changed, rt):
         mock_changed.return_value = set()
         fixed_in = [self._entry()]
-        fixed, remaining = rt._reconcile_fix_results(
+        fixed, remaining, count = rt._reconcile_fix_results(
             fixed_in, [], Path("/wt"), "abc123",
         )
         assert len(fixed) == 1
         assert len(remaining) == 0
+        assert count == 0
 
     @patch("review_threads._changed_source_files")
     def test_multiple_threads_same_file_partial_fix(self, mock_changed, rt):
@@ -885,33 +888,36 @@ class TestReconcileFixResults:
             self._entry(thread_id="t2", file="src/big.tsx", reason="design decision"),
             self._entry(thread_id="t3", file="src/other.go", reason="needs discussion"),
         ]
-        fixed, remaining = rt._reconcile_fix_results(
+        fixed, remaining, count = rt._reconcile_fix_results(
             fixed_in, deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 2
         assert len(remaining) == 1
         assert remaining[0]["thread_id"] == "t3"
+        assert count == 1
 
     @patch("review_threads._changed_source_files")
     def test_no_file_in_entry(self, mock_changed, rt):
         mock_changed.return_value = {"src/foo.go"}
         deferred = [self._entry(file="", reason="agent could not auto-fix")]
-        fixed, remaining = rt._reconcile_fix_results(
+        fixed, remaining, count = rt._reconcile_fix_results(
             [], deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 0
         assert len(remaining) == 1
+        assert count == 0
 
     @patch("review_threads._changed_source_files")
     def test_does_not_mutate_input_list(self, mock_changed, rt):
         mock_changed.return_value = {"src/foo.go"}
         original_fixed = [self._entry(thread_id="t0")]
         deferred = [self._entry(thread_id="t1", reason="agent could not auto-fix")]
-        fixed, remaining = rt._reconcile_fix_results(
+        fixed, remaining, count = rt._reconcile_fix_results(
             original_fixed, deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 2
         assert len(original_fixed) == 1
+        assert count == 1
 
 
 # ── _build_deferred_issue_body ────────────────────────────────────────────
@@ -1174,23 +1180,48 @@ class TestDiffContextForFile:
 # ── _changed_source_files ──────────────────────────────────────────────────
 
 class TestChangedSourceFiles:
+    def _mock_git(self, committed="", uncommitted="",
+                  committed_rc=0, uncommitted_rc=0):
+        """Return a side_effect that responds differently per git diff call."""
+        def side_effect(cmd, **_kw):
+            m = type("R", (), {"returncode": 0, "stdout": ""})()
+            if ".." in str(cmd):
+                m.returncode = committed_rc
+                m.stdout = committed
+            else:
+                m.returncode = uncommitted_rc
+                m.stdout = uncommitted
+            return m
+        return side_effect
+
     @patch("review_threads.subprocess.run")
-    def test_returns_changed_files(self, mock_run, rt):
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = "src/foo.go\nsrc/bar.go\n"
+    def test_committed_changes_detected(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(committed="src/foo.go\n")
+        result = rt._changed_source_files(Path("/wt"), "abc123")
+        assert result == {"src/foo.go"}
+
+    @patch("review_threads.subprocess.run")
+    def test_uncommitted_changes_detected(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(uncommitted="src/bar.go\n")
+        result = rt._changed_source_files(Path("/wt"), "abc123")
+        assert result == {"src/bar.go"}
+
+    @patch("review_threads.subprocess.run")
+    def test_merges_committed_and_uncommitted(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(
+            committed="src/foo.go\n", uncommitted="src/bar.go\n",
+        )
         result = rt._changed_source_files(Path("/wt"), "abc123")
         assert result == {"src/foo.go", "src/bar.go"}
 
     @patch("review_threads.subprocess.run")
-    def test_git_failure_returns_empty(self, mock_run, rt):
-        mock_run.return_value.returncode = 1
-        mock_run.return_value.stdout = ""
+    def test_both_fail_returns_empty(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(committed_rc=1, uncommitted_rc=1)
         assert rt._changed_source_files(Path("/wt"), "abc123") == set()
 
     @patch("review_threads.subprocess.run")
     def test_empty_output(self, mock_run, rt):
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = ""
+        mock_run.side_effect = self._mock_git()
         assert rt._changed_source_files(Path("/wt"), "abc123") == set()
 
 

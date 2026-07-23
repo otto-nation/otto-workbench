@@ -1200,18 +1200,36 @@ def _post_fix_summary(
     return url
 
 
+def _inject_deferred_issue_link(body: str, issue_id: str, issue_url: str) -> str:
+    """Replace bare 'Deferred' status cells with a link to the tracking issue."""
+    if not issue_id:
+        return body
+    if issue_url:
+        linked = f"Deferred → [{issue_id}]({issue_url})"
+    else:
+        linked = f"Deferred → {issue_id}"
+    return body.replace("| Deferred |", f"| {linked} |")
+
+
 def _post_pending_comments(
     state: pr_state.PRState, repo: str, pr_number: int,
+    deferred_issue_id: str = "", deferred_issue_url: str = "",
 ) -> None:
     """Post any pending comments saved from a prior fix pass."""
     pending = pr_state.pop_pending_comments(state, source=_SOURCE_FIX_SUMMARY)
     for comment in pending:
-        url = pc.post_issue_comment(repo, pr_number, comment.body)
+        body = _inject_deferred_issue_link(
+            comment.body, deferred_issue_id, deferred_issue_url,
+        )
+        url = pc.post_issue_comment(repo, pr_number, body)
         if url:
             log.info(f"Posted deferred fix summary: {url}")
         else:
             log.error("failed to post deferred fix summary")
-            pr_state.add_pending_comment(state, comment)
+            pr_state.add_pending_comment(state, pr_state.PendingComment(
+                body=comment.body, source=comment.source,
+                updated_at=comment.updated_at,
+            ))
 
 
 def _post_or_defer_summary(
@@ -1786,9 +1804,18 @@ def _run_threads(trail, args, ctx) -> None:
             updated_at=pr_state.now_iso(),
         ))
         if args.resolve:
-            _post_pending_comments(st, repo, pr_number)
             threads_by_id = {t.id: t for t in report.threads}
             _finalize_deferred(ctx, threads_by_id, trail=trail)
+            # Pick up deferred_issue_id/url saved by _finalize_deferred
+            saved = pr_state.load_state(toplevel)
+            if saved:
+                st.fix.deferred_issue_id = saved.fix.deferred_issue_id
+                st.fix.deferred_issue_url = saved.fix.deferred_issue_url
+            _post_pending_comments(
+                st, repo, pr_number,
+                deferred_issue_id=st.fix.deferred_issue_id,
+                deferred_issue_url=st.fix.deferred_issue_url,
+            )
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")

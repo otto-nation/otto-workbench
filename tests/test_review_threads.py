@@ -807,6 +807,52 @@ class TestBuildSummaryBody:
         assert "→" not in body
 
 
+# ── _inject_deferred_issue_link ─────────────────────────────────────────────
+
+
+class TestInjectDeferredIssueLink:
+    def test_replaces_bare_deferred(self, rt):
+        body = "| some thread | `file.go:10` | Deferred |"
+        result = rt._inject_deferred_issue_link(
+            body, "ENG-456", "https://linear.app/team/issue/ENG-456",
+        )
+        assert "| Deferred → [ENG-456](https://linear.app/team/issue/ENG-456) |" in result
+        assert "| Deferred |" not in result
+
+    def test_replaces_multiple_rows(self, rt):
+        body = (
+            "| thread1 | `a.go:1` | Deferred |\n"
+            "| thread2 | `b.go:2` | Deferred |"
+        )
+        result = rt._inject_deferred_issue_link(
+            body, "ENG-789", "https://linear.app/team/issue/ENG-789",
+        )
+        assert result.count("Deferred →") == 2
+        assert "| Deferred |" not in result
+
+    def test_no_issue_id_is_noop(self, rt):
+        body = "| some thread | `file.go:10` | Deferred |"
+        result = rt._inject_deferred_issue_link(body, "", "")
+        assert result == body
+
+    def test_issue_id_without_url(self, rt):
+        body = "| some thread | `file.go:10` | Deferred |"
+        result = rt._inject_deferred_issue_link(body, "ENG-456", "")
+        assert "Deferred → ENG-456" in result
+        assert "[ENG-456]" not in result
+
+    def test_preserves_non_deferred_rows(self, rt):
+        body = (
+            "| fixed thread | `a.go:1` | Fixed (abc1234) |\n"
+            "| deferred thread | `b.go:2` | Deferred |"
+        )
+        result = rt._inject_deferred_issue_link(
+            body, "ENG-456", "https://linear.app/team/issue/ENG-456",
+        )
+        assert "Fixed (abc1234)" in result
+        assert "Deferred →" in result
+
+
 # ── _summarize_comment_body ─────────────────────────────────────────────────
 
 

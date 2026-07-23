@@ -534,10 +534,23 @@ def test_run_delegate_forwards_only_original_pr(mock_run):
 
 
 @patch("pr_cli.subprocess.run")
-def test_run_delegate_forwards_only_original_branch(mock_run):
-    """When the user provided --branch, only --branch is forwarded (not --pr)."""
+def test_run_delegate_prefers_pr_over_original_branch(mock_run):
+    """When the user provided --branch but a PR was resolved, forward --pr."""
     mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    entry = {"script": "review-threads", "help": "x"}
+    pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
+    cmd = mock_run.call_args[0][0]
+    assert "--pr" in cmd
+    assert cmd[cmd.index("--pr") + 1] == "99"
+    assert "--branch" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+def test_run_delegate_falls_back_to_original_branch_without_pr(mock_run):
+    """When the user provided --branch and no PR was resolved, forward --branch."""
+    mock_run.return_value = MagicMock(returncode=0)
+    ctx = _make_ctx(branch="feat/my-feature", pr_number=None)
     entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
@@ -598,15 +611,15 @@ def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_branch_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
-    """pr --branch feat/foo comments must forward only --branch, not --pr."""
+def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_run):
+    """pr --branch feat/foo comments forwards --pr when a PR was resolved."""
     mock_resolve.return_value = _make_ctx(branch="feat/foo", pr_number=42)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--branch", "feat/foo", "--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
-    assert "--branch" in cmd
-    assert cmd[cmd.index("--branch") + 1] == "feat/foo"
-    assert "--pr" not in cmd
+    assert "--pr" in cmd
+    assert cmd[cmd.index("--pr") + 1] == "42"
+    assert "--branch" not in cmd
 
 
 @patch("pr_cli.subprocess.run")

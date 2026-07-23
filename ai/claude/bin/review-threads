@@ -1807,10 +1807,9 @@ def _run_threads(trail, args, ctx) -> None:
             threads_by_id = {t.id: t for t in report.threads}
             _finalize_deferred(ctx, threads_by_id, trail=trail)
             # Pick up deferred_issue_id/url saved by _finalize_deferred
-            saved = pr_state.load_state(toplevel)
-            if saved:
-                st.fix.deferred_issue_id = saved.fix.deferred_issue_id
-                st.fix.deferred_issue_url = saved.fix.deferred_issue_url
+            saved = pr_state.load_state(toplevel) or st
+            st.fix.deferred_issue_id = saved.fix.deferred_issue_id
+            st.fix.deferred_issue_url = saved.fix.deferred_issue_url
             _post_pending_comments(
                 st, repo, pr_number,
                 deferred_issue_id=st.fix.deferred_issue_id,

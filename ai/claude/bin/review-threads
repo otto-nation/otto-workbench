@@ -1416,11 +1416,12 @@ def _classify_triage_entries(
         if classification != "actionable_suggestion":
             continue
 
+        if verification == "valid" and tt.get("complexity") == "high":
+            needs_human.append({**entry, "reason": "complex"})
+            continue
+
         if verification == "valid":
-            if tt.get("complexity") == "high":
-                needs_human.append({**entry, "reason": "complex"})
-            else:
-                fixable.append(tt)
+            fixable.append(tt)
         elif verification == "needs_discussion":
             needs_human.append({**entry, "reason": "needs_discussion"})
         elif verification == "invalid":

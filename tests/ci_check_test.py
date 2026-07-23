@@ -766,55 +766,48 @@ def test_annotations_to_items_headline_from_context():
 # ── _fetch_job_failure artifact fallback ─────────────────────────────
 
 
-def test_fetch_job_failure_uses_artifact_fallback():
+_UNINFORMATIVE_ANNOTATIONS = [
+    {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
+]
+
+_ARTIFACT_CONTEXT = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, got 2"
+
+
+@patch("ci_check._fetch_test_artifact", return_value=_ARTIFACT_CONTEXT)
+@patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST))
+@patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS)
+def test_fetch_job_failure_uses_artifact_fallback(_mock_ann, _mock_log, _mock_art):
     """When annotations are uninformative and logs are empty, artifact fallback triggers."""
-    uninformative_annotations = [
-        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
-    ]
     job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10,
            "_source_run_id": 100}
-    run_data = {"databaseId": 100}
-
-    artifact_context = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, got 2"
-
-    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST)):
-            with patch("ci_check._fetch_test_artifact", return_value=artifact_context):
-                result = ci_check._fetch_job_failure("owner/repo", job, run_data)
-
+    result = ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     assert result is not None
-    assert result["items"][0].context == artifact_context
+    assert result["items"][0].context == _ARTIFACT_CONTEXT
     assert "FAIL: TestFoo" in result["items"][0].headline
 
 
-def test_fetch_job_failure_skips_artifact_when_logs_succeed():
+@patch("ci_check._fetch_test_artifact")
+@patch("ci_check._log_fallback")
+@patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS)
+def test_fetch_job_failure_skips_artifact_when_logs_succeed(_mock_ann, mock_log, mock_artifact):
     """When log fallback produces context, artifact download is not attempted."""
-    uninformative_annotations = [
-        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
-    ]
     log_context = "--- FAIL: TestBar (0.02s)\n    bar_test.go:10: wrong result"
     log_annotations = [{"message": log_context, "path": "", "start_line": 0, "title": ""}]
+    mock_log.return_value = (log_annotations, [log_context], ci_check.ci.FailureKind.TEST)
     job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10}
-    run_data = {"databaseId": 100}
-
-    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
-        with patch("ci_check._log_fallback", return_value=(log_annotations, [log_context], ci_check.ci.FailureKind.TEST)):
-            with patch("ci_check._fetch_test_artifact") as mock_artifact:
-                ci_check._fetch_job_failure("owner/repo", job, run_data)
+    ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_artifact.assert_not_called()
 
 
-def test_fetch_job_failure_no_artifact_for_lint():
+@patch("ci_check._fetch_test_artifact")
+@patch("ci_check._log_fallback")
+@patch("ci_check._fetch_annotations")
+def test_fetch_job_failure_no_artifact_for_lint(mock_ann, mock_log, mock_artifact):
     """LINT failures do not trigger artifact download even when uninformative."""
-    uninformative_annotations = [
+    mock_ann.return_value = [
         {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": "", "start_line": 0},
     ]
     job = {"name": "shellcheck", "conclusion": "failure", "databaseId": 10}
-    run_data = {"databaseId": 100}
-
-    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
-        with patch("ci_check._log_fallback") as mock_log:
-            with patch("ci_check._fetch_test_artifact") as mock_artifact:
-                ci_check._fetch_job_failure("owner/repo", job, run_data)
+    ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_log.assert_not_called()
     mock_artifact.assert_not_called()

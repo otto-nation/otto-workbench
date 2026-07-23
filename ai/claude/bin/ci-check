@@ -228,40 +228,41 @@ def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) ->
     return annotations, [context], ci.classify_job(job.get("name", "unknown"), [context])
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    """Read a JSONL file into a list of dicts, returning [] on any parse error."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except (json.JSONDecodeError, KeyError):
+            return []
+    return entries
+
+
 def _parse_test_artifact(artifact_dir: str) -> str:
     """Parse a downloaded test-results artifact directory for failure output."""
-    artifact_path = Path(artifact_dir)
-    jsonl_files = sorted(artifact_path.glob("*.json"))
+    jsonl_files = sorted(Path(artifact_dir).glob("*.json"))
     if not jsonl_files:
         return ""
-    target = jsonl_files[0]
-    fail_packages: set[str] = set()
-    output_lines: list[str] = []
-    try:
-        with open(target) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                obj = json.loads(line)
-                if obj.get("Action") == "fail":
-                    fail_packages.add(obj.get("Package", ""))
-        if not fail_packages:
-            return ""
-        with open(target) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                obj = json.loads(line)
-                if obj.get("Action") == "output" and obj.get("Package") in fail_packages:
-                    output_lines.append(obj.get("Output", "").rstrip())
-    except (json.JSONDecodeError, KeyError, OSError):
+    entries = _read_jsonl(jsonl_files[0])
+    fail_packages = {e.get("Package", "") for e in entries if e.get("Action") == "fail"}
+    if not fail_packages:
         return ""
+    output_lines = [
+        e.get("Output", "").rstrip()
+        for e in entries
+        if e.get("Action") == "output" and e.get("Package") in fail_packages
+    ]
     if not output_lines:
         return ""
-    raw = "\n".join(output_lines)
-    return ci.extract_failure_context(raw, ci.FailureKind.TEST)
+    return ci.extract_failure_context("\n".join(output_lines), ci.FailureKind.TEST)
 
 
 def _fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
@@ -315,22 +316,20 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | No
     kind = ci.classify_job(job_name, annotation_texts)
     log_context = None
 
+    need_artifact = kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST)
+
     if not annotations:
         annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
-        if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST):
-            artifact_context = _fetch_test_artifact(repo, source_run_id, job_name)
-            if artifact_context:
-                annotations = [{"message": artifact_context, "path": "", "start_line": 0, "title": ""}]
-                annotation_texts = [artifact_context]
-                kind = ci.classify_job(job_name, [artifact_context])
-    elif kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST) and _annotations_uninformative(annotations):
+        if not annotations and need_artifact and (ctx := _fetch_test_artifact(repo, source_run_id, job_name)):
+            annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
+            annotation_texts = [ctx]
+            kind = ci.classify_job(job_name, [ctx])
+    elif need_artifact and _annotations_uninformative(annotations):
         result = _log_fallback(repo, job, run_data, kind)
         if result[0]:
             log_context, kind = result[1][0], result[2]
-        else:
-            artifact_context = _fetch_test_artifact(repo, source_run_id, job_name)
-            if artifact_context:
-                log_context = artifact_context
+        elif (ctx := _fetch_test_artifact(repo, source_run_id, job_name)):
+            log_context = ctx
 
     if annotations:
         items = _annotations_to_items(annotations, job_name, source_run_id, context=log_context)

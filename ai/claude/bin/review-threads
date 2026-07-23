@@ -34,14 +34,25 @@ from review_github import fetch_pr_data
 from trail import Trail, add_trail_args
 
 TRIAGE_CONTEXT_LINES = 10
-FIX_MAX_TURNS = 15
-FIX_MAX_BUDGET = 2.0
+FIX_MIN_TURNS = 20
+FIX_MAX_TURNS_CAP = 60
+FIX_TURNS_PER_ITEM = 5
+FIX_MIN_BUDGET = 2.0
+FIX_MAX_BUDGET_CAP = 5.0
+FIX_BUDGET_PER_ITEM = 0.5
 FIX_MODEL = "sonnet"
+DIFF_CONTEXT_MAX_LINES = 100
+FIX_RETRY_TURNS_MIN = 30
+FIX_RETRY_TURNS_BUMP = 15
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 _SOURCE_FIX_SUMMARY = "fix_summary"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
+_FIX_RETRY_HINT = (
+    "This is a RETRY of a prior fix pass. Some items were already fixed in the "
+    "previous pass — focus only on unchecked items below. Work efficiently.\n\n"
+)
 
 
 def _extract_json(text: str) -> str:
@@ -127,6 +138,7 @@ Top-level comments:
       "reviewer": "user from input comment",
       "classification": "actionable_suggestion|question|approval|conflicting",
       "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "summary": "one-line summary of this specific item",
       "file": "file path if referenced in the item (empty string if not)",
@@ -140,8 +152,12 @@ Top-level comments:
 For each thread, provide:
 1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
 2. verification (only for actionable_suggestion): one of 'valid', 'invalid', 'needs_discussion'
-3. reasoning: one sentence explaining your classification/verification
-4. summary: one-line summary of the thread
+3. complexity (only for actionable_suggestion with verification=valid): one of 'low', 'medium', 'high'
+   - low: rename, remove, import fix, guard/nil check, use existing helper
+   - medium: logic change within a single function or file
+   - high: cross-file refactor, design decision, or architectural change
+4. reasoning: one sentence explaining your classification/verification
+5. summary: one-line summary of the thread
 
 Thread data:
 {thread_json}
@@ -154,6 +170,7 @@ Return JSON matching this exact schema:
       "state": "state from input",
       "classification": "actionable_suggestion|question|approval|conflicting",
       "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "file": "file from input",
       "line": "line_from_input",
@@ -307,6 +324,24 @@ def _code_context_for_thread(file_path: str, line: int | str, repo_dir: Path) ->
     return f"```\n{snippet}\n```" if snippet else ""
 
 
+def _diff_context_for_file(file_path: str, wt_path: Path) -> str:
+    """Get the PR diff for a file, truncated to DIFF_CONTEXT_MAX_LINES."""
+    if not file_path:
+        return ""
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", "origin/main", "--", file_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return ""
+    lines = result.stdout.splitlines()
+    total = len(lines)
+    if total > DIFF_CONTEXT_MAX_LINES:
+        lines = lines[:DIFF_CONTEXT_MAX_LINES]
+        lines.append(f"... ({total - DIFF_CONTEXT_MAX_LINES} more lines)")
+    return "```diff\n" + "\n".join(lines) + "\n```"
+
+
 def _build_tracking_file(
     tracking_path: Path,
     fixable: list[dict],
@@ -328,6 +363,7 @@ def _build_tracking_file(
         comments = report_thread.get("comments", [])
         conversation = _thread_comment_text(comments)
         code_ctx = _code_context_for_thread(file_path, line, repo_dir)
+        diff_ctx = _diff_context_for_file(file_path, repo_dir)
 
         section = f"## <!-- thread:{tid} --> {file_path}:{line} — @{reviewer}\n\n"
         if summary:
@@ -336,6 +372,8 @@ def _build_tracking_file(
             section += f"**Conversation:**\n{conversation}\n\n"
         if code_ctx:
             section += f"**Code context:**\n{code_ctx}\n\n"
+        if diff_ctx:
+            section += f"**PR diff for this file:**\n{diff_ctx}\n\n"
         section += "- [ ] Apply fix\n"
         sections.append(section)
 
@@ -349,6 +387,7 @@ def _build_tracking_file(
 
         location = f"{file_path}:{line}" if file_path and line else (file_path or "general")
         code_ctx = _code_context_for_thread(file_path, line, repo_dir) if file_path and line else ""
+        diff_ctx = _diff_context_for_file(file_path, repo_dir) if file_path else ""
 
         section = f"## <!-- item:{item_id} --> {location} — @{reviewer}\n\n"
         if summary:
@@ -358,6 +397,8 @@ def _build_tracking_file(
             section += f"**From comment by @{reviewer}:**\n{quoted}\n\n"
         if code_ctx:
             section += f"**Code context:**\n{code_ctx}\n\n"
+        if diff_ctx:
+            section += f"**PR diff for this file:**\n{diff_ctx}\n\n"
         section += "- [ ] Apply fix\n"
         sections.append(section)
 
@@ -415,8 +456,21 @@ def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     return main_wt
 
 
+def _fix_turn_budget(item_count: int) -> int:
+    return min(max(FIX_MIN_TURNS, item_count * FIX_TURNS_PER_ITEM), FIX_MAX_TURNS_CAP)
+
+
+def _fix_budget_usd(item_count: int) -> float:
+    return min(max(FIX_MIN_BUDGET, item_count * FIX_BUDGET_PER_ITEM), FIX_MAX_BUDGET_CAP)
+
+
+def _fix_retry_budget(original: int) -> int:
+    return min(max(FIX_RETRY_TURNS_MIN, original + FIX_RETRY_TURNS_BUMP), FIX_MAX_TURNS_CAP)
+
+
 def _invoke_fix_agent(
     prompt: str, wt_path: Path, main_wt_path: Path | None = None,
+    max_turns: int | None = None, max_budget: float | None = None,
 ) -> int:
     """Run AI agent to apply fixes. Returns exit code."""
     dirs = [str(wt_path)]
@@ -425,8 +479,8 @@ def _invoke_fix_agent(
     return ai_backend.invoke_fix(
         prompt,
         add_dirs=dirs,
-        max_turns=FIX_MAX_TURNS,
-        max_budget=FIX_MAX_BUDGET,
+        max_turns=max_turns or FIX_MIN_TURNS,
+        max_budget=max_budget or FIX_MIN_BUDGET,
         model=FIX_MODEL,
     )
 
@@ -487,14 +541,35 @@ def _parse_tracking_results(
     return fixed, deferred, fixed_items, deferred_items
 
 
+def _changed_source_files(wt_path: Path, head_before: str) -> set[str]:
+    """Return set of files changed between head_before and current HEAD."""
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", "--name-only", f"{head_before}..HEAD"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
 def _reconcile_fix_results(
     fixed: list[dict],
     deferred: list[dict],
     wt_path: Path,
-    cp: "CommitPushResult",
-) -> tuple[list[dict], list[dict], int]:
-    """Trust the agent's tracking checkboxes — no automatic reclassification."""
-    return fixed, deferred, 0
+    head_before: str,
+) -> tuple[list[dict], list[dict]]:
+    """Move deferred entries to fixed if their file was modified by the agent."""
+    changed = _changed_source_files(wt_path, head_before)
+    if not changed:
+        return fixed, deferred
+    reconciled = list(fixed)
+    still_deferred = []
+    for entry in deferred:
+        if entry.get("file") and entry["file"] in changed:
+            reconciled.append(entry)
+        else:
+            still_deferred.append(entry)
+    return reconciled, still_deferred
 
 
 @dataclass
@@ -1342,13 +1417,88 @@ def _classify_triage_entries(
             continue
 
         if verification == "valid":
-            fixable.append(tt)
+            if tt.get("complexity") == "high":
+                needs_human.append({**entry, "reason": "complex"})
+            else:
+                fixable.append(tt)
         elif verification == "needs_discussion":
             needs_human.append({**entry, "reason": "needs_discussion"})
         elif verification == "invalid":
             dismissed.append({**entry, "reasoning": tt.get("reasoning", "")})
 
     return fixable, needs_human, dismissed
+
+
+def _retry_fix_pass(
+    deferred_threads: list[dict],
+    deferred_items: list[dict],
+    original_fixable: list[dict],
+    original_fixable_items: list[dict],
+    threads_by_id: dict,
+    wt_path: Path,
+    pr_number: int,
+    ctx: pr_context.ResolvedContext,
+    main_wt: Path | None,
+    original_turns: int,
+    trail: Trail | None = None,
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """Retry fix pass with only deferred items and increased budget."""
+    fixable_by_id = {t["id"]: t for t in original_fixable}
+    items_by_id = {it["id"]: it for it in original_fixable_items}
+
+    retry_fixable = [fixable_by_id[e["thread_id"]] for e in deferred_threads
+                     if e["thread_id"] in fixable_by_id]
+    retry_items = [items_by_id[e["thread_id"]] for e in deferred_items
+                   if e["thread_id"] in items_by_id]
+
+    if not retry_fixable and not retry_items:
+        return [], deferred_threads, [], deferred_items
+
+    tracking_dir = wt_path / "ignore" / "pr-comments"
+    tracking_file = tracking_dir / "fix-tracking.md"
+
+    _build_tracking_file(
+        tracking_file, retry_fixable, threads_by_id,
+        wt_path, pr_number,
+        fixable_items=retry_items,
+    )
+
+    retry_count = len(retry_fixable) + len(retry_items)
+    retry_turns = _fix_retry_budget(original_turns)
+
+    prompt = _FIX_RETRY_HINT + _render_fix_template(
+        branch=ctx.branch,
+        repo=ctx.repo,
+        threads_content=tracking_file.read_text(),
+        tracking_file=str(tracking_file),
+        wt_path=str(wt_path),
+        max_turns=retry_turns,
+        main_wt_path=str(main_wt) if main_wt else "",
+    )
+
+    log.info(f"Retry pass — {retry_count} deferred items (max_turns={retry_turns})...")
+    head_before = _get_head_sha(wt_path)
+    _invoke_fix_agent(prompt, wt_path, main_wt,
+                      max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count))
+    log.blank()
+
+    fixed, still_deferred, fixed_items, still_deferred_items = _parse_tracking_results(
+        tracking_file, retry_fixable, fixable_items=retry_items,
+    )
+
+    fixed, still_deferred = _reconcile_fix_results(
+        fixed, still_deferred, wt_path, head_before,
+    )
+    fixed_items, still_deferred_items = _reconcile_fix_results(
+        fixed_items, still_deferred_items, wt_path, head_before,
+    )
+
+    if trail:
+        trail.info("fix_retry", "retry pass complete",
+                    data={"fixed": len(fixed), "fixed_items": len(fixed_items),
+                          "still_deferred": len(still_deferred) + len(still_deferred_items)})
+
+    return fixed, still_deferred, fixed_items, still_deferred_items
 
 
 def _run_comment_fix(
@@ -1432,6 +1582,10 @@ def _run_comment_fix(
         fixable_items=fixable_items,
     )
 
+    total_items = len(fixable) + len(fixable_items or [])
+    max_turns = _fix_turn_budget(total_items)
+    max_budget = _fix_budget_usd(total_items)
+
     before = _count_unchecked(tracking_file)
 
     head_before = _get_head_sha(wt_path)
@@ -1444,12 +1598,13 @@ def _run_comment_fix(
         threads_content=tracking_file.read_text(),
         tracking_file=str(tracking_file),
         wt_path=str(wt_path),
-        max_turns=FIX_MAX_TURNS,
+        max_turns=max_turns,
         main_wt_path=str(main_wt) if main_wt else "",
     )
 
     log.info("Fix pass — applying review comment suggestions...")
-    _invoke_fix_agent(prompt, wt_path, main_wt)
+    _invoke_fix_agent(prompt, wt_path, main_wt,
+                      max_turns=max_turns, max_budget=max_budget)
     log.blank()
 
     after = _count_unchecked(tracking_file)
@@ -1459,7 +1614,31 @@ def _run_comment_fix(
         tracking_file, fixable, fixable_items=fixable_items,
     )
 
-    cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
+    fixed, deferred = _reconcile_fix_results(
+        fixed, deferred, wt_path, head_before,
+    )
+    fixed_items, deferred_items = _reconcile_fix_results(
+        fixed_items, deferred_items, wt_path, head_before,
+    )
+
+    all_deferred_pre_retry = deferred + deferred_items
+    if all_deferred_pre_retry:
+        retry_fixed, retry_deferred, retry_fixed_items, retry_deferred_items = (
+            _retry_fix_pass(
+                deferred, deferred_items, fixable, fixable_items or [],
+                threads_by_id, wt_path, report["pr_number"],
+                ctx, main_wt, max_turns, trail,
+            )
+        )
+        fixed = fixed + retry_fixed
+        deferred = retry_deferred
+        fixed_items = fixed_items + retry_fixed_items
+        deferred_items = retry_deferred_items
+
+    fixed_count = len(fixed) + len(fixed_items)
+    deferred_count = len(deferred) + len(deferred_items)
+
+    cp = _commit_and_push(wt_path, fixed_count, deferred_count, trail=trail)
 
     if cp.status in ("no_changes", "commit_failed"):
         cp = _recover_agent_commit(wt_path, head_before, trail)

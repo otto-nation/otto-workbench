@@ -10,6 +10,9 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from pr_thread_models import (
+    ClassifiedEntry, ReportThread, ThreadEntry, TriageEntry,
+)
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -674,7 +677,9 @@ class TestBuildSummaryBody:
     """Test summary body renders correct status per CommitPushResult."""
 
     def _fixed_entry(self, **overrides):
-        return {"summary": "fix regex", "file": "parsers.py", "line": 10, **overrides}
+        defaults = {"summary": "fix regex", "file": "parsers.py", "line": 10}
+        defaults.update(overrides)
+        return ThreadEntry(**defaults)
 
     def test_pushed_shows_commit_link(self, rt):
         cp = rt.CommitPushResult("abc1234", "pushed", "")
@@ -709,7 +714,7 @@ class TestBuildSummaryBody:
     def test_needs_human_rows(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
-            [], [{"summary": "question", "file": "a.py", "line": 1, "reason": "contested"}],
+            [], [ClassifiedEntry(summary="question", file="a.py", line=1, reason="contested")],
             [], cp, "owner/repo", 1, {},
         )
         assert "contested" in body
@@ -724,7 +729,7 @@ class TestBuildSummaryBody:
         tid = "PRRT_abc123"
         entry = self._fixed_entry(thread_id=tid)
         threads_by_id = {
-            tid: {"comments": [{"databaseId": 999}]},
+            tid: ReportThread(id=tid, comments=[{"databaseId": 999}]),
         }
         cp = rt.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
@@ -784,7 +789,7 @@ class TestBuildSummaryBody:
 
     def test_deferred_with_issue_link(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
-        deferred = [self._fixed_entry(thread_id="t1")]
+        deferred = [ThreadEntry(thread_id="t1", summary="fix regex", file="parsers.py", line=10)]
         body = rt._build_summary_body(
             [], [], deferred, cp, "owner/repo", 1, {},
             deferred_issue_id="ENG-456",
@@ -796,7 +801,7 @@ class TestBuildSummaryBody:
 
     def test_deferred_without_issue(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
-        deferred = [self._fixed_entry(thread_id="t1")]
+        deferred = [ThreadEntry(thread_id="t1", summary="fix regex", file="parsers.py", line=10)]
         body = rt._build_summary_body(
             [], [], deferred, cp, "owner/repo", 1, {},
         )
@@ -843,8 +848,10 @@ class TestReconcileFixResults:
     """Reconciliation promotes deferred entries whose files were changed by the agent."""
 
     def _entry(self, file="src/foo.go", **kw):
-        return {"thread_id": "t1", "file": file, "line": 10,
-                "reviewer": "alice", "summary": "fix it", **kw}
+        defaults = {"thread_id": "t1", "file": file, "line": 10,
+                    "reviewer": "alice", "summary": "fix it"}
+        defaults.update(kw)
+        return ClassifiedEntry(**defaults)
 
     @patch("review_threads._changed_source_files")
     def test_deferred_promoted_when_file_changed(self, mock_changed, rt):
@@ -893,7 +900,7 @@ class TestReconcileFixResults:
         )
         assert len(fixed) == 2
         assert len(remaining) == 1
-        assert remaining[0]["thread_id"] == "t3"
+        assert remaining[0].thread_id == "t3"
         assert count == 1
 
     @patch("review_threads._changed_source_files")
@@ -927,11 +934,11 @@ class TestBuildDeferredIssueBody:
 
     def test_basic_body(self, rt):
         deferred = [
-            {"thread_id": "t1", "file": "src/foo.go", "line": 10,
-             "summary": "fix it", "reason": "agent could not auto-fix"},
+            ClassifiedEntry(thread_id="t1", file="src/foo.go", line=10,
+                            summary="fix it", reason="agent could not auto-fix"),
         ]
         threads_by_id = {
-            "t1": {"comments": [{"databaseId": 12345}]},
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
         }
         body = rt._build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
         assert "PR #42" in body
@@ -942,8 +949,8 @@ class TestBuildDeferredIssueBody:
 
     def test_no_permalink(self, rt):
         deferred = [
-            {"thread_id": "t1", "file": "a.go", "line": 1,
-             "summary": "do thing", "reason": "r"},
+            ClassifiedEntry(thread_id="t1", file="a.go", line=1,
+                            summary="do thing", reason="r"),
         ]
         body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "do thing" in body
@@ -957,10 +964,10 @@ class TestPostDeferredReplies:
 
     def test_posts_replies_with_issue_link(self, rt):
         deferred = [
-            {"thread_id": "t1", "summary": "fix it"},
+            ThreadEntry(thread_id="t1", summary="fix it"),
         ]
         threads_by_id = {
-            "t1": {"comments": [{"databaseId": 111}]},
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
             count = rt._post_deferred_replies(
@@ -974,7 +981,7 @@ class TestPostDeferredReplies:
         assert "Deferred" in body
 
     def test_no_comments_skips(self, rt):
-        deferred = [{"thread_id": "t1", "summary": "fix it"}]
+        deferred = [ThreadEntry(thread_id="t1", summary="fix it")]
         with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_deferred_replies(
                 deferred, {}, "owner/repo", 42, "ENG-456", "",
@@ -989,8 +996,8 @@ class TestPostDeferredReplies:
 class TestPostAlreadyAddressedReplies:
 
     def test_posts_replies_with_commit_ref(self, rt, tmp_path):
-        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
-        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        fixed = [ThreadEntry(thread_id="t1", summary="use helper", file="src/app.py")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply,
             patch.object(rt, "_find_addressing_commit", return_value="abc1234def5678"),
@@ -1006,8 +1013,8 @@ class TestPostAlreadyAddressedReplies:
         assert "owner/repo/commit/abc1234def5678" in body
 
     def test_fallback_when_no_commit_found(self, rt, tmp_path):
-        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
-        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        fixed = [ThreadEntry(thread_id="t1", summary="use helper", file="src/app.py")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply,
             patch.object(rt, "_find_addressing_commit", return_value=None),
@@ -1021,7 +1028,7 @@ class TestPostAlreadyAddressedReplies:
         assert "commit" not in body
 
     def test_no_comments_skips(self, rt, tmp_path):
-        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
+        fixed = [ThreadEntry(thread_id="t1", summary="use helper", file="src/app.py")]
         with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_already_addressed_replies(
                 fixed, {}, "owner/repo", 42, tmp_path,
@@ -1036,10 +1043,10 @@ class TestPostAlreadyAddressedReplies:
 class TestResolveFixedThreads:
 
     def test_resolves_unresolved_threads(self, rt):
-        fixed = [{"thread_id": "t1"}, {"thread_id": "t2"}]
+        fixed = [ThreadEntry(thread_id="t1"), ThreadEntry(thread_id="t2")]
         threads_by_id = {
-            "t1": {"is_resolved": False},
-            "t2": {"is_resolved": False},
+            "t1": ReportThread(id="t1", is_resolved=False),
+            "t2": ReportThread(id="t2", is_resolved=False),
         }
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
@@ -1047,23 +1054,26 @@ class TestResolveFixedThreads:
         assert mock_resolve.call_count == 2
 
     def test_skips_already_resolved(self, rt):
-        fixed = [{"thread_id": "t1"}]
-        threads_by_id = {"t1": {"is_resolved": True}}
+        fixed = [ThreadEntry(thread_id="t1")]
+        threads_by_id = {"t1": ReportThread(id="t1", is_resolved=True)}
         with patch("pr_comments.resolve_thread") as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
         assert count == 0
         mock_resolve.assert_not_called()
 
     def test_resolves_thread_absent_from_threads_by_id(self, rt):
-        fixed = [{"thread_id": "t1"}]
+        fixed = [ThreadEntry(thread_id="t1")]
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, {})
         assert count == 1
         mock_resolve.assert_called_once_with("t1")
 
     def test_counts_only_successful_resolves(self, rt):
-        fixed = [{"thread_id": "t1"}, {"thread_id": "t2"}]
-        threads_by_id = {"t1": {}, "t2": {}}
+        fixed = [ThreadEntry(thread_id="t1"), ThreadEntry(thread_id="t2")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1"),
+            "t2": ReportThread(id="t2"),
+        }
         with patch("pr_comments.resolve_thread", side_effect=[True, False]):
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
         assert count == 1
@@ -1229,42 +1239,42 @@ class TestChangedSourceFiles:
 
 class TestClassifyTriageComplexity:
     def test_high_complexity_goes_to_needs_human(self, rt):
-        entries = [{
-            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
-            "summary": "refactor", "classification": "actionable_suggestion",
-            "verification": "valid", "complexity": "high", "state": "new",
-        }]
-        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
-        assert len(fixable) == 0
-        assert len(needs_human) == 1
-        assert needs_human[0]["reason"] == "complex"
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="refactor", classification="actionable_suggestion",
+            verification="valid", complexity="high", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 0
+        assert len(result.needs_human) == 1
+        assert result.needs_human[0].reason == "complex"
 
     def test_low_complexity_stays_fixable(self, rt):
-        entries = [{
-            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
-            "summary": "rename", "classification": "actionable_suggestion",
-            "verification": "valid", "complexity": "low", "state": "new",
-        }]
-        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
-        assert len(fixable) == 1
-        assert len(needs_human) == 0
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="rename", classification="actionable_suggestion",
+            verification="valid", complexity="low", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 1
+        assert len(result.needs_human) == 0
 
     def test_medium_complexity_stays_fixable(self, rt):
-        entries = [{
-            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
-            "summary": "add guard", "classification": "actionable_suggestion",
-            "verification": "valid", "complexity": "medium", "state": "new",
-        }]
-        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
-        assert len(fixable) == 1
-        assert len(needs_human) == 0
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="add guard", classification="actionable_suggestion",
+            verification="valid", complexity="medium", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 1
+        assert len(result.needs_human) == 0
 
     def test_no_complexity_field_stays_fixable(self, rt):
-        entries = [{
-            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
-            "summary": "fix", "classification": "actionable_suggestion",
-            "verification": "valid", "state": "new",
-        }]
-        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
-        assert len(fixable) == 1
-        assert len(needs_human) == 0
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="fix", classification="actionable_suggestion",
+            verification="valid", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 1
+        assert len(result.needs_human) == 0

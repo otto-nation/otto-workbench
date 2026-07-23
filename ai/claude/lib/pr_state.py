@@ -144,8 +144,18 @@ class ThreadOutcome:
 
     @classmethod
     def from_entry(
-        cls, entry: dict, action: ThreadAction, reason_key: str = "reason",
+        cls, entry, action: ThreadAction, reason_key: str = "reason",
     ) -> "ThreadOutcome":
+        if hasattr(entry, "thread_id"):
+            return cls(
+                thread_id=entry.thread_id,
+                file=entry.file,
+                line=entry.line,
+                reviewer=entry.reviewer,
+                summary=entry.summary,
+                action=action.value,
+                reason=getattr(entry, reason_key, ""),
+            )
         return cls(
             thread_id=entry.get("thread_id", ""),
             file=entry.get("file", ""),

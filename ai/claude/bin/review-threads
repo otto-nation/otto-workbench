@@ -814,21 +814,21 @@ def _post_deferred_replies(
     return posted
 
 
+_NO_ISSUE = CreatedIssue()
+
+
 def _finalize_deferred(
     ctx: pr_context.ResolvedContext,
     threads_by_id: dict,
     trail: Trail | None = None,
-) -> tuple[str, str]:
-    """Create tracking issue and post deferred replies for items held from fix pass.
-
-    Returns (issue_id, issue_url) — both empty if nothing was deferred.
-    """
+) -> CreatedIssue:
+    """Create tracking issue and post deferred replies for items held from fix pass."""
     wt_path = ctx.worktree_root
     if not wt_path:
-        return ("", "")
+        return _NO_ISSUE
     state = pr_state.load_state(wt_path)
     if not state or not state.fix.threads:
-        return ("", "")
+        return _NO_ISSUE
 
     FA = pr_state.ThreadAction
     deferred = [
@@ -839,11 +839,11 @@ def _finalize_deferred(
         for t in state.fix.threads if t.action == FA.DEFERRED.value
     ]
     if not deferred:
-        return ("", "")
+        return _NO_ISSUE
 
     pr_number = ctx.pr_number
     if not pr_number:
-        return ("", "")
+        return _NO_ISSUE
 
     issue = _create_or_update_deferred_issue(
         deferred, ctx.repo, pr_number, threads_by_id,
@@ -860,7 +860,7 @@ def _finalize_deferred(
     state.fix.deferred_issue_id = issue.id
     state.fix.deferred_issue_url = issue.url
     pr_state.save_state(wt_path, state)
-    return (issue.id, issue.url)
+    return issue
 
 
 def _resolve_fixed_threads(
@@ -1786,9 +1786,9 @@ def _run_threads(trail, args, ctx) -> None:
         ))
         if args.resolve:
             threads_by_id = {t.id: t for t in report.threads}
-            issue_id, issue_url = _finalize_deferred(ctx, threads_by_id, trail=trail)
-            st.fix.deferred_issue_id = issue_id
-            st.fix.deferred_issue_url = issue_url
+            issue = _finalize_deferred(ctx, threads_by_id, trail=trail)
+            st.fix.deferred_issue_id = issue.id
+            st.fix.deferred_issue_url = issue.url
             _render_deferred_summary(st, report, repo, pr_number, threads_by_id)
         pr_state.save_state(toplevel, st)
     except Exception as exc:

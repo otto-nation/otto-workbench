@@ -1207,16 +1207,17 @@ def _post_fix_summary(
 def _render_deferred_summary(
     state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread],
-) -> str | None:
+) -> None:
     """Re-render fix summary from state and post it.
 
     Called during --resolve after the deferred tracking issue has been created
     and stored in state.fix.  Rebuilds the summary body from FixSummary's
     structured data so the issue link renders inline — no string patching.
+    Updates state.fix.summary_url and summary_deferred on success.
     """
     fix = state.fix
     if not fix.summary_deferred:
-        return None
+        return
 
     FA = pr_state.ThreadAction
     fixed = [t for t in fix.threads if t.action == FA.FIXED.value]
@@ -1240,9 +1241,10 @@ def _render_deferred_summary(
     url = pc.post_issue_comment(repo, pr_number, body)
     if url:
         log.info(f"Posted deferred fix summary: {url}")
+        fix.summary_url = url
+        fix.summary_deferred = False
     else:
         log.error("failed to post deferred fix summary")
-    return url
 
 
 def _post_or_defer_summary(
@@ -1787,12 +1789,7 @@ def _run_threads(trail, args, ctx) -> None:
             issue_id, issue_url = _finalize_deferred(ctx, threads_by_id, trail=trail)
             st.fix.deferred_issue_id = issue_id
             st.fix.deferred_issue_url = issue_url
-            summary_url = _render_deferred_summary(
-                st, report, repo, pr_number, threads_by_id,
-            )
-            if summary_url:
-                st.fix.summary_url = summary_url
-                st.fix.summary_deferred = False
+            _render_deferred_summary(st, report, repo, pr_number, threads_by_id)
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")

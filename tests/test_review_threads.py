@@ -823,11 +823,12 @@ def _make_state(fix=None):
 
 
 class TestRenderDeferredSummary:
-    def test_not_deferred_returns_none(self, rt):
+    def test_not_deferred_is_noop(self, rt):
         state = _make_state(FixSummary(summary_deferred=False))
         report = PRReport()
-        result = rt._render_deferred_summary(state, report, "owner/repo", 1, {})
-        assert result is None
+        with patch("pr_comments.post_issue_comment") as mock_post:
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        mock_post.assert_not_called()
 
     def test_renders_with_issue_link(self, rt):
         fix = FixSummary(
@@ -843,8 +844,9 @@ class TestRenderDeferredSummary:
         state = _make_state(fix)
         report = PRReport()
         with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
-            url = rt._render_deferred_summary(state, report, "owner/repo", 1, {})
-        assert url == "https://github.com/comment/1"
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        assert fix.summary_url == "https://github.com/comment/1"
+        assert fix.summary_deferred is False
         body = mock_post.call_args[0][2]
         assert "Deferred →" in body
         assert "[ENG-456]" in body

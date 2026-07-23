@@ -282,6 +282,7 @@
       "Edit",
       "Edit(//private/tmp/**)",
       "Edit(//tmp/**)",
+      "Read",
       "Read(//opt/homebrew/**)",
       "Read(//private/tmp/**)",
       "Read(//tmp/**)",

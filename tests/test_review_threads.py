@@ -840,59 +840,78 @@ class TestSummarizeCommentBody:
 
 
 class TestReconcileFixResults:
-    """Reconciliation is a no-op — the agent's checkboxes are the source of truth."""
+    """Reconciliation promotes deferred entries whose files were changed by the agent."""
 
     def _entry(self, file="src/foo.go", **kw):
         return {"thread_id": "t1", "file": file, "line": 10,
                 "reviewer": "alice", "summary": "fix it", **kw}
 
-    def _cp(self, rt, sha="abc123"):
-        return rt.CommitPushResult(sha, "pushed", "")
-
-    def _cp_none(self, rt):
-        return rt.CommitPushResult(None, "no_changes", "")
-
-    def test_deferred_stays_deferred_even_when_file_modified(self, rt):
+    @patch("review_threads._changed_source_files")
+    def test_deferred_promoted_when_file_changed(self, mock_changed, rt):
+        mock_changed.return_value = {"src/foo.go"}
         deferred = [self._entry(reason="agent could not auto-fix")]
-        fixed, remaining, count = rt._reconcile_fix_results(
-            [], deferred, Path("/wt"), self._cp(rt),
-        )
-        assert len(fixed) == 0
-        assert len(remaining) == 1
-        assert count == 0
-
-    def test_no_sha_returns_unchanged(self, rt):
-        deferred = [self._entry(reason="agent could not auto-fix")]
-        fixed, remaining, count = rt._reconcile_fix_results(
-            [], deferred, Path("/wt"), self._cp_none(rt),
-        )
-        assert len(fixed) == 0
-        assert len(remaining) == 1
-        assert count == 0
-
-    def test_fixed_passed_through(self, rt):
-        fixed_in = [self._entry()]
-        fixed, remaining, count = rt._reconcile_fix_results(
-            fixed_in, [], Path("/wt"), self._cp(rt),
+        fixed, remaining = rt._reconcile_fix_results(
+            [], deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 1
         assert len(remaining) == 0
-        assert count == 0
 
-    def test_multiple_threads_same_file_partial_fix(self, rt):
-        """Regression: multiple threads in one file, agent fixes only some."""
+    @patch("review_threads._changed_source_files")
+    def test_deferred_stays_when_no_changes(self, mock_changed, rt):
+        mock_changed.return_value = set()
+        deferred = [self._entry(reason="agent could not auto-fix")]
+        fixed, remaining = rt._reconcile_fix_results(
+            [], deferred, Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 0
+        assert len(remaining) == 1
+
+    @patch("review_threads._changed_source_files")
+    def test_fixed_passed_through(self, mock_changed, rt):
+        mock_changed.return_value = set()
+        fixed_in = [self._entry()]
+        fixed, remaining = rt._reconcile_fix_results(
+            fixed_in, [], Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 1
+        assert len(remaining) == 0
+
+    @patch("review_threads._changed_source_files")
+    def test_multiple_threads_same_file_partial_fix(self, mock_changed, rt):
+        """Multiple threads in one file — deferred ones with matching file get promoted."""
+        mock_changed.return_value = {"src/big.tsx"}
         fixed_in = [self._entry(thread_id="t1", file="src/big.tsx")]
         deferred = [
             self._entry(thread_id="t2", file="src/big.tsx", reason="design decision"),
-            self._entry(thread_id="t3", file="src/big.tsx", reason="needs discussion"),
+            self._entry(thread_id="t3", file="src/other.go", reason="needs discussion"),
         ]
-        fixed, remaining, count = rt._reconcile_fix_results(
-            fixed_in, deferred, Path("/wt"), self._cp(rt),
+        fixed, remaining = rt._reconcile_fix_results(
+            fixed_in, deferred, Path("/wt"), "abc123",
         )
-        assert len(fixed) == 1
-        assert fixed[0]["thread_id"] == "t1"
-        assert len(remaining) == 2
-        assert count == 0
+        assert len(fixed) == 2
+        assert len(remaining) == 1
+        assert remaining[0]["thread_id"] == "t3"
+
+    @patch("review_threads._changed_source_files")
+    def test_no_file_in_entry(self, mock_changed, rt):
+        mock_changed.return_value = {"src/foo.go"}
+        deferred = [self._entry(file="", reason="agent could not auto-fix")]
+        fixed, remaining = rt._reconcile_fix_results(
+            [], deferred, Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 0
+        assert len(remaining) == 1
+
+    @patch("review_threads._changed_source_files")
+    def test_does_not_mutate_input_list(self, mock_changed, rt):
+        mock_changed.return_value = {"src/foo.go"}
+        original_fixed = [self._entry(thread_id="t0")]
+        deferred = [self._entry(thread_id="t1", reason="agent could not auto-fix")]
+        fixed, remaining = rt._reconcile_fix_results(
+            original_fixed, deferred, Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 2
+        assert len(original_fixed) == 1
 
 
 # ── _build_deferred_issue_body ────────────────────────────────────────────
@@ -1083,3 +1102,138 @@ class TestBlockingReviewers:
 
     def test_empty_verdicts(self):
         assert self._extract_blocking([]) == []
+
+
+# ── _fix_turn_budget / _fix_budget_usd ─────────────────────────────────────
+
+class TestFixTurnBudget:
+    def test_minimum_floor(self, rt):
+        assert rt._fix_turn_budget(1) == 20
+
+    def test_scales_with_items(self, rt):
+        assert rt._fix_turn_budget(5) == 25
+
+    def test_caps_at_maximum(self, rt):
+        assert rt._fix_turn_budget(100) == 60
+
+    def test_zero_items(self, rt):
+        assert rt._fix_turn_budget(0) == 20
+
+
+class TestFixBudgetUsd:
+    def test_minimum_floor(self, rt):
+        assert rt._fix_budget_usd(1) == 2.0
+
+    def test_scales_with_items(self, rt):
+        assert rt._fix_budget_usd(6) == 3.0
+
+    def test_caps_at_maximum(self, rt):
+        assert rt._fix_budget_usd(100) == 5.0
+
+
+class TestFixRetryBudget:
+    def test_bumps_by_increment(self, rt):
+        assert rt._fix_retry_budget(25) == 40
+
+    def test_minimum_floor(self, rt):
+        assert rt._fix_retry_budget(10) == 30
+
+    def test_caps_at_maximum(self, rt):
+        assert rt._fix_retry_budget(50) == 60
+
+
+# ── _diff_context_for_file ─────────────────────────────────────────────────
+
+class TestDiffContextForFile:
+    def test_empty_file_path(self, rt):
+        assert rt._diff_context_for_file("", Path("/wt")) == ""
+
+    @patch("review_threads.subprocess.run")
+    def test_returns_diff(self, mock_run, rt):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "+ added line\n- removed line\n"
+        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        assert "```diff" in result
+        assert "+ added line" in result
+
+    @patch("review_threads.subprocess.run")
+    def test_truncates_long_diff(self, mock_run, rt):
+        long_diff = "\n".join(f"+ line {i}" for i in range(200))
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = long_diff
+        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        assert "more lines" in result
+
+    @patch("review_threads.subprocess.run")
+    def test_git_failure_returns_empty(self, mock_run, rt):
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stdout = ""
+        assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
+
+
+# ── _changed_source_files ──────────────────────────────────────────────────
+
+class TestChangedSourceFiles:
+    @patch("review_threads.subprocess.run")
+    def test_returns_changed_files(self, mock_run, rt):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "src/foo.go\nsrc/bar.go\n"
+        result = rt._changed_source_files(Path("/wt"), "abc123")
+        assert result == {"src/foo.go", "src/bar.go"}
+
+    @patch("review_threads.subprocess.run")
+    def test_git_failure_returns_empty(self, mock_run, rt):
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stdout = ""
+        assert rt._changed_source_files(Path("/wt"), "abc123") == set()
+
+    @patch("review_threads.subprocess.run")
+    def test_empty_output(self, mock_run, rt):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = ""
+        assert rt._changed_source_files(Path("/wt"), "abc123") == set()
+
+
+# ── _classify_triage_entries (complexity) ──────────────────────────────────
+
+class TestClassifyTriageComplexity:
+    def test_high_complexity_goes_to_needs_human(self, rt):
+        entries = [{
+            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
+            "summary": "refactor", "classification": "actionable_suggestion",
+            "verification": "valid", "complexity": "high", "state": "new",
+        }]
+        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
+        assert len(fixable) == 0
+        assert len(needs_human) == 1
+        assert needs_human[0]["reason"] == "complex"
+
+    def test_low_complexity_stays_fixable(self, rt):
+        entries = [{
+            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
+            "summary": "rename", "classification": "actionable_suggestion",
+            "verification": "valid", "complexity": "low", "state": "new",
+        }]
+        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
+        assert len(fixable) == 1
+        assert len(needs_human) == 0
+
+    def test_medium_complexity_stays_fixable(self, rt):
+        entries = [{
+            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
+            "summary": "add guard", "classification": "actionable_suggestion",
+            "verification": "valid", "complexity": "medium", "state": "new",
+        }]
+        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
+        assert len(fixable) == 1
+        assert len(needs_human) == 0
+
+    def test_no_complexity_field_stays_fixable(self, rt):
+        entries = [{
+            "id": "t1", "file": "f.go", "line": 10, "reviewer": "alice",
+            "summary": "fix", "classification": "actionable_suggestion",
+            "verification": "valid", "state": "new",
+        }]
+        fixable, needs_human, dismissed = rt._classify_triage_entries(entries)
+        assert len(fixable) == 1
+        assert len(needs_human) == 0

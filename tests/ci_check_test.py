@@ -527,6 +527,39 @@ def test_uninformative_mixed_informative_and_not():
     assert ci_check._annotations_uninformative(annotations) is False
 
 
+def test_uninformative_generic_path_dot_github():
+    """Annotations with path='.github' and generic message are uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_generic_exit_code_message():
+    """Annotations with a source path but generic 'exit code' message are uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": "src/main.go", "start_line": 1},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_informative_real_error_with_source_path():
+    """Annotations with a real source path and specific error are informative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "SC2086: Double quote to prevent globbing", "path": "bin/foo.sh", "start_line": 42},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is False
+
+
+def test_informative_mixed_generic_and_specific():
+    """If any annotation has a real path and specific message, annotations are informative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
+        {"annotation_level": "failure", "message": "error TS2304: Cannot find name 'foo'", "path": "src/app.ts", "start_line": 10},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is False
+
+
 # ── _parse_run log enrichment for BUILD failures ──────────────────────
 
 

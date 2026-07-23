@@ -190,10 +190,25 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
     )
 
 
+_GENERIC_MESSAGES = (
+    "process completed with exit code",
+    "exit code",
+)
+
+
 def _annotations_uninformative(annotations: list[dict]) -> bool:
-    """True when non-notice annotations exist but carry no actionable file context."""
+    """True when non-notice annotations carry no actionable diagnostic context."""
     non_notices = [a for a in annotations if a.get("annotation_level") != "notice"]
-    return bool(non_notices) and all(not a.get("path") for a in non_notices)
+    if not non_notices:
+        return True
+    for a in non_notices:
+        path = a.get("path", "")
+        msg = (a.get("message", "") or "").lower()
+        has_source_path = bool(path) and "." in path.rsplit("/", 1)[-1]
+        has_specific_msg = not any(g in msg for g in _GENERIC_MESSAGES)
+        if has_source_path and has_specific_msg:
+            return False
+    return True
 
 
 def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> tuple[list[dict], list[str], ci.FailureKind]:

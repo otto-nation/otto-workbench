@@ -51,20 +51,21 @@ def _run_delegate(entry: dict, argv: list[str],
 
     Forwards exactly one of --pr or --branch (never both) so the
     delegate's pr_context.resolve() doesn't hit the mutual-exclusivity
-    check.  Priority: explicit --pr > explicit --branch > auto-detected
-    PR number > auto-detected branch.  PR number is preferred over branch
+    check.  Priority: explicit --pr > resolved PR number > explicit
+    --branch > auto-detected branch.  PR number is preferred over branch
     because it's a stable identifier that avoids a redundant gh API call
-    in the delegate.
+    in the delegate — and prevents mismatched --repo-dir/--branch when
+    the worktree is on a different branch than the target.
     """
     cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", [])
     if ctx.worktree_root:
         cmd += ["--repo-dir", str(ctx.worktree_root)]
     if original_pr is not None:
         cmd += ["--pr", str(original_pr)]
-    elif original_branch is not None:
-        cmd += ["--branch", original_branch]
     elif ctx.pr_number is not None:
         cmd += ["--pr", str(ctx.pr_number)]
+    elif original_branch is not None:
+        cmd += ["--branch", original_branch]
     elif ctx.branch:
         cmd += ["--branch", ctx.branch]
     cmd += list(argv)

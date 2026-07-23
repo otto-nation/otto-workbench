@@ -318,7 +318,7 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | No
 
     if not annotations:
         annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
-        if not annotations:
+        if not annotations and kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST):
             artifact_context = _fetch_test_artifact(repo, source_run_id, job_name)
             if artifact_context:
                 annotations = [{"message": artifact_context, "path": "", "start_line": 0, "title": ""}]

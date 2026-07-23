@@ -179,6 +179,7 @@ class FixSummary:
     reconciled_count: int = 0
     deferred_issue_id: str = ""
     deferred_issue_url: str = ""
+    has_comment_items: bool = False
     updated_at: str = ""
 
 

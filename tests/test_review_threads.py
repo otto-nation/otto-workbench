@@ -10,7 +10,8 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_thread_models import CommentItem, ReportThread
+from pr_state import FixSummary, PRIdentity, PRState, ThreadOutcome
+from pr_thread_models import CommentItem, PRReport, ReportThread
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -805,6 +806,105 @@ class TestBuildSummaryBody:
         )
         assert "Deferred" in body
         assert "→" not in body
+
+
+# ── _render_deferred_summary ───────────────────────────────────────────────
+
+
+def _make_state(fix=None):
+    """Build a minimal PRState with the given FixSummary."""
+    return PRState(
+        identity=PRIdentity(
+            repo="owner/repo", branch="feat", pr_number=1,
+            head_sha="abc1234", worktree_root="/tmp/wt",
+        ),
+        fix=fix or FixSummary(),
+    )
+
+
+class TestRenderDeferredSummary:
+    def test_not_deferred_is_noop(self, rt):
+        state = _make_state(FixSummary(summary_deferred=False))
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment") as mock_post:
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        mock_post.assert_not_called()
+
+    def test_renders_with_issue_link(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix regex", file="parsers.py", line=10, action="deferred"),
+            ],
+            commit_sha="abc1234",
+            commit_status="pushed",
+            summary_deferred=True,
+            deferred_issue_id="ENG-456",
+            deferred_issue_url="https://linear.app/team/issue/ENG-456",
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        assert fix.summary_url == "https://github.com/comment/1"
+        assert fix.summary_deferred is False
+        body = mock_post.call_args[0][2]
+        assert "Deferred →" in body
+        assert "[ENG-456]" in body
+        assert "linear.app" in body
+
+    def test_renders_without_issue_link(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix regex", file="parsers.py", line=10, action="deferred"),
+            ],
+            commit_status="no_changes",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        body = mock_post.call_args[0][2]
+        assert "Deferred" in body
+        assert "→" not in body
+
+    def test_omits_needs_human_from_body(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="auto fix", file="a.py", line=1, action="fixed"),
+                ThreadOutcome(id="t2", summary="contested", file="b.py", line=2, action="needs_human"),
+                ThreadOutcome(id="t3", summary="complex", file="c.py", line=3, action="deferred"),
+            ],
+            commit_sha="abc1234",
+            commit_status="pushed",
+            summary_deferred=True,
+            deferred_issue_id="ENG-789",
+            deferred_issue_url="https://linear.app/issue/ENG-789",
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        body = mock_post.call_args[0][2]
+        assert "auto fix" in body
+        assert "complex" in body
+        assert "contested" not in body
+
+    def test_reconstructs_commit_link(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="def5678",
+            commit_status="pushed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
+            rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        body = mock_post.call_args[0][2]
+        assert "def5678" in body
 
 
 # ── _summarize_comment_body ─────────────────────────────────────────────────

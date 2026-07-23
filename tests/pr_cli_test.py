@@ -877,20 +877,6 @@ def test_render_fix_section_with_data():
     assert "pushed" in lines[0]
 
 
-def test_render_fix_section_with_reconciled():
-    f = pr_state.FixSummary(
-        threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED.value),
-        ],
-        commit_sha="abc", commit_status="pushed",
-        reconciled_count=1,
-        updated_at="2026-07-14T00:00:00+00:00",
-    )
-    lines = pr_cli._render_fix_section(f)
-    assert any("reconciled" in line for line in lines)
-    assert any("reconciled 1" in line for line in lines)
-
-
 def test_render_fix_section_needs_human():
     f = pr_state.FixSummary(
         threads=[

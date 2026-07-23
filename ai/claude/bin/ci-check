@@ -616,10 +616,6 @@ def _run_fix(trail, report: dict, ctx) -> int:
         log.error("--fix requires a worktree (use --repo-dir)")
         return 1
 
-    if _rebase_if_behind(trail, report, ctx):
-        log.info("Re-run `ci-check --fix` after CI completes on the new HEAD")
-        return 0
-
     failures = report.get("failures", [])
     if not failures:
         log.info("No failures to fix")
@@ -634,6 +630,10 @@ def _run_fix(trail, report: dict, ctx) -> int:
     if fixable_count == 0:
         log.info("No fixable failures (all infra/flaky)")
         return 0
+
+    # Rebase after capturing failure data — the original run has the failures
+    # we need to fix, but the branch should be current before applying fixes
+    _rebase_if_behind(trail, report, ctx)
 
     trail.info("fix_start", f"{fixable_count} fixable failure(s)")
     log.info(f"Fixing {fixable_count} CI failure(s)...")

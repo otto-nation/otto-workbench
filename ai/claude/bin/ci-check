@@ -194,7 +194,6 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
 
 _GENERIC_MESSAGES = (
     "process completed with exit code",
-    "exit code",
 )
 
 
@@ -232,7 +231,7 @@ def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) ->
 def _parse_test_artifact(artifact_dir: str) -> str:
     """Parse a downloaded test-results artifact directory for failure output."""
     artifact_path = Path(artifact_dir)
-    jsonl_files = list(artifact_path.glob("*.json"))
+    jsonl_files = sorted(artifact_path.glob("*.json"))
     if not jsonl_files:
         return ""
     target = jsonl_files[0]

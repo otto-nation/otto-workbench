@@ -134,7 +134,7 @@ class ThreadAction(Enum):
 @dataclass
 class ThreadOutcome:
     """Per-thread outcome from a comment processing pass."""
-    thread_id: str = ""
+    id: str = ""
     file: str = ""
     line: int = 0
     reviewer: str = ""
@@ -144,10 +144,20 @@ class ThreadOutcome:
 
     @classmethod
     def from_entry(
-        cls, entry: dict, action: ThreadAction, reason_key: str = "reason",
+        cls, entry, action: ThreadAction, reason_key: str = "reason",
     ) -> "ThreadOutcome":
+        if hasattr(entry, "id"):
+            return cls(
+                id=entry.id,
+                file=entry.file,
+                line=entry.line,
+                reviewer=entry.reviewer,
+                summary=entry.summary,
+                action=action.value,
+                reason=getattr(entry, reason_key, ""),
+            )
         return cls(
-            thread_id=entry.get("thread_id", ""),
+            id=entry.get("id", entry.get("thread_id", "")),
             file=entry.get("file", ""),
             line=entry.get("line", 0),
             reviewer=entry.get("reviewer", ""),
@@ -270,6 +280,9 @@ def _rebase_from_dict(d: dict) -> RebaseSummary:
 
 
 def _fix_from_dict(d: dict) -> FixSummary:
+    for t in d.get("threads", []):
+        if "thread_id" in t and "id" not in t:
+            t["id"] = t.pop("thread_id")
     return _serde_from_dict(FixSummary, d)
 
 

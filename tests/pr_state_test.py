@@ -677,7 +677,7 @@ def test_apply_state_update_unknown_domain():
 
 def test_fix_thread_outcome_defaults():
     t = ThreadOutcome()
-    assert t.thread_id == ""
+    assert t.id == ""
     assert t.file == ""
     assert t.line == 0
     assert t.action == ""
@@ -686,11 +686,11 @@ def test_fix_thread_outcome_defaults():
 
 def test_fix_thread_outcome_from_entry():
     entry = {
-        "thread_id": "t1", "file": "src/foo.go", "line": 42,
+        "id": "t1", "file": "src/foo.go", "line": 42,
         "reviewer": "alice", "summary": "fix it", "reasoning": "not applicable",
     }
     t = ThreadOutcome.from_entry(entry, ThreadAction.DISMISSED, reason_key="reasoning")
-    assert t.thread_id == "t1"
+    assert t.id == "t1"
     assert t.file == "src/foo.go"
     assert t.line == 42
     assert t.action == ThreadAction.DISMISSED.value
@@ -699,7 +699,7 @@ def test_fix_thread_outcome_from_entry():
 
 def test_fix_thread_outcome_from_entry_defaults():
     t = ThreadOutcome.from_entry({}, ThreadAction.FIXED)
-    assert t.thread_id == ""
+    assert t.id == ""
     assert t.file == ""
     assert t.action == ThreadAction.FIXED.value
     assert t.reason == ""
@@ -732,7 +732,7 @@ def test_pr_state_has_fix_field():
 def test_update_fix_replaces():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     update_fix(state, FixSummary(
-        threads=[ThreadOutcome(thread_id="t1", action=ThreadAction.FIXED.value)],
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED.value)],
         commit_sha="abc", commit_status="pushed",
         updated_at="t1",
     ))
@@ -752,17 +752,17 @@ def test_state_roundtrip_with_fix_data():
     update_fix(state, FixSummary(
         threads=[
             ThreadOutcome(
-                thread_id="t1", file="src/foo.go", line=10,
+                id="t1", file="src/foo.go", line=10,
                 reviewer="alice", summary="fix the thing",
                 action=ThreadAction.FIXED.value,
             ),
             ThreadOutcome(
-                thread_id="t2", file="src/bar.go", line=20,
+                id="t2", file="src/bar.go", line=20,
                 reviewer="bob", summary="add validation",
                 action=ThreadAction.DEFERRED.value, reason="agent could not auto-fix",
             ),
             ThreadOutcome(
-                thread_id="t3", file="src/baz.go", line=30,
+                id="t3", file="src/baz.go", line=30,
                 reviewer="charlie", summary="needs design",
                 action=ThreadAction.NEEDS_HUMAN.value, reason="contested",
             ),
@@ -779,7 +779,7 @@ def test_state_roundtrip_with_fix_data():
     restored = state_from_dict(d)
 
     assert len(restored.fix.threads) == 3
-    assert restored.fix.threads[0].thread_id == "t1"
+    assert restored.fix.threads[0].id == "t1"
     assert restored.fix.threads[0].action == "fixed"
     assert restored.fix.threads[0].file == "src/foo.go"
     assert restored.fix.threads[1].action == "deferred"
@@ -800,8 +800,8 @@ def test_save_preserves_fix_data():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         update_fix(state, FixSummary(
             threads=[
-                ThreadOutcome(thread_id="t1", file="a.go", action=ThreadAction.FIXED.value),
-                ThreadOutcome(thread_id="t2", file="b.go", action=ThreadAction.DISMISSED.value, reason="invalid"),
+                ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED.value),
+                ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED.value, reason="invalid"),
             ],
             commit_sha="def456", commit_status="pushed",
             replies_posted=1, reconciled_count=1,

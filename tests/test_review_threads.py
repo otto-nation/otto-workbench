@@ -10,6 +10,9 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from pr_thread_models import (
+    ClassifiedEntry, ReportThread, ThreadEntry, TriageEntry,
+)
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -674,7 +677,9 @@ class TestBuildSummaryBody:
     """Test summary body renders correct status per CommitPushResult."""
 
     def _fixed_entry(self, **overrides):
-        return {"summary": "fix regex", "file": "parsers.py", "line": 10, **overrides}
+        defaults = {"summary": "fix regex", "file": "parsers.py", "line": 10}
+        defaults.update(overrides)
+        return ThreadEntry(**defaults)
 
     def test_pushed_shows_commit_link(self, rt):
         cp = rt.CommitPushResult("abc1234", "pushed", "")
@@ -709,7 +714,7 @@ class TestBuildSummaryBody:
     def test_needs_human_rows(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
-            [], [{"summary": "question", "file": "a.py", "line": 1, "reason": "contested"}],
+            [], [ClassifiedEntry(summary="question", file="a.py", line=1, reason="contested")],
             [], cp, "owner/repo", 1, {},
         )
         assert "contested" in body
@@ -724,7 +729,7 @@ class TestBuildSummaryBody:
         tid = "PRRT_abc123"
         entry = self._fixed_entry(thread_id=tid)
         threads_by_id = {
-            tid: {"comments": [{"databaseId": 999}]},
+            tid: ReportThread(id=tid, comments=[{"databaseId": 999}]),
         }
         cp = rt.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
@@ -784,7 +789,7 @@ class TestBuildSummaryBody:
 
     def test_deferred_with_issue_link(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
-        deferred = [self._fixed_entry(thread_id="t1")]
+        deferred = [ThreadEntry(thread_id="t1", summary="fix regex", file="parsers.py", line=10)]
         body = rt._build_summary_body(
             [], [], deferred, cp, "owner/repo", 1, {},
             deferred_issue_id="ENG-456",
@@ -796,7 +801,7 @@ class TestBuildSummaryBody:
 
     def test_deferred_without_issue(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
-        deferred = [self._fixed_entry(thread_id="t1")]
+        deferred = [ThreadEntry(thread_id="t1", summary="fix regex", file="parsers.py", line=10)]
         body = rt._build_summary_body(
             [], [], deferred, cp, "owner/repo", 1, {},
         )
@@ -840,59 +845,86 @@ class TestSummarizeCommentBody:
 
 
 class TestReconcileFixResults:
-    """Reconciliation is a no-op — the agent's checkboxes are the source of truth."""
+    """Reconciliation promotes deferred entries whose files were changed by the agent."""
 
     def _entry(self, file="src/foo.go", **kw):
-        return {"thread_id": "t1", "file": file, "line": 10,
-                "reviewer": "alice", "summary": "fix it", **kw}
+        defaults = {"thread_id": "t1", "file": file, "line": 10,
+                    "reviewer": "alice", "summary": "fix it"}
+        defaults.update(kw)
+        return ClassifiedEntry(**defaults)
 
-    def _cp(self, rt, sha="abc123"):
-        return rt.CommitPushResult(sha, "pushed", "")
-
-    def _cp_none(self, rt):
-        return rt.CommitPushResult(None, "no_changes", "")
-
-    def test_deferred_stays_deferred_even_when_file_modified(self, rt):
+    @patch("review_threads._changed_source_files")
+    def test_deferred_promoted_when_file_changed(self, mock_changed, rt):
+        mock_changed.return_value = {"src/foo.go"}
         deferred = [self._entry(reason="agent could not auto-fix")]
         fixed, remaining, count = rt._reconcile_fix_results(
-            [], deferred, Path("/wt"), self._cp(rt),
+            [], deferred, Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 1
+        assert len(remaining) == 0
+        assert count == 1
+
+    @patch("review_threads._changed_source_files")
+    def test_deferred_stays_when_no_changes(self, mock_changed, rt):
+        mock_changed.return_value = set()
+        deferred = [self._entry(reason="agent could not auto-fix")]
+        fixed, remaining, count = rt._reconcile_fix_results(
+            [], deferred, Path("/wt"), "abc123",
         )
         assert len(fixed) == 0
         assert len(remaining) == 1
         assert count == 0
 
-    def test_no_sha_returns_unchanged(self, rt):
-        deferred = [self._entry(reason="agent could not auto-fix")]
-        fixed, remaining, count = rt._reconcile_fix_results(
-            [], deferred, Path("/wt"), self._cp_none(rt),
-        )
-        assert len(fixed) == 0
-        assert len(remaining) == 1
-        assert count == 0
-
-    def test_fixed_passed_through(self, rt):
+    @patch("review_threads._changed_source_files")
+    def test_fixed_passed_through(self, mock_changed, rt):
+        mock_changed.return_value = set()
         fixed_in = [self._entry()]
         fixed, remaining, count = rt._reconcile_fix_results(
-            fixed_in, [], Path("/wt"), self._cp(rt),
+            fixed_in, [], Path("/wt"), "abc123",
         )
         assert len(fixed) == 1
         assert len(remaining) == 0
         assert count == 0
 
-    def test_multiple_threads_same_file_partial_fix(self, rt):
-        """Regression: multiple threads in one file, agent fixes only some."""
+    @patch("review_threads._changed_source_files")
+    def test_multiple_threads_same_file_partial_fix(self, mock_changed, rt):
+        """Multiple threads in one file — deferred ones with matching file get promoted."""
+        mock_changed.return_value = {"src/big.tsx"}
         fixed_in = [self._entry(thread_id="t1", file="src/big.tsx")]
         deferred = [
             self._entry(thread_id="t2", file="src/big.tsx", reason="design decision"),
-            self._entry(thread_id="t3", file="src/big.tsx", reason="needs discussion"),
+            self._entry(thread_id="t3", file="src/other.go", reason="needs discussion"),
         ]
         fixed, remaining, count = rt._reconcile_fix_results(
-            fixed_in, deferred, Path("/wt"), self._cp(rt),
+            fixed_in, deferred, Path("/wt"), "abc123",
         )
-        assert len(fixed) == 1
-        assert fixed[0]["thread_id"] == "t1"
-        assert len(remaining) == 2
+        assert len(fixed) == 2
+        assert len(remaining) == 1
+        assert remaining[0].thread_id == "t3"
+        assert count == 1
+
+    @patch("review_threads._changed_source_files")
+    def test_no_file_in_entry(self, mock_changed, rt):
+        mock_changed.return_value = {"src/foo.go"}
+        deferred = [self._entry(file="", reason="agent could not auto-fix")]
+        fixed, remaining, count = rt._reconcile_fix_results(
+            [], deferred, Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 0
+        assert len(remaining) == 1
         assert count == 0
+
+    @patch("review_threads._changed_source_files")
+    def test_does_not_mutate_input_list(self, mock_changed, rt):
+        mock_changed.return_value = {"src/foo.go"}
+        original_fixed = [self._entry(thread_id="t0")]
+        deferred = [self._entry(thread_id="t1", reason="agent could not auto-fix")]
+        fixed, remaining, count = rt._reconcile_fix_results(
+            original_fixed, deferred, Path("/wt"), "abc123",
+        )
+        assert len(fixed) == 2
+        assert len(original_fixed) == 1
+        assert count == 1
 
 
 # ── _build_deferred_issue_body ────────────────────────────────────────────
@@ -902,11 +934,11 @@ class TestBuildDeferredIssueBody:
 
     def test_basic_body(self, rt):
         deferred = [
-            {"thread_id": "t1", "file": "src/foo.go", "line": 10,
-             "summary": "fix it", "reason": "agent could not auto-fix"},
+            ClassifiedEntry(thread_id="t1", file="src/foo.go", line=10,
+                            summary="fix it", reason="agent could not auto-fix"),
         ]
         threads_by_id = {
-            "t1": {"comments": [{"databaseId": 12345}]},
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 12345}]),
         }
         body = rt._build_deferred_issue_body(deferred, "owner/repo", 42, threads_by_id)
         assert "PR #42" in body
@@ -917,8 +949,8 @@ class TestBuildDeferredIssueBody:
 
     def test_no_permalink(self, rt):
         deferred = [
-            {"thread_id": "t1", "file": "a.go", "line": 1,
-             "summary": "do thing", "reason": "r"},
+            ClassifiedEntry(thread_id="t1", file="a.go", line=1,
+                            summary="do thing", reason="r"),
         ]
         body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
         assert "do thing" in body
@@ -932,10 +964,10 @@ class TestPostDeferredReplies:
 
     def test_posts_replies_with_issue_link(self, rt):
         deferred = [
-            {"thread_id": "t1", "summary": "fix it"},
+            ThreadEntry(thread_id="t1", summary="fix it"),
         ]
         threads_by_id = {
-            "t1": {"comments": [{"databaseId": 111}]},
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
             count = rt._post_deferred_replies(
@@ -949,7 +981,7 @@ class TestPostDeferredReplies:
         assert "Deferred" in body
 
     def test_no_comments_skips(self, rt):
-        deferred = [{"thread_id": "t1", "summary": "fix it"}]
+        deferred = [ThreadEntry(thread_id="t1", summary="fix it")]
         with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_deferred_replies(
                 deferred, {}, "owner/repo", 42, "ENG-456", "",
@@ -964,8 +996,8 @@ class TestPostDeferredReplies:
 class TestPostAlreadyAddressedReplies:
 
     def test_posts_replies_with_commit_ref(self, rt, tmp_path):
-        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
-        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        fixed = [ThreadEntry(thread_id="t1", summary="use helper", file="src/app.py")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply,
             patch.object(rt, "_find_addressing_commit", return_value="abc1234def5678"),
@@ -981,8 +1013,8 @@ class TestPostAlreadyAddressedReplies:
         assert "owner/repo/commit/abc1234def5678" in body
 
     def test_fallback_when_no_commit_found(self, rt, tmp_path):
-        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
-        threads_by_id = {"t1": {"comments": [{"databaseId": 111}]}}
+        fixed = [ThreadEntry(thread_id="t1", summary="use helper", file="src/app.py")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply,
             patch.object(rt, "_find_addressing_commit", return_value=None),
@@ -996,7 +1028,7 @@ class TestPostAlreadyAddressedReplies:
         assert "commit" not in body
 
     def test_no_comments_skips(self, rt, tmp_path):
-        fixed = [{"thread_id": "t1", "summary": "use helper", "file": "src/app.py"}]
+        fixed = [ThreadEntry(thread_id="t1", summary="use helper", file="src/app.py")]
         with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_already_addressed_replies(
                 fixed, {}, "owner/repo", 42, tmp_path,
@@ -1011,10 +1043,10 @@ class TestPostAlreadyAddressedReplies:
 class TestResolveFixedThreads:
 
     def test_resolves_unresolved_threads(self, rt):
-        fixed = [{"thread_id": "t1"}, {"thread_id": "t2"}]
+        fixed = [ThreadEntry(thread_id="t1"), ThreadEntry(thread_id="t2")]
         threads_by_id = {
-            "t1": {"is_resolved": False},
-            "t2": {"is_resolved": False},
+            "t1": ReportThread(id="t1", is_resolved=False),
+            "t2": ReportThread(id="t2", is_resolved=False),
         }
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
@@ -1022,23 +1054,26 @@ class TestResolveFixedThreads:
         assert mock_resolve.call_count == 2
 
     def test_skips_already_resolved(self, rt):
-        fixed = [{"thread_id": "t1"}]
-        threads_by_id = {"t1": {"is_resolved": True}}
+        fixed = [ThreadEntry(thread_id="t1")]
+        threads_by_id = {"t1": ReportThread(id="t1", is_resolved=True)}
         with patch("pr_comments.resolve_thread") as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
         assert count == 0
         mock_resolve.assert_not_called()
 
     def test_resolves_thread_absent_from_threads_by_id(self, rt):
-        fixed = [{"thread_id": "t1"}]
+        fixed = [ThreadEntry(thread_id="t1")]
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, {})
         assert count == 1
         mock_resolve.assert_called_once_with("t1")
 
     def test_counts_only_successful_resolves(self, rt):
-        fixed = [{"thread_id": "t1"}, {"thread_id": "t2"}]
-        threads_by_id = {"t1": {}, "t2": {}}
+        fixed = [ThreadEntry(thread_id="t1"), ThreadEntry(thread_id="t2")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1"),
+            "t2": ReportThread(id="t2"),
+        }
         with patch("pr_comments.resolve_thread", side_effect=[True, False]):
             count = rt._resolve_fixed_threads(fixed, threads_by_id)
         assert count == 1
@@ -1083,3 +1118,163 @@ class TestBlockingReviewers:
 
     def test_empty_verdicts(self):
         assert self._extract_blocking([]) == []
+
+
+# ── _fix_turn_budget / _fix_budget_usd ─────────────────────────────────────
+
+class TestFixTurnBudget:
+    def test_minimum_floor(self, rt):
+        assert rt._fix_turn_budget(1) == 20
+
+    def test_scales_with_items(self, rt):
+        assert rt._fix_turn_budget(5) == 25
+
+    def test_caps_at_maximum(self, rt):
+        assert rt._fix_turn_budget(100) == 60
+
+    def test_zero_items(self, rt):
+        assert rt._fix_turn_budget(0) == 20
+
+
+class TestFixBudgetUsd:
+    def test_minimum_floor(self, rt):
+        assert rt._fix_budget_usd(1) == 2.0
+
+    def test_scales_with_items(self, rt):
+        assert rt._fix_budget_usd(6) == 3.0
+
+    def test_caps_at_maximum(self, rt):
+        assert rt._fix_budget_usd(100) == 5.0
+
+
+class TestFixRetryBudget:
+    def test_bumps_by_increment(self, rt):
+        assert rt._fix_retry_budget(25) == 40
+
+    def test_minimum_floor(self, rt):
+        assert rt._fix_retry_budget(10) == 30
+
+    def test_caps_at_maximum(self, rt):
+        assert rt._fix_retry_budget(50) == 60
+
+
+# ── _diff_context_for_file ─────────────────────────────────────────────────
+
+class TestDiffContextForFile:
+    def test_empty_file_path(self, rt):
+        assert rt._diff_context_for_file("", Path("/wt")) == ""
+
+    @patch("review_threads.subprocess.run")
+    def test_returns_diff(self, mock_run, rt):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "+ added line\n- removed line\n"
+        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        assert "```diff" in result
+        assert "+ added line" in result
+
+    @patch("review_threads.subprocess.run")
+    def test_truncates_long_diff(self, mock_run, rt):
+        long_diff = "\n".join(f"+ line {i}" for i in range(200))
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = long_diff
+        result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
+        assert "more lines" in result
+
+    @patch("review_threads.subprocess.run")
+    def test_git_failure_returns_empty(self, mock_run, rt):
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stdout = ""
+        assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
+
+
+# ── _changed_source_files ──────────────────────────────────────────────────
+
+class TestChangedSourceFiles:
+    def _mock_git(self, committed="", uncommitted="",
+                  committed_rc=0, uncommitted_rc=0):
+        """Return a side_effect that responds differently per git diff call."""
+        def side_effect(cmd, **_kw):
+            m = type("R", (), {"returncode": 0, "stdout": ""})()
+            if ".." in str(cmd):
+                m.returncode = committed_rc
+                m.stdout = committed
+            else:
+                m.returncode = uncommitted_rc
+                m.stdout = uncommitted
+            return m
+        return side_effect
+
+    @patch("review_threads.subprocess.run")
+    def test_committed_changes_detected(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(committed="src/foo.go\n")
+        result = rt._changed_source_files(Path("/wt"), "abc123")
+        assert result == {"src/foo.go"}
+
+    @patch("review_threads.subprocess.run")
+    def test_uncommitted_changes_detected(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(uncommitted="src/bar.go\n")
+        result = rt._changed_source_files(Path("/wt"), "abc123")
+        assert result == {"src/bar.go"}
+
+    @patch("review_threads.subprocess.run")
+    def test_merges_committed_and_uncommitted(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(
+            committed="src/foo.go\n", uncommitted="src/bar.go\n",
+        )
+        result = rt._changed_source_files(Path("/wt"), "abc123")
+        assert result == {"src/foo.go", "src/bar.go"}
+
+    @patch("review_threads.subprocess.run")
+    def test_both_fail_returns_empty(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git(committed_rc=1, uncommitted_rc=1)
+        assert rt._changed_source_files(Path("/wt"), "abc123") == set()
+
+    @patch("review_threads.subprocess.run")
+    def test_empty_output(self, mock_run, rt):
+        mock_run.side_effect = self._mock_git()
+        assert rt._changed_source_files(Path("/wt"), "abc123") == set()
+
+
+# ── _classify_triage_entries (complexity) ──────────────────────────────────
+
+class TestClassifyTriageComplexity:
+    def test_high_complexity_goes_to_needs_human(self, rt):
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="refactor", classification="actionable_suggestion",
+            verification="valid", complexity="high", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 0
+        assert len(result.needs_human) == 1
+        assert result.needs_human[0].reason == "complex"
+
+    def test_low_complexity_stays_fixable(self, rt):
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="rename", classification="actionable_suggestion",
+            verification="valid", complexity="low", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 1
+        assert len(result.needs_human) == 0
+
+    def test_medium_complexity_stays_fixable(self, rt):
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="add guard", classification="actionable_suggestion",
+            verification="valid", complexity="medium", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 1
+        assert len(result.needs_human) == 0
+
+    def test_no_complexity_field_stays_fixable(self, rt):
+        entries = [TriageEntry(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="fix", classification="actionable_suggestion",
+            verification="valid", state="new",
+        )]
+        result = rt._classify_triage_entries(entries)
+        assert len(result.fixable) == 1
+        assert len(result.needs_human) == 0

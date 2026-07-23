@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import dataclasses
 import json
 import re
 import subprocess
@@ -30,18 +31,44 @@ import pr_context
 import pr_state
 import review_common
 import review_issue
+from pr_thread_models import (
+    ClassificationResult,
+    ClassifiedEntry,
+    CommentItem,
+    CommentItemResults,
+    FixPassResult,
+    PRReport,
+    ReportThread,
+    ThreadEntry,
+    TrackingResult,
+    TriageEntry,
+    TriageResult,
+    triage_result_from_dict,
+)
 from review_github import fetch_pr_data
+from review_issue import CreatedIssue
 from trail import Trail, add_trail_args
 
 TRIAGE_CONTEXT_LINES = 10
-FIX_MAX_TURNS = 15
-FIX_MAX_BUDGET = 2.0
+FIX_MIN_TURNS = 20
+FIX_MAX_TURNS_CAP = 60
+FIX_TURNS_PER_ITEM = 5
+FIX_MIN_BUDGET = 2.0
+FIX_MAX_BUDGET_CAP = 5.0
+FIX_BUDGET_PER_ITEM = 0.5
 FIX_MODEL = "sonnet"
+DIFF_CONTEXT_MAX_LINES = 100
+FIX_RETRY_TURNS_MIN = 30
+FIX_RETRY_TURNS_BUMP = 15
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 _SOURCE_FIX_SUMMARY = "fix_summary"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
+_FIX_RETRY_HINT = (
+    "This is a RETRY of a prior fix pass. Some items were already fixed in the "
+    "previous pass — focus only on unchecked items below. Work efficiently.\n\n"
+)
 
 
 def _extract_json(text: str) -> str:
@@ -72,12 +99,12 @@ def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
     return resolved
 
 
-def _gather_code_context(threads: list, repo_dir: Path) -> str:
+def _gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
     """Read surrounding source lines for each thread's file location."""
     snippets = []
     for t in threads:
-        file_path = t.get("file")
-        line = int(t.get("line") or 0)
+        file_path = t.file
+        line = int(t.line or 0)
         if not file_path or line == 0:
             continue
         full_path = repo_dir / file_path
@@ -96,11 +123,11 @@ def _gather_code_context(threads: list, repo_dir: Path) -> str:
 
 
 def _build_triage_prompt(
-    non_resolved: list, code_context: str,
+    non_resolved: list[ReportThread], code_context: str,
     unseen_comments: list[dict] | None = None,
 ) -> str:
     """Build the AI classification prompt for thread triage."""
-    thread_json = json.dumps(non_resolved, indent=2)
+    thread_json = json.dumps([dataclasses.asdict(t) for t in non_resolved], indent=2)
     context_block = ""
     if code_context:
         context_block = f"\nCode context for referenced files:\n{code_context}\n"
@@ -127,6 +154,7 @@ Top-level comments:
       "reviewer": "user from input comment",
       "classification": "actionable_suggestion|question|approval|conflicting",
       "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "summary": "one-line summary of this specific item",
       "file": "file path if referenced in the item (empty string if not)",
@@ -140,8 +168,12 @@ Top-level comments:
 For each thread, provide:
 1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
 2. verification (only for actionable_suggestion): one of 'valid', 'invalid', 'needs_discussion'
-3. reasoning: one sentence explaining your classification/verification
-4. summary: one-line summary of the thread
+3. complexity (only for actionable_suggestion with verification=valid): one of 'low', 'medium', 'high'
+   - low: rename, remove, import fix, guard/nil check, use existing helper
+   - medium: logic change within a single function or file
+   - high: cross-file refactor, design decision, or architectural change
+4. reasoning: one sentence explaining your classification/verification
+5. summary: one-line summary of the thread
 
 Thread data:
 {thread_json}
@@ -154,6 +186,7 @@ Return JSON matching this exact schema:
       "state": "state from input",
       "classification": "actionable_suggestion|question|approval|conflicting",
       "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "file": "file from input",
       "line": "line_from_input",
@@ -177,10 +210,10 @@ Return JSON matching this exact schema:
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation."""
 
 
-def _collect_unseen_comments(report: dict) -> list[dict]:
+def _collect_unseen_comments(report: PRReport) -> list[dict]:
     """Collect unseen issue and review body comments for triage decomposition."""
     unseen = []
-    for c in report.get("issue_comments", []):
+    for c in report.issue_comments:
         if not c.get("seen"):
             unseen.append({
                 "id": c["id"],
@@ -188,7 +221,7 @@ def _collect_unseen_comments(report: dict) -> list[dict]:
                 "user": c.get("user", ""),
                 "body": c.get("body", ""),
             })
-    for c in report.get("review_body_comments", []):
+    for c in report.review_body_comments:
         if not c.get("seen"):
             unseen.append({
                 "id": c["id"],
@@ -199,32 +232,24 @@ def _collect_unseen_comments(report: dict) -> list[dict]:
     return unseen
 
 
-def _assign_item_ids(comment_items: list[dict]) -> None:
+def _assign_item_ids(comment_items: list[CommentItem]) -> None:
     """Assign synthetic IDs to decomposed comment items in place."""
     for item in comment_items:
-        source_type = item.get("source_type", "ic")
-        prefix = "ic" if source_type == "issue_comment" else "rb"
-        source_id = item.get("source_id", "0")
-        index = item.get("index", 0)
-        item["id"] = f"{prefix}-{source_id}-{index}"
+        prefix = "ic" if item.source_type == "issue_comment" else "rb"
+        item.id = f"{prefix}-{item.source_id}-{item.index}"
 
 
-def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
-                trail: Trail | None = None) -> tuple[dict | None, int]:
+def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
+                trail: Trail | None = None) -> tuple[TriageResult | None, int]:
     """Classify non-resolved threads and decompose top-level comments via AI.
 
     Returns (triage_result, exit_code). Caller handles stdout output.
     """
-    non_resolved = [t for t in report["threads"] if t.get("state") != "resolved"]
+    non_resolved = [t for t in report.threads if t.state != "resolved"]
     unseen_comments = _collect_unseen_comments(report)
 
     if not non_resolved and not unseen_comments:
-        empty = {"threads": [], "comment_items": [], "stats": {
-            "total": 0, "actionable": 0, "questions": 0,
-            "approvals": 0, "conflicting": 0, "valid": 0, "invalid": 0,
-            "comment_items_total": 0, "comment_items_actionable": 0,
-        }}
-        return empty, 0
+        return TriageResult(), 0
 
     code_context = _gather_code_context(non_resolved, repo_dir)
     prompt = _build_triage_prompt(
@@ -240,7 +265,7 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
         return None, 1
 
     try:
-        triage_result = json.loads(_extract_json(stdout))
+        raw = json.loads(_extract_json(stdout))
     except (json.JSONDecodeError, TypeError):
         preview = (stdout or "")[:200]
         if trail:
@@ -250,22 +275,20 @@ def _run_triage(report: dict, repo_dir: Path, ctx_args: dict,
         log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
         return None, 1
 
-    # Assign synthetic IDs to comment items
-    comment_items = triage_result.get("comment_items", [])
-    _assign_item_ids(comment_items)
-    triage_result["comment_items"] = comment_items
+    triage_result = triage_result_from_dict(raw)
+    _assign_item_ids(triage_result.comment_items)
 
     # Update triage state
     try:
-        stats = triage_result.get("stats", {})
+        stats = triage_result.stats
         st = pr_state.load_or_init(**ctx_args)
         pr_state.update_triage(st, pr_state.TriageSummary(
-            total=stats.get("total", 0),
-            actionable=stats.get("actionable", 0),
-            valid=stats.get("valid", 0),
-            questions=stats.get("questions", 0),
-            comment_items_total=stats.get("comment_items_total", 0),
-            comment_items_actionable=stats.get("comment_items_actionable", 0),
+            total=stats.total,
+            actionable=stats.actionable,
+            valid=stats.valid,
+            questions=stats.questions,
+            comment_items_total=stats.comment_items_total,
+            comment_items_actionable=stats.comment_items_actionable,
             updated_at=pr_state.now_iso(),
         ))
         pr_state.save_state(ctx_args["worktree_root"], st)
@@ -307,57 +330,74 @@ def _code_context_for_thread(file_path: str, line: int | str, repo_dir: Path) ->
     return f"```\n{snippet}\n```" if snippet else ""
 
 
+def _diff_context_for_file(file_path: str, wt_path: Path) -> str:
+    """Get the PR diff for a file, truncated to DIFF_CONTEXT_MAX_LINES."""
+    if not file_path:
+        return ""
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", "origin/main", "--", file_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return ""
+    lines = result.stdout.splitlines()
+    total = len(lines)
+    if total > DIFF_CONTEXT_MAX_LINES:
+        lines = lines[:DIFF_CONTEXT_MAX_LINES]
+        lines.append(f"... ({total - DIFF_CONTEXT_MAX_LINES} more lines)")
+    return "```diff\n" + "\n".join(lines) + "\n```"
+
+
 def _build_tracking_file(
     tracking_path: Path,
-    fixable: list[dict],
-    threads_by_id: dict,
+    fixable: list[TriageEntry],
+    threads_by_id: dict[str, ReportThread],
     repo_dir: Path,
     pr_number: int,
-    fixable_items: list[dict] | None = None,
+    fixable_items: list[CommentItem] | None = None,
 ) -> None:
     """Build the tracking markdown file for the fix agent."""
+    diff_cache: dict[str, str] = {}
     sections = []
     for thread in fixable:
-        tid = thread["id"]
-        report_thread = threads_by_id.get(tid, {})
-        file_path = thread.get("file", "")
-        line = thread.get("line", 0)
-        reviewer = thread.get("reviewer", "")
-        summary = thread.get("summary", "")
-
-        comments = report_thread.get("comments", [])
+        tid = thread.id
+        report_thread = threads_by_id.get(tid)
+        comments = report_thread.comments if report_thread else []
         conversation = _thread_comment_text(comments)
-        code_ctx = _code_context_for_thread(file_path, line, repo_dir)
+        code_ctx = _code_context_for_thread(thread.file, thread.line, repo_dir)
+        if thread.file not in diff_cache:
+            diff_cache[thread.file] = _diff_context_for_file(thread.file, repo_dir)
+        diff_ctx = diff_cache[thread.file]
 
-        section = f"## <!-- thread:{tid} --> {file_path}:{line} — @{reviewer}\n\n"
-        if summary:
-            section += f"**Summary:** {summary}\n\n"
+        section = f"## <!-- thread:{tid} --> {thread.file}:{thread.line} — @{thread.reviewer}\n\n"
+        if thread.summary:
+            section += f"**Summary:** {thread.summary}\n\n"
         if conversation:
             section += f"**Conversation:**\n{conversation}\n\n"
         if code_ctx:
             section += f"**Code context:**\n{code_ctx}\n\n"
+        if diff_ctx:
+            section += f"**PR diff for this file:**\n{diff_ctx}\n\n"
         section += "- [ ] Apply fix\n"
         sections.append(section)
 
     for item in (fixable_items or []):
-        item_id = item.get("id", "")
-        file_path = item.get("file", "")
-        line = int(item.get("line") or 0)
-        reviewer = item.get("reviewer", "")
-        summary = item.get("summary", "")
-        body = item.get("body", "")
+        location = f"{item.file}:{item.line}" if item.file and item.line else (item.file or "general")
+        code_ctx = _code_context_for_thread(item.file, item.line, repo_dir) if item.file and item.line else ""
+        if item.file and item.file not in diff_cache:
+            diff_cache[item.file] = _diff_context_for_file(item.file, repo_dir)
+        diff_ctx = diff_cache.get(item.file, "")
 
-        location = f"{file_path}:{line}" if file_path and line else (file_path or "general")
-        code_ctx = _code_context_for_thread(file_path, line, repo_dir) if file_path and line else ""
-
-        section = f"## <!-- item:{item_id} --> {location} — @{reviewer}\n\n"
-        if summary:
-            section += f"**Summary:** {summary}\n\n"
-        if body:
-            quoted = "\n".join(f"> {ln}" for ln in body.splitlines())
-            section += f"**From comment by @{reviewer}:**\n{quoted}\n\n"
+        section = f"## <!-- item:{item.id} --> {location} — @{item.reviewer}\n\n"
+        if item.summary:
+            section += f"**Summary:** {item.summary}\n\n"
+        if item.body:
+            quoted = "\n".join(f"> {ln}" for ln in item.body.splitlines())
+            section += f"**From comment by @{item.reviewer}:**\n{quoted}\n\n"
         if code_ctx:
             section += f"**Code context:**\n{code_ctx}\n\n"
+        if diff_ctx:
+            section += f"**PR diff for this file:**\n{diff_ctx}\n\n"
         section += "- [ ] Apply fix\n"
         sections.append(section)
 
@@ -415,8 +455,21 @@ def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     return main_wt
 
 
+def _fix_turn_budget(item_count: int) -> int:
+    return min(max(FIX_MIN_TURNS, item_count * FIX_TURNS_PER_ITEM), FIX_MAX_TURNS_CAP)
+
+
+def _fix_budget_usd(item_count: int) -> float:
+    return min(max(FIX_MIN_BUDGET, item_count * FIX_BUDGET_PER_ITEM), FIX_MAX_BUDGET_CAP)
+
+
+def _fix_retry_budget(original: int) -> int:
+    return min(max(FIX_RETRY_TURNS_MIN, original + FIX_RETRY_TURNS_BUMP), FIX_MAX_TURNS_CAP)
+
+
 def _invoke_fix_agent(
     prompt: str, wt_path: Path, main_wt_path: Path | None = None,
+    max_turns: int | None = None, max_budget: float | None = None,
 ) -> int:
     """Run AI agent to apply fixes. Returns exit code."""
     dirs = [str(wt_path)]
@@ -425,8 +478,8 @@ def _invoke_fix_agent(
     return ai_backend.invoke_fix(
         prompt,
         add_dirs=dirs,
-        max_turns=FIX_MAX_TURNS,
-        max_budget=FIX_MAX_BUDGET,
+        max_turns=max_turns or FIX_MIN_TURNS,
+        max_budget=max_budget or FIX_MIN_BUDGET,
         model=FIX_MODEL,
     )
 
@@ -442,22 +495,16 @@ def _count_unchecked(path: Path) -> int:
 
 
 def _parse_tracking_results(
-    tracking_path: Path, fixable: list[dict],
-    fixable_items: list[dict] | None = None,
-) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-    """Parse tracking file to determine which threads/items were fixed vs deferred.
-
-    Returns (fixed_threads, deferred_threads, fixed_items, deferred_items).
-    """
+    tracking_path: Path, fixable: list[TriageEntry],
+    fixable_items: list[CommentItem] | None = None,
+) -> TrackingResult:
+    """Parse tracking file to determine which threads/items were fixed vs deferred."""
     content = tracking_path.read_text()
     sections = re.split(r"^## <!-- (?:thread|item):", content, flags=re.MULTILINE)
 
-    fixable_by_id = {t["id"]: t for t in fixable}
-    items_by_id = {it["id"]: it for it in (fixable_items or [])}
-    fixed = []
-    deferred = []
-    fixed_items = []
-    deferred_items = []
+    fixable_by_id = {t.id: t for t in fixable}
+    items_by_id = {it.id: it for it in (fixable_items or [])}
+    result = TrackingResult()
 
     for section in sections[1:]:
         tid_match = re.match(r"(\S+) -->", section)
@@ -468,33 +515,57 @@ def _parse_tracking_results(
         source = fixable_by_id.get(tid) or items_by_id.get(tid)
         if not source:
             continue
-        entry = {
-            "thread_id": tid,
-            "file": source.get("file", ""),
-            "line": int(source.get("line") or 0),
-            "reviewer": source.get("reviewer", ""),
-            "summary": source.get("summary", ""),
-        }
+        entry = source.to_thread_entry()
         is_item = tid in items_by_id
-        target_fixed = fixed_items if is_item else fixed
-        target_deferred = deferred_items if is_item else deferred
         if is_checked:
-            target_fixed.append(entry)
+            (result.fixed_items if is_item else result.fixed).append(entry)
         else:
-            entry["reason"] = "agent could not auto-fix"
-            target_deferred.append(entry)
+            classified = ClassifiedEntry(
+                thread_id=entry.thread_id, file=entry.file, line=entry.line,
+                reviewer=entry.reviewer, summary=entry.summary,
+                reason="agent could not auto-fix",
+            )
+            (result.deferred_items if is_item else result.deferred).append(classified)
 
-    return fixed, deferred, fixed_items, deferred_items
+    return result
+
+
+def _changed_source_files(wt_path: Path, head_before: str) -> set[str]:
+    """Return set of files changed since head_before (committed + uncommitted)."""
+    files: set[str] = set()
+    for cmd in (
+        ["git", "-C", str(wt_path), "diff", "--name-only", f"{head_before}..HEAD"],
+        ["git", "-C", str(wt_path), "diff", "--name-only"],
+    ):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            files.update(line.strip() for line in result.stdout.splitlines() if line.strip())
+    return files
 
 
 def _reconcile_fix_results(
-    fixed: list[dict],
-    deferred: list[dict],
+    fixed: list[ThreadEntry],
+    deferred: list[ThreadEntry | ClassifiedEntry],
     wt_path: Path,
-    cp: "CommitPushResult",
-) -> tuple[list[dict], list[dict], int]:
-    """Trust the agent's tracking checkboxes — no automatic reclassification."""
-    return fixed, deferred, 0
+    head_before: str,
+) -> tuple[list[ThreadEntry], list[ThreadEntry | ClassifiedEntry], int]:
+    """Move deferred entries to fixed if their file was modified by the agent.
+
+    Returns (fixed, deferred, reconciled_count).
+    """
+    changed = _changed_source_files(wt_path, head_before)
+    if not changed:
+        return fixed, deferred, 0
+    reconciled = list(fixed)
+    still_deferred = []
+    count = 0
+    for entry in deferred:
+        if entry.file and entry.file in changed:
+            reconciled.append(entry)
+            count += 1
+        else:
+            still_deferred.append(entry)
+    return reconciled, still_deferred, count
 
 
 @dataclass
@@ -613,21 +684,19 @@ def _commit_and_push(
 
 
 def _post_thread_replies(
-    entries: list[dict],
-    threads_by_id: dict,
+    entries: list[ThreadEntry],
+    threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    body_fn: Callable[[dict], str],
+    body_fn: Callable[[ThreadEntry], str],
 ) -> int:
     """Post a reply to each thread entry using body_fn to build the message body."""
     posted = 0
     for entry in entries:
-        tid = entry.get("thread_id", "")
-        thread = threads_by_id.get(tid, {})
-        comments = thread.get("comments", [])
-        if not comments:
+        thread = threads_by_id.get(entry.thread_id)
+        if not thread or not thread.comments:
             continue
-        database_id = comments[0].get("databaseId")
+        database_id = thread.comments[0].get("databaseId")
         if not database_id:
             continue
         if pc.post_thread_reply(repo, pr_number, database_id, body_fn(entry)):
@@ -636,8 +705,8 @@ def _post_thread_replies(
 
 
 def _post_fix_replies(
-    fixed: list[dict],
-    threads_by_id: dict,
+    fixed: list[ThreadEntry],
+    threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
     commit_sha: str,
@@ -645,9 +714,8 @@ def _post_fix_replies(
     """Post replies to each fixed thread. Returns count of replies posted."""
     commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
 
-    def body_fn(entry: dict) -> str:
-        summary = entry.get("summary", "")
-        return f"Applied: {summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
+    def body_fn(entry: ThreadEntry) -> str:
+        return f"Applied: {entry.summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
@@ -667,8 +735,8 @@ def _find_addressing_commit(wt_path: Path, filepath: str) -> str | None:
 
 
 def _post_already_addressed_replies(
-    fixed: list[dict],
-    threads_by_id: dict,
+    fixed: list[ThreadEntry],
+    threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
     wt_path: Path,
@@ -676,19 +744,17 @@ def _post_already_addressed_replies(
     """Post replies to threads already addressed in the current code. Returns count posted."""
     commit_cache: dict[str, str | None] = {}
 
-    def body_fn(entry: dict) -> str:
-        summary = entry.get("summary", "")
-        filepath = entry.get("file", "")
-        if filepath not in commit_cache:
-            commit_cache[filepath] = _find_addressing_commit(wt_path, filepath)
-        sha = commit_cache[filepath]
+    def body_fn(entry: ThreadEntry) -> str:
+        if entry.file not in commit_cache:
+            commit_cache[entry.file] = _find_addressing_commit(wt_path, entry.file)
+        sha = commit_cache[entry.file]
         if sha:
             commit_url = f"https://github.com/{repo}/commit/{sha}"
             return (
-                f"Already addressed: {summary}\n\n"
+                f"Already addressed: {entry.summary}\n\n"
                 f"Addressed in [`{sha[:7]}`]({commit_url})."
             )
-        return f"Already addressed in the current implementation: {summary}"
+        return f"Already addressed in the current implementation: {entry.summary}"
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
@@ -697,14 +763,14 @@ def _post_already_addressed_replies(
 
 
 def _post_dismissed_replies(
-    dismissed: list[dict],
-    threads_by_id: dict,
+    dismissed: list[ClassifiedEntry],
+    threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
 ) -> int:
     """Post replies to invalid suggestion threads. Returns count posted."""
-    def body_fn(entry: dict) -> str:
-        reasoning = entry.get("reasoning", "")
+    def body_fn(entry: ThreadEntry) -> str:
+        reasoning = getattr(entry, "reasoning", "")
         if reasoning:
             return f"Suggestion reviewed and determined to be inapplicable: {reasoning}"
         return "Suggestion reviewed and determined to be inapplicable."
@@ -715,17 +781,19 @@ def _post_dismissed_replies(
     return posted
 
 
-def _has_deferred_reply(thread: dict) -> bool:
+def _has_deferred_reply(thread: ReportThread | None) -> bool:
     """Check if a thread already has a deferred reply posted."""
-    for comment in thread.get("comments", []):
+    if not thread:
+        return False
+    for comment in thread.comments:
         if comment.get("body", "").startswith(_DEFERRED_REPLY_PREFIX):
             return True
     return False
 
 
 def _post_deferred_replies(
-    deferred: list[dict],
-    threads_by_id: dict,
+    deferred: list[ThreadEntry],
+    threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
     issue_id: str,
@@ -734,16 +802,15 @@ def _post_deferred_replies(
     """Post replies to deferred threads linking the tracking issue."""
     new_deferred = [
         e for e in deferred
-        if not _has_deferred_reply(threads_by_id.get(e.get("thread_id", ""), {}))
+        if not _has_deferred_reply(threads_by_id.get(e.thread_id))
     ]
     if not new_deferred:
         return 0
 
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
 
-    def body_fn(entry: dict) -> str:
-        summary = entry.get("summary", "")
-        return f"{_DEFERRED_REPLY_PREFIX} {summary}\n\nTracked in {issue_ref}."
+    def body_fn(entry: ThreadEntry) -> str:
+        return f"{_DEFERRED_REPLY_PREFIX} {entry.summary}\n\nTracked in {issue_ref}."
 
     posted = _post_thread_replies(new_deferred, threads_by_id, repo, pr_number, body_fn)
     if posted:
@@ -766,8 +833,10 @@ def _finalize_deferred(
 
     FA = pr_state.ThreadAction
     deferred = [
-        {"thread_id": t.thread_id, "file": t.file, "line": t.line,
-         "reviewer": t.reviewer, "summary": t.summary}
+        ThreadEntry(
+            thread_id=t.thread_id, file=t.file, line=t.line,
+            reviewer=t.reviewer, summary=t.summary,
+        )
         for t in state.fix.threads if t.action == FA.DEFERRED.value
     ]
     if not deferred:
@@ -777,35 +846,34 @@ def _finalize_deferred(
     if not pr_number:
         return
 
-    deferred_issue_id, deferred_issue_url = _create_or_update_deferred_issue(
+    issue = _create_or_update_deferred_issue(
         deferred, ctx.repo, pr_number, threads_by_id,
         ctx, state.fix.deferred_issue_id, trail,
         state.fix.deferred_issue_url,
     )
 
-    if deferred_issue_id:
+    if issue.id:
         _post_deferred_replies(
             deferred, threads_by_id, ctx.repo, pr_number,
-            deferred_issue_id, deferred_issue_url,
+            issue.id, issue.url,
         )
 
-    state.fix.deferred_issue_id = deferred_issue_id
-    state.fix.deferred_issue_url = deferred_issue_url
+    state.fix.deferred_issue_id = issue.id
+    state.fix.deferred_issue_url = issue.url
     pr_state.save_state(wt_path, state)
 
 
 def _resolve_fixed_threads(
-    fixed: list[dict],
-    threads_by_id: dict,
+    fixed: list[ThreadEntry],
+    threads_by_id: dict[str, ReportThread],
 ) -> int:
     """Resolve fixed threads on GitHub. Returns count resolved."""
     resolved = 0
     for entry in fixed:
-        tid = entry.get("thread_id", "")
-        thread = threads_by_id.get(tid, {})
-        if thread.get("is_resolved"):
+        thread = threads_by_id.get(entry.thread_id)
+        if thread and thread.is_resolved:
             continue
-        if pc.resolve_thread(tid):
+        if pc.resolve_thread(entry.thread_id):
             resolved += 1
     if resolved:
         log.info(f"Resolved {resolved} fixed thread(s)")
@@ -813,10 +881,10 @@ def _resolve_fixed_threads(
 
 
 def _build_deferred_issue_body(
-    deferred: list[dict],
+    deferred: list[ThreadEntry],
     repo: str,
     pr_number: int,
-    threads_by_id: dict,
+    threads_by_id: dict[str, ReportThread],
 ) -> str:
     """Build markdown description for the deferred threads tracking issue."""
     pr_url = f"https://github.com/{repo}/pull/{pr_number}"
@@ -827,13 +895,11 @@ def _build_deferred_issue_body(
         "|--------|------|--------|",
     ]
     for entry in deferred:
-        summary = entry.get("summary", "—")
+        summary = entry.summary or "—"
         permalink = _thread_permalink(entry, threads_by_id, repo, pr_number)
         thread_cell = f"[{summary}]({permalink})" if permalink else summary
-        file_path = entry.get("file", "")
-        line = entry.get("line", 0)
-        file_cell = f"`{file_path}:{line}`" if file_path else "—"
-        reason = entry.get("reason", "")
+        file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
+        reason = getattr(entry, "reason", "")
         parts.append(f"| {thread_cell} | {file_cell} | {reason} |")
     parts.append("")
     return "\n".join(parts)
@@ -841,13 +907,13 @@ def _build_deferred_issue_body(
 
 def _update_deferred_issue(
     provider: str, issue_id: str, body: str, repo: str, opts: dict | None,
-) -> tuple[str, str]:
+) -> CreatedIssue:
     ok = review_issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
     if not ok:
         log.error(f"Failed to update deferred issue {issue_id}")
-        return issue_id, ""
+        return CreatedIssue(id=issue_id)
     url = review_issue.get_issue_url(provider, issue_id)
-    return issue_id, url
+    return CreatedIssue(id=issue_id, url=url)
 
 
 def _create_deferred_issue(
@@ -858,14 +924,14 @@ def _create_deferred_issue(
     pr_number: int,
     opts: dict | None,
     trail: Trail | None,
-) -> tuple[str, str]:
+) -> CreatedIssue:
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
     team = parent_id.split("-", 1)[0] if parent_id and "-" in parent_id else ""
     if not team:
         log.dim("Cannot determine team key for issue creation — skipping")
         if trail:
             trail.info("deferred_issue", "skipped — no team key")
-        return "", ""
+        return CreatedIssue()
 
     title = f"fix(review): deferred review comments — PR #{pr_number}"
     created = review_issue.create_issue(
@@ -875,29 +941,26 @@ def _create_deferred_issue(
         log.error("Failed to create deferred tracking issue")
         if trail:
             trail.error("deferred_issue", "creation failed")
-        return "", ""
+        return CreatedIssue()
 
     if trail:
         trail.info("deferred_issue", f"created {created.id}", data={"url": created.url})
-    return created.id, created.url
+    return created
 
 
 def _create_or_update_deferred_issue(
-    deferred: list[dict],
+    deferred: list[ThreadEntry],
     repo: str,
     pr_number: int,
-    threads_by_id: dict,
+    threads_by_id: dict[str, ReportThread],
     ctx: pr_context.ResolvedContext,
     existing_issue_id: str,
     trail: Trail | None,
     existing_issue_url: str = "",
-) -> tuple[str, str]:
-    """Create or update the deferred threads tracking issue.
-
-    Returns (issue_id, issue_url). Empty strings on failure or skip.
-    """
+) -> CreatedIssue:
+    """Create or update the deferred threads tracking issue."""
     if not deferred:
-        return existing_issue_id, ""
+        return CreatedIssue(id=existing_issue_id)
 
     root_path = str(ctx.worktree_root) if ctx.worktree_root else None
     provider_info = review_issue.load_issue_provider(root_path)
@@ -906,10 +969,10 @@ def _create_or_update_deferred_issue(
     body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
 
     if existing_issue_id:
-        issue_id, url = _update_deferred_issue(
+        issue = _update_deferred_issue(
             provider, existing_issue_id, body, repo, provider_info.options,
         )
-        return issue_id, url or existing_issue_url
+        return CreatedIssue(id=issue.id, url=issue.url or existing_issue_url)
 
     return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
 
@@ -930,23 +993,25 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
 
 
 def _thread_permalink(
-    entry: dict, threads_by_id: dict, repo: str, pr_number: int,
+    entry: ThreadEntry, threads_by_id: dict[str, ReportThread],
+    repo: str, pr_number: int,
 ) -> str | None:
     """Build a GitHub permalink for a review thread, or None if unavailable."""
-    tid = entry.get("thread_id", "")
-    thread = threads_by_id.get(tid, {})
-    comments = thread.get("comments", [])
-    if not comments:
+    thread = threads_by_id.get(entry.thread_id)
+    if not thread or not thread.comments:
         return None
-    db_id = comments[0].get("databaseId")
+    db_id = thread.comments[0].get("databaseId")
     if not db_id:
         return None
     return f"https://github.com/{repo}/pull/{pr_number}#discussion_r{db_id}"
 
 
-def _summary_cell(entry: dict, threads_by_id: dict, repo: str, pr_number: int) -> str:
+def _summary_cell(
+    entry: ThreadEntry, threads_by_id: dict[str, ReportThread],
+    repo: str, pr_number: int,
+) -> str:
     """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
-    summary = entry.get("summary", "—")
+    summary = entry.summary or "—"
     url = _thread_permalink(entry, threads_by_id, repo, pr_number)
     if url:
         return f"[{summary}]({url})"
@@ -954,16 +1019,15 @@ def _summary_cell(entry: dict, threads_by_id: dict, repo: str, pr_number: int) -
 
 
 def _build_row(
-    entry: dict, status: str, threads_by_id: dict, repo: str, pr_number: int,
+    entry: ThreadEntry, status: str,
+    threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
 ) -> str:
     """Build a single summary table row for a thread entry."""
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
-    file_path = entry.get("file", "")
-    line = entry.get("line", "")
-    if file_path and line:
-        file_loc = f"`{file_path}:{line}`"
-    elif file_path:
-        file_loc = f"`{file_path}`"
+    if entry.file and entry.line:
+        file_loc = f"`{entry.file}:{entry.line}`"
+    elif entry.file:
+        file_loc = f"`{entry.file}`"
     else:
         file_loc = "—"
     return f"| {summary} | {file_loc} | {status} |"
@@ -990,14 +1054,14 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
 
 
 def _build_summary_body(
-    fixed: list[dict],
-    needs_human: list[dict],
-    deferred: list[dict],
+    fixed: list[ThreadEntry],
+    needs_human: list[ClassifiedEntry],
+    deferred: list[ThreadEntry],
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
-    threads_by_id: dict,
-    dismissed: list[dict] | None = None,
+    threads_by_id: dict[str, ReportThread],
+    dismissed: list[ClassifiedEntry] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
@@ -1033,7 +1097,7 @@ def _build_summary_body(
     for entry in dismissed:
         rows.append(_build_row(entry, "Dismissed (invalid)", threads_by_id, repo, pr_number))
     for entry in needs_human:
-        reason = entry.get("reason", "needs discussion")
+        reason = entry.reason or "needs discussion"
         rows.append(_build_row(entry, reason, threads_by_id, repo, pr_number))
     if deferred_issue_id and deferred_issue_url:
         deferred_status = f"Deferred → [{deferred_issue_id}]({deferred_issue_url})"
@@ -1098,14 +1162,14 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
 
 
 def _post_fix_summary(
-    fixed: list[dict],
-    needs_human: list[dict],
-    deferred: list[dict],
+    fixed: list[ThreadEntry],
+    needs_human: list[ClassifiedEntry],
+    deferred: list[ThreadEntry],
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
-    threads_by_id: dict,
-    dismissed: list[dict] | None = None,
+    threads_by_id: dict[str, ReportThread],
+    dismissed: list[ClassifiedEntry] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
@@ -1154,16 +1218,16 @@ def _post_pending_comments(
 
 
 def _post_or_defer_summary(
-    fixed: list[dict],
-    needs_human: list[dict],
-    deferred: list[dict],
+    fixed: list[ThreadEntry],
+    needs_human: list[ClassifiedEntry],
+    deferred: list[ThreadEntry],
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
-    threads_by_id: dict,
+    threads_by_id: dict[str, ReportThread],
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
-    dismissed: list[dict] | None = None,
+    dismissed: list[ClassifiedEntry] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
@@ -1263,24 +1327,23 @@ def _recover_agent_commit(
 
 
 def _build_thread_outcomes(
-    fixed: list[dict],
-    deferred: list[dict],
-    needs_human: list[dict],
-    dismissed: list[dict],
+    fixed: list[ThreadEntry],
+    deferred: list[ThreadEntry],
+    needs_human: list[ClassifiedEntry],
+    dismissed: list[ClassifiedEntry],
 ) -> list[pr_state.ThreadOutcome]:
-    """Build ThreadOutcome list from categorized entry dicts."""
+    """Build ThreadOutcome list from categorized entries."""
     FA = pr_state.ThreadAction
-    batches = [
-        (fixed, FA.FIXED, "reason"),
-        (deferred, FA.DEFERRED, "reason"),
-        (needs_human, FA.NEEDS_HUMAN, "reason"),
-        (dismissed, FA.DISMISSED, "reasoning"),
-    ]
-    return [
-        pr_state.ThreadOutcome.from_entry(entry, action, reason_key)
-        for entries, action, reason_key in batches
-        for entry in entries
-    ]
+    outcomes: list[pr_state.ThreadOutcome] = []
+    for entry in fixed:
+        outcomes.append(entry.to_outcome(FA.FIXED))
+    for entry in deferred:
+        outcomes.append(entry.to_outcome(FA.DEFERRED))
+    for entry in needs_human:
+        outcomes.append(entry.to_outcome(FA.NEEDS_HUMAN))
+    for entry in dismissed:
+        outcomes.append(entry.to_outcome(FA.DISMISSED))
+    return outcomes
 
 
 def _persist_fix_state(
@@ -1304,76 +1367,152 @@ def _persist_fix_state(
 
 
 def _classify_triage_entries(
-    triage_entries: list[dict], id_key: str = "id",
-) -> tuple[list[dict], list[dict], list[dict]]:
+    triage_entries: list[TriageEntry] | list[CommentItem],
+) -> ClassificationResult:
     """Classify triage entries into fixable/needs_human/dismissed.
 
-    Works for both threads and comment items. Returns (fixable, needs_human, dismissed).
+    Works for both threads and comment items.
     """
-    fixable = []
-    needs_human = []
-    dismissed = []
+    result = ClassificationResult()
 
     for tt in triage_entries:
-        entry = {
-            "thread_id": tt.get(id_key, ""),
-            "file": tt.get("file", ""),
-            "line": int(tt.get("line") or 0),
-            "reviewer": tt.get("reviewer", ""),
-            "summary": tt.get("summary", ""),
-        }
-        classification = tt.get("classification", "")
-        verification = tt.get("verification", "")
-        state = tt.get("state", "")
+        entry = tt.to_thread_entry()
+        classification = tt.classification
+        verification = tt.verification
+        state = tt.state if hasattr(tt, "state") else ""
 
         if state == "contested":
-            needs_human.append({**entry, "reason": "contested"})
+            result.needs_human.append(ClassifiedEntry(
+                **vars(entry), reason="contested"))
             continue
 
         if classification == "conflicting":
-            needs_human.append({**entry, "reason": "conflicting"})
+            result.needs_human.append(ClassifiedEntry(
+                **vars(entry), reason="conflicting"))
             continue
 
         if classification == "question":
-            needs_human.append({**entry, "reason": "question"})
+            result.needs_human.append(ClassifiedEntry(
+                **vars(entry), reason="question"))
             continue
 
         if classification != "actionable_suggestion":
             continue
 
-        if verification == "valid":
-            fixable.append(tt)
-        elif verification == "needs_discussion":
-            needs_human.append({**entry, "reason": "needs_discussion"})
-        elif verification == "invalid":
-            dismissed.append({**entry, "reasoning": tt.get("reasoning", "")})
+        if verification == "valid" and tt.complexity == "high":
+            result.needs_human.append(ClassifiedEntry(
+                **vars(entry), reason="complex"))
+            continue
 
-    return fixable, needs_human, dismissed
+        if verification == "valid":
+            result.fixable.append(tt)
+        elif verification == "needs_discussion":
+            result.needs_human.append(ClassifiedEntry(
+                **vars(entry), reason="needs_discussion"))
+        elif verification == "invalid":
+            result.dismissed.append(ClassifiedEntry(
+                **vars(entry), reasoning=tt.reasoning))
+
+    return result
+
+
+def _retry_fix_pass(
+    deferred_threads: list[ClassifiedEntry],
+    deferred_items: list[ClassifiedEntry],
+    original_fixable: list[TriageEntry],
+    original_fixable_items: list[CommentItem],
+    threads_by_id: dict[str, ReportThread],
+    wt_path: Path,
+    pr_number: int,
+    ctx: pr_context.ResolvedContext,
+    main_wt: Path | None,
+    original_turns: int,
+    trail: Trail | None = None,
+) -> TrackingResult:
+    """Retry fix pass with only deferred items and increased budget."""
+    fixable_by_id = {t.id: t for t in original_fixable}
+    items_by_id = {it.id: it for it in original_fixable_items}
+
+    retry_fixable = [fixable_by_id[e.thread_id] for e in deferred_threads
+                     if e.thread_id in fixable_by_id]
+    retry_items = [items_by_id[e.thread_id] for e in deferred_items
+                   if e.thread_id in items_by_id]
+
+    if not retry_fixable and not retry_items:
+        return TrackingResult(deferred=list(deferred_threads),
+                              deferred_items=list(deferred_items))
+
+    tracking_dir = wt_path / "ignore" / "pr-comments"
+    tracking_file = tracking_dir / "fix-tracking.md"
+
+    _build_tracking_file(
+        tracking_file, retry_fixable, threads_by_id,
+        wt_path, pr_number,
+        fixable_items=retry_items,
+    )
+
+    retry_count = len(retry_fixable) + len(retry_items)
+    retry_turns = _fix_retry_budget(original_turns)
+
+    prompt = _FIX_RETRY_HINT + _render_fix_template(
+        branch=ctx.branch,
+        repo=ctx.repo,
+        threads_content=tracking_file.read_text(),
+        tracking_file=str(tracking_file),
+        wt_path=str(wt_path),
+        max_turns=retry_turns,
+        main_wt_path=str(main_wt) if main_wt else "",
+    )
+
+    log.info(f"Retry pass — {retry_count} deferred items (max_turns={retry_turns})...")
+    head_before = _get_head_sha(wt_path)
+    _invoke_fix_agent(prompt, wt_path, main_wt,
+                      max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count))
+    log.blank()
+
+    result = _parse_tracking_results(
+        tracking_file, retry_fixable, fixable_items=retry_items,
+    )
+
+    result.fixed, result.deferred, rc1 = _reconcile_fix_results(
+        result.fixed, result.deferred, wt_path, head_before,
+    )
+    result.fixed_items, result.deferred_items, rc2 = _reconcile_fix_results(
+        result.fixed_items, result.deferred_items, wt_path, head_before,
+    )
+
+    result.reconciled_count = rc1 + rc2
+
+    if trail:
+        trail.info("fix_retry", "retry pass complete",
+                    data={"fixed": len(result.fixed), "fixed_items": len(result.fixed_items),
+                          "still_deferred": len(result.deferred) + len(result.deferred_items),
+                          "reconciled": result.reconciled_count})
+
+    return result
 
 
 def _run_comment_fix(
-    triage_result: dict,
-    report: dict,
+    triage_result: TriageResult,
+    report: PRReport,
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
     trail: Trail | None = None,
-) -> dict:
-    """Apply mechanical fixes for valid actionable comment threads and items.
-
-    Returns a fix_pass dict with fixed/needs_human/deferred/commit_sha
-    plus comment_items breakdown.
-    """
-    threads_by_id = {t["id"]: t for t in report["threads"]}
+) -> FixPassResult:
+    """Apply mechanical fixes for valid actionable comment threads and items."""
+    threads_by_id = {t.id: t for t in report.threads}
 
     # Classify threads
-    fixable, needs_human, dismissed = _classify_triage_entries(
-        triage_result.get("threads", []),
-    )
+    thread_cls = _classify_triage_entries(triage_result.threads)
+    fixable = thread_cls.fixable
+    needs_human = thread_cls.needs_human
+    dismissed = thread_cls.dismissed
 
     # Classify comment items
-    fixable_items, items_needs_human, items_dismissed = _classify_triage_entries(
-        triage_result.get("comment_items", []),
-    )
+    item_cls = _classify_triage_entries(triage_result.comment_items)
+    fixable_items = item_cls.fixable
+    items_needs_human = item_cls.needs_human
+    items_dismissed = item_cls.dismissed
 
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
@@ -1383,36 +1522,33 @@ def _run_comment_fix(
     dismissed_replies = 0
     if dismissed:
         dismissed_replies = _post_dismissed_replies(
-            dismissed, threads_by_id, ctx.repo, report["pr_number"],
+            dismissed, threads_by_id, ctx.repo, report.pr_number,
         )
 
     all_fixable = bool(fixable) or bool(fixable_items)
     has_items = bool(fixable_items) or bool(items_needs_human) or bool(items_dismissed)
 
-    empty_result = {
-        "fixed": [], "needs_human": all_needs_human, "dismissed": all_dismissed,
-        "deferred": [], "commit_sha": None,
-        "commit_status": "no_changes",
-        "replies_posted": dismissed_replies, "summary_url": None,
-        "comment_items": {
-            "fixed": [], "needs_human": items_needs_human,
-            "dismissed": items_dismissed, "deferred": [],
-        },
-    }
+    empty_result = FixPassResult(
+        needs_human=all_needs_human, dismissed=all_dismissed,
+        commit_status="no_changes", replies_posted=dismissed_replies,
+        comment_items=CommentItemResults(
+            needs_human=items_needs_human, dismissed=items_dismissed,
+        ),
+    )
 
     if not all_fixable:
         if all_dismissed or all_needs_human:
             summary_url = _post_or_defer_summary(
-                [], all_needs_human, [], no_commit, ctx.repo, report["pr_number"],
+                [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, wt_path, ctx, dismissed=all_dismissed,
-                issue_comments=report.get("issue_comments"),
-                review_body_comments=report.get("review_body_comments"),
+                issue_comments=report.issue_comments,
+                review_body_comments=report.review_body_comments,
                 has_comment_items=has_items,
             )
         else:
             summary_url = None
-        empty_result["summary_url"] = summary_url
-        empty_result["summary_deferred"] = summary_url is None and bool(all_needs_human)
+        empty_result.summary_url = summary_url
+        empty_result.summary_deferred = summary_url is None and bool(all_needs_human)
         _persist_fix_state(pr_state.FixSummary(
             threads=_build_thread_outcomes([], [], all_needs_human, all_dismissed),
             commit_status=no_commit.status,
@@ -1428,11 +1564,13 @@ def _run_comment_fix(
 
     _build_tracking_file(
         tracking_file, fixable, threads_by_id,
-        wt_path, report["pr_number"],
+        wt_path, report.pr_number,
         fixable_items=fixable_items,
     )
 
-    before = _count_unchecked(tracking_file)
+    total_items = len(fixable) + len(fixable_items or [])
+    max_turns = _fix_turn_budget(total_items)
+    max_budget = _fix_budget_usd(total_items)
 
     head_before = _get_head_sha(wt_path)
 
@@ -1444,22 +1582,44 @@ def _run_comment_fix(
         threads_content=tracking_file.read_text(),
         tracking_file=str(tracking_file),
         wt_path=str(wt_path),
-        max_turns=FIX_MAX_TURNS,
+        max_turns=max_turns,
         main_wt_path=str(main_wt) if main_wt else "",
     )
 
     log.info("Fix pass — applying review comment suggestions...")
-    _invoke_fix_agent(prompt, wt_path, main_wt)
+    _invoke_fix_agent(prompt, wt_path, main_wt,
+                      max_turns=max_turns, max_budget=max_budget)
     log.blank()
-
-    after = _count_unchecked(tracking_file)
-    fixed_count = before - after
 
     fixed, deferred, fixed_items, deferred_items = _parse_tracking_results(
         tracking_file, fixable, fixable_items=fixable_items,
     )
 
-    cp = _commit_and_push(wt_path, fixed_count, after, trail=trail)
+    fixed, deferred, rc1 = _reconcile_fix_results(
+        fixed, deferred, wt_path, head_before,
+    )
+    fixed_items, deferred_items, rc2 = _reconcile_fix_results(
+        fixed_items, deferred_items, wt_path, head_before,
+    )
+    reconciled_count = rc1 + rc2
+
+    all_deferred_pre_retry = deferred + deferred_items
+    if all_deferred_pre_retry:
+        retry_result = _retry_fix_pass(
+            deferred, deferred_items, fixable, fixable_items or [],
+            threads_by_id, wt_path, report.pr_number,
+            ctx, main_wt, max_turns, trail,
+        )
+        fixed = fixed + retry_result.fixed
+        deferred = retry_result.deferred
+        fixed_items = fixed_items + retry_result.fixed_items
+        deferred_items = retry_result.deferred_items
+        reconciled_count += retry_result.reconciled_count
+
+    fixed_count = len(fixed) + len(fixed_items)
+    deferred_count = len(deferred) + len(deferred_items)
+
+    cp = _commit_and_push(wt_path, fixed_count, deferred_count, trail=trail)
 
     if cp.status in ("no_changes", "commit_failed"):
         cp = _recover_agent_commit(wt_path, head_before, trail)
@@ -1468,11 +1628,11 @@ def _run_comment_fix(
     if fixed:
         if cp.sha:
             replies_posted += _post_fix_replies(
-                fixed, threads_by_id, ctx.repo, report["pr_number"], cp.sha,
+                fixed, threads_by_id, ctx.repo, report.pr_number, cp.sha,
             )
         else:
             replies_posted += _post_already_addressed_replies(
-                fixed, threads_by_id, ctx.repo, report["pr_number"], wt_path,
+                fixed, threads_by_id, ctx.repo, report.pr_number, wt_path,
             )
         _resolve_fixed_threads(fixed, threads_by_id)
 
@@ -1484,10 +1644,10 @@ def _run_comment_fix(
 
     summary_url = _post_or_defer_summary(
         all_fixed, all_needs_human, all_deferred, cp,
-        ctx.repo, report["pr_number"],
+        ctx.repo, report.pr_number,
         threads_by_id, wt_path, ctx, dismissed=all_dismissed,
-        issue_comments=report.get("issue_comments"),
-        review_body_comments=report.get("review_body_comments"),
+        issue_comments=report.issue_comments,
+        review_body_comments=report.review_body_comments,
         has_comment_items=has_items,
     )
 
@@ -1500,25 +1660,28 @@ def _run_comment_fix(
         replies_posted=replies_posted,
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and pending_deferred,
-        reconciled_count=0,
+        reconciled_count=reconciled_count,
         updated_at=pr_state.now_iso(),
     ), wt_path, ctx, trail)
 
-    return {
-        "fixed": all_fixed,
-        "needs_human": all_needs_human,
-        "dismissed": all_dismissed,
-        "deferred": all_deferred,
-        "commit_sha": cp.sha,
-        "commit_status": cp.status,
-        "replies_posted": replies_posted,
-        "summary_url": summary_url,
-        "summary_deferred": summary_url is None and pending_deferred,
-        "comment_items": {
-            "fixed": fixed_items, "needs_human": items_needs_human,
-            "dismissed": items_dismissed, "deferred": deferred_items,
-        },
-    }
+    return FixPassResult(
+        fixed=all_fixed,
+        needs_human=all_needs_human,
+        dismissed=all_dismissed,
+        deferred=all_deferred,
+        commit_sha=cp.sha,
+        commit_status=cp.status,
+        replies_posted=replies_posted,
+        summary_url=summary_url,
+        summary_deferred=summary_url is None and pending_deferred,
+        reconciled_count=reconciled_count,
+        max_turns=max_turns,
+        max_budget=max_budget,
+        comment_items=CommentItemResults(
+            fixed=fixed_items, needs_human=items_needs_human,
+            dismissed=items_dismissed, deferred=deferred_items,
+        ),
+    )
 
 
 def _run_threads(trail, args, ctx) -> None:
@@ -1574,30 +1737,31 @@ def _run_threads(trail, args, ctx) -> None:
     )
     print(dashboard, file=sys.stderr)
 
-    # JSON report to stdout
-    report = {
-        "repo": repo,
-        "pr_number": pr_number,
-        "my_login": my_login,
-        "threads": [],
-        "issue_comments": issue_comments,
-        "review_body_comments": review_body_comments,
-        "verdicts": verdicts,
-    }
+    # Build report
+    report_threads = []
     for thread_data in threads_raw:
         tid = thread_data["id"]
         t = threads.get(tid, {})
         comments = thread_data.get("comments", {}).get("nodes", [])
-        report["threads"].append({
-            "id": tid,
-            "state": t.get("state", "new"),
-            "classification": t.get("classification"),
-            "reviewer": t.get("reviewer", ""),
-            "comments": comments,
-            "is_resolved": thread_data.get("isResolved", False),
-            "file": thread_data.get("path"),
-            "line": thread_data.get("line"),
-        })
+        report_threads.append(ReportThread(
+            id=tid,
+            state=t.get("state", "new"),
+            classification=t.get("classification"),
+            reviewer=t.get("reviewer", ""),
+            comments=comments,
+            is_resolved=thread_data.get("isResolved", False),
+            file=thread_data.get("path", ""),
+            line=thread_data.get("line"),
+        ))
+    report = PRReport(
+        repo=repo,
+        pr_number=pr_number,
+        my_login=my_login,
+        threads=report_threads,
+        issue_comments=issue_comments,
+        review_body_comments=review_body_comments,
+        verdicts=verdicts,
+    )
 
     # Update unified PR state (best-effort)
     ctx_args = dict(
@@ -1606,16 +1770,15 @@ def _run_threads(trail, args, ctx) -> None:
     )
     try:
         thread_states: dict[str, int] = {}
-        for t in report["threads"]:
-            s = t.get("state", "new")
-            thread_states[s] = thread_states.get(s, 0) + 1
+        for t in report.threads:
+            thread_states[t.state] = thread_states.get(t.state, 0) + 1
         blocking = [
             v.get("user", "unknown")
-            for v in report.get("verdicts", [])
+            for v in report.verdicts
             if v.get("state") == "CHANGES_REQUESTED"
         ]
         has_approvals = any(
-            v.get("state") == "APPROVED" for v in report.get("verdicts", [])
+            v.get("state") == "APPROVED" for v in report.verdicts
         )
         st = pr_state.load_or_init(**ctx_args)
         prior_seen_ids = set(st.comments.seen_issue_comment_ids)
@@ -1627,7 +1790,7 @@ def _run_threads(trail, args, ctx) -> None:
         for c in review_body_comments:
             c["seen"] = c["id"] in prior_seen_review_ids
         pr_state.update_comments(st, pr_state.CommentsSummary(
-            total_threads=len(report["threads"]),
+            total_threads=len(report.threads),
             by_state=thread_states,
             blocking_reviewers=blocking,
             has_approvals=has_approvals,
@@ -1637,7 +1800,7 @@ def _run_threads(trail, args, ctx) -> None:
         ))
         if args.resolve:
             _post_pending_comments(st, repo, pr_number)
-            threads_by_id = {t["id"]: t for t in report["threads"]}
+            threads_by_id = {t.id: t for t in report.threads}
             _finalize_deferred(ctx, threads_by_id, trail=trail)
         pr_state.save_state(toplevel, st)
     except Exception as exc:
@@ -1655,46 +1818,48 @@ def _run_threads(trail, args, ctx) -> None:
             sys.exit(rc)
 
         if args.fix and triage_result:
-            triage_threads = triage_result.get("threads", [])
-            triage_items = triage_result.get("comment_items", [])
             fixable_count = sum(
-                1 for t in triage_threads
-                if t.get("classification") == "actionable_suggestion"
-                and t.get("verification") == "valid"
+                1 for t in triage_result.threads
+                if t.classification == "actionable_suggestion"
+                and t.verification == "valid"
             )
             fixable_items_count = sum(
-                1 for it in triage_items
-                if it.get("classification") == "actionable_suggestion"
-                and it.get("verification") == "valid"
+                1 for it in triage_result.comment_items
+                if it.classification == "actionable_suggestion"
+                and it.verification == "valid"
             )
             trail.decision(
                 "fix_classification",
                 f"{fixable_count} fixable threads, {fixable_items_count} fixable items identified",
                 reason="classification=actionable_suggestion and verification=valid",
                 data={"fixable": fixable_count, "fixable_items": fixable_items_count,
-                      "total": len(triage_threads), "total_items": len(triage_items)},
+                      "total": len(triage_result.threads),
+                      "total_items": len(triage_result.comment_items)},
             )
             fix_pass = _run_comment_fix(triage_result, report, toplevel, ctx, trail=trail)
-            deferred_count = len(fix_pass.get("deferred", []))
-            dismissed_count = len(fix_pass.get("dismissed", []))
             trail.info("fix_result", "fix pass complete",
-                       data={"fixable": fixable_count, "deferred": deferred_count,
-                             "dismissed": dismissed_count,
-                             "commit_sha": fix_pass.get("commit_sha"),
-                             "commit_status": fix_pass.get("commit_status")})
-            output = {**triage_result, "fix_pass": fix_pass,
-                      "issue_comments": report.get("issue_comments", []),
-                      "review_body_comments": report.get("review_body_comments", [])}
+                       data={"fixable": fixable_count,
+                             "deferred": len(fix_pass.deferred),
+                             "dismissed": len(fix_pass.dismissed),
+                             "reconciled": fix_pass.reconciled_count,
+                             "max_turns": fix_pass.max_turns,
+                             "max_budget": fix_pass.max_budget,
+                             "commit_sha": fix_pass.commit_sha,
+                             "commit_status": fix_pass.commit_status})
+            output = dataclasses.asdict(triage_result)
+            output["fix_pass"] = dataclasses.asdict(fix_pass)
+            output["issue_comments"] = report.issue_comments
+            output["review_body_comments"] = report.review_body_comments
         else:
-            output = {**triage_result,
-                      "issue_comments": report.get("issue_comments", []),
-                      "review_body_comments": report.get("review_body_comments", [])}
+            output = dataclasses.asdict(triage_result) if triage_result else {}
+            output["issue_comments"] = report.issue_comments
+            output["review_body_comments"] = report.review_body_comments
 
         json.dump(output, sys.stdout, indent=2)
         print()
         sys.exit(0)
 
-    json.dump(report, sys.stdout, indent=2)
+    json.dump(dataclasses.asdict(report), sys.stdout, indent=2)
     print()
 
 

@@ -15,12 +15,22 @@ For each unchecked thread (`- [ ]`) above:
 3. If fixable: apply the fix using the Edit tool on the source file
 4. After fixing: update the thread checkbox from `- [ ]` to `- [x]` in the tracking file using Edit
 
+## Priority order
+
+Process threads in this order to maximize fixes within the turn budget:
+
+1. File removals and dead code deletion
+2. Import fixes, renames, and nil/guard additions
+3. Changes using existing helpers or patterns
+4. Everything else
+
 ## Rules
 
 - For each fix, make the minimal correct change — do not refactor surrounding code
 - If a suggestion references a function, type, or API — verify it exists in the codebase before using it
 - If a suggestion is ambiguous or requires a design choice, skip it (leave unchecked)
 - Do not add comments explaining the change — the reviewer already knows what they asked for
+- When a "PR diff for this file" section is included, use it to understand what the PR changed before applying the fix
 
 ## Tracking file location
 ${tracking_file}

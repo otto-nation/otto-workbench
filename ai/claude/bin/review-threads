@@ -59,7 +59,6 @@ FIX_RETRY_TURNS_BUMP = 15
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
-_SOURCE_FIX_SUMMARY = "fix_summary"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
 _FIX_RETRY_HINT = (
     "This is a RETRY of a prior fix pass. Some items were already fixed in the "
@@ -994,7 +993,8 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
 
 
 def _thread_permalink(
-    entry: CommentItem, threads_by_id: dict[str, ReportThread],
+    entry: CommentItem | pr_state.ThreadOutcome,
+    threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str | None:
     """Build a GitHub permalink for a review thread, or None if unavailable."""
@@ -1008,7 +1008,8 @@ def _thread_permalink(
 
 
 def _summary_cell(
-    entry: CommentItem, threads_by_id: dict[str, ReportThread],
+    entry: CommentItem | pr_state.ThreadOutcome,
+    threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str:
     """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
@@ -1020,7 +1021,7 @@ def _summary_cell(
 
 
 def _build_row(
-    entry: CommentItem, status: str,
+    entry: CommentItem | pr_state.ThreadOutcome, status: str,
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
 ) -> str:
     """Build a single summary table row for a thread entry."""
@@ -1054,15 +1055,18 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
     return "(empty)"
 
 
+_SummaryEntry = CommentItem | pr_state.ThreadOutcome
+
+
 def _build_summary_body(
-    fixed: list[CommentItem],
-    needs_human: list[CommentItem],
-    deferred: list[CommentItem],
+    fixed: list[_SummaryEntry],
+    needs_human: list[_SummaryEntry],
+    deferred: list[_SummaryEntry],
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    dismissed: list[CommentItem] | None = None,
+    dismissed: list[_SummaryEntry] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
@@ -1173,8 +1177,6 @@ def _post_fix_summary(
     dismissed: list[CommentItem] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
-    deferred_issue_id: str = "",
-    deferred_issue_url: str = "",
     has_comment_items: bool = False,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
@@ -1192,8 +1194,6 @@ def _post_fix_summary(
         dismissed=dismissed,
         issue_comments=issue_comments,
         review_body_comments=review_body_comments,
-        deferred_issue_id=deferred_issue_id,
-        deferred_issue_url=deferred_issue_url,
         has_comment_items=has_comment_items,
     )
     url = pc.post_issue_comment(repo, pr_number, body)
@@ -1204,36 +1204,45 @@ def _post_fix_summary(
     return url
 
 
-def _inject_deferred_issue_link(body: str, issue_id: str, issue_url: str) -> str:
-    """Replace bare 'Deferred' status cells with a link to the tracking issue."""
-    if not issue_id:
-        return body
-    if issue_url:
-        linked = f"Deferred → [{issue_id}]({issue_url})"
+def _render_deferred_summary(
+    state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
+    threads_by_id: dict[str, ReportThread],
+) -> str | None:
+    """Re-render fix summary from state and post it.
+
+    Called during --resolve after the deferred tracking issue has been created
+    and stored in state.fix.  Rebuilds the summary body from FixSummary's
+    structured data so the issue link renders inline — no string patching.
+    """
+    fix = state.fix
+    if not fix.summary_deferred:
+        return None
+
+    FA = pr_state.ThreadAction
+    fixed = [t for t in fix.threads if t.action == FA.FIXED.value]
+    deferred = [t for t in fix.threads if t.action == FA.DEFERRED.value]
+    dismissed = [t for t in fix.threads if t.action == FA.DISMISSED.value]
+
+    cp = CommitPushResult(
+        sha=fix.commit_sha or None,
+        status=fix.commit_status,
+        error="",
+    )
+    body = _build_summary_body(
+        fixed, [], deferred, cp, repo, pr_number, threads_by_id,
+        dismissed=dismissed,
+        issue_comments=report.issue_comments,
+        review_body_comments=report.review_body_comments,
+        deferred_issue_id=fix.deferred_issue_id,
+        deferred_issue_url=fix.deferred_issue_url,
+        has_comment_items=fix.has_comment_items,
+    )
+    url = pc.post_issue_comment(repo, pr_number, body)
+    if url:
+        log.info(f"Posted deferred fix summary: {url}")
     else:
-        linked = f"Deferred → {issue_id}"
-    return body.replace("| Deferred |", f"| {linked} |")
-
-
-def _post_pending_comments(
-    state: pr_state.PRState, repo: str, pr_number: int,
-    deferred_issue_id: str = "", deferred_issue_url: str = "",
-) -> None:
-    """Post any pending comments saved from a prior fix pass."""
-    pending = pr_state.pop_pending_comments(state, source=_SOURCE_FIX_SUMMARY)
-    for comment in pending:
-        body = _inject_deferred_issue_link(
-            comment.body, deferred_issue_id, deferred_issue_url,
-        )
-        url = pc.post_issue_comment(repo, pr_number, body)
-        if url:
-            log.info(f"Posted deferred fix summary: {url}")
-        else:
-            log.error("failed to post deferred fix summary")
-            pr_state.add_pending_comment(state, pr_state.PendingComment(
-                body=comment.body, source=comment.source,
-                updated_at=comment.updated_at,
-            ))
+        log.error("failed to post deferred fix summary")
+    return url
 
 
 def _post_or_defer_summary(
@@ -1244,61 +1253,26 @@ def _post_or_defer_summary(
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    wt_path: Path,
-    ctx: pr_context.ResolvedContext,
     dismissed: list[CommentItem] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
-    deferred_issue_id: str = "",
-    deferred_issue_url: str = "",
     has_comment_items: bool = False,
 ) -> str | None:
     """Post summary immediately or defer to state when discussion is pending.
 
     Returns the comment URL if posted, None if deferred or nothing to post.
+    When deferred, the summary is re-rendered from FixSummary during --resolve.
     """
-    dismissed = dismissed or []
-    issue_comments = issue_comments or []
-    review_body_comments = review_body_comments or []
     if not needs_human and not deferred:
         return _post_fix_summary(
             fixed, needs_human, deferred, cp, repo, pr_number,
             threads_by_id, dismissed=dismissed,
             issue_comments=issue_comments,
             review_body_comments=review_body_comments,
-            deferred_issue_id=deferred_issue_id,
-            deferred_issue_url=deferred_issue_url,
             has_comment_items=has_comment_items,
         )
 
-    # Defer: build body without needs_human/deferred entries and save to state
-    has_unseen = (
-        any(not c.get("seen") for c in issue_comments)
-        or any(not c.get("seen") for c in review_body_comments)
-    )
-    if not fixed and not deferred and not dismissed and not has_unseen:
-        return None
-    body = _build_summary_body(
-        fixed, [], deferred, cp, repo, pr_number, threads_by_id,
-        dismissed=dismissed,
-        issue_comments=issue_comments,
-        review_body_comments=review_body_comments,
-        deferred_issue_id=deferred_issue_id,
-        deferred_issue_url=deferred_issue_url,
-        has_comment_items=has_comment_items,
-    )
-    try:
-        st = pr_state.load_or_init(
-            worktree_root=wt_path, repo=ctx.repo, branch=ctx.branch,
-            pr_number=ctx.pr_number, head_sha=ctx.head_sha,
-        )
-        pr_state.add_pending_comment(st, pr_state.PendingComment(
-            body=body, source=_SOURCE_FIX_SUMMARY, updated_at=pr_state.now_iso(),
-        ))
-        pr_state.save_state(wt_path, st)
-        log.info("Deferred fix summary — will post on resolve")
-    except Exception as exc:
-        log.error(f"failed to defer summary: {exc}")
+    log.info("Deferred fix summary — will render from state on resolve")
     return None
 
 
@@ -1547,7 +1521,7 @@ def _run_comment_fix(
         if all_dismissed or all_needs_human:
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
-                threads_by_id, wt_path, ctx, dismissed=all_dismissed,
+                threads_by_id, dismissed=all_dismissed,
                 issue_comments=report.issue_comments,
                 review_body_comments=report.review_body_comments,
                 has_comment_items=has_items,
@@ -1658,7 +1632,7 @@ def _run_comment_fix(
     summary_url = _post_or_defer_summary(
         all_fixed, all_needs_human, all_deferred, cp,
         ctx.repo, report.pr_number,
-        threads_by_id, wt_path, ctx, dismissed=all_dismissed,
+        threads_by_id, dismissed=all_dismissed,
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
         has_comment_items=has_items,
@@ -1674,6 +1648,7 @@ def _run_comment_fix(
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and pending_deferred,
         reconciled_count=reconciled_count,
+        has_comment_items=has_items,
         updated_at=pr_state.now_iso(),
     ), wt_path, ctx, trail)
 
@@ -1812,10 +1787,12 @@ def _run_threads(trail, args, ctx) -> None:
             issue_id, issue_url = _finalize_deferred(ctx, threads_by_id, trail=trail)
             st.fix.deferred_issue_id = issue_id
             st.fix.deferred_issue_url = issue_url
-            _post_pending_comments(
-                st, repo, pr_number,
-                deferred_issue_id=issue_id, deferred_issue_url=issue_url,
+            summary_url = _render_deferred_summary(
+                st, report, repo, pr_number, threads_by_id,
             )
+            if summary_url:
+                st.fix.summary_url = summary_url
+                st.fix.summary_deferred = False
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")

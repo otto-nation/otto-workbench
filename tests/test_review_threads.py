@@ -841,6 +841,13 @@ class TestInjectDeferredIssueLink:
         assert "Deferred → ENG-456" in result
         assert "[ENG-456]" not in result
 
+    def test_already_linked_is_noop(self, rt):
+        body = "| thread | `f.go:1` | Deferred → [ENG-123](https://linear.app/issue/ENG-123) |"
+        result = rt._inject_deferred_issue_link(
+            body, "ENG-123", "https://linear.app/issue/ENG-123",
+        )
+        assert result == body
+
     def test_preserves_non_deferred_rows(self, rt):
         body = (
             "| fixed thread | `a.go:1` | Fixed (abc1234) |\n"

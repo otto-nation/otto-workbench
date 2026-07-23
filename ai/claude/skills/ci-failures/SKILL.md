@@ -50,23 +50,9 @@ The script outputs:
 
 **Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed (no JSON report in the output), report the result to the user and **stop — do not proceed further**. The script only outputs the JSON failure report when there are actual failures to process.
 
-### 2. Rebase if behind main
+### 2. Classify and group failures
 
-Check the `behind_main` field in the JSON report. If the branch is behind
-`origin/main`:
-
-1. Report to the user: "Branch is N commits behind main — rebasing first."
-2. Run `pr rebase --fix` (auto-resolves conflicts and force-pushes)
-3. After rebase completes, re-run `pr ci 2>&1` to get fresh status against the
-   rebased HEAD — some failures may resolve after rebase
-4. Continue to step 3 with the updated report
-
-If `behind_main` is 0, skip this step and proceed directly to step 3.
-
-### 3. Classify and group failures
-
-From the JSON report (or updated report after rebase), present failures grouped
-by kind in priority order:
+From the JSON report, present failures grouped by kind in priority order:
 
 1. **Regressed** — failures that were fixed but came back (urgent)
 2. **Persisting** — failures from prior run that survived a fix attempt
@@ -102,7 +88,20 @@ Present diagnosis per group and proceed directly to fixing.
 For persisting/regressed failures, include context from prior attempts:
 > "Previously diagnosed as X, fix Y was applied at commit Z — still failing. The prior fix may have been incomplete or targeted the wrong root cause."
 
-### 5. Apply fixes and push
+### 5. Rebase if behind main
+
+Check the `behind_main` field in the JSON report. If the branch is behind
+`origin/main`:
+
+1. Report to the user: "Branch is N commits behind main — rebasing before applying fixes."
+2. Run `pr rebase --fix` (auto-resolves conflicts and force-pushes)
+3. Continue to step 6 with the original failure report — do NOT re-run `pr ci`
+   (the rebased HEAD has no CI results yet; the original run's failures are what
+   we need to fix)
+
+If `behind_main` is 0, skip this step.
+
+### 6. Apply fixes and push
 
 **Worktree switch:** If CWD is not the branch's worktree, switch immediately
 using `wt switch -c <branch>` — do not ask, just switch and proceed with fixes.
@@ -119,7 +118,7 @@ git push
 
 Group all fixes into a single commit. The state file is updated automatically on the next `pr ci` invocation.
 
-### 6. Monitor (on re-invocation)
+### 7. Monitor (on re-invocation)
 
 When re-invoked after a push:
 1. Fetch the new run triggered by the push
@@ -136,7 +135,7 @@ New: 1 (bats test_cleanup)
 
 Re-enter Step 4 for persisting failures with context of what was already tried.
 
-### 7. Report
+### 8. Report
 
 Print:
 - Number of fixes applied

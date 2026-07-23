@@ -351,6 +351,7 @@ def _build_tracking_file(
     fixable_items: list[dict] | None = None,
 ) -> None:
     """Build the tracking markdown file for the fix agent."""
+    diff_cache: dict[str, str] = {}
     sections = []
     for thread in fixable:
         tid = thread["id"]
@@ -363,7 +364,9 @@ def _build_tracking_file(
         comments = report_thread.get("comments", [])
         conversation = _thread_comment_text(comments)
         code_ctx = _code_context_for_thread(file_path, line, repo_dir)
-        diff_ctx = _diff_context_for_file(file_path, repo_dir)
+        if file_path not in diff_cache:
+            diff_cache[file_path] = _diff_context_for_file(file_path, repo_dir)
+        diff_ctx = diff_cache[file_path]
 
         section = f"## <!-- thread:{tid} --> {file_path}:{line} — @{reviewer}\n\n"
         if summary:
@@ -387,7 +390,9 @@ def _build_tracking_file(
 
         location = f"{file_path}:{line}" if file_path and line else (file_path or "general")
         code_ctx = _code_context_for_thread(file_path, line, repo_dir) if file_path and line else ""
-        diff_ctx = _diff_context_for_file(file_path, repo_dir) if file_path else ""
+        if file_path and file_path not in diff_cache:
+            diff_cache[file_path] = _diff_context_for_file(file_path, repo_dir)
+        diff_ctx = diff_cache.get(file_path, "")
 
         section = f"## <!-- item:{item_id} --> {location} — @{reviewer}\n\n"
         if summary:
@@ -1587,8 +1592,6 @@ def _run_comment_fix(
     max_turns = _fix_turn_budget(total_items)
     max_budget = _fix_budget_usd(total_items)
 
-    before = _count_unchecked(tracking_file)
-
     head_before = _get_head_sha(wt_path)
 
     main_wt = _find_and_update_main_worktree(wt_path)
@@ -1607,9 +1610,6 @@ def _run_comment_fix(
     _invoke_fix_agent(prompt, wt_path, main_wt,
                       max_turns=max_turns, max_budget=max_budget)
     log.blank()
-
-    after = _count_unchecked(tracking_file)
-    fixed_count = before - after
 
     fixed, deferred, fixed_items, deferred_items = _parse_tracking_results(
         tracking_file, fixable, fixable_items=fixable_items,

@@ -711,3 +711,110 @@ def test_rebase_if_behind_continues_on_failure():
         result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
     assert result is False
     trail.warn.assert_called()
+
+
+# ── _parse_test_artifact ─────────────────────────────────────────────
+
+
+def test_parse_test_artifact_jsonl(tmp_path):
+    """Artifact with Go test JSONL should extract failure output."""
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    jsonl = artifact_dir / "test-results.json"
+    lines = [
+        '{"Action":"output","Package":"github.com/foo/tests","Output":"=== RUN   TestFoo\\n"}',
+        '{"Action":"output","Package":"github.com/foo/tests","Output":"    foo_test.go:42: expected 1, got 2\\n"}',
+        '{"Action":"output","Package":"github.com/foo/tests","Output":"--- FAIL: TestFoo (0.01s)\\n"}',
+        '{"Action":"fail","Package":"github.com/foo/tests","Elapsed":0.01}',
+    ]
+    jsonl.write_text("\n".join(lines))
+
+    result = ci_check._parse_test_artifact(str(artifact_dir))
+    assert "--- FAIL: TestFoo" in result
+    assert "expected 1, got 2" in result
+
+
+def test_parse_test_artifact_returns_empty_on_no_failures(tmp_path):
+    """Artifact with all passing tests returns empty."""
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    jsonl = artifact_dir / "test-results.json"
+    lines = [
+        '{"Action":"output","Package":"github.com/foo/tests","Output":"=== RUN   TestFoo\\n"}',
+        '{"Action":"pass","Package":"github.com/foo/tests","Elapsed":0.01}',
+    ]
+    jsonl.write_text("\n".join(lines))
+
+    result = ci_check._parse_test_artifact(str(artifact_dir))
+    assert result == ""
+
+
+# ── _annotations_to_items headline from context ─────────────────────
+
+
+def test_annotations_to_items_headline_from_context():
+    """When annotation text has no headline, derive it from context."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
+    ]
+    context = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, got 2"
+    items = ci_check._annotations_to_items(annotations, "Test: svc-payment", source_run_id=100, context=context)
+    assert len(items) == 1
+    assert "FAIL: TestFoo" in items[0].headline
+
+
+# ── _fetch_job_failure artifact fallback ─────────────────────────────
+
+
+def test_fetch_job_failure_uses_artifact_fallback():
+    """When annotations are uninformative and logs are empty, artifact fallback triggers."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
+    ]
+    job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10,
+           "_source_run_id": 100}
+    run_data = {"databaseId": 100}
+
+    artifact_context = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, got 2"
+
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST)):
+            with patch("ci_check._fetch_test_artifact", return_value=artifact_context):
+                result = ci_check._fetch_job_failure("owner/repo", job, run_data)
+
+    assert result is not None
+    assert result["items"][0].context == artifact_context
+    assert "FAIL: TestFoo" in result["items"][0].headline
+
+
+def test_fetch_job_failure_skips_artifact_when_logs_succeed():
+    """When log fallback produces context, artifact download is not attempted."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
+    ]
+    log_context = "--- FAIL: TestBar (0.02s)\n    bar_test.go:10: wrong result"
+    log_annotations = [{"message": log_context, "path": "", "start_line": 0, "title": ""}]
+    job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10}
+    run_data = {"databaseId": 100}
+
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback", return_value=(log_annotations, [log_context], ci_check.ci.FailureKind.TEST)):
+            with patch("ci_check._fetch_test_artifact") as mock_artifact:
+                ci_check._fetch_job_failure("owner/repo", job, run_data)
+    mock_artifact.assert_not_called()
+
+
+def test_fetch_job_failure_no_artifact_for_lint():
+    """LINT failures do not trigger artifact download even when uninformative."""
+    uninformative_annotations = [
+        {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": "", "start_line": 0},
+    ]
+    job = {"name": "shellcheck", "conclusion": "failure", "databaseId": 10}
+    run_data = {"databaseId": 100}
+
+    with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
+        with patch("ci_check._log_fallback") as mock_log:
+            with patch("ci_check._fetch_test_artifact") as mock_artifact:
+                ci_check._fetch_job_failure("owner/repo", job, run_data)
+    mock_log.assert_not_called()
+    mock_artifact.assert_not_called()

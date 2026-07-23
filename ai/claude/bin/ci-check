@@ -16,8 +16,10 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -169,7 +171,7 @@ def _annotations_to_items(
             diagnosis=None,
             fix_sha=None,
             outcome=None,
-            headline=ci.extract_headline(text),
+            headline=ci.extract_headline(text) or ci.extract_headline(context),
             source_run_id=source_run_id,
             context=context,
         ))
@@ -190,10 +192,24 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
     )
 
 
+_GENERIC_MESSAGES = (
+    "process completed with exit code",
+)
+
+
 def _annotations_uninformative(annotations: list[dict]) -> bool:
-    """True when non-notice annotations exist but carry no actionable file context."""
+    """True when non-notice annotations carry no actionable diagnostic context."""
     non_notices = [a for a in annotations if a.get("annotation_level") != "notice"]
-    return bool(non_notices) and all(not a.get("path") for a in non_notices)
+    if not non_notices:
+        return True
+    for a in non_notices:
+        path = a.get("path", "")
+        msg = (a.get("message", "") or "").lower()
+        has_source_path = bool(path) and "." in path.rsplit("/", 1)[-1]
+        has_specific_msg = not any(g in msg for g in _GENERIC_MESSAGES)
+        if has_source_path and has_specific_msg:
+            return False
+    return True
 
 
 def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> tuple[list[dict], list[str], ci.FailureKind]:
@@ -212,6 +228,67 @@ def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) ->
     return annotations, [context], ci.classify_job(job.get("name", "unknown"), [context])
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    """Read a JSONL file into a list of dicts, returning [] on any parse error."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except (json.JSONDecodeError, KeyError):
+            return []
+    return entries
+
+
+def _parse_test_artifact(artifact_dir: str) -> str:
+    """Parse a downloaded test-results artifact directory for failure output."""
+    jsonl_files = sorted(Path(artifact_dir).glob("*.json"))
+    if not jsonl_files:
+        return ""
+    entries = _read_jsonl(jsonl_files[0])
+    fail_packages = {e.get("Package", "") for e in entries if e.get("Action") == "fail"}
+    if not fail_packages:
+        return ""
+    output_lines = [
+        e.get("Output", "").rstrip()
+        for e in entries
+        if e.get("Action") == "output" and e.get("Package") in fail_packages
+    ]
+    if not output_lines:
+        return ""
+    return ci.extract_failure_context("\n".join(output_lines), ci.FailureKind.TEST)
+
+
+def _fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
+    """Download and parse a test-results artifact for failure context."""
+    slug = job_name.lower()
+    for prefix in ("test: ", "test "):
+        if slug.startswith(prefix):
+            slug = slug[len(prefix):]
+            break
+    slug = slug.replace(" ", "-")
+    artifact_name = f"test-results-{slug}"
+
+    tmpdir = tempfile.mkdtemp(prefix="ci-artifact-")
+    try:
+        result = subprocess.run(
+            ["gh", "run", "download", str(run_id), "--repo", repo,
+             "--name", artifact_name, "--dir", tmpdir],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return ""
+        return _parse_test_artifact(tmpdir)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def _extract_failed_step(job: dict) -> str | None:
     """Return the name of the first failed step in a job, if available."""
     for step in job.get("steps", []):
@@ -227,6 +304,17 @@ class _JobFailure(TypedDict):
     failed_step: str | None
 
 
+def _make_result(job_name, kind, annotations, source_run_id, failed_step, context=None):
+    """Build the _JobFailure dict from resolved annotations."""
+    if annotations:
+        items = _annotations_to_items(annotations, job_name, source_run_id, context=context)
+    else:
+        items = [_fallback_item(job_name, source_run_id)]
+    if not items:
+        return None
+    return {"job_name": job_name, "kind": kind, "items": items, "failed_step": failed_step}
+
+
 def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | None:
     """Fetch annotations/logs for a single failed job. Thread-safe."""
     job_name = job.get("name", "unknown")
@@ -237,22 +325,24 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | No
     annotations = _fetch_annotations(repo, job_id) if job_id else []
     annotation_texts = [a.get("message", "") for a in annotations]
     kind = ci.classify_job(job_name, annotation_texts)
-    log_context = None
 
-    if not annotations:
-        annotations, annotation_texts, kind = _log_fallback(repo, job, run_data, kind)
-    elif kind in (ci.FailureKind.BUILD, ci.FailureKind.TEST) and _annotations_uninformative(annotations):
-        result = _log_fallback(repo, job, run_data, kind)
-        log_context, kind = (result[1][0], result[2]) if result[0] else (None, kind)
+    if kind not in (ci.FailureKind.BUILD, ci.FailureKind.TEST):
+        return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
-    if annotations:
-        items = _annotations_to_items(annotations, job_name, source_run_id, context=log_context)
-    else:
-        items = [_fallback_item(job_name, source_run_id)]
-    if not items:
-        return None
+    if annotations and not _annotations_uninformative(annotations):
+        return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
-    return {"job_name": job_name, "kind": kind, "items": items, "failed_step": failed_step}
+    # Annotations absent or uninformative — try logs, then artifact
+    have_original = bool(annotations)
+    log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
+    ctx = log_texts[0] if log_ann else _fetch_test_artifact(repo, source_run_id, job_name)
+
+    if ctx and have_original:
+        return _make_result(job_name, log_kind if log_ann else kind, annotations, source_run_id, failed_step, context=ctx)
+    if ctx:
+        annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
+        kind = ci.classify_job(job_name, [ctx])
+    return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
 
 def _parse_run(repo: str, run_data: dict) -> ci.RunState:

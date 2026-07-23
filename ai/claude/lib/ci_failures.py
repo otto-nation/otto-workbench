@@ -110,6 +110,7 @@ def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
 
 # ── Log extraction ────────────────────────────────────────────────────────
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
 
 _MAX_HEADLINE_LEN = 200
@@ -131,7 +132,8 @@ class LogMarker:
 
 LOG_MARKERS: list[LogMarker] = [
     LogMarker("go-test-fail", re.compile(r"--- FAIL:"), FailureKind.TEST),
-    LogMarker("go-pkg-fail", re.compile(r"^FAIL\t"), FailureKind.TEST),
+    LogMarker("go-pkg-fail", re.compile(r"^FAIL\s+"), FailureKind.TEST),
+    LogMarker("go-testsum-fail", re.compile(r"=== FAIL"), FailureKind.TEST),
     LogMarker("assertion-error", re.compile(r"AssertionError|AssertError|assert .* ==", re.IGNORECASE), FailureKind.TEST),
     LogMarker("go-compiler", re.compile(r"\S+\.go:\d+:\d+:"), FailureKind.BUILD, before=2, after=30),
     LogMarker("gha-error", re.compile(r"##\[error\]"), FailureKind.BUILD, before=2, after=10),
@@ -142,6 +144,7 @@ LOG_MARKERS: list[LogMarker] = [
     LogMarker("test-failed", re.compile(r"FAILED", re.IGNORECASE), FailureKind.TEST),
     LogMarker("codegen-drift", re.compile(r"locally and commit"), FailureKind.BUILD, before=5, after=20),
     LogMarker("diff-stat-summary", re.compile(r"\d+ files? changed"), FailureKind.BUILD, before=30, after=5),
+    LogMarker("service-error", re.compile(r"\[ERROR\]|\bERROR:"), FailureKind.TEST, before=5, after=20),
 ]
 
 _HEADLINE_EXTRA: list[re.Pattern] = [
@@ -176,9 +179,9 @@ def extract_headline(context: str | None, max_len: int = _MAX_HEADLINE_LEN) -> s
 
 
 def _strip_timestamps(text: str) -> str:
-    """Remove GitHub Actions timestamp prefixes from log lines."""
+    """Remove GitHub Actions timestamp prefixes and ANSI escapes from log lines."""
     return "\n".join(
-        _TIMESTAMP_RE.sub("", line) for line in text.splitlines()
+        _ANSI_RE.sub("", _TIMESTAMP_RE.sub("", line)) for line in text.splitlines()
     )
 
 
@@ -212,7 +215,7 @@ def _extract_test_context(lines: list[str]) -> str:
     """Extract test failure output — captures from first failure marker to summary."""
     fail_indices = []
     for i, line in enumerate(lines):
-        if re.match(r"--- FAIL:", line) or re.match(r"FAIL\t", line):
+        if re.match(r"--- FAIL:", line) or re.match(r"FAIL\s+", line) or re.match(r"=== FAIL", line):
             fail_indices.append(i)
         elif "FAILED" in line.upper() and ("assert" in line.lower() or "error" in line.lower()):
             fail_indices.append(i)

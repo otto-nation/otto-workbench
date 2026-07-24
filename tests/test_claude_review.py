@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -918,6 +919,10 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
         "repo": "org/my-repo", "pr_number": "42", "head_sha": "abc",
     }))
 
+    old_time = time.time() - 8 * 86400
+    for f in d.iterdir():
+        os.utime(f, (old_time, old_time))
+
     def side_effect(cmd, **kwargs):
         m = MagicMock()
         if "gh" in cmd[0] and "pr" in cmd:
@@ -943,6 +948,10 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
         "repo": "org/my-repo", "pr_number": "99", "head_sha": "def",
     }))
 
+    old_time = time.time() - 8 * 86400
+    for f in d.iterdir():
+        os.utime(f, (old_time, old_time))
+
     def side_effect(cmd, **kwargs):
         m = MagicMock()
         if "gh" in cmd[0] and "pr" in cmd:
@@ -958,6 +967,43 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
 
     assert d.exists()
     assert (d / "review.md").exists()
+
+
+@patch("review_gc.subprocess.run")
+def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
+    d = reviews_dir / "my-repo-50"
+    d.mkdir()
+    (d / "review.md").write_text("review content")
+    (d / "meta.json").write_text(json.dumps({
+        "repo": "org/my-repo", "pr_number": "50", "head_sha": "abc",
+    }))
+
+    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=0, stdout="MERGED\n")
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert d.exists(), "recently-modified merged review should be retained"
+
+
+@patch("review_gc.subprocess.run")
+def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
+    d = reviews_dir / "my-repo-51"
+    d.mkdir()
+    (d / "review.md").write_text("review content")
+    (d / "meta.json").write_text(json.dumps({
+        "repo": "org/my-repo", "pr_number": "51", "head_sha": "abc",
+    }))
+    (d / "pipeline.json").write_text(json.dumps({
+        "synthesis_failed": "all groups failed",
+    }))
+
+    old_time = time.time() - 15 * 86400
+    for f in d.iterdir():
+        os.utime(f, (old_time, old_time))
+
+    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=0, stdout="MERGED\n")
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert d.exists(), "failed review within 30-day window should be retained"
 
 
 # ── _confirm ──────────────────────────────────────────────────────────────────

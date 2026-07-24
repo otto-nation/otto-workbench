@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -75,7 +76,29 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _env_key_status(key: str) -> str:
+    val = os.environ.get(key)
+    if val is None:
+        return "absent"
+    return "empty" if val == "" else "set"
+
+
+def _log_ai_backend(trail) -> None:
+    env = os.environ
+    trail.info("ai_backend", "resolved AI backend configuration", data={
+        "ai_backend": env.get("AI_BACKEND", "claude"),
+        "use_vertex": env.get("CLAUDE_CODE_USE_VERTEX", ""),
+        "vertex_project": env.get("ANTHROPIC_VERTEX_PROJECT_ID", ""),
+        "vertex_region": env.get("CLOUD_ML_REGION", ""),
+        "base_url": env.get("ANTHROPIC_BASE_URL", ""),
+        "anthropic_api_key": _env_key_status("ANTHROPIC_API_KEY"),
+        "anthropic_auth_token": _env_key_status("ANTHROPIC_AUTH_TOKEN"),
+        "model": env.get("ANTHROPIC_MODEL", ""),
+    })
+
+
 def _run_orchestrate(trail, args, repo, session_log) -> None:
+    _log_ai_backend(trail)
     pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
     prior_review = ""

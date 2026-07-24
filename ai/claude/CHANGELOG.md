@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.2](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.1...otto-ai-tools-v1.40.2) (2026-07-24)
+
+
+### Bug Fixes
+
+* **pr-comments:** add permalinks for comment items and reviewer column in summary ([#544](https://github.com/otto-nation/otto-workbench/issues/544)) ([f0d98f5](https://github.com/otto-nation/otto-workbench/commit/f0d98f5973d95b8927e226d669d06080d8017e7b))
+
 ## [1.40.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.0...otto-ai-tools-v1.40.1) (2026-07-24)
 
 

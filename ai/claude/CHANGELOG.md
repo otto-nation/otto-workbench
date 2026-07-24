@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.0...otto-ai-tools-v1.40.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **review:** retry synthesis on transient API errors; detect self-review fallback ([#541](https://github.com/otto-nation/otto-workbench/issues/541)) ([89b02d9](https://github.com/otto-nation/otto-workbench/commit/89b02d92f79f5a227d8128096a5cd372c7fa3bbb))
+
 ## [1.40.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.39.2...otto-ai-tools-v1.40.0) (2026-07-24)
 
 

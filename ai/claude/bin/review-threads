@@ -526,44 +526,6 @@ def _parse_tracking_results(
     return result
 
 
-def _changed_source_files(wt_path: Path, head_before: str) -> set[str]:
-    """Return set of files changed since head_before (committed + uncommitted)."""
-    files: set[str] = set()
-    for cmd in (
-        ["git", "-C", str(wt_path), "diff", "--name-only", f"{head_before}..HEAD"],
-        ["git", "-C", str(wt_path), "diff", "--name-only"],
-    ):
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            files.update(line.strip() for line in result.stdout.splitlines() if line.strip())
-    return files
-
-
-def _reconcile_fix_results(
-    fixed: list[CommentItem],
-    deferred: list[CommentItem],
-    wt_path: Path,
-    head_before: str,
-) -> tuple[list[CommentItem], list[CommentItem], int]:
-    """Move deferred entries to fixed if their file was modified by the agent.
-
-    Returns (fixed, deferred, reconciled_count).
-    """
-    changed = _changed_source_files(wt_path, head_before)
-    if not changed:
-        return fixed, deferred, 0
-    reconciled = list(fixed)
-    still_deferred = []
-    count = 0
-    for entry in deferred:
-        if entry.file and entry.file in changed:
-            reconciled.append(entry)
-            count += 1
-        else:
-            still_deferred.append(entry)
-    return reconciled, still_deferred, count
-
-
 @dataclass
 class CommitPushResult:
     sha: str | None
@@ -1451,7 +1413,6 @@ def _retry_fix_pass(
     )
 
     log.info(f"Retry pass — {retry_count} deferred items (max_turns={retry_turns})...")
-    head_before = _get_head_sha(wt_path)
     _invoke_fix_agent(prompt, wt_path, main_wt,
                       max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count))
     log.blank()
@@ -1460,20 +1421,10 @@ def _retry_fix_pass(
         tracking_file, retry_fixable, fixable_items=retry_items,
     )
 
-    result.fixed, result.deferred, rc1 = _reconcile_fix_results(
-        result.fixed, result.deferred, wt_path, head_before,
-    )
-    result.fixed_items, result.deferred_items, rc2 = _reconcile_fix_results(
-        result.fixed_items, result.deferred_items, wt_path, head_before,
-    )
-
-    result.reconciled_count = rc1 + rc2
-
     if trail:
         trail.info("fix_retry", "retry pass complete",
                     data={"fixed": len(result.fixed), "fixed_items": len(result.fixed_items),
-                          "still_deferred": len(result.deferred) + len(result.deferred_items),
-                          "reconciled": result.reconciled_count})
+                          "still_deferred": len(result.deferred) + len(result.deferred_items)})
 
     return result
 
@@ -1581,14 +1532,6 @@ def _run_comment_fix(
         tracking_file, fixable, fixable_items=fixable_items,
     )
 
-    tracking.fixed, tracking.deferred, rc1 = _reconcile_fix_results(
-        tracking.fixed, tracking.deferred, wt_path, head_before,
-    )
-    tracking.fixed_items, tracking.deferred_items, rc2 = _reconcile_fix_results(
-        tracking.fixed_items, tracking.deferred_items, wt_path, head_before,
-    )
-    reconciled_count = rc1 + rc2
-
     all_deferred_pre_retry = tracking.deferred + tracking.deferred_items
     if all_deferred_pre_retry:
         retry_result = _retry_fix_pass(
@@ -1602,7 +1545,6 @@ def _run_comment_fix(
         tracking.deferred = retry_result.deferred
         tracking.fixed_items = tracking.fixed_items + retry_result.fixed_items
         tracking.deferred_items = retry_result.deferred_items
-        reconciled_count += retry_result.reconciled_count
 
     fixed_count = len(tracking.fixed) + len(tracking.fixed_items)
     deferred_count = len(tracking.deferred) + len(tracking.deferred_items)
@@ -1649,7 +1591,6 @@ def _run_comment_fix(
         replies_posted=replies_posted,
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and pending_deferred,
-        reconciled_count=reconciled_count,
         has_comment_items=has_items,
         updated_at=pr_state.now_iso(),
     ), wt_path, ctx, trail)
@@ -1664,7 +1605,6 @@ def _run_comment_fix(
         replies_posted=replies_posted,
         summary_url=summary_url,
         summary_deferred=summary_url is None and pending_deferred,
-        reconciled_count=reconciled_count,
         max_turns=max_turns,
         max_budget=max_budget,
     )
@@ -1829,7 +1769,6 @@ def _run_threads(trail, args, ctx) -> None:
                        data={"fixable": fixable_count,
                              "deferred": len(fix_pass.deferred),
                              "dismissed": len(fix_pass.dismissed),
-                             "reconciled": fix_pass.reconciled_count,
                              "max_turns": fix_pass.max_turns,
                              "max_budget": fix_pass.max_budget,
                              "commit_sha": fix_pass.commit_sha,

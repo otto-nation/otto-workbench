@@ -956,6 +956,15 @@ def _retry_failed_groups(
     if not retryable:
         return failed_groups
 
+    # Circuit breaker: if all groups failed with the same reason, the cause is
+    # systemic (wrong credentials, model unavailable) — retries won't help.
+    if len(failed_groups) >= CONSECUTIVE_FAIL_THRESHOLD:
+        reasons = {r for _, r in failed_groups if not r.startswith("skipped: ")}
+        if len(reasons) == 1:
+            reason = reasons.pop()
+            log.warn(f"All {len(failed_groups)} groups failed with same error ({reason}) — skipping retries")
+            return failed_groups
+
     group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
 
     log.info(f"Retrying {len(retryable)} failed groups...")
@@ -1149,7 +1158,7 @@ def _phase_synthesis(
     synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
 
-    _touch(job.review_file)
+    Path(job.review_file).write_text("")
 
     max_turns = _synthesis_max_turns(merged_content)
     prompt = build_prompt(
@@ -1171,7 +1180,7 @@ def _phase_synthesis(
 
     if _synthesis_is_transient_failure(job.review_file, synthesis_log):
         log.warn("Synthesis hit transient API error — retrying once...")
-        _touch(job.review_file)
+        Path(job.review_file).write_text("")
         log.blank()
         rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
         log.blank()

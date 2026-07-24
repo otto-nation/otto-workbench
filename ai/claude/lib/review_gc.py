@@ -16,10 +16,12 @@ from review_common import (
     FILENAME_PIPELINE_STATE,
     REVIEW_EXT,
     REVIEWS_DIR,
+    read_pipeline_status,
     read_review_meta,
 )
 
 GC_STALE_DAYS = 7
+GC_FAILED_STALE_DAYS = 30
 PRUNE_MAX_FILES = 10
 
 
@@ -79,6 +81,10 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
     return cleaned
 
 
+def _has_pipeline_failure(review_dir: Path) -> bool:
+    return read_pipeline_status(review_dir) == "error"
+
+
 def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE_MAX_FILES) -> int:
     """Remove review directories for merged/closed PRs. Returns count pruned."""
     reviews_dir = reviews_dir or REVIEWS_DIR
@@ -98,6 +104,11 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
 
         checked += 1
 
+        review_dir = meta_file.parent
+        stale_days = GC_FAILED_STALE_DAYS if _has_pipeline_failure(review_dir) else GC_STALE_DAYS
+        if not _dir_is_all_stale(review_dir, stale_days):
+            continue
+
         try:
             r = subprocess.run(
                 ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
@@ -109,7 +120,6 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
             state = ""
 
         if state in ("MERGED", "CLOSED"):
-            review_dir = meta_file.parent
             shutil.rmtree(review_dir, ignore_errors=True)
             log.info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
             pruned += 1

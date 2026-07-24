@@ -1713,6 +1713,136 @@ class TestPhaseSynthesis:
         result = Path(job.review_file).read_text()
         assert ro.FALLBACK_SUMMARY in result
 
+    def test_transient_error_retries_then_succeeds(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+        review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
+        calls = []
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            calls.append(len(calls))
+            if len(calls) == 1:
+                Path(log).write_text(
+                    '{"type":"result","subtype":"success","is_error":true,'
+                    '"result":"API Error: Connection to the API was lost (FailedToOpenSocket)."}\n'
+                )
+                return 1
+            Path(kwargs.get("review_file", job.review_file)).write_text(review_content)
+            Path(log).write_text("")
+            return 0
+
+        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+
+        ro._phase_synthesis(job, "", 3, "merged content")
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert "## Summary" in result
+        assert ro.FALLBACK_SUMMARY not in result
+        assert len(calls) == 2
+
+    def test_transient_error_retries_then_falls_back(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+        calls = []
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            calls.append(len(calls))
+            Path(log).write_text(
+                '{"type":"result","subtype":"success","is_error":true,'
+                '"result":"API Error: Connection to the API was lost (FailedToOpenSocket)."}\n'
+            )
+            return 1
+
+        self._patch_pipeline(
+            monkeypatch, ro,
+            invoke_agent=mock_invoke,
+            _try_recover_output=lambda *a: False,
+        )
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in result
+        assert len(calls) == 2
+
+    def test_non_transient_error_does_not_retry(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+        calls = []
+
+        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+            from pathlib import Path
+            calls.append(len(calls))
+            Path(log).write_text(
+                '{"type":"result","subtype":"success","is_error":true,'
+                '"result":"agent error: something broke"}\n'
+            )
+            return 1
+
+        self._patch_pipeline(
+            monkeypatch, ro,
+            invoke_agent=mock_invoke,
+            _try_recover_output=lambda *a: False,
+        )
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        from pathlib import Path
+        result = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in result
+        assert len(calls) == 1
+
+
+class TestSynthesisFailedTracking:
+    def _make_state(self, ro):
+        return ro.PipelineState(
+            head_sha="abc123",
+            group_names=["grp-1"],
+            holistic_done=True,
+            groups_done=[1],
+        )
+
+    def _make_job(self, ro, tmp_path, mode="pr"):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42",
+            pr=ro.PRMetadata(title="test PR", body="", head="feat", base="main",
+                             head_sha="abc123", additions=100, deletions=50,
+                             changed_files=10, files=[]),
+            ctx=ro.PRContext(),
+            wt_path=str(tmp_path / "wt"),
+            review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode=ro.MODE_PR if mode == "pr" else ro.MODE_SELF,
+        )
+
+    def test_self_review_fallback_detected(self, ro, tmp_path, monkeypatch):
+        """Self-reviews without verdict must still detect mechanical fallback."""
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path, mode="self")
+        state = self._make_state(ro)
+
+        def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
+            from pathlib import Path
+            fallback = ro._build_mechanical_fallback(
+                job, count, merged, skipped_groups=skipped_groups,
+            )
+            Path(job.review_file).write_text(fallback)
+            return str(tmp_path / "synthesis.jsonl")
+
+        monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [], 0, 0.0, 20.0,
+        )
+        assert state.synthesis_failed == "mechanical fallback"
+
 
 class TestIsRetryable:
     def test_max_turns_is_retryable(self, ro):
@@ -1735,6 +1865,38 @@ class TestIsRetryable:
 
     def test_skipped_other_reason_not_retryable(self, ro):
         assert ro._is_retryable("skipped: Model not available — aborting remaining 4 groups") is False
+
+    def test_transient_socket_error_is_retryable(self, ro):
+        reason = "agent error: API Error: Connection to the API was lost (FailedToOpenSocket). This is usually temporary — try again."
+        assert ro._is_retryable(reason) is True
+
+    def test_transient_connection_refused_is_retryable(self, ro):
+        reason = "agent error: API Error: Connection to the API was lost (ConnectionRefused). This is usually temporary — try again."
+        assert ro._is_retryable(reason) is True
+
+    def test_transient_connection_reset_is_retryable(self, ro):
+        reason = "agent error: Connection to the API was lost (ConnectionReset)"
+        assert ro._is_retryable(reason) is True
+
+    def test_transient_etimedout_is_retryable(self, ro):
+        assert ro._is_retryable("agent error: ETIMEDOUT") is True
+
+
+class TestIsTransientError:
+    def test_socket_error(self, ro):
+        assert ro.is_transient_error("agent error: API Error: Connection to the API was lost (FailedToOpenSocket).") is True
+
+    def test_connection_refused(self, ro):
+        assert ro.is_transient_error("agent error: ConnectionRefused") is True
+
+    def test_non_agent_error_prefix(self, ro):
+        assert ro.is_transient_error("FailedToOpenSocket") is False
+
+    def test_model_error_not_transient(self, ro):
+        assert ro.is_transient_error("agent error: model not available") is False
+
+    def test_generic_agent_error_not_transient(self, ro):
+        assert ro.is_transient_error("agent error: something broke") is False
 
 
 class TestRetryTurns:

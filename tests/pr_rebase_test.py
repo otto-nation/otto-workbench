@@ -559,6 +559,207 @@ def test_resolve_one_normal_conflict_falls_through_to_ai():
         mock_ai.assert_called_once()
 
 
+# ── Chunked conflict resolution ──────────────────────────────────────────
+
+
+def _make_large_file(num_lines, conflicts):
+    """Build a file with num_lines of filler and conflict blocks at given positions.
+
+    conflicts: list of (line_index, ours_text, theirs_text)
+    """
+    lines = [f"line {i}\n" for i in range(num_lines)]
+    offset = 0
+    for pos, ours, theirs in conflicts:
+        block = [
+            "<<<<<<< HEAD\n",
+            f"{ours}\n",
+            "=======\n",
+            f"{theirs}\n",
+            ">>>>>>> abc123\n",
+        ]
+        lines[pos + offset:pos + offset + 1] = block
+        offset += len(block) - 1
+    return "".join(lines)
+
+
+def test_extract_conflict_blocks_single():
+    content = _make_large_file(300, [(50, "old", "new")])
+    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    assert len(blocks) == 1
+    assert blocks[0]["index"] == 1
+    assert blocks[0]["start"] == 50
+    assert blocks[0]["end"] == 54
+    assert "<<<<<<< HEAD" in blocks[0]["conflict"]
+    assert ">>>>>>> abc123" in blocks[0]["conflict"]
+    assert blocks[0]["context_before"].count("\n") == 30
+    assert blocks[0]["context_after"].count("\n") == 30
+
+
+def test_extract_conflict_blocks_multiple():
+    content = _make_large_file(500, [(50, "a", "b"), (200, "c", "d")])
+    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    assert len(blocks) == 2
+    assert blocks[0]["index"] == 1
+    assert blocks[1]["index"] == 2
+    assert blocks[0]["start"] == 50
+    assert blocks[1]["start"] == 204
+
+
+def test_extract_conflict_blocks_at_file_start():
+    content = "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\nrest\n"
+    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    assert len(blocks) == 1
+    assert blocks[0]["start"] == 0
+    assert blocks[0]["context_before"] == ""
+
+
+def test_extract_conflict_blocks_at_file_end():
+    content = "line 1\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n"
+    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    assert len(blocks) == 1
+    assert blocks[0]["context_after"] == ""
+
+
+def test_should_chunk_small_file():
+    content = "x\n" * 100
+    blocks = [{"start": 10, "end": 15}]
+    assert pr_rebase_cli._should_chunk(content, blocks) is False
+
+
+def test_should_chunk_large_file_small_conflict():
+    content = "x\n" * 500
+    blocks = [{"start": 100, "end": 105}]
+    assert pr_rebase_cli._should_chunk(content, blocks) is True
+
+
+def test_should_chunk_large_file_mostly_conflicts():
+    content = "x\n" * 500
+    blocks = [{"start": 0, "end": 300}]
+    assert pr_rebase_cli._should_chunk(content, blocks) is False
+
+
+def test_build_chunked_prompt_structure():
+    blocks = [{
+        "index": 1,
+        "start": 50, "end": 54,
+        "conflict": "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+        "context_before": "before line\n",
+        "context_after": "after line\n",
+    }]
+    prompt = pr_rebase_cli._build_chunked_prompt(
+        "main.go", blocks, "abc123", "feat: change",
+        commit_diff="diff content",
+    )
+    assert "--- CONFLICT 1 ---" in prompt
+    assert "--- END CONFLICT 1 ---" in prompt
+    assert "before line" in prompt
+    assert "after line" in prompt
+    assert "<<<RESOLVED>>>_1" in prompt
+    assert "<<<END_RESOLVED>>>_1" in prompt
+    assert "diff content" in prompt
+    assert "BASE VERSION" not in prompt
+
+
+def test_parse_chunked_resolutions_single():
+    stdout = "<<<RESOLVED>>>_1\nresolved line\n<<<END_RESOLVED>>>_1\n"
+    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 1)
+    assert reason == ""
+    assert result == ["resolved line\n"]
+
+
+def test_parse_chunked_resolutions_multiple():
+    stdout = (
+        "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
+        "<<<RESOLVED>>>_2\nsecond\n<<<END_RESOLVED>>>_2\n"
+    )
+    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 2)
+    assert reason == ""
+    assert result == ["first\n", "second\n"]
+
+
+def test_parse_chunked_resolutions_missing_marker():
+    stdout = "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
+    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 2)
+    assert result is None
+    assert "block_2" in reason
+
+
+def test_parse_chunked_resolutions_surviving_markers():
+    stdout = "<<<RESOLVED>>>_1\n<<<<<<< HEAD\nstill broken\n<<<END_RESOLVED>>>_1\n"
+    result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 1)
+    assert result is None
+    assert "surviving_conflict_marker" in reason
+
+
+def test_splice_resolutions_single():
+    content = "line 0\nline 1\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\nline 7\n"
+    blocks = [{"start": 2, "end": 6}]
+    resolutions = ["merged\n"]
+    result = pr_rebase_cli._splice_resolutions(content, blocks, resolutions)
+    assert result == "line 0\nline 1\nmerged\nline 7\n"
+
+
+def test_splice_resolutions_multiple():
+    lines = [f"line {i}\n" for i in range(20)]
+    lines[5:6] = ["<<<<<<< HEAD\na\n=======\nb\n>>>>>>> abc\n"]
+    lines[14:15] = ["<<<<<<< HEAD\nc\n=======\nd\n>>>>>>> abc\n"]
+    content = "".join(lines)
+    blocks = pr_rebase_cli._extract_conflict_blocks(content)
+    resolutions = ["merged_1\n", "merged_2\n"]
+    result = pr_rebase_cli._splice_resolutions(content, blocks, resolutions)
+    assert "<<<<<<< " not in result
+    assert "merged_1" in result
+    assert "merged_2" in result
+
+
+def test_resolve_single_file_uses_chunked_for_large_file(tmp_path):
+    content = _make_large_file(500, [(100, "old", "new")])
+    f = tmp_path / "big.go"
+    f.write_text(content)
+
+    resolved_output = "<<<RESOLVED>>>_1\nmerged\n<<<END_RESOLVED>>>_1\n"
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["claude", "-p", "--bare"]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=resolved_output, stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        result = pr_rebase_cli._resolve_single_file(
+            "big.go", f, "abc123", "feat: update", str(tmp_path),
+        )
+
+    assert result == "big.go"
+    written = f.read_text()
+    assert "merged" in written
+    assert "<<<<<<< " not in written
+
+
+def test_resolve_single_file_uses_full_for_small_file(tmp_path):
+    content = "<<<<<<< HEAD\nold code\n=======\nnew code\n>>>>>>> abc123\n"
+    f = tmp_path / "small.go"
+    f.write_text(content)
+
+    resolved_output = "<<<RESOLVED>>>\nmerged code\n<<<END_RESOLVED>>>\n"
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["claude", "-p", "--bare"]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=resolved_output, stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        result = pr_rebase_cli._resolve_single_file(
+            "small.go", f, "abc123", "feat: update", str(tmp_path),
+        )
+
+    assert result == "small.go"
+    assert "merged code" in f.read_text()
+
+
 # ── _resolve_file_conflicts ───────────────────────────────────────────────
 
 

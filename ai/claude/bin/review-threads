@@ -954,19 +954,44 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     return "Fix pending"
 
 
+def _comment_item_permalink(
+    entry: CommentItem | pr_state.ThreadOutcome,
+    repo: str, pr_number: int,
+) -> str | None:
+    """Build a permalink for a decomposed comment item from its source comment."""
+    source_id = getattr(entry, "source_id", "")
+    source_type = getattr(entry, "source_type", "")
+    if not source_id and not source_type:
+        # ThreadOutcome — parse synthetic id (ic-{source_id}-{index} or rb-{source_id}-{index})
+        eid = entry.id
+        if eid.startswith("ic-"):
+            source_type = "issue_comment"
+            source_id = "-".join(eid.split("-")[1:-1])
+        elif eid.startswith("rb-"):
+            source_type = "review_body"
+            source_id = "-".join(eid.split("-")[1:-1])
+    if not source_id:
+        return None
+    base = f"https://github.com/{repo}/pull/{pr_number}"
+    if source_type == "issue_comment":
+        return f"{base}#issuecomment-{source_id}"
+    if source_type == "review_body":
+        return f"{base}#pullrequestreview-{source_id}"
+    return None
+
+
 def _thread_permalink(
     entry: CommentItem | pr_state.ThreadOutcome,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str | None:
-    """Build a GitHub permalink for a review thread, or None if unavailable."""
+    """Build a GitHub permalink for a review thread or comment item."""
     thread = threads_by_id.get(entry.id)
-    if not thread or not thread.comments:
-        return None
-    db_id = thread.comments[0].get("databaseId")
-    if not db_id:
-        return None
-    return f"https://github.com/{repo}/pull/{pr_number}#discussion_r{db_id}"
+    if thread and thread.comments:
+        db_id = thread.comments[0].get("databaseId")
+        if db_id:
+            return f"https://github.com/{repo}/pull/{pr_number}#discussion_r{db_id}"
+    return _comment_item_permalink(entry, repo, pr_number)
 
 
 def _summary_cell(
@@ -988,13 +1013,14 @@ def _build_row(
 ) -> str:
     """Build a single summary table row for a thread entry."""
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
+    reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"
     elif entry.file:
         file_loc = f"`{entry.file}`"
     else:
         file_loc = "—"
-    return f"| {summary} | {file_loc} | {status} |"
+    return f"| {summary} | {reviewer} | {file_loc} | {status} |"
 
 
 def _summarize_comment_body(body: str, max_len: int = 120) -> str:
@@ -1076,8 +1102,8 @@ def _build_summary_body(
         rows.append(_build_row(entry, deferred_status, threads_by_id, repo, pr_number))
 
     if rows:
-        parts.append("| Thread | File | Action |")
-        parts.append("|--------|------|--------|")
+        parts.append("| Thread | Reviewer | File | Action |")
+        parts.append("|--------|----------|------|--------|")
         parts.extend(rows)
         parts.append("")
 

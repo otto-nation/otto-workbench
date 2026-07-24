@@ -737,6 +737,64 @@ class TestBuildSummaryBody:
         assert "#discussion_r999" in body
         assert "[fix regex]" in body
 
+    def test_comment_item_issue_comment_permalink(self, rt):
+        """Comment items from issue comments link to #issuecomment-{source_id}."""
+        entry = CommentItem(
+            id="ic-77777-0", summary="add tests", file="foo.py", line=5,
+            source_id="77777", source_type="issue_comment",
+        )
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [entry], [], [], cp, "owner/repo", 42, {},
+        )
+        assert "#issuecomment-77777" in body
+        assert "[add tests]" in body
+
+    def test_comment_item_review_body_permalink(self, rt):
+        """Comment items from review bodies link to #pullrequestreview-{source_id}."""
+        entry = CommentItem(
+            id="rb-88888-1", summary="refactor needed", file="bar.py", line=3,
+            source_id="88888", source_type="review_body",
+        )
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [entry], [], [], cp, "owner/repo", 42, {},
+        )
+        assert "#pullrequestreview-88888" in body
+        assert "[refactor needed]" in body
+
+    def test_thread_outcome_comment_item_permalink(self, rt):
+        """ThreadOutcome with synthetic id parses source for permalink."""
+        outcome = ThreadOutcome(
+            id="ic-99999-0", summary="fix typo", file="readme.md", line=1,
+            action="fixed",
+        )
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [outcome], [], [], cp, "owner/repo", 42, {},
+        )
+        assert "#issuecomment-99999" in body
+        assert "[fix typo]" in body
+
+    def test_reviewer_column_rendered(self, rt):
+        """Table rows include the reviewer as @mention."""
+        entry = self._fixed_entry(reviewer="alice")
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [entry], [], [], cp, "owner/repo", 1, {},
+        )
+        assert "| Reviewer |" in body
+        assert "@alice" in body
+
+    def test_reviewer_column_missing_shows_dash(self, rt):
+        """Entries without a reviewer show a dash."""
+        entry = self._fixed_entry(reviewer="")
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [entry], [], [], cp, "owner/repo", 1, {},
+        )
+        assert "| — |" in body
+
     def test_unseen_issue_comments_render_discussion_section(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
         issue_comments = [

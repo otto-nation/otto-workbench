@@ -164,6 +164,31 @@ _RESOLVE_END = "<<<END_RESOLVED>>>"
 
 _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 
+_GENERATED_HEADER_PATTERNS = ("DO NOT EDIT", "@generated", "Code generated")
+
+
+def _is_generated_file(filepath: str, full_path: Path, cwd: str) -> tuple[bool, str]:
+    """Detect generated files using repo-agnostic signals.
+
+    Returns (is_generated, detection_method).
+    """
+    r = subprocess.run(
+        ["git", "check-attr", "linguist-generated", "--", filepath],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode == 0 and ": true" in r.stdout:
+        return True, "gitattributes"
+
+    try:
+        with open(full_path) as f:
+            header = "".join(f.readline() for _ in range(5))
+        if any(p in header for p in _GENERATED_HEADER_PATTERNS):
+            return True, "header"
+    except OSError:
+        pass
+
+    return False, ""
+
 
 def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
     """Detect modify/delete conflicts by checking git index stages.
@@ -459,6 +484,20 @@ def _resolve_file_conflicts(
 
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
+
+        generated, method = _is_generated_file(filepath, full_path, cwd)
+        if generated:
+            if _trail:
+                _trail.decision(
+                    "generated_file",
+                    f"accepting theirs for {filepath}",
+                    reason=f"generated file detected via {method}",
+                )
+            ok = _accept_theirs_and_stage(filepath, full_path.parent, cwd)
+            if not ok:
+                return None
+            resolved.append(filepath)
+            continue
 
         if _is_binary(full_path):
             _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})

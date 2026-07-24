@@ -164,6 +164,31 @@ _RESOLVE_END = "<<<END_RESOLVED>>>"
 
 _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 
+_GENERATED_HEADER_PATTERNS = ("DO NOT EDIT", "@generated", "Code generated")
+
+
+def _is_generated_file(filepath: str, full_path: Path, cwd: str) -> tuple[bool, str]:
+    """Detect generated files using repo-agnostic signals.
+
+    Returns (is_generated, detection_method).
+    """
+    r = subprocess.run(
+        ["git", "check-attr", "linguist-generated", "--", filepath],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode == 0 and ": true" in r.stdout:
+        return True, "gitattributes"
+
+    try:
+        with open(full_path) as f:
+            header = "".join(f.readline() for _ in range(5))
+        if any(p in header for p in _GENERATED_HEADER_PATTERNS):
+            return True, "header"
+    except OSError:
+        pass
+
+    return False, ""
+
 
 def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
     """Detect modify/delete conflicts by checking git index stages.
@@ -355,6 +380,154 @@ def _parse_resolved_content(stdout: str) -> tuple[str | None, str]:
     return resolved + "\n", ""
 
 
+# ── Chunked conflict resolution ──────────────────────────────────────────
+
+_CONFLICT_CONTEXT_LINES = 30
+_CHUNKED_MIN_LINES = 200
+_CHUNKED_MAX_CONFLICT_RATIO = 0.5
+
+
+def _extract_conflict_blocks(
+    content: str, context_lines: int = _CONFLICT_CONTEXT_LINES,
+) -> list[dict]:
+    """Extract conflict blocks with surrounding context from file content."""
+    lines = content.splitlines(keepends=True)
+    blocks = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].startswith("<<<<<<< "):
+            i += 1
+            continue
+        start = i
+        j = i + 1
+        while j < len(lines) and not lines[j].startswith(">>>>>>> "):
+            j += 1
+        if j >= len(lines):
+            break
+        end = j
+        ctx_start = max(0, start - context_lines)
+        ctx_end = min(len(lines), end + 1 + context_lines)
+        blocks.append({
+            "index": len(blocks) + 1,
+            "start": start,
+            "end": end,
+            "conflict": "".join(lines[start:end + 1]),
+            "context_before": "".join(lines[ctx_start:start]),
+            "context_after": "".join(lines[end + 1:ctx_end]),
+        })
+        i = end + 1
+    return blocks
+
+
+def _conflict_line_count(blocks: list[dict]) -> int:
+    """Total lines occupied by conflict markers across all blocks."""
+    return sum(b["end"] - b["start"] + 1 for b in blocks)
+
+
+def _should_chunk(content: str, blocks: list[dict]) -> bool:
+    """Decide whether to use chunked resolution based on file size and conflict ratio."""
+    total = content.count("\n") + 1
+    if total <= _CHUNKED_MIN_LINES:
+        return False
+    return _conflict_line_count(blocks) / total < _CHUNKED_MAX_CONFLICT_RATIO
+
+
+def _build_chunked_prompt(
+    filepath: str,
+    blocks: list[dict],
+    sha: str,
+    subject: str,
+    commit_diff: str | None = None,
+) -> str:
+    """Build a prompt containing only conflict blocks with context."""
+    parts = [
+        f"You are resolving merge conflicts during a git rebase onto {_TARGET_REF}.\n",
+        f"\nFile: {filepath}\n",
+        f"Commit being applied: {sha} — {subject}\n",
+        "\nIn a rebase, conflict markers mean:\n",
+        f"- <<<<<<< HEAD = the base side ({_TARGET_REF} or previously rebased commits)\n",
+        "- ======= separates the two sides\n",
+        f"- >>>>>>> {sha} = the branch's changes being replayed\n",
+    ]
+
+    if commit_diff is not None:
+        parts.append(
+            "\n--- COMMIT DIFF (what this commit intended to change) ---\n"
+            f"{commit_diff}\n"
+            "--- END COMMIT DIFF ---\n"
+        )
+
+    parts.append(
+        "\nMerge both sides, preserving the intent of the commit being applied "
+        "onto the current base-side structure. "
+        "If both sides add non-overlapping content, keep both. "
+        "If they modify the same lines, combine them sensibly.\n"
+    )
+
+    for block in blocks:
+        n = block["index"]
+        parts.append(f"\n--- CONFLICT {n} ---\n")
+        if block["context_before"]:
+            parts.append(block["context_before"])
+        parts.append(block["conflict"])
+        if block["context_after"]:
+            parts.append(block["context_after"])
+        parts.append(f"--- END CONFLICT {n} ---\n")
+
+    parts.append(
+        "\nFor each conflict, output ONLY the resolved replacement for the "
+        "conflict markers (everything from <<<<<<< through >>>>>>>). "
+        "Do NOT include the surrounding context lines.\n"
+        "No explanation, no markdown fencing, no commentary outside the markers.\n\n"
+    )
+    for block in blocks:
+        n = block["index"]
+        parts.append(
+            f"{_RESOLVE_BEGIN}_{n}\n"
+            f"(resolved content for conflict {n})\n"
+            f"{_RESOLVE_END}_{n}\n"
+        )
+
+    return "".join(parts)
+
+
+def _parse_chunked_resolutions(
+    stdout: str, num_blocks: int,
+) -> tuple[list[str] | None, str]:
+    """Extract per-block resolutions from AI output.
+
+    Returns (list_of_resolutions, failure_reason). failure_reason is empty on success.
+    """
+    resolutions = []
+    for i in range(1, num_blocks + 1):
+        begin_marker = f"{_RESOLVE_BEGIN}_{i}"
+        end_marker = f"{_RESOLVE_END}_{i}"
+        begin = stdout.find(begin_marker)
+        end = stdout.find(end_marker)
+        if begin == -1 or end == -1 or end <= begin:
+            return None, f"missing_markers_for_block_{i}"
+        resolved = stdout[begin + len(begin_marker):end]
+        if resolved.startswith("\n"):
+            resolved = resolved[1:]
+        if resolved.endswith("\n"):
+            resolved = resolved[:-1]
+        surviving = _has_conflict_markers(resolved)
+        if surviving:
+            return None, f"surviving_conflict_marker_in_block_{i}:{surviving.strip()}"
+        resolutions.append(resolved + "\n")
+    return resolutions, ""
+
+
+def _splice_resolutions(
+    content: str, blocks: list[dict], resolutions: list[str],
+) -> str:
+    """Replace conflict markers in content with resolved text."""
+    lines = content.splitlines(keepends=True)
+    for block, resolution in reversed(list(zip(blocks, resolutions))):
+        lines[block["start"]:block["end"] + 1] = resolution.splitlines(keepends=True)
+    return "".join(lines)
+
+
 def _git_add(filepath: str, cwd: str) -> bool:
     """Stage a file and return True on success."""
     r = subprocess.run(["git", "add", filepath], cwd=cwd)
@@ -385,6 +558,17 @@ def _resolve_single_file(
         log.error(f"Cannot read {filepath}: {e}")
         return None
 
+    blocks = _extract_conflict_blocks(content)
+    if blocks and _should_chunk(content, blocks):
+        return _resolve_chunked(filepath, full_path, content, blocks, sha, subject, cwd)
+    return _resolve_full_file(filepath, full_path, content, sha, subject, cwd)
+
+
+def _resolve_full_file(
+    filepath: str, full_path: Path, content: str,
+    sha: str, subject: str, cwd: str,
+) -> str | None:
+    """Resolve via full-file prompt (small files or heavily conflicted)."""
     ours_content = _get_ours_content(filepath, cwd)
     commit_diff = _get_commit_diff(filepath, cwd)
     prompt = _build_resolve_prompt(
@@ -419,6 +603,41 @@ def _resolve_single_file(
     return filepath
 
 
+def _resolve_chunked(
+    filepath: str, full_path: Path, content: str,
+    blocks: list[dict], sha: str, subject: str, cwd: str,
+) -> str | None:
+    """Resolve via chunked prompt (large files with small conflicts)."""
+    commit_diff = _get_commit_diff(filepath, cwd)
+    prompt = _build_chunked_prompt(filepath, blocks, sha, subject, commit_diff)
+    _trail and _trail.info(
+        "chunked_resolve", f"using chunked resolution for {filepath}",
+        data={"blocks": len(blocks), "total_lines": content.count("\n") + 1},
+    )
+    stdout, rc = ai_backend.prompt(prompt)
+    if rc != 0:
+        _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
+        log.error(f"ai prompt failed for {filepath} (exit {rc})")
+        return None
+
+    resolutions, failure_reason = _parse_chunked_resolutions(stdout, len(blocks))
+    if resolutions is None:
+        _terr(
+            "resolve_conflicts",
+            f"failed to parse chunked resolution for {filepath}",
+            data={"filepath": filepath, "reason": failure_reason},
+        )
+        log.error(f"Failed to parse chunked resolution for {filepath} ({failure_reason})")
+        return None
+
+    resolved_content = _splice_resolutions(content, blocks, resolutions)
+    full_path.write_text(resolved_content)
+    if not _git_add(filepath, cwd):
+        return None
+    log.ok(f"Resolved: {filepath} ({len(blocks)} conflict(s), chunked)")
+    return filepath
+
+
 def _resolve_one(
     filepath: str, full_path: Path, sha: str, subject: str,
     cwd: str, go_dirs: set[Path],
@@ -450,6 +669,15 @@ def _resolve_one(
     return True
 
 
+def _resolve_generated(filepath: str, full_path: Path, cwd: str, method: str) -> bool:
+    """Accept theirs for a generated file. Returns True on success."""
+    _trail and _trail.decision(
+        "generated_file", f"accepting theirs for {filepath}",
+        reason=f"generated file detected via {method}",
+    )
+    return _accept_theirs_and_stage(filepath, full_path.parent, cwd)
+
+
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
 ) -> list[str] | None:
@@ -459,6 +687,13 @@ def _resolve_file_conflicts(
 
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
+
+        generated, method = _is_generated_file(filepath, full_path, cwd)
+        if generated and not _resolve_generated(filepath, full_path, cwd, method):
+            return None
+        if generated:
+            resolved.append(filepath)
+            continue
 
         if _is_binary(full_path):
             _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})

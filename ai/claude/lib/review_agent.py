@@ -21,6 +21,17 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
 
+_TRANSIENT_ERROR_MARKERS = (
+    "FailedToOpenSocket",
+    "ConnectionRefused",
+    "ConnectionReset",
+    "Connection to the API was lost",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "socket hang up",
+)
+
 
 # ── Cost tracking ────────────────────────────────────────────────────────────
 
@@ -69,6 +80,12 @@ def _diagnose_missing_output(log_path: str) -> str:
     if not results:
         return DIAG_NO_RESULT_RECORD
     return _diagnose_result_type(results[-1])
+
+
+def is_transient_error(reason: str) -> bool:
+    if not reason.startswith("agent error:"):
+        return False
+    return any(marker in reason for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 def _is_model_error(log_path: str) -> bool:

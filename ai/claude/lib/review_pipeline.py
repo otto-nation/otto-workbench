@@ -68,7 +68,7 @@ from review_agent import (
     _diagnose_missing_output, _is_model_error, _parse_session_cost,
     _resolve_model, _resolve_provider, _resolve_thinking_level,
     _try_recover_output, _try_recover_review,
-    invoke_agent,
+    invoke_agent, is_transient_error,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -929,6 +929,8 @@ def _is_retryable(reason: str) -> bool:
         return True
     if reason in (DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG):
         return True
+    if is_transient_error(reason):
+        return True
     return False
 
 
@@ -1130,6 +1132,15 @@ def _write_mechanical_fallback(
     Path(job.review_file).write_text(fallback)
 
 
+def _synthesis_is_transient_failure(review_file: str, synthesis_log: str) -> bool:
+    if _is_complete_review(review_file):
+        return False
+    if _has_output(review_file):
+        return False
+    reason = _diagnose_missing_output(synthesis_log)
+    return is_transient_error(reason)
+
+
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
@@ -1157,6 +1168,13 @@ def _phase_synthesis(
     agent = _effort_default(job.effort, "agent", "reviewer")
     rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
     log.blank()
+
+    if _synthesis_is_transient_failure(job.review_file, synthesis_log):
+        log.warn("Synthesis hit transient API error — retrying once...")
+        _touch(job.review_file)
+        log.blank()
+        rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
+        log.blank()
 
     if not _has_output(job.review_file):
         _try_recover_output(synthesis_log, job.review_file)
@@ -1508,7 +1526,7 @@ def _run_synthesis_or_fallback(
     )
     state.synthesis_done = True
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    if _MECHANICAL_NOTE in review_content:
+    if _MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
         state.synthesis_failed = "mechanical fallback"
     _write_pipeline_state(job, state)
     return synthesis_log

@@ -495,9 +495,9 @@ def _resolve_file_conflicts(
         full_path = Path(cwd) / filepath
 
         generated, method = _is_generated_file(filepath, full_path, cwd)
+        if generated and not _resolve_generated(filepath, full_path, cwd, method):
+            return None
         if generated:
-            if not _resolve_generated(filepath, full_path, cwd, method):
-                return None
             resolved.append(filepath)
             continue
 

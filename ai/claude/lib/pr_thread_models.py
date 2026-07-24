@@ -107,7 +107,6 @@ class TrackingResult:
     deferred: list[CommentItem] = field(default_factory=list)
     fixed_items: list[CommentItem] = field(default_factory=list)
     deferred_items: list[CommentItem] = field(default_factory=list)
-    reconciled_count: int = 0
 
 
 # ── Report types ──────────────────────────────────────────────────────────
@@ -156,7 +155,6 @@ class CommentFixResult:
     replies_posted: int = 0
     summary_url: str | None = None
     summary_deferred: bool = False
-    reconciled_count: int = 0
     max_turns: int = 0
     max_budget: float = 0.0
 

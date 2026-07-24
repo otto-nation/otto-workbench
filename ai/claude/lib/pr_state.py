@@ -176,7 +176,6 @@ class FixSummary:
     replies_posted: int = 0
     summary_url: str = ""
     summary_deferred: bool = False
-    reconciled_count: int = 0
     deferred_issue_id: str = ""
     deferred_issue_url: str = ""
     has_comment_items: bool = False

@@ -713,7 +713,6 @@ def test_fix_summary_defaults():
     assert f.replies_posted == 0
     assert f.summary_url == ""
     assert f.summary_deferred is False
-    assert f.reconciled_count == 0
     assert f.deferred_issue_id == ""
     assert f.deferred_issue_url == ""
     assert f.updated_at == ""
@@ -769,7 +768,6 @@ def test_state_roundtrip_with_fix_data():
         ],
         commit_sha="abc1234", commit_status="pushed",
         replies_posted=2, summary_url="https://github.com/r/p/issues/1#comment",
-        reconciled_count=1,
         deferred_issue_id="ENG-456",
         deferred_issue_url="https://linear.app/team/issue/ENG-456/slug",
         updated_at="2026-07-14T00:00:00+00:00",
@@ -788,7 +786,6 @@ def test_state_roundtrip_with_fix_data():
     assert restored.fix.commit_sha == "abc1234"
     assert restored.fix.commit_status == "pushed"
     assert restored.fix.replies_posted == 2
-    assert restored.fix.reconciled_count == 1
     assert restored.fix.deferred_issue_id == "ENG-456"
     assert restored.fix.summary_url == "https://github.com/r/p/issues/1#comment"
     assert restored.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456/slug"
@@ -804,7 +801,7 @@ def test_save_preserves_fix_data():
                 ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED.value, reason="invalid"),
             ],
             commit_sha="def456", commit_status="pushed",
-            replies_posted=1, reconciled_count=1,
+            replies_posted=1,
             updated_at="2026-07-14T00:00:00+00:00",
         ))
         save_state(root, state)
@@ -814,7 +811,6 @@ def test_save_preserves_fix_data():
         assert loaded.fix.threads[0].action == "fixed"
         assert loaded.fix.threads[1].reason == "invalid"
         assert loaded.fix.commit_sha == "def456"
-        assert loaded.fix.reconciled_count == 1
 
 
 def test_load_state_without_fix_defaults_empty():
@@ -845,7 +841,7 @@ def test_apply_state_update_fix():
                     {"thread_id": "t1", "file": "f.go", "action": "fixed"},
                 ],
                 "commit_sha": "xyz", "commit_status": "pushed",
-                "reconciled_count": 1, "updated_at": "t",
+                "updated_at": "t",
             },
         )
         loaded = load_state(root)

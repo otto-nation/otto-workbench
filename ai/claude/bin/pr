@@ -217,8 +217,6 @@ def _render_fix_section(f: pr_state.FixSummary) -> list[str]:
     lines = [f"**Fix**: {summary}"]
     if f.commit_sha:
         lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
-    if f.reconciled_count:
-        lines.append(f"  reconciled {f.reconciled_count} thread(s) via diff")
     if f.deferred_issue_id:
         lines.append(f"  tracked in {f.deferred_issue_id}")
     return lines

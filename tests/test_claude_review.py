@@ -978,10 +978,10 @@ def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
         "repo": "org/my-repo", "pr_number": "50", "head_sha": "abc",
     }))
 
-    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=0, stdout="MERGED\n")
     review_gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "recently-modified merged review should be retained"
+    mock_run.assert_not_called()
 
 
 @patch("review_gc.subprocess.run")
@@ -1004,6 +1004,28 @@ def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
     review_gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "failed review within 30-day window should be retained"
+
+
+@patch("review_gc.subprocess.run")
+def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
+    d = reviews_dir / "my-repo-52"
+    d.mkdir()
+    (d / "review.md").write_text("review content")
+    (d / "meta.json").write_text(json.dumps({
+        "repo": "org/my-repo", "pr_number": "52", "head_sha": "abc",
+    }))
+    (d / "pipeline.json").write_text(json.dumps({
+        "synthesis_failed": "all groups failed",
+    }))
+
+    old_time = time.time() - 35 * 86400
+    for f in d.iterdir():
+        os.utime(f, (old_time, old_time))
+
+    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=0, stdout="MERGED\n")
+    review_gc.prune_merged_reviews(reviews_dir)
+
+    assert not d.exists(), "failed review older than 30 days should be pruned"
 
 
 # ── _confirm ──────────────────────────────────────────────────────────────────

@@ -82,8 +82,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
 
 
 def _has_pipeline_failure(review_dir: Path) -> bool:
-    from pr_state import ReviewStatus
-    return read_pipeline_status(review_dir) == ReviewStatus.ERROR.value
+    return read_pipeline_status(review_dir) == "error"
 
 
 def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE_MAX_FILES) -> int:

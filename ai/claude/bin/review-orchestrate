@@ -87,7 +87,7 @@ def _log_ai_backend(trail) -> None:
         if not (key.startswith(_AI_ENV_PREFIXES) or key in _AI_ENV_EXACT):
             continue
         if any(f in key for f in _SENSITIVE_FRAGMENTS):
-            data[key] = "absent" if val is None else ("empty" if val == "" else "set")
+            data[key] = "empty" if val == "" else "set"
         else:
             data[key] = val or ""
     trail.info("ai_backend", "resolved AI backend configuration", data=data)

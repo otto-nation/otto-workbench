@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.40.3](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.2...otto-ai-tools-v1.40.3) (2026-07-24)
+
+
+### Bug Fixes
+
+* **pr-rebase:** auto-resolve generated files instead of AI resolution ([#547](https://github.com/otto-nation/otto-workbench/issues/547)) ([cc5da99](https://github.com/otto-nation/otto-workbench/commit/cc5da99398d40ba70b221a39e9a117764d26c287))
+* **review:** improve pipeline resilience and failure observability ([#550](https://github.com/otto-nation/otto-workbench/issues/550)) ([14b810d](https://github.com/otto-nation/otto-workbench/commit/14b810d92beadaf2b242290f0c1fb3e45f4cd7d6))
+
 ## [1.40.2](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.1...otto-ai-tools-v1.40.2) (2026-07-24)
 
 

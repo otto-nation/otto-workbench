@@ -475,6 +475,15 @@ def _resolve_one(
     return True
 
 
+def _resolve_generated(filepath: str, full_path: Path, cwd: str, method: str) -> bool:
+    """Accept theirs for a generated file. Returns True on success."""
+    _trail and _trail.decision(
+        "generated_file", f"accepting theirs for {filepath}",
+        reason=f"generated file detected via {method}",
+    )
+    return _accept_theirs_and_stage(filepath, full_path.parent, cwd)
+
+
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
 ) -> list[str] | None:
@@ -487,14 +496,7 @@ def _resolve_file_conflicts(
 
         generated, method = _is_generated_file(filepath, full_path, cwd)
         if generated:
-            if _trail:
-                _trail.decision(
-                    "generated_file",
-                    f"accepting theirs for {filepath}",
-                    reason=f"generated file detected via {method}",
-                )
-            ok = _accept_theirs_and_stage(filepath, full_path.parent, cwd)
-            if not ok:
+            if not _resolve_generated(filepath, full_path, cwd, method):
                 return None
             resolved.append(filepath)
             continue

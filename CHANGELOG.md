@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.3](https://github.com/otto-nation/otto-workbench/compare/v1.46.2...v1.46.3) (2026-07-24)
+
+
+### Bug Fixes
+
+* **pr-rebase:** auto-resolve generated files instead of AI resolution ([#547](https://github.com/otto-nation/otto-workbench/issues/547)) ([cc5da99](https://github.com/otto-nation/otto-workbench/commit/cc5da99398d40ba70b221a39e9a117764d26c287))
+
 ## [1.46.2](https://github.com/otto-nation/otto-workbench/compare/v1.46.1...v1.46.2) (2026-07-24)
 
 

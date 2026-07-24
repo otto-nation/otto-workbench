@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -75,7 +76,25 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+_AI_ENV_PREFIXES = ("ANTHROPIC_", "CLAUDE_CODE_", "CLOUD_ML_")
+_AI_ENV_EXACT = ("AI_BACKEND",)
+_SENSITIVE_FRAGMENTS = ("KEY", "TOKEN", "SECRET")
+
+
+def _log_ai_backend(trail) -> None:
+    data: dict[str, str] = {}
+    for key, val in sorted(os.environ.items()):
+        if not (key.startswith(_AI_ENV_PREFIXES) or key in _AI_ENV_EXACT):
+            continue
+        if any(f in key for f in _SENSITIVE_FRAGMENTS):
+            data[key] = "empty" if val == "" else "set"
+        else:
+            data[key] = val or ""
+    trail.info("ai_backend", "resolved AI backend configuration", data=data)
+
+
 def _run_orchestrate(trail, args, repo, session_log) -> None:
+    _log_ai_backend(trail)
     pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
     prior_review = ""

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.46.0](https://github.com/otto-nation/otto-workbench/compare/v1.45.2...v1.46.0) (2026-07-24)
+
+
+### Features
+
+* **ci-check:** improve extraction robustness and artifact fallback ([#539](https://github.com/otto-nation/otto-workbench/issues/539)) ([55f93a8](https://github.com/otto-nation/otto-workbench/commit/55f93a83792b9d6b339490d8e18e4b91673d1e77))
+* **ci-check:** rebase onto main before fixing CI failures ([#526](https://github.com/otto-nation/otto-workbench/issues/526)) ([1a74710](https://github.com/otto-nation/otto-workbench/commit/1a747104550c3188de022e97a7c89e42d7fd1223))
+* **rules:** apply retro proposals — rename audit, deployment ordering, error handling, CI depth ([#532](https://github.com/otto-nation/otto-workbench/issues/532)) ([0444ad4](https://github.com/otto-nation/otto-workbench/commit/0444ad4ba34940089031743acda5b83371023428))
+
+
+### Bug Fixes
+
+* **ci-check:** report in-progress runs instead of false success ([#531](https://github.com/otto-nation/otto-workbench/issues/531)) ([9da1d6a](https://github.com/otto-nation/otto-workbench/commit/9da1d6a203e79ac4c3b3f7ea67d9df51d96bd367))
+* **pr-comments:** include issue link in deferred summary rows ([#534](https://github.com/otto-nation/otto-workbench/issues/534)) ([2aa10ff](https://github.com/otto-nation/otto-workbench/commit/2aa10ffd06956632a9ae45e69743a02fa807bdec))
+* **pr-comments:** remove false-positive reconciliation; defer replies until --resolve ([#523](https://github.com/otto-nation/otto-workbench/issues/523)) ([a94bec5](https://github.com/otto-nation/otto-workbench/commit/a94bec5e574fc77128d07d8c450052320e4e87d4))
+* **pr-comments:** remove file-level reconciliation that falsely resolves threads ([#540](https://github.com/otto-nation/otto-workbench/issues/540)) ([55993a6](https://github.com/otto-nation/otto-workbench/commit/55993a6060d3e3e42f000c41ab48a9708095799c))
+* **pr:** prefer resolved PR number over --branch in delegate dispatch ([#538](https://github.com/otto-nation/otto-workbench/issues/538)) ([2d827f1](https://github.com/otto-nation/otto-workbench/commit/2d827f1fcf81d296848ec8f933104f438c69ee2a))
+* **review-post:** re-verify inline positions on SHA drift instead of falling back to comment ([#527](https://github.com/otto-nation/otto-workbench/issues/527)) ([7f8479a](https://github.com/otto-nation/otto-workbench/commit/7f8479a592873c8186ee748a5d6b779f196fb75f))
+
+
+### Code Refactoring
+
+* **pr-comments:** consolidate thread model types ([#537](https://github.com/otto-nation/otto-workbench/issues/537)) ([48c4363](https://github.com/otto-nation/otto-workbench/commit/48c43632150eb743bd816870a60d2a6325f23757))
+
 ## [1.45.2](https://github.com/otto-nation/otto-workbench/compare/v1.45.1...v1.45.2) (2026-07-21)
 
 

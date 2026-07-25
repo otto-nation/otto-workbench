@@ -290,9 +290,7 @@
       "WebFetch(domain:gist.github.com)",
       "WebFetch(domain:github.com)",
       "WebSearch",
-      "Write",
-      "Write(//private/tmp/**)",
-      "Write(//tmp/**)"
+      "Write"
     ],
     "deny": [
       "Bash(git reset:*)",

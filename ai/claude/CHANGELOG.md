@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.4](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.3...otto-ai-tools-v1.40.4) (2026-07-25)
+
+
+### Bug Fixes
+
+* remove invalid Write path permission rules ([#551](https://github.com/otto-nation/otto-workbench/issues/551)) ([220382f](https://github.com/otto-nation/otto-workbench/commit/220382f80661f7e2c2a590fc9eda2e4b99dda0e5))
+
 ## [1.40.3](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.40.2...otto-ai-tools-v1.40.3) (2026-07-24)
 
 

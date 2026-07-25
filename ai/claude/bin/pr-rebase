@@ -539,6 +539,51 @@ def _git_add(filepath: str, cwd: str) -> bool:
 _FIX_ERROR_MAX_CHARS = 4000
 
 
+def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
+    """Fix a single file based on pre-push check errors. Returns True if changed."""
+    full_path = Path(cwd) / filepath
+    if not full_path.exists():
+        return False
+    try:
+        content = full_path.read_text()
+    except OSError:
+        return False
+
+    prompt = (
+        "A pre-push check failed after resolving merge conflicts during a "
+        "git rebase. Fix any formatting, build, or lint issues in this file "
+        "that are reported in the check output below.\n\n"
+        f"File: {filepath}\n\n"
+        f"--- CHECK OUTPUT ---\n{check_output}\n--- END CHECK OUTPUT ---\n\n"
+        f"Output the fixed file between {_RESOLVE_BEGIN} and {_RESOLVE_END} "
+        "markers. If the file has no issues, output it unchanged.\n\n"
+        f"{_RESOLVE_BEGIN}\n(your fixed content here)\n{_RESOLVE_END}\n\n"
+        f"--- FILE CONTENT ---\n{content}"
+    )
+
+    stdout, rc = ai_backend.prompt(prompt)
+    if rc != 0:
+        log.error(f"AI fix failed for {filepath} (exit {rc})")
+        return False
+
+    fixed_content, failure_reason = _parse_resolved_content(stdout)
+    if fixed_content is None:
+        _terr(
+            "fix_push_failures", f"failed to parse fix for {filepath}",
+            data={"filepath": filepath, "reason": failure_reason},
+        )
+        return False
+
+    if fixed_content == content:
+        return False
+
+    full_path.write_text(fixed_content)
+    if not _git_add(filepath, cwd):
+        return False
+    log.ok(f"Fixed: {filepath}")
+    return True
+
+
 def _fix_push_failures(
     cwd: str, error_output: str, resolved_files: list[str],
 ) -> bool:
@@ -554,51 +599,8 @@ def _fix_push_failures(
         return False
 
     truncated = error_output[:_FIX_ERROR_MAX_CHARS]
-    fixed_any = False
-
-    for filepath in resolved_files:
-        full_path = Path(cwd) / filepath
-        if not full_path.exists():
-            continue
-        try:
-            content = full_path.read_text()
-        except OSError:
-            continue
-
-        prompt = (
-            "A pre-push check failed after resolving merge conflicts during a "
-            "git rebase. Fix any formatting, build, or lint issues in this file "
-            "that are reported in the check output below.\n\n"
-            f"File: {filepath}\n\n"
-            f"--- CHECK OUTPUT ---\n{truncated}\n--- END CHECK OUTPUT ---\n\n"
-            f"Output the fixed file between {_RESOLVE_BEGIN} and {_RESOLVE_END} "
-            "markers. If the file has no issues, output it unchanged.\n\n"
-            f"{_RESOLVE_BEGIN}\n(your fixed content here)\n{_RESOLVE_END}\n\n"
-            f"--- FILE CONTENT ---\n{content}"
-        )
-
-        stdout, rc = ai_backend.prompt(prompt)
-        if rc != 0:
-            log.error(f"AI fix failed for {filepath} (exit {rc})")
-            continue
-
-        fixed_content, failure_reason = _parse_resolved_content(stdout)
-        if fixed_content is None:
-            _terr(
-                "fix_push_failures",
-                f"failed to parse fix for {filepath}",
-                data={"filepath": filepath, "reason": failure_reason},
-            )
-            continue
-
-        if fixed_content != content:
-            full_path.write_text(fixed_content)
-            if not _git_add(filepath, cwd):
-                continue
-            fixed_any = True
-            log.ok(f"Fixed: {filepath}")
-
-    if not fixed_any:
+    fixed = [f for f in resolved_files if _fix_one_file(f, cwd, truncated)]
+    if not fixed:
         return False
 
     cr = subprocess.run(
@@ -612,7 +614,7 @@ def _fix_push_failures(
     if _trail:
         _trail.info(
             "fix_push_failures", "committed check-failure fixes",
-            data={"files": [f for f in resolved_files if (Path(cwd) / f).exists()]},
+            data={"files": fixed},
         )
     return True
 

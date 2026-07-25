@@ -1472,7 +1472,8 @@ def test_fix_push_failures_ai_fixes_file(tmp_path):
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=fixed_output, stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "gofmt: server.go needs formatting", ["server.go"],
         )
@@ -1503,7 +1504,8 @@ def test_fix_push_failures_ai_prompt_fails(tmp_path):
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "errors", ["server.go"],
         )
@@ -1524,7 +1526,8 @@ def test_fix_push_failures_no_changes_needed(tmp_path):
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=unchanged_output, stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "errors", ["server.go"],
         )
@@ -1557,7 +1560,8 @@ def test_fix_push_failures_truncates_error_output(tmp_path):
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
         pr_rebase_cli._fix_push_failures(
             str(tmp_path), long_error, ["server.go"],
         )

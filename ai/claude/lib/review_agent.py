@@ -13,6 +13,7 @@ from pathlib import Path
 
 import ai_backend
 import log
+from review_common import preserve_log, restore_preserved
 
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -226,6 +227,7 @@ def invoke_agent(
         fallback = _MODEL_FALLBACK.get(model)
         if fallback:
             log.warn(f"Quota exhausted on {model} — retrying with {fallback}")
+            prior_log = preserve_log(session_log)
             rc = ai_backend.invoke_agent(
                 prompt, session_log,
                 add_dirs=add_dirs, agent=agent,
@@ -233,6 +235,7 @@ def invoke_agent(
                 model=fallback, thinking_level=thinking_level,
                 provider=provider, label=label,
             )
+            restore_preserved(session_log, prior_log)
     return rc
 
 

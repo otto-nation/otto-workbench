@@ -36,6 +36,7 @@ from review_common import (
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
+    preserve_log, restore_preserved,
 )
 from review_findings import (
     Finding,
@@ -830,12 +831,14 @@ def run_fix_pass(job: ReviewJob):
                 TEMPLATE_FIX, job, max_turns=retry_turns,
             )
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
+            prior_log = preserve_log(fix_log)
             log.blank()
             invoke_agent(retry_prompt, fix_log, job.wt_path, job.reviews_dir,
                          review_file=job.review_file, model=model,
                          thinking_level=thinking, provider=provider,
                          max_turns=retry_turns, max_budget=budget,
                          agent="reviewer-lite")
+            restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
             after_text = Path(job.review_file).read_text()
@@ -1181,8 +1184,10 @@ def _phase_synthesis(
     if _synthesis_is_transient_failure(job.review_file, synthesis_log):
         log.warn("Synthesis hit transient API error — retrying once...")
         Path(job.review_file).write_text("")
+        prior_log = preserve_log(synthesis_log)
         log.blank()
         rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
+        restore_preserved(synthesis_log, prior_log)
         log.blank()
 
     if not _has_output(job.review_file):

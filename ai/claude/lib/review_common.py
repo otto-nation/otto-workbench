@@ -220,11 +220,19 @@ def parse_session_log(path: str) -> SessionUsage:
         if rec.get("type") != "result":
             continue
         cost += rec.get("total_cost_usd", 0) or 0
-        usage = rec.get("usage", {})
-        input_tokens += usage.get("input_tokens", 0) or 0
-        output_tokens += usage.get("output_tokens", 0) or 0
-        cache_read += usage.get("cache_read_input_tokens", 0) or 0
-        cache_write += usage.get("cache_creation_input_tokens", 0) or 0
+        model_usage = rec.get("modelUsage")
+        if model_usage:
+            for mu in model_usage.values():
+                input_tokens += mu.get("input_tokens", 0) or 0
+                output_tokens += mu.get("output_tokens", 0) or 0
+                cache_read += mu.get("cache_read_input_tokens", 0) or 0
+                cache_write += mu.get("cache_creation_input_tokens", 0) or 0
+        else:
+            usage = rec.get("usage", {})
+            input_tokens += usage.get("input_tokens", 0) or 0
+            output_tokens += usage.get("output_tokens", 0) or 0
+            cache_read += usage.get("cache_read_input_tokens", 0) or 0
+            cache_write += usage.get("cache_creation_input_tokens", 0) or 0
         duration_ms += rec.get("duration_ms", 0) or 0
     return SessionUsage(
         cost=cost,
@@ -234,6 +242,28 @@ def parse_session_log(path: str) -> SessionUsage:
         cache_write_tokens=cache_write,
         duration_ms=duration_ms,
     )
+
+
+# ── Log preservation for retries ─────────────────────────────────────────────
+
+
+def preserve_log(path: str) -> str:
+    """Read session log content before a retry that will overwrite it."""
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return ""
+
+
+def restore_preserved(path: str, prior: str) -> None:
+    """Prepend prior log content so both attempts' result records are preserved."""
+    if not prior:
+        return
+    try:
+        current = Path(path).read_text()
+    except OSError:
+        current = ""
+    Path(path).write_text(prior + current)
 
 
 # ── Subprocess ───────────────────────────────────────────────────────────────

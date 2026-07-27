@@ -20,6 +20,7 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
+DIAG_RATE_LIMITED = "rate limited (429)"
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -78,6 +79,8 @@ def _diagnose_missing_output(log_path: str) -> str:
         return DIAG_NO_SESSION_LOG
     results = _parse_jsonl_records(log_path, "result")
     if not results:
+        if _is_rate_limit_error(log_path):
+            return DIAG_RATE_LIMITED
         return DIAG_NO_RESULT_RECORD
     return _diagnose_result_type(results[-1])
 
@@ -145,6 +148,28 @@ def _try_recover_review(job: "ReviewJob"):
     _try_recover_output(job.session_log, job.review_file)
 
 
+# ── Rate-limit detection ────────────────────────────────────────────────────
+
+_MODEL_FALLBACK = {"opus": "sonnet"}
+
+
+def _is_rate_limit_error(log_path: str) -> bool:
+    if not Path(log_path).exists():
+        return False
+    with open(log_path) as f:
+        for line in f:
+            d = _try_parse_json(line)
+            if (d and d.get("type") == "system"
+                    and d.get("subtype") == "api_retry"
+                    and d.get("error_status") == 429):
+                return True
+    return False
+
+
+def rate_limit_fallback(model: str) -> str | None:
+    return _MODEL_FALLBACK.get(model)
+
+
 # ── Model selection ───────────────────────────────────────────────────────────
 
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
@@ -193,12 +218,24 @@ def invoke_agent(
         review_dir = str(Path(review_file).parent)
         if review_dir not in (reviews_dir, wt_path):
             add_dirs.append(review_dir)
-    return ai_backend.invoke_agent(
+    rc = ai_backend.invoke_agent(
         prompt, session_log,
         add_dirs=add_dirs, agent=agent,
         max_turns=max_turns, max_budget=max_budget,
         model=model, thinking_level=thinking_level,
         provider=provider, label=label,
     )
+    if rc != 0 and model and _is_rate_limit_error(session_log):
+        fallback = _MODEL_FALLBACK.get(model)
+        if fallback:
+            log.warn(f"Rate limited on {model} — retrying with {fallback}")
+            rc = ai_backend.invoke_agent(
+                prompt, session_log,
+                add_dirs=add_dirs, agent=agent,
+                max_turns=max_turns, max_budget=max_budget,
+                model=fallback, thinking_level=thinking_level,
+                provider=provider, label=label,
+            )
+    return rc
 
 

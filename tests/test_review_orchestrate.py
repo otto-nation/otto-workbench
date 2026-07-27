@@ -1203,6 +1203,15 @@ class TestDiagnoseMissingOutput:
         result = ro._diagnose_missing_output(str(log))
         assert "no result record" in result
 
+    def test_rate_limited_no_result(self, ro, tmp_path):
+        log = tmp_path / "session.jsonl"
+        log.write_text(
+            json.dumps({"type": "system", "subtype": "init"}) + "\n"
+            + json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}) + "\n"
+        )
+        result = ro._diagnose_missing_output(str(log))
+        assert "rate limited" in result.lower()
+
 
 # ── 25. _is_model_error ─────────────────────────────────────────────────────
 
@@ -2356,3 +2365,53 @@ class TestWriteReviewSidecar:
         ro._write_review_sidecar(job)
         meta = json.loads((tmp_path / "meta.json").read_text())
         assert "generator_version" not in meta
+
+
+# ── _is_rate_limit_error ───────────────────────────────────────────────────
+
+
+class TestIsRateLimitError:
+    def test_detects_429_retry(self, ro, tmp_path):
+        log = tmp_path / "session.jsonl"
+        log.write_text(
+            json.dumps({"type": "system", "subtype": "init"}) + "\n"
+            + json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}) + "\n"
+        )
+        assert ro._is_rate_limit_error(str(log)) is True
+
+    def test_ignores_non_429(self, ro, tmp_path):
+        log = tmp_path / "session.jsonl"
+        log.write_text(
+            json.dumps({"type": "system", "subtype": "api_retry", "error_status": 500}) + "\n"
+        )
+        assert ro._is_rate_limit_error(str(log)) is False
+
+    def test_false_for_normal_session(self, ro, tmp_path):
+        log = tmp_path / "session.jsonl"
+        log.write_text(
+            json.dumps({"type": "system", "subtype": "init"}) + "\n"
+            + json.dumps({"type": "result", "subtype": "completed"}) + "\n"
+        )
+        assert ro._is_rate_limit_error(str(log)) is False
+
+    def test_false_for_missing_log(self, ro, tmp_path):
+        assert ro._is_rate_limit_error(str(tmp_path / "missing.jsonl")) is False
+
+    def test_false_for_empty_log(self, ro, tmp_path):
+        log = tmp_path / "session.jsonl"
+        log.write_text("")
+        assert ro._is_rate_limit_error(str(log)) is False
+
+
+# ── rate_limit_fallback ────────────────────────────────────────────────────
+
+
+class TestRateLimitFallback:
+    def test_opus_falls_back_to_sonnet(self, ro):
+        assert ro.rate_limit_fallback("opus") == "sonnet"
+
+    def test_sonnet_has_no_fallback(self, ro):
+        assert ro.rate_limit_fallback("sonnet") is None
+
+    def test_unknown_model_has_no_fallback(self, ro):
+        assert ro.rate_limit_fallback("haiku") is None

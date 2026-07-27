@@ -594,8 +594,7 @@ def test_read_pipeline_warnings_all_complete(cr, tmp_path):
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
         "holistic_done": True, "groups_done": [1],
-        "groups_failed": {}, "angles_done": True,
-        "synthesis_done": True, "synthesis_failed": "",
+        "groups_failed": {},        "synthesis_done": True, "synthesis_failed": "",
     }))
     assert read_pipeline_warnings(tmp_path) == []
 
@@ -604,8 +603,7 @@ def test_read_pipeline_warnings_holistic_incomplete(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False, "angles_done": True,
-    }))
+        "holistic_done": False,    }))
     assert read_pipeline_warnings(tmp_path) == ["holistic phase"]
 
 
@@ -613,8 +611,7 @@ def test_read_pipeline_warnings_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "holistic_done": True, "angles_done": True,
-        "groups_failed": {"1": "max turns", "2": "model error"},
+        "holistic_done": True,        "groups_failed": {"1": "max turns", "2": "model error"},
     }))
     assert read_pipeline_warnings(tmp_path) == ["2 groups failed"]
 
@@ -623,8 +620,7 @@ def test_read_pipeline_warnings_single_group_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": True, "angles_done": True,
-        "groups_failed": {"1": "max turns"},
+        "holistic_done": True,        "groups_failed": {"1": "max turns"},
     }))
     assert read_pipeline_warnings(tmp_path) == ["1 group failed"]
 
@@ -645,8 +641,7 @@ def test_read_pipeline_warnings_skipped_phases_no_warning_when_synthesis_done(cr
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False, "angles_done": False,
-        "synthesis_done": True, "synthesis_failed": "",
+        "holistic_done": False,        "synthesis_done": True, "synthesis_failed": "",
     }))
     assert read_pipeline_warnings(tmp_path) == []
 
@@ -1225,7 +1220,7 @@ def test_generator_version_returns_string(cr):
 
 def test_constants_match_expected(cr):
     assert cr.ARCHIVE_KEEP_COUNT == 3
-    assert cr.DEFAULT_MAX_PARALLEL == 4
+    assert cr.DEFAULT_MAX_PARALLEL == 2
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4

@@ -9,7 +9,8 @@ ${env_section}
 Review PR #${pr_number} in ${repo}.
 ${pr_header}
 
-Review ONLY the following files. Do NOT read or comment on files outside this list:
+Review ONLY the following files. Do NOT read or comment on files outside this list.
+As you review, watch for: suspicious deletions or silent behavior changes, unhandled error/edge cases, missing sibling updates (e.g., enum added but switch not updated), security concerns (injection, auth bypass, data exposure), and correctness issues (off-by-one, race conditions, null handling).
 ${group_files_formatted}
 ${preflight_data}
 ${delta_section}

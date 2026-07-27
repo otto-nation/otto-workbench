@@ -138,7 +138,7 @@ def test_state_roundtrip_with_data():
     update_review(state, ReviewSummary(
         review_file="/tmp/review.md", review_type="self",
         head_sha="def", finding_counts={"M": 1, "S": 2},
-        verdict=ReviewVerdict.CHANGES_REQUESTED.value, cost_usd=1.50,
+        verdict=ReviewVerdict.CHANGES_REQUESTED.value, cost_usd=1.50, total_tokens=54321,
         updated_at="2026-06-20T00:00:00+00:00",
     ))
     update_comments(state, CommentsSummary(
@@ -158,6 +158,7 @@ def test_state_roundtrip_with_data():
     assert restored.review.finding_counts == {"M": 1, "S": 2}
     assert restored.review.verdict == ReviewVerdict.CHANGES_REQUESTED.value
     assert restored.review.cost_usd == 1.50
+    assert restored.review.total_tokens == 54321
 
     assert restored.comments.total_threads == 5
     assert restored.comments.by_state == {"new": 2, "addressed": 3}

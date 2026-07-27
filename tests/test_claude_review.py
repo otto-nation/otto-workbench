@@ -17,7 +17,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    count_severity, json_summary, parse_review_verdict,
+    count_severity, json_summary, parse_review_verdict, parse_session_log,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -52,13 +52,16 @@ def reviews_dir(tmp_path, cr, monkeypatch):
 def _make_session_log(
     path, cost=1.0, input_tokens=100, output_tokens=200,
     duration_ms=60000, cache_read=0, cache_create=0,
+    model_usage=None,
 ):
+    model_usage_part = f',"modelUsage":{json.dumps(model_usage)}' if model_usage else ""
     Path(path).write_text(
         '{"type":"assistant","message":{"content":[{"type":"text","text":"working..."}]}}\n'
         f'{{"type":"result","subtype":"success","is_error":false,'
         f'"duration_ms":{duration_ms},"total_cost_usd":{cost},'
         f'"usage":{{"input_tokens":{input_tokens},"output_tokens":{output_tokens},'
-        f'"cache_read_input_tokens":{cache_read},"cache_creation_input_tokens":{cache_create}}}}}\n'
+        f'"cache_read_input_tokens":{cache_read},"cache_creation_input_tokens":{cache_create}}}'
+        f'{model_usage_part}}}\n'
     )
 
 
@@ -175,7 +178,7 @@ def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
         duration_ms=300000, cache_read=100000, cache_create=50000,
     )
     result = cr._format_usage(log)
-    assert "1.1M tokens" in result
+    assert "1.2M tokens" in result
     assert "(100k cached)" in result
 
 
@@ -207,7 +210,7 @@ def test_format_usage_separates_cache_from_fresh(cr, tmp_path):
         duration_ms=10000, cache_read=5000, cache_create=3000,
     )
     result = cr._format_usage(log)
-    assert "3k tokens" in result
+    assert "8k tokens" in result
     assert "(5k cached)" in result
 
 
@@ -217,6 +220,88 @@ def test_format_usage_no_cache_omits_parenthetical(cr, tmp_path):
     result = cr._format_usage(log)
     assert "300 tokens" in result
     assert "cached" not in result
+
+
+def test_format_usage_wall_clock_override(cr, tmp_path):
+    log = str(tmp_path / "session.jsonl")
+    _make_session_log(log, cost=1.00, input_tokens=100, output_tokens=200, duration_ms=600000)
+    result = cr._format_usage(log, wall_clock_ms=120000)
+    assert "2m 0s" in result
+    assert "10m" not in result
+
+
+def test_format_usage_total_includes_cache_reads(cr, tmp_path):
+    log = str(tmp_path / "session.jsonl")
+    _make_session_log(
+        log, cost=1.0, input_tokens=100, output_tokens=200,
+        duration_ms=10000, cache_read=10000,
+    )
+    result = cr._format_usage(log)
+    assert "10k tokens" in result
+    assert "(10k cached)" in result
+
+
+def test_parse_session_log_model_usage(tmp_path):
+    log = tmp_path / "session.jsonl"
+    log.write_text(json.dumps({
+        "type": "result",
+        "total_cost_usd": 2.0,
+        "duration_ms": 30000,
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 200,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        },
+        "modelUsage": {
+            "claude-sonnet-4-20250514": {
+                "input_tokens": 500,
+                "output_tokens": 300,
+                "cache_read_input_tokens": 1000,
+                "cache_creation_input_tokens": 200,
+            },
+            "claude-haiku-4-5-20251001": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        },
+    }) + "\n")
+    usage = parse_session_log(str(log))
+    assert usage.input_tokens == 600
+    assert usage.output_tokens == 350
+    assert usage.cache_read_tokens == 1000
+    assert usage.cache_write_tokens == 200
+    assert usage.cost == pytest.approx(2.0)
+
+
+def test_parse_session_log_no_model_usage_fallback(tmp_path):
+    log = str(tmp_path / "session.jsonl")
+    _make_session_log(log, cost=1.0, input_tokens=100, output_tokens=200)
+    usage = parse_session_log(log)
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 200
+
+
+def test_format_usage_model_usage_tokens(cr, tmp_path):
+    log = str(tmp_path / "session.jsonl")
+    _make_session_log(
+        log, cost=2.0, input_tokens=100, output_tokens=200, duration_ms=10000,
+        model_usage={
+            "claude-sonnet-4-20250514": {
+                "input_tokens": 500, "output_tokens": 300,
+                "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200,
+            },
+            "claude-haiku-4-5-20251001": {
+                "input_tokens": 100, "output_tokens": 50,
+                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+            },
+        },
+    )
+    result = cr._format_usage(log)
+    assert "2k tokens" in result
+    assert "(1k cached)" in result
 
 
 # ── count_severity ────────────────────────────────────────────────────────────
@@ -509,8 +594,7 @@ def test_read_pipeline_warnings_all_complete(cr, tmp_path):
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
         "holistic_done": True, "groups_done": [1],
-        "groups_failed": {}, "angles_done": True,
-        "synthesis_done": True, "synthesis_failed": "",
+        "groups_failed": {},        "synthesis_done": True, "synthesis_failed": "",
     }))
     assert read_pipeline_warnings(tmp_path) == []
 
@@ -519,26 +603,15 @@ def test_read_pipeline_warnings_holistic_incomplete(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False, "angles_done": True,
-    }))
+        "holistic_done": False,    }))
     assert read_pipeline_warnings(tmp_path) == ["holistic phase"]
-
-
-def test_read_pipeline_warnings_angles_incomplete(cr, tmp_path):
-    pipeline = tmp_path / "pipeline.json"
-    pipeline.write_text(json.dumps({
-        "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": True, "angles_done": False,
-    }))
-    assert read_pipeline_warnings(tmp_path) == ["angles phase"]
 
 
 def test_read_pipeline_warnings_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "holistic_done": True, "angles_done": True,
-        "groups_failed": {"1": "max turns", "2": "model error"},
+        "holistic_done": True,        "groups_failed": {"1": "max turns", "2": "model error"},
     }))
     assert read_pipeline_warnings(tmp_path) == ["2 groups failed"]
 
@@ -547,8 +620,7 @@ def test_read_pipeline_warnings_single_group_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": True, "angles_done": True,
-        "groups_failed": {"1": "max turns"},
+        "holistic_done": True,        "groups_failed": {"1": "max turns"},
     }))
     assert read_pipeline_warnings(tmp_path) == ["1 group failed"]
 
@@ -557,12 +629,11 @@ def test_read_pipeline_warnings_multiple(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False, "angles_done": False,
+        "holistic_done": False,
         "synthesis_failed": "all groups failed",
     }))
     warnings = read_pipeline_warnings(tmp_path)
     assert "holistic phase" in warnings
-    assert "angles phase" in warnings
     assert "synthesis" in warnings
 
 
@@ -570,8 +641,7 @@ def test_read_pipeline_warnings_skipped_phases_no_warning_when_synthesis_done(cr
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False, "angles_done": False,
-        "synthesis_done": True, "synthesis_failed": "",
+        "holistic_done": False,        "synthesis_done": True, "synthesis_failed": "",
     }))
     assert read_pipeline_warnings(tmp_path) == []
 
@@ -1150,7 +1220,7 @@ def test_generator_version_returns_string(cr):
 
 def test_constants_match_expected(cr):
     assert cr.ARCHIVE_KEEP_COUNT == 3
-    assert cr.DEFAULT_MAX_PARALLEL == 4
+    assert cr.DEFAULT_MAX_PARALLEL == 2
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4

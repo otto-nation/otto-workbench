@@ -66,7 +66,6 @@ TEMPLATE_GROUP = "group.md"
 TEMPLATE_SYNTHESIS = "synthesis.md"
 TEMPLATE_SELF_REVIEW = "self-review.md"
 TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
-TEMPLATE_ANGLES = "angles.md"
 TEMPLATE_SCOUT = "scout.md"
 TEMPLATE_DISPROVE = "disprove.md"
 TEMPLATE_FIX = "fix-findings.md"
@@ -85,8 +84,6 @@ FILENAME_HOLISTIC_LOG = "holistic.jsonl"
 FILENAME_SYNTHESIS_LOG = "synthesis.jsonl"
 FILENAME_GROUP = "group-{}.md"
 FILENAME_GROUP_LOG = "group-{}.jsonl"
-FILENAME_ANGLES = "angles.md"
-FILENAME_ANGLES_LOG = "angles.jsonl"
 FILENAME_SCOUT = "scout.md"
 FILENAME_SCOUT_LOG = "scout.jsonl"
 FILENAME_DISPROVE = "disprove.md"
@@ -198,6 +195,14 @@ class SessionUsage:
         return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
 
 
+def _extract_token_sources(rec: dict) -> list[dict]:
+    """Return per-model usage dicts, preferring modelUsage over usage."""
+    model_usage = rec.get("modelUsage")
+    if model_usage:
+        return list(model_usage.values())
+    return [rec.get("usage", {})]
+
+
 def parse_session_log(path: str) -> SessionUsage:
     """Parse a session JSONL log file and return aggregated usage."""
     cost = 0.0
@@ -220,11 +225,11 @@ def parse_session_log(path: str) -> SessionUsage:
         if rec.get("type") != "result":
             continue
         cost += rec.get("total_cost_usd", 0) or 0
-        usage = rec.get("usage", {})
-        input_tokens += usage.get("input_tokens", 0) or 0
-        output_tokens += usage.get("output_tokens", 0) or 0
-        cache_read += usage.get("cache_read_input_tokens", 0) or 0
-        cache_write += usage.get("cache_creation_input_tokens", 0) or 0
+        for src in _extract_token_sources(rec):
+            input_tokens += src.get("input_tokens", 0) or 0
+            output_tokens += src.get("output_tokens", 0) or 0
+            cache_read += src.get("cache_read_input_tokens", 0) or 0
+            cache_write += src.get("cache_creation_input_tokens", 0) or 0
         duration_ms += rec.get("duration_ms", 0) or 0
     return SessionUsage(
         cost=cost,
@@ -234,6 +239,28 @@ def parse_session_log(path: str) -> SessionUsage:
         cache_write_tokens=cache_write,
         duration_ms=duration_ms,
     )
+
+
+# ── Log preservation for retries ─────────────────────────────────────────────
+
+
+def preserve_log(path: str) -> str:
+    """Read session log content before a retry that will overwrite it."""
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return ""
+
+
+def restore_preserved(path: str, prior: str) -> None:
+    """Prepend prior log content so both attempts' result records are preserved."""
+    if not prior:
+        return
+    try:
+        current = Path(path).read_text()
+    except OSError:
+        current = ""
+    Path(path).write_text(prior + current)
 
 
 # ── Subprocess ───────────────────────────────────────────────────────────────
@@ -354,8 +381,6 @@ def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
     if groups_failed:
         n = len(groups_failed)
         warnings.append(f"{n} group{'s' if n != 1 else ''} failed")
-    if not data.get("angles_done", False) and not synthesis_done:
-        warnings.append("angles phase")
     if data.get("synthesis_failed"):
         warnings.append("synthesis")
     return warnings

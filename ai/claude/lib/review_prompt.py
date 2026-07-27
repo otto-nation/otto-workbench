@@ -18,7 +18,7 @@ import log
 from review_common import (
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     TEMPLATE_DIR_REL,
-    TEMPLATE_ANGLES, TEMPLATE_DISPROVE, TEMPLATE_FIX,
+    TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
@@ -970,34 +970,6 @@ def _prompt_synthesis(job, common, extra):
     return sections, kwargs, ""
 
 
-def _prompt_angles(job, common, extra):
-    holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
-    holistic_block = _build_holistic_block(holistic_content, job.pr.changed_files)
-    sections = {
-        "pr_header": common["pr_header"],
-        "holistic_block": holistic_block,
-        "env_section": common["env_section"],
-        "delta_section": common["delta_section"],
-    }
-    diff_budget = _compute_diff_budget(job, sections)
-    preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
-    sections["preflight_data"] = preflight
-    kwargs = {
-        "branch_name": job.pr.head,
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "holistic_block": holistic_block,
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "env_section": common["env_section"],
-        "angles_output": extra["angles_output"],
-        "wt_path": job.wt_path,
-        "omitted_guidance": common["omitted_guidance"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
-
-
 def _prompt_fix(job, common, extra):
     review_content = ""
     if Path(job.review_file).exists():
@@ -1069,7 +1041,6 @@ _PROMPT_HANDLERS = {
     TEMPLATE_GROUP: _prompt_group,
     TEMPLATE_SYNTHESIS: _prompt_synthesis,
     TEMPLATE_DISPROVE: _prompt_disprove,
-    TEMPLATE_ANGLES: _prompt_angles,
     TEMPLATE_FIX: _prompt_fix,
 }
 

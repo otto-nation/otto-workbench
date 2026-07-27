@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 import ai_backend
 import log
+from review_common import preserve_log, restore_preserved
 
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -55,11 +58,6 @@ def _parse_session_cost(log_path: str) -> float:
         return 0.0
     results = _parse_jsonl_records(log_path, "result")
     return sum(r.get("total_cost_usd", 0.0) for r in results)
-
-
-def _check_budget(logs: list[str], max_cost: float) -> tuple[float, bool]:
-    total = sum(_parse_session_cost(log) for log in logs)
-    return total, total > max_cost
 
 
 def _diagnose_result_type(result: dict) -> str:
@@ -148,6 +146,38 @@ def _try_recover_review(job: "ReviewJob"):
     _try_recover_output(job.session_log, job.review_file)
 
 
+# ── Quota throttle ─────────────────────────────────────────────────────────
+
+
+class QuotaThrottle:
+    """Thread-safe throttle shared across pipeline agents.
+
+    When any agent hits a 429, all pending agents wait before launching.
+    """
+
+    def __init__(self, backoff: float = 30.0, max_backoff: float = 120.0):
+        self._lock = threading.Lock()
+        self._resume_at: float = 0.0
+        self._backoff = backoff
+        self._max_backoff = max_backoff
+
+    def report_exhausted(self, model: str) -> float:
+        with self._lock:
+            wait = self._backoff
+            self._resume_at = time.monotonic() + wait
+            self._backoff = min(self._backoff * 2, self._max_backoff)
+        log.warn(f"Quota exhausted on {model} — backing off {wait:.0f}s")
+        return wait
+
+    def wait_if_needed(self) -> None:
+        with self._lock:
+            resume_at = self._resume_at
+        remaining = resume_at - time.monotonic()
+        if remaining > 0:
+            log.info(f"Throttle: waiting {remaining:.0f}s for quota to recover")
+            time.sleep(remaining)
+
+
 # ── Quota detection ────────────────────────────────────────────────────────
 
 _MODEL_FALLBACK = {"opus": "sonnet"}
@@ -200,6 +230,37 @@ def _resolve_provider() -> str | None:
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 
+def _invoke_once(prompt, session_log, add_dirs, agent, max_turns, max_budget,
+                  model, thinking_level, provider, label):
+    prior_log = preserve_log(session_log)
+    rc = ai_backend.invoke_agent(
+        prompt, session_log,
+        add_dirs=add_dirs, agent=agent,
+        max_turns=max_turns, max_budget=max_budget,
+        model=model, thinking_level=thinking_level,
+        provider=provider, label=label,
+    )
+    restore_preserved(session_log, prior_log)
+    return rc
+
+
+def _retry_quota(prompt, session_log, add_dirs, agent, max_turns, max_budget,
+                 model, thinking_level, provider, label, throttle):
+    if throttle:
+        wait = throttle.report_exhausted(model)
+        time.sleep(wait)
+    rc = _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
+                      max_budget, model, thinking_level, provider, label)
+    if rc == 0 or not _is_quota_error(session_log):
+        return rc
+    fallback = _MODEL_FALLBACK.get(model)
+    if not fallback:
+        return rc
+    log.warn(f"Still exhausted on {model} — falling back to {fallback}")
+    return _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
+                        max_budget, fallback, thinking_level, provider, label)
+
+
 def invoke_agent(
     prompt: str, session_log: str, wt_path: str, reviews_dir: str,
     label: str = "", review_file: str = "",
@@ -209,12 +270,17 @@ def invoke_agent(
     thinking_level: str | None = None,
     provider: str | None = None,
     agent: str = "reviewer",
+    throttle: "QuotaThrottle | None" = None,
 ) -> int:
     add_dirs = [reviews_dir, wt_path]
     if review_file:
         review_dir = str(Path(review_file).parent)
         if review_dir not in (reviews_dir, wt_path):
             add_dirs.append(review_dir)
+
+    if throttle:
+        throttle.wait_if_needed()
+
     rc = ai_backend.invoke_agent(
         prompt, session_log,
         add_dirs=add_dirs, agent=agent,
@@ -223,16 +289,9 @@ def invoke_agent(
         provider=provider, label=label,
     )
     if rc != 0 and model and _is_quota_error(session_log):
-        fallback = _MODEL_FALLBACK.get(model)
-        if fallback:
-            log.warn(f"Quota exhausted on {model} — retrying with {fallback}")
-            rc = ai_backend.invoke_agent(
-                prompt, session_log,
-                add_dirs=add_dirs, agent=agent,
-                max_turns=max_turns, max_budget=max_budget,
-                model=fallback, thinking_level=thinking_level,
-                provider=provider, label=label,
-            )
+        rc = _retry_quota(prompt, session_log, add_dirs, agent, max_turns,
+                          max_budget, model, thinking_level, provider, label,
+                          throttle)
     return rc
 
 

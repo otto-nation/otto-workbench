@@ -38,31 +38,6 @@ print(f'{cost:.2f}')
   [ "$result" = "0.00" ]
 }
 
-@test "_check_budget: sums costs and detects exceeded" {
-  cat > "$TMPDIR/log1.jsonl" <<'EOF'
-{"type":"result","subtype":"success","total_cost_usd":5.00}
-EOF
-  cat > "$TMPDIR/log2.jsonl" <<'EOF'
-{"type":"result","subtype":"success","total_cost_usd":8.00}
-EOF
-  result=$(_py "
-total, exceeded = mod._check_budget(['$TMPDIR/log1.jsonl', '$TMPDIR/log2.jsonl'], 10.0)
-print(f'{total:.2f} {exceeded}')
-")
-  [ "$result" = "13.00 True" ]
-}
-
-@test "_check_budget: under budget returns False" {
-  cat > "$TMPDIR/log.jsonl" <<'EOF'
-{"type":"result","subtype":"success","total_cost_usd":2.00}
-EOF
-  result=$(_py "
-total, exceeded = mod._check_budget(['$TMPDIR/log.jsonl'], 10.0)
-print(f'{total:.2f} {exceeded}')
-")
-  [ "$result" = "2.00 False" ]
-}
-
 # ── Diagnostics ─────────────────────────────────────────────────────────────
 
 @test "_diagnose_result_type: handles error_max_turns subtype" {

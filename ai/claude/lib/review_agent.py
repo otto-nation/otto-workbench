@@ -230,6 +230,37 @@ def _resolve_provider() -> str | None:
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 
+def _invoke_once(prompt, session_log, add_dirs, agent, max_turns, max_budget,
+                  model, thinking_level, provider, label):
+    prior_log = preserve_log(session_log)
+    rc = ai_backend.invoke_agent(
+        prompt, session_log,
+        add_dirs=add_dirs, agent=agent,
+        max_turns=max_turns, max_budget=max_budget,
+        model=model, thinking_level=thinking_level,
+        provider=provider, label=label,
+    )
+    restore_preserved(session_log, prior_log)
+    return rc
+
+
+def _retry_quota(prompt, session_log, add_dirs, agent, max_turns, max_budget,
+                 model, thinking_level, provider, label, throttle):
+    if throttle:
+        wait = throttle.report_exhausted(model)
+        time.sleep(wait)
+    rc = _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
+                      max_budget, model, thinking_level, provider, label)
+    if rc == 0 or not _is_quota_error(session_log):
+        return rc
+    fallback = _MODEL_FALLBACK.get(model)
+    if not fallback:
+        return rc
+    log.warn(f"Still exhausted on {model} — falling back to {fallback}")
+    return _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
+                        max_budget, fallback, thinking_level, provider, label)
+
+
 def invoke_agent(
     prompt: str, session_log: str, wt_path: str, reviews_dir: str,
     label: str = "", review_file: str = "",
@@ -258,34 +289,9 @@ def invoke_agent(
         provider=provider, label=label,
     )
     if rc != 0 and model and _is_quota_error(session_log):
-        # Stage 1: backoff and retry same model
-        if throttle:
-            wait = throttle.report_exhausted(model)
-            time.sleep(wait)
-        prior_log = preserve_log(session_log)
-        rc = ai_backend.invoke_agent(
-            prompt, session_log,
-            add_dirs=add_dirs, agent=agent,
-            max_turns=max_turns, max_budget=max_budget,
-            model=model, thinking_level=thinking_level,
-            provider=provider, label=label,
-        )
-        restore_preserved(session_log, prior_log)
-
-        # Stage 2: fall back to cheaper model
-        if rc != 0 and _is_quota_error(session_log):
-            fallback = _MODEL_FALLBACK.get(model)
-            if fallback:
-                log.warn(f"Still exhausted on {model} — falling back to {fallback}")
-                prior_log = preserve_log(session_log)
-                rc = ai_backend.invoke_agent(
-                    prompt, session_log,
-                    add_dirs=add_dirs, agent=agent,
-                    max_turns=max_turns, max_budget=max_budget,
-                    model=fallback, thinking_level=thinking_level,
-                    provider=provider, label=label,
-                )
-                restore_preserved(session_log, prior_log)
+        rc = _retry_quota(prompt, session_log, add_dirs, agent, max_turns,
+                          max_budget, model, thinking_level, provider, label,
+                          throttle)
     return rc
 
 

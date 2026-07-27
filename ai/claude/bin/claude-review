@@ -308,6 +308,7 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
         verdict=verdict,
         status=status,
         cost_usd=usage.cost,
+        total_tokens=usage.total_tokens,
         updated_at=pr_state.now_iso(),
     )
 

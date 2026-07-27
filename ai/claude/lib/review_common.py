@@ -66,7 +66,6 @@ TEMPLATE_GROUP = "group.md"
 TEMPLATE_SYNTHESIS = "synthesis.md"
 TEMPLATE_SELF_REVIEW = "self-review.md"
 TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
-TEMPLATE_ANGLES = "angles.md"
 TEMPLATE_SCOUT = "scout.md"
 TEMPLATE_DISPROVE = "disprove.md"
 TEMPLATE_FIX = "fix-findings.md"
@@ -85,8 +84,6 @@ FILENAME_HOLISTIC_LOG = "holistic.jsonl"
 FILENAME_SYNTHESIS_LOG = "synthesis.jsonl"
 FILENAME_GROUP = "group-{}.md"
 FILENAME_GROUP_LOG = "group-{}.jsonl"
-FILENAME_ANGLES = "angles.md"
-FILENAME_ANGLES_LOG = "angles.jsonl"
 FILENAME_SCOUT = "scout.md"
 FILENAME_SCOUT_LOG = "scout.jsonl"
 FILENAME_DISPROVE = "disprove.md"
@@ -384,8 +381,6 @@ def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
     if groups_failed:
         n = len(groups_failed)
         warnings.append(f"{n} group{'s' if n != 1 else ''} failed")
-    if not data.get("angles_done", False) and not synthesis_done:
-        warnings.append("angles phase")
     if data.get("synthesis_failed"):
         warnings.append("synthesis")
     return warnings

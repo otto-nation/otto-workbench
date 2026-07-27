@@ -609,15 +609,6 @@ def test_read_pipeline_warnings_holistic_incomplete(cr, tmp_path):
     assert read_pipeline_warnings(tmp_path) == ["holistic phase"]
 
 
-def test_read_pipeline_warnings_angles_incomplete(cr, tmp_path):
-    pipeline = tmp_path / "pipeline.json"
-    pipeline.write_text(json.dumps({
-        "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": True, "angles_done": False,
-    }))
-    assert read_pipeline_warnings(tmp_path) == ["angles phase"]
-
-
 def test_read_pipeline_warnings_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
@@ -642,12 +633,11 @@ def test_read_pipeline_warnings_multiple(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False, "angles_done": False,
+        "holistic_done": False,
         "synthesis_failed": "all groups failed",
     }))
     warnings = read_pipeline_warnings(tmp_path)
     assert "holistic phase" in warnings
-    assert "angles phase" in warnings
     assert "synthesis" in warnings
 
 

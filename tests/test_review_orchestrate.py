@@ -1590,27 +1590,6 @@ class TestParseSessionCost:
         assert ro._parse_session_cost(str(log)) == 0.0
 
 
-# ── 35. _check_budget ───────────────────────────────────────────────────────
-
-
-class TestCheckBudget:
-    def test_under_budget(self, ro, tmp_path):
-        log1 = tmp_path / "log1.jsonl"
-        log1.write_text(json.dumps({"type": "result", "total_cost_usd": 1.0}) + "\n")
-        log2 = tmp_path / "log2.jsonl"
-        log2.write_text(json.dumps({"type": "result", "total_cost_usd": 2.0}) + "\n")
-        total, exceeded = ro._check_budget([str(log1), str(log2)], 10.0)
-        assert total == 3.0
-        assert exceeded is False
-
-    def test_over_budget(self, ro, tmp_path):
-        log = tmp_path / "log.jsonl"
-        log.write_text(json.dumps({"type": "result", "total_cost_usd": 15.0}) + "\n")
-        total, exceeded = ro._check_budget([str(log)], 10.0)
-        assert total == 15.0
-        assert exceeded is True
-
-
 # ── 35b. preserve_log / restore_preserved ──────────────────────────────────
 
 

@@ -20,7 +20,7 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
-DIAG_RATE_LIMITED = "rate limited (429)"
+DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -79,8 +79,8 @@ def _diagnose_missing_output(log_path: str) -> str:
         return DIAG_NO_SESSION_LOG
     results = _parse_jsonl_records(log_path, "result")
     if not results:
-        if _is_rate_limit_error(log_path):
-            return DIAG_RATE_LIMITED
+        if _is_quota_error(log_path):
+            return DIAG_QUOTA_EXHAUSTED
         return DIAG_NO_RESULT_RECORD
     return _diagnose_result_type(results[-1])
 
@@ -148,12 +148,12 @@ def _try_recover_review(job: "ReviewJob"):
     _try_recover_output(job.session_log, job.review_file)
 
 
-# ── Rate-limit detection ────────────────────────────────────────────────────
+# ── Quota detection ────────────────────────────────────────────────────────
 
 _MODEL_FALLBACK = {"opus": "sonnet"}
 
 
-def _is_rate_limit_error(log_path: str) -> bool:
+def _is_quota_error(log_path: str) -> bool:
     if not Path(log_path).exists():
         return False
     records = _parse_jsonl_records(log_path, "system")
@@ -163,7 +163,7 @@ def _is_rate_limit_error(log_path: str) -> bool:
     )
 
 
-def rate_limit_fallback(model: str) -> str | None:
+def quota_fallback(model: str) -> str | None:
     return _MODEL_FALLBACK.get(model)
 
 
@@ -222,10 +222,10 @@ def invoke_agent(
         model=model, thinking_level=thinking_level,
         provider=provider, label=label,
     )
-    if rc != 0 and model and _is_rate_limit_error(session_log):
+    if rc != 0 and model and _is_quota_error(session_log):
         fallback = _MODEL_FALLBACK.get(model)
         if fallback:
-            log.warn(f"Rate limited on {model} — retrying with {fallback}")
+            log.warn(f"Quota exhausted on {model} — retrying with {fallback}")
             rc = ai_backend.invoke_agent(
                 prompt, session_log,
                 add_dirs=add_dirs, agent=agent,

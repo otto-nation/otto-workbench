@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.46.4](https://github.com/otto-nation/otto-workbench/compare/v1.46.3...v1.46.4) (2026-07-27)
+
+
+### Bug Fixes
+
+* **pr-rebase:** auto-fix pre-push check failures after conflict resolution ([#553](https://github.com/otto-nation/otto-workbench/issues/553)) ([0bc93a0](https://github.com/otto-nation/otto-workbench/commit/0bc93a08fccbee1b7acc039a6953cb2ec57c214d))
+* **review:** fall back to sonnet on opus quota exhaustion ([#554](https://github.com/otto-nation/otto-workbench/issues/554)) ([554b737](https://github.com/otto-nation/otto-workbench/commit/554b737975179e6652b4596be0a33d04cab998ca))
+
 ## [1.46.3](https://github.com/otto-nation/otto-workbench/compare/v1.46.2...v1.46.3) (2026-07-24)
 
 

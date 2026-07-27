@@ -159,9 +159,9 @@ def _is_rate_limit_error(log_path: str) -> bool:
     with open(log_path) as f:
         for line in f:
             d = _try_parse_json(line)
-            if (d and d.get("type") == "system"
-                    and d.get("subtype") == "api_retry"
-                    and d.get("error_status") == 429):
+            if not d or d.get("type") != "system":
+                continue
+            if d.get("subtype") == "api_retry" and d.get("error_status") == 429:
                 return True
     return False
 

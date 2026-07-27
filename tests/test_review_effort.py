@@ -36,13 +36,11 @@ class TestEffortPresets:
     def test_low_skips_phases(self):
         low = review_pipeline.EFFORT_PRESETS["low"]
         assert low["skip_synthesis"] is True
-        assert low["skip_angles"] is True
         assert low["skip_holistic"] is True
 
     def test_medium_does_not_skip_phases(self):
         medium = review_pipeline.EFFORT_PRESETS["medium"]
         assert medium["skip_synthesis"] is False
-        assert medium["skip_angles"] is False
         assert medium["skip_holistic"] is False
 
     def test_agent_budget_scales_with_effort(self):
@@ -226,45 +224,3 @@ class TestHolisticPhaseStateUpdate:
         mock_write.assert_not_called()
 
 
-class TestAnglesPhaseStateUpdate:
-    @patch.object(review_pipeline, "_phase_group_reviews", return_value=([], []))
-    @patch.object(review_pipeline, "_write_pipeline_state")
-    def test_pr_mode_marks_angles_done(self, mock_write, mock_groups, tmp_path):
-        job = _make_job(tmp_path, mode="pr")
-        state = PipelineState(head_sha="abc", group_names=["g1"])
-        assert state.angles_done is False
-
-        review_pipeline._run_groups_and_angles(
-            job, groups=[], group_count=0,
-            holistic_content="", max_parallel=1,
-            skip_groups=None, state=state,
-        )
-        assert state.angles_done is True
-        mock_write.assert_called_once_with(job, state)
-
-    @patch.object(review_pipeline, "_phase_group_reviews", return_value=([], []))
-    @patch.object(review_pipeline, "_write_pipeline_state")
-    def test_effort_skip_marks_angles_done(self, mock_write, mock_groups, tmp_path):
-        job = _make_job(tmp_path, mode="self", effort="low")
-        state = PipelineState(head_sha="abc", group_names=["g1"])
-
-        review_pipeline._run_groups_and_angles(
-            job, groups=[], group_count=0,
-            holistic_content="", max_parallel=1,
-            skip_groups=None, state=state,
-        )
-        assert state.angles_done is True
-
-    @patch.object(review_pipeline, "_phase_group_reviews", return_value=([], []))
-    @patch.object(review_pipeline, "_write_pipeline_state")
-    def test_already_done_no_write(self, mock_write, mock_groups, tmp_path):
-        job = _make_job(tmp_path, mode="pr")
-        state = PipelineState(head_sha="abc", group_names=["g1"], angles_done=True)
-
-        review_pipeline._run_groups_and_angles(
-            job, groups=[], group_count=0,
-            holistic_content="", max_parallel=1,
-            skip_groups=None, state=state,
-        )
-        assert state.angles_done is True
-        mock_write.assert_not_called()

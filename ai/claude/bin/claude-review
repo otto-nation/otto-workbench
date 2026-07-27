@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -46,7 +47,7 @@ LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.cl
 FILENAME_PRIOR = f"prior{REVIEW_EXT}"
 
 ARCHIVE_KEEP_COUNT = 3
-DEFAULT_MAX_PARALLEL = 4
+DEFAULT_MAX_PARALLEL = 2
 GITHUB_BASE_URL = "https://github.com"
 
 ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
@@ -182,21 +183,21 @@ def _format_tokens(n: int) -> str:
     return str(n)
 
 
-def _format_usage(*log_paths: str) -> str:
+def _format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
     logs = [p for p in log_paths if p and os.path.isfile(p)]
     if not logs:
         return ""
 
     usages = [parse_session_log(p) for p in logs]
     cost = sum(u.cost for u in usages)
-    fresh = sum(u.input_tokens + u.cache_write_tokens + u.output_tokens for u in usages)
+    total = sum(u.total_tokens for u in usages)
     cached = sum(u.cache_read_tokens for u in usages)
-    duration_ms = sum(u.duration_ms for u in usages)
+    duration_ms = wall_clock_ms if wall_clock_ms is not None else sum(u.duration_ms for u in usages)
 
-    if cost == 0.0 and fresh == 0 and cached == 0 and duration_ms == 0:
+    if cost == 0.0 and total == 0 and duration_ms == 0:
         return ""
 
-    tokens_part = f"{_format_tokens(fresh)} tokens"
+    tokens_part = f"{_format_tokens(total)} tokens"
     if cached > 0:
         tokens_part += f" ({_format_tokens(cached)} cached)"
 
@@ -237,6 +238,7 @@ def _print_summary(
     pr_url: str = "",
     post_session_log: str = "",
     branch_name: str = "",
+    wall_clock_ms: int | None = None,
 ) -> None:
     log.blank()
     log.info("─── Summary ───")
@@ -262,7 +264,7 @@ def _print_summary(
         log.dim(f"PR:              {pr_url}")
     elif branch_name:
         log.dim(f"Branch:          {branch_name}")
-    usage_line = _format_usage(session_log, post_session_log)
+    usage_line = _format_usage(session_log, post_session_log, wall_clock_ms=wall_clock_ms)
     if usage_line:
         log.dim(usage_line.strip())
     log.blank()
@@ -306,6 +308,7 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
         verdict=verdict,
         status=status,
         cost_usd=usage.cost,
+        total_tokens=usage.total_tokens,
         updated_at=pr_state.now_iso(),
     )
 
@@ -696,7 +699,9 @@ def _run_review_body(
         effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
     )
+    wall_start = time.monotonic()
     rc = subprocess.run(orchestrate_args).returncode
+    wall_ms = int((time.monotonic() - wall_start) * 1000)
     if rc != 0:
         _fail_orchestration("Review orchestration failed", session_log)
     if not review_file.is_file():
@@ -706,24 +711,24 @@ def _run_review_body(
     _display_review(review_file)
 
     if no_post:
-        _print_summary(str(review_file), session_log, pr_url)
+        _print_summary(str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
         log.dim("Post to GitHub:  pr review --post")
         return
 
     if auto_post:
         _post_review(repo, pr_number, str(review_file), auto_submit)
         post_session_log = str(review_dir / FILENAME_POST_SESSION)
-        _print_summary(str(review_file), session_log, pr_url, post_session_log)
+        _print_summary(str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
         return
 
     if not _confirm("Satisfied with the review?"):
-        _print_summary(str(review_file), session_log, pr_url)
+        _print_summary(str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
         log.dim("Edit the review:  $EDITOR " + str(review_file))
         log.dim("Post to GitHub:   pr review --post")
         sys.exit(0)
 
     if not _confirm("Post review to GitHub?"):
-        _print_summary(str(review_file), session_log, pr_url)
+        _print_summary(str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
         log.dim("Post to GitHub:  pr review --post")
         return
 
@@ -733,7 +738,7 @@ def _run_review_body(
     if _confirm("Submit review now?"):
         _submit_pending_review(repo, pr_number, str(review_file))
 
-    _print_summary(str(review_file), session_log, pr_url, post_session_log)
+    _print_summary(str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
 
 
 # ── Main flows ───────────────────────────────────────────────────────────────
@@ -932,7 +937,9 @@ def _run_self_review_body(
         no_scout=no_scout, disprove=disprove, generated=generated,
     )
 
+    wall_start = time.monotonic()
     rc = subprocess.run(orchestrate_args).returncode
+    wall_ms = int((time.monotonic() - wall_start) * 1000)
     if rc != 0:
         _fail_orchestration("Review orchestration failed", session_log)
     if not review_file.is_file():
@@ -942,7 +949,7 @@ def _run_self_review_body(
     _display_review(review_file)
 
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
-    _print_summary(str(review_file), session_log, pr_url, "", branch_name)
+    _print_summary(str(review_file), session_log, pr_url, "", branch_name, wall_clock_ms=wall_ms)
 
     _update_pr_state(repo, pr_number, str(review_file), wt_path, "self")
 

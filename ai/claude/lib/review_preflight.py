@@ -113,6 +113,7 @@ class ReviewJob:
     verification: dict | None = None
     pr_state_data: "PRState | None" = None
     viewer_role: str = ""
+    throttle: "QuotaThrottle | None" = None
 
 
 @dataclass
@@ -157,9 +158,9 @@ MULTI_PHASE_LINE_THRESHOLD = 500
 MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
 MAX_GROUP_FILES = 15
-DEFAULT_MAX_PARALLEL = 4
+DEFAULT_MAX_PARALLEL = 2
 DEFAULT_MAX_GROUPS = 12
-HOLISTIC_MIN_GROUPS = 4
+HOLISTIC_MIN_GROUPS = 8
 
 DEFAULT_MAX_COST = 20.0
 DEFAULT_MAX_TURNS = 10

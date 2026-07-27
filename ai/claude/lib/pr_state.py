@@ -86,6 +86,7 @@ class ReviewSummary:
     verdict: str = ""
     status: str = ""
     cost_usd: float = 0.0
+    total_tokens: int = 0
     updated_at: str = ""
 
 

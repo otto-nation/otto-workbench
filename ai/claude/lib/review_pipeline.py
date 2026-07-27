@@ -20,8 +20,7 @@ from pathlib import Path
 
 import log
 from review_common import (
-    FILE_STAT_FMT,
-    FILENAME_ANGLES, FILENAME_ANGLES_LOG,
+    FILE_STAT_FMT, count_severity,
     FILENAME_DISPROVE, FILENAME_DISPROVE_LOG,
     FILENAME_FIX_LOG,
     FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
@@ -32,10 +31,11 @@ from review_common import (
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     MODE_SELF,
     PRIOR_DATE_RE,
-    TEMPLATE_ANGLES, TEMPLATE_DISPROVE, TEMPLATE_FIX,
+    TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
+    preserve_log, restore_preserved,
 )
 from review_findings import (
     Finding,
@@ -86,7 +86,6 @@ DEFAULT_MODEL_SCOUT = "sonnet"
 DEFAULT_MODEL_SYNTHESIS = "opus"
 DEFAULT_MODEL_DISPROVE = "sonnet"
 DEFAULT_MODEL_SINGLE = "opus"
-DEFAULT_MODEL_ANGLES = "sonnet"
 DEFAULT_MODEL_FIX = "sonnet"
 
 DEFAULT_THINKING_GROUP = "low"
@@ -95,12 +94,11 @@ DEFAULT_THINKING_SCOUT = "low"
 DEFAULT_THINKING_SYNTHESIS = "high"
 DEFAULT_THINKING_DISPROVE = "medium"
 DEFAULT_THINKING_SINGLE = "medium"
-DEFAULT_THINKING_ANGLES = "low"
 DEFAULT_THINKING_FIX = "low"
 
 DEFAULT_MAX_TURNS_SCOUT = 10
 DEFAULT_MAX_TURNS_DISPROVE = 15
-DEFAULT_MAX_TURNS_ANGLES = 15
+DISPROVE_MIN_FINDINGS = 3
 DEFAULT_MAX_TURNS_FIX = 20
 MAX_TURNS_FIX_CAP = 60
 RETRY_MAX_TURNS_FIX = 40
@@ -113,11 +111,10 @@ EFFORT_PRESETS = {
     "low": {
         "thinking": "low",
         "agent_budget": 3.0,
-        "max_groups": 8,
+        "max_groups": 6,
         "multi_phase_line_threshold": 1000,
         "multi_phase_file_threshold": 15,
         "skip_synthesis": True,
-        "skip_angles": True,
         "skip_holistic": True,
         "skip_scout": True,
         "skip_disprove": True,
@@ -127,11 +124,10 @@ EFFORT_PRESETS = {
     "medium": {
         "thinking": None,
         "agent_budget": DEFAULT_MAX_BUDGET_PER_AGENT,
-        "max_groups": 12,
+        "max_groups": 8,
         "multi_phase_line_threshold": 500,
         "multi_phase_file_threshold": 10,
         "skip_synthesis": False,
-        "skip_angles": False,
         "skip_holistic": False,
         "skip_scout": False,
         "skip_disprove": False,
@@ -145,7 +141,6 @@ EFFORT_PRESETS = {
         "multi_phase_line_threshold": 500,
         "multi_phase_file_threshold": 10,
         "skip_synthesis": False,
-        "skip_angles": False,
         "skip_holistic": False,
         "skip_scout": False,
         "skip_disprove": False,
@@ -322,7 +317,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     agent = _effort_default(job.effort, "agent", "reviewer")
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
+    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
     log.blank()
 
     reason = ""
@@ -398,7 +393,7 @@ def _review_group(
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
 
     failed = None
     if not _has_output(group_output):
@@ -437,7 +432,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     agent = _effort_default(job.effort, "agent", "reviewer")
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
+    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
     log.blank()
 
     holistic_content = ""
@@ -468,7 +463,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
-    invoke_agent(prompt, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
+    invoke_agent(prompt, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
     log.blank()
 
     if _has_output(scout_output):
@@ -508,7 +503,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
-    invoke_agent(prompt, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
+    invoke_agent(prompt, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
     log.blank()
 
     cost = _parse_session_cost(disprove_log) if disprove_log else 0.0
@@ -543,36 +538,6 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
     if explicit_disprove is False:
         return False
     return not _effort_default(job.effort, "skip_disprove", True)
-
-
-def _phase_angles(job: ReviewJob, holistic_content: str) -> tuple[str, str, str]:
-    angles_output = _derive_path(job.review_file, FILENAME_ANGLES)
-    angles_log = _derive_path(job.review_file, FILENAME_ANGLES_LOG)
-
-    _touch(angles_output)
-
-    max_turns = DEFAULT_MAX_TURNS_ANGLES + _omitted_turns(job)
-    prompt = build_prompt(
-        TEMPLATE_ANGLES, job, max_turns=max_turns,
-        angles_output=angles_output, holistic_content=holistic_content,
-    )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_ANGLES_MODEL",
-                           DEFAULT_MODEL_ANGLES)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_ANGLES_THINKING",
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_ANGLES))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
-    log.info("Angles scan (7 review angles)...")
-    invoke_agent(prompt, angles_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite")
-
-    angles_content = ""
-    if _has_output(angles_output):
-        angles_content = Path(angles_output).read_text()
-    else:
-        reason = _diagnose_missing_output(angles_log)
-        log.warn(f"Angles scan produced no output ({reason}) — continuing without it")
-
-    return angles_content, angles_output, angles_log
 
 
 def _count_unchecked(review_file: str) -> int:
@@ -810,7 +775,7 @@ def run_fix_pass(job: ReviewJob):
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
                  review_file=job.review_file, model=model, thinking_level=thinking,
                  provider=provider, max_turns=max_turns, max_budget=budget,
-                 agent="reviewer-lite")
+                 agent="reviewer-lite", throttle=job.throttle)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -830,12 +795,14 @@ def run_fix_pass(job: ReviewJob):
                 TEMPLATE_FIX, job, max_turns=retry_turns,
             )
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
+            prior_log = preserve_log(fix_log)
             log.blank()
             invoke_agent(retry_prompt, fix_log, job.wt_path, job.reviews_dir,
                          review_file=job.review_file, model=model,
                          thinking_level=thinking, provider=provider,
                          max_turns=retry_turns, max_budget=budget,
-                         agent="reviewer-lite")
+                         agent="reviewer-lite", throttle=job.throttle)
+            restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
             after_text = Path(job.review_file).read_text()
@@ -1175,14 +1142,16 @@ def _phase_synthesis(
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
     agent = _effort_default(job.effort, "agent", "reviewer")
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
+    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
     log.blank()
 
     if _synthesis_is_transient_failure(job.review_file, synthesis_log):
         log.warn("Synthesis hit transient API error — retrying once...")
         Path(job.review_file).write_text("")
+        prior_log = preserve_log(synthesis_log)
         log.blank()
-        rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent)
+        rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        restore_preserved(synthesis_log, prior_log)
         log.blank()
 
     if not _has_output(job.review_file):
@@ -1218,14 +1187,12 @@ def _read_existing_logs(log_paths: list[str]) -> str:
 def _consolidate_logs(
     job: ReviewJob,
     holistic_log: str, group_count: int, synthesis_log: str,
-    angles_log: str = "", disprove_log: str = "",
+    disprove_log: str = "",
 ):
     group_logs = _group_log_paths(job, group_count)
     all_logs = group_logs[:]
     if holistic_log:
         all_logs.insert(0, holistic_log)
-    if angles_log:
-        all_logs.append(angles_log)
     if synthesis_log:
         all_logs.append(synthesis_log)
     if disprove_log:
@@ -1241,7 +1208,6 @@ def _cleanup_intermediates(
     job: ReviewJob,
     holistic_output: str, holistic_log: str,
     group_outputs: list[str], group_count: int, synthesis_log: str,
-    angles_output: str = "", angles_log: str = "",
 ):
     group_logs = _group_log_paths(job, group_count)
     cleanup = group_outputs + group_logs
@@ -1251,10 +1217,6 @@ def _cleanup_intermediates(
         cleanup.append(holistic_log)
     if synthesis_log:
         cleanup.append(synthesis_log)
-    if angles_output:
-        cleanup.append(angles_output)
-    if angles_log:
-        cleanup.append(angles_log)
     cleanup.append(_pipeline_state_path(job))
 
     review_dir = str(Path(job.review_file).parent)
@@ -1437,42 +1399,17 @@ def _run_holistic_phase(
     return content, holistic_output, holistic_log, cost
 
 
-def _run_groups_and_angles(
+def _run_group_phase(
     job: ReviewJob, groups: list[Group], group_count: int,
     holistic_content: str, max_parallel: int,
     skip_groups: "set[int] | None", state: PipelineState,
-) -> tuple[list[str], "list[tuple[str, str]]", str, str, float]:
-    run_angles = (
-        job.mode == MODE_SELF
-        and not getattr(state, "angles_done", False)
-        and not _effort_default(job.effort, "skip_angles", False)
+) -> tuple[list[str], "list[tuple[str, str]]", float]:
+    group_outputs, failed_groups = _phase_group_reviews(
+        groups, job, group_count, holistic_content, max_parallel,
+        skip_groups=skip_groups, pipeline_state=state,
     )
-    angles_output, angles_log = "", ""
+
     cost = 0.0
-
-    if run_angles:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            angles_future = pool.submit(_phase_angles, job, holistic_content)
-            groups_future = pool.submit(
-                _phase_group_reviews,
-                groups, job, group_count, holistic_content, max_parallel,
-                skip_groups, state,
-            )
-            _, angles_output, angles_log = angles_future.result()
-            group_outputs, failed_groups = groups_future.result()
-        state.angles_done = True
-        _write_pipeline_state(job, state)
-        if angles_log:
-            cost += _parse_session_cost(angles_log)
-    else:
-        if not state.angles_done:
-            state.angles_done = True
-            _write_pipeline_state(job, state)
-        group_outputs, failed_groups = _phase_group_reviews(
-            groups, job, group_count, holistic_content, max_parallel,
-            skip_groups=skip_groups, pipeline_state=state,
-        )
-
     new_group_indices = [
         i for i in range(1, len(group_outputs) + 1)
         if skip_groups is None or i not in skip_groups
@@ -1481,7 +1418,7 @@ def _run_groups_and_angles(
         gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
         cost += _parse_session_cost(gl)
 
-    return group_outputs, failed_groups, angles_output, angles_log, cost
+    return group_outputs, failed_groups, cost
 
 
 def _run_synthesis_or_fallback(
@@ -1610,24 +1547,20 @@ def run_multi_phase(
     )
     cost_so_far += holistic_cost
 
-    # ── Phase 2: Groups + Angles ─────────────────────────────────────────────
+    # ── Phase 2: Groups ───────────────────────────────────────────────────────
     if cost_so_far > max_cost:
         log.warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
         group_outputs: list[str] = []
         failed_groups: list[tuple[str, str]] = [(g.name, "budget exceeded") for g in groups]
-        angles_output, angles_log = "", ""
     else:
-        group_outputs, failed_groups, angles_output, angles_log, ga_cost = _run_groups_and_angles(
+        group_outputs, failed_groups, groups_cost = _run_group_phase(
             job, groups, group_count, holistic_content, max_parallel,
             skip_groups, state,
         )
-        cost_so_far += ga_cost
+        cost_so_far += groups_cost
 
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
-    all_merge_inputs = group_outputs[:]
-    if angles_output and _has_output(angles_output):
-        all_merge_inputs.append(angles_output)
-    merged_content = _phase_merge(all_merge_inputs, failed_groups)
+    merged_content = _phase_merge(group_outputs[:], failed_groups)
 
     if carried_forward:
         merged_content += "\n" + carried_forward
@@ -1642,16 +1575,20 @@ def run_multi_phase(
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────
     disprove_log = ""
     if _should_disprove(job, disprove) and cost_so_far <= max_cost:
-        disprove_log, disprove_cost = _phase_disprove(job)
-        cost_so_far += disprove_cost
+        review_path = Path(job.review_file)
+        ms_count = count_severity(review_path, "M") + count_severity(review_path, "S")
+        if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
+            disprove_log, disprove_cost = _phase_disprove(job)
+            cost_so_far += disprove_cost
+        else:
+            log.info(f"Skipping disprove — only {ms_count} M/S findings (threshold: {DISPROVE_MIN_FINDINGS})")
 
     # ── Cleanup ──────────────────────────────────────────────────────────────
-    _consolidate_logs(job, holistic_log, group_count, synthesis_log, angles_log=angles_log, disprove_log=disprove_log)
+    _consolidate_logs(job, holistic_log, group_count, synthesis_log, disprove_log=disprove_log)
 
     if not failed_groups:
         _cleanup_intermediates(
             job, holistic_output, holistic_log, group_outputs, group_count, synthesis_log,
-            angles_output=angles_output, angles_log=angles_log,
         )
 
 

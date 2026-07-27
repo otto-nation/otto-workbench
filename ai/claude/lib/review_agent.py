@@ -156,14 +156,11 @@ _MODEL_FALLBACK = {"opus": "sonnet"}
 def _is_rate_limit_error(log_path: str) -> bool:
     if not Path(log_path).exists():
         return False
-    with open(log_path) as f:
-        for line in f:
-            d = _try_parse_json(line)
-            if not d or d.get("type") != "system":
-                continue
-            if d.get("subtype") == "api_retry" and d.get("error_status") == 429:
-                return True
-    return False
+    records = _parse_jsonl_records(log_path, "system")
+    return any(
+        r.get("subtype") == "api_retry" and r.get("error_status") == 429
+        for r in records
+    )
 
 
 def rate_limit_fallback(model: str) -> str | None:

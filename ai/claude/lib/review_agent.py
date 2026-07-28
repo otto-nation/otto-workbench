@@ -180,9 +180,6 @@ class QuotaThrottle:
 
 # ── Quota detection ────────────────────────────────────────────────────────
 
-_MODEL_FALLBACK = {"opus": "sonnet"}
-
-
 def _is_quota_error(log_path: str) -> bool:
     if not Path(log_path).exists():
         return False
@@ -191,10 +188,6 @@ def _is_quota_error(log_path: str) -> bool:
         r.get("subtype") == "api_retry" and r.get("error_status") == 429
         for r in records
     )
-
-
-def quota_fallback(model: str) -> str | None:
-    return _MODEL_FALLBACK.get(model)
 
 
 # ── Model selection ───────────────────────────────────────────────────────────
@@ -244,23 +237,6 @@ def _invoke_once(prompt, session_log, add_dirs, agent, max_turns, max_budget,
     return rc
 
 
-def _retry_quota(prompt, session_log, add_dirs, agent, max_turns, max_budget,
-                 model, thinking_level, provider, label, throttle):
-    if throttle:
-        wait = throttle.report_exhausted(model)
-        time.sleep(wait)
-    rc = _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
-                      max_budget, model, thinking_level, provider, label)
-    if rc == 0 or not _is_quota_error(session_log):
-        return rc
-    fallback = _MODEL_FALLBACK.get(model)
-    if not fallback:
-        return rc
-    log.warn(f"Still exhausted on {model} — falling back to {fallback}")
-    return _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
-                        max_budget, fallback, thinking_level, provider, label)
-
-
 def invoke_agent(
     prompt: str, session_log: str, wt_path: str, reviews_dir: str,
     label: str = "", review_file: str = "",
@@ -289,9 +265,14 @@ def invoke_agent(
         provider=provider, label=label,
     )
     if rc != 0 and model and _is_quota_error(session_log):
-        rc = _retry_quota(prompt, session_log, add_dirs, agent, max_turns,
-                          max_budget, model, thinking_level, provider, label,
-                          throttle)
+        if throttle:
+            wait = throttle.report_exhausted(model)
+            time.sleep(wait)
+        else:
+            log.warn(f"Quota exhausted on {model} — retrying once after 30s backoff")
+            time.sleep(30)
+        rc = _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
+                          max_budget, model, thinking_level, provider, label)
     return rc
 
 

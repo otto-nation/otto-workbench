@@ -1220,7 +1220,7 @@ def test_generator_version_returns_string(cr):
 
 def test_constants_match_expected(cr):
     assert cr.ARCHIVE_KEEP_COUNT == 3
-    assert cr.DEFAULT_MAX_PARALLEL == 2
+    assert cr.DEFAULT_MAX_PARALLEL == 1
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4

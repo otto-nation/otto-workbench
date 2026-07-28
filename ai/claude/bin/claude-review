@@ -47,7 +47,7 @@ LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.cl
 FILENAME_PRIOR = f"prior{REVIEW_EXT}"
 
 ARCHIVE_KEEP_COUNT = 3
-DEFAULT_MAX_PARALLEL = 2
+DEFAULT_MAX_PARALLEL = 1
 GITHUB_BASE_URL = "https://github.com"
 
 ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"

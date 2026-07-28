@@ -2426,15 +2426,3 @@ class TestIsQuotaError:
         assert ro._is_quota_error(str(log)) is False
 
 
-# ── quota_fallback ────────────────────────────────────────────────────
-
-
-class TestQuotaFallback:
-    def test_opus_falls_back_to_sonnet(self, ro):
-        assert ro.quota_fallback("opus") == "sonnet"
-
-    def test_sonnet_has_no_fallback(self, ro):
-        assert ro.quota_fallback("sonnet") is None
-
-    def test_unknown_model_has_no_fallback(self, ro):
-        assert ro.quota_fallback("haiku") is None

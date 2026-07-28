@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.46.5](https://github.com/otto-nation/otto-workbench/compare/v1.46.4...v1.46.5) (2026-07-28)
+
+
+### Bug Fixes
+
+* **review:** accurate cost, token, and duration tracking ([#557](https://github.com/otto-nation/otto-workbench/issues/557)) ([40f746d](https://github.com/otto-nation/otto-workbench/commit/40f746d4905de2af1047a44152f24d75fd4c2041))
+* **review:** sonnet-only pipeline to prevent rate limiting ([#561](https://github.com/otto-nation/otto-workbench/issues/561)) ([c00121d](https://github.com/otto-nation/otto-workbench/commit/c00121d55954f6349ce5971d415cff675bccbb97))
+
+
+### Performance Improvements
+
+* **tests:** optimize slow bats test suite ([#560](https://github.com/otto-nation/otto-workbench/issues/560)) ([dd89604](https://github.com/otto-nation/otto-workbench/commit/dd896040f67e25399cdd208efe61292a57192843))
+
 ## [1.46.4](https://github.com/otto-nation/otto-workbench/compare/v1.46.3...v1.46.4) (2026-07-27)
 
 

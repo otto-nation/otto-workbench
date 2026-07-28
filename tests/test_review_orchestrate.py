@@ -3042,6 +3042,7 @@ class TestCollectPreflightData:
             ["git", "commit", "-q", "--no-verify", "-m", "init"],
             cwd=str(repo), check=True, capture_output=True,
         )
+        self._add_origin(repo)
         subprocess.run(
             ["git", "checkout", "-b", "feat", "-q"],
             cwd=str(repo), check=True, capture_output=True,
@@ -3075,6 +3076,7 @@ class TestCollectPreflightData:
             data = ro.collect_preflight_data(job)
         assert data.file_contents["removed.txt"] == "<file deleted>"
         assert "updated" in data.file_contents["kept.txt"]
+        assert len(data.diff) > 0
 
     def test_captures_uncommitted_diff_when_no_commits_on_branch(self, ro, tmp_path):
         repo = tmp_path / "repo"
@@ -3210,37 +3212,9 @@ class TestCollectPreflightData:
 
 
 class TestFetchBranchMetadata:
-    @staticmethod
-    def _init_repo(path):
-        """Initialize a git repo with standard test config."""
-        subprocess.run(
-            ["git", "init", "-b", "main", "-q"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "commit.gpgsign", "false"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-
-    @staticmethod
-    def _add_origin(path):
-        """Add the repo itself as origin and fetch main."""
-        subprocess.run(
-            ["git", "remote", "add", "origin", str(path)], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "fetch", "-q", "origin", "main"], cwd=str(path),
-            check=True, capture_output=True,
-        )
+    # Shared with TestCollectPreflightData — single source of truth for repo helpers.
+    _init_repo = TestCollectPreflightData._init_repo
+    _add_origin = TestCollectPreflightData._add_origin
 
     def test_includes_uncommitted_changes_when_no_commits_on_branch(
         self, ro, tmp_path,

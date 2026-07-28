@@ -2,7 +2,6 @@
 
 setup_file() {
   load 'test_helper'
-  source "$REPO_ROOT/bin/local/generate-tool-context"
 }
 
 setup() {

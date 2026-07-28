@@ -6,6 +6,7 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 
 GRACE_PERIOD_SECS=600
 CLEANUP_LOG_DIR="${CLEANUP_LOG_DIR:-$WORKBENCH_STATE_DIR/logs}"
+CLEANUP_LOG="${CLEANUP_LOG:-$CLEANUP_LOG_DIR/wt-cleanup.log}"
 
 usage() {
   cat <<EOF
@@ -50,7 +51,7 @@ _has_uncommitted_changes() {
 
 _log() {
   { [[ -d "$CLEANUP_LOG_DIR" ]] || mkdir -p "$CLEANUP_LOG_DIR"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$CLEANUP_LOG_DIR/wt-cleanup.log"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$CLEANUP_LOG"
   } 2>/dev/null || true
 }
 

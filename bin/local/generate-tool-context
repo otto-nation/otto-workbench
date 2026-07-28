@@ -212,9 +212,9 @@ _tool_ref_entry() {
 # here, then _flush_sections renders each section once: brief entries first (under
 # the ## heading), then full entries (with ### headings). This prevents brief entries
 # from visually nesting under a preceding full entry's heading.
-declare -gA _section_brief=()
-declare -gA _section_full=()
-declare -ga _section_order=()
+declare -A _section_brief=()
+declare -A _section_full=()
+declare -a _section_order=()
 
 # _collect_registry FILE — buffers tools into per-section accumulators.
 _collect_registry() {
@@ -265,7 +265,7 @@ _flush_sections() {
 # Centralized here so registries stay simple (just `scope: go`). Adding a new
 # scope requires an entry here and `scope:` in the registry YAML.
 
-declare -gA SCOPE_PATHS
+declare -A SCOPE_PATHS
 SCOPE_PATHS[go]='  - "**/*.go"
   - "**/go.mod"
   - "**/go.sum"'

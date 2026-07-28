@@ -449,7 +449,7 @@ main() {
 
   ERRORS=0
   REGISTRIES_CHECKED=0
-  ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
+  declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
 
   if ! command -v yq >/dev/null 2>&1; then
     err "yq not found — run: brew install yq"

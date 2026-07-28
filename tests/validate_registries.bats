@@ -29,7 +29,6 @@ setup() {
   # from setup_file() don't survive. The libs sourced by the script are
   # unavoidable overhead in bats's architecture.
   REPO_ROOT="$SHARED_DIR" source "$BATS_TEST_DIRNAME/../bin/local/validate-registries"
-  REPO_ROOT="$SHARED_DIR"
   ORIG_DIR="$PWD"
   TMPDIR="$SHARED_DIR"
 

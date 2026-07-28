@@ -19,6 +19,7 @@ def _clear_git_hook_env():
     yield
     os.environ.update(saved)
 
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
 REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"

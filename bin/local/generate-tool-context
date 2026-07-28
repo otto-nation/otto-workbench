@@ -265,7 +265,7 @@ _flush_sections() {
 # Centralized here so registries stay simple (just `scope: go`). Adding a new
 # scope requires an entry here and `scope:` in the registry YAML.
 
-declare -A SCOPE_PATHS
+declare -gA SCOPE_PATHS
 SCOPE_PATHS[go]='  - "**/*.go"
   - "**/go.mod"
   - "**/go.sum"'
@@ -647,7 +647,8 @@ EOF
   OUTPUT_DIR="$(dirname "$OUTPUT")"
 
   # Core file — always loaded, no frontmatter.
-  _section_brief=(); _section_full=(); _section_order=()
+  declare -A _section_brief=() _section_full=()
+  declare -a _section_order=()
   {
     printf '# Tools\n'
     printf '<!-- AUTO-GENERATED — do not edit directly -->\n'

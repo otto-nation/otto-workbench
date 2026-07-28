@@ -3213,8 +3213,8 @@ class TestCollectPreflightData:
 
 class TestFetchBranchMetadata:
     # Shared with TestCollectPreflightData — single source of truth for repo helpers.
-    _init_repo = TestCollectPreflightData._init_repo
-    _add_origin = TestCollectPreflightData._add_origin
+    _init_repo = staticmethod(TestCollectPreflightData._init_repo)
+    _add_origin = staticmethod(TestCollectPreflightData._add_origin)
 
     def test_includes_uncommitted_changes_when_no_commits_on_branch(
         self, ro, tmp_path,

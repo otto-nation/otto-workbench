@@ -1,4 +1,7 @@
+import contextlib
+import io
 import json
+import subprocess
 
 import pytest
 
@@ -845,6 +848,20 @@ class TestScopeDiff:
         result = ro._scope_diff(diff, ["file1.go"])
         assert "file1.go" in result
         assert "file2.go" not in result
+
+    def test_filter_two_of_three(self, ro):
+        diff = (
+            "diff --git a/foo.go b/foo.go\n"
+            "--- a/foo.go\n+++ b/foo.go\n@@ -1,3 +1,4 @@\n package main\n+import \"fmt\"\n\n"
+            "diff --git a/bar.go b/bar.go\n"
+            "--- a/bar.go\n+++ b/bar.go\n@@ -1,3 +1,3 @@\n-package old\n+package bar\n\n"
+            "diff --git a/baz.go b/baz.go\n"
+            "--- a/baz.go\n+++ b/baz.go\n@@ -1 +1 @@\n-old\n+new\n"
+        )
+        result = ro._scope_diff(diff, ["foo.go", "baz.go"])
+        assert "foo.go" in result
+        assert "bar.go" not in result
+        assert "baz.go" in result
 
     def test_filter_no_match(self, ro):
         diff = "diff --git a/file1.go b/file1.go\n--- a/file1.go\n+++ b/file1.go\n"
@@ -2426,3 +2443,858 @@ class TestIsQuotaError:
         assert ro._is_quota_error(str(log)) is False
 
 
+
+# ── format_preflight_data ──────────────────────────────────────────────
+
+
+class TestFormatPreflightData:
+    def test_includes_all_sections(self, ro):
+        data = ro.PreflightData(
+            diff="--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new",
+            commit_log="abc123 fix bug",
+            file_contents={"foo.go": "package main\n", "bar.go": "package bar\n"},
+            file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+            claude_md="# My Project",
+            architecture_md="## Known Constraints",
+            review_checklists={"security.md": "# Security checks"},
+        )
+        result = ro.format_preflight_data(data)
+        assert "Pre-collected data" in result
+        assert "```diff" in result
+        assert "foo.go" in result
+        assert "bar.go" in result
+        assert "# My Project" in result
+        assert "Known Constraints" in result
+        assert "Security checks" in result
+        assert "abc123 fix bug" in result
+
+    def test_file_filter_scopes_file_contents(self, ro):
+        data = ro.PreflightData(
+            diff="full diff",
+            commit_log="log",
+            file_contents={"foo.go": "package main", "bar.go": "package bar"},
+            file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+            claude_md="",
+            architecture_md="",
+        )
+        result = ro.format_preflight_data(data, file_filter=["foo.go"])
+        assert "package main" in result
+        assert "package bar" not in result
+
+    def test_file_filter_scopes_diff(self, ro):
+        diff_text = (
+            "diff --git a/foo.go b/foo.go\n"
+            "--- a/foo.go\n"
+            "+++ b/foo.go\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "\n"
+            "diff --git a/bar.go b/bar.go\n"
+            "--- a/bar.go\n"
+            "+++ b/bar.go\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        data = ro.PreflightData(
+            diff=diff_text,
+            commit_log="log",
+            file_contents={"foo.go": "package main", "bar.go": "package bar"},
+            file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
+            claude_md="",
+            architecture_md="",
+        )
+        result = ro.format_preflight_data(data, file_filter=["foo.go"])
+        assert "a/foo.go" in result
+        assert "a/bar.go" not in result
+
+    def test_empty_commit_log_omits_section(self, ro):
+        data = ro.PreflightData(
+            diff="--- a/f.go\n+++ b/f.go",
+            commit_log="",
+            file_contents={"f.go": "code"},
+            file_permissions={"f.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+        )
+        result = ro.format_preflight_data(data)
+        assert "Commit history" not in result
+
+    def test_omitted_files_listed_in_output(self, ro):
+        data = ro.PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={"a.go": "code"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+            omitted_files=["big.go", "huge.go"],
+        )
+        result = ro.format_preflight_data(data)
+        assert "Files not pre-collected" in result
+        assert "- big.go" in result
+        assert "- huge.go" in result
+        assert "a.go" in result
+
+    def test_no_omitted_section_when_all_files_included(self, ro):
+        data = ro.PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="log",
+            file_contents={"a.go": "code"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+        )
+        result = ro.format_preflight_data(data)
+        assert "Files not pre-collected" not in result
+
+    def test_skip_file_contents_omits_file_contents_and_omitted_list(self, ro):
+        data = ro.PreflightData(
+            diff="--- a/foo.go\n+++ b/foo.go",
+            commit_log="abc123 fix bug",
+            file_contents={"foo.go": "package main"},
+            file_permissions={"foo.go": "0o644"},
+            claude_md="# Project",
+            architecture_md="",
+            omitted_files=["bar.go"],
+        )
+        result = ro.format_preflight_data(data, skip_file_contents=True)
+        assert "```diff" in result
+        assert "abc123 fix bug" in result
+        assert "# Project" in result
+        assert "package main" not in result
+        assert "Changed file contents" not in result
+        assert "Files not pre-collected" not in result
+
+
+# ── _file_permissions ──────────────────────────────────────────────────
+
+
+class TestFilePermissions:
+    def test_returns_octal_for_normal_file(self, ro, tmp_path):
+        f = tmp_path / "perm.txt"
+        f.write_text("test\n")
+        f.chmod(0o644)
+        assert ro._file_permissions(f) == "0o644"
+
+    def test_returns_question_mark_for_missing_file(self, ro, tmp_path):
+        assert ro._file_permissions(tmp_path / "nonexistent.txt") == "?"
+
+    def test_returns_executable_mode(self, ro, tmp_path):
+        f = tmp_path / "exec.sh"
+        f.write_text("#!/bin/sh\n")
+        f.chmod(0o755)
+        assert ro._file_permissions(f) == "0o755"
+
+
+# ── build_prompt (preflight) ──────────────────────────────────────────
+
+
+class TestBuildPromptPreflight:
+    def test_includes_preflight_data_when_set(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="desc", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext(
+            commits="fix it", reviews="[]",
+            review_comments="[]", comments="[]",
+        )
+        preflight = ro.PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="abc fix",
+            file_contents={"a.go": "package main"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="# Project",
+            architecture_md="",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            preflight=preflight,
+        )
+        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        assert "Pre-collected data" in result
+        assert "package main" in result
+        assert "--- a/a.go" in result
+
+    def test_no_preflight_data_when_not_set(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="desc", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext(
+            commits="fix it", reviews="[]",
+            review_comments="[]", comments="[]",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+        )
+        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        assert "Pre-collected data" not in result
+
+    def test_synthesis_includes_reviews_section(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext(
+            commits="fix",
+            reviews='[{"user":"bob","state":"APPROVED"}]',
+            review_comments="[]",
+            comments="[]",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+        )
+        result = ro.build_prompt(
+            "synthesis.md", job, max_turns=15,
+            holistic_content="assessment",
+            group_count=1,
+            merged_content="## Must fix\n- [M1] bug",
+        )
+        assert "bob" in result
+        assert "APPROVED" in result
+
+    def test_group_template_gets_scoped_preflight(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=20, deletions=10, changed_files=2,
+            files=[
+                {"path": "a.go", "additions": 10, "deletions": 5},
+                {"path": "b.go", "additions": 10, "deletions": 5},
+            ],
+        )
+        ctx = ro.PRContext()
+        preflight = ro.PreflightData(
+            diff="full diff here",
+            commit_log="commits",
+            file_contents={"a.go": "package a", "b.go": "package b"},
+            file_permissions={"a.go": "0o644", "b.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            preflight=preflight,
+        )
+        result = ro.build_prompt(
+            "group.md", job, max_turns=15,
+            group_idx=1, group_count=2, group_name="pkg",
+            group_files_formatted="  - a.go (+10 -5)",
+            group_output="/tmp/g1.md",
+            holistic_content="",
+            group_file_paths=["a.go"],
+        )
+        assert "package a" in result
+        assert "package b" not in result
+
+    def test_holistic_template_includes_preflight(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext(
+            commits="fix", reviews="[]",
+            review_comments="[]", comments="[]",
+        )
+        preflight = ro.PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="abc fix",
+            file_contents={"a.go": "package main"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="# Proj",
+            architecture_md="",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            preflight=preflight,
+        )
+        result = ro.build_prompt(
+            "holistic.md", job, max_turns=15,
+            holistic_output="/tmp/h.md",
+        )
+        assert "Pre-collected data" in result
+        assert "package main" in result
+
+    def test_self_review_template_includes_preflight(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext()
+        preflight = ro.PreflightData(
+            diff="--- a/a.go\n+++ b/a.go",
+            commit_log="abc fix",
+            file_contents={"a.go": "package main"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="",
+            architecture_md="",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            preflight=preflight,
+        )
+        result = ro.build_prompt(
+            "self-review.md", job, max_turns=15,
+            branch_name="feat",
+        )
+        assert "Pre-collected data" in result
+        assert "package main" in result
+
+    def test_env_section_all_files_pre_collected(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext(
+            commits="fix", reviews="[]",
+            review_comments="[]", comments="[]",
+        )
+        preflight = ro.PreflightData(
+            diff="diff", commit_log="log",
+            file_contents={"a.go": "pkg"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="", architecture_md="",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            preflight=preflight,
+        )
+        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        assert "NOT in the PR" in result
+        assert "Files not pre-collected" not in result
+        assert "Read source files directly" not in result
+
+    def test_env_section_partial_preflight_with_omitted_files(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=2,
+            files=[
+                {"path": "a.go", "additions": 5, "deletions": 2},
+                {"path": "b.go", "additions": 5, "deletions": 3},
+            ],
+        )
+        ctx = ro.PRContext(
+            commits="fix", reviews="[]",
+            review_comments="[]", comments="[]",
+        )
+        preflight = ro.PreflightData(
+            diff="diff", commit_log="log",
+            file_contents={"a.go": "pkg"},
+            file_permissions={"a.go": "0o644"},
+            claude_md="", architecture_md="",
+            omitted_files=["b.go"],
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            preflight=preflight,
+        )
+        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        assert "NOT in the PR" not in result
+        assert "must be read directly" in result
+        assert "Read source files directly" not in result
+
+    def test_env_section_no_preflight(self, ro):
+        pr = ro.PRMetadata(
+            title="Fix", body="", head="feat", base="main", head_sha="abc",
+            additions=10, deletions=5, changed_files=1,
+            files=[{"path": "a.go", "additions": 10, "deletions": 5}],
+        )
+        ctx = ro.PRContext(
+            commits="fix", reviews="[]",
+            review_comments="[]", comments="[]",
+        )
+        job = ro.ReviewJob(
+            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
+            wt_path="/tmp/wt", review_file="/tmp/review.md",
+            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+        )
+        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        assert "NOT in the PR" not in result
+        assert "must be read directly" not in result
+        assert "Read source files directly" in result
+
+
+# ── collect_preflight_data (git repo tests) ───────────────────────────
+
+
+class TestCollectPreflightData:
+    @staticmethod
+    def _init_repo(path):
+        """Initialize a git repo with standard test config."""
+        subprocess.run(
+            ["git", "init", "-b", "main", "-q"], cwd=str(path),
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"], cwd=str(path),
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=str(path),
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "commit.gpgsign", "false"], cwd=str(path),
+            check=True, capture_output=True,
+        )
+
+    @staticmethod
+    def _add_origin(path):
+        """Add the repo itself as origin and fetch main."""
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(path)], cwd=str(path),
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "fetch", "-q", "origin", "main"], cwd=str(path),
+            check=True, capture_output=True,
+        )
+
+    def test_oversized_file_in_diff_but_omitted_from_contents(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "big.txt").write_text("x" * 600_000)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "big.txt").write_text("y" * 600_000)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "change"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=1, deletions=0, changed_files=1,
+            files=[{"path": "big.txt", "additions": 1, "deletions": 0}],
+        )
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert data is not None
+        assert len(data.diff) > 0
+        assert data.omitted_files == ["big.txt"]
+        assert data.file_contents == {}
+
+    def test_large_diff_includes_diff_but_omits_some_files(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        for i in range(1, 6):
+            content = "".join(
+                f"original_line_content_padding_{j}\n" for j in range(10_000)
+            )
+            (repo / f"file{i}.go").write_text(content)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        for i in range(1, 6):
+            content = "".join(
+                f"modified_line_content_padding_{j}\n" for j in range(10_000)
+            )
+            (repo / f"file{i}.go").write_text(content)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "change"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=50_000, deletions=50_000, changed_files=5,
+            files=[
+                {"path": f"file{i}.go", "additions": 10_000, "deletions": 10_000}
+                for i in range(1, 6)
+            ],
+        )
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert data is not None
+        assert len(data.diff) > 0
+        assert len(data.omitted_files) > 0
+        assert len(data.file_contents) + len(data.omitted_files) == 5
+
+    def test_success_path_collects_all_data(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        (repo / ".claude" / "review").mkdir(parents=True)
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        (repo / "CLAUDE.md").write_text("# Project\n")
+        (repo / ".claude" / "architecture.md").write_text("## Known Constraints\n")
+        (repo / ".claude" / "review" / "security.md").write_text("# Security\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "add hello"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=1, deletions=0, changed_files=1,
+            files=[{"path": "main.go", "additions": 1, "deletions": 0}],
+        )
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert data is not None
+        assert "main.go" in data.file_contents
+        assert "main.go" in data.file_permissions
+        assert data.file_permissions["main.go"] != "?"
+        assert "# Project" in data.claude_md
+        assert "## Known Constraints" in data.architecture_md
+        assert "security.md" in data.review_checklists
+        assert len(data.diff) > 0
+        assert len(data.commit_log) > 0
+        assert data.omitted_files == []
+
+    def test_handles_deleted_files_in_pr(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "removed.txt").write_text("old content\n")
+        (repo / "kept.txt").write_text("keep\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "removed.txt").unlink()
+        (repo / "kept.txt").write_text("updated\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "remove file"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=1, deletions=1, changed_files=2,
+            files=[
+                {"path": "removed.txt", "additions": 0, "deletions": 1},
+                {"path": "kept.txt", "additions": 1, "deletions": 0},
+            ],
+        )
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert data.file_contents["removed.txt"] == "<file deleted>"
+        assert "updated" in data.file_contents["kept.txt"]
+        assert len(data.diff) > 0
+
+    def test_captures_uncommitted_diff_when_no_commits_on_branch(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode="self",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "func hello" in data.diff
+        assert "main.go" in data.file_contents
+
+    def test_low_density_large_file_omitted_from_contents(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "big.py").write_text("x = 1\n" * 2000)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        with open(str(repo / "big.py"), "a") as f:
+            f.write("new_line_1\n")
+            f.write("new_line_2\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "small change"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=2, deletions=0, changed_files=1,
+            files=[{"path": "big.py", "additions": 2, "deletions": 0}],
+        )
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "big.py" not in data.file_contents
+        assert "big.py" in data.omitted_files
+
+    def test_tier1_files_prioritized_over_tier2_when_budget_tight(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "CLAUDE.md").write_text("# Rules\n" * 10)
+        (repo / "util.go").write_text("package main\n" + "func f() {}\n" * 3000)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "CLAUDE.md").write_text("# Updated rules\n" * 10)
+        (repo / "util.go").write_text("package main\n" + "func g() {}\n" * 3000)
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "change"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=2, deletions=2, changed_files=2,
+            files=[
+                {"path": "util.go", "additions": 3000, "deletions": 3000},
+                {"path": "CLAUDE.md", "additions": 10, "deletions": 10},
+            ],
+        )
+        ctx = ro.PRContext()
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ctx,
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        # Set budget so diff fits but only ~1000 bytes remain for file contents
+        diff_size = len(ro._run(
+            ["git", "diff", "origin/main...HEAD"], cwd=str(repo),
+        ).encode())
+        monkeypatch.setattr(ro, "MAX_PROMPT_BYTES", diff_size + ro.TEMPLATE_OVERHEAD_BYTES + 1000)
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "CLAUDE.md" in data.file_contents
+        assert "util.go" in data.omitted_files
+
+
+# ── fetch_branch_metadata ─────────────────────────────────────────────
+
+
+class TestFetchBranchMetadata:
+    # Shared with TestCollectPreflightData — single source of truth for repo helpers.
+    _init_repo = staticmethod(TestCollectPreflightData._init_repo)
+    _add_origin = staticmethod(TestCollectPreflightData._add_origin)
+
+    def test_includes_uncommitted_changes_when_no_commits_on_branch(
+        self, ro, tmp_path,
+    ):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        # Stay on main but modify a file without committing
+        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert pr.changed_files == 1
+        assert pr.files[0]["path"] == "main.go"
+
+    def test_includes_staged_changes_when_no_commits_on_branch(
+        self, ro, tmp_path,
+    ):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        # Stage changes without committing
+        (repo / "main.go").write_text("package main\nfunc staged() {}\n")
+        subprocess.run(
+            ["git", "add", "main.go"], cwd=str(repo),
+            check=True, capture_output=True,
+        )
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert pr.changed_files == 1
+
+    def test_prefers_committed_diff_over_uncommitted_when_commits_exist(
+        self, ro, tmp_path,
+    ):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "init"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "main.go").write_text("package main\nfunc committed() {}\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", "add committed"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        # Also add an uncommitted file that should NOT appear
+        (repo / "extra.go").write_text("uncommitted\n")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert pr.changed_files == 1
+        paths = [f["path"] for f in pr.files]
+        assert "main.go" in paths
+        assert "extra.go" not in paths

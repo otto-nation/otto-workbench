@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)}"
@@ -7,7 +6,7 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 
 GRACE_PERIOD_SECS=600
 CLEANUP_LOG_DIR="${CLEANUP_LOG_DIR:-$WORKBENCH_STATE_DIR/logs}"
-CLEANUP_LOG="$CLEANUP_LOG_DIR/wt-cleanup.log"
+CLEANUP_LOG="${CLEANUP_LOG:-$CLEANUP_LOG_DIR/wt-cleanup.log}"
 
 usage() {
   cat <<EOF
@@ -29,42 +28,6 @@ Options:
   -h, --help         Show this help
 EOF
 }
-
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
-
-command -v wt >/dev/null 2>&1 || exit 0
-command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 1; }
-
-use_gh=false
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  use_gh=true
-fi
-
-dry_run=false
-quiet=false
-max_age_days=""
-grace_period=true
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dry-run)          dry_run=true; shift ;;
-    --quiet)            quiet=true; shift ;;
-    --age)              max_age_days="$2"; shift 2 ;;
-    --no-grace-period)  grace_period=false; shift ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
-  esac
-done
-
-now=$(date +%s)
-removed=0
-dirty_merged_branches=()
-dirty_merged_changes=()
-default_branch=$(git config worktrunk.default-branch 2>/dev/null \
-  || git config init.defaultBranch 2>/dev/null \
-  || echo "main")
-
-worktrees=$(wt list --format json 2>/dev/null) || exit 0
-count=$(echo "$worktrees" | jq 'length')
 
 _worktree_age_secs() {
   local wt_path="$1"
@@ -138,71 +101,115 @@ _detect_reason() {
   fi
 }
 
-_log "START count=$count dry_run=$dry_run quiet=$quiet max_age=$max_age_days"
+main() {
+  set -e
 
-for ((i = 0; i < count; i++)); do
-  is_main=$(echo "$worktrees" | jq -r ".[$i].is_main")
-  is_current=$(echo "$worktrees" | jq -r ".[$i].is_current")
-  branch=$(echo "$worktrees" | jq -r ".[$i].branch")
-  wt_path=$(echo "$worktrees" | jq -r ".[$i].path")
-  main_state=$(echo "$worktrees" | jq -r ".[$i].main_state")
-  symbols=$(echo "$worktrees" | jq -r ".[$i].symbols")
-  timestamp=$(echo "$worktrees" | jq -r ".[$i].commit.timestamp")
+  [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; return 0; }
 
-  [[ "$is_main" == "true" ]] && continue
-  [[ "$branch" == "$default_branch" ]] && continue
-  [[ "$is_current" == "true" ]] && continue
+  command -v wt >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; return 1; }
 
-  pr_state=$(_pr_state "$branch") || pr_state=""
-
-  if [[ "$pr_state" == "OPEN" ]]; then
-    _log "SKIP-OPEN-PR branch=$branch main_state=$main_state symbols=$symbols"
-    [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
-      echo "skipping: $branch (open PR)"
-    continue
+  use_gh=false
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    use_gh=true
   fi
 
-  if _has_uncommitted_changes "$i"; then
-    _is_merged "$main_state" "$symbols" "$pr_state" \
-      && dirty_merged_branches+=("$branch") \
-      && dirty_merged_changes+=("$(_describe_changes "$i")")
-    continue
-  fi
+  dry_run=false
+  quiet=false
+  max_age_days=""
+  grace_period=true
 
-  if _within_grace_period "$wt_path"; then
-    [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
-      echo "skipping: $branch (grace period)"
-    continue
-  fi
-
-  reason=$(_detect_reason "$main_state" "$symbols" "$pr_state" "$timestamp")
-  [[ -z "$reason" ]] && continue
-
-  removed=$((removed + 1))
-  if [[ "$dry_run" == "true" ]]; then
-    _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
-    [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
-  else
-    _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
-    [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
-    wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
-  fi
-done
-
-_log "END removed=$removed dirty_merged=${#dirty_merged_branches[@]}"
-
-if [[ "$quiet" != "true" && "$removed" -eq 0 && ${#dirty_merged_branches[@]} -eq 0 ]]; then
-  echo "no stale worktrees"
-fi
-
-if [[ "$quiet" != "true" && ${#dirty_merged_branches[@]} -gt 0 ]]; then
-  max_len=0
-  for b in "${dirty_merged_branches[@]}"; do
-    (( ${#b} > max_len )) && max_len=${#b}
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run)          dry_run=true; shift ;;
+      --quiet)            quiet=true; shift ;;
+      --age)              max_age_days="$2"; shift 2 ;;
+      --no-grace-period)  grace_period=false; shift ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
+    esac
   done
-  [[ "$removed" -gt 0 ]] && echo ""
-  warn "Merged worktrees with uncommitted changes:"
-  for ((j = 0; j < ${#dirty_merged_branches[@]}; j++)); do
-    printf "  %-${max_len}s  ${DIM}%s${NC}\n" "${dirty_merged_branches[$j]}" "${dirty_merged_changes[$j]}"
+
+  now=$(date +%s)
+  removed=0
+  dirty_merged_branches=()
+  dirty_merged_changes=()
+  default_branch=$(git config worktrunk.default-branch 2>/dev/null \
+    || git config init.defaultBranch 2>/dev/null \
+    || echo "main")
+
+  worktrees=$(wt list --format json 2>/dev/null) || return 0
+  count=$(echo "$worktrees" | jq 'length')
+
+  _log "START count=$count dry_run=$dry_run quiet=$quiet max_age=$max_age_days"
+
+  for ((i = 0; i < count; i++)); do
+    is_main=$(echo "$worktrees" | jq -r ".[$i].is_main")
+    is_current=$(echo "$worktrees" | jq -r ".[$i].is_current")
+    branch=$(echo "$worktrees" | jq -r ".[$i].branch")
+    wt_path=$(echo "$worktrees" | jq -r ".[$i].path")
+    main_state=$(echo "$worktrees" | jq -r ".[$i].main_state")
+    symbols=$(echo "$worktrees" | jq -r ".[$i].symbols")
+    timestamp=$(echo "$worktrees" | jq -r ".[$i].commit.timestamp")
+
+    [[ "$is_main" == "true" ]] && continue
+    [[ "$branch" == "$default_branch" ]] && continue
+    [[ "$is_current" == "true" ]] && continue
+
+    pr_state=$(_pr_state "$branch") || pr_state=""
+
+    if [[ "$pr_state" == "OPEN" ]]; then
+      _log "SKIP-OPEN-PR branch=$branch main_state=$main_state symbols=$symbols"
+      [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+        echo "skipping: $branch (open PR)"
+      continue
+    fi
+
+    if _has_uncommitted_changes "$i"; then
+      _is_merged "$main_state" "$symbols" "$pr_state" \
+        && dirty_merged_branches+=("$branch") \
+        && dirty_merged_changes+=("$(_describe_changes "$i")")
+      continue
+    fi
+
+    if _within_grace_period "$wt_path"; then
+      [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+        echo "skipping: $branch (grace period)"
+      continue
+    fi
+
+    reason=$(_detect_reason "$main_state" "$symbols" "$pr_state" "$timestamp")
+    [[ -z "$reason" ]] && continue
+
+    removed=$((removed + 1))
+    if [[ "$dry_run" == "true" ]]; then
+      _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
+      [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
+    else
+      _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
+      [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
+      wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
+    fi
   done
+
+  _log "END removed=$removed dirty_merged=${#dirty_merged_branches[@]}"
+
+  if [[ "$quiet" != "true" && "$removed" -eq 0 && ${#dirty_merged_branches[@]} -eq 0 ]]; then
+    echo "no stale worktrees"
+  fi
+
+  if [[ "$quiet" != "true" && ${#dirty_merged_branches[@]} -gt 0 ]]; then
+    max_len=0
+    for b in "${dirty_merged_branches[@]}"; do
+      (( ${#b} > max_len )) && max_len=${#b}
+    done
+    [[ "$removed" -gt 0 ]] && echo ""
+    warn "Merged worktrees with uncommitted changes:"
+    for ((j = 0; j < ${#dirty_merged_branches[@]}; j++)); do
+      printf "  %-${max_len}s  ${DIM}%s${NC}\n" "${dirty_merged_branches[$j]}" "${dirty_merged_changes[$j]}"
+    done
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi

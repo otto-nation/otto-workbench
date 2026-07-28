@@ -1,8 +1,13 @@
 #!/usr/bin/env bats
 
+setup_file() {
+  load 'test_helper'
+}
+
 setup() {
   load 'test_helper'
   common_setup
+  source "$REPO_ROOT/bin/local/generate-tool-context"
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
 
@@ -26,7 +31,6 @@ setup() {
   export COMPONENTS_DOC_PATH="$TMPDIR/docs/components.md"
 
   mkdir -p "$WORK_DIR"
-  GENERATOR="$REPO_ROOT/bin/local/generate-tool-context"
 }
 
 teardown() {
@@ -104,7 +108,7 @@ EOF
 @test "creates the output file" {
   _write_registry "$BREW_REGISTRY"
 
-  run bash "$GENERATOR"
+  run main
   [ "$status" -eq 0 ]
   [ -f "$TOOL_CONTEXT_OUTPUT" ]
 }
@@ -112,7 +116,7 @@ EOF
 @test "output contains auto-generated header comment" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q "AUTO-GENERATED" "$TOOL_CONTEXT_OUTPUT"
 }
 
@@ -121,21 +125,21 @@ EOF
 @test "renders section title from meta.section in BREW_REGISTRY" {
   _write_registry "$BREW_REGISTRY" "Brew Tools"
 
-  bash "$GENERATOR"
+  main
   grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders section title from meta.section in BIN_REGISTRY" {
   _write_registry "$BIN_REGISTRY" "Workbench Scripts"
 
-  bash "$GENERATOR"
+  main
   grep -q "## Workbench Scripts" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders section title from meta.section in ZSH_REGISTRY" {
   _write_registry "$ZSH_REGISTRY" "Shell Aliases"
 
-  bash "$GENERATOR"
+  main
   grep -q "## Shell Aliases" "$TOOL_CONTEXT_OUTPUT"
 }
 
@@ -144,35 +148,35 @@ EOF
 @test "renders tool name as H3" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q "### mytool" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders tool description" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q "A test tool" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders when_to_use field" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q "When testing" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders usage field when present" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q "mytool --flag" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "omits docs field from output" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   run grep "https://example.com" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -190,7 +194,7 @@ tools:
     description: "A brief tool"
 EOF
 
-  bash "$GENERATOR"
+  main
   run grep "Usage" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -198,7 +202,7 @@ EOF
 @test "omits docs line when docs is absent" {
   _write_minimal_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   run grep "Docs" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -206,14 +210,14 @@ EOF
 # ── Missing registries ────────────────────────────────────────────────────────
 
 @test "succeeds when all registries are missing" {
-  run bash "$GENERATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
 @test "skips section for missing registry file" {
   _write_registry "$BREW_REGISTRY" "Brew Tools"
 
-  bash "$GENERATOR"
+  main
   grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
   run grep "## Workbench Scripts" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
@@ -242,7 +246,7 @@ tools:
     usage: "tool-b --help"
 EOF
 
-  bash "$GENERATOR"
+  main
   grep -q "### tool-a" "$TOOL_CONTEXT_OUTPUT"
   grep -q "### tool-b" "$TOOL_CONTEXT_OUTPUT"
 }
@@ -275,7 +279,7 @@ tools:
     description: "Tool B"
 EOF
 
-  bash "$GENERATOR"
+  main
   grep -q "### tool-a" "$TOOL_CONTEXT_OUTPUT"
   grep -q "tool-b" "$TOOL_CONTEXT_OUTPUT"
   local count
@@ -309,7 +313,7 @@ tools:
     description: "Brief entry"
 EOF
 
-  bash "$GENERATOR"
+  main
   local brief_line full_line
   brief_line=$(grep -n "brief-tool" "$TOOL_CONTEXT_OUTPUT" | head -1 | cut -d: -f1)
   full_line=$(grep -n "### full-tool" "$TOOL_CONTEXT_OUTPUT" | head -1 | cut -d: -f1)
@@ -321,7 +325,7 @@ EOF
 @test "visibility: full renders full entry" {
   _write_visibility_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q "### full-tool" "$TOOL_CONTEXT_OUTPUT"
   grep -q "When to use" "$TOOL_CONTEXT_OUTPUT"
 }
@@ -329,7 +333,7 @@ EOF
 @test "visibility: brief renders one-liner" {
   _write_visibility_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   grep -q '^\- \*\*ref-tool\*\*' "$TOOL_CONTEXT_OUTPUT"
   run grep "### ref-tool" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
@@ -338,7 +342,7 @@ EOF
 @test "visibility: hidden omits tool entirely" {
   _write_visibility_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   run grep "hidden-tool" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -366,7 +370,7 @@ tools:
         description: "Second subcommand"
 EOF
 
-  bash "$GENERATOR"
+  main
   grep -q "Subcommands" "$TOOL_CONTEXT_OUTPUT"
   grep -q '`sub1` — First subcommand' "$TOOL_CONTEXT_OUTPUT"
   grep -q '`sub2` — Second subcommand' "$TOOL_CONTEXT_OUTPUT"
@@ -375,7 +379,7 @@ EOF
 @test "omits subcommands section when commands field is absent" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   run grep "Subcommands" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -385,7 +389,7 @@ EOF
 @test "output file has no frontmatter" {
   _write_registry "$BREW_REGISTRY"
 
-  bash "$GENERATOR"
+  main
   run grep "^---" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -412,7 +416,7 @@ EOF
 @test "scoped registry writes to tools.generated.<scope>.md" {
   _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
 
-  bash "$GENERATOR"
+  main
   local scoped_file
   scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.go.md"
   [ -f "$scoped_file" ]
@@ -423,7 +427,7 @@ EOF
   _write_registry "$BREW_REGISTRY" "Core Tools"
   _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
 
-  bash "$GENERATOR"
+  main
   grep -q "Core Tools" "$TOOL_CONTEXT_OUTPUT"
   run grep "Go Tools" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
@@ -432,7 +436,7 @@ EOF
 @test "scoped output file has paths frontmatter" {
   _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
 
-  bash "$GENERATOR"
+  main
   local scoped_file
   scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.go.md"
   grep -q "^---" "$scoped_file"
@@ -456,7 +460,7 @@ tools:
     description: "Kubernetes CLI"
 EOF
 
-  bash "$GENERATOR"
+  main
   local scoped_file
   scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.infra.md"
   [ -f "$scoped_file" ]
@@ -470,14 +474,14 @@ EOF
   echo "stale" > "$stale_file"
 
   _write_registry "$BREW_REGISTRY"
-  bash "$GENERATOR"
+  main
   [ ! -f "$stale_file" ]
 }
 
 @test "unknown scope exits non-zero" {
   _write_scoped_registry "$WORK_DIR/python.registry.yml" "Python Tools" "python"
 
-  run bash "$GENERATOR"
+  run main
   [ "$status" -ne 0 ]
 }
 
@@ -495,7 +499,7 @@ tools:
     description: "Explicit core scope tool"
 EOF
 
-  bash "$GENERATOR"
+  main
   grep -q "Core Extra" "$TOOL_CONTEXT_OUTPUT"
   local scoped_file
   scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.core.md"

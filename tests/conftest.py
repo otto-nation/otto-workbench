@@ -1,9 +1,24 @@
 import importlib.machinery
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+_GIT_HOOK_VARS = (
+    "GIT_DIR", "GIT_WORK_TREE",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _clear_git_hook_env():
+    """Clear git env vars inherited from hooks (e.g. pre-push)."""
+    saved = {k: os.environ.pop(k) for k in _GIT_HOOK_VARS if k in os.environ}
+    yield
+    os.environ.update(saved)
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")

@@ -41,51 +41,13 @@
 #   TASKFILE_PATH        Taskfile.global.yml path
 #   AI_DIR               ai/ directory
 
-set -euo pipefail
-
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 WORKBENCH_DIR="${WORKBENCH_DIR:-$REPO_ROOT}"
 
 # shellcheck source=/dev/null
 . "$REPO_ROOT/lib/ui.sh"
 # shellcheck source=/dev/null
 . "$REPO_ROOT/lib/registries.sh"
-
-BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
-BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
-MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
-BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
-OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
-README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
-TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
-AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
-COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
-CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
-DOCS_DIR="${DOCS_DIR:-"$REPO_ROOT/docs"}"
-TOOLS_DOC_PATH="${TOOLS_DOC_PATH:-"$DOCS_DIR/tools.md"}"
-AI_DOC_PATH="${AI_DOC_PATH:-"$DOCS_DIR/ai-automation.md"}"
-COMPONENTS_DOC_PATH="${COMPONENTS_DOC_PATH:-"$DOCS_DIR/components.md"}"
-
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [--quiet]
-
-Regenerate tools.generated.md and README sections from source registries.
-
-Options:
-  --quiet     Suppress per-file success messages
-  -h, --help  Show this help
-EOF
-}
-
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
-QUIET=false
-[[ "${1:-}" == "--quiet" ]] && QUIET=true
-
-if ! command -v yq >/dev/null 2>&1; then
-  err "yq not found — run: brew install yq"
-  exit 1
-fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -250,9 +212,9 @@ _tool_ref_entry() {
 # here, then _flush_sections renders each section once: brief entries first (under
 # the ## heading), then full entries (with ### headings). This prevents brief entries
 # from visually nesting under a preceding full entry's heading.
-declare -A _section_brief=()
-declare -A _section_full=()
-declare -a _section_order=()
+declare -gA _section_brief=()
+declare -gA _section_full=()
+declare -ga _section_order=()
 
 # _collect_registry FILE — buffers tools into per-section accumulators.
 _collect_registry() {
@@ -303,7 +265,7 @@ _flush_sections() {
 # Centralized here so registries stay simple (just `scope: go`). Adding a new
 # scope requires an entry here and `scope:` in the registry YAML.
 
-declare -A SCOPE_PATHS
+declare -gA SCOPE_PATHS
 SCOPE_PATHS[go]='  - "**/*.go"
   - "**/go.mod"
   - "**/go.sum"'
@@ -321,74 +283,6 @@ SCOPE_PATHS[infra]='  - "**/Dockerfile*"
 SCOPE_PATHS[workbench]='  - "**/bin/local/**"
   - "**/lib/*.sh"
   - "**/install.components"'
-
-_tool_registries=()
-collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
-
-# Group registries by meta.scope (empty/core → core group, others → named scope)
-declare -a _core_registries=()
-declare -A _scope_registries=()
-for _reg in "${_tool_registries[@]}"; do
-  _scope=$(yq '.meta.scope // ""' "$_reg")
-  if [[ -z "$_scope" || "$_scope" == "null" || "$_scope" == "core" ]]; then
-    _core_registries+=("$_reg")
-  else
-    _scope_registries["$_scope"]+="$_reg"$'\n'
-  fi
-done
-
-OUTPUT_DIR="$(dirname "$OUTPUT")"
-
-# Core file — always loaded, no frontmatter.
-_section_brief=(); _section_full=(); _section_order=()
-{
-  printf '# Tools\n'
-  printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-  printf '<!-- Regenerate: generate-tool-context -->\n'
-  for _reg in "${_core_registries[@]}"; do
-    _collect_registry "$_reg"
-  done
-  _flush_sections
-} > "$OUTPUT"
-$QUIET || success "Generated $(basename "$OUTPUT")"
-
-# Scoped files — loaded only when the session touches matching file types.
-for _scope in "${!_scope_registries[@]}"; do
-  _scope_output="$OUTPUT_DIR/tools.generated.${_scope}.md"
-  _scope_regs="${_scope_registries[$_scope]}"
-  _paths="${SCOPE_PATHS[$_scope]:-}"
-
-  if [[ -z "$_paths" ]]; then
-    err "Scope '$_scope' has no entry in SCOPE_PATHS — add a paths mapping before using it"
-    exit 1
-  fi
-
-  _section_brief=(); _section_full=(); _section_order=()
-  {
-    printf -- '---\npaths:\n%s\n---\n' "$_paths"
-    printf '# Tools — %s\n' "$_scope"
-    printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
-    printf '<!-- Regenerate: generate-tool-context -->\n'
-    while IFS= read -r _reg; do
-      [[ -z "$_reg" ]] && continue
-      _collect_registry "$_reg"
-    done <<< "$_scope_regs"
-    _flush_sections
-  } > "$_scope_output"
-  $QUIET || success "Generated $(basename "$_scope_output")"
-done
-
-# Clean up stale scope files (scopes that no longer have registries).
-for _existing in "$OUTPUT_DIR"/tools.generated.*.md; do
-  [[ -f "$_existing" ]] || continue
-  _stale_file="$(basename "$_existing")"
-  _existing_scope="${_stale_file#tools.generated.}"
-  _existing_scope="${_existing_scope%.md}"
-  if [[ -z "${_scope_registries[$_existing_scope]+set}" ]]; then
-    rm "$_existing"
-    $QUIET || info "Removed stale $(basename "$_existing")"
-  fi
-done
 
 # ── README sections ───────────────────────────────────────────────────────────
 
@@ -692,47 +586,163 @@ _readme_workbench_commands() {
   done
 }
 
-_gen_success() { $QUIET || success "$*"; }
+# ── Main ─────────────────────────────────────────────────────────────────────
 
-# README splices (landing page content stays in README)
-if [[ -f "$BIN_REGISTRY" ]];    then _readme_workbench_commands | _splice_readme "$README_PATH" "WORKBENCH-COMMANDS"; _gen_success "Updated README workbench commands"; fi
-if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   _gen_success "Updated README component menu";   fi
-if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    _gen_success "Updated README after-install";    fi
+main() {
+  set -euo pipefail
 
-# docs/ splices (reference content lives in docs/)
-if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$TOOLS_DOC_PATH" "SCRIPTS-TABLE";    _gen_success "Updated docs/tools.md scripts table";    fi
-if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$TOOLS_DOC_PATH" "TOOLS-TABLE";      _gen_success "Updated docs/tools.md tools table";      fi
-if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$AI_DOC_PATH" "AI-INSTALLS";         _gen_success "Updated docs/ai-automation.md installs"; fi
-if [[ -d "$AI_DIR" ]];          then _readme_skill_reference | _splice_readme "$AI_DOC_PATH" "SKILL-REFERENCE";     _gen_success "Updated docs/ai-automation.md skills";    fi
-if [[ -d "$AI_DIR" ]];          then _readme_lifecycle      | _splice_readme "$AI_DOC_PATH" "LIFECYCLE";           _gen_success "Updated docs/ai-automation.md lifecycle"; fi
-if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
-                                     _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
-                                     _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"
+  usage() {
+    cat <<EOF
+Usage: $(basename "$0") [--quiet]
 
-# ── Project settings permissions ─────────────────────────────────────────────
+Regenerate tools.generated.md and README sections from source registries.
 
-CLAUDE_SETTINGS_SRC="${CLAUDE_SETTINGS_SRC:-"$REPO_ROOT/ai/claude/settings.json"}"
+Options:
+  --quiet     Suppress per-file success messages
+  -h, --help  Show this help
+EOF
+  }
 
-_sync_project_permissions() {
-  [[ -f "$CLAUDE_SETTINGS_SRC" ]] || return 0
+  [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; return 0; }
+  QUIET=false
+  [[ "${1:-}" == "--quiet" ]] && QUIET=true
 
-  local -a registry_perms=()
-  collect_registry_permissions registry_perms "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
-  [[ ${#registry_perms[@]} -gt 0 ]] || return 0
+  if ! command -v yq >/dev/null 2>&1; then
+    err "yq not found — run: brew install yq"
+    return 1
+  fi
 
-  local perms_json
-  perms_json=$(printf '%s\n' "${registry_perms[@]}" | jq -Rn '[inputs] | sort')
+  BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
+  BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
+  MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
+  BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
+  OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
+  README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
+  TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
+  AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
+  COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
+  CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
+  DOCS_DIR="${DOCS_DIR:-"$REPO_ROOT/docs"}"
+  TOOLS_DOC_PATH="${TOOLS_DOC_PATH:-"$DOCS_DIR/tools.md"}"
+  AI_DOC_PATH="${AI_DOC_PATH:-"$DOCS_DIR/ai-automation.md"}"
+  COMPONENTS_DOC_PATH="${COMPONENTS_DOC_PATH:-"$DOCS_DIR/components.md"}"
 
-  local result
-  result=$(jq --argjson rp "$perms_json" '
-    (._generated_permissions // []) as $prev |
-    [.permissions.allow[] | select(. as $x | $prev | index($x) == null)] as $manual |
-    .permissions.allow = ($manual + $rp | unique) |
-    ._generated_permissions = $rp
-  ' "$CLAUDE_SETTINGS_SRC")
+  _gen_success() { $QUIET || success "$*"; }
 
-  printf '%s\n' "$result" > "$CLAUDE_SETTINGS_SRC"
-  _gen_success "Synced project permissions"
+  _tool_registries=()
+  collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+
+  # Group registries by meta.scope (empty/core → core group, others → named scope)
+  declare -a _core_registries=()
+  declare -A _scope_registries=()
+  for _reg in "${_tool_registries[@]}"; do
+    _scope=$(yq '.meta.scope // ""' "$_reg")
+    if [[ -z "$_scope" || "$_scope" == "null" || "$_scope" == "core" ]]; then
+      _core_registries+=("$_reg")
+    else
+      _scope_registries["$_scope"]+="$_reg"$'\n'
+    fi
+  done
+
+  OUTPUT_DIR="$(dirname "$OUTPUT")"
+
+  # Core file — always loaded, no frontmatter.
+  _section_brief=(); _section_full=(); _section_order=()
+  {
+    printf '# Tools\n'
+    printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
+    printf '<!-- Regenerate: generate-tool-context -->\n'
+    for _reg in "${_core_registries[@]}"; do
+      _collect_registry "$_reg"
+    done
+    _flush_sections
+  } > "$OUTPUT"
+  $QUIET || success "Generated $(basename "$OUTPUT")"
+
+  # Scoped files — loaded only when the session touches matching file types.
+  for _scope in "${!_scope_registries[@]}"; do
+    _scope_output="$OUTPUT_DIR/tools.generated.${_scope}.md"
+    _scope_regs="${_scope_registries[$_scope]}"
+    _paths="${SCOPE_PATHS[$_scope]:-}"
+
+    if [[ -z "$_paths" ]]; then
+      err "Scope '$_scope' has no entry in SCOPE_PATHS — add a paths mapping before using it"
+      return 1
+    fi
+
+    _section_brief=(); _section_full=(); _section_order=()
+    {
+      printf -- '---\npaths:\n%s\n---\n' "$_paths"
+      printf '# Tools — %s\n' "$_scope"
+      printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
+      printf '<!-- Regenerate: generate-tool-context -->\n'
+      while IFS= read -r _reg; do
+        [[ -z "$_reg" ]] && continue
+        _collect_registry "$_reg"
+      done <<< "$_scope_regs"
+      _flush_sections
+    } > "$_scope_output"
+    $QUIET || success "Generated $(basename "$_scope_output")"
+  done
+
+  # Clean up stale scope files (scopes that no longer have registries).
+  for _existing in "$OUTPUT_DIR"/tools.generated.*.md; do
+    [[ -f "$_existing" ]] || continue
+    _stale_file="$(basename "$_existing")"
+    _existing_scope="${_stale_file#tools.generated.}"
+    _existing_scope="${_existing_scope%.md}"
+    if [[ -z "${_scope_registries[$_existing_scope]+set}" ]]; then
+      rm "$_existing"
+      $QUIET || info "Removed stale $(basename "$_existing")"
+    fi
+  done
+
+  # ── README sections ───────────────────────────────────────────────────────────
+
+  # README splices (landing page content stays in README)
+  if [[ -f "$BIN_REGISTRY" ]];    then _readme_workbench_commands | _splice_readme "$README_PATH" "WORKBENCH-COMMANDS"; _gen_success "Updated README workbench commands"; fi
+  if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   _gen_success "Updated README component menu";   fi
+  if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    _gen_success "Updated README after-install";    fi
+
+  # docs/ splices (reference content lives in docs/)
+  if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$TOOLS_DOC_PATH" "SCRIPTS-TABLE";    _gen_success "Updated docs/tools.md scripts table";    fi
+  if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$TOOLS_DOC_PATH" "TOOLS-TABLE";      _gen_success "Updated docs/tools.md tools table";      fi
+  if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$AI_DOC_PATH" "AI-INSTALLS";         _gen_success "Updated docs/ai-automation.md installs"; fi
+  if [[ -d "$AI_DIR" ]];          then _readme_skill_reference | _splice_readme "$AI_DOC_PATH" "SKILL-REFERENCE";     _gen_success "Updated docs/ai-automation.md skills";    fi
+  if [[ -d "$AI_DIR" ]];          then _readme_lifecycle      | _splice_readme "$AI_DOC_PATH" "LIFECYCLE";           _gen_success "Updated docs/ai-automation.md lifecycle"; fi
+  if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
+                                       _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
+                                       _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"
+
+  # ── Project settings permissions ─────────────────────────────────────────────
+
+  CLAUDE_SETTINGS_SRC="${CLAUDE_SETTINGS_SRC:-"$REPO_ROOT/ai/claude/settings.json"}"
+
+  _sync_project_permissions() {
+    [[ -f "$CLAUDE_SETTINGS_SRC" ]] || return 0
+
+    local -a registry_perms=()
+    collect_registry_permissions registry_perms "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+    [[ ${#registry_perms[@]} -gt 0 ]] || return 0
+
+    local perms_json
+    perms_json=$(printf '%s\n' "${registry_perms[@]}" | jq -Rn '[inputs] | sort')
+
+    local result
+    result=$(jq --argjson rp "$perms_json" '
+      (._generated_permissions // []) as $prev |
+      [.permissions.allow[] | select(. as $x | $prev | index($x) == null)] as $manual |
+      .permissions.allow = ($manual + $rp | unique) |
+      ._generated_permissions = $rp
+    ' "$CLAUDE_SETTINGS_SRC")
+
+    printf '%s\n' "$result" > "$CLAUDE_SETTINGS_SRC"
+    _gen_success "Synced project permissions"
+  }
+
+  _sync_project_permissions
 }
 
-_sync_project_permissions
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

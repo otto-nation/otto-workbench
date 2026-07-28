@@ -19,17 +19,17 @@ setup_file() {
   touch "$SHARED_DIR/bin/mytool" && chmod +x "$SHARED_DIR/bin/mytool"
   touch "$SHARED_DIR/bin/othertool" && chmod +x "$SHARED_DIR/bin/othertool"
 
-  VALIDATOR="$SHARED_DIR/validate-registries"
-  sed "s|REPO_ROOT=.*|REPO_ROOT=\"$SHARED_DIR\"|" \
-    "$REPO_ROOT/bin/local/validate-registries" > "$VALIDATOR"
-  chmod +x "$VALIDATOR"
-
-  export SHARED_DIR VALIDATOR
+  export SHARED_DIR
 }
 
 setup() {
   load 'test_helper'
   common_setup
+  # Must source per-test: bats runs each test in a subshell, so functions
+  # from setup_file() don't survive. The libs sourced by the script are
+  # unavoidable overhead in bats's architecture.
+  REPO_ROOT="$SHARED_DIR" source "$BATS_TEST_DIRNAME/../bin/local/validate-registries"
+  REPO_ROOT="$SHARED_DIR"
   ORIG_DIR="$PWD"
   TMPDIR="$SHARED_DIR"
 
@@ -136,7 +136,7 @@ EOF
   _write_valid_bin
   _write_valid_zsh
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -156,7 +156,7 @@ tools:
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: description"* ]]
 }
@@ -177,7 +177,7 @@ tools:
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: when_to_use"* ]]
 }
@@ -205,7 +205,7 @@ tools:
 EOF
   printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"duplicate tool name: mytool"* ]]
 }
@@ -229,7 +229,7 @@ tools:
 EOF
   printf 'brew "something-else"\n' > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"not found in brew/Brewfile"* ]]
 }
@@ -251,7 +251,7 @@ tools:
 EOF
   printf 'cask "mycask"\n' > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -273,7 +273,7 @@ tools:
 EOF
   printf 'brew "maven"\n' > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -293,7 +293,7 @@ tools:
     usage: "no-such-script --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"not found in bin/"* ]]
 }
@@ -315,7 +315,7 @@ tools:
 EOF
   # No matching comment in any zsh file
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"no matching comment found"* ]]
 }
@@ -326,7 +326,7 @@ EOF
   _write_valid_bin
   touch "$TMPDIR/bin/newtool" && chmod +x "$TMPDIR/bin/newtool"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"not registered"* ]]
 }
@@ -335,7 +335,7 @@ EOF
   _write_valid_bin
   touch "$TMPDIR/bin/datafile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -344,7 +344,7 @@ EOF
 @test "validates work registry schema" {
   _write_valid_work
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -366,7 +366,7 @@ tools:
 EOF
   printf 'brew "something-else"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"not found in brew/work/mystack.Brewfile"* ]]
 }
@@ -390,7 +390,7 @@ tools:
 EOF
   printf 'brew "kubernetes-cli"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -410,7 +410,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -426,7 +426,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: var"* ]]
 }
@@ -443,7 +443,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"invalid var name"* ]]
 }
@@ -461,7 +461,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"duplicate env var: MY_VAR"* ]]
 }
@@ -488,7 +488,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"defined in multiple registries"* ]]
 }
@@ -506,7 +506,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"requires install_check_command"* ]]
 }
@@ -525,7 +525,7 @@ env:
 tools: []
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -546,7 +546,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -565,7 +565,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -584,7 +584,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -603,7 +603,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"permission string must be non-empty"* ]]
 }
@@ -625,7 +625,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -644,7 +644,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"permission must be boolean, string, or array"* ]]
 }
@@ -663,7 +663,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: permission"* ]]
 }
@@ -682,7 +682,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: visibility"* ]]
 }
@@ -701,7 +701,7 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"field 'when_to_use' is not allowed"* ]]
 }
@@ -720,7 +720,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"field 'usage' is not allowed"* ]]
 }
@@ -739,7 +739,7 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"field 'when_to_use' is not allowed"* ]]
 }
@@ -758,7 +758,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"field 'usage' is not allowed"* ]]
 }
@@ -777,7 +777,7 @@ tools:
     when_to_use: "When needed"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: usage"* ]]
 }
@@ -798,7 +798,7 @@ tools:
     bogus_field: "unexpected"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown field 'bogus_field'"* ]]
 }
@@ -819,7 +819,7 @@ tools:
     usage: "mytool --help"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"must match Bash(...) pattern"* ]]
 }
@@ -841,7 +841,7 @@ tools:
 EOF
   echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -860,7 +860,7 @@ tools:
 EOF
   echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"must be lowercase alphanumeric"* ]]
 }
@@ -880,7 +880,7 @@ tools:
 EOF
   echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -907,7 +907,7 @@ tools:
         description: "Second subcommand"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -933,7 +933,7 @@ tools:
         detail: "Detailed explanation"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }
 
@@ -955,7 +955,7 @@ tools:
       - description: "No name field"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: name"* ]]
 }
@@ -978,7 +978,7 @@ tools:
       - name: sub1
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing required field: description"* ]]
 }
@@ -1003,7 +1003,7 @@ tools:
         bogus: "unexpected"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown field 'bogus'"* ]]
 }
@@ -1029,7 +1029,7 @@ tools:
         description: "Duplicate"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"duplicate command name: sub1"* ]]
 }
@@ -1051,7 +1051,7 @@ tools:
         description: "First"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"field 'commands' is not allowed"* ]]
 }
@@ -1073,7 +1073,7 @@ tools:
         description: "First"
 EOF
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"field 'commands' is not allowed"* ]]
 }
@@ -1083,6 +1083,6 @@ EOF
 @test "succeeds and warns when registries are missing" {
   # No registry files written
 
-  run "$VALIDATOR"
+  run main
   [ "$status" -eq 0 ]
 }

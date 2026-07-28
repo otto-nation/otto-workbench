@@ -1,15 +1,12 @@
 #!/usr/bin/env bats
 # Tests for _export_claude_config(), _profile_excludes_skill(), and workbench-export.
 
-FAKE_HOME=""
-EXPORT_DIR=""
-TARBALL_ROOT=""
-
-setup() {
+setup_file() {
   load 'test_helper'
-  common_setup
-  TMPDIR="$(mktemp -d)"
-  FAKE_HOME="$TMPDIR/home"
+  export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+
+  SHARED_TMPDIR="$BATS_FILE_TMPDIR"
+  FAKE_HOME="$SHARED_TMPDIR/home"
   mkdir -p "$FAKE_HOME"
 
   HOME="$FAKE_HOME"
@@ -22,8 +19,21 @@ setup() {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/ai/claude/steps.sh"
 
-  EXPORT_DIR="$TMPDIR/export"
+  EXPORT_DIR="$SHARED_TMPDIR/export"
   _export_claude_config "$EXPORT_DIR" "server"
+
+  export SHARED_TMPDIR FAKE_HOME EXPORT_DIR
+}
+
+setup() {
+  load 'test_helper'
+  common_setup
+  TMPDIR="$(mktemp -d)"
+  HOME="$FAKE_HOME"
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/ui.sh"
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/ai/claude/steps.sh"
 }
 
 teardown() {

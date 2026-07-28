@@ -41,7 +41,6 @@ FAKEGH
   chmod +x "$MOCK_BIN/gh"
 
   export MOCK_BIN
-  export WT_CLEANUP="$REPO_ROOT/bin/wt-cleanup"
 }
 
 setup() {
@@ -54,6 +53,18 @@ setup() {
   GH_PR_MERGED="$TMPDIR/gh-pr-merged.txt"
   GH_PR_OPEN="$TMPDIR/gh-pr-open.txt"
   GH_PR_CLOSED="$TMPDIR/gh-pr-closed.txt"
+
+  export PATH="$MOCK_BIN:$PATH"
+  export WT_JSON_FILE="$WT_JSON"
+  export WT_REMOVE_LOG_FILE="$WT_REMOVE_LOG"
+  export GH_PR_MERGED_FILE="$GH_PR_MERGED"
+  export GH_PR_OPEN_FILE="$GH_PR_OPEN"
+  export GH_PR_CLOSED_FILE="$GH_PR_CLOSED"
+  export CLEANUP_LOG_DIR="$TMPDIR/logs"
+  export NO_COLOR=1
+  export WORKBENCH_DIR="$REPO_ROOT"
+
+  source "$REPO_ROOT/bin/wt-cleanup"
 }
 
 teardown() {
@@ -63,15 +74,7 @@ teardown() {
 
 # Helper: run wt-cleanup with mocked wt and gh
 _run_cleanup() {
-  PATH="$MOCK_BIN:$PATH" \
-    WT_JSON_FILE="$WT_JSON" \
-    WT_REMOVE_LOG_FILE="$WT_REMOVE_LOG" \
-    GH_PR_MERGED_FILE="$GH_PR_MERGED" \
-    GH_PR_OPEN_FILE="$GH_PR_OPEN" \
-    GH_PR_CLOSED_FILE="$GH_PR_CLOSED" \
-    CLEANUP_LOG_DIR="$TMPDIR/logs" \
-    NO_COLOR=1 \
-    run "$WT_CLEANUP" "$@"
+  run main "$@"
 }
 
 # Helper: write worktree JSON
@@ -82,13 +85,13 @@ _write_worktrees() {
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 @test "wt-cleanup --help exits 0" {
-  run "$WT_CLEANUP" --help
+  run main --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"worktrees"* ]]
 }
 
 @test "wt-cleanup -h exits 0" {
-  run "$WT_CLEANUP" -h
+  run main -h
   [ "$status" -eq 0 ]
 }
 

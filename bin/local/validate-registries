@@ -21,9 +21,7 @@
 # Usage: bin/local/validate-registries
 # Exit code: 0 if all checks pass, 1 if any fail.
 
-set -euo pipefail
-
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 WORKBENCH_DIR="${WORKBENCH_DIR:-$REPO_ROOT}"
 
 # shellcheck source=/dev/null
@@ -42,14 +40,6 @@ Options:
   -h, --help  Show this help
 EOF
 }
-
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
-QUIET=false
-[[ "${1:-}" == "--quiet" ]] && QUIET=true
-
-ERRORS=0
-REGISTRIES_CHECKED=0
-declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
 
 # _fail MSG — records an error and prints it; does not exit immediately so all
 # errors in a registry are reported before aborting.
@@ -434,38 +424,6 @@ _validate_registry() {
   esac
 }
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
-if ! command -v yq >/dev/null 2>&1; then
-  err "yq not found — run: brew install yq"
-  exit 1
-fi
-
-# Collect all registries: top-level + nested (e.g. ai/claude/) + optional brew stacks
-declare -a all_registries=()
-collect_registries all_registries "$REPO_ROOT"
-
-if [[ "${#all_registries[@]}" -eq 0 ]]; then
-  warn "No registry files found — skipping"
-  exit 0
-fi
-
-$QUIET || echo "→ Validating registries..."
-
-for registry in "${all_registries[@]}"; do
-  REGISTRIES_CHECKED=$(( REGISTRIES_CHECKED + 1 ))
-  if ! $QUIET; then
-    echo
-    info "Schema: ${registry#"$REPO_ROOT/"}"
-  fi
-  _validate_schema "$registry"
-  _validate_env_fields "$registry"
-  _validate_auth_fields "$registry"
-  _validate_install_check_command "$registry"
-  _validate_meta_scope "$registry"
-  _validate_registry "$registry"
-done
-
 # Cross-registry duplicate check: no env var name should appear in multiple registries.
 _check_cross_registry_dupes() {
   local -A var_sources=()
@@ -479,14 +437,64 @@ _check_cross_registry_dupes() {
     var_sources[$var]="$source"
   done
 }
-if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then
-  _check_cross_registry_dupes
-fi
 
-echo
-if [[ "$ERRORS" -gt 0 ]]; then
-  err "$ERRORS error(s) found"
-  exit 1
-fi
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-success "All registries valid ($REGISTRIES_CHECKED files)"
+main() {
+  set -euo pipefail
+
+  [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; return 0; }
+  QUIET=false
+  [[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+  ERRORS=0
+  REGISTRIES_CHECKED=0
+  ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
+
+  if ! command -v yq >/dev/null 2>&1; then
+    err "yq not found — run: brew install yq"
+    return 1
+  fi
+
+  # Collect all registries: top-level + nested (e.g. ai/claude/) + optional brew stacks
+  local -a all_registries=()
+  collect_registries all_registries "$REPO_ROOT"
+
+  if [[ "${#all_registries[@]}" -eq 0 ]]; then
+    warn "No registry files found — skipping"
+    return 0
+  fi
+
+  $QUIET || echo "→ Validating registries..."
+
+  local registry
+  for registry in "${all_registries[@]}"; do
+    REGISTRIES_CHECKED=$(( REGISTRIES_CHECKED + 1 ))
+    if ! $QUIET; then
+      echo
+      info "Schema: ${registry#"$REPO_ROOT/"}"
+    fi
+    _validate_schema "$registry"
+    _validate_env_fields "$registry"
+    _validate_auth_fields "$registry"
+    _validate_install_check_command "$registry"
+    _validate_meta_scope "$registry"
+    _validate_registry "$registry"
+  done
+
+  if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then
+    _check_cross_registry_dupes
+  fi
+
+  echo
+  if [[ "$ERRORS" -gt 0 ]]; then
+    err "$ERRORS error(s) found"
+    return 1
+  fi
+
+  success "All registries valid ($REGISTRIES_CHECKED files)"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -791,6 +792,216 @@ def _run_fix(trail, report: dict, ctx) -> int:
     return 0 if rc == 0 else 1
 
 
+def _emit_json(report: dict, report_type: str) -> None:
+    """Emit a JSON report to stdout with --- delimiter."""
+    report["type"] = report_type
+    print("---", flush=True)
+    json.dump(report, sys.stdout, indent=2)
+    print(flush=True)
+
+
+def _run_ci_wait(trail, args, ctx) -> dict:
+    """Poll CI until all jobs complete, emitting partial reports as failures arrive."""
+    repo = ctx.repo
+    branch = ctx.branch
+    pr_number = ctx.pr_number
+    toplevel = ctx.worktree_root
+
+    reported_job_ids: set[int] = set()
+    all_partial_failures: list[dict] = []
+    start_time = time.monotonic()
+    timeout = args.wait_timeout
+    interval = args.wait_interval
+    merged = None
+
+    while True:
+        elapsed = time.monotonic() - start_time
+
+        # Fetch current state
+        if args.run:
+            run_ids = [args.run]
+        else:
+            run_ids = _fetch_latest_run_ids(repo, branch)
+            if not run_ids:
+                trail.warn("no_runs", "no workflow runs found")
+                log.error(f"No workflow runs found for branch '{branch}'")
+                sys.exit(1)
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            fetched = list(pool.map(lambda rid: (rid, _fetch_run_data(repo, rid)), run_ids))
+        run_data_list = []
+        for rid, rd in fetched:
+            if rd is not None:
+                rd["_run_id"] = rid
+                run_data_list.append(rd)
+
+        merged = _merge_runs(run_data_list)
+        if merged is None:
+            trail.error("fetch_run_data", "failed to fetch run data")
+            log.error("Failed to fetch run data")
+            sys.exit(1)
+
+        # Find newly-failed jobs
+        new_failed_jobs = [
+            j for j in merged.get("jobs", [])
+            if j.get("conclusion") in _FAILURE_CONCLUSIONS
+            and j.get("databaseId", 0) not in reported_job_ids
+        ]
+
+        # Process and emit partial report for new failures
+        if new_failed_jobs:
+            partial_merged = dict(merged)
+            partial_merged["jobs"] = new_failed_jobs
+            partial_run = _parse_run(repo, partial_merged)
+
+            completed, failed, running, queued = _count_job_states(merged)
+            total = completed + running + queued
+
+            partial_report = {
+                "completed": completed,
+                "total": total,
+                "failures": [],
+                "progression": {},
+            }
+            for group_key, group in partial_run.failures.items():
+                for item in group.items:
+                    partial_report["failures"].append({
+                        "id": item.id,
+                        "job": group.job,
+                        "failed_step": group.failed_step,
+                        "kind": group.kind.value,
+                        "annotation": item.annotation,
+                        "headline": item.headline,
+                        "file": item.file,
+                        "line": item.line,
+                        "diagnosis": item.diagnosis,
+                        "fix_sha": item.fix_sha,
+                        "outcome": "new",
+                        "source_run_id": item.source_run_id,
+                        "context": item.context,
+                    })
+
+            if partial_report["failures"]:
+                _emit_json(partial_report, "partial")
+                all_partial_failures.extend(partial_report["failures"])
+                trail.info("partial_report", f"{len(partial_report['failures'])} new failure(s)")
+
+            reported_job_ids.update(j.get("databaseId", 0) for j in new_failed_jobs)
+
+        # Status line and dashboard
+        completed, failed, running, queued = _count_job_states(merged)
+        total = completed + running + queued
+        status_parts = [f"{completed}/{total} jobs complete"]
+        if running:
+            status_parts.append(f"{running} running")
+        if queued:
+            status_parts.append(f"{queued} queued")
+        if failed:
+            status_parts.append(f"{failed} failed")
+
+        is_complete = merged.get("status") == "completed" or running + queued == 0
+
+        print(f"  {', '.join(status_parts)}", file=sys.stderr, flush=True)
+
+        if is_complete:
+            break
+
+        if elapsed >= timeout:
+            print(f"  Timeout after {int(elapsed)}s — emitting partial results", file=sys.stderr, flush=True)
+            trail.warn("wait_timeout", f"timed out after {int(elapsed)}s")
+            break
+
+        time.sleep(interval)
+
+    # Final full report — reuse _run_ci() logic for the complete state
+    run_state = _parse_run(repo, merged)
+
+    if toplevel:
+        state = pr_state.load_or_init(
+            worktree_root=toplevel, repo=repo, branch=branch,
+            pr_number=pr_number, head_sha=run_state.head_sha,
+        )
+        ci_domain = state.ci
+    else:
+        state = None
+        ci_domain = pr_state.CIDomain()
+
+    prior_run = ci_domain.runs.get(str(ci_domain.latest_run_id)) if ci_domain.latest_run_id else None
+    prior_failures = prior_run.failures if prior_run else {}
+    progression = ci.compute_progression(run_state.failures, prior_failures)
+
+    ci.sync_ci_domain(ci_domain, run_state)
+
+    dashboard = ci.render_dashboard(run_state, progression, run_ids=run_ids, show_status=True)
+    print(dashboard, file=sys.stderr)
+
+    behind_main = _commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
+
+    report = {
+        "repo": repo,
+        "branch": branch,
+        "pr_number": pr_number,
+        "run_id": run_state.run_id,
+        "run_ids": run_ids,
+        "run_number": run_state.run_number,
+        "head_sha": run_state.head_sha,
+        "conclusion": run_state.conclusion,
+        "behind_main": behind_main,
+        "failures": [],
+        "progression": {k: v.value for k, v in progression.items()},
+        "resolved_since_prior": [],
+        "completed": completed,
+        "total": total,
+    }
+
+    for group_key, group in run_state.failures.items():
+        for item in group.items:
+            report["failures"].append({
+                "id": item.id,
+                "job": group.job,
+                "failed_step": group.failed_step,
+                "kind": group.kind.value,
+                "annotation": item.annotation,
+                "headline": item.headline,
+                "file": item.file,
+                "line": item.line,
+                "diagnosis": item.diagnosis,
+                "fix_sha": item.fix_sha,
+                "outcome": progression.get(item.id, ci.Outcome.NEW).value,
+                "source_run_id": item.source_run_id,
+                "context": item.context,
+            })
+
+    if prior_run:
+        prior_item_ids = ci.collect_item_ids(prior_run.failures)
+        current_item_ids = ci.collect_item_ids(run_state.failures)
+        report["resolved_since_prior"] = [
+            item_id for item_id in prior_item_ids
+            if item_id not in current_item_ids
+        ]
+
+    if state is not None:
+        kind_counts: dict[str, int] = {}
+        for f in report.get("failures", []):
+            k = f.get("kind", "unknown")
+            kind_counts[k] = kind_counts.get(k, 0) + 1
+        ci_domain.conclusion = run_state.conclusion
+        ci_domain.failure_count = len(report.get("failures", []))
+        ci_domain.failure_kinds = kind_counts
+        ci_domain.last_run_id = run_state.run_id
+        ci_domain.last_run_number = run_state.run_number
+        ci_domain.updated_at = pr_state.now_iso()
+        try:
+            pr_state.save_state(toplevel, state)
+        except Exception as exc:
+            trail.error("state_update", f"state update failed: {exc}")
+            log.error(f"ci-check: state update failed: {exc}")
+
+    _emit_json(report, "final")
+
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description="CI failure status")
     parser.add_argument("--pr", help="PR number or URL")
@@ -800,6 +1011,12 @@ def main():
                         help="Git worktree directory")
     parser.add_argument("--fix", action="store_true",
                         help="Invoke AI to fix failures after diagnosis")
+    parser.add_argument("--wait", action="store_true",
+                        help="Poll until all jobs complete, emitting incremental reports")
+    parser.add_argument("--wait-timeout", type=int, default=900,
+                        help="Max wait time in seconds (default: 900)")
+    parser.add_argument("--wait-interval", type=int, default=30,
+                        help="Poll interval in seconds (default: 30)")
     add_trail_args(parser)
     args = parser.parse_args()
 
@@ -818,7 +1035,10 @@ def main():
         debug=args.debug,
     )
     try:
-        report = _run_ci(trail, args, ctx)
+        if args.wait:
+            report = _run_ci_wait(trail, args, ctx)
+        else:
+            report = _run_ci(trail, args, ctx)
         if args.fix:
             rc = _run_fix(trail, report, ctx)
             sys.exit(rc)

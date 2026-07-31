@@ -899,3 +899,138 @@ def test_count_job_states_pending_is_queued():
     ]}
     completed, failed, running, queued = ci_check._count_job_states(merged)
     assert queued == 1
+
+
+# ── _run_ci_wait ─────────────────────────────────────────────────────────
+
+
+def test_run_ci_wait_emits_partial_on_new_failure(capsys):
+    """When a job fails during polling, a partial JSON report is emitted."""
+    # First poll: one job running, one failed
+    run_data_cycle1 = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "in_progress", "conclusion": "failure",
+        "jobs": [
+            {"name": "Lint", "conclusion": "failure", "databaseId": 10, "status": "completed"},
+            {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+        ],
+    }
+    # Second poll: all complete
+    run_data_cycle2 = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "completed", "conclusion": "failure",
+        "jobs": [
+            {"name": "Lint", "conclusion": "failure", "databaseId": 10, "status": "completed"},
+            {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+        ],
+    }
+    fetch_calls = iter([
+        ([100], run_data_cycle1),
+        ([100], run_data_cycle2),
+    ])
+
+    def mock_fetch_ids(repo, branch):
+        ids, _ = next(fetch_calls)
+        return ids
+
+    call_count = [0]
+    def mock_fetch_data(repo, run_id):
+        cycle = call_count[0]
+        call_count[0] += 1
+        if cycle == 0:
+            return run_data_cycle1
+        return run_data_cycle2
+
+    mock_trail = MagicMock()
+    mock_args = MagicMock()
+    mock_args.wait_timeout = 120
+    mock_args.wait_interval = 0  # no sleep in tests
+    mock_args.run = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.repo = "owner/repo"
+    mock_ctx.branch = "feat/test"
+    mock_ctx.pr_number = None
+    mock_ctx.worktree_root = None
+
+    with patch("ci_check._fetch_latest_run_ids", side_effect=mock_fetch_ids), \
+         patch("ci_check._fetch_run_data", side_effect=mock_fetch_data), \
+         patch("ci_check._fetch_annotations", return_value=[]), \
+         patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)), \
+         patch("ci_check._commits_behind_main", return_value=0), \
+         patch("ci_check.time.sleep"):
+        result = ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
+
+    stdout = capsys.readouterr().out
+    assert "---" in stdout
+    chunks = [c.strip() for c in stdout.split("---") if c.strip()]
+    assert len(chunks) >= 1
+    partial = json.loads(chunks[0])
+    assert partial["type"] == "partial"
+    final = json.loads(chunks[-1])
+    assert final["type"] == "final"
+
+
+def test_run_ci_wait_emits_status_lines(capsys):
+    """Status lines showing job counts appear on stderr."""
+    run_data = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "completed", "conclusion": "success",
+        "jobs": [
+            {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+            {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+        ],
+    }
+    mock_trail = MagicMock()
+    mock_args = MagicMock()
+    mock_args.wait_timeout = 120
+    mock_args.wait_interval = 0
+    mock_args.run = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.repo = "owner/repo"
+    mock_ctx.branch = "feat/test"
+    mock_ctx.pr_number = None
+    mock_ctx.worktree_root = None
+
+    with patch("ci_check._fetch_latest_run_ids", return_value=[100]), \
+         patch("ci_check._fetch_run_data", return_value=run_data), \
+         patch("ci_check._commits_behind_main", return_value=0), \
+         patch("ci_check.time.sleep"):
+        ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
+
+    stderr = capsys.readouterr().err
+    assert "2/2" in stderr or "complete" in stderr.lower()
+
+
+def test_run_ci_wait_times_out(capsys):
+    """When timeout is reached, a final report is emitted with whatever we have."""
+    run_data = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "in_progress", "conclusion": "",
+        "jobs": [
+            {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+        ],
+    }
+    mock_trail = MagicMock()
+    mock_args = MagicMock()
+    mock_args.wait_timeout = 0  # immediate timeout
+    mock_args.wait_interval = 0
+    mock_args.run = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.repo = "owner/repo"
+    mock_ctx.branch = "feat/test"
+    mock_ctx.pr_number = None
+    mock_ctx.worktree_root = None
+
+    with patch("ci_check._fetch_latest_run_ids", return_value=[100]), \
+         patch("ci_check._fetch_run_data", return_value=run_data), \
+         patch("ci_check._commits_behind_main", return_value=0), \
+         patch("ci_check.time.sleep"):
+        result = ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
+
+    stderr = capsys.readouterr().err
+    assert "timeout" in stderr.lower() or "Timeout" in stderr
+
+    assert result["type"] == "final"

@@ -543,6 +543,38 @@ def test_uninformative_generic_exit_code_message():
     assert ci_check._annotations_uninformative(annotations) is True
 
 
+def test_uninformative_exited_with_code():
+    """'exited with code' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Step exited with code 1", "path": "src/main.go", "start_line": 1},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_returned_non_zero():
+    """'returned a non-zero code' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Command returned a non-zero code: 2", "path": "Makefile", "start_line": 10},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_check_failure_on_line():
+    """'check failure on line' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Check failure on line 42", "path": ".github/workflows/ci.yml", "start_line": 42},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_failed_with_exit_code():
+    """'failed with exit code' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Job failed with exit code 1", "path": ".github/workflows/ci.yml", "start_line": 1},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
 def test_informative_real_error_with_source_path():
     """Annotations with a real source path and specific error are informative."""
     annotations = [
@@ -811,3 +843,183 @@ def test_fetch_job_failure_no_artifact_for_lint(mock_ann, mock_log, mock_artifac
     ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_log.assert_not_called()
     mock_artifact.assert_not_called()
+
+
+# ── _count_job_states ──────────────────────────────────────────────────────
+
+
+def test_count_job_states_all_completed():
+    merged = {"jobs": [
+        {"name": "lint", "status": "completed", "conclusion": "success"},
+        {"name": "test", "status": "completed", "conclusion": "failure"},
+        {"name": "build", "status": "completed", "conclusion": "neutral"},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 3
+    assert failed == 1
+    assert running == 0
+    assert queued == 0
+
+
+def test_count_job_states_mixed():
+    merged = {"jobs": [
+        {"name": "lint", "status": "completed", "conclusion": "success"},
+        {"name": "test", "status": "in_progress", "conclusion": None},
+        {"name": "build", "status": "queued", "conclusion": None},
+        {"name": "deploy", "status": "waiting", "conclusion": None},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 1
+    assert failed == 0
+    assert running == 1
+    assert queued == 2
+
+
+def test_count_job_states_empty():
+    merged = {"jobs": []}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 0
+    assert failed == 0
+    assert running == 0
+    assert queued == 0
+
+
+def test_count_job_states_timed_out_is_failed():
+    merged = {"jobs": [
+        {"name": "slow", "status": "completed", "conclusion": "timed_out"},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 1
+    assert failed == 1
+
+
+def test_count_job_states_pending_is_queued():
+    merged = {"jobs": [
+        {"name": "deploy", "status": "pending", "conclusion": None},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert queued == 1
+
+
+# ── _run_ci_wait ─────────────────────────────────────────────────────────
+
+
+def test_run_ci_wait_emits_partial_on_new_failure(capsys):
+    """When a job fails during polling, a partial JSON report is emitted."""
+    # First poll: one job running, one failed
+    run_data_cycle1 = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "in_progress", "conclusion": "failure",
+        "jobs": [
+            {"name": "Lint", "conclusion": "failure", "databaseId": 10, "status": "completed"},
+            {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+        ],
+    }
+    # Second poll: all complete
+    run_data_cycle2 = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "completed", "conclusion": "failure",
+        "jobs": [
+            {"name": "Lint", "conclusion": "failure", "databaseId": 10, "status": "completed"},
+            {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+        ],
+    }
+    call_count = [0]
+    def mock_fetch_data(repo, run_id):
+        cycle = call_count[0]
+        call_count[0] += 1
+        if cycle == 0:
+            return run_data_cycle1
+        return run_data_cycle2
+
+    mock_trail = MagicMock()
+    mock_args = MagicMock()
+    mock_args.wait_timeout = 120
+    mock_args.wait_interval = 0  # no sleep in tests
+    mock_args.run = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.repo = "owner/repo"
+    mock_ctx.branch = "feat/test"
+    mock_ctx.pr_number = None
+    mock_ctx.worktree_root = None
+
+    with patch("ci_check._fetch_latest_run_ids", side_effect=[[100], [100]]), \
+         patch("ci_check._fetch_run_data", side_effect=mock_fetch_data), \
+         patch("ci_check._fetch_annotations", return_value=[]), \
+         patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)), \
+         patch("ci_check._commits_behind_main", return_value=0), \
+         patch("ci_check.time.sleep"):
+        result = ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
+
+    stdout = capsys.readouterr().out
+    assert "---" in stdout
+    chunks = [c.strip() for c in stdout.split("---") if c.strip()]
+    assert len(chunks) >= 2
+    partial = json.loads(chunks[0])
+    assert partial["type"] == "partial"
+    final = json.loads(chunks[-1])
+    assert final["type"] == "final"
+
+
+def test_run_ci_wait_emits_status_lines(capsys):
+    """Status lines showing job counts appear on stderr."""
+    run_data = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "completed", "conclusion": "success",
+        "jobs": [
+            {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+            {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+        ],
+    }
+    mock_trail = MagicMock()
+    mock_args = MagicMock()
+    mock_args.wait_timeout = 120
+    mock_args.wait_interval = 0
+    mock_args.run = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.repo = "owner/repo"
+    mock_ctx.branch = "feat/test"
+    mock_ctx.pr_number = None
+    mock_ctx.worktree_root = None
+
+    with patch("ci_check._fetch_latest_run_ids", return_value=[100]), \
+         patch("ci_check._fetch_run_data", return_value=run_data), \
+         patch("ci_check._commits_behind_main", return_value=0), \
+         patch("ci_check.time.sleep"):
+        ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
+
+    stderr = capsys.readouterr().err
+    assert "2/2" in stderr
+
+
+def test_run_ci_wait_times_out(capsys):
+    """When timeout is reached, a final report is emitted with whatever we have."""
+    run_data = {
+        "databaseId": 100, "number": 1, "headSha": "abc123",
+        "status": "in_progress", "conclusion": "",
+        "jobs": [
+            {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+        ],
+    }
+    mock_trail = MagicMock()
+    mock_args = MagicMock()
+    mock_args.wait_timeout = 0  # immediate timeout
+    mock_args.wait_interval = 0
+    mock_args.run = None
+
+    mock_ctx = MagicMock()
+    mock_ctx.repo = "owner/repo"
+    mock_ctx.branch = "feat/test"
+    mock_ctx.pr_number = None
+    mock_ctx.worktree_root = None
+
+    with patch("ci_check._fetch_latest_run_ids", return_value=[100]), \
+         patch("ci_check._fetch_run_data", return_value=run_data), \
+         patch("ci_check._commits_behind_main", return_value=0), \
+         patch("ci_check.time.sleep"):
+        result = ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
+
+    stderr = capsys.readouterr().err
+    assert "timeout" in stderr.lower()

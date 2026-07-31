@@ -347,9 +347,14 @@ def render_dashboard(
     run: RunState,
     progression: dict[str, Outcome],
     run_ids: list[int] | None = None,
+    show_status: bool = False,
 ) -> str:
     """Render a human-readable dashboard string for stderr output."""
-    lines = [f"## CI Run #{run.run_number} ({run.head_sha[:7]})", ""]
+    header = f"## CI Run #{run.run_number} ({run.head_sha[:7]})"
+    if show_status:
+        suffix = "in progress" if run.status != "completed" else "complete"
+        header += f" — {suffix}"
+    lines = [header, ""]
 
     if run_ids and len(run_ids) > 1:
         lines.append(f"Workflow runs: {', '.join(str(r) for r in run_ids)}")

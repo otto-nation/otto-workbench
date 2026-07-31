@@ -924,15 +924,6 @@ def test_run_ci_wait_emits_partial_on_new_failure(capsys):
             {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
         ],
     }
-    fetch_calls = iter([
-        ([100], run_data_cycle1),
-        ([100], run_data_cycle2),
-    ])
-
-    def mock_fetch_ids(repo, branch):
-        ids, _ = next(fetch_calls)
-        return ids
-
     call_count = [0]
     def mock_fetch_data(repo, run_id):
         cycle = call_count[0]
@@ -953,7 +944,7 @@ def test_run_ci_wait_emits_partial_on_new_failure(capsys):
     mock_ctx.pr_number = None
     mock_ctx.worktree_root = None
 
-    with patch("ci_check._fetch_latest_run_ids", side_effect=mock_fetch_ids), \
+    with patch("ci_check._fetch_latest_run_ids", side_effect=[[100], [100]]), \
          patch("ci_check._fetch_run_data", side_effect=mock_fetch_data), \
          patch("ci_check._fetch_annotations", return_value=[]), \
          patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)), \
@@ -964,7 +955,7 @@ def test_run_ci_wait_emits_partial_on_new_failure(capsys):
     stdout = capsys.readouterr().out
     assert "---" in stdout
     chunks = [c.strip() for c in stdout.split("---") if c.strip()]
-    assert len(chunks) >= 1
+    assert len(chunks) >= 2
     partial = json.loads(chunks[0])
     assert partial["type"] == "partial"
     final = json.loads(chunks[-1])
@@ -1000,7 +991,7 @@ def test_run_ci_wait_emits_status_lines(capsys):
         ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
 
     stderr = capsys.readouterr().err
-    assert "2/2" in stderr or "complete" in stderr.lower()
+    assert "2/2" in stderr
 
 
 def test_run_ci_wait_times_out(capsys):
@@ -1031,6 +1022,4 @@ def test_run_ci_wait_times_out(capsys):
         result = ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)
 
     stderr = capsys.readouterr().err
-    assert "timeout" in stderr.lower() or "Timeout" in stderr
-
-    assert result["type"] == "final"
+    assert "timeout" in stderr.lower()

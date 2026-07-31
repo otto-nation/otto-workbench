@@ -46,7 +46,7 @@ The script outputs:
 - **stderr:** Human-readable dashboard (run number, commit, failure counts by kind, progression)
 - **stdout:** Structured JSON report with all failures, classifications, and progression markers
 
-**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
+**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. Without `--wait`, the dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. With `--wait`, output uses `---`-delimited JSON chunks instead (see below).
 
 **In-progress runs:** When the run is in-progress (dashboard says "Checks still running"):
 - Add `--wait` to poll until all jobs complete with incremental reporting

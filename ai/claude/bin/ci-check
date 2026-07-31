@@ -195,7 +195,7 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
 
 _GENERIC_MESSAGES = (
     "process completed with exit code",
-    "a]process completed with exit code",
+    "a]process completed with exit code",  # GHA bracket-notation artifact
     "check failure on line",
     "failed with exit code",
     "exited with code",
@@ -802,9 +802,8 @@ def _run_fix(trail, report: dict, ctx) -> int:
 
 def _emit_json(report: dict, report_type: str) -> None:
     """Emit a JSON report to stdout with --- delimiter."""
-    report["type"] = report_type
     print("---", flush=True)
-    json.dump(report, sys.stdout, indent=2)
+    json.dump({**report, "type": report_type}, sys.stdout, indent=2)
     print(flush=True)
 
 

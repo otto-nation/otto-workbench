@@ -7,8 +7,11 @@ signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 
@@ -27,7 +30,75 @@ class CheckerResult:
     files_checked: int
 
 
-_CHECKERS: list[Callable[[list[str], str], CheckerResult | None]] = []
+_WORKBENCH_LIB = str(Path(__file__).resolve().parent.parent.parent.parent / "lib")
+if _WORKBENCH_LIB not in sys.path:
+    sys.path.insert(0, _WORKBENCH_LIB)
+
+from nesting import get_checker_for_extension, get_checker_for_shebang, get_all_extensions
+
+
+def _read_shebang(path: str) -> bytes | None:
+    try:
+        with open(path, "rb") as f:
+            return f.readline()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _get_nesting_checker(filepath: str, ext: str):
+    checker = get_checker_for_extension(ext)
+    if checker:
+        return checker
+    if not ext:
+        shebang = _read_shebang(filepath)
+        if shebang:
+            return get_checker_for_shebang(shebang)
+    return None
+
+
+def check_nesting_depth(changed_files: list[str], wt_path: str) -> CheckerResult | None:
+    all_exts = get_all_extensions()
+    candidates = []
+    for relpath in changed_files:
+        _, ext = os.path.splitext(relpath)
+        if ext in all_exts or not ext:
+            candidates.append(relpath)
+
+    if not candidates:
+        return None
+
+    violations: list[StaticViolation] = []
+    files_checked = 0
+
+    for relpath in candidates:
+        abspath = os.path.join(wt_path, relpath)
+        _, ext = os.path.splitext(relpath)
+        checker = _get_nesting_checker(abspath, ext)
+        if not checker:
+            continue
+        try:
+            with open(abspath) as f:
+                lines = f.readlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        files_checked += 1
+        max_depth = checker.DEFAULT_MAX_DEPTH
+        file_violations = checker.check_nesting(lines, max_depth)
+        for v in file_violations:
+            violations.append(StaticViolation(
+                file=relpath,
+                line=v.line_number,
+                message=f"depth {v.depth} exceeds limit {max_depth}",
+                context=f"in {v.function_name}()",
+            ))
+
+    return CheckerResult(name="Nesting depth", violations=violations, files_checked=files_checked)
+
+
+_CHECKERS: list[Callable[[list[str], str], CheckerResult | None]] = [
+    check_nesting_depth,
+]
 
 _VERDICT_RE = re.compile(r"^## Verdict\b", re.MULTILINE)
 

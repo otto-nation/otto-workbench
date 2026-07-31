@@ -90,3 +90,92 @@ class TestInjectStaticAnalysis:
         review = "## Summary\nLooks good."
         result = inject_static_analysis(review, "")
         assert result == review
+
+
+import os
+import tempfile
+
+from review_static_analysis import check_nesting_depth
+
+
+class TestCheckNestingDepth:
+    def test_no_applicable_files(self):
+        result = check_nesting_depth(["README.md", "go.sum"], "/tmp")
+        assert result is None
+
+    def test_clean_files(self, tmp_path):
+        script = tmp_path / "clean.sh"
+        script.write_text("#!/bin/bash\necho hello\n")
+        result = check_nesting_depth(["clean.sh"], str(tmp_path))
+        assert result is not None
+        assert result.name == "Nesting depth"
+        assert result.violations == []
+        assert result.files_checked == 1
+
+    def test_violation_detected(self, tmp_path):
+        script = tmp_path / "deep.sh"
+        script.write_text(
+            "#!/bin/bash\n"
+            "func() {\n"
+            "  if true; then\n"
+            "    for x in a; do\n"
+            "      while true; do\n"
+            "        echo deep\n"
+            "      done\n"
+            "    done\n"
+            "  fi\n"
+            "}\n"
+        )
+        result = check_nesting_depth(["deep.sh"], str(tmp_path))
+        assert result is not None
+        assert len(result.violations) > 0
+        v = result.violations[0]
+        assert v.file == "deep.sh"
+        assert "depth" in v.message
+        assert "exceeds limit" in v.message
+        assert v.context == "in func()"
+
+    def test_python_file(self, tmp_path):
+        script = tmp_path / "deep.py"
+        script.write_text(
+            "def func():\n"
+            "    if True:\n"
+            "        for x in range(10):\n"
+            "            while True:\n"
+            "                pass\n"
+        )
+        result = check_nesting_depth(["deep.py"], str(tmp_path))
+        assert result is not None
+        assert len(result.violations) > 0
+
+    def test_missing_file_skipped(self, tmp_path):
+        result = check_nesting_depth(["nonexistent.sh"], str(tmp_path))
+        assert result is not None
+        assert result.files_checked == 0
+        assert result.violations == []
+
+    def test_mixed_files(self, tmp_path):
+        clean = tmp_path / "clean.sh"
+        clean.write_text("#!/bin/bash\necho ok\n")
+        result = check_nesting_depth(["clean.sh", "README.md", "image.png"], str(tmp_path))
+        assert result is not None
+        assert result.files_checked == 1
+
+    def test_go_file(self, tmp_path):
+        script = tmp_path / "deep.go"
+        script.write_text(
+            "package main\n\n"
+            "func f() {\n"
+            "\tif true {\n"
+            "\t\tfor i := 0; i < 10; i++ {\n"
+            "\t\t\tswitch {\n"
+            "\t\t\tdefault:\n"
+            "\t\t\t\tprintln()\n"
+            "\t\t\t}\n"
+            "\t\t}\n"
+            "\t}\n"
+            "}\n"
+        )
+        result = check_nesting_depth(["deep.go"], str(tmp_path))
+        assert result is not None
+        assert len(result.violations) > 0

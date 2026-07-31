@@ -40,6 +40,8 @@ from review_common import (
 )
 import review_issue
 import review_worktree
+from pr_state import PostTracking
+from serde import from_dict as serde_from_dict, to_dict as serde_to_dict
 
 BIN_DIR = Path(__file__).resolve().parent
 LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
@@ -500,29 +502,28 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
         return
 
     try:
-        data = json.loads(post_file.read_text())
-        review_id = data.get("review_id")
+        tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
     except (json.JSONDecodeError, OSError):
-        review_id = None
+        tracking = None
 
-    if not review_id:
+    if not tracking or not tracking.review_id:
         log.error(f"Could not read review_id from {post_file}")
         return
 
-    log.info(f"Submitting review #{review_id}...")
+    log.info(f"Submitting review #{tracking.review_id}...")
     r = subprocess.run(
-        ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{review_id}/events",
+        ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{tracking.review_id}/events",
          "--method", "POST", "-f", "event=COMMENT"],
         capture_output=True, text=True,
     )
     if r.returncode == 0:
-        log.info(f"Review #{review_id} submitted")
+        log.info(f"Review #{tracking.review_id} submitted")
     else:
-        log.warn(f"Failed to submit review #{review_id}")
+        log.warn(f"Failed to submit review #{tracking.review_id}")
 
     try:
-        data["submitted"] = True
-        post_file.write_text(json.dumps(data))
+        tracking.submitted = True
+        post_file.write_text(json.dumps(serde_to_dict(tracking)))
     except Exception:
         pass
 

@@ -34,14 +34,18 @@ _WORKBENCH_LIB = str(Path(__file__).resolve().parent.parent.parent.parent / "lib
 if _WORKBENCH_LIB not in sys.path:
     sys.path.insert(0, _WORKBENCH_LIB)
 
-from nesting import get_checker_for_extension, get_checker_for_shebang, get_all_extensions
+try:
+    from nesting import get_checker_for_extension, get_checker_for_shebang, get_all_extensions
+    _NESTING_AVAILABLE = True
+except ImportError:
+    _NESTING_AVAILABLE = False
 
 
 def _read_shebang(path: str) -> bytes | None:
     try:
         with open(path, "rb") as f:
             return f.readline()
-    except (OSError, UnicodeDecodeError):
+    except OSError:
         return None
 
 
@@ -57,6 +61,8 @@ def _get_nesting_checker(filepath: str, ext: str):
 
 
 def check_nesting_depth(changed_files: list[str], wt_path: str) -> CheckerResult | None:
+    if not _NESTING_AVAILABLE:
+        return None
     all_exts = get_all_extensions()
     candidates = []
     for relpath in changed_files:

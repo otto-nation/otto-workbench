@@ -13,6 +13,7 @@ if str(REPO_ROOT / "lib") not in sys.path:
 from review_static_analysis import (
     CheckerResult,
     StaticViolation,
+    check_nesting_depth,
     format_static_analysis,
     inject_static_analysis,
 )
@@ -49,7 +50,7 @@ class TestFormatStaticAnalysis:
         results = [CheckerResult(name="Nesting depth", violations=violations, files_checked=1)]
         output = format_static_analysis(results)
         assert "**`script.sh:10`** — depth 3 exceeds limit 2" in output
-        assert "()" not in output
+        assert "(in " not in output
 
     def test_multiple_checkers_mixed(self):
         results = [
@@ -92,12 +93,9 @@ class TestInjectStaticAnalysis:
         assert result == review
 
 
-from review_static_analysis import check_nesting_depth
-
-
 class TestCheckNestingDepth:
-    def test_no_applicable_files(self):
-        result = check_nesting_depth(["README.md", "go.sum"], "/tmp")
+    def test_no_applicable_files(self, tmp_path):
+        result = check_nesting_depth(["README.md", "go.sum"], str(tmp_path))
         assert result is None
 
     def test_clean_files(self, tmp_path):

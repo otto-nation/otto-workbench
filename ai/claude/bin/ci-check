@@ -413,6 +413,23 @@ def _merge_runs(run_data_list: list[dict]) -> dict | None:
     return primary
 
 
+def _count_job_states(merged: dict) -> tuple[int, int, int, int]:
+    """Count jobs by state: (completed, failed, running, queued)."""
+    completed = failed = running = queued = 0
+    for job in merged.get("jobs", []):
+        status = job.get("status", "")
+        conclusion = job.get("conclusion")
+        if status == "completed":
+            completed += 1
+            if conclusion in _FAILURE_CONCLUSIONS:
+                failed += 1
+        elif status == "in_progress":
+            running += 1
+        else:
+            queued += 1
+    return completed, failed, running, queued
+
+
 def _commits_behind_main(repo: str, branch: str) -> int:
     """Count commits on origin/main not reachable from the branch."""
     result = subprocess.run(

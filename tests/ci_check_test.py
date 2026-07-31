@@ -843,3 +843,59 @@ def test_fetch_job_failure_no_artifact_for_lint(mock_ann, mock_log, mock_artifac
     ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_log.assert_not_called()
     mock_artifact.assert_not_called()
+
+
+# ── _count_job_states ──────────────────────────────────────────────────────
+
+
+def test_count_job_states_all_completed():
+    merged = {"jobs": [
+        {"name": "lint", "status": "completed", "conclusion": "success"},
+        {"name": "test", "status": "completed", "conclusion": "failure"},
+        {"name": "build", "status": "completed", "conclusion": "neutral"},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 3
+    assert failed == 1
+    assert running == 0
+    assert queued == 0
+
+
+def test_count_job_states_mixed():
+    merged = {"jobs": [
+        {"name": "lint", "status": "completed", "conclusion": "success"},
+        {"name": "test", "status": "in_progress", "conclusion": None},
+        {"name": "build", "status": "queued", "conclusion": None},
+        {"name": "deploy", "status": "waiting", "conclusion": None},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 1
+    assert failed == 0
+    assert running == 1
+    assert queued == 2
+
+
+def test_count_job_states_empty():
+    merged = {"jobs": []}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 0
+    assert failed == 0
+    assert running == 0
+    assert queued == 0
+
+
+def test_count_job_states_timed_out_is_failed():
+    merged = {"jobs": [
+        {"name": "slow", "status": "completed", "conclusion": "timed_out"},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert completed == 1
+    assert failed == 1
+
+
+def test_count_job_states_pending_is_queued():
+    merged = {"jobs": [
+        {"name": "deploy", "status": "pending", "conclusion": None},
+    ]}
+    completed, failed, running, queued = ci_check._count_job_states(merged)
+    assert queued == 1

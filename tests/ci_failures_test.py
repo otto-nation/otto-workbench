@@ -673,6 +673,46 @@ def test_render_dashboard_omits_arrow_without_failed_step():
     assert "→" not in dashboard
 
 
+def test_render_dashboard_show_status_in_progress():
+    item = _make_item("a")
+    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="in_progress", conclusion="",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"build": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW}, show_status=True)
+    assert "— in progress" in dashboard
+    assert "Run #5" in dashboard
+
+
+def test_render_dashboard_show_status_complete():
+    item = _make_item("a")
+    group = FailureGroup(job="build", kind=FailureKind.BUILD, items=(item,))
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={"build": group},
+    )
+    dashboard = render_dashboard(run, {"a": Outcome.NEW}, show_status=True)
+    assert "— complete" in dashboard
+
+
+def test_render_dashboard_show_status_default_off():
+    """Without show_status, header has no status suffix."""
+    run = RunState(
+        run_id=100, run_number=5, head_sha="abc1234",
+        status="in_progress", conclusion="",
+        fetched_at="2026-06-26T00:00:00+00:00",
+        failures={},
+    )
+    dashboard = render_dashboard(run, {})
+    assert "— in progress" not in dashboard
+    assert "— complete" not in dashboard
+
+
 # ── Drift/Codegen Marker Tests ──────────────────────────────────────────
 
 

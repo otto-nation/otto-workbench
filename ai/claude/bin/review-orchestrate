@@ -48,6 +48,9 @@ from review_pipeline import (  # noqa: E402
     _effort_default, _effort_thinking, _fetch_metadata,
     run_fix_pass, run_multi_phase, run_single_agent,
 )
+from review_static_analysis import (  # noqa: E402
+    format_static_analysis, inject_static_analysis, run_static_analysis,
+)
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
 
@@ -92,6 +95,25 @@ def _log_ai_backend(trail) -> None:
         else:
             data[key] = val or ""
     trail.info("ai_backend", "resolved AI backend configuration", data=data)
+
+
+def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_path: str) -> dict | None:
+    review_path = Path(review_file)
+    if not review_path.is_file():
+        return None
+    changed_files = [f["path"] for f in pr_files]
+    results = run_static_analysis(changed_files, wt_path)
+    section = format_static_analysis(results)
+    if not section:
+        return None
+    text = review_path.read_text()
+    updated = inject_static_analysis(text, section)
+    review_path.write_text(updated)
+    return {
+        "checkers_run": len(results),
+        "files_checked": sum(r.files_checked for r in results),
+        "violations": sum(len(r.violations) for r in results),
+    }
 
 
 def _run_orchestrate(trail, args, repo, session_log) -> None:
@@ -167,6 +189,11 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         v = job.verification
         detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
         trail.info("evidence_verification", detail, data=v)
+
+    sa_summary = _inject_static_analysis_section(job.review_file, job.pr.files, job.wt_path)
+    if sa_summary is not None:
+        detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
+        trail.info("static_analysis", detail, data=sa_summary)
 
     if args.fix and Path(job.review_file).exists():
         trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")

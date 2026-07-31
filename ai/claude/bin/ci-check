@@ -194,20 +194,30 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.Failur
 
 _GENERIC_MESSAGES = (
     "process completed with exit code",
+    "a]process completed with exit code",
+    "check failure on line",
+    "failed with exit code",
+    "exited with code",
+    "returned a non-zero code",
 )
 
 
 def _annotations_uninformative(annotations: list[dict]) -> bool:
-    """True when non-notice annotations carry no actionable diagnostic context."""
+    """True when non-notice annotations carry no actionable diagnostic context.
+
+    A generic message (exit code restated, check failure marker) is always
+    uninformative regardless of path — the real error is in the logs.
+    """
     non_notices = [a for a in annotations if a.get("annotation_level") != "notice"]
     if not non_notices:
         return True
     for a in non_notices:
-        path = a.get("path", "")
         msg = (a.get("message", "") or "").lower()
+        if any(g in msg for g in _GENERIC_MESSAGES):
+            continue
+        path = a.get("path", "")
         has_source_path = bool(path) and "." in path.rsplit("/", 1)[-1]
-        has_specific_msg = not any(g in msg for g in _GENERIC_MESSAGES)
-        if has_source_path and has_specific_msg:
+        if has_source_path:
             return False
     return True
 

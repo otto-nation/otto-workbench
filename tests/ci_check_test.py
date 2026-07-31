@@ -543,6 +543,38 @@ def test_uninformative_generic_exit_code_message():
     assert ci_check._annotations_uninformative(annotations) is True
 
 
+def test_uninformative_exited_with_code():
+    """'exited with code' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Step exited with code 1", "path": "src/main.go", "start_line": 1},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_returned_non_zero():
+    """'returned a non-zero code' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Command returned a non-zero code: 2", "path": "Makefile", "start_line": 10},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_check_failure_on_line():
+    """'check failure on line' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Check failure on line 42", "path": ".github/workflows/ci.yml", "start_line": 42},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
+def test_uninformative_failed_with_exit_code():
+    """'failed with exit code' variant is also uninformative."""
+    annotations = [
+        {"annotation_level": "failure", "message": "Job failed with exit code 1", "path": ".github/workflows/ci.yml", "start_line": 1},
+    ]
+    assert ci_check._annotations_uninformative(annotations) is True
+
+
 def test_informative_real_error_with_source_path():
     """Annotations with a real source path and specific error are informative."""
     annotations = [

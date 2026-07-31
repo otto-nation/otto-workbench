@@ -1350,6 +1350,93 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     mock_drive.assert_called_once_with("/fake", ctx, True)
 
 
+def test_fresh_skips_checkout_when_on_correct_branch():
+    """No checkout when HEAD already matches ctx.branch."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+    checkout_calls = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="feat/my-branch\n", stderr="")
+        if cmd[:2] == ["git", "checkout"]:
+            checkout_calls.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 0
+    assert len(checkout_calls) == 0
+
+
+def test_fresh_checks_out_branch_on_detached_head():
+    """Detached HEAD triggers checkout -B to the correct branch."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+    checkout_calls = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="HEAD\n", stderr="")
+        if cmd[:2] == ["git", "checkout"]:
+            checkout_calls.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 0
+    assert len(checkout_calls) == 1
+    assert checkout_calls[0] == ["git", "checkout", "-B", "feat/my-branch", "origin/feat/my-branch"]
+
+
+def test_fresh_checks_out_branch_on_wrong_branch():
+    """Wrong branch triggers checkout -B to ctx.branch."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+    checkout_calls = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="other-branch\n", stderr="")
+        if cmd[:2] == ["git", "checkout"]:
+            checkout_calls.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 0
+    assert len(checkout_calls) == 1
+    assert checkout_calls[0] == ["git", "checkout", "-B", "feat/my-branch", "origin/feat/my-branch"]
+
+
+def test_fresh_checkout_failure_returns_error():
+    """Checkout failure aborts with return code 1."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="HEAD\n", stderr="")
+        if cmd[:2] == ["git", "checkout"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error: pathspec")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 1
+
+
 # ── _force_push ────────────────────────────────────────────────────────────
 
 

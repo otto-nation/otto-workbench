@@ -146,6 +146,39 @@ def test_find_worktree_for_branch_not_found(mock_sub):
     assert result is None
 
 
+@patch.object(pr_context, "subprocess")
+def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
+    """Detached-HEAD worktree has no [branch] — falls back to sanitized dir name."""
+    mock_sub.run.return_value = MagicMock(
+        stdout="/home/user/repo/isaac-feat-auth  abc1234 (detached HEAD)\n"
+               "/home/user/repo/main             def5678 [main]\n",
+    )
+    result = pr_context.find_worktree_for_branch("isaac/feat/auth")
+    assert result == Path("/home/user/repo/isaac-feat-auth")
+
+
+@patch.object(pr_context, "subprocess")
+def test_find_worktree_for_branch_prefers_branch_tag_over_dir_name(mock_sub):
+    """When [branch] matches, prefer it over directory name fallback."""
+    mock_sub.run.return_value = MagicMock(
+        stdout="/home/user/repo/wrong-dir  abc1234 [feat/branch]\n"
+               "/home/user/repo/feat-branch  def5678 [main]\n",
+    )
+    result = pr_context.find_worktree_for_branch("feat/branch")
+    assert result == Path("/home/user/repo/wrong-dir")
+
+
+@patch.object(pr_context, "subprocess")
+def test_find_worktree_for_branch_sanitized_no_match(mock_sub):
+    """Neither [branch] nor sanitized dir name matches — returns None."""
+    mock_sub.run.return_value = MagicMock(
+        stdout="/home/user/repo/other-branch  abc1234 (detached HEAD)\n"
+               "/home/user/repo/main          def5678 [main]\n",
+    )
+    result = pr_context.find_worktree_for_branch("feat/nonexistent")
+    assert result is None
+
+
 # ── Branch-aware worktree resolution ──────────────────────────────────────
 
 

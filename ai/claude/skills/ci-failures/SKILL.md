@@ -48,9 +48,20 @@ The script outputs:
 
 **Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there.
 
+**In-progress runs:** When the run is in-progress (dashboard says "Checks still running"):
+- Add `--wait` to poll until all jobs complete with incremental reporting
+- `--wait` emits `---`-delimited JSON chunks to stdout: `"type": "partial"` for each batch of new failures, `"type": "final"` for the complete report
+- Start diagnosing failures from each `"partial"` report immediately — don't wait for the final report
+- Status lines on stderr show progress: `4/7 jobs complete, 2 running, 1 queued`
+- Default timeout is 15 minutes (override with `--wait-timeout <seconds>`)
+
+**With `--fix`:** Always pass `--wait` to capture all failures before applying fixes: `pr ci --fix --wait 2>&1`
+
 **Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed (no JSON report in the output), report the result to the user and **stop — do not proceed further**. The script only outputs the JSON failure report when there are actual failures to process.
 
 ### 2. Classify and group failures
+
+**Incremental mode (with `--wait`):** Process each `---`-delimited JSON chunk as it arrives. For `"type": "partial"` chunks, classify and begin diagnosing the failures immediately — more may arrive. When `"type": "final"` arrives, present the complete classification table and summarize any already-diagnosed failures.
 
 From the JSON report, present failures grouped by kind in priority order:
 

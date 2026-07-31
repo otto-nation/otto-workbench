@@ -388,7 +388,11 @@ def is_bare_repo(cwd: str | None = None) -> bool:
 def find_worktree_for_branch(
     branch: str, cwd: str | None = None,
 ) -> Path | None:
-    """Find the worktree directory checked out on *branch*."""
+    """Find the worktree directory checked out on *branch*.
+
+    Falls back to matching by sanitized directory name (slashes to dashes)
+    so detached-HEAD worktrees are still found.
+    """
     try:
         r = subprocess.run(
             ["git", "worktree", "list"],
@@ -399,6 +403,11 @@ def find_worktree_for_branch(
     for line in r.stdout.splitlines():
         if f"[{branch}]" in line:
             return Path(line.split()[0])
+    sanitized = branch.replace("/", "-")
+    for line in r.stdout.splitlines():
+        wt_path = line.split()[0]
+        if Path(wt_path).name == sanitized:
+            return Path(wt_path)
     return None
 
 

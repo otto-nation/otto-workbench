@@ -1252,6 +1252,27 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
         if fetch.stderr.strip():
             log.dim(fetch.stderr.strip())
 
+    current = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, cwd=cwd,
+    ).stdout.strip()
+    if current != ctx.branch:
+        log.info(f"Worktree on {current}, checking out {ctx.branch}...")
+        co = subprocess.run(
+            ["git", "checkout", "-B", ctx.branch, f"origin/{ctx.branch}"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if co.returncode != 0:
+            _terr("preflight", f"cannot checkout {ctx.branch}", data={"stderr": co.stderr.strip()})
+            log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
+            return 1
+        if _trail:
+            _trail.decision(
+                "branch_checkout",
+                f"checked out {ctx.branch} (was {current})",
+                reason="worktree was on wrong branch or detached HEAD",
+            )
+
     log.info(f"Rebasing onto {_TARGET_REF}...")
     r = subprocess.run(
         ["git", "rebase", _TARGET_REF],

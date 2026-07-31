@@ -45,6 +45,7 @@ class ResolvedContext:
     pr_number: int | None
     worktree_root: Path | None
     head_sha: str
+    current_branch: str | None = None
 
 
 def resolve(
@@ -84,12 +85,15 @@ def resolve(
         branch_name = _current_branch(cwd)
         pr_number = _pr_from_current(cwd)
 
+    current = _current_branch_quiet(cwd) if worktree_root else None
+
     return ResolvedContext(
         repo=repo,
         branch=branch_name,
         pr_number=pr_number,
         worktree_root=worktree_root,
         head_sha=head_sha,
+        current_branch=current,
     )
 
 
@@ -178,6 +182,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         pr_number=ctx.pr_number,
         worktree_root=ctx.worktree_root,
         head_sha=remote_sha,
+        current_branch=ctx.current_branch,
     )
 
 
@@ -281,10 +286,14 @@ def _current_branch(cwd: str | None = None) -> str:
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         capture_output=True, text=True, cwd=cwd,
     )
-    if r.returncode != 0 or not r.stdout.strip():
+    branch = r.stdout.strip()
+    if r.returncode != 0 or not branch:
         log.error("Cannot determine current branch")
         sys.exit(1)
-    return r.stdout.strip()
+    if branch == "HEAD":
+        log.error("Cannot determine current branch — HEAD is detached")
+        sys.exit(1)
+    return branch
 
 
 def _resolve_branch(hint: str, cwd: str | None = None) -> str:
@@ -388,7 +397,12 @@ def is_bare_repo(cwd: str | None = None) -> bool:
 def find_worktree_for_branch(
     branch: str, cwd: str | None = None,
 ) -> Path | None:
-    """Find the worktree directory checked out on *branch*."""
+    """Find the worktree directory checked out on *branch*.
+
+    Prefers an exact ``[branch]`` tag match from ``git worktree list``.
+    Falls back to matching by sanitized directory name (slashes to dashes)
+    so detached-HEAD worktrees are still found.
+    """
     try:
         r = subprocess.run(
             ["git", "worktree", "list"],
@@ -396,10 +410,17 @@ def find_worktree_for_branch(
         )
     except Exception:
         return None
+    sanitized = branch.replace("/", "-")
+    dir_fallback: Path | None = None
     for line in r.stdout.splitlines():
         if f"[{branch}]" in line:
             return Path(line.split()[0])
-    return None
+        if dir_fallback is not None:
+            continue
+        wt_path = line.split()[0]
+        if Path(wt_path).name == sanitized:
+            dir_fallback = Path(wt_path)
+    return dir_fallback
 
 
 def resolve_bare_repo_worktree(

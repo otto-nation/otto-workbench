@@ -20,7 +20,7 @@ import review_format
 import review_github
 
 import log
-from pr_state import PostedAs, PostTracking
+from pr_state import PostedAs, PostEvent, PostTracking
 from review_findings import Finding
 from review_github import LineResolutionError, PRData
 from serde import to_dict as serde_to_dict
@@ -223,8 +223,9 @@ def _post_as_comment(
     if not findings:
         log.warn("No findings to post after dedup")
         write_post_tracking(args.review_file, PostTracking(
+            posted_as=PostedAs.COMMENT.value, status=PostEvent.COMMENT.value,
             commit_id=head_sha, skipped_count=len(deduped),
-            submitted=True, posted_as=PostedAs.COMMENT.value,
+            submitted=True,
             review_sha=review_sha, head_sha_at_post=head_sha,
             sha_drifted=True, verdict=verdict,
         ))
@@ -260,11 +261,11 @@ def _post_as_comment(
     log.info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
 
     write_post_tracking(args.review_file, PostTracking(
+        posted_as=PostedAs.COMMENT.value, status=PostEvent.COMMENT.value,
         review_ids=[comment_id], commit_id=head_sha,
         body_count=len(findings), submitted=True,
-        posted_as=PostedAs.COMMENT.value, review_sha=review_sha,
-        head_sha_at_post=head_sha, sha_drifted=True,
-        verdict=verdict,
+        review_sha=review_sha, head_sha_at_post=head_sha,
+        sha_drifted=True, verdict=verdict,
     ))
 
 
@@ -415,6 +416,7 @@ def _post_and_track(
     if existing_ids:
         log.warn(f"Review already posted (review IDs: {existing_ids})")
         write_post_tracking(args.review_file, PostTracking(
+            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=list(existing_ids), commit_id=commit_id,
             submitted=submit, chunk_count=len(existing_ids),
             verdict=verdict,
@@ -454,6 +456,7 @@ def _post_and_track(
         print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
 
     write_post_tracking(args.review_file, PostTracking(
+        posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
         review_ids=review_ids, commit_id=commit_id,
         inline_count=len(inline_comments),
         body_count=len(body_findings), skipped_count=len(skipped),

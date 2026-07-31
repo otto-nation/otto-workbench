@@ -11,7 +11,7 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_state import PostedAs, PostTracking
+from pr_state import PostedAs, PostEvent, PostTracking
 from serde import from_dict as serde_from_dict
 
 
@@ -900,6 +900,7 @@ class TestWritePostTracking:
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, PostTracking(
+            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=[123], commit_id="abc",
             inline_count=5, body_count=2, skipped_count=1, submitted=True,
         ))
@@ -910,6 +911,7 @@ class TestWritePostTracking:
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, PostTracking(
+            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=[123], commit_id="abc",
             inline_count=5, body_count=2, skipped_count=1,
         ))
@@ -920,6 +922,7 @@ class TestWritePostTracking:
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, PostTracking(
+            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=[456], commit_id="abc",
             inline_count=3, body_count=1,
         ))
@@ -932,6 +935,7 @@ class TestWritePostTracking:
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, PostTracking(
+            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=[100, 200, 300], commit_id="abc",
             inline_count=90, body_count=5, skipped_count=2,
             submitted=True, chunk_count=3,

@@ -11,7 +11,7 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_state import PostTracking
+from pr_state import PostedAs, PostTracking
 from serde import from_dict as serde_from_dict
 
 
@@ -2102,7 +2102,7 @@ class TestShaDriftReverify:
         assert tracking.review_sha == "aaa1111bbb2222"
         assert tracking.head_sha_at_post == new_head
         assert tracking.sha_drifted is True
-        assert tracking.posted_as == "review"
+        assert tracking.posted_as == PostedAs.REVIEW.value
 
 
 class TestHandleChunkFailure:

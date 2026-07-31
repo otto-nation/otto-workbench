@@ -71,6 +71,11 @@ class ReviewVerdict(Enum):
     DISAPPROVE = "disapprove"
 
 
+class PostedAs(Enum):
+    REVIEW = "review"
+    COMMENT = "comment"
+
+
 class PostEvent(Enum):
     COMMENT = "comment"
     APPROVE = "approve"
@@ -95,7 +100,7 @@ class PostTracking:
     skipped_count: int = 0
     submitted: bool = False
     chunk_count: int = 1
-    posted_as: str = "review"
+    posted_as: str = PostedAs.REVIEW.value
     review_sha: str = ""
     head_sha_at_post: str = ""
     sha_drifted: bool = False

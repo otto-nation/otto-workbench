@@ -20,7 +20,7 @@ import review_format
 import review_github
 
 import log
-from pr_state import PostTracking
+from pr_state import PostedAs, PostTracking
 from review_findings import Finding
 from review_github import LineResolutionError, PRData
 from serde import to_dict as serde_to_dict
@@ -224,7 +224,7 @@ def _post_as_comment(
         log.warn("No findings to post after dedup")
         write_post_tracking(args.review_file, PostTracking(
             commit_id=head_sha, skipped_count=len(deduped),
-            submitted=True, posted_as="comment",
+            submitted=True, posted_as=PostedAs.COMMENT.value,
             review_sha=review_sha, head_sha_at_post=head_sha,
             sha_drifted=True, verdict=verdict,
         ))
@@ -262,7 +262,7 @@ def _post_as_comment(
     write_post_tracking(args.review_file, PostTracking(
         review_ids=[comment_id], commit_id=head_sha,
         body_count=len(findings), submitted=True,
-        posted_as="comment", review_sha=review_sha,
+        posted_as=PostedAs.COMMENT.value, review_sha=review_sha,
         head_sha_at_post=head_sha, sha_drifted=True,
         verdict=verdict,
     ))

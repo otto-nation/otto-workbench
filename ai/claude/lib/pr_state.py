@@ -71,9 +71,49 @@ class ReviewVerdict(Enum):
     DISAPPROVE = "disapprove"
 
 
+class PostedAs(Enum):
+    REVIEW = "review"
+    COMMENT = "comment"
+
+
+class PostEvent(Enum):
+    COMMENT = "comment"
+    APPROVE = "approve"
+    REQUESTED_CHANGES = "requested_changes"
+    DISMISSED = "dismissed"
+
+
 class ReviewStatus(Enum):
     COMPLETED = "completed"
     ERROR = "error"
+
+
+@dataclass
+class PostTracking:
+    """Recorded in post.jsonl alongside each review."""
+    posted_as: str
+    status: str
+    review_id: int = 0
+    review_ids: list[int] = field(default_factory=list)
+    commit_id: str = ""
+    posted_at: str = ""
+    inline_count: int = 0
+    body_count: int = 0
+    skipped_count: int = 0
+    submitted: bool = False
+    chunk_count: int = 1
+    review_sha: str = ""
+    head_sha_at_post: str = ""
+    sha_drifted: bool = False
+    verdict: str = ""
+
+    def __post_init__(self):
+        if not self.posted_at:
+            self.posted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if self.review_ids and not self.review_id:
+            self.review_id = self.review_ids[0]
+        if self.review_id and not self.review_ids:
+            self.review_ids = [self.review_id]
 
 
 @dataclass

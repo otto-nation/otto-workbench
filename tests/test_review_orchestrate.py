@@ -3298,3 +3298,55 @@ class TestFetchBranchMetadata:
         paths = [f["path"] for f in pr.files]
         assert "main.go" in paths
         assert "extra.go" not in paths
+
+
+class TestStaticAnalysisIntegration:
+    def test_static_analysis_injected_into_review(self, ro, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+
+        deep_script = tmp_path / "deep.sh"
+        deep_script.write_text(
+            "#!/bin/bash\n"
+            "func() {\n"
+            "  if true; then\n"
+            "    for x in a; do\n"
+            "      while true; do\n"
+            "        echo deep\n"
+            "      done\n"
+            "    done\n"
+            "  fi\n"
+            "}\n"
+        )
+
+        changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
+        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+
+        result = review_file.read_text()
+        assert "## Static Analysis" in result
+        assert "Nesting depth" in result
+        assert result.index("## Static Analysis") < result.index("## Verdict")
+
+    def test_static_analysis_skipped_when_no_applicable_files(self, ro, tmp_path):
+        review_file = tmp_path / "review.md"
+        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
+        review_file.write_text(original)
+
+        changed_files = [{"path": "README.md", "additions": 5, "deletions": 0}]
+        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+
+        assert review_file.read_text() == original
+
+    def test_static_analysis_clean_files(self, ro, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+
+        clean_script = tmp_path / "clean.sh"
+        clean_script.write_text("#!/bin/bash\necho hello\n")
+
+        changed_files = [{"path": "clean.sh", "additions": 2, "deletions": 0}]
+        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+
+        result = review_file.read_text()
+        assert "## Static Analysis" in result
+        assert "All checks passed" in result

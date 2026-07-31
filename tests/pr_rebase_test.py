@@ -1351,14 +1351,13 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
 
 
 def test_fresh_skips_checkout_when_on_correct_branch():
-    """No checkout when HEAD already matches ctx.branch."""
+    """No checkout when current_branch already matches ctx.branch."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
+    ctx.current_branch = "feat/my-branch"
     checkout_calls = []
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="feat/my-branch\n", stderr="")
         if cmd[:2] == ["git", "checkout"]:
             checkout_calls.append(cmd)
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -1373,14 +1372,13 @@ def test_fresh_skips_checkout_when_on_correct_branch():
 
 
 def test_fresh_checks_out_branch_on_detached_head():
-    """Detached HEAD triggers checkout -B to the correct branch."""
+    """Detached HEAD (current_branch=None) triggers checkout -B."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
+    ctx.current_branch = None
     checkout_calls = []
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="HEAD\n", stderr="")
         if cmd[:2] == ["git", "checkout"]:
             checkout_calls.append(cmd)
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -1396,14 +1394,13 @@ def test_fresh_checks_out_branch_on_detached_head():
 
 
 def test_fresh_checks_out_branch_on_wrong_branch():
-    """Wrong branch triggers checkout -B to ctx.branch."""
+    """Wrong current_branch triggers checkout -B to ctx.branch."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
+    ctx.current_branch = "other-branch"
     checkout_calls = []
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="other-branch\n", stderr="")
         if cmd[:2] == ["git", "checkout"]:
             checkout_calls.append(cmd)
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -1422,10 +1419,9 @@ def test_fresh_checkout_failure_returns_error():
     """Checkout failure aborts with return code 1."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
+    ctx.current_branch = None
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="HEAD\n", stderr="")
         if cmd[:2] == ["git", "checkout"]:
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error: pathspec")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")

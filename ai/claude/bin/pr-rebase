@@ -25,6 +25,7 @@ import subprocess
 import sys
 import traceback
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -1096,6 +1097,39 @@ def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     )
 
 
+@dataclass
+class RebaseOutcome:
+    """Result of a rebase — owns state persistence and JSON reporting."""
+    commits_replayed: int = 0
+    conflicts_resolved: int = 0
+    files_resolved: list[str] = field(default_factory=list)
+    force_pushed: bool | None = None
+
+    def save(self, ctx: pr_context.ResolvedContext) -> None:
+        state = _load_or_init(ctx)
+        pr_state.update_rebase(state, pr_state.RebaseSummary(
+            target_base=_TARGET_REF,
+            commits_replayed=self.commits_replayed,
+            conflicts_resolved=self.conflicts_resolved,
+            files_resolved=self.files_resolved,
+            force_pushed=self.force_pushed is True,
+            updated_at=pr_state.now_iso(),
+        ))
+        pr_state.save_state(ctx.worktree_root, state)
+
+    def emit(self) -> None:
+        report: dict = {
+            "status": "clean",
+            "commits_replayed": self.commits_replayed,
+            "conflicts_resolved": self.conflicts_resolved,
+            "files_resolved": self.files_resolved,
+        }
+        if self.force_pushed is not None:
+            report["force_pushed"] = self.force_pushed
+        json.dump(report, sys.stdout, indent=2)
+        print()
+
+
 # ── Push helper ─────────────────────────────────────────────────────────────
 
 
@@ -1186,21 +1220,12 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
         return push_rc
 
     state = _load_or_init(ctx)
-    target_base = state.rebase.target_base or subprocess.run(
-        ["git", "rev-parse", _TARGET_REF],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-    commits = state.rebase.commits_replayed or _commits_ahead(cwd)
-
-    pr_state.update_rebase(state, pr_state.RebaseSummary(
-        target_base=target_base,
-        commits_replayed=commits,
+    RebaseOutcome(
+        commits_replayed=state.rebase.commits_replayed or _commits_ahead(cwd),
         conflicts_resolved=state.rebase.conflicts_resolved,
         files_resolved=state.rebase.files_resolved,
         force_pushed=True,
-        updated_at=pr_state.now_iso(),
-    ))
-    pr_state.save_state(ctx.worktree_root, state)
+    ).save(ctx)
     log.ok("Force-pushed successfully.")
     return 0
 
@@ -1252,12 +1277,9 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
         if fetch.stderr.strip():
             log.dim(fetch.stderr.strip())
 
-    current = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd,
-    ).stdout.strip()
-    if current != ctx.branch:
-        log.info(f"Worktree on {current}, checking out {ctx.branch}...")
+    if ctx.current_branch != ctx.branch:
+        display = ctx.current_branch or "detached HEAD"
+        log.info(f"Worktree on {display}, checking out {ctx.branch}...")
         co = subprocess.run(
             ["git", "checkout", "-B", ctx.branch, f"origin/{ctx.branch}"],
             capture_output=True, text=True, cwd=cwd,
@@ -1269,7 +1291,7 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
         if _trail:
             _trail.decision(
                 "branch_checkout",
-                f"checked out {ctx.branch} (was {current})",
+                f"checked out {ctx.branch} (was {display})",
                 reason="worktree was on wrong branch or detached HEAD",
             )
 
@@ -1297,11 +1319,10 @@ def _rebase_success(
     resolved: tuple[list[str], int] | None = None,
 ) -> int:
     """Handle rebase completion — update state and optionally force-push."""
-    commits = _commits_ahead(cwd)
-    state = _load_or_init(ctx)
     files_resolved = resolved[0] if resolved else []
     conflicts_resolved = resolved[1] if resolved else 0
 
+    push_rc = 0
     if fix:
         label = "Rebase complete" if not resolved else (
             f"Rebase complete — resolved {len(files_resolved)} file(s) "
@@ -1313,47 +1334,23 @@ def _rebase_success(
             _trail and _trail.info("force_push", "force-pushed to remote")
         else:
             _terr("force_push", "force-push failed", data={"exit_code": push_rc})
-        pr_state.update_rebase(state, pr_state.RebaseSummary(
-            target_base=_TARGET_REF,
-            commits_replayed=commits,
-            conflicts_resolved=conflicts_resolved,
-            files_resolved=files_resolved,
-            force_pushed=push_rc == 0,
-            updated_at=pr_state.now_iso(),
-        ))
-        pr_state.save_state(ctx.worktree_root, state)
-        report = {
-            "status": "clean",
-            "commits_replayed": commits,
-            "conflicts_resolved": conflicts_resolved,
-            "files_resolved": files_resolved,
-            "force_pushed": push_rc == 0,
-        }
-        json.dump(report, sys.stdout, indent=2)
-        print()
+
+    outcome = RebaseOutcome(
+        commits_replayed=_commits_ahead(cwd),
+        conflicts_resolved=conflicts_resolved,
+        files_resolved=files_resolved,
+        force_pushed=push_rc == 0 if fix else None,
+    )
+    outcome.save(ctx)
+    outcome.emit()
+
+    if fix:
         if push_rc == 0:
             log.ok("Force-pushed.")
         else:
             log.error("Force-push failed.")
         return push_rc
 
-    pr_state.update_rebase(state, pr_state.RebaseSummary(
-        target_base=_TARGET_REF,
-        commits_replayed=commits,
-        conflicts_resolved=conflicts_resolved,
-        files_resolved=files_resolved,
-        force_pushed=False,
-        updated_at=pr_state.now_iso(),
-    ))
-    pr_state.save_state(ctx.worktree_root, state)
-    report = {
-        "status": "clean",
-        "commits_replayed": commits,
-        "conflicts_resolved": conflicts_resolved,
-        "files_resolved": files_resolved,
-    }
-    json.dump(report, sys.stdout, indent=2)
-    print()
     log.ok("Rebase clean — run `pr rebase --push` to force-push.")
     return 0
 

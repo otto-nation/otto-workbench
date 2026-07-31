@@ -20,14 +20,16 @@ def test_pr_and_branch_mutually_exclusive():
 
 
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo"))
+@patch.object(pr_context, "_current_branch_quiet", return_value="feat/bar")
 @patch.object(pr_context, "_detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
 @patch.object(pr_context, "_branch_from_pr", return_value="feat/bar")
-def test_pr_only_resolves(mock_branch, mock_sha, mock_repo, mock_top):
+def test_pr_only_resolves(mock_branch, mock_sha, mock_repo, mock_current, mock_top):
     ctx = pr_context.resolve(pr="42")
     assert ctx.pr_number == 42
     assert ctx.branch == "feat/bar"
     assert ctx.repo == "owner/repo"
+    assert ctx.current_branch == "feat/bar"
 
 
 @patch.object(pr_context, "_git_toplevel", return_value=Path("/repo"))
@@ -53,13 +55,15 @@ def test_branch_only_resolves(mock_pr, mock_resolve, mock_sha, mock_repo,
 @patch.object(pr_context, "resolve_bare_repo_worktree", return_value=Path("/wt/main"))
 @patch.object(pr_context, "_detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="def456")
+@patch.object(pr_context, "_current_branch_quiet", return_value="main")
 @patch.object(pr_context, "_current_branch", return_value="main")
 @patch.object(pr_context, "_pr_from_current", return_value=None)
-def test_bare_repo_finds_worktree(mock_pr, mock_branch, mock_sha, mock_repo,
+def test_bare_repo_finds_worktree(mock_pr, mock_branch, mock_quiet, mock_sha, mock_repo,
                                   mock_resolve_wt, mock_bare, mock_top):
     ctx = pr_context.resolve()
     assert ctx.worktree_root == Path("/wt/main")
     assert ctx.repo == "owner/repo"
+    assert ctx.current_branch == "main"
     mock_repo.assert_called_once_with("/wt/main")
     mock_resolve_wt.assert_called_once_with(None, None)
 
@@ -92,10 +96,11 @@ def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
               return_value=Path("/wt/isaac-improve-ci-failures-skill"))
 @patch.object(pr_context, "_detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
+@patch.object(pr_context, "_current_branch_quiet", return_value="isaac/improve-ci-failures-skill")
 @patch.object(pr_context, "_resolve_branch", return_value="isaac/improve-ci-failures-skill")
 @patch.object(pr_context, "_pr_from_branch", return_value=42)
 def test_bare_repo_fuzzy_branch_resolves_worktree(
-    mock_pr, mock_resolve, mock_sha, mock_repo,
+    mock_pr, mock_resolve, mock_quiet, mock_sha, mock_repo,
     mock_find_wt, mock_bare, mock_top,
 ):
     """Bare repo with dash-separated branch hint finds slash-separated worktree."""
@@ -177,6 +182,31 @@ def test_find_worktree_for_branch_sanitized_no_match(mock_sub):
     )
     result = pr_context.find_worktree_for_branch("feat/nonexistent")
     assert result is None
+
+
+# ── _current_branch detached HEAD ─────────────────────────────────────────
+
+
+@patch.object(pr_context, "subprocess")
+def test_current_branch_detached_head_exits(mock_sub):
+    """_current_branch exits when HEAD is detached."""
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout="HEAD\n")
+    with pytest.raises(SystemExit):
+        pr_context._current_branch("/repo")
+
+
+@patch.object(pr_context, "_git_toplevel", return_value=Path("/repo"))
+@patch.object(pr_context, "_current_branch_quiet", return_value=None)
+@patch.object(pr_context, "_detect_repo", return_value="owner/repo")
+@patch.object(pr_context, "_head_sha", return_value="abc123")
+@patch.object(pr_context, "_branch_from_pr", return_value="feat/bar")
+def test_resolve_sets_current_branch_none_on_detached_head(
+    mock_branch, mock_sha, mock_repo, mock_quiet, mock_top,
+):
+    """current_branch is None when worktree is in detached HEAD."""
+    ctx = pr_context.resolve(pr="42")
+    assert ctx.current_branch is None
+    assert ctx.branch == "feat/bar"
 
 
 # ── Branch-aware worktree resolution ──────────────────────────────────────

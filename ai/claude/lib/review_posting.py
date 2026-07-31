@@ -179,6 +179,8 @@ def write_post_tracking(
     review_sha: str = "",
     head_sha_at_post: str = "",
     sha_drifted: bool = False,
+    verdict: str = "",
+    status: str = "comment",
 ):
     """Write a post tracking entry alongside the review file."""
     post_file = str(Path(review_file).parent / "post.jsonl")
@@ -199,6 +201,8 @@ def write_post_tracking(
         "review_sha": review_sha,
         "head_sha_at_post": head_sha_at_post,
         "sha_drifted": sha_drifted,
+        "verdict": verdict,
+        "status": status,
     }
     try:
         with open(post_file, "w") as f:
@@ -448,6 +452,7 @@ def _post_and_track(
             args.review_file, list(existing_ids), commit_id,
             inline_count=0, body_count=0, skipped_count=0,
             submitted=submit, chunk_count=len(existing_ids),
+            verdict=verdict,
         )
         return
 
@@ -491,6 +496,7 @@ def _post_and_track(
         review_sha=review_sha or head_sha,
         head_sha_at_post=head_sha,
         sha_drifted=sha_drifted,
+        verdict=verdict,
     )
 
 

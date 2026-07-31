@@ -71,6 +71,13 @@ class ReviewVerdict(Enum):
     DISAPPROVE = "disapprove"
 
 
+class PostEvent(Enum):
+    COMMENT = "comment"
+    APPROVE = "approve"
+    REQUESTED_CHANGES = "requested_changes"
+    DISMISSED = "dismissed"
+
+
 class ReviewStatus(Enum):
     COMPLETED = "completed"
     ERROR = "error"

@@ -899,21 +899,30 @@ class TestWritePostTracking:
     def test_submitted_true(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
-        rp.write_post_tracking(review, 123, "abc", 5, 2, 1, submitted=True)
+        rp.write_post_tracking(review, PostTracking(
+            review_ids=[123], commit_id="abc",
+            inline_count=5, body_count=2, skipped_count=1, submitted=True,
+        ))
         tracking = self._read_tracking(d)
         assert tracking.submitted is True
 
     def test_submitted_defaults_false(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
-        rp.write_post_tracking(review, 123, "abc", 5, 2, 1)
+        rp.write_post_tracking(review, PostTracking(
+            review_ids=[123], commit_id="abc",
+            inline_count=5, body_count=2, skipped_count=1,
+        ))
         tracking = self._read_tracking(d)
         assert tracking.submitted is False
 
-    def test_single_int_backward_compat(self, rp, tmp_path):
+    def test_review_id_from_review_ids(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
-        rp.write_post_tracking(review, 456, "abc", 3, 1, 0)
+        rp.write_post_tracking(review, PostTracking(
+            review_ids=[456], commit_id="abc",
+            inline_count=3, body_count=1,
+        ))
         tracking = self._read_tracking(d)
         assert tracking.review_id == 456
         assert tracking.review_ids == [456]
@@ -922,7 +931,11 @@ class TestWritePostTracking:
     def test_list_of_review_ids_with_chunk_count(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
-        rp.write_post_tracking(review, [100, 200, 300], "abc", 90, 5, 2, submitted=True, chunk_count=3)
+        rp.write_post_tracking(review, PostTracking(
+            review_ids=[100, 200, 300], commit_id="abc",
+            inline_count=90, body_count=5, skipped_count=2,
+            submitted=True, chunk_count=3,
+        ))
         tracking = self._read_tracking(d)
         assert tracking.review_id == 100
         assert tracking.review_ids == [100, 200, 300]

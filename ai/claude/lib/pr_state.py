@@ -102,6 +102,14 @@ class PostTracking:
     verdict: str = ""
     status: str = PostEvent.COMMENT.value
 
+    def __post_init__(self):
+        if not self.posted_at:
+            self.posted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if self.review_ids and not self.review_id:
+            self.review_id = self.review_ids[0]
+        if self.review_id and not self.review_ids:
+            self.review_ids = [self.review_id]
+
 
 @dataclass
 class ReviewSummary:

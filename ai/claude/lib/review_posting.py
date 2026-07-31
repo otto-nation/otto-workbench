@@ -20,7 +20,7 @@ import review_format
 import review_github
 
 import log
-from pr_state import PostEvent, PostTracking
+from pr_state import PostTracking
 from review_findings import Finding
 from review_github import LineResolutionError, PRData
 from serde import to_dict as serde_to_dict
@@ -172,40 +172,9 @@ def _submit_review(repo: str, pr: str, review_id: int) -> bool:
 
 # ── Post tracking ───────────────────────────────────────────────────────────
 
-def write_post_tracking(
-    review_file: str, review_ids: list[int] | int, commit_id: str,
-    inline_count: int, body_count: int, skipped_count: int,
-    submitted: bool = False,
-    chunk_count: int = 1,
-    posted_as: str = "review",
-    review_sha: str = "",
-    head_sha_at_post: str = "",
-    sha_drifted: bool = False,
-    verdict: str = "",
-    status: str = PostEvent.COMMENT.value,
-):
+def write_post_tracking(review_file: str, entry: PostTracking):
     """Write a post tracking entry alongside the review file."""
     post_file = str(Path(review_file).parent / "post.jsonl")
-
-    ids = [review_ids] if isinstance(review_ids, int) else review_ids
-
-    entry = PostTracking(
-        review_id=ids[0],
-        review_ids=ids,
-        commit_id=commit_id,
-        posted_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        inline_count=inline_count,
-        body_count=body_count,
-        skipped_count=skipped_count,
-        submitted=submitted,
-        chunk_count=chunk_count,
-        posted_as=posted_as,
-        review_sha=review_sha,
-        head_sha_at_post=head_sha_at_post,
-        sha_drifted=sha_drifted,
-        verdict=verdict,
-        status=status,
-    )
     try:
         with open(post_file, "w") as f:
             json.dump(serde_to_dict(entry), f)
@@ -253,16 +222,12 @@ def _post_as_comment(
 
     if not findings:
         log.warn("No findings to post after dedup")
-        write_post_tracking(
-            args.review_file, [0], head_sha,
-            inline_count=0, body_count=0, skipped_count=len(deduped),
-            submitted=True,
-            posted_as="comment",
-            review_sha=review_sha,
-            head_sha_at_post=head_sha,
-            sha_drifted=True,
-            verdict=verdict,
-        )
+        write_post_tracking(args.review_file, PostTracking(
+            commit_id=head_sha, skipped_count=len(deduped),
+            submitted=True, posted_as="comment",
+            review_sha=review_sha, head_sha_at_post=head_sha,
+            sha_drifted=True, verdict=verdict,
+        ))
         return
 
     diff_text = review_github._get_diff(args.repo, args.pr)
@@ -294,16 +259,13 @@ def _post_as_comment(
     comment_id = result.get("id", 0)
     log.info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
 
-    write_post_tracking(
-        args.review_file, [comment_id], head_sha,
-        inline_count=0, body_count=len(findings), skipped_count=0,
-        submitted=True,
-        posted_as="comment",
-        review_sha=review_sha,
-        head_sha_at_post=head_sha,
+    write_post_tracking(args.review_file, PostTracking(
+        review_ids=[comment_id], commit_id=head_sha,
+        body_count=len(findings), submitted=True,
+        posted_as="comment", review_sha=review_sha,
+        head_sha_at_post=head_sha, sha_drifted=True,
         verdict=verdict,
-        sha_drifted=True,
-    )
+    ))
 
 
 # ── Reclassification after line-resolution failure ──────────────────────────
@@ -452,12 +414,11 @@ def _post_and_track(
     existing_ids = review_dedup.check_review_already_posted(bot_reviews, body_text)
     if existing_ids:
         log.warn(f"Review already posted (review IDs: {existing_ids})")
-        write_post_tracking(
-            args.review_file, list(existing_ids), commit_id,
-            inline_count=0, body_count=0, skipped_count=0,
+        write_post_tracking(args.review_file, PostTracking(
+            review_ids=list(existing_ids), commit_id=commit_id,
             submitted=submit, chunk_count=len(existing_ids),
             verdict=verdict,
-        )
+        ))
         return
 
     orphaned_ids = _find_orphaned_chunks(bot_reviews)
@@ -492,16 +453,14 @@ def _post_and_track(
         print()
         print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
 
-    write_post_tracking(
-        args.review_file, review_ids, commit_id,
-        len(inline_comments), len(body_findings), len(skipped),
-        submitted=submit or is_chunked,
-        chunk_count=len(results),
-        review_sha=review_sha or head_sha,
-        head_sha_at_post=head_sha,
-        sha_drifted=sha_drifted,
-        verdict=verdict,
-    )
+    write_post_tracking(args.review_file, PostTracking(
+        review_ids=review_ids, commit_id=commit_id,
+        inline_count=len(inline_comments),
+        body_count=len(body_findings), skipped_count=len(skipped),
+        submitted=submit or is_chunked, chunk_count=len(results),
+        review_sha=review_sha or head_sha, head_sha_at_post=head_sha,
+        sha_drifted=sha_drifted, verdict=verdict,
+    ))
 
 
 # ── Dry-run display ─────────────────────────────────────────────────────────

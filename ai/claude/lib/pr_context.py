@@ -415,10 +415,11 @@ def find_worktree_for_branch(
     for line in r.stdout.splitlines():
         if f"[{branch}]" in line:
             return Path(line.split()[0])
-        if dir_fallback is None:
-            wt_path = line.split()[0]
-            if Path(wt_path).name == sanitized:
-                dir_fallback = Path(wt_path)
+        if dir_fallback is not None:
+            continue
+        wt_path = line.split()[0]
+        if Path(wt_path).name == sanitized:
+            dir_fallback = Path(wt_path)
     return dir_fallback
 
 

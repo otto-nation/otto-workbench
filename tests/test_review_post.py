@@ -2,9 +2,17 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from pr_state import PostTracking
+from serde import from_dict as serde_from_dict
 
 
 class TestExtractPath:
@@ -885,38 +893,41 @@ class TestWritePostTracking:
         d.mkdir()
         return d
 
+    def _read_tracking(self, d):
+        return serde_from_dict(PostTracking, json.loads((d / "post.jsonl").read_text()))
+
     def test_submitted_true(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, 123, "abc", 5, 2, 1, submitted=True)
-        data = json.loads((d / "post.jsonl").read_text())
-        assert data["submitted"] is True
+        tracking = self._read_tracking(d)
+        assert tracking.submitted is True
 
     def test_submitted_defaults_false(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, 123, "abc", 5, 2, 1)
-        data = json.loads((d / "post.jsonl").read_text())
-        assert data["submitted"] is False
+        tracking = self._read_tracking(d)
+        assert tracking.submitted is False
 
     def test_single_int_backward_compat(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, 456, "abc", 3, 1, 0)
-        data = json.loads((d / "post.jsonl").read_text())
-        assert data["review_id"] == 456
-        assert data["review_ids"] == [456]
-        assert data["chunk_count"] == 1
+        tracking = self._read_tracking(d)
+        assert tracking.review_id == 456
+        assert tracking.review_ids == [456]
+        assert tracking.chunk_count == 1
 
     def test_list_of_review_ids_with_chunk_count(self, rp, tmp_path):
         d = self._review_dir(tmp_path)
         review = str(d / "review.md")
         rp.write_post_tracking(review, [100, 200, 300], "abc", 90, 5, 2, submitted=True, chunk_count=3)
-        data = json.loads((d / "post.jsonl").read_text())
-        assert data["review_id"] == 100
-        assert data["review_ids"] == [100, 200, 300]
-        assert data["chunk_count"] == 3
-        assert data["submitted"] is True
+        tracking = self._read_tracking(d)
+        assert tracking.review_id == 100
+        assert tracking.review_ids == [100, 200, 300]
+        assert tracking.chunk_count == 3
+        assert tracking.submitted is True
 
 
 class TestFormatSubmitCommand:
@@ -2074,11 +2085,11 @@ class TestShaDriftReverify:
             rp._run_post(trail, args, "org/repo", sidecar, review_file)
 
         post_file = review_file.parent / "post.jsonl"
-        data = json.loads(post_file.read_text())
-        assert data["review_sha"] == "aaa1111bbb2222"
-        assert data["head_sha_at_post"] == new_head
-        assert data["sha_drifted"] is True
-        assert data["posted_as"] == "review"
+        tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
+        assert tracking.review_sha == "aaa1111bbb2222"
+        assert tracking.head_sha_at_post == new_head
+        assert tracking.sha_drifted is True
+        assert tracking.posted_as == "review"
 
 
 class TestHandleChunkFailure:

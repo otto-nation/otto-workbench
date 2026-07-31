@@ -261,6 +261,7 @@ def _post_as_comment(
             review_sha=review_sha,
             head_sha_at_post=head_sha,
             sha_drifted=True,
+            verdict=verdict,
         )
         return
 
@@ -300,6 +301,7 @@ def _post_as_comment(
         posted_as="comment",
         review_sha=review_sha,
         head_sha_at_post=head_sha,
+        verdict=verdict,
         sha_drifted=True,
     )
 

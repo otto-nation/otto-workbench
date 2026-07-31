@@ -60,46 +60,51 @@ def _get_nesting_checker(filepath: str, ext: str):
     return None
 
 
+def _check_file_nesting(relpath: str, wt_path: str) -> tuple[bool, list[StaticViolation]]:
+    abspath = os.path.join(wt_path, relpath)
+    _, ext = os.path.splitext(relpath)
+    checker = _get_nesting_checker(abspath, ext)
+    if not checker:
+        return False, []
+    try:
+        with open(abspath) as f:
+            lines = f.readlines()
+    except (OSError, UnicodeDecodeError):
+        return False, []
+
+    max_depth = checker.DEFAULT_MAX_DEPTH
+    file_violations = checker.check_nesting(lines, max_depth)
+    violations = []
+    for v in file_violations:
+        fn = v.function_name
+        ctx = f"in {fn}" if fn.startswith("(") else f"in {fn}()"
+        violations.append(StaticViolation(
+            file=relpath,
+            line=v.line_number,
+            message=f"depth {v.depth} exceeds limit {max_depth}",
+            context=ctx,
+        ))
+    return True, violations
+
+
 def check_nesting_depth(changed_files: list[str], wt_path: str) -> CheckerResult | None:
     if not _NESTING_AVAILABLE:
         return None
     all_exts = get_all_extensions()
-    candidates = []
-    for relpath in changed_files:
-        _, ext = os.path.splitext(relpath)
-        if ext in all_exts or not ext:
-            candidates.append(relpath)
-
+    candidates = [
+        rp for rp in changed_files
+        if os.path.splitext(rp)[1] in all_exts or not os.path.splitext(rp)[1]
+    ]
     if not candidates:
         return None
 
     violations: list[StaticViolation] = []
     files_checked = 0
-
     for relpath in candidates:
-        abspath = os.path.join(wt_path, relpath)
-        _, ext = os.path.splitext(relpath)
-        checker = _get_nesting_checker(abspath, ext)
-        if not checker:
-            continue
-        try:
-            with open(abspath) as f:
-                lines = f.readlines()
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        files_checked += 1
-        max_depth = checker.DEFAULT_MAX_DEPTH
-        file_violations = checker.check_nesting(lines, max_depth)
-        for v in file_violations:
-            fn = v.function_name
-            ctx = f"in {fn}" if fn.startswith("(") else f"in {fn}()"
-            violations.append(StaticViolation(
-                file=relpath,
-                line=v.line_number,
-                message=f"depth {v.depth} exceeds limit {max_depth}",
-                context=ctx,
-            ))
+        checked, file_viols = _check_file_nesting(relpath, wt_path)
+        if checked:
+            files_checked += 1
+            violations.extend(file_viols)
 
     return CheckerResult(name="Nesting depth", violations=violations, files_checked=files_checked)
 
@@ -120,6 +125,22 @@ def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerR
     return results
 
 
+def _format_checker_violations(r: CheckerResult) -> list[str]:
+    file_count = len({v.file for v in r.violations})
+    lines = [
+        f"\n### {r.name}",
+        f"{len(r.violations)} violation{'s' if len(r.violations) != 1 else ''} "
+        f"in {file_count} of {r.files_checked} files checked",
+        "",
+    ]
+    for v in r.violations:
+        entry = f"- **`{v.file}:{v.line}`** — {v.message}"
+        if v.context:
+            entry += f" ({v.context})"
+        lines.append(entry)
+    return lines
+
+
 def format_static_analysis(results: list[CheckerResult]) -> str:
     if not results:
         return ""
@@ -130,20 +151,8 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
 
     parts = ["## Static Analysis"]
     for r in results:
-        if not r.violations:
-            continue
-        file_count = len({v.file for v in r.violations})
-        parts.append(f"\n### {r.name}")
-        parts.append(
-            f"{len(r.violations)} violation{'s' if len(r.violations) != 1 else ''} "
-            f"in {file_count} of {r.files_checked} files checked"
-        )
-        parts.append("")
-        for v in r.violations:
-            line = f"- **`{v.file}:{v.line}`** — {v.message}"
-            if v.context:
-                line += f" ({v.context})"
-            parts.append(line)
+        if r.violations:
+            parts.extend(_format_checker_violations(r))
     return "\n".join(parts)
 
 

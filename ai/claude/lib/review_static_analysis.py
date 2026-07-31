@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -86,11 +86,13 @@ def check_nesting_depth(changed_files: list[str], wt_path: str) -> CheckerResult
         max_depth = checker.DEFAULT_MAX_DEPTH
         file_violations = checker.check_nesting(lines, max_depth)
         for v in file_violations:
+            fn = v.function_name
+            ctx = f"in {fn}" if fn.startswith("(") else f"in {fn}()"
             violations.append(StaticViolation(
                 file=relpath,
                 line=v.line_number,
                 message=f"depth {v.depth} exceeds limit {max_depth}",
-                context=f"in {v.function_name}()",
+                context=ctx,
             ))
 
     return CheckerResult(name="Nesting depth", violations=violations, files_checked=files_checked)

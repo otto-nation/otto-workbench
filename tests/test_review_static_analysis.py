@@ -92,9 +92,6 @@ class TestInjectStaticAnalysis:
         assert result == review
 
 
-import os
-import tempfile
-
 from review_static_analysis import check_nesting_depth
 
 

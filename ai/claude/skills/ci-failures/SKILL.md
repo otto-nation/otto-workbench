@@ -57,7 +57,7 @@ The script outputs:
 
 **With `--fix`:** Always pass `--wait` to capture all failures before applying fixes: `pr ci --fix --wait 2>&1`
 
-**Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed (no JSON report in the output), report the result to the user and **stop — do not proceed further**. The script only outputs the JSON failure report when there are actual failures to process.
+**Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed, report the result to the user and **stop — do not proceed further**. Without `--wait`, all-pass means no JSON report in the output. With `--wait`, the final JSON is always emitted — check for `"failures": []` in the `"type": "final"` report instead.
 
 ### 2. Classify and group failures
 

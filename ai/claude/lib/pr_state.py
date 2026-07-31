@@ -84,6 +84,26 @@ class ReviewStatus(Enum):
 
 
 @dataclass
+class PostTracking:
+    """Recorded in post.jsonl alongside each review."""
+    review_id: int = 0
+    review_ids: list[int] = field(default_factory=list)
+    commit_id: str = ""
+    posted_at: str = ""
+    inline_count: int = 0
+    body_count: int = 0
+    skipped_count: int = 0
+    submitted: bool = False
+    chunk_count: int = 1
+    posted_as: str = "review"
+    review_sha: str = ""
+    head_sha_at_post: str = ""
+    sha_drifted: bool = False
+    verdict: str = ""
+    status: str = PostEvent.COMMENT.value
+
+
+@dataclass
 class ReviewSummary:
     """Snapshot written by ``pr review``."""
     review_file: str = ""

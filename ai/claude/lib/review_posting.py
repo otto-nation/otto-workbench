@@ -20,8 +20,10 @@ import review_format
 import review_github
 
 import log
+from pr_state import PostEvent, PostTracking
 from review_findings import Finding
 from review_github import LineResolutionError, PRData
+from serde import to_dict as serde_to_dict
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -180,33 +182,33 @@ def write_post_tracking(
     head_sha_at_post: str = "",
     sha_drifted: bool = False,
     verdict: str = "",
-    status: str = "comment",
+    status: str = PostEvent.COMMENT.value,
 ):
     """Write a post tracking entry alongside the review file."""
     post_file = str(Path(review_file).parent / "post.jsonl")
 
     ids = [review_ids] if isinstance(review_ids, int) else review_ids
 
-    entry = {
-        "review_id": ids[0],
-        "review_ids": ids,
-        "commit_id": commit_id,
-        "posted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "inline_count": inline_count,
-        "body_count": body_count,
-        "skipped_count": skipped_count,
-        "submitted": submitted,
-        "chunk_count": chunk_count,
-        "posted_as": posted_as,
-        "review_sha": review_sha,
-        "head_sha_at_post": head_sha_at_post,
-        "sha_drifted": sha_drifted,
-        "verdict": verdict,
-        "status": status,
-    }
+    entry = PostTracking(
+        review_id=ids[0],
+        review_ids=ids,
+        commit_id=commit_id,
+        posted_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        inline_count=inline_count,
+        body_count=body_count,
+        skipped_count=skipped_count,
+        submitted=submitted,
+        chunk_count=chunk_count,
+        posted_as=posted_as,
+        review_sha=review_sha,
+        head_sha_at_post=head_sha_at_post,
+        sha_drifted=sha_drifted,
+        verdict=verdict,
+        status=status,
+    )
     try:
         with open(post_file, "w") as f:
-            json.dump(entry, f)
+            json.dump(serde_to_dict(entry), f)
             f.write("\n")
     except OSError as e:
         log.warn(f"Failed to write post tracking ({post_file}): {e}")

@@ -1,6 +1,6 @@
 {
   "name": "unchecked-error-go",
-  "description": "Database query error return value is silently discarded, causing nil pointer dereference on the result",
+  "description": "Database query error return value is silently discarded, causing silent empty-string results on failure",
   "source": "synthetic",
   "language": "go",
   "expected": [

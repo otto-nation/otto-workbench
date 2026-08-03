@@ -14,7 +14,7 @@ from review_findings import Finding
 
 @dataclass(frozen=True)
 class ExpectedFinding:
-    severity: list[str]
+    severity: tuple[str, ...]
     path: str
     line_range: tuple[int, int]
     category: str
@@ -55,7 +55,7 @@ def parse_manifest(
     for e in manifest.get("expected", []):
         lr = e.get("line_range", [0, 0])
         expected.append(ExpectedFinding(
-            severity=e.get("severity", []),
+            severity=tuple(e.get("severity", [])),
             path=e.get("path", ""),
             line_range=(lr[0], lr[1]),
             category=e.get("category", ""),
@@ -66,8 +66,14 @@ def parse_manifest(
     return expected, fp_max, tags
 
 
+def _path_matches(actual_path: str, expected_path: str) -> bool:
+    if actual_path == expected_path:
+        return True
+    return actual_path.endswith("/" + expected_path)
+
+
 def _finding_matches(actual: Finding, exp: ExpectedFinding) -> bool:
-    if not actual.path.endswith(exp.path):
+    if not _path_matches(actual.path, exp.path):
         return False
     if actual.line is None:
         return False

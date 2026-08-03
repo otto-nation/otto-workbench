@@ -89,7 +89,11 @@ def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:
 def create_temp_repo(src_dir: str) -> str:
     tmpdir = tempfile.mkdtemp(prefix="eval-review-")
     env = _clean_env()
-    git = ["git", "-C", tmpdir]
+    git = [
+        "git", "-C", tmpdir,
+        "-c", "user.email=eval@eval.local",
+        "-c", "user.name=eval",
+    ]
 
     subprocess.run(
         git + ["init", "-b", "main"], capture_output=True, check=True, env=env,
@@ -106,9 +110,9 @@ def create_temp_repo(src_dir: str) -> str:
     for item in Path(src_dir).iterdir():
         dest = Path(tmpdir) / item.name
         if item.is_dir():
-            shutil.copytree(str(item), str(dest))
+            shutil.copytree(item, dest)
         else:
-            shutil.copy2(str(item), str(dest))
+            shutil.copy2(item, dest)
 
     subprocess.run(
         git + ["add", "-A"], capture_output=True, check=True, env=env,
@@ -137,7 +141,7 @@ def run_review(
     review_file: str,
     timeout: int,
     verbose: bool,
-) -> tuple[int, str]:
+) -> int:
     cmd = [
         sys.executable, str(_REVIEW_ORCHESTRATE),
         "--mode", "self",
@@ -160,11 +164,9 @@ def run_review(
         )
     except subprocess.TimeoutExpired:
         print("  timeout expired", file=sys.stderr)
-        return 1, ""
+        return 1
 
-    review_path = Path(review_file)
-    content = review_path.read_text() if review_path.exists() else ""
-    return result.returncode, content
+    return result.returncode
 
 
 def parse_review_output(
@@ -231,7 +233,7 @@ def _run_single(
     session_log = str(Path(reviews_dir) / "session.jsonl")
 
     try:
-        rc, _ = run_review(
+        rc = run_review(
             tmpdir, model, args.effort,
             reviews_dir, review_file, args.timeout, args.verbose,
         )

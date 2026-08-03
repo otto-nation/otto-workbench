@@ -1149,14 +1149,27 @@ def test_drive_to_completion_safety_valve():
 
 def test_step_conflicts_no_fix_reports():
     """Without --fix, reports conflicts and returns 3."""
-    with mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
-        rc = pr_rebase_cli._step_conflicts("/fake", False, ["a.py"], [])
+    ctx = mock.MagicMock()
+    with mock.patch.object(pr_rebase_cli, "_save_conflicts_state"), \
+         mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, False, ["a.py"], [])
 
     assert rc == 3
 
 
+def test_step_conflicts_no_fix_saves_state():
+    """Without --fix, saves conflicts state before returning."""
+    ctx = mock.MagicMock()
+    with mock.patch.object(pr_rebase_cli, "_save_conflicts_state") as mock_save, \
+         mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
+        pr_rebase_cli._step_conflicts("/fake", ctx, False, ["a.py"], [])
+
+    mock_save.assert_called_once_with(ctx)
+
+
 def test_step_conflicts_fix_resolves():
     """With --fix, resolves conflicts via AI and returns None to continue."""
+    ctx = mock.MagicMock()
     all_resolved = []
 
     with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
@@ -1165,7 +1178,7 @@ def test_step_conflicts_fix_resolves():
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], all_resolved)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], all_resolved)
 
     assert rc is None
     assert all_resolved == ["a.py"]
@@ -1173,29 +1186,33 @@ def test_step_conflicts_fix_resolves():
 
 def test_step_conflicts_fix_resolution_fails_aborts():
     """AI resolution failure aborts rebase and returns 1."""
+    ctx = mock.MagicMock()
     with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], [])
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
 
     assert rc == 1
 
 
 def test_step_conflicts_fix_ai_unavailable():
     """With --fix but AI unavailable, reports conflicts and returns 3."""
+    ctx = mock.MagicMock()
     with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_save_conflicts_state"), \
          mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
         mock_ai.is_available.return_value = False
-        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], [])
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
 
     assert rc == 3
 
 
 def test_step_conflicts_continue_fails_but_rebase_in_progress():
     """rebase --continue fails because next commit has conflicts — continue loop."""
+    ctx = mock.MagicMock()
     all_resolved = []
 
     def fake_run(cmd, **kwargs):
@@ -1212,7 +1229,7 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], all_resolved)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], all_resolved)
 
     assert rc is None
     assert all_resolved == ["a.py"]
@@ -1220,6 +1237,7 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
 
 def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
     """rebase --continue fails and rebase is not in progress — abort."""
+    ctx = mock.MagicMock()
     abort_called = []
 
     def fake_run(cmd, **kwargs):
@@ -1237,7 +1255,7 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", True, ["a.py"], [])
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
 
     assert rc == 1
     assert abort_called
@@ -1755,3 +1773,43 @@ def test_cmd_start_stash_failure_aborts():
 
     assert result == 1
     mock_fresh.assert_not_called()
+
+
+# ── main() --push dispatch ──────────────────────────────────────────────────
+
+
+def _run_main_with_push(cmd_start_rc: int) -> tuple[int, mock.MagicMock]:
+    """Run main() with --push and return (exit_code, mock_cmd_push)."""
+    fake_ctx = mock.MagicMock()
+    fake_ctx.worktree_root = Path("/fake")
+    fake_trail = mock.MagicMock()
+    fake_trail.__enter__ = mock.Mock(return_value=fake_trail)
+    fake_trail.__exit__ = mock.Mock(return_value=False)
+
+    with mock.patch("sys.argv", ["pr-rebase", "--push"]), \
+         mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=fake_ctx), \
+         mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls, \
+         mock.patch.object(pr_rebase_cli, "cmd_start", return_value=cmd_start_rc), \
+         mock.patch.object(pr_rebase_cli, "cmd_push", return_value=0) as mock_push:
+        mock_trail_cls.start.return_value = fake_trail
+        try:
+            pr_rebase_cli.main()
+        except SystemExit as exc:
+            exit_code = exc.code
+    return exit_code, mock_push
+
+
+def test_push_flag_calls_cmd_push_when_start_succeeds():
+    """--push must call cmd_push after cmd_start returns 0 (the bug being fixed)."""
+    exit_code, mock_push = _run_main_with_push(cmd_start_rc=0)
+
+    mock_push.assert_called_once()
+    assert exit_code == 0
+
+
+def test_push_flag_skips_cmd_push_on_conflicts():
+    """--push must not call cmd_push when cmd_start returns non-zero (e.g. conflicts)."""
+    exit_code, mock_push = _run_main_with_push(cmd_start_rc=3)
+
+    mock_push.assert_not_called()
+    assert exit_code == 3

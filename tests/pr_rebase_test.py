@@ -1164,7 +1164,7 @@ def test_step_conflicts_no_fix_saves_state():
          mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
         pr_rebase_cli._step_conflicts("/fake", ctx, False, ["a.py"], [])
 
-    mock_save.assert_called_once_with("/fake", ctx)
+    mock_save.assert_called_once_with(ctx)
 
 
 def test_step_conflicts_fix_resolves():

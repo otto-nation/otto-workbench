@@ -17,11 +17,14 @@ from pathlib import Path
 BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 
+import ci_failures
+import pr_comments
 import pr_context
 import pr_state
-from pr_state import RebaseStatus, ReviewStatus, ReviewVerdict
+import rebase_status
 import review_gc
 import log
+import review_common
 from review_common import build_review_summary, find_review_file, json_summary, review_file_path
 from trail import Trail, add_trail_args
 
@@ -120,7 +123,7 @@ def _update_review_state(summary_data: dict,
         head_sha=summary_data.get("head_sha", ""),
         finding_counts=finding_counts,
         verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", ReviewStatus.COMPLETED.value),
+        status=summary_data.get("status", pr_state.ReviewStatus.COMPLETED.value),
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))
@@ -147,96 +150,6 @@ def _is_pr_target(target: str | None) -> bool:
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
-def _render_ci_section(ci: pr_state.CIDomain) -> list[str]:
-    if not ci.updated_at:
-        return ["**CI**: not checked yet"]
-    icon = "green" if ci.conclusion == "success" else "red"
-    lines = [f"**CI** ({icon}): {ci.conclusion} — {ci.failure_count} failure(s)"]
-    for kind, count in sorted(ci.failure_kinds.items()):
-        lines.append(f"  {kind}: {count}")
-    if ci.last_run_number:
-        lines.append(f"  run #{ci.last_run_number}")
-    return lines
-
-
-def _render_review_section(rev: pr_state.ReviewSummary) -> list[str]:
-    if not rev.updated_at:
-        return ["**Review**: not run yet"]
-    suffixes = []
-    if rev.status == ReviewStatus.ERROR.value:
-        suffixes.append("[ERROR]")
-    if rev.verdict == ReviewVerdict.DISAPPROVE.value:
-        suffixes.append("[DISAPPROVED]")
-    suffix = " " + " ".join(suffixes) if suffixes else ""
-    verdict_part = f": {rev.verdict}" if rev.verdict else ""
-    lines = [f"**Review** ({rev.review_type}){verdict_part}{suffix}"]
-    if rev.finding_counts:
-        parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
-        lines.append(f"  findings: {', '.join(parts)}")
-    if rev.cost_usd:
-        lines.append(f"  cost: ${rev.cost_usd:.2f}")
-    return lines
-
-
-def _render_comments_section(c: pr_state.CommentsSummary) -> list[str]:
-    if not c.updated_at:
-        return ["**Comments**: not checked yet"]
-    lines = [f"**Comments**: {c.total_threads} thread(s)"]
-    if c.by_state:
-        parts = [f"{s}: {ct}" for s, ct in sorted(c.by_state.items())]
-        lines.append(f"  {', '.join(parts)}")
-    if c.blocking_reviewers:
-        lines.append(f"  blocking: {', '.join(c.blocking_reviewers)}")
-    return lines
-
-
-def _render_triage_section(t: pr_state.TriageSummary) -> list[str]:
-    if not t.updated_at:
-        return ["**Triage**: not run yet"]
-    lines = [f"**Triage**: {t.total} threads — {t.actionable} actionable ({t.valid} valid), {t.questions} questions"]
-    return lines
-
-
-def _render_fix_section(f: pr_state.FixSummary) -> list[str]:
-    if not f.updated_at:
-        return ["**Fix**: not run yet"]
-    by_action: dict[str, int] = {}
-    for t in f.threads:
-        by_action[t.action] = by_action.get(t.action, 0) + 1
-    FA = pr_state.ThreadAction
-    parts = []
-    if by_action.get(FA.FIXED.value, 0):
-        parts.append(f"**{by_action[FA.FIXED.value]} fixed**")
-    if by_action.get(FA.DEFERRED.value, 0):
-        parts.append(f"{by_action[FA.DEFERRED.value]} deferred")
-    if by_action.get(FA.NEEDS_HUMAN.value, 0):
-        parts.append(f"{by_action[FA.NEEDS_HUMAN.value]} need discussion")
-    if by_action.get(FA.DISMISSED.value, 0):
-        parts.append(f"{by_action[FA.DISMISSED.value]} dismissed")
-    summary = " · ".join(parts) if parts else "no threads"
-    lines = [f"**Fix**: {summary}"]
-    if f.commit_sha:
-        lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
-    if f.deferred_issue_id:
-        lines.append(f"  tracked in {f.deferred_issue_id}")
-    return lines
-
-
-def _render_rebase_section(r: pr_state.RebaseSummary) -> list[str]:
-    if not r.updated_at:
-        return ["**Rebase**: not run yet"]
-    if r.status == RebaseStatus.CONFLICTS.value:
-        return ["**Rebase**: conflicts — resolve manually or run `pr rebase --fix`"]
-    if r.status == RebaseStatus.ABORTED.value:
-        return ["**Rebase**: aborted"]
-    if r.conflicts_resolved == 0:
-        desc = f"clean rebase — {r.commits_replayed} commit(s) replayed"
-    else:
-        desc = f"resolved {r.conflicts_resolved} file(s) across {r.commits_replayed} commit(s)"
-    if r.force_pushed:
-        desc += ", force-pushed"
-    return [f"**Rebase**: {desc}"]
-
 
 def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Render unified status dashboard from cached state."""
@@ -253,17 +166,17 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         print("\n".join(lines), file=sys.stderr)
         return 0
 
-    lines += _render_ci_section(state.ci)
+    lines += ci_failures.render_status(state.ci)
     lines.append("")
-    lines += _render_review_section(state.review)
+    lines += review_common.render_status(state.review)
     lines.append("")
-    lines += _render_comments_section(state.comments)
+    lines += pr_comments.render_status(state.comments)
     lines.append("")
-    lines += _render_triage_section(state.triage)
+    lines += pr_comments.render_triage_status(state.triage)
     lines.append("")
-    lines += _render_fix_section(state.fix)
+    lines += pr_comments.render_fix_status(state.fix)
     lines.append("")
-    lines += _render_rebase_section(state.rebase)
+    lines += rebase_status.render_status(state.rebase)
     lines.append("")
     lines.append(_merge_readiness(state))
 

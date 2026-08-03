@@ -9,7 +9,12 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_comments import load_state, save_state, empty_state, compute_thread_state, sync_threads, render_dashboard, STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED
+import pr_state
+from pr_comments import (
+    load_state, save_state, empty_state, compute_thread_state, sync_threads,
+    render_dashboard, render_status, render_triage_status, render_fix_status,
+    STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED,
+)
 
 
 def test_empty_state_has_required_fields():
@@ -292,3 +297,102 @@ def test_dashboard_backward_compatible_without_review_body():
     verdicts = []
     dashboard = render_dashboard(42, threads, verdicts, [])
     assert "review-level" not in dashboard
+
+
+# ── render_status ────────────────────────────────────────────────────────
+
+
+def test_render_status_not_checked():
+    c = pr_state.CommentsSummary()
+    assert render_status(c) == ["**Comments**: not checked yet"]
+
+
+def test_render_status_with_threads():
+    c = pr_state.CommentsSummary(
+        total_threads=5, by_state={"new": 2, "resolved": 3}, updated_at="t",
+    )
+    lines = render_status(c)
+    assert "5 thread(s)" in lines[0]
+    assert any("new: 2" in l for l in lines)
+    assert any("resolved: 3" in l for l in lines)
+
+
+def test_render_status_with_blocking_reviewers():
+    c = pr_state.CommentsSummary(
+        total_threads=1, blocking_reviewers=["alice", "bob"], updated_at="t",
+    )
+    lines = render_status(c)
+    assert any("blocking: alice, bob" in l for l in lines)
+
+
+# ── render_triage_status ─────────────────────────────────────────────────
+
+
+def test_render_triage_status_not_run():
+    t = pr_state.TriageSummary()
+    assert render_triage_status(t) == ["**Triage**: not run yet"]
+
+
+def test_render_triage_status_with_data():
+    t = pr_state.TriageSummary(
+        total=5, actionable=2, valid=1, questions=1, updated_at="2024-01-01T00:00:00Z",
+    )
+    result = render_triage_status(t)
+    assert len(result) == 1
+    assert "5 threads" in result[0]
+    assert "2 actionable" in result[0]
+    assert "1 valid" in result[0]
+    assert "1 questions" in result[0]
+
+
+# ── render_fix_status ────────────────────────────────────────────────────
+
+
+def test_render_fix_status_not_run():
+    f = pr_state.FixSummary()
+    assert render_fix_status(f) == ["**Fix**: not run yet"]
+
+
+def test_render_fix_status_with_data():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED.value),
+            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.FIXED.value),
+            pr_state.ThreadOutcome(id="t3", action=pr_state.ThreadAction.DEFERRED.value),
+            pr_state.ThreadOutcome(id="t4", action=pr_state.ThreadAction.DISMISSED.value),
+        ],
+        commit_sha="abc1234", commit_status="pushed",
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = render_fix_status(f)
+    assert "**2 fixed**" in lines[0]
+    assert "1 deferred" in lines[0]
+    assert "1 dismissed" in lines[0]
+    assert "abc1234" in lines[0]
+    assert "pushed" in lines[0]
+
+
+def test_render_fix_status_needs_human():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.NEEDS_HUMAN.value),
+            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.NEEDS_HUMAN.value),
+        ],
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = render_fix_status(f)
+    assert "2 need discussion" in lines[0]
+
+
+def test_render_fix_status_deferred_issue():
+    f = pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.DEFERRED.value),
+        ],
+        commit_sha="abc", commit_status="pushed",
+        deferred_issue_id="ENG-456",
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    lines = render_fix_status(f)
+    assert any("ENG-456" in line for line in lines)
+    assert any("tracked in" in line for line in lines)

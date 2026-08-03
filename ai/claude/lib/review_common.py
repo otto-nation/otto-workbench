@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import log
+from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -472,3 +473,26 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
     """Build a REVIEW_SUMMARY:{json} string for a review."""
     data = build_review_summary(repo, pr_number, review_file)
     return f"REVIEW_SUMMARY:{json.dumps(data)}"
+
+
+# ── Status rendering ─────────────────────────────────────────────────────
+
+
+def render_status(rev: ReviewSummary) -> list[str]:
+    """Render review state as status lines for the pr dashboard."""
+    if not rev.updated_at:
+        return ["**Review**: not run yet"]
+    suffixes = []
+    if rev.status == ReviewStatus.ERROR.value:
+        suffixes.append("[ERROR]")
+    if rev.verdict == ReviewVerdict.DISAPPROVE.value:
+        suffixes.append("[DISAPPROVED]")
+    suffix = " " + " ".join(suffixes) if suffixes else ""
+    verdict_part = f": {rev.verdict}" if rev.verdict else ""
+    lines = [f"**Review** ({rev.review_type}){verdict_part}{suffix}"]
+    if rev.finding_counts:
+        parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
+        lines.append(f"  findings: {', '.join(parts)}")
+    if rev.cost_usd:
+        lines.append(f"  cost: ${rev.cost_usd:.2f}")
+    return lines

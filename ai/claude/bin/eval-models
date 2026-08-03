@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from eval_scoring import (  # noqa: E402
+    ScoringResult,
     aggregate_runs,
     format_summary_table,
     parse_manifest,
@@ -179,6 +180,98 @@ def parse_review_output(
     return findings, usage
 
 
+def _serialize_run(r: ScoringResult) -> dict:
+    return {
+        "recall": r.recall,
+        "precision": r.precision,
+        "severity_accuracy": r.severity_accuracy,
+        "false_positive_count": r.false_positive_count,
+        "false_positive_ok": r.false_positive_ok,
+        "cost_usd": r.cost_usd,
+        "duration_ms": r.duration_ms,
+        "matched_ids": [m.matched_finding_id for m in r.matches if m.matched],
+        "false_positive_ids": r.false_positive_ids,
+    }
+
+
+def _build_output(
+    all_results: dict[tuple[str, str], list[ScoringResult]],
+    effort: str,
+    runs_per_entry: int,
+) -> dict:
+    entries: dict[str, dict] = {}
+    for (entry_name, model_label), results in all_results.items():
+        entry_out = entries.setdefault(entry_name, {})
+        agg = aggregate_runs(results)
+        entry_out[model_label] = {
+            **agg,
+            "runs": [_serialize_run(r) for r in results],
+        }
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "effort": effort,
+        "runs_per_entry": runs_per_entry,
+        "entries": entries,
+    }
+
+
+def _run_single(
+    entry: dict, model: str, label: str, run_idx: int,
+    args: argparse.Namespace,
+    expected: list, fp_max: int,
+) -> ScoringResult:
+    run_label = f"{entry['name']} / {label}"
+    if args.runs > 1:
+        run_label += f" (run {run_idx + 1}/{args.runs})"
+    print(f"\n>> {run_label}", file=sys.stderr)
+
+    tmpdir = create_temp_repo(entry["src_dir"])
+    reviews_dir = tempfile.mkdtemp(prefix="eval-reviews-")
+    review_file = str(Path(reviews_dir) / "review.md")
+    session_log = str(Path(reviews_dir) / "session.jsonl")
+
+    try:
+        rc, _ = run_review(
+            tmpdir, model, args.effort,
+            reviews_dir, review_file, args.timeout, args.verbose,
+        )
+        if rc != 0:
+            print(f"  review-orchestrate exited {rc}", file=sys.stderr)
+
+        findings, usage = parse_review_output(review_file, session_log)
+        print(
+            f"  findings: {len(findings)}, "
+            f"cost: ${usage.cost:.2f}, "
+            f"duration: {usage.duration_ms / 1000:.0f}s",
+            file=sys.stderr,
+        )
+
+        result = score_entry(
+            entry["name"], label, run_idx,
+            expected, findings, fp_max,
+            cost_usd=usage.cost,
+            duration_ms=usage.duration_ms,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
+
+        matched = sum(1 for m in result.matches if m.matched)
+        print(
+            f"  recall: {result.recall:.0%} "
+            f"({matched}/{len(expected)}), "
+            f"FP: {result.false_positive_count}",
+            file=sys.stderr,
+        )
+        return result
+    finally:
+        if not args.keep_temp:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            shutil.rmtree(reviews_dir, ignore_errors=True)
+        else:
+            print(f"  temp repo: {tmpdir}", file=sys.stderr)
+            print(f"  reviews: {reviews_dir}", file=sys.stderr)
+
+
 def run_eval(args: argparse.Namespace) -> dict:
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
     corpus_dir = args.corpus
@@ -212,96 +305,17 @@ def run_eval(args: argparse.Namespace) -> dict:
 
     for entry in entries:
         manifest = entry["manifest"]
-        expected, fp_max, tags = parse_manifest(manifest)
-
+        expected, fp_max, _ = parse_manifest(manifest)
         for model, label in zip(models, model_labels):
             key = (entry["name"], label)
-            all_results[key] = []
-
-            for run_idx in range(args.runs):
-                run_label = f"{entry['name']} / {label}"
-                if args.runs > 1:
-                    run_label += f" (run {run_idx + 1}/{args.runs})"
-                print(f"\n>> {run_label}", file=sys.stderr)
-
-                tmpdir = create_temp_repo(entry["src_dir"])
-                reviews_dir = tempfile.mkdtemp(prefix="eval-reviews-")
-                review_file = str(Path(reviews_dir) / "review.md")
-                session_log = str(Path(reviews_dir) / "session.jsonl")
-
-                try:
-                    rc, _ = run_review(
-                        tmpdir, model, args.effort,
-                        reviews_dir, review_file, args.timeout, args.verbose,
-                    )
-
-                    if rc != 0:
-                        print(f"  review-orchestrate exited {rc}", file=sys.stderr)
-
-                    findings, usage = parse_review_output(review_file, session_log)
-                    print(
-                        f"  findings: {len(findings)}, "
-                        f"cost: ${usage.cost:.2f}, "
-                        f"duration: {usage.duration_ms / 1000:.0f}s",
-                        file=sys.stderr,
-                    )
-
-                    result = score_entry(
-                        entry["name"], label, run_idx,
-                        expected, findings, fp_max,
-                        cost_usd=usage.cost,
-                        duration_ms=usage.duration_ms,
-                        input_tokens=usage.input_tokens,
-                        output_tokens=usage.output_tokens,
-                    )
-
-                    matched = sum(1 for m in result.matches if m.matched)
-                    print(
-                        f"  recall: {result.recall:.0%} "
-                        f"({matched}/{len(expected)}), "
-                        f"FP: {result.false_positive_count}",
-                        file=sys.stderr,
-                    )
-
-                    all_results[key].append(result)
-                finally:
-                    if not args.keep_temp:
-                        shutil.rmtree(tmpdir, ignore_errors=True)
-                        shutil.rmtree(reviews_dir, ignore_errors=True)
-                    else:
-                        print(f"  temp repo: {tmpdir}", file=sys.stderr)
-                        print(f"  reviews: {reviews_dir}", file=sys.stderr)
+            all_results[key] = [
+                _run_single(entry, model, label, run_idx, args, expected, fp_max)
+                for run_idx in range(args.runs)
+            ]
 
     print("\n" + format_summary_table(all_results))
 
-    output = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "effort": args.effort,
-        "runs_per_entry": args.runs,
-        "entries": {},
-    }
-    for (entry_name, model_label), results in all_results.items():
-        entry_out = output["entries"].setdefault(entry_name, {})
-        agg = aggregate_runs(results)
-        entry_out[model_label] = {
-            **agg,
-            "runs": [
-                {
-                    "recall": r.recall,
-                    "precision": r.precision,
-                    "severity_accuracy": r.severity_accuracy,
-                    "false_positive_count": r.false_positive_count,
-                    "false_positive_ok": r.false_positive_ok,
-                    "cost_usd": r.cost_usd,
-                    "duration_ms": r.duration_ms,
-                    "matched_ids": [
-                        m.matched_finding_id for m in r.matches if m.matched
-                    ],
-                    "false_positive_ids": r.false_positive_ids,
-                }
-                for r in results
-            ],
-        }
+    output = _build_output(all_results, args.effort, args.runs)
 
     if args.output:
         Path(args.output).write_text(json.dumps(output, indent=2) + "\n")

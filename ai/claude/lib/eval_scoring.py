@@ -82,26 +82,28 @@ def _finding_matches(actual: Finding, exp: ExpectedFinding) -> bool:
     return True
 
 
+def _find_match(
+    exp: ExpectedFinding, actuals: list[Finding], used: set[int],
+) -> MatchResult:
+    mr = MatchResult(expected=exp)
+    for i, actual in enumerate(actuals):
+        if i in used or not _finding_matches(actual, exp):
+            continue
+        mr.matched = True
+        mr.matched_finding_id = actual.id
+        mr.matched_severity = actual.severity
+        mr.severity_exact = actual.severity == exp.severity[0]
+        used.add(i)
+        break
+    return mr
+
+
 def match_findings(
     expected: list[ExpectedFinding],
     actuals: list[Finding],
 ) -> tuple[list[MatchResult], list[str]]:
     used: set[int] = set()
-    results: list[MatchResult] = []
-
-    for exp in expected:
-        mr = MatchResult(expected=exp)
-        for i, actual in enumerate(actuals):
-            if i in used:
-                continue
-            if _finding_matches(actual, exp):
-                mr.matched = True
-                mr.matched_finding_id = actual.id
-                mr.matched_severity = actual.severity
-                mr.severity_exact = actual.severity == exp.severity[0]
-                used.add(i)
-                break
-        results.append(mr)
+    results = [_find_match(exp, actuals, used) for exp in expected]
 
     false_positive_ids = [
         actuals[i].id for i in range(len(actuals)) if i not in used

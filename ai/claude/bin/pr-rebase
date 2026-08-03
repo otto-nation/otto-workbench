@@ -865,7 +865,7 @@ def _drive_one_step(
     return None, True
 
 
-def _save_conflicts_state(cwd: str, ctx: pr_context.ResolvedContext) -> None:
+def _save_conflicts_state(ctx: pr_context.ResolvedContext) -> None:
     """Persist rebase state with status=conflicts."""
     RebaseOutcome(status=RebaseStatus.CONFLICTS.value).save(ctx)
 
@@ -876,7 +876,7 @@ def _step_conflicts(
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not fix:
-        _save_conflicts_state(cwd, ctx)
+        _save_conflicts_state(ctx)
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
         print()
@@ -885,7 +885,7 @@ def _step_conflicts(
     if not ai_backend.is_available():
         _terr("resolve_conflicts", "AI backend unavailable")
         log.error("Cannot resolve conflicts — AI backend unavailable.")
-        _save_conflicts_state(cwd, ctx)
+        _save_conflicts_state(ctx)
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
         print()

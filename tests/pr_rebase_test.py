@@ -1773,3 +1773,43 @@ def test_cmd_start_stash_failure_aborts():
 
     assert result == 1
     mock_fresh.assert_not_called()
+
+
+# ── main() --push dispatch ──────────────────────────────────────────────────
+
+
+def _run_main_with_push(cmd_start_rc: int) -> tuple[int, mock.MagicMock]:
+    """Run main() with --push and return (exit_code, mock_cmd_push)."""
+    fake_ctx = mock.MagicMock()
+    fake_ctx.worktree_root = Path("/fake")
+    fake_trail = mock.MagicMock()
+    fake_trail.__enter__ = mock.Mock(return_value=fake_trail)
+    fake_trail.__exit__ = mock.Mock(return_value=False)
+
+    with mock.patch("sys.argv", ["pr-rebase", "--push"]), \
+         mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=fake_ctx), \
+         mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls, \
+         mock.patch.object(pr_rebase_cli, "cmd_start", return_value=cmd_start_rc), \
+         mock.patch.object(pr_rebase_cli, "cmd_push", return_value=0) as mock_push:
+        mock_trail_cls.start.return_value = fake_trail
+        try:
+            pr_rebase_cli.main()
+        except SystemExit as exc:
+            exit_code = exc.code
+    return exit_code, mock_push
+
+
+def test_push_flag_calls_cmd_push_when_start_succeeds():
+    """--push must call cmd_push after cmd_start returns 0 (the bug being fixed)."""
+    exit_code, mock_push = _run_main_with_push(cmd_start_rc=0)
+
+    mock_push.assert_called_once()
+    assert exit_code == 0
+
+
+def test_push_flag_skips_cmd_push_on_conflicts():
+    """--push must not call cmd_push when cmd_start returns non-zero (e.g. conflicts)."""
+    exit_code, mock_push = _run_main_with_push(cmd_start_rc=3)
+
+    mock_push.assert_not_called()
+    assert exit_code == 3

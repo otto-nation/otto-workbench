@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""Model evaluation runner for the review pipeline.
+
+Runs review-orchestrate against a corpus of known-bad code and scores
+the results against expected findings.
+
+Usage:
+  eval-models --corpus eval/corpus/ --models sonnet,opus --effort medium
+  eval-models --entry unchecked-error-go --runs 3
+  eval-models --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from eval_scoring import (  # noqa: E402
+    ScoringResult,
+    aggregate_runs,
+    format_summary_table,
+    parse_manifest,
+    score_entry,
+)
+from review_common import SessionUsage, parse_session_log  # noqa: E402
+from review_findings import parse_findings  # noqa: E402
+
+_SELF_DIR = Path(__file__).resolve().parent
+_REVIEW_ORCHESTRATE = _SELF_DIR / "review-orchestrate"
+
+_GIT_ENV_SANITIZE = [
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+    "GIT_CEILING_DIRECTORIES", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+]
+
+
+def _clean_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in _GIT_ENV_SANITIZE:
+        env.pop(key, None)
+    return env
+
+
+def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:
+    corpus = Path(corpus_dir)
+    if not corpus.is_dir():
+        print(f"error: corpus directory not found: {corpus_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    entries = []
+    for d in sorted(corpus.iterdir()):
+        if not d.is_dir():
+            continue
+        manifest_path = d / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        manifest = json.loads(manifest_path.read_text())
+        name = manifest.get("name", d.name)
+        if entry_filter and name != entry_filter:
+            continue
+        src_dir = d / "src"
+        if not src_dir.is_dir():
+            print(f"warning: no src/ directory in {d.name}, skipping", file=sys.stderr)
+            continue
+        entries.append({
+            "name": name,
+            "manifest_path": str(manifest_path),
+            "src_dir": str(src_dir),
+            "manifest": manifest,
+        })
+
+    if entry_filter and not entries:
+        print(f"error: corpus entry not found: {entry_filter}", file=sys.stderr)
+        sys.exit(1)
+
+    return entries
+
+
+def create_temp_repo(src_dir: str) -> str:
+    tmpdir = tempfile.mkdtemp(prefix="eval-review-")
+    env = _clean_env()
+    git = [
+        "git", "-C", tmpdir,
+        "-c", "user.email=eval@eval.local",
+        "-c", "user.name=eval",
+    ]
+
+    subprocess.run(
+        git + ["init", "-b", "main"], capture_output=True, check=True, env=env,
+    )
+    subprocess.run(
+        git + ["commit", "--allow-empty", "-m", "initial"],
+        capture_output=True, check=True, env=env,
+    )
+    subprocess.run(
+        git + ["checkout", "-b", "eval"],
+        capture_output=True, check=True, env=env,
+    )
+
+    for item in Path(src_dir).iterdir():
+        dest = Path(tmpdir) / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)
+
+    subprocess.run(
+        git + ["add", "-A"], capture_output=True, check=True, env=env,
+    )
+    subprocess.run(
+        git + ["commit", "-m", "add buggy code"],
+        capture_output=True, check=True, env=env,
+    )
+    subprocess.run(
+        git + ["remote", "add", "origin", tmpdir],
+        capture_output=True, check=True, env=env,
+    )
+    subprocess.run(
+        git + ["fetch", "origin"],
+        capture_output=True, check=True, env=env,
+    )
+
+    return tmpdir
+
+
+def run_review(
+    repo_dir: str,
+    model: str,
+    effort: str,
+    reviews_dir: str,
+    review_file: str,
+    timeout: int,
+    verbose: bool,
+) -> int:
+    cmd = [
+        sys.executable, str(_REVIEW_ORCHESTRATE),
+        "--mode", "self",
+        "--effort", effort,
+        "--repo-dir", repo_dir,
+        "--review-file", review_file,
+        "--reviews-dir", reviews_dir,
+        "--repo", "eval/corpus",
+    ]
+    if model:
+        cmd += ["--model", model]
+
+    env = _clean_env()
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=not verbose,
+            timeout=timeout,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        print("  timeout expired", file=sys.stderr)
+        return 1
+
+    return result.returncode
+
+
+def parse_review_output(
+    review_file: str, session_log: str,
+) -> tuple[list, SessionUsage]:
+    review_path = Path(review_file)
+    if not review_path.exists():
+        return [], SessionUsage()
+
+    content = review_path.read_text()
+    findings = parse_findings(content)
+    usage = parse_session_log(session_log)
+    return findings, usage
+
+
+def _serialize_run(r: ScoringResult) -> dict:
+    return {
+        "recall": r.recall,
+        "precision": r.precision,
+        "severity_accuracy": r.severity_accuracy,
+        "false_positive_count": r.false_positive_count,
+        "false_positive_ok": r.false_positive_ok,
+        "cost_usd": r.cost_usd,
+        "duration_ms": r.duration_ms,
+        "matched_ids": [m.matched_finding_id for m in r.matches if m.matched],
+        "false_positive_ids": r.false_positive_ids,
+    }
+
+
+def _build_output(
+    all_results: dict[tuple[str, str], list[ScoringResult]],
+    effort: str,
+    runs_per_entry: int,
+) -> dict:
+    entries: dict[str, dict] = {}
+    for (entry_name, model_label), results in all_results.items():
+        entry_out = entries.setdefault(entry_name, {})
+        agg = aggregate_runs(results)
+        entry_out[model_label] = {
+            **agg,
+            "runs": [_serialize_run(r) for r in results],
+        }
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "effort": effort,
+        "runs_per_entry": runs_per_entry,
+        "entries": entries,
+    }
+
+
+def _run_single(
+    entry: dict, model: str, label: str, run_idx: int,
+    args: argparse.Namespace,
+    expected: list, fp_max: int,
+) -> ScoringResult:
+    run_label = f"{entry['name']} / {label}"
+    if args.runs > 1:
+        run_label += f" (run {run_idx + 1}/{args.runs})"
+    print(f"\n>> {run_label}", file=sys.stderr)
+
+    tmpdir = create_temp_repo(entry["src_dir"])
+    reviews_dir = tempfile.mkdtemp(prefix="eval-reviews-")
+    review_file = str(Path(reviews_dir) / "review.md")
+    session_log = str(Path(reviews_dir) / "session.jsonl")
+
+    try:
+        rc = run_review(
+            tmpdir, model, args.effort,
+            reviews_dir, review_file, args.timeout, args.verbose,
+        )
+        if rc != 0:
+            print(f"  review-orchestrate exited {rc}", file=sys.stderr)
+
+        findings, usage = parse_review_output(review_file, session_log)
+        print(
+            f"  findings: {len(findings)}, "
+            f"cost: ${usage.cost:.2f}, "
+            f"duration: {usage.duration_ms / 1000:.0f}s",
+            file=sys.stderr,
+        )
+
+        result = score_entry(
+            entry["name"], label, run_idx,
+            expected, findings, fp_max,
+            cost_usd=usage.cost,
+            duration_ms=usage.duration_ms,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
+
+        matched = sum(1 for m in result.matches if m.matched)
+        print(
+            f"  recall: {result.recall:.0%} "
+            f"({matched}/{len(expected)}), "
+            f"FP: {result.false_positive_count}",
+            file=sys.stderr,
+        )
+        return result
+    finally:
+        if not args.keep_temp:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            shutil.rmtree(reviews_dir, ignore_errors=True)
+        else:
+            print(f"  temp repo: {tmpdir}", file=sys.stderr)
+            print(f"  reviews: {reviews_dir}", file=sys.stderr)
+
+
+def run_eval(args: argparse.Namespace) -> dict:
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    corpus_dir = args.corpus
+    if not Path(corpus_dir).is_absolute():
+        corpus_dir = str(repo_root / corpus_dir)
+
+    entries = discover_entries(corpus_dir, args.entry)
+    models = [m.strip() for m in args.models.split(",")] if args.models else [""]
+    model_labels = [m or "(default)" for m in models]
+
+    print(f"Corpus: {len(entries)} entries", file=sys.stderr)
+    print(f"Models: {', '.join(model_labels)}", file=sys.stderr)
+    print(f"Effort: {args.effort}, Runs: {args.runs}", file=sys.stderr)
+
+    if args.dry_run:
+        print("\n-- Dry run --", file=sys.stderr)
+        for entry in entries:
+            manifest = entry["manifest"]
+            expected, fp_max, tags = parse_manifest(manifest)
+            src_files = list(Path(entry["src_dir"]).iterdir())
+            print(
+                f"  {entry['name']}: {len(expected)} expected findings, "
+                f"{len(src_files)} source files, tags={tags}",
+                file=sys.stderr,
+            )
+        total = len(entries) * len(models) * args.runs
+        print(f"\nTotal runs: {total}", file=sys.stderr)
+        return {}
+
+    all_results: dict[tuple[str, str], list] = {}
+
+    for entry in entries:
+        manifest = entry["manifest"]
+        expected, fp_max, _ = parse_manifest(manifest)
+        for model, label in zip(models, model_labels):
+            key = (entry["name"], label)
+            all_results[key] = [
+                _run_single(entry, model, label, run_idx, args, expected, fp_max)
+                for run_idx in range(args.runs)
+            ]
+
+    print("\n" + format_summary_table(all_results))
+
+    output = _build_output(all_results, args.effort, args.runs)
+
+    if args.output:
+        Path(args.output).write_text(json.dumps(output, indent=2) + "\n")
+        print(f"\nResults written to {args.output}", file=sys.stderr)
+
+    return output
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Model evaluation runner for the review pipeline",
+    )
+    parser.add_argument(
+        "--corpus", default="eval/corpus/",
+        help="Path to corpus directory (default: eval/corpus/)",
+    )
+    parser.add_argument(
+        "--models", default="",
+        help="Comma-separated model names (default: review-orchestrate default)",
+    )
+    parser.add_argument(
+        "--effort", default="low",
+        help="Effort level for review-orchestrate (default: low)",
+    )
+    parser.add_argument(
+        "--runs", type=int, default=1,
+        help="Number of runs per entry per model (default: 1)",
+    )
+    parser.add_argument(
+        "--output", default="",
+        help="Path to write results JSON",
+    )
+    parser.add_argument(
+        "--entry", default="",
+        help="Filter to a specific corpus entry by name",
+    )
+    parser.add_argument(
+        "--timeout", type=int, default=300,
+        help="Timeout in seconds per review run (default: 300)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate corpus and show what would run without invoking LLM",
+    )
+    parser.add_argument(
+        "--keep-temp", action="store_true",
+        help="Keep temp repos for debugging",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print review-orchestrate stdout/stderr",
+    )
+
+    args = parser.parse_args()
+    run_eval(args)
+
+
+if __name__ == "__main__":
+    main()

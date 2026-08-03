@@ -1,0 +1,16 @@
+{
+  "name": "command-injection-bash",
+  "description": "User-supplied branch name is interpolated into shell command without quoting",
+  "source": "synthetic",
+  "language": "bash",
+  "expected": [
+    {
+      "severity": ["M", "S"],
+      "path": "deploy.sh",
+      "line_range": [7, 8],
+      "category": "security"
+    }
+  ],
+  "false_positives_max": 2,
+  "tags": ["security", "command-injection", "bash"]
+}

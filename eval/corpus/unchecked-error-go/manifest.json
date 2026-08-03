@@ -1,0 +1,17 @@
+{
+  "name": "unchecked-error-go",
+  "description": "Database query error return value is silently discarded, causing silent empty-string results on failure",
+  "source": "synthetic",
+  "language": "go",
+  "expected": [
+    {
+      "severity": ["M", "S"],
+      "path": "handler.go",
+      "line_range": [14, 14],
+      "category": "correctness",
+      "description_contains": "error"
+    }
+  ],
+  "false_positives_max": 2,
+  "tags": ["error-handling", "go"]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "sql-injection-python",
+  "description": "User input is interpolated directly into SQL query string via f-string",
+  "source": "synthetic",
+  "language": "python",
+  "expected": [
+    {
+      "severity": ["M", "S"],
+      "path": "db.py",
+      "line_range": [8, 10],
+      "category": "security",
+      "description_contains": "sql"
+    }
+  ],
+  "false_positives_max": 2,
+  "tags": ["security", "sql-injection", "python"]
+}

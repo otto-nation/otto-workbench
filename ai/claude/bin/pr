@@ -225,6 +225,10 @@ def _render_fix_section(f: pr_state.FixSummary) -> list[str]:
 def _render_rebase_section(r: pr_state.RebaseSummary) -> list[str]:
     if not r.updated_at:
         return ["**Rebase**: not run yet"]
+    if r.status == "conflicts":
+        return [f"**Rebase**: conflicts — resolve manually or run `pr rebase --fix`"]
+    if r.status == "aborted":
+        return [f"**Rebase**: aborted"]
     if r.conflicts_resolved == 0:
         desc = f"clean rebase — {r.commits_replayed} commit(s) replayed"
     else:

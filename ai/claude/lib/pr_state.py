@@ -157,6 +157,7 @@ class TriageSummary:
 @dataclass
 class RebaseSummary:
     """Snapshot written by ``pr rebase``."""
+    status: str = ""
     target_base: str = ""
     commits_replayed: int = 0
     conflicts_resolved: int = 0

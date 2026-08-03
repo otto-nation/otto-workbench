@@ -123,7 +123,7 @@ def _update_review_state(summary_data: dict,
         head_sha=summary_data.get("head_sha", ""),
         finding_counts=finding_counts,
         verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", ReviewStatus.COMPLETED.value),
+        status=summary_data.get("status", pr_state.ReviewStatus.COMPLETED.value),
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))

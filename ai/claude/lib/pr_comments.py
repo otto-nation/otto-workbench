@@ -499,3 +499,54 @@ def _dashboard_raw_comments(
             label += f" ({unseen_issue} new)"
         lines.append(label)
     return lines
+
+
+# ── Status rendering ─────────────────────────────────────────────────────
+
+
+def render_status(c) -> list[str]:
+    """Render comments state as status lines for the pr dashboard."""
+    if not c.updated_at:
+        return ["**Comments**: not checked yet"]
+    lines = [f"**Comments**: {c.total_threads} thread(s)"]
+    if c.by_state:
+        parts = [f"{s}: {ct}" for s, ct in sorted(c.by_state.items())]
+        lines.append(f"  {', '.join(parts)}")
+    if c.blocking_reviewers:
+        lines.append(f"  blocking: {', '.join(c.blocking_reviewers)}")
+    return lines
+
+
+def render_triage_status(t) -> list[str]:
+    """Render triage state as status lines for the pr dashboard."""
+    if not t.updated_at:
+        return ["**Triage**: not run yet"]
+    return [f"**Triage**: {t.total} threads — {t.actionable} actionable ({t.valid} valid), {t.questions} questions"]
+
+
+def render_fix_status(f) -> list[str]:
+    """Render fix state as status lines for the pr dashboard."""
+    from pr_state import ThreadAction
+
+    if not f.updated_at:
+        return ["**Fix**: not run yet"]
+    by_action: dict[str, int] = {}
+    for t in f.threads:
+        by_action[t.action] = by_action.get(t.action, 0) + 1
+    FA = ThreadAction
+    parts = []
+    if by_action.get(FA.FIXED.value, 0):
+        parts.append(f"**{by_action[FA.FIXED.value]} fixed**")
+    if by_action.get(FA.DEFERRED.value, 0):
+        parts.append(f"{by_action[FA.DEFERRED.value]} deferred")
+    if by_action.get(FA.NEEDS_HUMAN.value, 0):
+        parts.append(f"{by_action[FA.NEEDS_HUMAN.value]} need discussion")
+    if by_action.get(FA.DISMISSED.value, 0):
+        parts.append(f"{by_action[FA.DISMISSED.value]} dismissed")
+    summary = " · ".join(parts) if parts else "no threads"
+    lines = [f"**Fix**: {summary}"]
+    if f.commit_sha:
+        lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
+    if f.deferred_issue_id:
+        lines.append(f"  tracked in {f.deferred_issue_id}")
+    return lines

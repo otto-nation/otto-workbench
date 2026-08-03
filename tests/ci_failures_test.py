@@ -813,3 +813,43 @@ def test_extract_failure_context_service_error():
     ])
     result = extract_failure_context(log, FailureKind.TEST)
     assert "ERROR:" in result or "FAIL" in result
+
+
+# ── render_status ────────────────────────────────────────────────────────
+
+
+import pr_state
+from ci_failures import render_status
+
+
+def test_render_status_not_checked():
+    ci = pr_state.CIDomain()
+    assert render_status(ci) == ["**CI**: not checked yet"]
+
+
+def test_render_status_success():
+    ci = pr_state.CIDomain(conclusion="success", failure_count=0, updated_at="t")
+    lines = render_status(ci)
+    assert "green" in lines[0]
+    assert "success" in lines[0]
+
+
+def test_render_status_failure_with_kinds():
+    ci = pr_state.CIDomain(
+        conclusion="failure", failure_count=3,
+        failure_kinds={"test": 2, "lint": 1}, updated_at="t",
+    )
+    lines = render_status(ci)
+    assert "red" in lines[0]
+    assert "3 failure(s)" in lines[0]
+    assert any("lint: 1" in l for l in lines)
+    assert any("test: 2" in l for l in lines)
+
+
+def test_render_status_with_run_number():
+    ci = pr_state.CIDomain(
+        conclusion="failure", failure_count=1,
+        last_run_number=42, updated_at="t",
+    )
+    lines = render_status(ci)
+    assert any("run #42" in l for l in lines)

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import log
+from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -477,10 +478,8 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
 # ── Status rendering ─────────────────────────────────────────────────────
 
 
-def render_status(rev) -> list[str]:
+def render_status(rev: ReviewSummary) -> list[str]:
     """Render review state as status lines for the pr dashboard."""
-    from pr_state import ReviewStatus, ReviewVerdict
-
     if not rev.updated_at:
         return ["**Review**: not run yet"]
     suffixes = []

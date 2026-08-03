@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import log
+from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
 from review_github import (
     PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
 )
@@ -504,7 +505,7 @@ def _dashboard_raw_comments(
 # ── Status rendering ─────────────────────────────────────────────────────
 
 
-def render_status(c) -> list[str]:
+def render_status(c: CommentsSummary) -> list[str]:
     """Render comments state as status lines for the pr dashboard."""
     if not c.updated_at:
         return ["**Comments**: not checked yet"]
@@ -517,32 +518,29 @@ def render_status(c) -> list[str]:
     return lines
 
 
-def render_triage_status(t) -> list[str]:
+def render_triage_status(t: TriageSummary) -> list[str]:
     """Render triage state as status lines for the pr dashboard."""
     if not t.updated_at:
         return ["**Triage**: not run yet"]
     return [f"**Triage**: {t.total} threads — {t.actionable} actionable ({t.valid} valid), {t.questions} questions"]
 
 
-def render_fix_status(f) -> list[str]:
+def render_fix_status(f: FixSummary) -> list[str]:
     """Render fix state as status lines for the pr dashboard."""
-    from pr_state import ThreadAction
-
     if not f.updated_at:
         return ["**Fix**: not run yet"]
     by_action: dict[str, int] = {}
     for t in f.threads:
         by_action[t.action] = by_action.get(t.action, 0) + 1
-    FA = ThreadAction
     parts = []
-    if by_action.get(FA.FIXED.value, 0):
-        parts.append(f"**{by_action[FA.FIXED.value]} fixed**")
-    if by_action.get(FA.DEFERRED.value, 0):
-        parts.append(f"{by_action[FA.DEFERRED.value]} deferred")
-    if by_action.get(FA.NEEDS_HUMAN.value, 0):
-        parts.append(f"{by_action[FA.NEEDS_HUMAN.value]} need discussion")
-    if by_action.get(FA.DISMISSED.value, 0):
-        parts.append(f"{by_action[FA.DISMISSED.value]} dismissed")
+    if by_action.get(ThreadAction.FIXED.value, 0):
+        parts.append(f"**{by_action[ThreadAction.FIXED.value]} fixed**")
+    if by_action.get(ThreadAction.DEFERRED.value, 0):
+        parts.append(f"{by_action[ThreadAction.DEFERRED.value]} deferred")
+    if by_action.get(ThreadAction.NEEDS_HUMAN.value, 0):
+        parts.append(f"{by_action[ThreadAction.NEEDS_HUMAN.value]} need discussion")
+    if by_action.get(ThreadAction.DISMISSED.value, 0):
+        parts.append(f"{by_action[ThreadAction.DISMISSED.value]} dismissed")
     summary = " · ".join(parts) if parts else "no threads"
     lines = [f"**Fix**: {summary}"]
     if f.commit_sha:

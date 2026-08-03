@@ -10,6 +10,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pr_state import CIDomain
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────
@@ -428,7 +432,7 @@ def render_dashboard(
 # ── Status rendering ─────────────────────────────────────────────────────
 
 
-def render_status(ci) -> list[str]:
+def render_status(ci: "CIDomain") -> list[str]:
     """Render CI state as status lines for the pr dashboard."""
     if not ci.updated_at:
         return ["**CI**: not checked yet"]

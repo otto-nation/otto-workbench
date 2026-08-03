@@ -11,8 +11,9 @@ if str(LIB_DIR) not in sys.path:
 
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
-    compute_progression, sync_ci_domain, render_dashboard, extract_failure_context,
-    extract_headline, LogMarker, LOG_MARKERS, _MAX_CONTEXT_CHARS,
+    compute_progression, sync_ci_domain, render_dashboard, render_status,
+    extract_failure_context, extract_headline, LogMarker, LOG_MARKERS,
+    _MAX_CONTEXT_CHARS,
 )
 from pr_state import CIDomain
 
@@ -818,24 +819,20 @@ def test_extract_failure_context_service_error():
 # ── render_status ────────────────────────────────────────────────────────
 
 
-import pr_state
-from ci_failures import render_status
-
-
 def test_render_status_not_checked():
-    ci = pr_state.CIDomain()
+    ci = CIDomain()
     assert render_status(ci) == ["**CI**: not checked yet"]
 
 
 def test_render_status_success():
-    ci = pr_state.CIDomain(conclusion="success", failure_count=0, updated_at="t")
+    ci = CIDomain(conclusion="success", failure_count=0, updated_at="t")
     lines = render_status(ci)
     assert "green" in lines[0]
     assert "success" in lines[0]
 
 
 def test_render_status_failure_with_kinds():
-    ci = pr_state.CIDomain(
+    ci = CIDomain(
         conclusion="failure", failure_count=3,
         failure_kinds={"test": 2, "lint": 1}, updated_at="t",
     )
@@ -847,7 +844,7 @@ def test_render_status_failure_with_kinds():
 
 
 def test_render_status_with_run_number():
-    ci = pr_state.CIDomain(
+    ci = CIDomain(
         conclusion="failure", failure_count=1,
         last_run_number=42, updated_at="t",
     )

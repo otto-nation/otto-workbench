@@ -9,7 +9,12 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_comments import load_state, save_state, empty_state, compute_thread_state, sync_threads, render_dashboard, STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED
+import pr_state
+from pr_comments import (
+    load_state, save_state, empty_state, compute_thread_state, sync_threads,
+    render_dashboard, render_status, render_triage_status, render_fix_status,
+    STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED,
+)
 
 
 def test_empty_state_has_required_fields():
@@ -295,10 +300,6 @@ def test_dashboard_backward_compatible_without_review_body():
 
 
 # ── render_status ────────────────────────────────────────────────────────
-
-
-import pr_state
-from pr_comments import render_status, render_triage_status, render_fix_status
 
 
 def test_render_status_not_checked():

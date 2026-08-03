@@ -14,7 +14,7 @@ Exit codes:
 Usage:
   pr-rebase                           # start or resume rebase
   pr-rebase --fix                     # resolve conflicts, rebase, and force-push
-  pr-rebase --push                    # force-push after completed rebase
+  pr-rebase --push                    # rebase and force-push
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
@@ -34,6 +34,7 @@ import ai_backend
 import log
 import pr_context
 import pr_state
+from pr_state import RebaseStatus
 from trail import Trail, add_trail_args
 
 
@@ -838,7 +839,7 @@ def _drive_loop(
             resolved = (all_resolved, commits_conflicted) if commits_conflicted else None
             return _rebase_success(cwd, ctx, fix, resolved=resolved)
 
-        rc, conflict_found = _drive_one_step(cwd, fix, all_resolved)
+        rc, conflict_found = _drive_one_step(cwd, ctx, fix, all_resolved)
         if rc is not None:
             return rc
         if conflict_found:
@@ -851,25 +852,31 @@ def _drive_loop(
 
 
 def _drive_one_step(
-    cwd: str, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
     all_resolved: list[str],
 ) -> tuple[int | None, bool]:
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
         return _step_advance(cwd), False
 
-    rc = _step_conflicts(cwd, fix, conflicts, all_resolved)
+    rc = _step_conflicts(cwd, ctx, fix, conflicts, all_resolved)
     if rc is not None:
         return rc, False
     return None, True
 
 
+def _save_conflicts_state(ctx: pr_context.ResolvedContext) -> None:
+    """Persist rebase state with status=conflicts."""
+    RebaseOutcome(status=RebaseStatus.CONFLICTS.value).save(ctx)
+
+
 def _step_conflicts(
-    cwd: str, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
     conflicts: list[str], all_resolved: list[str],
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not fix:
+        _save_conflicts_state(ctx)
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
         print()
@@ -878,6 +885,7 @@ def _step_conflicts(
     if not ai_backend.is_available():
         _terr("resolve_conflicts", "AI backend unavailable")
         log.error("Cannot resolve conflicts — AI backend unavailable.")
+        _save_conflicts_state(ctx)
         report = _conflict_report(cwd)
         json.dump(report, sys.stdout, indent=2)
         print()
@@ -1100,6 +1108,7 @@ def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
 @dataclass
 class RebaseOutcome:
     """Result of a rebase — owns state persistence and JSON reporting."""
+    status: str = RebaseStatus.COMPLETED.value
     commits_replayed: int = 0
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
@@ -1108,6 +1117,7 @@ class RebaseOutcome:
     def save(self, ctx: pr_context.ResolvedContext) -> None:
         state = _load_or_init(ctx)
         pr_state.update_rebase(state, pr_state.RebaseSummary(
+            status=self.status,
             target_base=_TARGET_REF,
             commits_replayed=self.commits_replayed,
             conflicts_resolved=self.conflicts_resolved,
@@ -1119,7 +1129,7 @@ class RebaseOutcome:
 
     def emit(self) -> None:
         report: dict = {
-            "status": "clean",
+            "status": self.status,
             "commits_replayed": self.commits_replayed,
             "conflicts_resolved": self.conflicts_resolved,
             "files_resolved": self.files_resolved,
@@ -1199,9 +1209,7 @@ def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     log.info("Aborting rebase...")
     r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
     if r.returncode == 0:
-        state = _load_or_init(ctx)
-        pr_state.update_rebase(state, pr_state.RebaseSummary())
-        pr_state.save_state(ctx.worktree_root, state)
+        RebaseOutcome(status=RebaseStatus.ABORTED.value).save(ctx)
         log.ok("Rebase aborted.")
     return r.returncode
 
@@ -1351,7 +1359,7 @@ def _rebase_success(
             log.error("Force-push failed.")
         return push_rc
 
-    log.ok("Rebase clean — run `pr rebase --push` to force-push.")
+    log.ok("Rebase clean — run `git push --force-with-lease` to force-push.")
     return 0
 
 
@@ -1371,7 +1379,7 @@ def main():
     parser.add_argument("--fix", action="store_true",
                         help="Autonomous mode — resolve conflicts with AI, rebase, and force-push")
     parser.add_argument("--push", action="store_true",
-                        help="Force-push after successful rebase")
+                        help="Rebase and force-push")
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)
@@ -1394,13 +1402,15 @@ def main():
         if args.abort:
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             sys.exit(cmd_abort(cwd, ctx))
-        elif args.push:
-            _trail.decision("mode", "selected push", reason="--push flag set")
-            sys.exit(cmd_push(cwd, ctx))
-        else:
-            mode = "fix" if args.fix else "start"
-            _trail.decision("mode", f"selected {mode}", reason="--fix flag set" if args.fix else "default mode")
-            sys.exit(cmd_start(cwd, ctx, args.fix))
+
+        mode = "fix" if args.fix else "push" if args.push else "start"
+        _trail.decision("mode", f"selected {mode}", reason=f"--{mode} flag set" if mode != "start" else "default mode")
+        rc = cmd_start(cwd, ctx, args.fix)
+
+        if rc == 0 and args.push and not args.fix:
+            rc = cmd_push(cwd, ctx)
+
+        sys.exit(rc)
     except Exception as exc:
         _trail.error("unexpected_error", str(exc), data={"traceback": traceback.format_exc()})
         raise

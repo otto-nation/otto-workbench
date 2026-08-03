@@ -19,7 +19,7 @@ sys.path.insert(0, str(BIN_DIR.parent / "lib"))
 
 import pr_context
 import pr_state
-from pr_state import ReviewStatus, ReviewVerdict
+from pr_state import RebaseStatus, ReviewStatus, ReviewVerdict
 import review_gc
 import log
 from review_common import build_review_summary, find_review_file, json_summary, review_file_path
@@ -225,6 +225,10 @@ def _render_fix_section(f: pr_state.FixSummary) -> list[str]:
 def _render_rebase_section(r: pr_state.RebaseSummary) -> list[str]:
     if not r.updated_at:
         return ["**Rebase**: not run yet"]
+    if r.status == RebaseStatus.CONFLICTS.value:
+        return ["**Rebase**: conflicts — resolve manually or run `pr rebase --fix`"]
+    if r.status == RebaseStatus.ABORTED.value:
+        return ["**Rebase**: aborted"]
     if r.conflicts_resolved == 0:
         desc = f"clean rebase — {r.commits_replayed} commit(s) replayed"
     else:

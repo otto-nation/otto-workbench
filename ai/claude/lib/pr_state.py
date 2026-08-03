@@ -88,6 +88,12 @@ class ReviewStatus(Enum):
     ERROR = "error"
 
 
+class RebaseStatus(Enum):
+    COMPLETED = "completed"
+    CONFLICTS = "conflicts"
+    ABORTED = "aborted"
+
+
 @dataclass
 class PostTracking:
     """Recorded in post.jsonl alongside each review."""
@@ -157,6 +163,7 @@ class TriageSummary:
 @dataclass
 class RebaseSummary:
     """Snapshot written by ``pr rebase``."""
+    status: str = ""
     target_base: str = ""
     commits_replayed: int = 0
     conflicts_resolved: int = 0

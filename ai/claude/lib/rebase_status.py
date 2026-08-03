@@ -1,0 +1,26 @@
+"""Rebase domain — status rendering.
+
+Owns the display logic for RebaseSummary so the pr dispatcher
+doesn't need to know rebase internals.
+"""
+
+from __future__ import annotations
+
+from pr_state import RebaseStatus, RebaseSummary
+
+
+def render_status(r: RebaseSummary) -> list[str]:
+    """Render rebase state as status lines for the pr dashboard."""
+    if not r.updated_at:
+        return ["**Rebase**: not run yet"]
+    if r.status == RebaseStatus.CONFLICTS.value:
+        return ["**Rebase**: conflicts — resolve manually or run `pr rebase --fix`"]
+    if r.status == RebaseStatus.ABORTED.value:
+        return ["**Rebase**: aborted"]
+    if r.conflicts_resolved == 0:
+        desc = f"clean rebase — {r.commits_replayed} commit(s) replayed"
+    else:
+        desc = f"resolved {r.conflicts_resolved} file(s) across {r.commits_replayed} commit(s)"
+    if r.force_pushed:
+        desc += ", force-pushed"
+    return [f"**Rebase**: {desc}"]

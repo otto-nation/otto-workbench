@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.42.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.41.1...otto-ai-tools-v1.42.0) (2026-08-03)
+
+
+### Features
+
+* **ci-check:** --wait mode with incremental reporting; fix log fallback ([#562](https://github.com/otto-nation/otto-workbench/issues/562)) ([57bfa11](https://github.com/otto-nation/otto-workbench/commit/57bfa11fb862365fb9c8bfa466a753b0959b1960))
+* **review:** add verdict and status fields to post.jsonl ([#566](https://github.com/otto-nation/otto-workbench/issues/566)) ([7c58afd](https://github.com/otto-nation/otto-workbench/commit/7c58afd773ea55f9fcf35dc4bc46345a1bac792f))
+* **review:** static analysis framework for review pipeline ([#565](https://github.com/otto-nation/otto-workbench/issues/565)) ([00de37f](https://github.com/otto-nation/otto-workbench/commit/00de37f98847ee3c721cd595e5526f39e823848c))
+
+
+### Bug Fixes
+
+* **pr-rebase:** handle detached HEAD worktrees ([#567](https://github.com/otto-nation/otto-workbench/issues/567)) ([bf6907f](https://github.com/otto-nation/otto-workbench/commit/bf6907fdd0a7e2e252ea96b7f2edbaad26352bd1))
+
 ## [1.41.1](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.41.0...otto-ai-tools-v1.41.1) (2026-07-28)
 
 

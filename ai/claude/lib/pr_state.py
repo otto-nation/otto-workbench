@@ -88,6 +88,12 @@ class ReviewStatus(Enum):
     ERROR = "error"
 
 
+class RebaseStatus(Enum):
+    COMPLETED = "completed"
+    CONFLICTS = "conflicts"
+    ABORTED = "aborted"
+
+
 @dataclass
 class PostTracking:
     """Recorded in post.jsonl alongside each review."""

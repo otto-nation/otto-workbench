@@ -34,6 +34,7 @@ import ai_backend
 import log
 import pr_context
 import pr_state
+from pr_state import RebaseStatus
 from trail import Trail, add_trail_args
 
 
@@ -866,7 +867,7 @@ def _drive_one_step(
 
 def _save_conflicts_state(cwd: str, ctx: pr_context.ResolvedContext) -> None:
     """Persist rebase state with status=conflicts."""
-    RebaseOutcome(status="conflicts").save(ctx)
+    RebaseOutcome(status=RebaseStatus.CONFLICTS.value).save(ctx)
 
 
 def _step_conflicts(
@@ -1107,7 +1108,7 @@ def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
 @dataclass
 class RebaseOutcome:
     """Result of a rebase — owns state persistence and JSON reporting."""
-    status: str = "completed"
+    status: str = RebaseStatus.COMPLETED.value
     commits_replayed: int = 0
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
@@ -1208,7 +1209,7 @@ def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     log.info("Aborting rebase...")
     r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
     if r.returncode == 0:
-        RebaseOutcome(status="aborted").save(ctx)
+        RebaseOutcome(status=RebaseStatus.ABORTED.value).save(ctx)
         log.ok("Rebase aborted.")
     return r.returncode
 

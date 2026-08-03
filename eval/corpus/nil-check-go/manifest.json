@@ -1,0 +1,17 @@
+{
+  "name": "nil-check-go",
+  "description": "Method called on pointer that may be nil when map lookup fails",
+  "source": "synthetic",
+  "language": "go",
+  "expected": [
+    {
+      "severity": ["M", "S"],
+      "path": "service.go",
+      "line_range": [13, 19],
+      "category": "correctness",
+      "description_contains": "nil"
+    }
+  ],
+  "false_positives_max": 2,
+  "tags": ["nil-check", "correctness", "go"]
+}

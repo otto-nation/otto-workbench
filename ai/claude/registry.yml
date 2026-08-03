@@ -130,3 +130,8 @@ tools:
     permission: false
     visibility: hidden
     description: "Run a Claude Code skill as a headless background session with output logging"
+
+  - name: eval-models
+    permission: false
+    visibility: hidden
+    description: "Model evaluation runner — benchmarks review pipeline against a corpus of known-bad code"

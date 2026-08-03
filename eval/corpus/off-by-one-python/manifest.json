@@ -1,0 +1,16 @@
+{
+  "name": "off-by-one-python",
+  "description": "Pagination slice uses end + 1, returning one extra item per page",
+  "source": "synthetic",
+  "language": "python",
+  "expected": [
+    {
+      "severity": ["M", "S"],
+      "path": "paginate.py",
+      "line_range": [8, 10],
+      "category": "correctness"
+    }
+  ],
+  "false_positives_max": 3,
+  "tags": ["off-by-one", "correctness", "python"]
+}

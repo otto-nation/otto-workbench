@@ -27,6 +27,7 @@ import review_findings as _rfi  # noqa: E402
 import review_format as _rfmt  # noqa: E402
 import review_github as _rg  # noqa: E402
 import review_posting as _rp  # noqa: E402
+import review_sections as _rs  # noqa: E402
 
 import log  # noqa: E402
 from review_common import SEVERITIES  # noqa: E402
@@ -64,8 +65,12 @@ from review_posting import (  # noqa: E402
     _submit_review, write_post_tracking, _format_submit_command,
     _reclassify_and_retry,
 )
+from review_sections import (  # noqa: E402
+    SectionConfig, ReviewSections, KNOWN_SECTIONS,
+    POSITION_BEFORE, POSITION_AFTER,
+)
 
-_SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp)
+_SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp, _rs)
 
 
 class _ProxyModule(type(sys.modules[__name__])):

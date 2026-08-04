@@ -15,7 +15,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 
 import log
@@ -172,7 +172,7 @@ class RebaseSummary:
     updated_at: str = ""
 
 
-class ThreadAction(Enum):
+class ThreadAction(StrEnum):
     FIXED = "fixed"
     DEFERRED = "deferred"
     NEEDS_HUMAN = "needs_human"
@@ -187,7 +187,7 @@ class ThreadOutcome:
     line: int = 0
     reviewer: str = ""
     summary: str = ""
-    action: str = ""
+    action: ThreadAction = ThreadAction.FIXED
     reason: str = ""
 
     @classmethod
@@ -201,7 +201,7 @@ class ThreadOutcome:
                 line=entry.line,
                 reviewer=entry.reviewer,
                 summary=entry.summary,
-                action=action.value,
+                action=action,
                 reason=getattr(entry, reason_key, ""),
             )
         return cls(
@@ -210,7 +210,7 @@ class ThreadOutcome:
             line=entry.get("line", 0),
             reviewer=entry.get("reviewer", ""),
             summary=entry.get("summary", ""),
-            action=action.value,
+            action=action,
             reason=entry.get(reason_key, ""),
         )
 

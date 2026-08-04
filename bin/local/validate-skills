@@ -153,7 +153,7 @@ for skill_dir in "$SKILLS_DIR"/*/; do
     tool_name=$(awk '
       /^output_schema:/ { in_os=1; next }
       in_os && /^[^ ]/ { exit }
-      in_os && /tool:/ { sub(/.*tool:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
+      in_os && /^[[:space:]]*tool:[[:space:]]/ { sub(/.*tool:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
     ' "$skill_file")
 
     if [[ -z "$tool_name" ]]; then

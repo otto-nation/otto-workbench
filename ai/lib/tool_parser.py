@@ -18,6 +18,7 @@ from argparse import SUPPRESS, ArgumentParser
 _CONTEXT_ARGS = frozenset({"repo_dir", "branch", "pr"})
 
 # Args managed by the framework, not the tool.
+# "debug" is registered by add_trail_args() in the pr dispatcher, not by ToolParser.
 _FRAMEWORK_ARGS = frozenset({"help", "tool_schema", "debug"})
 
 
@@ -35,9 +36,10 @@ class ToolParser(ArgumentParser):
         args = parser.parse_args()
     """
 
-    def __init__(self, *posargs, output_schema=None, **kwargs):
+    def __init__(self, *posargs, output_schema=None, ok_exit_codes=None, **kwargs):
         super().__init__(*posargs, **kwargs)
         self._output_schema = output_schema
+        self._ok_exit_codes = ok_exit_codes or []
         self.add_argument("--tool-schema", action="store_true", help=SUPPRESS)
 
     def parse_args(self, args=None, namespace=None):
@@ -59,6 +61,8 @@ class ToolParser(ArgumentParser):
         }
         if self._output_schema is not None:
             schema["output_schema"] = self._resolve_output_schema()
+        if self._ok_exit_codes:
+            schema["ok_exit_codes"] = self._ok_exit_codes
         return schema
 
     def _build_input_schema(self) -> dict:
@@ -67,6 +71,8 @@ class ToolParser(ArgumentParser):
 
         for action in self._actions:
             if action.dest in _FRAMEWORK_ARGS:
+                continue
+            if action.help is SUPPRESS:
                 continue
 
             prop = _action_to_property(action)

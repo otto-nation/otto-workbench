@@ -81,6 +81,8 @@ def test_context_args_tagged(capsys):
     assert props["branch"].get("x-context") is True
     assert props["pr"].get("x-context") is True
     assert "x-context" not in props["fix"]
+    assert "x-context" not in props["count"]
+    assert "x-context" not in props["effort"]
 
 
 def test_framework_args_excluded(capsys):
@@ -156,3 +158,4 @@ def test_store_false_action(capsys):
     schema = json.loads(capsys.readouterr().out)
     props = schema["input_schema"]["properties"]
     assert props["push"]["type"] == "boolean"
+    assert "no_push" not in props

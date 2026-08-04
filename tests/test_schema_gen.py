@@ -87,8 +87,7 @@ def test_enum():
 def test_nullable():
     schema = dataclass_to_schema(Person)
     nickname_schema = schema["properties"]["nickname"]
-    assert nickname_schema["type"] == "string"
-    assert nickname_schema["nullable"] is True
+    assert nickname_schema == {"oneOf": [{"type": "string"}, {"type": "null"}]}
 
 
 def test_nested_dataclass():

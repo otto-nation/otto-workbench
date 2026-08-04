@@ -1,4 +1,5 @@
 {
+  "name": "otto-workbench",
   "label": "Otto Workbench Tools",
   "url": "https://github.com/otto-nation/otto-workbench",
   "command": ["otto-mcp-server"]

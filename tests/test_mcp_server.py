@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 import stat
 import sys
 import textwrap
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -67,7 +65,7 @@ class TestExtractJson:
 # ── Argument Mapping ──────────────────────────────────────────────────────
 
 
-class TestArgsToClI:
+class TestArgsToCLI:
     def test_boolean_true(self):
         schema = {"properties": {"fix": {"type": "boolean"}}}
         args = _args_to_cli({"fix": True}, schema)
@@ -102,6 +100,11 @@ class TestArgsToClI:
         assert "--fix" in args
         assert "--branch" in args
         assert "feat" in args
+
+    def test_none_value_skipped(self):
+        schema = {"properties": {"branch": {"type": "string"}}}
+        args = _args_to_cli({"branch": None}, schema)
+        assert args == []
 
 
 # ── Tool Discovery ────────────────────────────────────────────────────────

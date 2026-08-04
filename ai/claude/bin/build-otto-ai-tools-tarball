@@ -91,6 +91,15 @@ if (( bin_count < MIN_BIN_SCRIPTS )); then
   exit 1
 fi
 
+# Patch Python sys.path for tarball layout — in the tarball, bin/ and lib/ are
+# siblings under one root. In the repo, scripts are at ai/claude/bin/ and modules
+# at ai/lib/ (one extra parent level). Remove one .parent from lib path chains.
+for pyscript in "$DEST/bin/"*; do
+  [[ -f "$pyscript" ]] || continue
+  head -1 "$pyscript" | grep -q python3 || continue
+  sed -i '' 's/\.parent\.parent \/ "lib"/.parent \/ "lib"/g' "$pyscript"
+done
+
 # Library files — all Python modules
 for py in "$_AI_LIB_DIR/"*.py; do
   cp "$py" "$DEST/lib/"

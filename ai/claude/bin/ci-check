@@ -27,7 +27,7 @@ from pathlib import Path
 from string import Template
 from typing import TypedDict
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import ai_backend
 import ci_failures as ci
@@ -44,7 +44,7 @@ _SKIP_KINDS = frozenset(("infra", "flaky"))
 FIX_MAX_TURNS = 20
 FIX_MAX_BUDGET = 3.0
 FIX_MODEL = "sonnet"
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "lib" / "review-templates"
 
 
 _SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))

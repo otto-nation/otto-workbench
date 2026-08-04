@@ -21,7 +21,7 @@ def _clear_git_hook_env():
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LIB_DIR = str(REPO_ROOT / "ai" / "claude" / "lib")
+LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"

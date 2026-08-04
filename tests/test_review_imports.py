@@ -37,7 +37,7 @@ SCRIPTS = [
     REPO_ROOT / "ai" / "claude" / "bin" / "review-post",
     REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate",
 ]
-LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
+LIB_DIR = REPO_ROOT / "ai" / "lib"
 
 BUILTINS = {"__name__", "__file__", "__class__", "__spec__"}
 

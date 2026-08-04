@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"
+LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
 from trail import (

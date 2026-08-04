@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import log
 import ai_backend
@@ -57,7 +57,7 @@ FIX_MODEL = "sonnet"
 DIFF_CONTEXT_MAX_LINES = 100
 FIX_RETRY_TURNS_MIN = 30
 FIX_RETRY_TURNS_BUMP = 15
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 _APPLIED_REPLY_PREFIX = "Applied:"

@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BIN_DIR.parent / "lib"))
+sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 
 import ci_failures
 import pr_comments

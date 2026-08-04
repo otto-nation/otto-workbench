@@ -3350,3 +3350,80 @@ class TestStaticAnalysisIntegration:
         result = review_file.read_text()
         assert "## Static Analysis" in result
         assert "All checks passed" in result
+
+
+class TestBuildFailuresSection:
+    def test_no_failures_returns_empty(self):
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["ui", "api"],
+            groups_done=[1, 2], groups_failed={},
+            synthesis_done=True, synthesis_failed="",
+        )
+        assert build_failures_section(state, []) == ""
+
+    def test_group_failures_produce_table(self):
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
+            groups_done=[1], groups_failed={2: "quota exhausted (429)", 3: "agent hit max turns (5)"},
+            synthesis_done=True, synthesis_failed="",
+        )
+        result = build_failures_section(state, [])
+        assert "## Agent Failures" in result
+        assert "group-2: api-routes" in result
+        assert "quota exhausted (429)" in result
+        assert "group-3: tests" in result
+        assert "agent hit max turns" in result
+        assert "failed" in result
+        assert "pr review --recover" in result
+
+    def test_synthesis_fallback_in_table(self):
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["g1"],
+            groups_done=[1], groups_failed={},
+            synthesis_done=True, synthesis_failed="mechanical fallback",
+        )
+        result = build_failures_section(state, [])
+        assert "synthesis" in result
+        assert "fallback" in result
+
+    def test_no_recover_hint_for_permission_errors(self):
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["g1"],
+            groups_done=[], groups_failed={1: "permission denied"},
+            synthesis_done=True, synthesis_failed="",
+        )
+        result = build_failures_section(state, [])
+        assert "## Agent Failures" in result
+        assert "pr review --recover" not in result
+
+
+def test_meta_status_constant_format():
+    from review_common import META_STATUS
+    assert META_STATUS.format(status="complete") == "<!-- status: complete -->"
+    assert META_STATUS.format(status="partial") == "<!-- status: partial -->"
+    assert META_STATUS.format(status="error") == "<!-- status: error -->"
+
+
+class TestFailuresSectionInReview:
+    def test_mechanical_fallback_includes_failures(self, tmp_path):
+        """When synthesis falls back, the review includes ## Agent Failures."""
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["ui", "api"],
+            groups_done=[1], groups_failed={2: "quota exhausted (429)"},
+            synthesis_done=True, synthesis_failed="mechanical fallback",
+        )
+        result = build_failures_section(state, [])
+        assert "group-2: api" in result
+        assert "quota exhausted" in result
+        assert "synthesis" in result
+        assert "fallback" in result

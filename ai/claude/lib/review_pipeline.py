@@ -29,6 +29,7 @@ from review_common import (
     FILENAME_SYNTHESIS_LOG,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
+    META_STATUS,
     MODE_SELF,
     PRIOR_DATE_RE,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
@@ -36,6 +37,7 @@ from review_common import (
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
     preserve_log, restore_preserved,
+    read_pipeline_status,
 )
 from review_findings import (
     Finding,
@@ -350,6 +352,71 @@ _FIX_RETRY_HINT = (
     "Skip findings that require design decisions — annotate them with *(skipped — reason)* "
     "and move on.\n\n"
 )
+
+_NON_RECOVERABLE_REASONS = ("permission denied",)
+
+
+def build_failures_section(
+    state: "PipelineState", groups: "list[Group]",
+) -> str:
+    """Build a markdown Agent Failures section from pipeline state."""
+    rows: list[tuple[str, str, str]] = []
+
+    for idx, reason in sorted(state.groups_failed.items(), key=lambda x: int(x[0]) if isinstance(x[0], str) else x[0]):
+        idx = int(idx) if isinstance(idx, str) else idx
+        name = state.group_names[idx - 1] if idx <= len(state.group_names) else f"group-{idx}"
+        rows.append((f"group-{idx}: {name}", reason, "failed"))
+
+    if state.synthesis_failed:
+        status = "fallback" if state.synthesis_failed == "mechanical fallback" else "failed"
+        rows.append(("synthesis", state.synthesis_failed, status))
+
+    if not rows:
+        return ""
+
+    lines = [
+        "## Agent Failures",
+        "",
+        "| Agent | Reason | Status |",
+        "|-------|--------|--------|",
+    ]
+    for agent, reason, status in rows:
+        lines.append(f"| {agent} | {reason} | {status} |")
+
+    has_recoverable = any(
+        reason not in _NON_RECOVERABLE_REASONS
+        for _, reason, _ in rows
+    )
+    if has_recoverable:
+        lines.append("")
+        lines.append("Run `pr review --recover` to retry failed agents.")
+
+    return "\n".join(lines) + "\n"
+
+
+def _inject_failures_and_status(
+    review_file: str, state: "PipelineState", groups: "list[Group]",
+) -> None:
+    """Insert Agent Failures section and status metadata into an existing review."""
+    path = Path(review_file)
+    if not path.exists():
+        return
+    content = path.read_text()
+
+    status = read_pipeline_status(path.parent)
+
+    failures = build_failures_section(state, groups)
+    if failures and "## Agent Failures" not in content:
+        content = content.replace("## Summary", f"{failures}\n## Summary", 1)
+
+    if "<!-- status:" not in content:
+        status_line = META_STATUS.format(status=status)
+        content = content.replace("<!-- generator:", f"{status_line}\n<!-- generator:", 1)
+        if status_line not in content:
+            # generator line not found — insert before first ## heading
+            content = content.replace("## ", f"{status_line}\n\n## ", 1)
+
+    path.write_text(content)
 
 
 def _review_group(
@@ -1032,6 +1099,7 @@ def _phase_merge(group_outputs: list[str], failed_groups: "list[tuple[str, str]]
 def _build_meta_header(
     job: ReviewJob,
     skipped_groups: int = 0, total_groups: int = 0,
+    status: str = "",
 ) -> str:
     today = date.today().isoformat()
     incremental = _is_incremental(job)
@@ -1055,6 +1123,9 @@ def _build_meta_header(
                 skipped=skipped_groups, total=total_groups,
             ))
 
+    if status:
+        lines.append(META_STATUS.format(status=status))
+
     if job.generator_version:
         lines.append(META_GENERATOR.format(generator_version=job.generator_version))
 
@@ -1071,14 +1142,20 @@ def _is_complete_review(review_file: str) -> bool:
 def _build_mechanical_fallback(
     job: ReviewJob, group_count: int, merged_content: str,
     skipped_groups: int = 0,
+    pipeline_state: "PipelineState | None" = None,
+    groups: "list[Group] | None" = None,
 ) -> str:
+    status = read_pipeline_status(Path(job.review_file).parent) if Path(job.review_file).parent.exists() else "error"
     meta = _build_meta_header(
         job, skipped_groups=skipped_groups, total_groups=group_count,
+        status=status,
     )
     if job.mode == MODE_SELF:
         title = f"# Self-Review: {job.repo} — {job.pr.head}"
     else:
         title = f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}"
+
+    failures_section = build_failures_section(pipeline_state, groups or []) if pipeline_state else ""
 
     return build_mechanical_review(
         merged_content,
@@ -1088,6 +1165,7 @@ def _build_mechanical_fallback(
         summary_note=FALLBACK_SUMMARY,
         include_verdict=(job.mode != MODE_SELF),
         file_count=job.pr.changed_files,
+        failures_section=failures_section,
     )
 
 
@@ -1426,6 +1504,7 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged_content: str, failed_groups: "list[tuple[str, str]]",
     n_skipped: int, cost_so_far: float, max_cost: float,
+    groups: "list[Group] | None" = None,
 ) -> str:
     all_groups_failed = len(failed_groups) == group_count
 
@@ -1440,6 +1519,7 @@ def _run_synthesis_or_fallback(
         log.warn("All group agents failed — skipping synthesis")
         fallback = _build_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=n_skipped,
+            pipeline_state=state, groups=groups,
         )
         Path(job.review_file).write_text(fallback)
         _write_review_sidecar(job)
@@ -1475,6 +1555,7 @@ def _run_synthesis_or_fallback(
     if _MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
         state.synthesis_failed = "mechanical fallback"
     _write_pipeline_state(job, state)
+    _inject_failures_and_status(job.review_file, state, groups or [])
     return synthesis_log
 
 
@@ -1570,6 +1651,7 @@ def run_multi_phase(
     synthesis_log = _run_synthesis_or_fallback(
         job, state, holistic_content, group_count,
         merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
+        groups=groups,
     )
 
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────

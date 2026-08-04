@@ -826,6 +826,36 @@ class TestFormatBodyTextDetails:
         idiom_idx = result.index("<summary>Idioms")
         assert nit_idx < idiom_idx
 
+    def test_static_analysis_appended_after_findings(self, rp):
+        findings = [
+            rp.Finding(id="N1", severity="N", seq=1, path="a.go", line=10,
+                       end_line=None, body="Nit", posted_id="N1"),
+        ]
+        sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
+        result = rp.format_body_text(
+            findings, has_inline=True, severity_filter={"N"},
+            static_analysis=sa,
+        )
+        assert "### Nesting depth" in result
+        assert "depth 5 exceeds limit 4" in result
+        assert result.index("Nit") < result.index("Nesting depth")
+
+    def test_static_analysis_with_no_findings(self, rp):
+        sa = "### Nesting depth\n1 violation in 1 of 3 files checked"
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            static_analysis=sa,
+        )
+        assert "Have some comments" in result
+        assert "### Nesting depth" in result
+
+    def test_static_analysis_empty_string_omitted(self, rp):
+        result = rp.format_body_text(
+            [], has_inline=True, severity_filter={"M"},
+            static_analysis="",
+        )
+        assert "Static Analysis" not in result
+
 
 class TestFormatPathRef:
     def test_path_with_line(self, rp):
@@ -2330,6 +2360,41 @@ class TestDryRunIntegration:
         result = self._run_dry_run(review_file)
         assert result.returncode != 0
         assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
+
+    def test_dry_run_includes_static_analysis(self, tmp_path):
+        review_with_sa = (
+            "# Review: test-org/test-repo#42 — Fix handler\n"
+            "<!-- head_sha: abc123def456 -->\n"
+            "\n"
+            "## Summary\n"
+            "Clean refactor.\n"
+            "\n"
+            "## Must fix\n"
+            "\n"
+            "- **[M1]** **`handler.go:11`** — missing error check\n"
+            "\n"
+            "## Static Analysis\n"
+            "\n"
+            "### Nesting depth\n"
+            "1 violation in 1 of 3 files checked\n"
+            "\n"
+            "- **`config.sh:42`** — depth 5 exceeds limit 4 (in main())\n"
+            "\n"
+            "## Verdict\n"
+            "\n"
+            "Request changes.\n"
+        )
+        review_dir = tmp_path / "sa-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(review_with_sa)
+        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        (review_dir / "meta.json").write_text(json.dumps(meta))
+        result = self._run_dry_run(review_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = self._extract_json(result.stdout)
+        assert "Nesting depth" in payload["body"]
+        assert "depth 5 exceeds limit 4" in payload["body"]
 
 
 class TestCheckReviewAlreadyPosted:

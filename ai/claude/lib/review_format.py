@@ -232,6 +232,7 @@ def format_body_text(
     severity_filter: set[str],
     summary: str = "",
     verdict: str = "",
+    static_analysis: str = "",
 ) -> str:
     """Format the review body text with body/skipped findings."""
     parts: list[str] = []
@@ -255,8 +256,13 @@ def format_body_text(
     else:
         parts.append(f"Review findings ({', '.join(labels)}):")
 
-    if not body_findings:
+    if not body_findings and not static_analysis:
         return "\n".join(parts)
+
+    if not body_findings:
+        parts.append("")
+        parts.append(static_analysis)
+        return "\n".join(parts).rstrip("\n")
 
     by_sev: dict[str, list[Finding]] = {}
     by_file: dict[str, list[Finding]] = {}
@@ -273,6 +279,10 @@ def format_body_text(
 
     if by_file:
         _append_body_only_findings(parts, by_file)
+
+    if static_analysis:
+        parts.append("")
+        parts.append(static_analysis)
 
     return "\n".join(parts).rstrip("\n")
 

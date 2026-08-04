@@ -92,11 +92,12 @@ class ReviewSections:
                 )
 
             content = _extract_section(text, cfg.header)
-            if content:
-                entries[cfg.key] = content
-                configs[cfg.key] = cfg
-                if cfg.key not in order:
-                    order.append(cfg.key)
+            if not content:
+                continue
+            entries[cfg.key] = content
+            configs[cfg.key] = cfg
+            if cfg.key not in order:
+                order.append(cfg.key)
 
         known_order = [c.key for c in KNOWN_SECTIONS]
         order.sort(key=lambda k: (

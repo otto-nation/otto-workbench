@@ -227,6 +227,38 @@ def _append_body_only_findings(
             _append_details_findings(parts, sev, by_file[sev])
 
 
+def _render_before_findings(
+    parts: list[str],
+    before: list[tuple[SectionConfig, str]],
+) -> None:
+    current_parent: str = ""
+    for cfg, content in before:
+        parent = cfg.subsection_of or cfg.key
+        prev = next((c for c, _ in before if c.key == current_parent), None)
+        if current_parent and parent != current_parent and prev and prev.trailing_separator:
+            parts.extend(("---", ""))
+        current_parent = parent
+        if cfg.heading:
+            parts.extend((cfg.heading, ""))
+        if cfg.strip_action:
+            content = _VERDICT_ACTION_RE.sub("", content, count=1)
+        parts.extend((content, ""))
+    last_cfg = next((c for c, _ in before if c.key == current_parent), None)
+    if last_cfg and last_cfg.trailing_separator:
+        parts.extend(("---", ""))
+
+
+def _render_after_findings(
+    parts: list[str],
+    after: list[tuple[SectionConfig, str]],
+) -> None:
+    for cfg, content in after:
+        parts.append("")
+        if cfg.heading:
+            parts.extend((cfg.heading, ""))
+        parts.append(content)
+
+
 def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
@@ -241,29 +273,7 @@ def format_body_text(
 
     before = sections.before_findings()
     if before:
-        current_parent: str = ""
-        for cfg, content in before:
-            parent = cfg.subsection_of or cfg.key
-            if current_parent and parent != current_parent:
-                parent_cfg = next(
-                    (c for c, _ in before if c.key == current_parent), None)
-                if parent_cfg and parent_cfg.trailing_separator:
-                    parts.append("---")
-                    parts.append("")
-            current_parent = parent
-            if cfg.heading:
-                parts.append(cfg.heading)
-                parts.append("")
-            if cfg.strip_action:
-                content = _VERDICT_ACTION_RE.sub("", content, count=1)
-            parts.append(content)
-            parts.append("")
-        last_parent_key = current_parent
-        last_parent_cfg = next(
-            (c for c, _ in before if c.key == last_parent_key), None)
-        if last_parent_cfg and last_parent_cfg.trailing_separator:
-            parts.append("---")
-            parts.append("")
+        _render_before_findings(parts, before)
 
     labels = [s.label for s in SEVERITIES if s.key in severity_filter]
 
@@ -278,12 +288,7 @@ def format_body_text(
         return "\n".join(parts)
 
     if not body_findings:
-        for cfg, content in after:
-            parts.append("")
-            if cfg.heading:
-                parts.append(cfg.heading)
-                parts.append("")
-            parts.append(content)
+        _render_after_findings(parts, after)
         return "\n".join(parts).rstrip("\n")
 
     by_sev: dict[str, list[Finding]] = {}
@@ -302,12 +307,7 @@ def format_body_text(
     if by_file:
         _append_body_only_findings(parts, by_file)
 
-    for cfg, content in after:
-        parts.append("")
-        if cfg.heading:
-            parts.append(cfg.heading)
-            parts.append("")
-        parts.append(content)
+    _render_after_findings(parts, after)
 
     return "\n".join(parts).rstrip("\n")
 

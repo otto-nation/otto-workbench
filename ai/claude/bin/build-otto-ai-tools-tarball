@@ -22,6 +22,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 WORKBENCH_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 _CLAUDE_DIR="$(dirname "$SCRIPT_DIR")"
+_AI_LIB_DIR="$WORKBENCH_ROOT/ai/lib"
 
 # ─── Constants ────────────────────────────────────────────────────────────
 
@@ -90,8 +91,18 @@ if (( bin_count < MIN_BIN_SCRIPTS )); then
   exit 1
 fi
 
+# Patch Python sys.path for tarball layout — in the tarball, bin/ and lib/ are
+# siblings under one root. In the repo, scripts are at ai/claude/bin/ and modules
+# at ai/lib/ (one extra parent level). Remove one .parent from lib path chains.
+for pyscript in "$DEST/bin/"*; do
+  [[ -f "$pyscript" ]] || continue
+  head -1 "$pyscript" | grep -q python3 || continue
+  sed -i.bak 's/\.parent\.parent \/ "lib"/.parent \/ "lib"/g' "$pyscript"
+  rm -f "$pyscript.bak"
+done
+
 # Library files — all Python modules
-for py in "$_CLAUDE_DIR/lib/"*.py; do
+for py in "$_AI_LIB_DIR/"*.py; do
   cp "$py" "$DEST/lib/"
 done
 
@@ -101,7 +112,7 @@ for sh in "${BASH_MODULES[@]}"; do
 done
 
 # Templates — all .md files in the templates directory
-for tpl in "$_CLAUDE_DIR/lib/review-templates/"*.md; do
+for tpl in "$_AI_LIB_DIR/review-templates/"*.md; do
   cp "$tpl" "$DEST/lib/review-templates/"
 done
 

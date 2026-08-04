@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
+LIB_DIR = REPO_ROOT / "ai" / "lib"
 
 BUILTIN_NAMES = set(dir(builtins)) | {
     "__name__", "__file__", "__class__", "__spec__",

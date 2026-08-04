@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_pipeline
 from review_preflight import PipelineState, PRContext, PRMetadata, ReviewJob

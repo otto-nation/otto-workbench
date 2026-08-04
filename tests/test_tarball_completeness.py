@@ -16,7 +16,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "build-otto-ai-tools-tarball"
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
-LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
+LIB_DIR = REPO_ROOT / "ai" / "lib"
 
 BIN_EXCLUDE = {"build-otto-ai-tools-tarball", "_version.py"}
 

@@ -139,6 +139,8 @@ def _parse_diff(diff_output: str) -> dict[str, set[int]]:
             remaining -= 1
         elif line.startswith('-'):
             pass  # removed line — does not advance new-file line counter
+        elif line.startswith('\\'):
+            pass  # "\ No newline at end of file" marker
         else:
             current_line += 1
             remaining -= 1

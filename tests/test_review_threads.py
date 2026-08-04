@@ -651,11 +651,11 @@ class TestFixedStatusText:
         assert "abc1234" in text
         assert "push failed" not in text
 
-    def test_push_failed_with_sha(self, rt):
+    def test_push_failed_falls_through_to_pending(self, rt):
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert "abc1234" in text
-        assert "push failed" in text
+        assert text == "Fix pending"
+        assert "push failed" not in text
 
     def test_no_changes(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
@@ -702,13 +702,13 @@ class TestBuildSummaryBody:
         )
         assert "commit failed" in body
 
-    def test_push_failed_shows_sha_and_warning(self, rt):
+    def test_push_failed_shows_pending(self, rt):
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         body = rt._build_summary_body(
             [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
-        assert "abc1234" in body
-        assert "push failed" in body
+        assert "Fix pending" in body
+        assert "push failed" not in body
 
     def test_needs_human_rows(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
@@ -880,6 +880,84 @@ def _make_state(fix=None):
     )
 
 
+class TestPostOrDeferSummary:
+    def _fixed_entry(self, **overrides):
+        defaults = {"summary": "fix regex", "file": "parsers.py", "line": 10}
+        defaults.update(overrides)
+        return CommentItem(**defaults)
+
+    def test_posts_when_pushed_no_deferred(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock:
+            url = rt._post_or_defer_summary(
+                [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
+            )
+        assert url == "https://url"
+        mock.assert_called_once()
+
+    def test_defers_when_needs_human(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        url = rt._post_or_defer_summary(
+            [self._fixed_entry()],
+            [self._fixed_entry(summary="question")],
+            [], cp, "owner/repo", 1, {},
+        )
+        assert url is None
+
+    def test_defers_when_push_failed(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        with patch("pr_comments.post_issue_comment") as mock:
+            url = rt._post_or_defer_summary(
+                [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
+            )
+        assert url is None
+        mock.assert_not_called()
+
+
+class TestUnaccountedThreadsDeferSummary:
+    """Summary should defer when non-resolved threads are not in any classified bucket."""
+
+    def test_all_threads_accounted(self, rt):
+        """When every non-resolved thread is in fixable/needs_human/dismissed, none are unaccounted."""
+        triage_threads = [
+            CommentItem(id="t1", classification="actionable_suggestion",
+                        verification="valid", complexity="low",
+                        file="a.py", line=1, summary="fix it"),
+        ]
+        report_threads = [
+            ReportThread(id="t1", state="new", is_resolved=False),
+            ReportThread(id="t2", state="resolved", is_resolved=True),
+        ]
+        accounted_ids = rt._accounted_thread_ids(triage_threads, [], [])
+        non_resolved = [t for t in report_threads if t.state != "resolved"]
+        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
+        assert unaccounted == []
+
+    def test_unaccounted_threads_detected(self, rt):
+        """Threads not in any classified bucket are detected as unaccounted."""
+        triage_threads = [
+            CommentItem(id="t1", classification="actionable_suggestion",
+                        verification="valid", complexity="low",
+                        file="a.py", line=1, summary="fix it"),
+            CommentItem(id="t2", classification="approval",
+                        file="b.py", line=1, summary="lgtm"),
+        ]
+        report_threads = [
+            ReportThread(id="t1", state="new", is_resolved=False),
+            ReportThread(id="t2", state="new", is_resolved=False),
+            ReportThread(id="t3", state="new", is_resolved=False),
+        ]
+        classified = rt._classify_triage_entries(triage_threads)
+        accounted_ids = rt._accounted_thread_ids(
+            classified.fixable, classified.needs_human, classified.dismissed,
+        )
+        non_resolved = [t for t in report_threads if t.state != "resolved"]
+        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
+        # t2 was classified as "approval" and dropped; t3 wasn't in triage at all
+        assert len(unaccounted) == 2
+        assert {t.id for t in unaccounted} == {"t2", "t3"}
+
+
 class TestRenderDeferredSummary:
     def test_not_deferred_is_noop(self, rt):
         state = _make_state(FixSummary(summary_deferred=False))
@@ -963,6 +1041,94 @@ class TestRenderDeferredSummary:
             rt._render_deferred_summary(state, report, "owner/repo", 1, {})
         body = mock_post.call_args[0][2]
         assert "def5678" in body
+
+    def test_skips_when_push_failed_and_still_unpushed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="def5678",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment") as mock_post:
+            with patch.object(rt, "_is_pushed", return_value=False):
+                rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        mock_post.assert_not_called()
+        assert fix.summary_deferred is True
+
+    def test_posts_when_push_failed_but_now_pushed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="def5678",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
+            with patch.object(rt, "_is_pushed", return_value=True):
+                rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        mock_post.assert_called_once()
+        assert fix.summary_deferred is False
+        assert fix.commit_status == "pushed"
+        body = mock_post.call_args[0][2]
+        assert "def5678" in body
+        assert "push failed" not in body
+
+
+class TestResolvePushDeferredReplies:
+    """Test that --resolve posts deferred replies when push has since landed."""
+
+    def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+                ThreadOutcome(id="t2", summary="another", file="y.py", line=2, action="fixed"),
+            ],
+            commit_sha="abc1234",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        threads_by_id = {
+            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
+            "t2": ReportThread(id="t2", is_resolved=False, comments=[{"databaseId": 200}]),
+        }
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            rt._post_push_deferred_replies(state, "owner/repo", 1, threads_by_id)
+        assert mock_reply.call_count == 2
+        assert mock_resolve.call_count == 2
+        assert fix.commit_status == "pushed"
+
+    def test_skips_when_still_unpushed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="abc1234",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch("pr_comments.post_thread_reply") as mock_reply:
+            rt._post_push_deferred_replies(state, "owner/repo", 1, {})
+        mock_reply.assert_not_called()
+        assert fix.commit_status == "push_failed"
+
+    def test_noop_when_not_push_failed(self, rt):
+        fix = FixSummary(commit_status="pushed", summary_deferred=True)
+        state = _make_state(fix)
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            rt._post_push_deferred_replies(state, "owner/repo", 1, {})
+        mock_reply.assert_not_called()
 
 
 # ── _summarize_comment_body ─────────────────────────────────────────────────

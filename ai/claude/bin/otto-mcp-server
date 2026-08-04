@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd -P)"
+exec uv run --with mcp python3 "$SCRIPT_DIR/../mcps/server.py" "$@"

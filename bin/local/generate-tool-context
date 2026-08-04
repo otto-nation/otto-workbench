@@ -418,7 +418,7 @@ _readme_skill_reference() {
     local skill_file="$d/SKILL.md"
     [[ -f "$skill_file" ]] || continue
 
-    local skill_name skill_desc invocation output cadence trigger skip
+    local skill_name skill_desc invocation output cadence trigger skip output_tool
     skill_name="$(basename "$d")"
     skill_desc="$(_extract_frontmatter_field "$skill_file" "description")"
     invocation="$(_extract_frontmatter_field "$skill_file" "invocation")"
@@ -426,6 +426,11 @@ _readme_skill_reference() {
     cadence="$(_extract_frontmatter_field "$skill_file" "lifecycle_cadence")"
     trigger="$(_extract_frontmatter_field "$skill_file" "trigger")"
     skip="$(_extract_frontmatter_field "$skill_file" "skip")"
+    output_tool=$(awk '
+      /^output_schema:/ { in_os=1; next }
+      in_os && /^[^ ]/ { exit }
+      in_os && /tool:/ { sub(/.*tool:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
+    ' "$skill_file")
 
     [[ -z "$invocation" ]] && invocation="/$skill_name"
     [[ -z "$skill_desc" ]] && skill_desc="—"
@@ -438,6 +443,10 @@ _readme_skill_reference() {
     if [[ -n "$output" ]]; then
       # shellcheck disable=SC2016  # backticks are markdown literals
       printf '\n**Output:** `%s`\n' "$output"
+    fi
+    if [[ -n "$output_tool" ]]; then
+      # shellcheck disable=SC2016  # backticks are markdown literals
+      printf '**Output schema:** `%s --tool-schema` (MCP tool: `%s`)\n' "$output_tool" "$output_tool"
     fi
     if [[ -n "$cadence" ]]; then
       printf '**Auto-trigger:** %s (via Stop hook)\n' "$cadence"

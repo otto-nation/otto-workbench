@@ -146,6 +146,31 @@ for skill_dir in "$SKILLS_DIR"/*/; do
       && _pass "$display: lifecycle_scope valid" \
       || _fail "$display: lifecycle_scope '$local_scope' must be 'per-project' or 'global'"
   fi
+
+  # output_schema validation — tool field must name a script supporting --tool-schema
+  has_output_schema=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { exit } in_fm && /^output_schema:/ { print "yes"; exit }' "$skill_file")
+  if [[ "$has_output_schema" == "yes" ]]; then
+    tool_name=$(awk '
+      /^output_schema:/ { in_os=1; next }
+      in_os && /^[^ ]/ { exit }
+      in_os && /tool:/ { sub(/.*tool:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
+    ' "$skill_file")
+
+    if [[ -z "$tool_name" ]]; then
+      _fail "$display: output_schema present but no tool field found"
+    else
+      tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
+      if [[ -x "$tool_script" ]]; then
+        if "$tool_script" --tool-schema > /dev/null 2>&1; then
+          _pass "$display: output_schema tool '$tool_name' supports --tool-schema"
+        else
+          _fail "$display: output_schema tool '$tool_name' does not support --tool-schema"
+        fi
+      else
+        _fail "$display: output_schema tool '$tool_name' not found in ai/claude/bin/"
+      fi
+    fi
+  fi
 done
 
 # Summary

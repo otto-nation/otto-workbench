@@ -5,6 +5,8 @@ source: otto-workbench/ai/claude/skills/pr-rebase/SKILL.md
 invocation: "/pr-rebase [branch] [--no-fix]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."
+output_schema:
+  tool: pr-rebase
 ---
 
 # PR Rebase

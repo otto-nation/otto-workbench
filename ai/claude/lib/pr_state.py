@@ -85,6 +85,7 @@ class PostEvent(Enum):
 
 class ReviewStatus(Enum):
     COMPLETED = "completed"
+    PARTIAL = "partial"
     ERROR = "error"
 
 
@@ -131,6 +132,7 @@ class ReviewSummary:
     finding_counts: dict[str, int] = field(default_factory=dict)
     verdict: str = ""
     status: str = ""
+    failure_detail: str = ""
     cost_usd: float = 0.0
     total_tokens: int = 0
     updated_at: str = ""

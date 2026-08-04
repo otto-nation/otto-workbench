@@ -128,6 +128,7 @@ META_PRIOR_DATE = "<!-- prior_date: {prior_date} -->"
 META_DELTA_FILES = "<!-- delta_files: {delta_file_count} -->"
 META_SKIPPED_GROUPS = "<!-- skipped_groups: {skipped}/{total} -->"
 META_GENERATOR = "<!-- generator: {generator_version} -->"
+META_STATUS = "<!-- status: {status} -->"
 
 PRIOR_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 PRIOR_DATE_RE = re.compile(r"<!-- date: (\d{4}-\d{2}-\d{2}) -->")
@@ -359,14 +360,32 @@ def _read_pipeline_data(review_dir: Path | None) -> dict | None:
 
 
 def read_pipeline_status(review_dir: Path | None) -> str:
-    """Derive review status from pipeline state: 'error' if any agent failed, else 'completed'."""
+    """Derive review status from pipeline state.
+
+    complete — all phases succeeded, no failures
+    partial  — review produced but with failures (groups or synthesis fallback)
+    error    — all groups failed, no usable output
+    """
     from pr_state import ReviewStatus
     data = _read_pipeline_data(review_dir)
     if data is None:
         return ReviewStatus.COMPLETED.value
-    if data.get("synthesis_failed") or data.get("groups_failed"):
+
+    groups_failed = data.get("groups_failed", {})
+    synthesis_failed = data.get("synthesis_failed", "")
+    group_names = data.get("group_names", [])
+
+    if not groups_failed and not synthesis_failed:
+        return ReviewStatus.COMPLETED.value
+
+    all_groups_failed = (
+        synthesis_failed == "all groups failed"
+        or (groups_failed and len(groups_failed) >= len(group_names) and len(group_names) > 0)
+    )
+    if all_groups_failed:
         return ReviewStatus.ERROR.value
-    return ReviewStatus.COMPLETED.value
+
+    return ReviewStatus.PARTIAL.value
 
 
 def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
@@ -385,6 +404,34 @@ def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
     if data.get("synthesis_failed"):
         warnings.append("synthesis")
     return warnings
+
+
+def build_failure_detail(review_dir: Path | None) -> str:
+    """Build a human-readable failure detail string from pipeline state."""
+    data = _read_pipeline_data(review_dir)
+    if data is None:
+        return ""
+    groups_failed = data.get("groups_failed", {})
+    synthesis_failed = data.get("synthesis_failed", "")
+    group_names = data.get("group_names", [])
+
+    if not groups_failed and not synthesis_failed:
+        return ""
+
+    parts = []
+    if groups_failed:
+        n_failed = len(groups_failed)
+        n_total = len(group_names)
+        reasons = sorted(set(groups_failed.values()))
+        if n_failed >= n_total and n_total > 0:
+            parts.append(f"all groups failed: {', '.join(reasons)}")
+        else:
+            parts.append(f"{n_failed}/{n_total} groups failed: {', '.join(reasons)}")
+
+    if synthesis_failed and synthesis_failed != "all groups failed":
+        parts.append(f"synthesis: {synthesis_failed}")
+
+    return "; ".join(parts)
 
 
 def parse_review_verdict(review_path: Path | None) -> str:
@@ -447,6 +494,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
             pass
 
     status = read_pipeline_status(review_dir)
+    failure_detail = build_failure_detail(review_dir)
 
     return {
         "repo": repo,
@@ -460,6 +508,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
         "findings": {**counts, "total": total},
         "verdict": verdict,
         "status": status,
+        "failure_detail": failure_detail,
         "cost_usd": usage.cost,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,

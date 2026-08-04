@@ -1107,6 +1107,108 @@ class TestPostAlreadyAddressedReplies:
         mock_reply.assert_not_called()
 
 
+# ── reply dedup ──────────────────────────────────────────────────────────
+
+
+class TestReplyDedup:
+
+    def test_dismissed_skips_when_reply_exists(self, rt):
+        dismissed = [CommentItem(id="t1", summary="not applicable")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[
+                {"databaseId": 111},
+                {"body": "Suggestion reviewed and determined to be inapplicable: reason"},
+            ]),
+        }
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            count = rt._post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42,
+            )
+        assert count == 0
+        mock_reply.assert_not_called()
+
+    def test_dismissed_posts_when_no_prior_reply(self, rt):
+        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
+        }
+        with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+            count = rt._post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42,
+            )
+        assert count == 1
+        mock_reply.assert_called_once()
+
+    def test_deferred_skips_when_reply_exists(self, rt):
+        deferred = [CommentItem(id="t1", summary="fix it")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[
+                {"databaseId": 111},
+                {"body": "Deferred: fix it\n\nTracked in ENG-123."},
+            ]),
+        }
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            count = rt._post_deferred_replies(
+                deferred, threads_by_id, "owner/repo", 42,
+                "ENG-456", "https://linear.app/team/issue/ENG-456",
+            )
+        assert count == 0
+        mock_reply.assert_not_called()
+
+    def test_applied_skips_when_reply_exists(self, rt):
+        fixed = [CommentItem(id="t1", summary="fix it")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[
+                {"databaseId": 111},
+                {"body": "Applied: fix it\n\nFixed in [`abc1234`](url)."},
+            ]),
+        }
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            count = rt._post_fix_replies(
+                fixed, threads_by_id, "owner/repo", 42, "def5678",
+            )
+        assert count == 0
+        mock_reply.assert_not_called()
+
+    def test_addressed_skips_when_reply_exists(self, rt, tmp_path):
+        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[
+                {"databaseId": 111},
+                {"body": "Already addressed: use helper\n\nAddressed in [`abc1234`](url)."},
+            ]),
+        }
+        with (
+            patch("pr_comments.post_thread_reply") as mock_reply,
+            patch.object(rt, "_find_addressing_commit", return_value="abc1234"),
+        ):
+            count = rt._post_already_addressed_replies(
+                fixed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        assert count == 0
+        mock_reply.assert_not_called()
+
+    def test_mixed_dedup_and_new(self, rt):
+        dismissed = [
+            CommentItem(id="t1", summary="already replied"),
+            CommentItem(id="t2", summary="new one", reasoning="reason"),
+        ]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[
+                {"databaseId": 111},
+                {"body": "Suggestion reviewed and determined to be inapplicable: old reason"},
+            ]),
+            "t2": ReportThread(id="t2", comments=[{"databaseId": 222}]),
+        }
+        with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+            count = rt._post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42,
+            )
+        assert count == 1
+        mock_reply.assert_called_once()
+        assert mock_reply.call_args[0][2] == 222
+
+
 # ── _resolve_fixed_threads ────────────────────────────────────────────────
 
 

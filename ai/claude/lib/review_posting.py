@@ -18,6 +18,7 @@ from pathlib import Path
 import review_dedup
 import review_format
 import review_github
+from review_sections import ReviewSections
 
 import log
 from pr_state import PostedAs, PostEvent, PostTracking
@@ -188,15 +189,13 @@ def write_post_tracking(review_file: str, entry: PostTracking):
 def _format_comment_body(
     findings: list[Finding], severity_filter: set[str],
     review_sha: str, head_sha: str, new_commit_count: int,
-    summary: str = "", verdict: str = "",
-    static_analysis: str = "",
+    sections: ReviewSections | None = None,
 ) -> str:
     """Format findings as a single comment body for stale-SHA posting."""
     _, body_findings = review_format.renumber_for_posting([], findings)
     body = review_format.format_body_text(
         body_findings, False, severity_filter,
-        summary=summary, verdict=verdict,
-        static_analysis=static_analysis,
+        sections=sections,
     )
 
     header = (
@@ -214,10 +213,10 @@ def _post_as_comment(
     review_sha: str, head_sha: str,
     head_ref: str, base_ref: str,
     pr_data: PRData | None = None,
-    summary: str = "", verdict: str = "",
-    static_analysis: str = "",
+    sections: ReviewSections | None = None,
 ):
     """Post review as a single PR comment when SHA has drifted."""
+    verdict = sections.get("verdict") if sections else ""
     kept, deduped = review_dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
     if deduped:
         log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
@@ -240,8 +239,7 @@ def _post_as_comment(
     new_commits = review_github._count_new_commits(args.repo, args.pr, review_sha, pr_data)
     body = _format_comment_body(
         findings, severity_filter, review_sha, head_sha, new_commits,
-        summary=summary, verdict=verdict,
-        static_analysis=static_analysis,
+        sections=sections,
     )
 
     with tempfile.NamedTemporaryFile(
@@ -281,8 +279,7 @@ def _reclassify_and_retry(
     commit_id: str, chunk_size: int, severity_filter: set[str],
     submit: bool,
     pr_data: PRData | None = None,
-    summary: str = "", verdict: str = "",
-    static_analysis: str = "",
+    sections: ReviewSections | None = None,
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -310,8 +307,7 @@ def _reclassify_and_retry(
         new_inline_comments = [review_format.format_inline_comment(f) for f in new_inline]
         new_body_text = review_format.format_body_text(
             new_body, True, severity_filter,
-            summary=summary, verdict=verdict,
-            static_analysis=static_analysis,
+            sections=sections,
         )
         try:
             results = _post_chunked_review(
@@ -326,8 +322,7 @@ def _reclassify_and_retry(
     _, new_body = review_format.renumber_for_posting([], list(inline) + list(body_findings))
     new_body_text = review_format.format_body_text(
         new_body, False, severity_filter,
-        summary=summary, verdict=verdict,
-        static_analysis=static_analysis,
+        sections=sections,
     )
     results = _post_chunked_review(
         args.repo, args.pr, commit_id,
@@ -410,10 +405,10 @@ def _post_and_track(
     commit_id: str, head_sha: str,
     chunk_size: int, severity_filter: set[str],
     pr_data: PRData | None = None,
-    summary: str = "", verdict: str = "",
     review_sha: str = "", sha_drifted: bool = False,
-    static_analysis: str = "",
+    sections: ReviewSections | None = None,
 ):
+    verdict = sections.get("verdict") if sections else ""
     submit = getattr(args, "submit", False)
 
     # Fetch bot reviews once for both dedup and orphan detection
@@ -445,8 +440,7 @@ def _post_and_track(
         inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
             args, inline, body_findings,
             commit_id, chunk_size, severity_filter, submit, pr_data,
-            summary=summary, verdict=verdict,
-            static_analysis=static_analysis,
+            sections=sections,
         )
 
     if not results:

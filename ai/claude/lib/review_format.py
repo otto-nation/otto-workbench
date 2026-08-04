@@ -10,6 +10,7 @@ import re
 
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
+from review_sections import ReviewSections, SectionConfig
 
 _VERDICT_ACTION_RE = re.compile(
     r"^\*{0,2}(?:Request changes|Needs discussion|Approve|Disapprove)\*{0,2}\s*[—–\-]\s*",
@@ -226,28 +227,53 @@ def _append_body_only_findings(
             _append_details_findings(parts, sev, by_file[sev])
 
 
+def _render_before_findings(
+    parts: list[str],
+    before: list[tuple[SectionConfig, str]],
+) -> None:
+    current_parent: str = ""
+    for cfg, content in before:
+        parent = cfg.subsection_of or cfg.key
+        prev = next((c for c, _ in before if c.key == current_parent), None)
+        if current_parent and parent != current_parent and prev and prev.trailing_separator:
+            parts.extend(("---", ""))
+        current_parent = parent
+        if cfg.heading:
+            parts.extend((cfg.heading, ""))
+        if cfg.strip_action:
+            content = _VERDICT_ACTION_RE.sub("", content, count=1)
+        parts.extend((content, ""))
+    last_cfg = next((c for c, _ in before if c.key == current_parent), None)
+    if last_cfg and last_cfg.trailing_separator:
+        parts.extend(("---", ""))
+
+
+def _render_after_findings(
+    parts: list[str],
+    after: list[tuple[SectionConfig, str]],
+) -> None:
+    for cfg, content in after:
+        parts.append("")
+        if cfg.heading:
+            parts.extend((cfg.heading, ""))
+        parts.append(content)
+
+
 def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
     severity_filter: set[str],
-    summary: str = "",
-    verdict: str = "",
-    static_analysis: str = "",
+    sections: ReviewSections | None = None,
 ) -> str:
     """Format the review body text with body/skipped findings."""
+    if sections is None:
+        sections = ReviewSections()
+
     parts: list[str] = []
 
-    if summary:
-        parts.append("## Summary")
-        parts.append("")
-        parts.append(summary)
-        parts.append("")
-        if verdict:
-            parts.append("### Verdict")
-            parts.append(_VERDICT_ACTION_RE.sub("", verdict, count=1))
-            parts.append("")
-        parts.append("---")
-        parts.append("")
+    before = sections.before_findings()
+    if before:
+        _render_before_findings(parts, before)
 
     labels = [s.label for s in SEVERITIES if s.key in severity_filter]
 
@@ -256,12 +282,13 @@ def format_body_text(
     else:
         parts.append(f"Review findings ({', '.join(labels)}):")
 
-    if not body_findings and not static_analysis:
+    after = sections.after_findings()
+
+    if not body_findings and not after:
         return "\n".join(parts)
 
     if not body_findings:
-        parts.append("")
-        parts.append(static_analysis)
+        _render_after_findings(parts, after)
         return "\n".join(parts).rstrip("\n")
 
     by_sev: dict[str, list[Finding]] = {}
@@ -280,9 +307,7 @@ def format_body_text(
     if by_file:
         _append_body_only_findings(parts, by_file)
 
-    if static_analysis:
-        parts.append("")
-        parts.append(static_analysis)
+    _render_after_findings(parts, after)
 
     return "\n".join(parts).rstrip("\n")
 

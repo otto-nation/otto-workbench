@@ -789,6 +789,7 @@ def build_mechanical_review(
     summary_note: str,
     include_verdict: bool = True,
     file_count: int = 0,
+    failures_section: str = "",
 ) -> str:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
@@ -799,8 +800,11 @@ def build_mechanical_review(
     else:
         scope = f"across {group_count} groups"
 
+    failures_block = f"{failures_section}\n" if failures_section else ""
+
     summary = (
         f"{title}\n{meta_header}\n"
+        f"{failures_block}"
         f"## Summary\n"
         f"{count_summary} {scope}. "
         f"{summary_note}\n\n"

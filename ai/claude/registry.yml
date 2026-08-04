@@ -12,7 +12,7 @@ tools:
     visibility: full
     description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. For multiple PRs, dispatch separate Agent subagents — do not background with &"
-    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]"
+    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review --recover <pr_url_or_number>"
 
   - name: claude-rules
     permission: true
@@ -79,7 +79,7 @@ tools:
     visibility: full
     description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary]  |  pr comments [--triage] [--fix] [--resolve]  |  pr fix  |  pr rebase [--fix] [--no-push] [--abort]  |  pr gc"
+    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary] [--recover]  |  pr comments [--triage] [--fix] [--resolve]  |  pr fix  |  pr rebase [--fix] [--no-push] [--abort]  |  pr gc"
 
   - name: otto-log
     permission: true

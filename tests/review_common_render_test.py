@@ -78,3 +78,39 @@ def test_render_status_with_cost():
     )
     lines = render_status(rev)
     assert any("$1.23" in l for l in lines)
+
+
+def test_render_status_partial_with_failure_detail():
+    rev = pr_state.ReviewSummary(
+        review_type="pr", verdict=pr_state.ReviewVerdict.CHANGES_REQUESTED.value,
+        status=pr_state.ReviewStatus.PARTIAL.value,
+        failure_detail="2/8 groups failed: quota exhausted (429), agent hit max turns (5)",
+        finding_counts={"M": 3, "S": 2}, cost_usd=4.50, updated_at="t",
+    )
+    lines = render_status(rev)
+    assert any("PARTIAL" in line for line in lines)
+    assert any("2/8 groups failed" in line for line in lines)
+    assert any("recover" in line for line in lines)
+
+
+def test_render_status_error_with_failure_detail():
+    rev = pr_state.ReviewSummary(
+        review_type="pr", status=pr_state.ReviewStatus.ERROR.value,
+        failure_detail="all groups failed: quota exhausted (429)",
+        cost_usd=2.10, updated_at="t",
+    )
+    lines = render_status(rev)
+    assert any("ERROR" in line for line in lines)
+    assert any("all groups failed" in line for line in lines)
+    assert any("recover" in line for line in lines)
+
+
+def test_render_status_complete_no_recover_hint():
+    rev = pr_state.ReviewSummary(
+        review_type="pr", verdict=pr_state.ReviewVerdict.APPROVE.value,
+        status=pr_state.ReviewStatus.COMPLETED.value,
+        finding_counts={}, cost_usd=3.00, updated_at="t",
+    )
+    lines = render_status(rev)
+    assert not any("recover" in line for line in lines)
+    assert not any("PARTIAL" in line or "ERROR" in line for line in lines)

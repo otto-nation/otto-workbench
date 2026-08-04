@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 
 import log
@@ -51,12 +52,22 @@ def save_state(path: Path, state: dict) -> None:
 
 # ── Thread lifecycle states ────────────────────────────────────────────────
 
-STATE_NEW = "new"
-STATE_ADDRESSED = "addressed"
-STATE_VERIFIED = "verified"
-STATE_CONTESTED = "contested"
-STATE_RESOLVED = "resolved"
-STATE_AMBIGUOUS = "ambiguous"
+
+class ThreadState(StrEnum):
+    NEW = "new"
+    ADDRESSED = "addressed"
+    VERIFIED = "verified"
+    CONTESTED = "contested"
+    RESOLVED = "resolved"
+    AMBIGUOUS = "ambiguous"
+
+
+STATE_NEW = ThreadState.NEW
+STATE_ADDRESSED = ThreadState.ADDRESSED
+STATE_VERIFIED = ThreadState.VERIFIED
+STATE_CONTESTED = ThreadState.CONTESTED
+STATE_RESOLVED = ThreadState.RESOLVED
+STATE_AMBIGUOUS = ThreadState.AMBIGUOUS
 
 _ACK_WORDS = {"done", "lgtm", "looks good", "thanks", "thank you", "fixed", "nice", "great", "sounds good", "perfect", "agreed", "makes sense"}
 _ACK_EMOJI = {"👍", "✅", ":thumbsup:", ":white_check_mark:"}
@@ -94,7 +105,7 @@ def compute_thread_state(
     comments: list[dict],
     is_resolved: bool,
     my_login: str,
-) -> str:
+) -> ThreadState:
     """Compute the lifecycle state of a thread from its comments.
 
     Returns one of: new, addressed, verified, contested, resolved, ambiguous.
@@ -533,14 +544,14 @@ def render_fix_status(f: FixSummary) -> list[str]:
     for t in f.threads:
         by_action[t.action] = by_action.get(t.action, 0) + 1
     parts = []
-    if by_action.get(ThreadAction.FIXED.value, 0):
-        parts.append(f"**{by_action[ThreadAction.FIXED.value]} fixed**")
-    if by_action.get(ThreadAction.DEFERRED.value, 0):
-        parts.append(f"{by_action[ThreadAction.DEFERRED.value]} deferred")
-    if by_action.get(ThreadAction.NEEDS_HUMAN.value, 0):
-        parts.append(f"{by_action[ThreadAction.NEEDS_HUMAN.value]} need discussion")
-    if by_action.get(ThreadAction.DISMISSED.value, 0):
-        parts.append(f"{by_action[ThreadAction.DISMISSED.value]} dismissed")
+    if by_action.get(ThreadAction.FIXED, 0):
+        parts.append(f"**{by_action[ThreadAction.FIXED]} fixed**")
+    if by_action.get(ThreadAction.DEFERRED, 0):
+        parts.append(f"{by_action[ThreadAction.DEFERRED]} deferred")
+    if by_action.get(ThreadAction.NEEDS_HUMAN, 0):
+        parts.append(f"{by_action[ThreadAction.NEEDS_HUMAN]} need discussion")
+    if by_action.get(ThreadAction.DISMISSED, 0):
+        parts.append(f"{by_action[ThreadAction.DISMISSED]} dismissed")
     summary = " · ".join(parts) if parts else "no threads"
     lines = [f"**Fix**: {summary}"]
     if f.commit_sha:

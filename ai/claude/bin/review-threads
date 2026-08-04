@@ -29,6 +29,7 @@ import ai_backend
 import pr_comments as pc
 import pr_context
 import pr_state
+from pr_comments import ThreadState
 import review_common
 import review_issue
 from pr_thread_models import (
@@ -243,7 +244,7 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
 
     Returns (triage_result, exit_code). Caller handles stdout output.
     """
-    non_resolved = [t for t in report.threads if t.state != "resolved"]
+    non_resolved = [t for t in report.threads if t.state not in (ThreadState.RESOLVED, ThreadState.ADDRESSED)]
     unseen_comments = _collect_unseen_comments(report)
 
     if not non_resolved and not unseen_comments:
@@ -817,7 +818,7 @@ def _finalize_deferred(
             id=t.id, file=t.file, line=t.line,
             reviewer=t.reviewer, summary=t.summary,
         )
-        for t in state.fix.threads if t.action == FA.DEFERRED.value
+        for t in state.fix.threads if t.action == FA.DEFERRED
     ]
     if not deferred:
         return _NO_ISSUE
@@ -1231,7 +1232,7 @@ def _post_push_deferred_replies(
     fix.commit_status = "pushed"
 
     FA = pr_state.ThreadAction
-    fixed_threads = [t for t in fix.threads if t.action == FA.FIXED.value]
+    fixed_threads = [t for t in fix.threads if t.action == FA.FIXED]
 
     if not fixed_threads:
         return
@@ -1269,9 +1270,23 @@ def _render_deferred_summary(
         fix.commit_status = "pushed"
 
     FA = pr_state.ThreadAction
-    fixed = [t for t in fix.threads if t.action == FA.FIXED.value]
-    deferred = [t for t in fix.threads if t.action == FA.DEFERRED.value]
-    dismissed = [t for t in fix.threads if t.action == FA.DISMISSED.value]
+    resolved_or_addressed = {
+        t.id for t in threads_by_id.values()
+        if t.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED) or t.is_resolved
+    }
+    fixed = [t for t in fix.threads if t.action == FA.FIXED]
+    still_deferred = []
+    manually_fixed = []
+    for t in fix.threads:
+        if t.action != FA.DEFERRED:
+            continue
+        if t.id in resolved_or_addressed:
+            manually_fixed.append(t)
+        else:
+            still_deferred.append(t)
+    fixed = fixed + manually_fixed
+    deferred = still_deferred
+    dismissed = [t for t in fix.threads if t.action == FA.DISMISSED]
 
     cp = CommitPushResult(
         sha=fix.commit_sha or None,
@@ -1424,7 +1439,7 @@ def _classify_triage_entries(
     result = ClassificationResult()
 
     for tt in triage_entries:
-        if tt.state == "contested":
+        if tt.state == ThreadState.CONTESTED:
             result.needs_human.append(dataclasses.replace(tt, reason="contested"))
             continue
 
@@ -1558,7 +1573,7 @@ def _run_comment_fix(
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
 
-    non_resolved_ids = {t.id for t in report.threads if t.state != "resolved"}
+    non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}
     accounted_ids = _accounted_thread_ids(
         fixable + (fixable_items or []),
         all_needs_human,
@@ -1759,7 +1774,7 @@ def _run_threads(trail, args, ctx) -> None:
 
     # Sync
     threads = pc.sync_threads(threads_raw, prior_threads, my_login)
-    synced_resolved = sum(1 for t in threads.values() if t.get("state") == "resolved")
+    synced_resolved = sum(1 for t in threads.values() if t.get("state") == pc.STATE_RESOLVED)
     synced_open = len(threads) - synced_resolved
     trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
                data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
@@ -1790,7 +1805,7 @@ def _run_threads(trail, args, ctx) -> None:
         comments = thread_data.get("comments", {}).get("nodes", [])
         report_threads.append(ReportThread(
             id=tid,
-            state=t.get("state", "new"),
+            state=ThreadState(t.get("state", "new")),
             classification=t.get("classification"),
             reviewer=t.get("reviewer", ""),
             comments=comments,

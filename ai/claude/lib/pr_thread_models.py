@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import serde
+from pr_comments import ThreadState
 from pr_state import ThreadAction, ThreadOutcome
 
 
@@ -53,7 +54,7 @@ class CommentItem:
             line=self.line,
             reviewer=self.reviewer,
             summary=self.summary,
-            action=action.value,
+            action=action,
             reason=reason or self.reason or self.reasoning,
         )
 
@@ -117,7 +118,7 @@ class ReportThread:
     """A thread in the PR report, combining GitHub data with lifecycle state."""
 
     id: str = ""
-    state: str = ""
+    state: ThreadState = ThreadState.NEW
     classification: str | None = None
     reviewer: str = ""
     comments: list[dict] = field(default_factory=list)

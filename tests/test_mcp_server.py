@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from server import _args_to_cli, _extract_json, discover_tools
 

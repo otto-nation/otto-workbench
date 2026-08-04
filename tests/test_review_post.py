@@ -589,6 +589,28 @@ class TestFormatInlineComment:
 
 
 class TestFormatBodyText:
+    @staticmethod
+    def _sections(rp, **kwargs):
+        """Build a ReviewSections from keyword args for test convenience."""
+        entries = {}
+        configs = {}
+        order = []
+        for key, content in kwargs.items():
+            if not content:
+                continue
+            matched = [c for c in rp.KNOWN_SECTIONS if c.key == key]
+            cfg = matched[0] if matched else rp.SectionConfig(
+                key=key, header=key, position=rp.POSITION_AFTER,
+            )
+            entries[key] = content
+            configs[key] = cfg
+            order.append(key)
+        known_order = [c.key for c in rp.KNOWN_SECTIONS]
+        order.sort(key=lambda k: (
+            known_order.index(k) if k in known_order else len(known_order), k,
+        ))
+        return rp.ReviewSections(entries=entries, configs=configs, order=order)
+
     def test_with_inline_shows_have_some_comments(self, rp):
         result = rp.format_body_text([], has_inline=True, severity_filter={"M", "S", "N"})
         assert "Have some comments" in result
@@ -656,7 +678,7 @@ class TestFormatBodyText:
     def test_summary_and_verdict_prepended(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Clean refactor.", verdict="Approve.",
+            sections=self._sections(rp, summary="Clean refactor.", verdict="Approve."),
         )
         assert result.startswith("## Summary")
         assert "Clean refactor." in result
@@ -669,8 +691,8 @@ class TestFormatBodyText:
     def test_verdict_action_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="Request changes — M1 and M2 are blockers.",
+            sections=self._sections(rp, summary="Summary text.",
+                                    verdict="Request changes — M1 and M2 are blockers."),
         )
         assert "### Verdict" in result
         assert "M1 and M2 are blockers." in result
@@ -679,8 +701,8 @@ class TestFormatBodyText:
     def test_verdict_approve_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="Approve — clean code.",
+            sections=self._sections(rp, summary="Summary text.",
+                                    verdict="Approve — clean code."),
         )
         assert "### Verdict" in result
         assert "clean code." in result
@@ -689,8 +711,8 @@ class TestFormatBodyText:
     def test_verdict_action_prefix_stripped_plain_hyphen(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="Needs discussion - looks good.",
+            sections=self._sections(rp, summary="Summary text.",
+                                    verdict="Needs discussion - looks good."),
         )
         assert "### Verdict" in result
         assert "looks good." in result
@@ -699,8 +721,8 @@ class TestFormatBodyText:
     def test_verdict_bold_action_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="**Request changes** — M1 and M2 are blockers.",
+            sections=self._sections(rp, summary="Summary text.",
+                                    verdict="**Request changes** — M1 and M2 are blockers."),
         )
         assert "### Verdict" in result
         assert "M1 and M2 are blockers." in result
@@ -709,7 +731,7 @@ class TestFormatBodyText:
     def test_verdict_without_action_prefix_unchanged(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.", verdict="Looks good overall.",
+            sections=self._sections(rp, summary="Summary text.", verdict="Looks good overall."),
         )
         assert "### Verdict" in result
         assert "Looks good overall." in result
@@ -717,7 +739,7 @@ class TestFormatBodyText:
     def test_summary_without_verdict(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Clean refactor.",
+            sections=self._sections(rp, summary="Clean refactor."),
         )
         assert result.startswith("## Summary")
         assert "Clean refactor." in result
@@ -728,7 +750,6 @@ class TestFormatBodyText:
     def test_empty_summary_omitted(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="", verdict="",
         )
         assert "## Summary" not in result
         assert "### Verdict" not in result
@@ -763,6 +784,28 @@ class TestFormatBodyText:
 
 
 class TestFormatBodyTextDetails:
+    @staticmethod
+    def _sections(rp, **kwargs):
+        """Build a ReviewSections from keyword args for test convenience."""
+        entries = {}
+        configs = {}
+        order = []
+        for key, content in kwargs.items():
+            if not content:
+                continue
+            matched = [c for c in rp.KNOWN_SECTIONS if c.key == key]
+            cfg = matched[0] if matched else rp.SectionConfig(
+                key=key, header=key, position=rp.POSITION_AFTER,
+            )
+            entries[key] = content
+            configs[key] = cfg
+            order.append(key)
+        known_order = [c.key for c in rp.KNOWN_SECTIONS]
+        order.sort(key=lambda k: (
+            known_order.index(k) if k in known_order else len(known_order), k,
+        ))
+        return rp.ReviewSections(entries=entries, configs=configs, order=order)
+
     def test_nits_sorted_by_path_then_line(self, rp):
         findings = [
             rp.Finding(id="N1", severity="N", seq=1, path="b.go", line=20,
@@ -834,7 +877,7 @@ class TestFormatBodyTextDetails:
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
         result = rp.format_body_text(
             findings, has_inline=True, severity_filter={"N"},
-            static_analysis=sa,
+            sections=self._sections(rp, static_analysis=sa),
         )
         assert "### Nesting depth" in result
         assert "depth 5 exceeds limit 4" in result
@@ -844,7 +887,7 @@ class TestFormatBodyTextDetails:
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked"
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            static_analysis=sa,
+            sections=self._sections(rp, static_analysis=sa),
         )
         assert "Have some comments" in result
         assert "### Nesting depth" in result
@@ -852,7 +895,6 @@ class TestFormatBodyTextDetails:
     def test_static_analysis_empty_string_omitted(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            static_analysis="",
         )
         assert "Static Analysis" not in result
 

@@ -10,6 +10,7 @@ import re
 
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
+from review_sections import ReviewSections, POSITION_BEFORE, POSITION_AFTER
 
 _VERDICT_ACTION_RE = re.compile(
     r"^\*{0,2}(?:Request changes|Needs discussion|Approve|Disapprove)\*{0,2}\s*[—–\-]\s*",
@@ -230,24 +231,38 @@ def format_body_text(
     body_findings: list[Finding],
     has_inline: bool,
     severity_filter: set[str],
-    summary: str = "",
-    verdict: str = "",
-    static_analysis: str = "",
+    sections: ReviewSections | None = None,
 ) -> str:
     """Format the review body text with body/skipped findings."""
+    if sections is None:
+        sections = ReviewSections()
+
     parts: list[str] = []
 
-    if summary:
-        parts.append("## Summary")
-        parts.append("")
-        parts.append(summary)
-        parts.append("")
-        if verdict:
-            parts.append("### Verdict")
-            parts.append(_VERDICT_ACTION_RE.sub("", verdict, count=1))
+    before = sections.before_findings()
+    if before:
+        current_parent: str = ""
+        for cfg, content in before:
+            parent = cfg.subsection_of or cfg.key
+            if current_parent and parent != current_parent:
+                parent_cfg = next(
+                    (c for c, _ in before if c.key == current_parent), None)
+                if parent_cfg and parent_cfg.trailing_separator:
+                    parts.append("---")
+                    parts.append("")
+            current_parent = parent
+            if cfg.heading:
+                parts.append(cfg.heading)
+            if cfg.strip_action:
+                content = _VERDICT_ACTION_RE.sub("", content, count=1)
+            parts.append(content)
             parts.append("")
-        parts.append("---")
-        parts.append("")
+        last_parent_key = current_parent
+        last_parent_cfg = next(
+            (c for c, _ in before if c.key == last_parent_key), None)
+        if last_parent_cfg and last_parent_cfg.trailing_separator:
+            parts.append("---")
+            parts.append("")
 
     labels = [s.label for s in SEVERITIES if s.key in severity_filter]
 
@@ -256,12 +271,15 @@ def format_body_text(
     else:
         parts.append(f"Review findings ({', '.join(labels)}):")
 
-    if not body_findings and not static_analysis:
+    after = sections.after_findings()
+
+    if not body_findings and not after:
         return "\n".join(parts)
 
     if not body_findings:
-        parts.append("")
-        parts.append(static_analysis)
+        for _, content in after:
+            parts.append("")
+            parts.append(content)
         return "\n".join(parts).rstrip("\n")
 
     by_sev: dict[str, list[Finding]] = {}
@@ -280,9 +298,9 @@ def format_body_text(
     if by_file:
         _append_body_only_findings(parts, by_file)
 
-    if static_analysis:
+    for _, content in after:
         parts.append("")
-        parts.append(static_analysis)
+        parts.append(content)
 
     return "\n".join(parts).rstrip("\n")
 

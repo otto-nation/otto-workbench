@@ -249,10 +249,12 @@ tasks:
         load_pr "$_CLI_ARGS" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
-        if ! validate-nesting --diff "origin/$TARGET_BASE" --quiet; then
+        NESTING_OUTPUT=$(validate-nesting --diff "origin/$TARGET_BASE" --quiet 2>&1) || {
           echo "✗ New code introduces nesting violations — fix before creating PR"
+          echo ""
+          echo "$NESTING_OUTPUT"
           exit 1
-        fi
+        }
 
         push_branch "$BRANCH" || exit 1
 

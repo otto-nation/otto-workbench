@@ -960,12 +960,9 @@ def _create_or_update_deferred_issue(
 
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
-    if cp.sha:
+    if cp.sha and cp.status == "pushed":
         url = f"https://github.com/{repo}/commit/{cp.sha}"
-        sha_link = f"[`{cp.sha}`]({url})"
-        if cp.status == "pushed":
-            return f"Fixed in {sha_link}"
-        return f"Fixed in {sha_link} (push failed — run manually)"
+        return f"Fixed in [`{cp.sha}`]({url})"
     if cp.status == "no_changes":
         return "Fix applied (no commit needed)"
     if cp.status == "commit_failed":
@@ -1211,6 +1208,43 @@ def _post_fix_summary(
     return url
 
 
+def _post_push_deferred_replies(
+    state: pr_state.PRState,
+    repo: str,
+    pr_number: int,
+    threads_by_id: dict[str, ReportThread],
+) -> None:
+    """Post fix replies and resolve threads that were deferred due to push failure.
+
+    Called during --resolve. Checks if the commit has since been pushed;
+    if so, posts replies and resolves threads. Updates state.fix.commit_status.
+    """
+    fix = state.fix
+    if fix.commit_status != "push_failed" or not fix.commit_sha:
+        return
+
+    wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
+    if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
+        log.info("Push still pending — skipping deferred replies")
+        return
+
+    fix.commit_status = "pushed"
+
+    FA = pr_state.ThreadAction
+    fixed_threads = [t for t in fix.threads if t.action == FA.FIXED.value]
+
+    if not fixed_threads:
+        return
+
+    items = [
+        CommentItem(id=t.id, file=t.file, line=t.line,
+                    reviewer=t.reviewer, summary=t.summary)
+        for t in fixed_threads
+    ]
+    _post_fix_replies(items, threads_by_id, repo, pr_number, fix.commit_sha)
+    _resolve_fixed_threads(items, threads_by_id)
+
+
 def _render_deferred_summary(
     state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -1225,6 +1259,14 @@ def _render_deferred_summary(
     fix = state.fix
     if not fix.summary_deferred:
         return
+
+    wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
+
+    if fix.commit_status == "push_failed" and fix.commit_sha:
+        if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
+            log.info("Push still pending — keeping summary deferred")
+            return
+        fix.commit_status = "pushed"
 
     FA = pr_state.ThreadAction
     fixed = [t for t in fix.threads if t.action == FA.FIXED.value]
@@ -1272,6 +1314,10 @@ def _post_or_defer_summary(
     Returns the comment URL if posted, None if deferred or nothing to post.
     When deferred, the summary is re-rendered from FixSummary during --resolve.
     """
+    if cp.status == "push_failed":
+        log.info("Deferred fix summary — push failed, will post after push lands")
+        return None
+
     if not needs_human and not deferred:
         return _post_fix_summary(
             fixed, needs_human, deferred, cp, repo, pr_number,
@@ -1407,6 +1453,19 @@ def _classify_triage_entries(
     return result
 
 
+def _accounted_thread_ids(
+    fixable: list[CommentItem],
+    needs_human: list[CommentItem],
+    dismissed: list[CommentItem],
+) -> set[str]:
+    """Return IDs of all threads that have a disposition in the fix pipeline."""
+    return {
+        entry.id
+        for entries in (fixable, needs_human, dismissed)
+        for entry in entries
+    }
+
+
 def _retry_fix_pass(
     deferred_threads: list[CommentItem],
     deferred_items: list[CommentItem],
@@ -1499,6 +1558,14 @@ def _run_comment_fix(
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
 
+    non_resolved_ids = {t.id for t in report.threads if t.state != "resolved"}
+    accounted_ids = _accounted_thread_ids(
+        fixable + (fixable_items or []),
+        all_needs_human,
+        all_dismissed,
+    )
+    has_unaccounted = bool(non_resolved_ids - accounted_ids)
+
     no_commit = CommitPushResult(None, "no_changes", "")
 
     dismissed_replies = 0
@@ -1516,7 +1583,11 @@ def _run_comment_fix(
     )
 
     if not all_fixable:
-        if all_dismissed or all_needs_human:
+        early_deferred = bool(all_needs_human) or has_unaccounted
+        if has_unaccounted:
+            log.info("Deferred fix summary — unresolved threads not yet addressed")
+            summary_url = None
+        elif all_dismissed or all_needs_human:
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, dismissed=all_dismissed,
@@ -1527,13 +1598,13 @@ def _run_comment_fix(
         else:
             summary_url = None
         empty_result.summary_url = summary_url
-        empty_result.summary_deferred = summary_url is None and bool(all_needs_human)
+        empty_result.summary_deferred = summary_url is None and early_deferred
         _persist_fix_state(pr_state.FixSummary(
             threads=_build_thread_outcomes([], [], all_needs_human, all_dismissed),
             commit_status=no_commit.status,
             replies_posted=dismissed_replies,
             summary_url=summary_url or "",
-            summary_deferred=summary_url is None and bool(all_needs_human),
+            summary_deferred=summary_url is None and early_deferred,
             updated_at=pr_state.now_iso(),
         ), wt_path, ctx, trail)
         return empty_result
@@ -1600,7 +1671,7 @@ def _run_comment_fix(
         cp = _recover_agent_commit(wt_path, head_before, trail)
 
     replies_posted = dismissed_replies
-    if tracking.fixed:
+    if tracking.fixed and cp.status == "pushed":
         if cp.sha:
             replies_posted += _post_fix_replies(
                 tracking.fixed, threads_by_id, ctx.repo, report.pr_number,
@@ -1616,7 +1687,10 @@ def _run_comment_fix(
     all_fixed = tracking.fixed + tracking.fixed_items
     all_deferred = tracking.deferred + tracking.deferred_items
 
-    pending_deferred = bool(all_deferred) or bool(all_needs_human)
+    pending_deferred = (
+        bool(all_deferred) or bool(all_needs_human)
+        or cp.status == "push_failed" or has_unaccounted
+    )
 
     summary_url = _post_or_defer_summary(
         all_fixed, all_needs_human, all_deferred, cp,
@@ -1771,6 +1845,7 @@ def _run_threads(trail, args, ctx) -> None:
         ))
         if args.resolve:
             threads_by_id = {t.id: t for t in report.threads}
+            _post_push_deferred_replies(st, repo, pr_number, threads_by_id)
             issue = _finalize_deferred(ctx, threads_by_id, trail=trail)
             st.fix.deferred_issue_id = issue.id
             st.fix.deferred_issue_url = issue.url

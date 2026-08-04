@@ -15,6 +15,28 @@ from pr_state import PostedAs, PostEvent, PostTracking
 from serde import from_dict as serde_from_dict
 
 
+def _make_sections(rp, **kwargs):
+    """Build a ReviewSections from keyword args for test convenience."""
+    entries = {}
+    configs = {}
+    order = []
+    for key, content in kwargs.items():
+        if not content:
+            continue
+        matched = [c for c in rp.KNOWN_SECTIONS if c.key == key]
+        cfg = matched[0] if matched else rp.SectionConfig(
+            key=key, header=key, position=rp.POSITION_AFTER,
+        )
+        entries[key] = content
+        configs[key] = cfg
+        order.append(key)
+    known_order = [c.key for c in rp.KNOWN_SECTIONS]
+    order.sort(key=lambda k: (
+        known_order.index(k) if k in known_order else len(known_order), k,
+    ))
+    return rp.ReviewSections(entries=entries, configs=configs, order=order)
+
+
 class TestExtractPath:
     def test_bold_backtick_with_line_number(self, rp):
         path, line, end = rp._extract_path("**`pkg/handler.go:42`**")
@@ -656,7 +678,7 @@ class TestFormatBodyText:
     def test_summary_and_verdict_prepended(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Clean refactor.", verdict="Approve.",
+            sections=_make_sections(rp,summary="Clean refactor.", verdict="Approve."),
         )
         assert result.startswith("## Summary")
         assert "Clean refactor." in result
@@ -669,8 +691,8 @@ class TestFormatBodyText:
     def test_verdict_action_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="Request changes — M1 and M2 are blockers.",
+            sections=_make_sections(rp,summary="Summary text.",
+                                    verdict="Request changes — M1 and M2 are blockers."),
         )
         assert "### Verdict" in result
         assert "M1 and M2 are blockers." in result
@@ -679,8 +701,8 @@ class TestFormatBodyText:
     def test_verdict_approve_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="Approve — clean code.",
+            sections=_make_sections(rp,summary="Summary text.",
+                                    verdict="Approve — clean code."),
         )
         assert "### Verdict" in result
         assert "clean code." in result
@@ -689,8 +711,8 @@ class TestFormatBodyText:
     def test_verdict_action_prefix_stripped_plain_hyphen(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="Needs discussion - looks good.",
+            sections=_make_sections(rp,summary="Summary text.",
+                                    verdict="Needs discussion - looks good."),
         )
         assert "### Verdict" in result
         assert "looks good." in result
@@ -699,8 +721,8 @@ class TestFormatBodyText:
     def test_verdict_bold_action_prefix_stripped(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.",
-            verdict="**Request changes** — M1 and M2 are blockers.",
+            sections=_make_sections(rp,summary="Summary text.",
+                                    verdict="**Request changes** — M1 and M2 are blockers."),
         )
         assert "### Verdict" in result
         assert "M1 and M2 are blockers." in result
@@ -709,7 +731,7 @@ class TestFormatBodyText:
     def test_verdict_without_action_prefix_unchanged(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Summary text.", verdict="Looks good overall.",
+            sections=_make_sections(rp,summary="Summary text.", verdict="Looks good overall."),
         )
         assert "### Verdict" in result
         assert "Looks good overall." in result
@@ -717,7 +739,7 @@ class TestFormatBodyText:
     def test_summary_without_verdict(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="Clean refactor.",
+            sections=_make_sections(rp,summary="Clean refactor."),
         )
         assert result.startswith("## Summary")
         assert "Clean refactor." in result
@@ -728,7 +750,6 @@ class TestFormatBodyText:
     def test_empty_summary_omitted(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            summary="", verdict="",
         )
         assert "## Summary" not in result
         assert "### Verdict" not in result
@@ -834,7 +855,7 @@ class TestFormatBodyTextDetails:
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
         result = rp.format_body_text(
             findings, has_inline=True, severity_filter={"N"},
-            static_analysis=sa,
+            sections=_make_sections(rp,static_analysis=sa),
         )
         assert "### Nesting depth" in result
         assert "depth 5 exceeds limit 4" in result
@@ -844,7 +865,7 @@ class TestFormatBodyTextDetails:
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked"
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            static_analysis=sa,
+            sections=_make_sections(rp,static_analysis=sa),
         )
         assert "Have some comments" in result
         assert "### Nesting depth" in result
@@ -852,7 +873,6 @@ class TestFormatBodyTextDetails:
     def test_static_analysis_empty_string_omitted(self, rp):
         result = rp.format_body_text(
             [], has_inline=True, severity_filter={"M"},
-            static_analysis="",
         )
         assert "Static Analysis" not in result
 
@@ -2396,6 +2416,38 @@ class TestDryRunIntegration:
         assert "Nesting depth" in payload["body"]
         assert "depth 5 exceeds limit 4" in payload["body"]
 
+    def test_dry_run_auto_discovers_unknown_section(self, tmp_path):
+        review_with_custom = (
+            "# Review: test-org/test-repo#42 — Fix handler\n"
+            "<!-- head_sha: abc123def456 -->\n"
+            "\n"
+            "## Summary\n"
+            "Clean refactor.\n"
+            "\n"
+            "## Must fix\n"
+            "\n"
+            "- **[M1]** **`handler.go:11`** — missing error check\n"
+            "\n"
+            "## Performance Notes\n"
+            "\n"
+            "Consider caching the DB query at handler.go:15.\n"
+            "\n"
+            "## Verdict\n"
+            "\n"
+            "Request changes.\n"
+        )
+        review_dir = tmp_path / "autodiscovery-review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(review_with_custom)
+        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        (review_dir / "meta.json").write_text(json.dumps(meta))
+        result = self._run_dry_run(review_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = self._extract_json(result.stdout)
+        assert "Performance Notes" in payload["body"]
+        assert "caching the DB query" in payload["body"]
+
 
 class TestCheckReviewAlreadyPosted:
     def test_no_reviews_returns_empty(self, rp):
@@ -2458,3 +2510,93 @@ class TestFetchBotReviews:
     def test_api_failure_returns_empty(self, rp, monkeypatch):
         monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (1, ""))
         assert rp.fetch_bot_reviews("org/repo", "1") == []
+
+
+class TestReviewSections:
+    REVIEW_TEXT = (
+        "# Review: test-org/test-repo#42 — Fix handler\n"
+        "<!-- head_sha: abc123def456 -->\n"
+        "\n"
+        "## Summary\n"
+        "Clean refactor with good test coverage.\n"
+        "\n"
+        "## Must fix\n"
+        "\n"
+        "- **[M1]** **`handler.go:11`** — missing error check\n"
+        "\n"
+        "## Should fix\n"
+        "\n"
+        "- **[S1]** **`handler.go:25`** — unused variable\n"
+        "\n"
+        "## Static Analysis\n"
+        "\n"
+        "### Nesting depth\n"
+        "1 violation in 1 of 3 files checked\n"
+        "\n"
+        "## Verdict\n"
+        "\n"
+        "Request changes — M1 is a blocker.\n"
+    )
+
+    def test_from_text_extracts_known_sections(self, rp):
+        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        assert sections.get("summary") == "Clean refactor with good test coverage."
+        assert "Request changes" in sections.get("verdict")
+        assert "Nesting depth" in sections.get("static_analysis")
+
+    def test_from_text_ignores_severity_headers(self, rp):
+        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        assert sections.get("must_fix") == ""
+        assert sections.get("should_fix") == ""
+
+    def test_get_returns_empty_for_absent(self, rp):
+        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        assert sections.get("nonexistent") == ""
+
+    def test_before_findings_returns_ordered_pairs(self, rp):
+        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        before = sections.before_findings()
+        keys = [cfg.key for cfg, _ in before]
+        assert "summary" in keys
+        assert "verdict" in keys
+        assert keys.index("summary") < keys.index("verdict")
+
+    def test_after_findings_returns_passthrough(self, rp):
+        sections = rp.ReviewSections.from_text(self.REVIEW_TEXT)
+        after = sections.after_findings()
+        keys = [cfg.key for cfg, _ in after]
+        assert "static_analysis" in keys
+
+    def test_empty_constructor(self, rp):
+        sections = rp.ReviewSections()
+        assert sections.get("summary") == ""
+        assert sections.before_findings() == []
+        assert sections.after_findings() == []
+
+    def test_auto_discovers_unknown_section(self, rp):
+        text = (
+            "## Summary\n"
+            "Quick summary.\n"
+            "\n"
+            "## Performance Notes\n"
+            "Consider caching the DB query.\n"
+            "\n"
+            "## Must fix\n"
+            "\n"
+            "- **[M1]** **`a.go:1`** — bug\n"
+        )
+        sections = rp.ReviewSections.from_text(text)
+        assert sections.get("performance_notes") == "Consider caching the DB query."
+        after = sections.after_findings()
+        keys = [cfg.key for cfg, _ in after]
+        assert "performance_notes" in keys
+
+    def test_before_findings_omits_empty(self, rp):
+        text = "## Must fix\n\n- **[M1]** **`a.go:1`** — bug\n"
+        sections = rp.ReviewSections.from_text(text)
+        assert sections.before_findings() == []
+
+    def test_severity_alias_nits_ignored(self, rp):
+        text = "## Nits\n\n- **[N1]** **`a.go:1`** — nit\n"
+        sections = rp.ReviewSections.from_text(text)
+        assert sections.get("nits") == ""

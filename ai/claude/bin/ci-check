@@ -35,6 +35,7 @@ import pr_context
 import pr_state
 import review_common
 import log
+from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
 
@@ -968,7 +969,11 @@ def _run_ci_wait(trail, args, ctx) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CI failure status")
+    parser = ToolParser(
+        prog="ci-check",
+        description="CI failure status",
+        output_schema=pr_state.CIDomain,
+    )
     parser.add_argument("--pr", help="PR number or URL")
     parser.add_argument("--branch", help="Branch name (overrides git detection)")
     parser.add_argument("--run", type=int, help="Specific run ID")

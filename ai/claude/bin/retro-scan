@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _BIN_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_BIN_DIR.parent / "lib"))
+sys.path.insert(0, str(_BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(_BIN_DIR))
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402

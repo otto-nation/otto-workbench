@@ -45,7 +45,7 @@ PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
 PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
-REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "pi" / "extensions" / "review-guard.ts"
+REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "claude" / "pi" / "extensions" / "review-guard.ts"
 
 
 def _read_agent_prompt(agent: str) -> str | None:

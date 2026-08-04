@@ -4,7 +4,7 @@ paths:
   - "ai/claude/bin/review-*"
   - "ai/claude/bin/ci-check"
   - "ai/claude/bin/pr"
-  - "ai/claude/lib/**"
+  - "ai/lib/**"
   - "ai/claude/agents/reviewer.md"
 ---
 
@@ -81,7 +81,7 @@ messages on stderr.
 ### State management
 
 - State file: `<worktree>/.workbench/state.json`
-- Lib module: `ai/claude/lib/pr_state.py`
+- Lib module: `ai/lib/pr_state.py`
 - Each domain has a dataclass (e.g., `CIDomain`, `RebaseSummary`) serialized
   via generic `serde.to_dict()`/`serde.from_dict()`
 - Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`

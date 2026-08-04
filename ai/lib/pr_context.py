@@ -18,7 +18,7 @@ import log
 _PR_URL_RE = re.compile(r"/pull/(\d+)")
 _PR_NUMBER_RE = re.compile(r"^\d+$")
 
-RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / "resolve-branch"
+RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent / "bin" / "resolve-branch"
 
 
 def is_pr_ref(s: str) -> bool:

@@ -8,7 +8,7 @@ import importlib.machinery
 import importlib.util
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
-LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"
+LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))
 

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
+LIB_DIR = REPO_ROOT / "ai" / "lib"
 TEMPLATE_DIR = LIB_DIR / "review-templates"
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"

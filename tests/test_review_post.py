@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "lib"
+LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 

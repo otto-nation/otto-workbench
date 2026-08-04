@@ -30,7 +30,7 @@ class CheckerResult:
     files_checked: int
 
 
-_WORKBENCH_LIB = str(Path(__file__).resolve().parent.parent.parent.parent / "lib")
+_WORKBENCH_LIB = str(Path(__file__).resolve().parent.parent.parent / "lib")
 if _WORKBENCH_LIB not in sys.path:
     sys.path.insert(0, _WORKBENCH_LIB)
 

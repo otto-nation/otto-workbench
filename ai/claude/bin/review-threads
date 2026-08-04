@@ -59,6 +59,9 @@ FIX_RETRY_TURNS_BUMP = 15
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+_APPLIED_REPLY_PREFIX = "Applied:"
+_ADDRESSED_REPLY_PREFIX = "Already addressed"
+_DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
 _FIX_RETRY_HINT = (
     "This is a RETRY of a prior fix pass. Some items were already fixed in the "
@@ -641,24 +644,45 @@ def _commit_and_push(
     return CommitPushResult(sha, "push_failed", err)
 
 
+def _thread_has_reply_prefix(thread: ReportThread | None, prefix: str) -> bool:
+    """Check if a thread already has a reply starting with the given prefix."""
+    if not thread:
+        return False
+    for comment in thread.comments:
+        if comment.get("body", "").startswith(prefix):
+            return True
+    return False
+
+
 def _post_thread_replies(
     entries: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
     body_fn: Callable[[CommentItem], str],
+    *,
+    reply_prefix: str | None = None,
 ) -> int:
-    """Post a reply to each thread entry using body_fn to build the message body."""
+    """Post a reply to each thread entry using body_fn to build the message body.
+
+    When reply_prefix is set, skip threads that already have a reply with that prefix.
+    """
     posted = 0
+    skipped = 0
     for entry in entries:
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
+            continue
+        if reply_prefix and _thread_has_reply_prefix(thread, reply_prefix):
+            skipped += 1
             continue
         database_id = thread.comments[0].get("databaseId")
         if not database_id:
             continue
         if pc.post_thread_reply(repo, pr_number, database_id, body_fn(entry)):
             posted += 1
+    if skipped:
+        log.info(f"Skipped {skipped} thread(s) with existing replies")
     return posted
 
 
@@ -675,7 +699,10 @@ def _post_fix_replies(
     def body_fn(entry: CommentItem) -> str:
         return f"Applied: {entry.summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
 
-    posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
+    posted = _post_thread_replies(
+        fixed, threads_by_id, repo, pr_number, body_fn,
+        reply_prefix=_APPLIED_REPLY_PREFIX,
+    )
     if posted:
         log.info(f"Posted {posted} thread replies")
     return posted
@@ -714,7 +741,10 @@ def _post_already_addressed_replies(
             )
         return f"Already addressed in the current implementation: {entry.summary}"
 
-    posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
+    posted = _post_thread_replies(
+        fixed, threads_by_id, repo, pr_number, body_fn,
+        reply_prefix=_ADDRESSED_REPLY_PREFIX,
+    )
     if posted:
         log.info(f"Posted {posted} already-addressed replies")
     return posted
@@ -733,20 +763,13 @@ def _post_dismissed_replies(
             return f"Suggestion reviewed and determined to be inapplicable: {reasoning}"
         return "Suggestion reviewed and determined to be inapplicable."
 
-    posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
+    posted = _post_thread_replies(
+        dismissed, threads_by_id, repo, pr_number, body_fn,
+        reply_prefix=_DISMISSED_REPLY_PREFIX,
+    )
     if posted:
         log.info(f"Dismissed {posted} invalid suggestion(s)")
     return posted
-
-
-def _has_deferred_reply(thread: ReportThread | None) -> bool:
-    """Check if a thread already has a deferred reply posted."""
-    if not thread:
-        return False
-    for comment in thread.comments:
-        if comment.get("body", "").startswith(_DEFERRED_REPLY_PREFIX):
-            return True
-    return False
 
 
 def _post_deferred_replies(
@@ -758,19 +781,15 @@ def _post_deferred_replies(
     issue_url: str,
 ) -> int:
     """Post replies to deferred threads linking the tracking issue."""
-    new_deferred = [
-        e for e in deferred
-        if not _has_deferred_reply(threads_by_id.get(e.id))
-    ]
-    if not new_deferred:
-        return 0
-
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
 
     def body_fn(entry: CommentItem) -> str:
         return f"{_DEFERRED_REPLY_PREFIX} {entry.summary}\n\nTracked in {issue_ref}."
 
-    posted = _post_thread_replies(new_deferred, threads_by_id, repo, pr_number, body_fn)
+    posted = _post_thread_replies(
+        deferred, threads_by_id, repo, pr_number, body_fn,
+        reply_prefix=_DEFERRED_REPLY_PREFIX,
+    )
     if posted:
         log.info(f"Posted {posted} deferred thread replies")
     return posted

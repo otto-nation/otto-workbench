@@ -414,17 +414,16 @@ def _run_post_eval(
     if args.compare:
         exit_code = _run_comparison(args, output, repo_root)
 
-    if args.save_baselines:
-        if exit_code != 0:
-            print(
-                "warning: skipping baseline save — regressions detected",
-                file=sys.stderr,
-            )
-        else:
-            results_dir = _resolve_results_dir(args, repo_root)
-            written = _save_baselines(output, results_dir)
-            for path in written:
-                print(f"Baseline written: {path}", file=sys.stderr)
+    if args.save_baselines and exit_code != 0:
+        print(
+            "warning: skipping baseline save — regressions detected",
+            file=sys.stderr,
+        )
+    elif args.save_baselines:
+        results_dir = _resolve_results_dir(args, repo_root)
+        written = _save_baselines(output, results_dir)
+        for path in written:
+            print(f"Baseline written: {path}", file=sys.stderr)
 
     return exit_code
 

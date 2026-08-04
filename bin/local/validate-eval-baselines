@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Validate eval baseline files in eval/results/ for schema and corpus coverage.
+#
+# Checks:
+#   - Each *.json in eval/results/ is valid JSON
+#   - Each baseline matches the expected schema (via Python helper)
+#   - Every corpus entry appears in at least one baseline
+#
+# Usage: bin/local/validate-eval-baselines [--quiet]
+# Exit code: 0 if all checks pass (or no baselines/corpus found), 1 if any fail.
+
+set -e
+
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$_SCRIPT_ROOT}"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate eval baseline files in eval/results/ for schema and corpus coverage.
+
+Options:
+  --quiet     Suppress per-check output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+ERRORS=0
+CHECKS=0
+BASELINES=0
+CORPUS_ENTRIES=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+RESULTS_DIR="$_SCRIPT_ROOT/eval/results"
+CORPUS_DIR="$_SCRIPT_ROOT/eval/corpus"
+
+# ── Validation functions ─────────────────────────────────────────────────────
+
+_validate_baseline_file() {
+  local baseline="$1"
+  local display
+  display="eval/results/$(basename "$baseline")"
+
+  if ! jq -e '.' "$baseline" > /dev/null 2>&1; then
+    _fail "$display: invalid JSON"
+    return
+  fi
+  _pass "$display: valid JSON"
+
+  local schema_output
+  schema_output=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$_SCRIPT_ROOT/ai/claude/lib')
+from eval_scoring import validate_baseline_schema
+errors = validate_baseline_schema(json.load(open(sys.argv[1])))
+for e in errors:
+    print(e)
+sys.exit(1 if errors else 0)
+" "$baseline" 2>&1) || true
+
+  if [[ -n "$schema_output" ]]; then
+    _fail "$display: schema errors: $schema_output"
+  else
+    _pass "$display: schema valid"
+  fi
+}
+
+_check_corpus_coverage() {
+  local covered_entries=""
+  local baseline
+  for baseline in "$RESULTS_DIR"/*.json; do
+    [[ -f "$baseline" ]] || continue
+    local entries
+    entries=$(jq -r '.entries | keys[]' "$baseline" 2>/dev/null) || true
+    covered_entries="$covered_entries $entries"
+  done
+
+  local manifest entry_name display
+  for manifest in "$CORPUS_DIR"/*/manifest.json; do
+    [[ -f "$manifest" ]] || continue
+    CORPUS_ENTRIES=$(( CORPUS_ENTRIES + 1 ))
+    entry_name=$(jq -r '.name // empty' "$manifest" 2>/dev/null)
+    [[ -z "$entry_name" ]] && entry_name=$(basename "$(dirname "$manifest")")
+    display="corpus/$entry_name"
+
+    (( BASELINES == 0 )) && continue
+
+    if echo "$covered_entries" | grep -qw "$entry_name"; then
+      _pass "$display: covered by baseline"
+    else
+      _fail "$display: not covered by any baseline in eval/results/"
+    fi
+  done
+}
+
+# ── Run checks ───────────────────────────────────────────────────────────────
+
+if [[ -d "$RESULTS_DIR" ]]; then
+  for baseline in "$RESULTS_DIR"/*.json; do
+    [[ -f "$baseline" ]] || continue
+    BASELINES=$(( BASELINES + 1 ))
+    _validate_baseline_file "$baseline"
+  done
+fi
+
+[[ -d "$CORPUS_DIR" ]] && _check_corpus_coverage
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+echo
+if (( BASELINES == 0 && CORPUS_ENTRIES == 0 )); then
+  echo -e "  ${DIM}no baselines or corpus entries found${NC}"
+  exit 0
+elif (( ERRORS == 0 )); then
+  success "$CHECKS checks passed ($BASELINES baselines, $CORPUS_ENTRIES corpus entries)"
+  exit 0
+else
+  err "$ERRORS of $CHECKS checks failed"
+  exit 1
+fi

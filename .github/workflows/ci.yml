@@ -71,6 +71,9 @@ jobs:
       - name: Validate errexit safety
         run: python3 bin/local/validate-errexit --quiet
 
+      - name: Validate eval baselines
+        run: bash bin/local/validate-eval-baselines
+
       - name: Verify generated files are up to date
         run: |
           bash bin/local/generate-tool-context

@@ -27,12 +27,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from eval_scoring import (  # noqa: E402
     ScoringResult,
     aggregate_runs,
+    compare_baselines,
+    format_comparison_table,
     format_summary_table,
     parse_manifest,
     score_entry,
 )
 from review_common import SessionUsage, parse_session_log  # noqa: E402
 from review_findings import parse_findings  # noqa: E402
+
+import re
 
 _SELF_DIR = Path(__file__).resolve().parent
 _REVIEW_ORCHESTRATE = _SELF_DIR / "review-orchestrate"
@@ -196,6 +200,68 @@ def _serialize_run(r: ScoringResult) -> dict:
     }
 
 
+def _sanitize_model_label(label: str) -> str:
+    s = label.replace("(", "").replace(")", "")
+    s = re.sub(r"[^a-zA-Z0-9._-]", "-", s)
+    return s.strip("-") or "default"
+
+
+def _build_baseline(
+    model_label: str,
+    effort: str,
+    runs_per_entry: int,
+    entry_results: dict[str, dict],
+) -> dict:
+    return {
+        "schema_version": 1,
+        "model": model_label,
+        "effort": effort,
+        "runs_per_entry": runs_per_entry,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "entries": entry_results,
+    }
+
+
+def _save_baselines(
+    output: dict,
+    results_dir: str,
+) -> list[str]:
+    results_path = Path(results_dir)
+    results_path.mkdir(parents=True, exist_ok=True)
+
+    models_data: dict[str, dict[str, dict]] = {}
+    for entry_name, entry_models in output.get("entries", {}).items():
+        for model_label, model_data in entry_models.items():
+            models_data.setdefault(model_label, {})[entry_name] = model_data
+
+    written = []
+    for model_label, entry_data in sorted(models_data.items()):
+        baseline = _build_baseline(
+            model_label, output["effort"], output["runs_per_entry"], entry_data,
+        )
+        filename = _sanitize_model_label(model_label) + ".json"
+        filepath = results_path / filename
+        filepath.write_text(json.dumps(baseline, indent=2) + "\n")
+        written.append(str(filepath))
+
+    return written
+
+
+def _load_baselines(results_dir: str) -> dict[str, dict]:
+    results_path = Path(results_dir)
+    baselines: dict[str, dict] = {}
+    if not results_path.is_dir():
+        return baselines
+    for f in sorted(results_path.glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        model = data.get("model", f.stem)
+        baselines[model] = data
+    return baselines
+
+
 def _build_output(
     all_results: dict[tuple[str, str], list[ScoringResult]],
     effort: str,
@@ -301,7 +367,7 @@ def run_eval(args: argparse.Namespace) -> dict:
             )
         total = len(entries) * len(models) * args.runs
         print(f"\nTotal runs: {total}", file=sys.stderr)
-        return {}
+        return {}, 0
 
     all_results: dict[tuple[str, str], list] = {}
 
@@ -323,7 +389,51 @@ def run_eval(args: argparse.Namespace) -> dict:
         Path(args.output).write_text(json.dumps(output, indent=2) + "\n")
         print(f"\nResults written to {args.output}", file=sys.stderr)
 
-    return output
+    exit_code = _run_post_eval(args, output, repo_root)
+    return output, exit_code
+
+
+def _resolve_results_dir(args: argparse.Namespace, repo_root: Path) -> str:
+    results_dir = args.results_dir
+    if not Path(results_dir).is_absolute():
+        results_dir = str(repo_root / results_dir)
+    return results_dir
+
+
+def _run_post_eval(
+    args: argparse.Namespace, output: dict, repo_root: Path,
+) -> int:
+    exit_code = 0
+
+    if args.compare:
+        exit_code = _run_comparison(args, output, repo_root)
+
+    if args.save_baselines:
+        results_dir = _resolve_results_dir(args, repo_root)
+        written = _save_baselines(output, results_dir)
+        for path in written:
+            print(f"Baseline written: {path}", file=sys.stderr)
+
+    return exit_code
+
+
+def _run_comparison(
+    args: argparse.Namespace, output: dict, repo_root: Path,
+) -> int:
+    results_dir = _resolve_results_dir(args, repo_root)
+    baselines = _load_baselines(results_dir)
+    if not baselines:
+        print("\nNo baselines found for comparison.", file=sys.stderr)
+        return 0
+    comparison = compare_baselines(baselines, output)
+    print("\n" + format_comparison_table(comparison))
+    if comparison["regressions"]:
+        print(
+            f"\n{len(comparison['regressions'])} regression(s) detected.",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
 
 
 def main():
@@ -370,9 +480,23 @@ def main():
         "--verbose", action="store_true",
         help="Print review-orchestrate stdout/stderr",
     )
+    parser.add_argument(
+        "--save-baselines", action="store_true",
+        help="Write per-model baseline files to eval/results/",
+    )
+    parser.add_argument(
+        "--compare", action="store_true",
+        help="Compare results against committed baselines",
+    )
+    parser.add_argument(
+        "--results-dir", default="eval/results/",
+        help="Directory for baseline result files (default: eval/results/)",
+    )
 
     args = parser.parse_args()
-    run_eval(args)
+    _, exit_code = run_eval(args)
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

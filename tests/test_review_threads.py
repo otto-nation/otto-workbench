@@ -880,6 +880,40 @@ def _make_state(fix=None):
     )
 
 
+class TestPostOrDeferSummary:
+    def _fixed_entry(self, **overrides):
+        defaults = {"summary": "fix regex", "file": "parsers.py", "line": 10}
+        defaults.update(overrides)
+        return CommentItem(**defaults)
+
+    def test_posts_when_pushed_no_deferred(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock:
+            url = rt._post_or_defer_summary(
+                [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
+            )
+        assert url == "https://url"
+        mock.assert_called_once()
+
+    def test_defers_when_needs_human(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        url = rt._post_or_defer_summary(
+            [self._fixed_entry()],
+            [self._fixed_entry(summary="question")],
+            [], cp, "owner/repo", 1, {},
+        )
+        assert url is None
+
+    def test_defers_when_push_failed(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
+        with patch("pr_comments.post_issue_comment") as mock:
+            url = rt._post_or_defer_summary(
+                [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
+            )
+        assert url is None
+        mock.assert_not_called()
+
+
 class TestRenderDeferredSummary:
     def test_not_deferred_is_noop(self, rt):
         state = _make_state(FixSummary(summary_deferred=False))

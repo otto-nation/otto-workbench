@@ -1269,6 +1269,10 @@ def _post_or_defer_summary(
     Returns the comment URL if posted, None if deferred or nothing to post.
     When deferred, the summary is re-rendered from FixSummary during --resolve.
     """
+    if cp.status == "push_failed":
+        log.info("Deferred fix summary — push failed, will post after push lands")
+        return None
+
     if not needs_human and not deferred:
         return _post_fix_summary(
             fixed, needs_human, deferred, cp, repo, pr_number,
@@ -1597,7 +1601,7 @@ def _run_comment_fix(
         cp = _recover_agent_commit(wt_path, head_before, trail)
 
     replies_posted = dismissed_replies
-    if tracking.fixed:
+    if tracking.fixed and cp.status == "pushed":
         if cp.sha:
             replies_posted += _post_fix_replies(
                 tracking.fixed, threads_by_id, ctx.repo, report.pr_number,
@@ -1613,7 +1617,7 @@ def _run_comment_fix(
     all_fixed = tracking.fixed + tracking.fixed_items
     all_deferred = tracking.deferred + tracking.deferred_items
 
-    pending_deferred = bool(all_deferred) or bool(all_needs_human)
+    pending_deferred = bool(all_deferred) or bool(all_needs_human) or cp.status == "push_failed"
 
     summary_url = _post_or_defer_summary(
         all_fixed, all_needs_human, all_deferred, cp,

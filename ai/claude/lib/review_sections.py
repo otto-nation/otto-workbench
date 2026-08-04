@@ -7,7 +7,7 @@ Replaces per-section parameter threading across the posting pipeline.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from review_common import SEVERITIES
 from review_findings import _extract_section
@@ -88,6 +88,7 @@ class ReviewSections:
                     key=_slugify(original),
                     header=original,
                     position=POSITION_AFTER,
+                    heading=f"## {original}",
                 )
 
             content = _extract_section(text, cfg.header)

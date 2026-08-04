@@ -10,7 +10,7 @@ import re
 
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
-from review_sections import ReviewSections, POSITION_BEFORE, POSITION_AFTER
+from review_sections import ReviewSections
 
 _VERDICT_ACTION_RE = re.compile(
     r"^\*{0,2}(?:Request changes|Needs discussion|Approve|Disapprove)\*{0,2}\s*[—–\-]\s*",
@@ -253,6 +253,7 @@ def format_body_text(
             current_parent = parent
             if cfg.heading:
                 parts.append(cfg.heading)
+                parts.append("")
             if cfg.strip_action:
                 content = _VERDICT_ACTION_RE.sub("", content, count=1)
             parts.append(content)
@@ -277,8 +278,11 @@ def format_body_text(
         return "\n".join(parts)
 
     if not body_findings:
-        for _, content in after:
+        for cfg, content in after:
             parts.append("")
+            if cfg.heading:
+                parts.append(cfg.heading)
+                parts.append("")
             parts.append(content)
         return "\n".join(parts).rstrip("\n")
 
@@ -298,8 +302,11 @@ def format_body_text(
     if by_file:
         _append_body_only_findings(parts, by_file)
 
-    for _, content in after:
+    for cfg, content in after:
         parts.append("")
+        if cfg.heading:
+            parts.append(cfg.heading)
+            parts.append("")
         parts.append(content)
 
     return "\n".join(parts).rstrip("\n")

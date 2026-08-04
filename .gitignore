@@ -34,3 +34,4 @@ ignore/
 
 # Superpowers plugin artifacts
 .superpowers/
+docs/superpowers/

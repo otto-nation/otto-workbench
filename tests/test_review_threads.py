@@ -914,6 +914,50 @@ class TestPostOrDeferSummary:
         mock.assert_not_called()
 
 
+class TestUnaccountedThreadsDeferSummary:
+    """Summary should defer when non-resolved threads are not in any classified bucket."""
+
+    def test_all_threads_accounted(self, rt):
+        """When every non-resolved thread is in fixable/needs_human/dismissed, none are unaccounted."""
+        triage_threads = [
+            CommentItem(id="t1", classification="actionable_suggestion",
+                        verification="valid", complexity="low",
+                        file="a.py", line=1, summary="fix it"),
+        ]
+        report_threads = [
+            ReportThread(id="t1", state="new", is_resolved=False),
+            ReportThread(id="t2", state="resolved", is_resolved=True),
+        ]
+        accounted_ids = rt._accounted_thread_ids(triage_threads, [], [])
+        non_resolved = [t for t in report_threads if t.state != "resolved"]
+        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
+        assert unaccounted == []
+
+    def test_unaccounted_threads_detected(self, rt):
+        """Threads not in any classified bucket are detected as unaccounted."""
+        triage_threads = [
+            CommentItem(id="t1", classification="actionable_suggestion",
+                        verification="valid", complexity="low",
+                        file="a.py", line=1, summary="fix it"),
+            CommentItem(id="t2", classification="approval",
+                        file="b.py", line=1, summary="lgtm"),
+        ]
+        report_threads = [
+            ReportThread(id="t1", state="new", is_resolved=False),
+            ReportThread(id="t2", state="new", is_resolved=False),
+            ReportThread(id="t3", state="new", is_resolved=False),
+        ]
+        classified = rt._classify_triage_entries(triage_threads)
+        accounted_ids = rt._accounted_thread_ids(
+            classified.fixable, classified.needs_human, classified.dismissed,
+        )
+        non_resolved = [t for t in report_threads if t.state != "resolved"]
+        unaccounted = [t for t in non_resolved if t.id not in accounted_ids]
+        # t2 was classified as "approval" and dropped; t3 wasn't in triage at all
+        assert len(unaccounted) == 2
+        assert {t.id for t in unaccounted} == {"t2", "t3"}
+
+
 class TestRenderDeferredSummary:
     def test_not_deferred_is_noop(self, rt):
         state = _make_state(FixSummary(summary_deferred=False))

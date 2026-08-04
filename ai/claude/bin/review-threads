@@ -1408,6 +1408,19 @@ def _classify_triage_entries(
     return result
 
 
+def _accounted_thread_ids(
+    fixable: list[CommentItem],
+    needs_human: list[CommentItem],
+    dismissed: list[CommentItem],
+) -> set[str]:
+    """Return IDs of all threads that have a disposition in the fix pipeline."""
+    return {
+        entry.id
+        for entries in (fixable, needs_human, dismissed)
+        for entry in entries
+    }
+
+
 def _retry_fix_pass(
     deferred_threads: list[CommentItem],
     deferred_items: list[CommentItem],
@@ -1500,6 +1513,14 @@ def _run_comment_fix(
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
 
+    non_resolved_ids = {t.id for t in report.threads if t.state != "resolved"}
+    accounted_ids = _accounted_thread_ids(
+        fixable + (fixable_items or []),
+        all_needs_human,
+        all_dismissed,
+    )
+    has_unaccounted = bool(non_resolved_ids - accounted_ids)
+
     no_commit = CommitPushResult(None, "no_changes", "")
 
     dismissed_replies = 0
@@ -1517,7 +1538,8 @@ def _run_comment_fix(
     )
 
     if not all_fixable:
-        if all_dismissed or all_needs_human:
+        early_deferred = bool(all_needs_human) or has_unaccounted
+        if (all_dismissed or all_needs_human) and not has_unaccounted:
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, dismissed=all_dismissed,
@@ -1526,15 +1548,17 @@ def _run_comment_fix(
                 has_comment_items=has_items,
             )
         else:
+            if has_unaccounted:
+                log.info("Deferred fix summary — unresolved threads not yet addressed")
             summary_url = None
         empty_result.summary_url = summary_url
-        empty_result.summary_deferred = summary_url is None and bool(all_needs_human)
+        empty_result.summary_deferred = summary_url is None and early_deferred
         _persist_fix_state(pr_state.FixSummary(
             threads=_build_thread_outcomes([], [], all_needs_human, all_dismissed),
             commit_status=no_commit.status,
             replies_posted=dismissed_replies,
             summary_url=summary_url or "",
-            summary_deferred=summary_url is None and bool(all_needs_human),
+            summary_deferred=summary_url is None and early_deferred,
             updated_at=pr_state.now_iso(),
         ), wt_path, ctx, trail)
         return empty_result
@@ -1617,7 +1641,10 @@ def _run_comment_fix(
     all_fixed = tracking.fixed + tracking.fixed_items
     all_deferred = tracking.deferred + tracking.deferred_items
 
-    pending_deferred = bool(all_deferred) or bool(all_needs_human) or cp.status == "push_failed"
+    pending_deferred = (
+        bool(all_deferred) or bool(all_needs_human)
+        or cp.status == "push_failed" or has_unaccounted
+    )
 
     summary_url = _post_or_defer_summary(
         all_fixed, all_needs_human, all_deferred, cp,

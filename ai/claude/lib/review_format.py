@@ -10,7 +10,7 @@ import re
 
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
-from review_sections import ReviewSections
+from review_sections import ReviewSections, SectionConfig
 
 _VERDICT_ACTION_RE = re.compile(
     r"^\*{0,2}(?:Request changes|Needs discussion|Approve|Disapprove)\*{0,2}\s*[—–\-]\s*",

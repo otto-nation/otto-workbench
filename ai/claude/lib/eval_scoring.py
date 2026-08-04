@@ -244,7 +244,7 @@ def _validate_entry(name: str, entry: object) -> list[str]:
     return errors
 
 
-def validate_baseline_schema(data: dict) -> list[str]:
+def validate_baseline_schema(data: object) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["root must be a JSON object"]

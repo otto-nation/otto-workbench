@@ -36,6 +36,7 @@ ERRORS=0
 CHECKS=0
 BASELINES=0
 CORPUS_ENTRIES=0
+COVERED_ENTRIES=""
 
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
@@ -55,6 +56,11 @@ _validate_baseline_file() {
     return
   fi
   _pass "$display: valid JSON"
+
+  # Accumulate covered entries so _check_corpus_coverage avoids re-reading files
+  local entries
+  entries=$(jq -r '.entries | keys[]' "$baseline" 2>/dev/null) || true
+  COVERED_ENTRIES="$COVERED_ENTRIES $entries"
 
   local schema_output
   schema_output=$(python3 -c "
@@ -83,15 +89,6 @@ _count_corpus_entries() {
 }
 
 _check_corpus_coverage() {
-  local covered_entries=""
-  local baseline
-  for baseline in "$RESULTS_DIR"/*.json; do
-    [[ -f "$baseline" ]] || continue
-    local entries
-    entries=$(jq -r '.entries | keys[]' "$baseline" 2>/dev/null) || true
-    covered_entries="$covered_entries $entries"
-  done
-
   local manifest entry_name display
   for manifest in "$CORPUS_DIR"/*/manifest.json; do
     [[ -f "$manifest" ]] || continue
@@ -100,7 +97,7 @@ _check_corpus_coverage() {
     [[ -z "$entry_name" ]] && entry_name=$(basename "$(dirname "$manifest")")
     display="corpus/$entry_name"
 
-    if echo "$covered_entries" | grep -qwF "$entry_name"; then
+    if echo "$COVERED_ENTRIES" | grep -qwF "$entry_name"; then
       _pass "$display: covered by baseline"
     else
       _fail "$display: not covered by any baseline in eval/results/"
@@ -131,6 +128,9 @@ fi
 echo
 if (( BASELINES == 0 && CORPUS_ENTRIES == 0 )); then
   echo -e "  ${DIM}no baselines or corpus entries found${NC}"
+  exit 0
+elif (( BASELINES == 0 )); then
+  echo -e "  ${DIM}corpus found but no baselines — skipping coverage check${NC}"
   exit 0
 elif (( ERRORS == 0 )); then
   success "$CHECKS checks passed ($BASELINES baselines, $CORPUS_ENTRIES corpus entries)"

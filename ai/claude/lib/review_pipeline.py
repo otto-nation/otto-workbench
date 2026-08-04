@@ -362,7 +362,7 @@ def build_failures_section(
     """Build a markdown Agent Failures section from pipeline state."""
     rows: list[tuple[str, str, str]] = []
 
-    for idx, reason in sorted(state.groups_failed.items(), key=lambda x: int(x[0]) if isinstance(x[0], str) else x[0]):
+    for idx, reason in sorted(state.groups_failed.items(), key=lambda x: int(x[0])):
         idx = int(idx) if isinstance(idx, str) else idx
         name = state.group_names[idx - 1] if idx <= len(state.group_names) else f"group-{idx}"
         rows.append((f"group-{idx}: {name}", reason, "failed"))

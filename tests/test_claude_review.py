@@ -587,7 +587,7 @@ def test_read_pipeline_status_partial_groups_failed_synthesis_ok(cr, tmp_path):
         "synthesis_done": True, "synthesis_failed": "",
         "groups_done": [1, 3], "groups_failed": {"2": "quota exhausted (429)"},
     }))
-    assert read_pipeline_status(tmp_path) == "partial"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
 
 
 def test_read_pipeline_status_partial_mechanical_fallback(cr, tmp_path):
@@ -598,7 +598,7 @@ def test_read_pipeline_status_partial_mechanical_fallback(cr, tmp_path):
         "synthesis_done": True, "synthesis_failed": "mechanical fallback",
         "groups_done": [1], "groups_failed": {},
     }))
-    assert read_pipeline_status(tmp_path) == "partial"
+    assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
 
 
 def test_read_pipeline_status_error_all_groups_failed(cr, tmp_path):
@@ -693,7 +693,7 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
     }))
     from review_common import build_review_summary
     result = build_review_summary("owner/test-repo", "1", str(review_file))
-    assert result["status"] == "partial"
+    assert result["status"] == ReviewStatus.PARTIAL.value
     assert "1/2 groups failed" in result["failure_detail"]
 
 
@@ -1362,10 +1362,10 @@ def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch)
 
     # Mock gh to return matching HEAD
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
+    # Verify _confirm is never called — auto-recovery must skip the prompt
+    monkeypatch.setattr(cr, "_confirm", MagicMock(side_effect=AssertionError("_confirm called unexpectedly")))
 
-    # Should return without prompting (not call sys.exit or _confirm)
     cr._check_stale_review("owner/repo", "1", review_file, force=False)
-    # If we get here, no prompt was shown — test passes
 
 
 def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch):

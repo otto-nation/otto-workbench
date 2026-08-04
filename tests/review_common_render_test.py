@@ -82,7 +82,8 @@ def test_render_status_with_cost():
 
 def test_render_status_partial_with_failure_detail():
     rev = pr_state.ReviewSummary(
-        review_type="pr", verdict="changes_requested", status="partial",
+        review_type="pr", verdict=pr_state.ReviewVerdict.CHANGES_REQUESTED.value,
+        status=pr_state.ReviewStatus.PARTIAL.value,
         failure_detail="2/8 groups failed: quota exhausted (429), agent hit max turns (5)",
         finding_counts={"M": 3, "S": 2}, cost_usd=4.50, updated_at="t",
     )
@@ -94,7 +95,7 @@ def test_render_status_partial_with_failure_detail():
 
 def test_render_status_error_with_failure_detail():
     rev = pr_state.ReviewSummary(
-        review_type="pr", status="error",
+        review_type="pr", status=pr_state.ReviewStatus.ERROR.value,
         failure_detail="all groups failed: quota exhausted (429)",
         cost_usd=2.10, updated_at="t",
     )
@@ -106,7 +107,8 @@ def test_render_status_error_with_failure_detail():
 
 def test_render_status_complete_no_recover_hint():
     rev = pr_state.ReviewSummary(
-        review_type="pr", verdict="approve", status="completed",
+        review_type="pr", verdict=pr_state.ReviewVerdict.APPROVE.value,
+        status=pr_state.ReviewStatus.COMPLETED.value,
         finding_counts={}, cost_usd=3.00, updated_at="t",
     )
     lines = render_status(rev)

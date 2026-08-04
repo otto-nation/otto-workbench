@@ -33,8 +33,8 @@ from review_common import (
     FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
     SEVERITIES,
-    ReviewMeta, SessionUsage, aggregate_session_usage, count_severity,
-    detect_repo, json_summary, parse_review_verdict, parse_session_log,
+    ReviewMeta, SessionUsage, aggregate_session_usage, build_failure_detail,
+    count_severity, detect_repo, json_summary, parse_review_verdict, parse_session_log,
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
 )
@@ -309,6 +309,7 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
         finding_counts=finding_counts,
         verdict=verdict,
         status=status,
+        failure_detail=build_failure_detail(review_dir),
         cost_usd=usage.cost,
         total_tokens=usage.total_tokens,
         updated_at=pr_state.now_iso(),
@@ -822,7 +823,11 @@ def _run_review_pr(
         except Exception:
             pass
         if pr_head_sha:
-            pipeline_data = json.loads(pipeline_path.read_text())
+            try:
+                pipeline_data = json.loads(pipeline_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                log.error(f"Corrupt pipeline state: {review_dir}")
+                sys.exit(1)
             if pipeline_data.get("head_sha") != pr_head_sha:
                 log.error(
                     f"HEAD has moved since the failed review "
@@ -834,6 +839,31 @@ def _run_review_pr(
         force = True  # Skip stale check and pending review check
     else:
         has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
+
+    if has_pipeline_state and review_file.exists():
+        # Auto-recovery: if HEAD hasn't moved and the prior review had failures,
+        # resume without prompting instead of treating it as a fresh stale review.
+        try:
+            _review_text = review_file.read_text()
+        except OSError:
+            _review_text = ""
+        _m = re.search(r"<!-- head_sha: ([a-f0-9]+) -->", _review_text)
+        _review_sha = _m.group(1) if _m else ""
+        if _review_sha:
+            _pr_head_sha_check = ""
+            try:
+                _r = subprocess.run(
+                    ["gh", "pr", "view", pr_number, "--repo", repo,
+                     "--json", "headRefOid", "--jq", ".headRefOid"],
+                    capture_output=True, text=True,
+                )
+                _pr_head_sha_check = _r.stdout.strip()
+            except Exception:
+                pass
+            if _pr_head_sha_check and _review_sha == _pr_head_sha_check:
+                _pipeline_status = read_pipeline_status(review_dir)
+                if _pipeline_status in (pr_state.ReviewStatus.PARTIAL.value, pr_state.ReviewStatus.ERROR.value):
+                    log.info(f"Recovering failed review agents (HEAD unchanged at {_review_sha[:7]})")
 
     if not has_pipeline_state:
         _check_stale_review(repo, pr_number, review_file, force)

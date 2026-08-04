@@ -1042,6 +1042,94 @@ class TestRenderDeferredSummary:
         body = mock_post.call_args[0][2]
         assert "def5678" in body
 
+    def test_skips_when_push_failed_and_still_unpushed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="def5678",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment") as mock_post:
+            with patch.object(rt, "_is_pushed", return_value=False):
+                rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        mock_post.assert_not_called()
+        assert fix.summary_deferred is True
+
+    def test_posts_when_push_failed_but_now_pushed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="def5678",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        report = PRReport()
+        with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
+            with patch.object(rt, "_is_pushed", return_value=True):
+                rt._render_deferred_summary(state, report, "owner/repo", 1, {})
+        mock_post.assert_called_once()
+        assert fix.summary_deferred is False
+        assert fix.commit_status == "pushed"
+        body = mock_post.call_args[0][2]
+        assert "def5678" in body
+        assert "push failed" not in body
+
+
+class TestResolvePushDeferredReplies:
+    """Test that --resolve posts deferred replies when push has since landed."""
+
+    def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+                ThreadOutcome(id="t2", summary="another", file="y.py", line=2, action="fixed"),
+            ],
+            commit_sha="abc1234",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        threads_by_id = {
+            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
+            "t2": ReportThread(id="t2", is_resolved=False, comments=[{"databaseId": 200}]),
+        }
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            rt._post_push_deferred_replies(state, "owner/repo", 1, threads_by_id)
+        assert mock_reply.call_count == 2
+        assert mock_resolve.call_count == 2
+        assert fix.commit_status == "pushed"
+
+    def test_skips_when_still_unpushed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+            ],
+            commit_sha="abc1234",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch("pr_comments.post_thread_reply") as mock_reply:
+            rt._post_push_deferred_replies(state, "owner/repo", 1, {})
+        mock_reply.assert_not_called()
+        assert fix.commit_status == "push_failed"
+
+    def test_noop_when_not_push_failed(self, rt):
+        fix = FixSummary(commit_status="pushed", summary_deferred=True)
+        state = _make_state(fix)
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            rt._post_push_deferred_replies(state, "owner/repo", 1, {})
+        mock_reply.assert_not_called()
+
 
 # ── _summarize_comment_body ─────────────────────────────────────────────────
 

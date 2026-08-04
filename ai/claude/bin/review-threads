@@ -1208,6 +1208,43 @@ def _post_fix_summary(
     return url
 
 
+def _post_push_deferred_replies(
+    state: pr_state.PRState,
+    repo: str,
+    pr_number: int,
+    threads_by_id: dict[str, ReportThread],
+) -> None:
+    """Post fix replies and resolve threads that were deferred due to push failure.
+
+    Called during --resolve. Checks if the commit has since been pushed;
+    if so, posts replies and resolves threads. Updates state.fix.commit_status.
+    """
+    fix = state.fix
+    if fix.commit_status != "push_failed" or not fix.commit_sha:
+        return
+
+    wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
+    if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
+        log.info("Push still pending — skipping deferred replies")
+        return
+
+    fix.commit_status = "pushed"
+
+    FA = pr_state.ThreadAction
+    fixed_threads = [t for t in fix.threads if t.action == FA.FIXED.value]
+
+    if not fixed_threads:
+        return
+
+    items = [
+        CommentItem(id=t.id, file=t.file, line=t.line,
+                    reviewer=t.reviewer, summary=t.summary)
+        for t in fixed_threads
+    ]
+    _post_fix_replies(items, threads_by_id, repo, pr_number, fix.commit_sha)
+    _resolve_fixed_threads(items, threads_by_id)
+
+
 def _render_deferred_summary(
     state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -1222,6 +1259,14 @@ def _render_deferred_summary(
     fix = state.fix
     if not fix.summary_deferred:
         return
+
+    wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
+
+    if fix.commit_status == "push_failed" and fix.commit_sha:
+        if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
+            log.info("Push still pending — keeping summary deferred")
+            return
+        fix.commit_status = "pushed"
 
     FA = pr_state.ThreadAction
     fixed = [t for t in fix.threads if t.action == FA.FIXED.value]
@@ -1799,6 +1844,7 @@ def _run_threads(trail, args, ctx) -> None:
         ))
         if args.resolve:
             threads_by_id = {t.id: t for t in report.threads}
+            _post_push_deferred_replies(st, repo, pr_number, threads_by_id)
             issue = _finalize_deferred(ctx, threads_by_id, trail=trail)
             st.fix.deferred_issue_id = issue.id
             st.fix.deferred_issue_url = issue.url

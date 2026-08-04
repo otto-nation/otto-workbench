@@ -91,4 +91,4 @@ This resumes the in-progress rebase with AI conflict resolution and force-pushes
 
 - Always call `pr rebase` (the dispatcher, two words), never `pr-rebase`
   (the backing script) — the dispatcher handles context resolution and routing
-- Never run raw `git push --force-with-lease` — always use `pr rebase --push`
+- Never run raw `git push --force-with-lease` — `pr rebase` force-pushes by default

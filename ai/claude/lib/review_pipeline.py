@@ -409,8 +409,12 @@ def _inject_failures_and_status(
     if failures and "## Agent Failures" not in content:
         content = content.replace("## Summary", f"{failures}\n## Summary", 1)
 
-    if "<!-- status:" not in content:
-        status_line = META_STATUS.format(status=status)
+    status_line = META_STATUS.format(status=status)
+    if "<!-- status:" in content:
+        # Replace existing status line — may be stale (e.g. completed written before
+        # synthesis_failed was set, now needs to become partial).
+        content = re.sub(r"<!-- status: [^>]+ -->", status_line, content, count=1)
+    else:
         content = content.replace("<!-- generator:", f"{status_line}\n<!-- generator:", 1)
         if status_line not in content:
             # generator line not found — insert before first ## heading
@@ -1535,6 +1539,7 @@ def _run_synthesis_or_fallback(
         _write_review_sidecar(job)
         state.synthesis_done = True
         _write_pipeline_state(job, state)
+        _inject_failures_and_status(job.review_file, state, groups or [])
         return ""
 
     if cost_so_far > max_cost:
@@ -1544,6 +1549,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_done = True
         state.synthesis_failed = "budget exceeded"
         _write_pipeline_state(job, state)
+        _inject_failures_and_status(job.review_file, state, groups or [])
         return ""
 
     synthesis_log = _phase_synthesis(

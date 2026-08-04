@@ -3427,3 +3427,100 @@ class TestFailuresSectionInReview:
         assert "quota exhausted" in result
         assert "synthesis" in result
         assert "fallback" in result
+
+
+class TestInjectFailuresAndStatus:
+    """Tests for _inject_failures_and_status — specifically the always-update status fix."""
+
+    def _make_pipeline_json(self, tmp_path, synthesis_failed="", groups_failed=None):
+        import json
+        data = {
+            "head_sha": "abc123",
+            "group_names": ["ui", "api"],
+            "groups_done": [1],
+            "groups_failed": groups_failed or {},
+            "holistic_done": False,
+            "synthesis_done": True,
+            "synthesis_failed": synthesis_failed,
+            "review_type": "full",
+            "prior_sha": "",
+            "skipped_groups": [],
+        }
+        (tmp_path / "pipeline.json").write_text(json.dumps(data))
+
+    def test_replaces_existing_status_line(self, tmp_path):
+        """I1: status already present as 'completed' is updated to 'partial' on synthesis failure."""
+        from review_preflight import PipelineState
+        from review_pipeline import _inject_failures_and_status
+
+        # Write a review file that already has a 'completed' status line
+        review_file = tmp_path / "review.md"
+        review_file.write_text(
+            "<!-- status: completed -->\n"
+            "<!-- generator: claude-review v1 -->\n"
+            "\n"
+            "## Summary\n\nAll good.\n"
+        )
+
+        # Pipeline state says synthesis failed — status should be 'partial'
+        self._make_pipeline_json(tmp_path, synthesis_failed="budget exceeded")
+
+        state = PipelineState(
+            head_sha="abc123", group_names=["ui", "api"],
+            groups_done=[1], groups_failed={},
+            synthesis_done=True, synthesis_failed="budget exceeded",
+        )
+        _inject_failures_and_status(str(review_file), state, [])
+
+        content = review_file.read_text()
+        assert "<!-- status: partial -->" in content
+        assert "<!-- status: completed -->" not in content
+
+    def test_inserts_status_when_absent(self, tmp_path):
+        """Status line is inserted before the generator line when not already present."""
+        from review_preflight import PipelineState
+        from review_pipeline import _inject_failures_and_status
+
+        review_file = tmp_path / "review.md"
+        review_file.write_text(
+            "<!-- generator: claude-review v1 -->\n"
+            "\n"
+            "## Summary\n\nAll good.\n"
+        )
+
+        self._make_pipeline_json(tmp_path, synthesis_failed="")
+
+        state = PipelineState(
+            head_sha="abc123", group_names=["ui", "api"],
+            groups_done=[1, 2], groups_failed={},
+            synthesis_done=True, synthesis_failed="",
+        )
+        _inject_failures_and_status(str(review_file), state, [])
+
+        content = review_file.read_text()
+        assert "<!-- status: completed -->" in content
+
+    def test_replaces_status_not_duplicated(self, tmp_path):
+        """Replacing an existing status line does not add a second status line."""
+        from review_preflight import PipelineState
+        from review_pipeline import _inject_failures_and_status
+
+        review_file = tmp_path / "review.md"
+        review_file.write_text(
+            "<!-- status: completed -->\n"
+            "<!-- generator: claude-review v1 -->\n"
+            "\n"
+            "## Summary\n\nAll good.\n"
+        )
+
+        self._make_pipeline_json(tmp_path, synthesis_failed="mechanical fallback")
+
+        state = PipelineState(
+            head_sha="abc123", group_names=["ui", "api"],
+            groups_done=[1], groups_failed={},
+            synthesis_done=True, synthesis_failed="mechanical fallback",
+        )
+        _inject_failures_and_status(str(review_file), state, [])
+
+        content = review_file.read_text()
+        assert content.count("<!-- status:") == 1

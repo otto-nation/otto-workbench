@@ -34,24 +34,40 @@ def _load_config() -> dict:
     return {}
 
 
+def _load_plugin_dir(plugin_file: Path) -> Path | None:
+    """Read a plugin JSON file and return its tool directory, or None."""
+    try:
+        plugin = json.loads(plugin_file.read_text())
+        td = Path(plugin["tool_dir"]).expanduser()
+        return td if td.is_dir() else None
+    except (json.JSONDecodeError, KeyError, OSError):
+        logger.warning("Skipping invalid plugin: %s", plugin_file)
+        return None
+
+
+def _scan_plugin_dir(plugin_dir: Path) -> list[Path]:
+    """Return tool directories referenced by JSON files in *plugin_dir*."""
+    if not plugin_dir.is_dir():
+        return []
+    results = []
+    for entry in sorted(plugin_dir.iterdir()):
+        if entry.suffix != ".json" or not entry.is_file():
+            continue
+        td = _load_plugin_dir(entry)
+        if td is not None:
+            results.append(td)
+    return results
+
+
 def _resolve_dirs(config: dict) -> list[Path]:
     dirs = []
     for d in config.get("tool_dirs", []):
         p = Path(d).expanduser()
         if p.is_dir():
             dirs.append(p)
+
     for d in config.get("plugin_dirs", []):
-        p = Path(d).expanduser()
-        if p.is_dir():
-            for entry in sorted(p.iterdir()):
-                if entry.suffix == ".json" and entry.is_file():
-                    try:
-                        plugin = json.loads(entry.read_text())
-                        td = Path(plugin["tool_dir"]).expanduser()
-                        if td.is_dir():
-                            dirs.append(td)
-                    except (json.JSONDecodeError, KeyError):
-                        logger.warning("Skipping invalid plugin: %s", entry)
+        dirs.extend(_scan_plugin_dir(Path(d).expanduser()))
     return dirs
 
 
@@ -84,6 +100,22 @@ def _probe_tool(script: Path) -> dict | None:
         return None
 
 
+def _scan_tool_dir(d: Path) -> list[dict]:
+    """Return tool schemas from executable scripts in *d*."""
+    try:
+        entries = sorted(d.iterdir())
+    except OSError as exc:
+        logger.warning("Skipping inaccessible directory %s: %s", d, exc)
+        return []
+    candidates = [e for e in entries if _is_executable(e) and not e.name.startswith((".", "_"))]
+    results = []
+    for entry in candidates:
+        schema = _probe_tool(entry)
+        if schema is not None:
+            results.append(schema)
+    return results
+
+
 def discover_tools(config: dict | None = None) -> dict[str, dict]:
     """Scan directories and return {tool_name: schema_dict}."""
     if config is None:
@@ -91,21 +123,11 @@ def discover_tools(config: dict | None = None) -> dict[str, dict]:
     dirs = _resolve_dirs(config)
     tools: dict[str, dict] = {}
 
-    for d in dirs:
-        try:
-            entries = sorted(d.iterdir())
-        except OSError as exc:
-            logger.warning("Skipping inaccessible directory %s: %s", d, exc)
-            continue
-        for entry in entries:
-            if not _is_executable(entry):
-                continue
-            if entry.name.startswith(".") or entry.name.startswith("_"):
-                continue
-            schema = _probe_tool(entry)
-            if schema and schema["name"] not in tools:
-                tools[schema["name"]] = schema
-                logger.info("Discovered tool: %s (%s)", schema["name"], entry)
+    all_schemas = [s for d in dirs for s in _scan_tool_dir(d)]
+    for schema in all_schemas:
+        if schema["name"] not in tools:
+            tools[schema["name"]] = schema
+            logger.info("Discovered tool: %s (%s)", schema["name"], schema["_script"])
 
     return tools
 
@@ -124,10 +146,9 @@ def _args_to_cli(arguments: dict, input_schema: dict) -> list[str]:
         flag = f"--{key.replace('_', '-')}"
         prop_type = props.get(key, {}).get("type", "string")
 
-        if prop_type == "boolean":
-            if value:
-                cli_args.append(flag)
-        else:
+        if prop_type == "boolean" and value:
+            cli_args.append(flag)
+        elif prop_type != "boolean":
             cli_args.extend([flag, str(value)])
 
     return cli_args
@@ -150,17 +171,16 @@ def _extract_json(text: str) -> str | None:
         except json.JSONDecodeError:
             pass
 
-    # Find the first line starting with { or [
+    # Find the first line starting with { or [ that begins valid JSON
     lines = text.split("\n")
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("{") or stripped.startswith("["):
-            remainder = "\n".join(lines[i:])
-            try:
-                json.loads(remainder)
-                return remainder
-            except json.JSONDecodeError:
-                continue
+    candidates = [i for i, line in enumerate(lines) if line.strip()[:1] in ("{", "[")]
+    for i in candidates:
+        remainder = "\n".join(lines[i:])
+        try:
+            json.loads(remainder)
+            return remainder
+        except json.JSONDecodeError:
+            continue
 
     return None
 

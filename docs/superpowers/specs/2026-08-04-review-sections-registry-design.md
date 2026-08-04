@@ -52,7 +52,7 @@ Class method `from_text(text: str) -> ReviewSections`:
 1. Scan for all `## X` headers in the review markdown
 2. Match against `KNOWN_SECTIONS` by header name (case-insensitive)
 3. Skip severity headers (`Must fix`, `Should fix`, `Nit`, `Idioms` and their aliases)
-4. Any unrecognized `## X` header gets a default `SectionConfig(position="after_findings", heading="", passthrough defaults)`
+4. Any unrecognized `## X` header gets a default `SectionConfig(position="after_findings", heading="## {original}")` — heading is re-emitted because `_extract_section` strips it from content
 5. Extract content between matched header and next `## ` boundary
 
 Instance methods:

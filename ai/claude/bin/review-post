@@ -65,10 +65,7 @@ from review_posting import (  # noqa: E402
     _submit_review, write_post_tracking, _format_submit_command,
     _reclassify_and_retry,
 )
-from review_sections import (  # noqa: E402
-    SectionConfig, ReviewSections, KNOWN_SECTIONS,
-    POSITION_BEFORE, POSITION_AFTER,
-)
+from review_sections import ReviewSections  # noqa: E402
 
 _SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp, _rs)
 

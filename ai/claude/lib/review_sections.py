@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from review_common import SEVERITIES
 from review_findings import _extract_section
@@ -26,7 +27,7 @@ for _s in SEVERITIES:
 class SectionConfig:
     key: str
     header: str
-    position: str
+    position: Literal["before_findings", "after_findings"]
     heading: str = ""
     strip_action: bool = False
     trailing_separator: bool = False
@@ -69,21 +70,17 @@ class ReviewSections:
         configs: dict[str, SectionConfig] = {}
         order: list[str] = []
 
-        seen_headers: set[str] = set()
+        seen: dict[str, str] = {}
         for m in _SECTION_HEADER_RE.finditer(text):
-            seen_headers.add(m.group(1).strip().lower())
+            raw = m.group(1).strip()
+            seen.setdefault(raw.lower(), raw)
 
-        for header_lower in seen_headers:
+        for header_lower, original in seen.items():
             if header_lower in _SEVERITY_HEADERS:
                 continue
 
             cfg = _KNOWN_BY_HEADER.get(header_lower)
             if cfg is None:
-                original = next(
-                    m.group(1).strip()
-                    for m in _SECTION_HEADER_RE.finditer(text)
-                    if m.group(1).strip().lower() == header_lower
-                )
                 cfg = SectionConfig(
                     key=_slugify(original),
                     header=original,

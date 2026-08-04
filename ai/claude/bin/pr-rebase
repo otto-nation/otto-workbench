@@ -12,9 +12,9 @@ Exit codes:
   3  Conflicts detected (JSON report on stdout)
 
 Usage:
-  pr-rebase                           # start or resume rebase
-  pr-rebase --fix                     # resolve conflicts, rebase, and force-push
-  pr-rebase --push                    # rebase and force-push
+  pr-rebase                           # rebase and force-push
+  pr-rebase --no-push                 # rebase only, skip force-push
+  pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
@@ -1359,7 +1359,7 @@ def _rebase_success(
             log.error("Force-push failed.")
         return push_rc
 
-    log.ok("Rebase clean — run `git push --force-with-lease` to force-push.")
+    log.ok("Rebase clean — run `git push --force-with-lease` to push, or re-run without --no-push.")
     return 0
 
 
@@ -1378,8 +1378,10 @@ def main():
     parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
     parser.add_argument("--fix", action="store_true",
                         help="Autonomous mode — resolve conflicts with AI, rebase, and force-push")
-    parser.add_argument("--push", action="store_true",
-                        help="Rebase and force-push")
+    parser.add_argument("--push", action="store_true", default=True,
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--no-push", action="store_false", dest="push",
+                        help="Rebase only — skip force-push")
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)
@@ -1403,8 +1405,8 @@ def main():
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             sys.exit(cmd_abort(cwd, ctx))
 
-        mode = "fix" if args.fix else "push" if args.push else "start"
-        _trail.decision("mode", f"selected {mode}", reason=f"--{mode} flag set" if mode != "start" else "default mode")
+        mode = "fix" if args.fix else "push" if args.push else "rebase-only"
+        _trail.decision("mode", f"selected {mode}", reason=f"--fix flag set" if args.fix else ("--no-push flag set" if not args.push else "default mode"))
         rc = cmd_start(cwd, ctx, args.fix)
 
         if rc == 0 and args.push and not args.fix:

@@ -277,6 +277,43 @@ claude-review threads [<pr_url_or_number>] [--resolve-verified] [--repo-dir <PAT
 | `--resolve-verified` | Resolve all verified threads on GitHub |
 | `--repo-dir <PATH>` | Git worktree directory (aliases: `--repo`, `--worktree`) |
 
+### `pr`
+
+Unified PR lifecycle CLI — manages CI, code review, comments, rebasing, and push state.
+
+```
+pr [global flags] <command> [flags]
+```
+
+| Global flag | Description |
+|-------------|-------------|
+| `--repo-dir PATH` | Git worktree directory (auto-detected from CWD when omitted) |
+| `--branch NAME` | Branch name override |
+| `--pr NUM\|URL` | PR number or URL |
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
+| `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
+| `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
+| `comments [--triage] [--fix] [--resolve]` | Fetch and manage PR review threads |
+| `fix` | Run fix passes for CI, review, and comments in one step |
+| `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
+| `gc` | Clean up stale PR review artifacts and cached state |
+
+**Push status in `pr status`:**
+
+`pr status` detects unpushed commits by comparing local HEAD against `origin/<branch>`.
+The Push verdict appears in the dashboard and gates the **Merge readiness** line:
+
+| Push state | Dashboard line | Effect on merge readiness |
+|------------|----------------|--------------------------|
+| Branch not pushed | `**Push**: branch not pushed to remote` | Blocks: "branch not pushed" |
+| Commits ahead | `**Push**: N commit(s) not pushed` | Blocks: "N unpushed commit(s)" |
+| Up to date | `**Push**: up to date` | No block |
+
 ### `serena-mcp`
 
 Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.

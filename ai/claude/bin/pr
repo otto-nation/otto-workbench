@@ -182,7 +182,7 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     lines += rebase_status.render_status(state.rebase)
     lines.append("")
     unpushed = push_status.detect_unpushed(ctx.worktree_root, branch)
-    lines += push_status.render_status(ctx.worktree_root, branch)
+    lines += push_status.render_status(ctx.worktree_root, branch, ahead=unpushed)
     lines.append("")
     lines.append(_merge_readiness(state, unpushed=unpushed))
 
@@ -210,7 +210,7 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
     if has_blockers is True:
         issues.append("blocking reviewers")
     if not pushed:
-        count = unpushed if unpushed and unpushed > 0 else None
+        count = unpushed if unpushed is not None else None
         desc = f"{count} unpushed commit(s)" if count else "branch not pushed"
         issues.append(desc)
     if ci_green is None or has_must_fix is None or has_blockers is None:

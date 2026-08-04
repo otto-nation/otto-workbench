@@ -27,9 +27,19 @@ def detect_unpushed(worktree_root: Path, branch: str) -> int | None:
     return int(count) if count.isdigit() else None
 
 
-def render_status(worktree_root: Path, branch: str) -> list[str]:
-    """Render push state as status lines for the pr dashboard."""
-    ahead = detect_unpushed(worktree_root, branch)
+_UNSET = object()
+
+
+def render_status(worktree_root: Path, branch: str, *, ahead=_UNSET) -> list[str]:
+    """Render push state as status lines for the pr dashboard.
+
+    If *ahead* is provided (pre-computed by the caller via detect_unpushed),
+    it is used directly and no subprocess is spawned.  Pass ahead=None to
+    indicate the branch is not pushed; pass a non-negative int for the commit
+    count.  When omitted, detect_unpushed is called internally.
+    """
+    if ahead is _UNSET:
+        ahead = detect_unpushed(worktree_root, branch)
     if ahead is None:
         return ["**Push**: branch not pushed to remote"]
     if ahead == 0:

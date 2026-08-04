@@ -247,9 +247,15 @@ tasks:
         . "{{.TASKFILE_DIR}}/lib/ai/prompts.sh"
         . "{{.TASKFILE_DIR}}/lib/ai/pr.sh"
         load_pr "$_CLI_ARGS" || exit 1
-        push_branch "$BRANCH" || exit 1
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
+        if ! validate-nesting --diff "origin/$TARGET_BASE" --quiet; then
+          echo "✗ New code introduces nesting violations — fix before creating PR"
+          exit 1
+        fi
+
+        push_branch "$BRANCH" || exit 1
+
         echo "→ Analyzing changes: $BRANCH"
         generate_pr_content "$BRANCH" "$TARGET_BASE"
         echo "✓ Content ready"

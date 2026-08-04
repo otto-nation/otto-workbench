@@ -1178,10 +1178,7 @@ class TestReplyDedup:
                 {"body": "Already addressed: use helper\n\nAddressed in [`abc1234`](url)."},
             ]),
         }
-        with (
-            patch("pr_comments.post_thread_reply") as mock_reply,
-            patch.object(rt, "_find_addressing_commit", return_value="abc1234"),
-        ):
+        with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_already_addressed_replies(
                 fixed, threads_by_id, "owner/repo", 42, tmp_path,
             )

@@ -92,7 +92,12 @@ def discover_tools(config: dict | None = None) -> dict[str, dict]:
     tools: dict[str, dict] = {}
 
     for d in dirs:
-        for entry in sorted(d.iterdir()):
+        try:
+            entries = sorted(d.iterdir())
+        except OSError as exc:
+            logger.warning("Skipping inaccessible directory %s: %s", d, exc)
+            continue
+        for entry in entries:
             if not _is_executable(entry):
                 continue
             if entry.name.startswith(".") or entry.name.startswith("_"):
@@ -114,6 +119,8 @@ def _args_to_cli(arguments: dict, input_schema: dict) -> list[str]:
     props = input_schema.get("properties", {})
 
     for key, value in arguments.items():
+        if value is None:
+            continue
         flag = f"--{key.replace('_', '-')}"
         prop_type = props.get(key, {}).get("type", "string")
 
@@ -144,10 +151,11 @@ def _extract_json(text: str) -> str | None:
             pass
 
     # Find the first line starting with { or [
-    for i, line in enumerate(text.split("\n")):
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("{") or stripped.startswith("["):
-            remainder = "\n".join(text.split("\n")[i:])
+            remainder = "\n".join(lines[i:])
             try:
                 json.loads(remainder)
                 return remainder
@@ -218,7 +226,8 @@ def create_server():
                 isError=True,
             )
 
-        if result.returncode not in (0, 3):
+        ok_codes = {0} | set(schema.get("ok_exit_codes", []))
+        if result.returncode not in ok_codes:
             error_text = result.stderr.strip() or f"Exit code {result.returncode}"
             return CallToolResult(
                 content=[TextContent(type="text", text=error_text)],

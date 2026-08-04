@@ -427,9 +427,11 @@ _readme_skill_reference() {
     trigger="$(_extract_frontmatter_field "$skill_file" "trigger")"
     skip="$(_extract_frontmatter_field "$skill_file" "skip")"
     output_tool=$(awk '
-      /^output_schema:/ { in_os=1; next }
+      NR==1 && /^---$/ { in_fm=1; next }
+      in_fm && /^---$/ { exit }
+      in_fm && /^output_schema:/ { in_os=1; next }
       in_os && /^[^ ]/ { exit }
-      in_os && /tool:/ { sub(/.*tool:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
+      in_os && /^[[:space:]]*tool:[[:space:]]/ { sub(/.*tool:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
     ' "$skill_file")
 
     [[ -z "$invocation" ]] && invocation="/$skill_name"

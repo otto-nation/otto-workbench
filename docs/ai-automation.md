@@ -46,7 +46,7 @@ This creates `~/.config/task/taskfile.env` with:
 | reviewer-lite | Lightweight code reviewer for group and angles phases. Receives pre-collected data — no context gathering needed. Produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 | reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
 
-**MCP Servers:** 
+**MCP Servers:** otto-workbench
 <!-- AI-INSTALLS-END -->
 
 <!-- SKILL-REFERENCE-START -->

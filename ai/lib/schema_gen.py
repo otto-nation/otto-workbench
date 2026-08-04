@@ -1,14 +1,17 @@
 """JSON Schema generation from Python dataclasses.
 
-Produces JSON Schema (draft 2020-12 compatible) from dataclass definitions,
-mirroring the type handling in serde.py for consistency.
+Produces JSON Schema from dataclass definitions, mirroring the type
+handling in serde.py for consistency.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import logging
 from enum import Enum
 from typing import get_args, get_origin, get_type_hints
+
+logger = logging.getLogger(__name__)
 
 
 def dataclass_to_schema(cls) -> dict:
@@ -49,9 +52,8 @@ def _hint_to_schema(hint) -> dict:
     if args and type(None) in args:
         non_none = [a for a in args if a is not type(None)]
         if non_none:
-            schema = _hint_to_schema(non_none[0])
-            schema["nullable"] = True
-            return schema
+            inner = _hint_to_schema(non_none[0])
+            return {"oneOf": [inner, {"type": "null"}]}
         return {}
 
     # Enum
@@ -88,4 +90,5 @@ def _hint_to_schema(hint) -> dict:
     if hint is dict:
         return {"type": "object"}
 
+    logger.debug("Unrecognized type hint %r — emitting open schema", hint)
     return {}

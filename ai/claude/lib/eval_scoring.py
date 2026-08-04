@@ -227,7 +227,6 @@ def format_summary_table(
     return "\n".join(rows)
 
 
-_BASELINE_REQUIRED_KEYS = {"schema_version", "model", "entries"}
 _ENTRY_METRIC_KEYS = {"recall_mean", "precision_mean"}
 
 
@@ -320,6 +319,8 @@ def _compare_entry_pair(
         cost_base, cur_model.get("cost_mean", 0.0),
         cost_threshold, higher_is_better=False,
     )
+    # ceiling: cost is informational-only — not added to regs because relative
+    # thresholds are model-dependent and unsuitable for hard gating
     metrics["cost_mean"] = cost_m
 
     return metrics, regs

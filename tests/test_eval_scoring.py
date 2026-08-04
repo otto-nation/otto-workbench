@@ -490,6 +490,11 @@ class TestCompareBaselines:
         assert result["regressions"] == []
         assert result["comparisons"] == {}
 
+    def test_empty_current(self):
+        baselines = {"sonnet": _baseline_data(0.8, 0.9)}
+        result = compare_baselines(baselines, {})
+        assert ("test-entry", "sonnet") in result["missing_entries"]
+
 
 # ── TestFormatComparisonTable ──────────────────────────────────────────────
 

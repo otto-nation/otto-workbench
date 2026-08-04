@@ -74,6 +74,14 @@ sys.exit(1 if errors else 0)
   fi
 }
 
+_count_corpus_entries() {
+  local manifest
+  for manifest in "$CORPUS_DIR"/*/manifest.json; do
+    [[ -f "$manifest" ]] || continue
+    CORPUS_ENTRIES=$(( CORPUS_ENTRIES + 1 ))
+  done
+}
+
 _check_corpus_coverage() {
   local covered_entries=""
   local baseline
@@ -92,9 +100,7 @@ _check_corpus_coverage() {
     [[ -z "$entry_name" ]] && entry_name=$(basename "$(dirname "$manifest")")
     display="corpus/$entry_name"
 
-    (( BASELINES == 0 )) && continue
-
-    if echo "$covered_entries" | grep -qw "$entry_name"; then
+    if echo "$covered_entries" | grep -qwF "$entry_name"; then
       _pass "$display: covered by baseline"
     else
       _fail "$display: not covered by any baseline in eval/results/"
@@ -112,7 +118,13 @@ if [[ -d "$RESULTS_DIR" ]]; then
   done
 fi
 
-[[ -d "$CORPUS_DIR" ]] && _check_corpus_coverage
+if [[ -d "$CORPUS_DIR" ]]; then
+  if (( BASELINES > 0 )); then
+    _check_corpus_coverage
+  else
+    _count_corpus_entries
+  fi
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 

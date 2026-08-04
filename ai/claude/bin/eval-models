@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,8 +36,6 @@ from eval_scoring import (  # noqa: E402
 )
 from review_common import SessionUsage, parse_session_log  # noqa: E402
 from review_findings import parse_findings  # noqa: E402
-
-import re
 
 _SELF_DIR = Path(__file__).resolve().parent
 _REVIEW_ORCHESTRATE = _SELF_DIR / "review-orchestrate"
@@ -255,7 +254,8 @@ def _load_baselines(results_dir: str) -> dict[str, dict]:
     for f in sorted(results_path.glob("*.json")):
         try:
             data = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"warning: skipping {f}: {e}", file=sys.stderr)
             continue
         model = data.get("model", f.stem)
         baselines[model] = data

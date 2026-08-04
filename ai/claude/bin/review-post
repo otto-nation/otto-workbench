@@ -102,6 +102,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
 
     summary = _extract_section(text, "Summary")
     verdict = _extract_section(text, "Verdict")
+    static_analysis = _extract_section(text, "Static Analysis")
 
     all_findings = parse_findings(text)
     log.info(f"Parsed {len(all_findings)} findings from review file")
@@ -179,6 +180,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
     body_text = format_body_text(
         body_findings, len(inline) > 0, severity_filter,
         summary=summary, verdict=verdict,
+        static_analysis=static_analysis,
     )
 
     commit_id = head_sha

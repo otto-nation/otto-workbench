@@ -206,6 +206,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
         summary=summary, verdict=verdict,
         review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
+        static_analysis=static_analysis,
     )
 
 

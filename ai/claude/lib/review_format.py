@@ -260,9 +260,8 @@ def format_body_text(
         return "\n".join(parts)
 
     if not body_findings:
-        if static_analysis:
-            parts.append("")
-            parts.append(static_analysis)
+        parts.append("")
+        parts.append(static_analysis)
         return "\n".join(parts).rstrip("\n")
 
     by_sev: dict[str, list[Finding]] = {}

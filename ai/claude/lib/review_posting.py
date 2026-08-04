@@ -189,12 +189,14 @@ def _format_comment_body(
     findings: list[Finding], severity_filter: set[str],
     review_sha: str, head_sha: str, new_commit_count: int,
     summary: str = "", verdict: str = "",
+    static_analysis: str = "",
 ) -> str:
     """Format findings as a single comment body for stale-SHA posting."""
     _, body_findings = review_format.renumber_for_posting([], findings)
     body = review_format.format_body_text(
         body_findings, False, severity_filter,
         summary=summary, verdict=verdict,
+        static_analysis=static_analysis,
     )
 
     header = (
@@ -213,6 +215,7 @@ def _post_as_comment(
     head_ref: str, base_ref: str,
     pr_data: PRData | None = None,
     summary: str = "", verdict: str = "",
+    static_analysis: str = "",
 ):
     """Post review as a single PR comment when SHA has drifted."""
     kept, deduped = review_dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
@@ -238,6 +241,7 @@ def _post_as_comment(
     body = _format_comment_body(
         findings, severity_filter, review_sha, head_sha, new_commits,
         summary=summary, verdict=verdict,
+        static_analysis=static_analysis,
     )
 
     with tempfile.NamedTemporaryFile(
@@ -278,6 +282,7 @@ def _reclassify_and_retry(
     submit: bool,
     pr_data: PRData | None = None,
     summary: str = "", verdict: str = "",
+    static_analysis: str = "",
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -306,6 +311,7 @@ def _reclassify_and_retry(
         new_body_text = review_format.format_body_text(
             new_body, True, severity_filter,
             summary=summary, verdict=verdict,
+            static_analysis=static_analysis,
         )
         try:
             results = _post_chunked_review(
@@ -321,6 +327,7 @@ def _reclassify_and_retry(
     new_body_text = review_format.format_body_text(
         new_body, False, severity_filter,
         summary=summary, verdict=verdict,
+        static_analysis=static_analysis,
     )
     results = _post_chunked_review(
         args.repo, args.pr, commit_id,
@@ -405,6 +412,7 @@ def _post_and_track(
     pr_data: PRData | None = None,
     summary: str = "", verdict: str = "",
     review_sha: str = "", sha_drifted: bool = False,
+    static_analysis: str = "",
 ):
     submit = getattr(args, "submit", False)
 
@@ -438,6 +446,7 @@ def _post_and_track(
             args, inline, body_findings,
             commit_id, chunk_size, severity_filter, submit, pr_data,
             summary=summary, verdict=verdict,
+            static_analysis=static_analysis,
         )
 
     if not results:

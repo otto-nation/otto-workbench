@@ -170,6 +170,6 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 ## Constraints
 
 - Never apply fixes without user confirmation for `needs_human` items
-- Never auto-resolve contested or ambiguous threads — only verified ones
+- Never auto-resolve contested or ambiguous threads — only verified and addressed ones
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans
 - If conflicting suggestions exist, flag both and apply neither until resolved

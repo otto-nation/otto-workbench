@@ -83,12 +83,13 @@ def _extract_json(text: str) -> str:
     return stripped
 
 
-def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
-    """Resolve all verified threads on GitHub. Returns count resolved."""
+def _resolve_completed_threads(threads_raw: list, threads: dict) -> int:
+    """Resolve verified and addressed threads on GitHub. Returns count resolved."""
     resolved = 0
     for thread_data in threads_raw:
         tid = thread_data["id"]
-        if threads.get(tid, {}).get("state") != pc.STATE_VERIFIED:
+        state = threads.get(tid, {}).get("state")
+        if state not in (pc.STATE_VERIFIED, pc.STATE_ADDRESSED):
             continue
         if not pc.resolve_thread(tid):
             continue
@@ -243,7 +244,7 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
 
     Returns (triage_result, exit_code). Caller handles stdout output.
     """
-    non_resolved = [t for t in report.threads if t.state != "resolved"]
+    non_resolved = [t for t in report.threads if t.state not in ("resolved", "addressed")]
     unseen_comments = _collect_unseen_comments(report)
 
     if not non_resolved and not unseen_comments:
@@ -1269,8 +1270,22 @@ def _render_deferred_summary(
         fix.commit_status = "pushed"
 
     FA = pr_state.ThreadAction
+    resolved_or_addressed = {
+        t.id for t in threads_by_id.values()
+        if t.state in ("resolved", "addressed") or t.is_resolved
+    }
     fixed = [t for t in fix.threads if t.action == FA.FIXED.value]
-    deferred = [t for t in fix.threads if t.action == FA.DEFERRED.value]
+    still_deferred = []
+    manually_fixed = []
+    for t in fix.threads:
+        if t.action != FA.DEFERRED.value:
+            continue
+        if t.id in resolved_or_addressed:
+            manually_fixed.append(t)
+        else:
+            still_deferred.append(t)
+    fixed = fixed + manually_fixed
+    deferred = still_deferred
     dismissed = [t for t in fix.threads if t.action == FA.DISMISSED.value]
 
     cp = CommitPushResult(
@@ -1766,9 +1781,9 @@ def _run_threads(trail, args, ctx) -> None:
 
     # Resolve verified threads if requested (or as part of triage)
     if args.resolve or args.triage:
-        resolved_count = _resolve_verified_threads(threads_raw, threads)
+        resolved_count = _resolve_completed_threads(threads_raw, threads)
         if resolved_count:
-            log.info(f"Resolved {resolved_count} verified threads")
+            log.info(f"Resolved {resolved_count} verified/addressed threads")
 
     # Save state
     state = pc.empty_state(repo, pr_number, my_login)

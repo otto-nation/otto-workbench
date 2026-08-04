@@ -10,7 +10,8 @@ LIB_DIR = REPO_ROOT / "ai" / "claude" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr_state import FixSummary, PRIdentity, PRState, ThreadOutcome
+from pr_comments import ThreadState
+from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
 from pr_thread_models import CommentItem, PRReport, ReportThread
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
@@ -767,7 +768,7 @@ class TestBuildSummaryBody:
         """ThreadOutcome with synthetic id parses source for permalink."""
         outcome = ThreadOutcome(
             id="ic-99999-0", summary="fix typo", file="readme.md", line=1,
-            action="fixed",
+            action=ThreadAction.FIXED,
         )
         cp = rt.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
@@ -925,8 +926,8 @@ class TestUnaccountedThreadsDeferSummary:
                         file="a.py", line=1, summary="fix it"),
         ]
         report_threads = [
-            ReportThread(id="t1", state="new", is_resolved=False),
-            ReportThread(id="t2", state="resolved", is_resolved=True),
+            ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
+            ReportThread(id="t2", state=ThreadState.RESOLVED, is_resolved=True),
         ]
         accounted_ids = rt._accounted_thread_ids(triage_threads, [], [])
         non_resolved = [t for t in report_threads if t.state != "resolved"]
@@ -943,9 +944,9 @@ class TestUnaccountedThreadsDeferSummary:
                         file="b.py", line=1, summary="lgtm"),
         ]
         report_threads = [
-            ReportThread(id="t1", state="new", is_resolved=False),
-            ReportThread(id="t2", state="new", is_resolved=False),
-            ReportThread(id="t3", state="new", is_resolved=False),
+            ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
+            ReportThread(id="t2", state=ThreadState.NEW, is_resolved=False),
+            ReportThread(id="t3", state=ThreadState.NEW, is_resolved=False),
         ]
         classified = rt._classify_triage_entries(triage_threads)
         accounted_ids = rt._accounted_thread_ids(
@@ -969,7 +970,7 @@ class TestRenderDeferredSummary:
     def test_renders_with_issue_link(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix regex", file="parsers.py", line=10, action="deferred"),
+                ThreadOutcome(id="t1", summary="fix regex", file="parsers.py", line=10, action=ThreadAction.DEFERRED),
             ],
             commit_sha="abc1234",
             commit_status="pushed",
@@ -991,7 +992,7 @@ class TestRenderDeferredSummary:
     def test_renders_without_issue_link(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix regex", file="parsers.py", line=10, action="deferred"),
+                ThreadOutcome(id="t1", summary="fix regex", file="parsers.py", line=10, action=ThreadAction.DEFERRED),
             ],
             commit_status="no_changes",
             summary_deferred=True,
@@ -1007,9 +1008,9 @@ class TestRenderDeferredSummary:
     def test_omits_needs_human_from_body(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="auto fix", file="a.py", line=1, action="fixed"),
-                ThreadOutcome(id="t2", summary="contested", file="b.py", line=2, action="needs_human"),
-                ThreadOutcome(id="t3", summary="complex", file="c.py", line=3, action="deferred"),
+                ThreadOutcome(id="t1", summary="auto fix", file="a.py", line=1, action=ThreadAction.FIXED),
+                ThreadOutcome(id="t2", summary="contested", file="b.py", line=2, action=ThreadAction.NEEDS_HUMAN),
+                ThreadOutcome(id="t3", summary="complex", file="c.py", line=3, action=ThreadAction.DEFERRED),
             ],
             commit_sha="abc1234",
             commit_status="pushed",
@@ -1029,7 +1030,7 @@ class TestRenderDeferredSummary:
     def test_reconstructs_commit_link(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
             ],
             commit_sha="def5678",
             commit_status="pushed",
@@ -1045,7 +1046,7 @@ class TestRenderDeferredSummary:
     def test_skips_when_push_failed_and_still_unpushed(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
             ],
             commit_sha="def5678",
             commit_status="push_failed",
@@ -1062,7 +1063,7 @@ class TestRenderDeferredSummary:
     def test_posts_when_push_failed_but_now_pushed(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
             ],
             commit_sha="def5678",
             commit_status="push_failed",
@@ -1087,8 +1088,8 @@ class TestResolvePushDeferredReplies:
     def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
-                ThreadOutcome(id="t2", summary="another", file="y.py", line=2, action="fixed"),
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+                ThreadOutcome(id="t2", summary="another", file="y.py", line=2, action=ThreadAction.FIXED),
             ],
             commit_sha="abc1234",
             commit_status="push_failed",
@@ -1110,7 +1111,7 @@ class TestResolvePushDeferredReplies:
     def test_skips_when_still_unpushed(self, rt):
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action="fixed"),
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
             ],
             commit_sha="abc1234",
             commit_status="push_failed",
@@ -1529,7 +1530,7 @@ class TestClassifyTriageComplexity:
         entries = [CommentItem(
             id="t1", file="f.go", line=10, reviewer="alice",
             summary="refactor", classification="actionable_suggestion",
-            verification="valid", complexity="high", state="new",
+            verification="valid", complexity="high", state=ThreadState.NEW,
         )]
         result = rt._classify_triage_entries(entries)
         assert len(result.fixable) == 0
@@ -1540,7 +1541,7 @@ class TestClassifyTriageComplexity:
         entries = [CommentItem(
             id="t1", file="f.go", line=10, reviewer="alice",
             summary="rename", classification="actionable_suggestion",
-            verification="valid", complexity="low", state="new",
+            verification="valid", complexity="low", state=ThreadState.NEW,
         )]
         result = rt._classify_triage_entries(entries)
         assert len(result.fixable) == 1
@@ -1550,7 +1551,7 @@ class TestClassifyTriageComplexity:
         entries = [CommentItem(
             id="t1", file="f.go", line=10, reviewer="alice",
             summary="add guard", classification="actionable_suggestion",
-            verification="valid", complexity="medium", state="new",
+            verification="valid", complexity="medium", state=ThreadState.NEW,
         )]
         result = rt._classify_triage_entries(entries)
         assert len(result.fixable) == 1
@@ -1560,7 +1561,7 @@ class TestClassifyTriageComplexity:
         entries = [CommentItem(
             id="t1", file="f.go", line=10, reviewer="alice",
             summary="fix", classification="actionable_suggestion",
-            verification="valid", state="new",
+            verification="valid", state=ThreadState.NEW,
         )]
         result = rt._classify_triage_entries(entries)
         assert len(result.fixable) == 1

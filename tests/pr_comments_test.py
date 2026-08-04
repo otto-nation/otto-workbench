@@ -356,10 +356,10 @@ def test_render_fix_status_not_run():
 def test_render_fix_status_with_data():
     f = pr_state.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED.value),
-            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.FIXED.value),
-            pr_state.ThreadOutcome(id="t3", action=pr_state.ThreadAction.DEFERRED.value),
-            pr_state.ThreadOutcome(id="t4", action=pr_state.ThreadAction.DISMISSED.value),
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED),
+            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.FIXED),
+            pr_state.ThreadOutcome(id="t3", action=pr_state.ThreadAction.DEFERRED),
+            pr_state.ThreadOutcome(id="t4", action=pr_state.ThreadAction.DISMISSED),
         ],
         commit_sha="abc1234", commit_status="pushed",
         updated_at="2026-07-14T00:00:00+00:00",
@@ -375,8 +375,8 @@ def test_render_fix_status_with_data():
 def test_render_fix_status_needs_human():
     f = pr_state.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.NEEDS_HUMAN.value),
-            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.NEEDS_HUMAN.value),
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.NEEDS_HUMAN),
+            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.NEEDS_HUMAN),
         ],
         updated_at="2026-07-14T00:00:00+00:00",
     )
@@ -387,7 +387,7 @@ def test_render_fix_status_needs_human():
 def test_render_fix_status_deferred_issue():
     f = pr_state.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.DEFERRED.value),
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.DEFERRED),
         ],
         commit_sha="abc", commit_status="pushed",
         deferred_issue_id="ENG-456",

@@ -681,7 +681,7 @@ def test_fix_thread_outcome_defaults():
     assert t.id == ""
     assert t.file == ""
     assert t.line == 0
-    assert t.action == ""
+    assert t.action == ThreadAction.FIXED
     assert t.reason == ""
 
 
@@ -694,7 +694,7 @@ def test_fix_thread_outcome_from_entry():
     assert t.id == "t1"
     assert t.file == "src/foo.go"
     assert t.line == 42
-    assert t.action == ThreadAction.DISMISSED.value
+    assert t.action == ThreadAction.DISMISSED
     assert t.reason == "not applicable"
 
 
@@ -702,7 +702,7 @@ def test_fix_thread_outcome_from_entry_defaults():
     t = ThreadOutcome.from_entry({}, ThreadAction.FIXED)
     assert t.id == ""
     assert t.file == ""
-    assert t.action == ThreadAction.FIXED.value
+    assert t.action == ThreadAction.FIXED
     assert t.reason == ""
 
 
@@ -732,13 +732,13 @@ def test_pr_state_has_fix_field():
 def test_update_fix_replaces():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     update_fix(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED.value)],
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
         commit_sha="abc", commit_status="pushed",
         updated_at="t1",
     ))
     assert state.fix.commit_sha == "abc"
     assert len(state.fix.threads) == 1
-    assert state.fix.threads[0].action == "fixed"
+    assert state.fix.threads[0].action == ThreadAction.FIXED
     update_fix(state, FixSummary(
         threads=[], commit_sha="", commit_status="no_changes",
         updated_at="t2",
@@ -754,17 +754,17 @@ def test_state_roundtrip_with_fix_data():
             ThreadOutcome(
                 id="t1", file="src/foo.go", line=10,
                 reviewer="alice", summary="fix the thing",
-                action=ThreadAction.FIXED.value,
+                action=ThreadAction.FIXED,
             ),
             ThreadOutcome(
                 id="t2", file="src/bar.go", line=20,
                 reviewer="bob", summary="add validation",
-                action=ThreadAction.DEFERRED.value, reason="agent could not auto-fix",
+                action=ThreadAction.DEFERRED, reason="agent could not auto-fix",
             ),
             ThreadOutcome(
                 id="t3", file="src/baz.go", line=30,
                 reviewer="charlie", summary="needs design",
-                action=ThreadAction.NEEDS_HUMAN.value, reason="contested",
+                action=ThreadAction.NEEDS_HUMAN, reason="contested",
             ),
         ],
         commit_sha="abc1234", commit_status="pushed",
@@ -779,11 +779,11 @@ def test_state_roundtrip_with_fix_data():
 
     assert len(restored.fix.threads) == 3
     assert restored.fix.threads[0].id == "t1"
-    assert restored.fix.threads[0].action == "fixed"
+    assert restored.fix.threads[0].action == ThreadAction.FIXED
     assert restored.fix.threads[0].file == "src/foo.go"
-    assert restored.fix.threads[1].action == "deferred"
+    assert restored.fix.threads[1].action == ThreadAction.DEFERRED
     assert restored.fix.threads[1].reason == "agent could not auto-fix"
-    assert restored.fix.threads[2].action == "needs_human"
+    assert restored.fix.threads[2].action == ThreadAction.NEEDS_HUMAN
     assert restored.fix.commit_sha == "abc1234"
     assert restored.fix.commit_status == "pushed"
     assert restored.fix.replies_posted == 2
@@ -798,8 +798,8 @@ def test_save_preserves_fix_data():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         update_fix(state, FixSummary(
             threads=[
-                ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED.value),
-                ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED.value, reason="invalid"),
+                ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED),
+                ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED, reason="invalid"),
             ],
             commit_sha="def456", commit_status="pushed",
             replies_posted=1,
@@ -809,7 +809,7 @@ def test_save_preserves_fix_data():
         loaded = load_state(root)
         assert loaded is not None
         assert len(loaded.fix.threads) == 2
-        assert loaded.fix.threads[0].action == "fixed"
+        assert loaded.fix.threads[0].action == ThreadAction.FIXED
         assert loaded.fix.threads[1].reason == "invalid"
         assert loaded.fix.commit_sha == "def456"
 
@@ -849,4 +849,4 @@ def test_apply_state_update_fix():
         assert loaded is not None
         assert loaded.fix.commit_sha == "xyz"
         assert len(loaded.fix.threads) == 1
-        assert loaded.fix.threads[0].action == "fixed"
+        assert loaded.fix.threads[0].action == ThreadAction.FIXED

@@ -22,6 +22,7 @@ import pr_comments
 import pr_context
 import pr_state
 import push_status
+import schema_gen
 import rebase_status
 import review_gc
 import log
@@ -467,7 +468,35 @@ Global flags (auto-detected from CWD when omitted):
 Run 'pr <command> -h' for details on a specific command."""
 
 
+def _tool_schema() -> dict:
+    """Build --tool-schema output for the pr command."""
+    return {
+        "name": "pr",
+        "description": "Unified PR lifecycle CLI — CI, review, comments, rebase",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "enum": list(_COMMANDS.keys()),
+                    "description": "Subcommand to run",
+                },
+                "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
+                "branch": {"type": "string", "description": "Branch name", "x-context": True},
+                "pr": {"type": "string", "description": "PR number or URL", "x-context": True},
+            },
+            "required": ["command"],
+        },
+        "output_schema": schema_gen.dataclass_to_schema(pr_state.PRState),
+    }
+
+
 def main():
+    if "--tool-schema" in sys.argv:
+        json.dump(_tool_schema(), sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        sys.exit(0)
+
     signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
 
     # Two-pass parse: extract global flags first, then route the subcommand.

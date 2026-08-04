@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -e
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+otto-mcp-server — dynamic MCP server for otto-workbench tools
+
+Discovers scripts with --tool-schema support and exposes them via MCP stdio transport.
+
+Usage: otto-mcp-server
+
+Requires: uv, mcp Python package
+EOF
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd -P)"
+exec uv run --with mcp python3 "$SCRIPT_DIR/../mcps/server.py" "$@"

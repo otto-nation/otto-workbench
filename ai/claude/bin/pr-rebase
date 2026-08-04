@@ -34,7 +34,8 @@ import ai_backend
 import log
 import pr_context
 import pr_state
-from pr_state import RebaseStatus
+from pr_state import RebaseStatus, RebaseSummary
+from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
 
@@ -1367,9 +1368,11 @@ def _rebase_success(
 
 
 def main():
-    parser = argparse.ArgumentParser(
+    parser = ToolParser(
         prog="pr-rebase",
         description="Rebase onto origin/main with conflict detection and force-push",
+        output_schema=RebaseSummary,
+        ok_exit_codes=[3],
     )
     parser.add_argument("--repo-dir", "--worktree",
                         dest="repo_dir",

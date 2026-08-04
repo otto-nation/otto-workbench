@@ -5,6 +5,8 @@ source: otto-workbench/ai/claude/skills/ci-failures/SKILL.md
 invocation: "/ci-failures [<pr_number_or_run_id_or_branch>]"
 trigger: "Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red."
 skip: "Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead)."
+output_schema:
+  tool: ci-check
 ---
 
 # CI Failures

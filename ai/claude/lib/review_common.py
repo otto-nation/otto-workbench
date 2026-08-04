@@ -532,8 +532,12 @@ def render_status(rev: ReviewSummary) -> list[str]:
     if not rev.updated_at:
         return ["**Review**: not run yet"]
     suffixes = []
-    if rev.status == ReviewStatus.ERROR.value:
-        suffixes.append("[ERROR]")
+    if rev.status == ReviewStatus.PARTIAL.value:
+        detail = f" — {rev.failure_detail}" if rev.failure_detail else ""
+        suffixes.append(f"[PARTIAL{detail}]")
+    elif rev.status == ReviewStatus.ERROR.value:
+        detail = f" — {rev.failure_detail}" if rev.failure_detail else ""
+        suffixes.append(f"[ERROR{detail}]")
     if rev.verdict == ReviewVerdict.DISAPPROVE.value:
         suffixes.append("[DISAPPROVED]")
     suffix = " " + " ".join(suffixes) if suffixes else ""
@@ -544,4 +548,6 @@ def render_status(rev: ReviewSummary) -> list[str]:
         lines.append(f"  findings: {', '.join(parts)}")
     if rev.cost_usd:
         lines.append(f"  cost: ${rev.cost_usd:.2f}")
+    if rev.status in (ReviewStatus.PARTIAL.value, ReviewStatus.ERROR.value):
+        lines.append("  recover: pr review --recover")
     return lines

@@ -122,6 +122,29 @@ def test_merge_readiness_not_checked():
     assert "not checked" in result
 
 
+def test_merge_readiness_review_incomplete():
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_ci_domain(state, pr_state.CIDomain(conclusion="success", updated_at="t"))
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        status="partial", finding_counts={}, updated_at="t",
+    ))
+    pr_state.update_comments(state, pr_state.CommentsSummary(updated_at="t"))
+    result = pr_cli._merge_readiness(state)
+    assert "review incomplete" in result
+
+
+def test_merge_readiness_review_error():
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_ci_domain(state, pr_state.CIDomain(conclusion="success", updated_at="t"))
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        status="error", updated_at="t",
+    ))
+    pr_state.update_comments(state, pr_state.CommentsSummary(updated_at="t"))
+    result = pr_cli._merge_readiness(state)
+    assert "review incomplete" in result
+
 
 # ── _COMMANDS registry ────────────────────────────────────────────────────
 

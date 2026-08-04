@@ -1584,7 +1584,10 @@ def _run_comment_fix(
 
     if not all_fixable:
         early_deferred = bool(all_needs_human) or has_unaccounted
-        if (all_dismissed or all_needs_human) and not has_unaccounted:
+        if has_unaccounted:
+            log.info("Deferred fix summary — unresolved threads not yet addressed")
+            summary_url = None
+        elif all_dismissed or all_needs_human:
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, dismissed=all_dismissed,
@@ -1593,8 +1596,6 @@ def _run_comment_fix(
                 has_comment_items=has_items,
             )
         else:
-            if has_unaccounted:
-                log.info("Deferred fix summary — unresolved threads not yet addressed")
             summary_url = None
         empty_result.summary_url = summary_url
         empty_result.summary_deferred = summary_url is None and early_deferred

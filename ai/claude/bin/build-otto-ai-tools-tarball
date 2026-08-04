@@ -97,7 +97,7 @@ fi
 for pyscript in "$DEST/bin/"*; do
   [[ -f "$pyscript" ]] || continue
   head -1 "$pyscript" | grep -q python3 || continue
-  sed -i '' 's/\.parent\.parent \/ "lib"/.parent \/ "lib"/g' "$pyscript"
+  sed -i.bak 's/\.parent\.parent \/ "lib"/.parent \/ "lib"/g' "$pyscript" && rm -f "$pyscript.bak"
 done
 
 # Library files — all Python modules

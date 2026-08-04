@@ -39,6 +39,11 @@ tools:
     visibility: brief
     description: "Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity"
 
+  - name: validate-eval-baselines
+    permission: false
+    visibility: brief
+    description: "Validates eval baseline files for schema correctness and corpus coverage"
+
   - name: generate-tool-context
     permission: false
     visibility: brief

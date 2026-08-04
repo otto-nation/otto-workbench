@@ -2,7 +2,7 @@
 set -e
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  cat <<'EOF'
+  cat <<EOF
 otto-mcp-server — dynamic MCP server for otto-workbench tools
 
 Discovers scripts with --tool-schema support and exposes them via MCP stdio transport.

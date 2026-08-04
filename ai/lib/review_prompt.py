@@ -25,7 +25,7 @@ from review_common import (
 )
 from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
 from review_scout import (
-    filter_leads_for_group, format_leads_block,
+    format_leads_block,
     is_scout_output, parse_scout_output,
 )
 from review_preflight import (
@@ -362,14 +362,13 @@ def _classify_failure_items(group, pr_files: set[str]) -> tuple[list[str], int]:
 
 def _build_holistic_block(
     holistic_content: str, changed_files: int,
-    group_files: list[str] | None = None,
 ) -> str:
     if not holistic_content:
         return ""
 
-    if is_scout_output(holistic_content) and group_files:
+    if is_scout_output(holistic_content):
         leads, no_scrutiny = parse_scout_output(holistic_content)
-        block = format_leads_block(leads, no_scrutiny, group_files=group_files)
+        block = format_leads_block(leads, no_scrutiny)
         if block:
             return f"\n## Scout context\n{block}"
         return ""
@@ -864,7 +863,6 @@ def _prompt_group(job, common, extra):
     )
     holistic_block = _build_holistic_block(
         extra.get("holistic_content", ""), job.pr.changed_files,
-        group_files=group_files or None,
     )
     pr_header = _build_pr_header(job.pr, job.ctx, file_filter=file_filter)
     delta_section = _build_delta_section(job.preflight, file_filter=file_filter)

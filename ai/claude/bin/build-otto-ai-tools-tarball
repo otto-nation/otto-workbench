@@ -22,7 +22,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 WORKBENCH_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 _CLAUDE_DIR="$(dirname "$SCRIPT_DIR")"
-_AI_LIB_DIR="$(dirname "$_CLAUDE_DIR")/lib"
+_AI_LIB_DIR="$WORKBENCH_ROOT/ai/lib"
 
 # ─── Constants ────────────────────────────────────────────────────────────
 

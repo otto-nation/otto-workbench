@@ -118,7 +118,6 @@ ZSH_SNIPPET_GLOB="*.zsh"
 
 # ─── Workbench source — AI ────────────────────────────────────────────────────
 AI_SRC_DIR="$WORKBENCH_DIR/ai"
-AI_LIB_DIR="$WORKBENCH_DIR/ai/lib"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
 

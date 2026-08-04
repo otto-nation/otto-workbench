@@ -21,6 +21,7 @@ import ci_failures
 import pr_comments
 import pr_context
 import pr_state
+import push_status
 import rebase_status
 import review_gc
 import log
@@ -163,6 +164,8 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
     if not state:
         lines.append("No status data yet. Run: pr ci, pr review, or pr comments")
+        lines.append("")
+        lines += push_status.render_status(ctx.worktree_root, branch)
         print("\n".join(lines), file=sys.stderr)
         return 0
 
@@ -178,7 +181,10 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     lines.append("")
     lines += rebase_status.render_status(state.rebase)
     lines.append("")
-    lines.append(_merge_readiness(state))
+    unpushed = push_status.detect_unpushed(ctx.worktree_root, branch)
+    lines += push_status.render_status(ctx.worktree_root, branch)
+    lines.append("")
+    lines.append(_merge_readiness(state, unpushed=unpushed))
 
     print("\n".join(lines), file=sys.stderr)
 
@@ -187,12 +193,14 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return 0
 
 
-def _merge_readiness(state: pr_state.PRState) -> str:
+def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> str:
     ci_green = state.ci.conclusion == "success" if state.ci.updated_at else None
     has_must_fix = state.review.finding_counts.get("M", 0) > 0 if state.review.updated_at else None
     has_blockers = bool(state.comments.blocking_reviewers) if state.comments.updated_at else None
 
-    if ci_green is True and has_must_fix is False and has_blockers is False:
+    pushed = unpushed == 0
+
+    if ci_green is True and has_must_fix is False and has_blockers is False and pushed:
         return "**Merge readiness**: ready"
     issues = []
     if ci_green is False:
@@ -201,6 +209,10 @@ def _merge_readiness(state: pr_state.PRState) -> str:
         issues.append("must-fix findings")
     if has_blockers is True:
         issues.append("blocking reviewers")
+    if not pushed:
+        count = unpushed if unpushed and unpushed > 0 else None
+        desc = f"{count} unpushed commit(s)" if count else "branch not pushed"
+        issues.append(desc)
     if ci_green is None or has_must_fix is None or has_blockers is None:
         unchecked = []
         if ci_green is None:

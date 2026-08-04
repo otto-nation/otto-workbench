@@ -960,12 +960,9 @@ def _create_or_update_deferred_issue(
 
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
-    if cp.sha:
+    if cp.sha and cp.status == "pushed":
         url = f"https://github.com/{repo}/commit/{cp.sha}"
-        sha_link = f"[`{cp.sha}`]({url})"
-        if cp.status == "pushed":
-            return f"Fixed in {sha_link}"
-        return f"Fixed in {sha_link} (push failed — run manually)"
+        return f"Fixed in [`{cp.sha}`]({url})"
     if cp.status == "no_changes":
         return "Fix applied (no commit needed)"
     if cp.status == "commit_failed":

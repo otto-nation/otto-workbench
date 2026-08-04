@@ -651,11 +651,11 @@ class TestFixedStatusText:
         assert "abc1234" in text
         assert "push failed" not in text
 
-    def test_push_failed_with_sha(self, rt):
+    def test_push_failed_falls_through_to_pending(self, rt):
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert "abc1234" in text
-        assert "push failed" in text
+        assert text == "Fix pending"
+        assert "push failed" not in text
 
     def test_no_changes(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
@@ -702,13 +702,13 @@ class TestBuildSummaryBody:
         )
         assert "commit failed" in body
 
-    def test_push_failed_shows_sha_and_warning(self, rt):
+    def test_push_failed_shows_pending(self, rt):
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         body = rt._build_summary_body(
             [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
-        assert "abc1234" in body
-        assert "push failed" in body
+        assert "Fix pending" in body
+        assert "push failed" not in body
 
     def test_needs_human_rows(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")

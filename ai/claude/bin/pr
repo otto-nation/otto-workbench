@@ -232,11 +232,11 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,
                original_branch: str | None = None) -> int:
-    """Delegate to claude-review, or handle --post/--repair/--summary locally."""
+    """Delegate to claude-review, or handle --post/--repair/--summary/--recover locally."""
     flags = set(argv)
-    mode_flags = flags & {"--post", "--repair", "--summary"}
+    mode_flags = flags & {"--post", "--repair", "--summary", "--recover"}
     if len(mode_flags) > 1:
-        log.error("pr: --post, --repair, and --summary are mutually exclusive")
+        log.error("pr: --post, --repair, --summary, and --recover are mutually exclusive")
         return 1
 
     if "--post" in flags:

@@ -479,6 +479,13 @@ def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: boo
         return
 
     if review_sha == pr_head_sha:
+        # Check if prior review had failures — auto-recover without prompting
+        review_dir = review_file.parent
+        pipeline_status = read_pipeline_status(review_dir)
+        if pipeline_status in ("partial", "error"):
+            log.info(f"Recovering failed review agents (HEAD unchanged at {pr_head_sha[:7]})")
+            return
+
         log.warn(f"No new commits since the last review (HEAD {pr_head_sha[:7]})")
         if not _confirm("Re-review anyway?"):
             sys.exit(0)
@@ -750,6 +757,7 @@ def _run_review_pr(
     force, repo_dir, max_parallel, no_holistic, max_cost, model,
     effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False,
+    recover=False,
 ) -> None:
     trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
                data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
@@ -792,7 +800,40 @@ def _run_review_pr(
 
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
-    has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
+    if recover:
+        # Validate pipeline state before doing any expensive setup
+        pipeline_path = review_dir / FILENAME_PIPELINE_STATE
+        if not pipeline_path.is_file():
+            log.error("No pipeline state found — nothing to recover")
+            sys.exit(1)
+        pipeline_status = read_pipeline_status(review_dir)
+        if pipeline_status == "completed":
+            log.info("Nothing to recover — review is complete")
+            sys.exit(0)
+        # Verify HEAD hasn't moved
+        pr_head_sha = ""
+        try:
+            r = subprocess.run(
+                ["gh", "pr", "view", pr_number, "--repo", repo,
+                 "--json", "headRefOid", "--jq", ".headRefOid"],
+                capture_output=True, text=True,
+            )
+            pr_head_sha = r.stdout.strip()
+        except Exception:
+            pass
+        if pr_head_sha:
+            pipeline_data = json.loads(pipeline_path.read_text())
+            if pipeline_data.get("head_sha") != pr_head_sha:
+                log.error(
+                    f"HEAD has moved since the failed review "
+                    f"({pipeline_data.get('head_sha', '?')[:7]} → {pr_head_sha[:7]}); "
+                    f"run `pr review` for a fresh review"
+                )
+                sys.exit(1)
+        has_pipeline_state = True
+        force = True  # Skip stale check and pending review check
+    else:
+        has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
 
     if not has_pipeline_state:
         _check_stale_review(repo, pr_number, review_file, force)
@@ -854,6 +895,7 @@ def _run_review(args) -> None:
     effort = args.effort
     max_groups = args.max_groups
     generated = args.generated
+    recover = getattr(args, "recover", False)
 
     if no_post or auto_post:
         force = True
@@ -881,6 +923,7 @@ def _run_review(args) -> None:
             force, repo_dir, max_parallel, no_holistic, max_cost, model,
             effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
+            recover=recover,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -1090,6 +1133,7 @@ def main() -> None:
     parser.add_argument("--fix", action="store_true")
     parser.add_argument("--skip-user-verification", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--recover", action="store_true")
     parser.add_argument("--no-holistic", action="store_true")
     parser.add_argument("--no-scout", action="store_true")
     parser.add_argument("--disprove", action="store_true", default=None)
@@ -1142,6 +1186,14 @@ def main() -> None:
 
     if parsed.fix and not parsed.self_review:
         log.error("--fix requires --self")
+        sys.exit(1)
+
+    if parsed.recover and parsed.force:
+        log.error("--recover and --force are mutually exclusive")
+        sys.exit(1)
+
+    if parsed.recover and parsed.self_review:
+        log.error("--recover is not supported with --self")
         sys.exit(1)
 
     if parsed.self_review:

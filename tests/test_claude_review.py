@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -1343,5 +1344,45 @@ def test_constants_match_expected(cr):
     assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4
     assert len(cr.SEVERITY_JSON_KEYS) == 4
+
+
+# ── _check_stale_review ───────────────────────────────────────────────────────
+
+
+def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch):
+    """Same HEAD + pipeline failures → no prompt, returns silently (auto-recover)."""
+    review_file = tmp_path / "review.md"
+    review_file.write_text("# Review\n<!-- head_sha: abc123 -->\n## Summary\n")
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc123", "group_names": ["g1", "g2"],
+        "synthesis_done": True, "synthesis_failed": "",
+        "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
+    }))
+
+    # Mock gh to return matching HEAD
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
+
+    # Should return without prompting (not call sys.exit or _confirm)
+    cr._check_stale_review("owner/repo", "1", review_file, force=False)
+    # If we get here, no prompt was shown — test passes
+
+
+def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch):
+    """Same HEAD + no failures → still prompts 'Re-review anyway?'."""
+    review_file = tmp_path / "review.md"
+    review_file.write_text("# Review\n<!-- head_sha: abc123 -->\n## Summary\n")
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc123", "group_names": ["g1"],
+        "synthesis_done": True, "synthesis_failed": "",
+        "groups_done": [1], "groups_failed": {},
+    }))
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
+    monkeypatch.setattr(cr, "_confirm", lambda msg: False)
+
+    with pytest.raises(SystemExit):
+        cr._check_stale_review("owner/repo", "1", review_file, force=False)
 
 

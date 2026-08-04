@@ -403,6 +403,26 @@ def test_cmd_review_passes_flags_through(mock_run):
     assert "--no-post" in cmd
 
 
+# ── cmd_review --recover mode flag ───────────────────────────────────────
+
+
+def test_review_recover_mutually_exclusive_with_post():
+    """--recover and --post are mutually exclusive."""
+    ctx = _make_ctx()
+    rc = pr_cli.cmd_review(["--recover", "--post"], ctx)
+    assert rc == 1
+
+
+def test_review_recover_passes_through_to_delegate():
+    """--recover alone is forwarded to claude-review."""
+    ctx = _make_ctx()
+    with patch("pr_cli.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        pr_cli.cmd_review(["--recover", "42"], ctx)
+    cmd = mock_run.call_args[0][0]
+    assert "--recover" in cmd
+
+
 # ── cmd_review --post ────────────────────────────────────────────────────
 
 

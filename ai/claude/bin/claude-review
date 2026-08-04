@@ -451,36 +451,80 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
         pass
 
 
-def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool) -> None:
-    if force:
-        return
-    if not review_file.is_file():
-        return
-
+def _read_review_sha(review_file: Path) -> str:
     try:
         text = review_file.read_text()
     except OSError:
-        return
+        return ""
     m = re.search(r"<!-- head_sha: ([a-f0-9]+) -->", text)
-    review_sha = m.group(1) if m else ""
-    if not review_sha:
-        return
+    return m.group(1) if m else ""
 
-    pr_head_sha = ""
+
+def _get_pr_head_sha(repo: str, pr_number: str) -> str:
     try:
         r = subprocess.run(
             ["gh", "pr", "view", pr_number, "--repo", repo,
              "--json", "headRefOid", "--jq", ".headRefOid"],
             capture_output=True, text=True,
         )
-        pr_head_sha = r.stdout.strip()
+        return r.stdout.strip()
     except Exception:
-        pass
+        return ""
+
+
+def _validate_recover(repo: str, pr_number: str, review_dir: Path) -> None:
+    """Validate pipeline state for --recover mode. Exits on failure."""
+    pipeline_path = review_dir / FILENAME_PIPELINE_STATE
+    if not pipeline_path.is_file():
+        log.error("No pipeline state found — nothing to recover")
+        sys.exit(1)
+    if read_pipeline_status(review_dir) == "completed":
+        log.info("Nothing to recover — review is complete")
+        sys.exit(0)
+    pr_head_sha = _get_pr_head_sha(repo, pr_number)
+    if not pr_head_sha:
+        return
+    try:
+        pipeline_data = json.loads(pipeline_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        log.error(f"Corrupt pipeline state: {review_dir}")
+        sys.exit(1)
+    if pipeline_data.get("head_sha") != pr_head_sha:
+        log.error(
+            f"HEAD has moved since the failed review "
+            f"({pipeline_data.get('head_sha', '?')[:7]} → {pr_head_sha[:7]}); "
+            f"run `pr review` for a fresh review"
+        )
+        sys.exit(1)
+
+
+def _should_auto_recover(repo: str, pr_number: str, review_file: Path) -> None:
+    """Log recovery intent when HEAD unchanged and prior review had failures."""
+    review_sha = _read_review_sha(review_file)
+    if not review_sha:
+        return
+    pr_head_sha = _get_pr_head_sha(repo, pr_number)
+    if not pr_head_sha or review_sha != pr_head_sha:
+        return
+    pipeline_status = read_pipeline_status(review_file.parent)
+    if pipeline_status in (pr_state.ReviewStatus.PARTIAL.value, pr_state.ReviewStatus.ERROR.value):
+        log.info(f"Recovering failed review agents (HEAD unchanged at {review_sha[:7]})")
+
+
+def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool) -> None:
+    if force:
+        return
+    if not review_file.is_file():
+        return
+
+    review_sha = _read_review_sha(review_file)
+    if not review_sha:
+        return
+    pr_head_sha = _get_pr_head_sha(repo, pr_number)
     if not pr_head_sha:
         return
 
     if review_sha == pr_head_sha:
-        # Check if prior review had failures — auto-recover without prompting
         review_dir = review_file.parent
         pipeline_status = read_pipeline_status(review_dir)
         if pipeline_status in ("partial", "error"):
@@ -802,68 +846,14 @@ def _run_review_pr(
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
     if recover:
-        # Validate pipeline state before doing any expensive setup
-        pipeline_path = review_dir / FILENAME_PIPELINE_STATE
-        if not pipeline_path.is_file():
-            log.error("No pipeline state found — nothing to recover")
-            sys.exit(1)
-        pipeline_status = read_pipeline_status(review_dir)
-        if pipeline_status == "completed":
-            log.info("Nothing to recover — review is complete")
-            sys.exit(0)
-        # Verify HEAD hasn't moved
-        pr_head_sha = ""
-        try:
-            r = subprocess.run(
-                ["gh", "pr", "view", pr_number, "--repo", repo,
-                 "--json", "headRefOid", "--jq", ".headRefOid"],
-                capture_output=True, text=True,
-            )
-            pr_head_sha = r.stdout.strip()
-        except Exception:
-            pass
-        if pr_head_sha:
-            try:
-                pipeline_data = json.loads(pipeline_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                log.error(f"Corrupt pipeline state: {review_dir}")
-                sys.exit(1)
-            if pipeline_data.get("head_sha") != pr_head_sha:
-                log.error(
-                    f"HEAD has moved since the failed review "
-                    f"({pipeline_data.get('head_sha', '?')[:7]} → {pr_head_sha[:7]}); "
-                    f"run `pr review` for a fresh review"
-                )
-                sys.exit(1)
+        _validate_recover(repo, pr_number, review_dir)
         has_pipeline_state = True
-        force = True  # Skip stale check and pending review check
+        force = True
     else:
         has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
 
     if has_pipeline_state and review_file.exists():
-        # Auto-recovery: if HEAD hasn't moved and the prior review had failures,
-        # resume without prompting instead of treating it as a fresh stale review.
-        try:
-            _review_text = review_file.read_text()
-        except OSError:
-            _review_text = ""
-        _m = re.search(r"<!-- head_sha: ([a-f0-9]+) -->", _review_text)
-        _review_sha = _m.group(1) if _m else ""
-        if _review_sha:
-            _pr_head_sha_check = ""
-            try:
-                _r = subprocess.run(
-                    ["gh", "pr", "view", pr_number, "--repo", repo,
-                     "--json", "headRefOid", "--jq", ".headRefOid"],
-                    capture_output=True, text=True,
-                )
-                _pr_head_sha_check = _r.stdout.strip()
-            except Exception:
-                pass
-            if _pr_head_sha_check and _review_sha == _pr_head_sha_check:
-                _pipeline_status = read_pipeline_status(review_dir)
-                if _pipeline_status in (pr_state.ReviewStatus.PARTIAL.value, pr_state.ReviewStatus.ERROR.value):
-                    log.info(f"Recovering failed review agents (HEAD unchanged at {_review_sha[:7]})")
+        _should_auto_recover(repo, pr_number, review_file)
 
     if not has_pipeline_state:
         _check_stale_review(repo, pr_number, review_file, force)

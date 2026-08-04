@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Validate that scripts do not exceed a maximum nesting depth per function.
 
-Usage: validate-nesting [--quiet] [--max-depth N] [file...]
+Usage: validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
 
 Checks nesting depth in bash, Python, and Go scripts. Each language has
 its own default max depth (bash/python: 2, go: 3) overridable with
 --max-depth.
 
 When no files are given, discovers all scripts in the repo by extension
-and shebang.
+and shebang. With --diff, only reports violations on lines added since
+BASE_REF (mutually exclusive with positional files).
 
 Exit code: 0 if all files pass, 1 if any exceed max depth.
 """

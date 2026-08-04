@@ -127,9 +127,8 @@ def _parse_diff(diff_output: str) -> dict[str, set[int]]:
             continue
         if line.startswith('@@'):
             m = re.search(r'\+(\d+)(?:,(\d+))?', line)
-            if m:
-                current_line = int(m.group(1))
-                remaining = int(m.group(2)) if m.group(2) else 1
+            current_line = int(m.group(1)) if m else current_line
+            remaining = int(m.group(2)) if m and m.group(2) else 1 if m else remaining
             continue
         if current_file is None or remaining <= 0:
             continue
@@ -189,35 +188,19 @@ def main():
         repo_root = os.getcwd()
 
     if args.diff:
-        diff_file_checkers = _resolve_diff_files(args.diff, repo_root)
-        errors = 0
-        for filepath, checker, added_lines in diff_file_checkers:
-            max_depth = args.max_depth if args.max_depth is not None else checker.DEFAULT_MAX_DEPTH
-            with open(filepath) as f:
-                lines = f.readlines()
-            violations = checker.check_nesting(lines, max_depth)
-            filtered = [v for v in violations if v.line_number in added_lines]
-            relpath = os.path.relpath(filepath, repo_root)
-            if filtered:
-                errors += 1
-                _report_violations(relpath, filtered, max_depth)
-            elif not args.quiet:
-                print(f'  {GREEN}✓{NC} {relpath}')
-        _print_summary(len(diff_file_checkers), errors)
-        if errors:
-            sys.exit(1)
-        return
-
-    file_checkers = _resolve_files(args, repo_root)
+        file_checkers = _resolve_diff_files(args.diff, repo_root)
+    else:
+        file_checkers = [(f, c, None) for f, c in _resolve_files(args, repo_root)]
 
     errors = 0
-    for filepath, checker in file_checkers:
+    for filepath, checker, added_lines in file_checkers:
         max_depth = args.max_depth if args.max_depth is not None else checker.DEFAULT_MAX_DEPTH
         with open(filepath) as f:
             lines = f.readlines()
         violations = checker.check_nesting(lines, max_depth)
+        if added_lines is not None:
+            violations = [v for v in violations if v.line_number in added_lines]
         relpath = os.path.relpath(filepath, repo_root)
-
         if violations:
             errors += 1
             _report_violations(relpath, violations, max_depth)

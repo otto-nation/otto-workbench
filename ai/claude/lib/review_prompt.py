@@ -362,13 +362,14 @@ def _classify_failure_items(group, pr_files: set[str]) -> tuple[list[str], int]:
 
 def _build_holistic_block(
     holistic_content: str, changed_files: int,
+    group_files: list[str] | None = None,
 ) -> str:
     if not holistic_content:
         return ""
 
-    if is_scout_output(holistic_content):
+    if is_scout_output(holistic_content) and group_files:
         leads, no_scrutiny = parse_scout_output(holistic_content)
-        block = format_leads_block(leads, no_scrutiny)
+        block = format_leads_block(leads, no_scrutiny, group_files=group_files)
         if block:
             return f"\n## Scout context\n{block}"
         return ""
@@ -863,6 +864,7 @@ def _prompt_group(job, common, extra):
     )
     holistic_block = _build_holistic_block(
         extra.get("holistic_content", ""), job.pr.changed_files,
+        group_files=group_files or None,
     )
     pr_header = _build_pr_header(job.pr, job.ctx, file_filter=file_filter)
     delta_section = _build_delta_section(job.preflight, file_filter=file_filter)

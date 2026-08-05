@@ -114,7 +114,7 @@ _resolve_file_conflicts(conflicts, cwd, sha, subject)
         "binary_error"  → return None
         "ai_merge"      → _resolve_single_file
 
-    for (dir, cmd), files in pending_regens:
+    for (dir, cmd), files in pending_regens.items():
         _run_regeneration(dir, cmd, files)
 
     return resolved
@@ -126,7 +126,7 @@ _resolve_file_conflicts(conflicts, cwd, sha, subject)
 - `_resolve_one` — dispatch logic moves into `_classify_conflict`
 - `_resolve_generated` — absorbed into the "accept_theirs" dispatch branch
 - The `go_dirs` set and post-loop `go mod tidy` block in `_resolve_file_conflicts`
-- The `go.sum`/`go.mod` special cases (lines 732-754)
+- The `go.sum`/`go.mod` special cases in the old `_resolve_one`
 
 ### Modified
 - `_resolve_file_conflicts` — new loop structure with classify → dispatch → deferred regen

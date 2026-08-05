@@ -167,17 +167,16 @@ def _is_empty_patch(cwd: str) -> bool:
 
 _LOCKFILE_REGENERATORS: dict[str, dict] = {
     "go.sum":            {"cmd": ["go", "mod", "tidy"], "stage_dir": True},
-    "go.mod":            {"cmd": ["go", "mod", "tidy"], "stage_dir": True},
-    "pnpm-lock.yaml":    {"cmd": ["pnpm", "install"]},
-    "package-lock.json": {"cmd": ["npm", "install"]},
+    "pnpm-lock.yaml":    {"cmd": ["pnpm", "install", "--lockfile-only"]},
+    "package-lock.json": {"cmd": ["npm", "install", "--package-lock-only"]},
     "yarn.lock":         {"cmd": ["yarn", "install"]},
     "bun.lock":          {"cmd": ["bun", "install"]},
     "bun.lockb":         {"cmd": ["bun", "install"]},
     "Cargo.lock":        {"cmd": ["cargo", "generate-lockfile"]},
     "uv.lock":           {"cmd": ["uv", "lock"]},
     "poetry.lock":       {"cmd": ["poetry", "lock", "--no-update"]},
-    "composer.lock":     {"cmd": ["composer", "install"]},
-    "Gemfile.lock":      {"cmd": ["bundle", "install"]},
+    "composer.lock":     {"cmd": ["composer", "update", "--lock"]},
+    "Gemfile.lock":      {"cmd": ["bundle", "lock"]},
 }
 
 
@@ -216,7 +215,7 @@ def _run_regeneration(
     log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(regen_dir).name}/)")
     r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
 
-    if r.returncode != 0 and not use_mise and r.returncode == 127:
+    if not use_mise and r.returncode == 127:
         if shutil.which("mise"):
             log.info("Retrying with mise...")
             run_cmd = ["mise", "exec", "--"] + cmd
@@ -231,7 +230,7 @@ def _run_regeneration(
         return False
 
     if stage_dir:
-        sr = subprocess.run(["git", "add", "-u"], cwd=regen_dir)
+        sr = subprocess.run(["git", "add", "-u", "."], cwd=regen_dir)
         if sr.returncode != 0:
             _terr("regeneration", f"git add -u failed in {regen_dir}")
             log.warn(f"git add -u failed after regeneration in {Path(regen_dir).name}/")
@@ -824,7 +823,7 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> list[str] | None:
             ["ls", "-1"],
             capture_output=True, text=True, cwd=target_dir,
         ).stdout.strip()
-    except Exception:
+    except Exception:  # non-fatal: AI can work without directory context
         nearby = "(unavailable)"
 
     prompt_text = (
@@ -849,6 +848,13 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> list[str] | None:
     if not parts:
         return None
 
+    safe_binaries = {entry["cmd"][0] for entry in _LOCKFILE_REGENERATORS.values()}
+    if parts[0] not in safe_binaries:
+        if _trail:
+            _trail.info("ai_suggest_regen", f"AI suggested unknown binary: {parts[0]}",
+                        data={"filepath": filepath, "command": parts, "rejected": True})
+        return None
+
     if _trail:
         _trail.info("ai_suggest_regen", f"AI suggested: {response}",
                     data={"filepath": filepath, "command": parts})
@@ -867,6 +873,10 @@ def _classify_conflict(
       "binary_error"  — cannot resolve binary files
       "ai_merge"      — resolve via AI
     """
+    delete_type = _detect_delete_conflict(filepath, cwd)
+    if delete_type is not None:
+        return ("delete", delete_type)
+
     regen = _find_regenerator(filepath)
     if regen is not None:
         return ("regenerate", regen)
@@ -874,10 +884,6 @@ def _classify_conflict(
     generated, method = _is_generated_file(filepath, full_path, cwd)
     if generated:
         return ("accept_theirs", method)
-
-    delete_type = _detect_delete_conflict(filepath, cwd)
-    if delete_type is not None:
-        return ("delete", delete_type)
 
     if _is_binary(full_path):
         return ("binary_error", None)
@@ -934,13 +940,19 @@ def _dispatch_conflict(
     strategy: str, context: Any,
     sha: str, subject: str, pending: dict,
 ) -> bool | None:
-    """Dispatch a single conflict by strategy. Returns True (resolved), False (skip), None (fatal)."""
+    """Dispatch a single conflict by strategy. Returns True on success, None on fatal failure."""
     if strategy == "regenerate":
-        return True if _dispatch_regenerate(filepath, full_path, cwd, context, pending) else None
+        if not _dispatch_regenerate(filepath, full_path, cwd, context, pending):
+            return None
+        return True
     if strategy == "accept_theirs":
-        return True if _dispatch_accept_theirs(filepath, full_path, cwd, context, pending) else None
+        if not _dispatch_accept_theirs(filepath, full_path, cwd, context, pending):
+            return None
+        return True
     if strategy == "delete":
-        return True if _resolve_delete_conflict(filepath, sha, cwd, context) else None
+        if not _resolve_delete_conflict(filepath, sha, cwd, context):
+            return None
+        return True
     if strategy == "binary_error":
         _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
         log.error(f"Cannot resolve binary file: {filepath}")
@@ -951,7 +963,7 @@ def _dispatch_conflict(
         if _trail:
             _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
         return True
-    return False
+    return None
 
 
 def _resolve_file_conflicts(
@@ -970,8 +982,13 @@ def _resolve_file_conflicts(
         if result:
             resolved.append(filepath)
 
+    regen_failures = []
     for (regen_dir, cmd_tuple), (files, stage_dir) in pending_regens.items():
-        _run_regeneration(regen_dir, list(cmd_tuple), files, stage_dir=stage_dir, cwd=cwd)
+        if not _run_regeneration(regen_dir, list(cmd_tuple), files, stage_dir=stage_dir, cwd=cwd):
+            regen_failures.extend(files)
+
+    if regen_failures:
+        log.warn(f"Regeneration failed for: {', '.join(regen_failures)} — lockfiles may be stale")
 
     return resolved
 

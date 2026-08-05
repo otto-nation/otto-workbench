@@ -100,7 +100,7 @@ def _find_regenerator(filepath: str) -> dict | None:
     return _LOCKFILE_REGENERATORS.get(os.path.basename(filepath))
 ```
 
-Add `import os` at the top if not already present (it's already imported via `ai_backend` usage — verify).
+Add `import os` at the top if not already present — verify with `grep`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -290,9 +290,6 @@ Expected: FAIL with `AttributeError: module 'pr_rebase_cli' has no attribute '_d
 Add after `_find_regenerator`, before `_accept_theirs_and_stage`:
 
 ```python
-import shutil
-
-
 def _detect_mise(target_dir: str, repo_root: str) -> bool:
     """Check if mise is available and configured for this directory."""
     if not shutil.which("mise"):
@@ -323,14 +320,14 @@ def _run_regeneration(
     log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(regen_dir).name}/)")
     r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
 
-    if r.returncode != 0 and not use_mise and r.returncode == 127:
+    if not use_mise and r.returncode == 127:
         if shutil.which("mise"):
-            log.info(f"Retrying with mise...")
+            log.info("Retrying with mise...")
             run_cmd = ["mise", "exec", "--"] + cmd
             r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
 
     if r.returncode != 0:
-        _terr("regeneration", f"{''.join(cmd)} failed in {regen_dir}",
+        _terr("regeneration", f"{' '.join(cmd)} failed in {regen_dir}",
               data={"cmd": cmd, "exit_code": r.returncode, "stderr": r.stderr.strip()[:500]})
         log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
         if r.stderr.strip():

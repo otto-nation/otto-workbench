@@ -152,7 +152,7 @@ def test_commits_ahead_non_numeric():
 def test_find_regenerator_known_lockfile():
     result = pr_rebase_cli._find_regenerator("pnpm-lock.yaml")
     assert result is not None
-    assert result["cmd"] == ["pnpm", "install"]
+    assert result["cmd"] == ["pnpm", "install", "--lockfile-only"]
 
 
 def test_find_regenerator_go_sum():
@@ -166,7 +166,7 @@ def test_find_regenerator_nested_path():
     """Lookup uses basename, not full path."""
     result = pr_rebase_cli._find_regenerator("packages/web/pnpm-lock.yaml")
     assert result is not None
-    assert result["cmd"] == ["pnpm", "install"]
+    assert result["cmd"] == ["pnpm", "install", "--lockfile-only"]
 
 
 def test_find_regenerator_unknown_file():
@@ -313,7 +313,7 @@ def test_run_regeneration_stage_dir(tmp_path):
 
     assert result is True
     cmds = [c[0] for c in calls]
-    assert ["git", "add", "-u"] in cmds
+    assert ["git", "add", "-u", "."] in cmds
 
 
 def test_run_regeneration_failure_returns_false(tmp_path):
@@ -662,6 +662,16 @@ def test_ai_suggest_regeneration_multiword_command(tmp_path):
     assert result == ["cargo", "generate-lockfile"]
 
 
+def test_ai_suggest_regeneration_rejects_unknown_binary(tmp_path):
+    """AI-suggested command with unknown binary is rejected for safety."""
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("rm -rf /", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
 
@@ -765,15 +775,17 @@ def test_resolve_delete_conflict_git_rm_fails():
 def test_classify_conflict_known_lockfile(tmp_path):
     f = tmp_path / "pnpm-lock.yaml"
     f.write_text("content")
-    strategy, ctx = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        strategy, ctx = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
     assert strategy == "regenerate"
-    assert ctx["cmd"] == ["pnpm", "install"]
+    assert ctx["cmd"] == ["pnpm", "install", "--lockfile-only"]
 
 
 def test_classify_conflict_go_sum(tmp_path):
     f = tmp_path / "go.sum"
     f.write_text("content")
-    strategy, ctx = pr_rebase_cli._classify_conflict("go.sum", f, str(tmp_path))
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        strategy, ctx = pr_rebase_cli._classify_conflict("go.sum", f, str(tmp_path))
     assert strategy == "regenerate"
     assert ctx["cmd"] == ["go", "mod", "tidy"]
 
@@ -781,9 +793,8 @@ def test_classify_conflict_go_sum(tmp_path):
 def test_classify_conflict_generated_file(tmp_path):
     f = tmp_path / "service.pb.go"
     f.write_text("// Code generated. DO NOT EDIT.\npackage v1\n")
-    with mock.patch.object(
-        pr_rebase_cli, "_is_generated_file", return_value=(True, "header"),
-    ):
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(True, "header")):
         strategy, ctx = pr_rebase_cli._classify_conflict("service.pb.go", f, str(tmp_path))
     assert strategy == "accept_theirs"
     assert ctx == "header"
@@ -792,8 +803,7 @@ def test_classify_conflict_generated_file(tmp_path):
 def test_classify_conflict_delete_conflict(tmp_path):
     f = tmp_path / "old.go"
     f.write_text("content")
-    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(False, "")), \
-         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted"):
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted"):
         strategy, ctx = pr_rebase_cli._classify_conflict("old.go", f, str(tmp_path))
     assert strategy == "delete"
     assert ctx == "theirs_deleted"
@@ -821,9 +831,8 @@ def test_classify_conflict_lockfile_takes_priority_over_generated(tmp_path):
     """Registry match wins even if the file is also detected as generated."""
     f = tmp_path / "pnpm-lock.yaml"
     f.write_text("content")
-    with mock.patch.object(
-        pr_rebase_cli, "_is_generated_file", return_value=(True, "gitattributes"),
-    ):
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(True, "gitattributes")):
         strategy, _ = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
     assert strategy == "regenerate"
 
@@ -1278,25 +1287,23 @@ def test_resolve_file_conflicts_git_add_failure_returns_none():
         assert result is None
 
 
-def test_resolve_file_conflicts_go_mod_triggers_regeneration():
+def test_resolve_file_conflicts_go_mod_uses_ai_merge():
+    """go.mod is hand-maintained — it goes through AI merge, not accept-theirs."""
     with tempfile.TemporaryDirectory() as tmpdir:
         go_mod = Path(tmpdir) / "go.mod"
         go_mod.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
 
-        def fake_run(cmd, **kwargs):
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-        with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
+        with mock.patch.object(
+            pr_rebase_cli, "_resolve_single_file", return_value="go.mod",
+        ) as mock_ai, \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration") as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.mod"], tmpdir, "abc123", "feat: deps",
             )
 
         assert result == ["go.mod"]
-        # go.mod is in registry — should be accepted-theirs + regenerated, not AI-merged
-        mock_regen.assert_called_once()
-        regen_args = mock_regen.call_args
-        assert regen_args[0][1] == ["go", "mod", "tidy"]
+        mock_ai.assert_called_once()
+        mock_regen.assert_not_called()
 
 
 def test_resolve_file_conflicts_regenerates_pnpm_lockfile():
@@ -1321,8 +1328,47 @@ def test_resolve_file_conflicts_regenerates_pnpm_lockfile():
         assert ["git", "checkout", "--theirs", "pnpm-lock.yaml"] in cmds
         mock_regen.assert_called_once()
         regen_args = mock_regen.call_args
-        assert regen_args[0][1] == ["pnpm", "install"]
+        assert regen_args[0][1] == ["pnpm", "install", "--lockfile-only"]
         assert regen_args[1].get("stage_dir", False) is False
+
+
+def test_resolve_file_conflicts_handles_delete_conflict():
+    """Delete conflicts route through _resolve_delete_conflict."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = "old_module.go"
+        f = Path(tmpdir) / filepath
+        f.write_text("content")
+
+        with mock.patch.object(
+            pr_rebase_cli, "_classify_conflict",
+            return_value=("delete", "theirs_deleted"),
+        ), mock.patch.object(
+            pr_rebase_cli, "_resolve_delete_conflict", return_value=True,
+        ) as mock_delete:
+            result = pr_rebase_cli._resolve_file_conflicts(
+                [filepath], tmpdir, "abc123", "feat: cleanup",
+            )
+
+        assert result == [filepath]
+        mock_delete.assert_called_once_with(filepath, "abc123", tmpdir, "theirs_deleted")
+
+
+def test_resolve_file_conflicts_regen_failure_warns():
+    """Regeneration failure is surfaced as a warning but doesn't abort."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lockfile = Path(tmpdir) / "pnpm-lock.yaml"
+        lockfile.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=False):
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["pnpm-lock.yaml"], tmpdir, "abc123", "feat: deps",
+            )
+
+        assert result == ["pnpm-lock.yaml"]
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────

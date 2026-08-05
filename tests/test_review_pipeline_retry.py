@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_agent
@@ -57,6 +59,27 @@ class TestRetryHintFor:
 
     def test_missing_result_record_gets_no_hint(self):
         assert review_pipeline._retry_hint_for(review_agent.DIAG_NO_RESULT_RECORD) == ""
+
+
+class TestIsRetryable:
+    def test_clean_completion_without_a_write_is_retryable(self):
+        """The motivating failure: finished cleanly, produced nothing."""
+        reason = (
+            "agent completed (subtype=success) but did not write output"
+            f" — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
+        )
+        assert review_pipeline._is_retryable(reason)
+        assert review_pipeline._retry_hint_for(reason) == review_pipeline._NO_WRITE_HINT
+
+    def test_clean_completion_that_wrote_nothing_observable_is_not_retryable(self):
+        """Without the no-write suffix there is no reason to expect a difference."""
+        assert not review_pipeline._is_retryable(
+            "agent completed (subtype=success) but did not write output"
+        )
+
+    def test_no_write_completion_keeps_its_turn_budget(self):
+        reason = f"agent completed (subtype=success) — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
+        assert review_pipeline._retry_turns_for(reason, 15) == 15
 
 
 class TestRetryTurnsFor:
@@ -136,6 +159,30 @@ class TestRetryMissingOutput:
         self._run(invoke, log_path, str(output))
         records = [json.loads(l) for l in Path(log_path).read_text().splitlines() if l]
         assert [r["subtype"] for r in records] == ["error_max_turns", "success"]
+
+    def test_retry_exit_code_reaches_the_failure_message(self, tmp_path, monkeypatch):
+        """The reported exit code must come from the retry, not the first attempt."""
+        log_path = _write_log(tmp_path, _result())
+        review_file = tmp_path / "review.md"
+        job = review_pipeline.ReviewJob(
+            repo="org/repo", pr_number="1",
+            pr=review_pipeline.PRMetadata(
+                title="t", body="", head="b", base="main", head_sha="abc",
+                additions=1, deletions=1, changed_files=1, files=[]),
+            ctx=review_pipeline.PRContext(), wt_path=str(tmp_path),
+            review_file=str(review_file), session_log=log_path,
+            reviews_dir=str(tmp_path),
+        )
+        codes = iter([0, 3])
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review_pipeline, "invoke_agent", lambda *a, **k: next(codes))
+        errors = []
+        monkeypatch.setattr(review_pipeline.log, "error", errors.append)
+
+        with pytest.raises(SystemExit):
+            review_pipeline.run_single_agent(job)
+
+        assert "exited with code 3" in errors[0]
 
     def test_denied_write_is_recovered_instead_of_retried(self, tmp_path):
         log_path = _write_log(tmp_path, json.dumps({

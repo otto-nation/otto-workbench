@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -320,10 +321,16 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     agent = _effort_default(job.effort, "agent", "reviewer")
 
-    def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+    # `rc` tracks the latest attempt so the failure message below reports the
+    # retry's exit code, not the first attempt's.
+    rc = 0
 
-    rc = invoke(prompt, max_turns)
+    def invoke(text: str, turns: int) -> int:
+        nonlocal rc
+        rc = invoke_agent(text, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        return rc
+
+    invoke(prompt, max_turns)
     log.blank()
 
     reason = _retry_missing_output(
@@ -371,8 +378,8 @@ _NON_RECOVERABLE_REASONS = ("permission denied",)
 def _retry_hint_for(reason: str) -> str:
     """The most specific hint the diagnosis supports.
 
-    Checked most-specific first: a no-write failure is also a max-turns
-    failure, and naming the write mechanism beats telling the agent to hurry.
+    Checked most-specific first: a no-write failure usually also hit max turns,
+    and naming the write mechanism beats telling the agent to hurry.
     """
     if DIAG_NO_WRITE_TOOL_CALL in reason:
         return _NO_WRITE_HINT
@@ -395,7 +402,7 @@ def _retry_turns_for(reason: str, max_turns: int) -> int:
 
 
 def _retry_missing_output(
-    invoke: "Callable[[str, int], object]",
+    invoke: Callable[[str, int], int],
     prompt: str, log_path: str, output_path: str,
     *, label: str, max_turns: int,
 ) -> str:
@@ -1065,6 +1072,10 @@ def _is_retryable(reason: str) -> bool:
         return False
     if _MAX_TURNS_REASON in reason:
         return True
+    # A clean completion that never called a write tool produced nothing and
+    # gave no reason it could not have — the retry hint names the mechanism.
+    if DIAG_NO_WRITE_TOOL_CALL in reason:
+        return True
     if reason in (DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG):
         return True
     if is_transient_error(reason):
@@ -1315,10 +1326,16 @@ def _phase_synthesis(
     log.blank()
     agent = _effort_default(job.effort, "agent", "reviewer")
 
-    def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+    # `rc` tracks the latest attempt so the fallback warning below reports the
+    # retry's exit code, not the first attempt's.
+    rc = 0
 
-    rc = invoke(prompt, max_turns)
+    def invoke(text: str, turns: int) -> int:
+        nonlocal rc
+        rc = invoke_agent(text, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        return rc
+
+    invoke(prompt, max_turns)
     log.blank()
 
     _retry_missing_output(

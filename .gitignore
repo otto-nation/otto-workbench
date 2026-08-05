@@ -32,8 +32,9 @@ ai/guidelines/rules/git.generated.md
 ignore/
 .workbench/
 
-# Release tarballs built by build-otto-ai-tools-tarball into the CWD
-otto-ai-tools-*.tar.gz
+# Archives — build artifacts (e.g. build-otto-ai-tools-tarball writes to the CWD)
+*.tar.gz
+*.zip
 
 # Superpowers plugin artifacts
 .superpowers/

@@ -223,6 +223,50 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# ── gh pr create block ──────────────────────────────────────────────────────
+
+_get_pr_create_hook() {
+  jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
+    select(.command | test("gh pr create")) | .command' "$SETTINGS"
+}
+
+@test "pr create hook: blocks gh pr create" {
+  local hook
+  hook=$(_get_pr_create_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"gh pr create"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "pr create hook: blocks gh pr create --draft" {
+  local hook
+  hook=$(_get_pr_create_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"gh pr create --draft --title \"fix: thing\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "pr create hook: allows gh pr list" {
+  local hook
+  hook=$(_get_pr_create_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"gh pr list --state open"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "pr create hook: allows gh pr view" {
+  local hook
+  hook=$(_get_pr_create_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"gh pr view 42 --json state"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "pr create hook: allows gh api" {
+  local hook
+  hook=$(_get_pr_create_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"gh api repos/owner/repo/pulls"}}'
+  [ "$status" -eq 0 ]
+}
+
 # ── sync-settings.jq integrity ───────────────────────────────────────────────
 
 @test "sync-settings.jq file exists" {

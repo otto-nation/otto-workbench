@@ -61,6 +61,28 @@ def test_render_status_conflicts():
     assert "pr rebase --fix" in result[0]
 
 
+def test_render_status_stale_files():
+    r = pr_state.RebaseSummary(
+        status="completed", target_base="origin/main", commits_replayed=3,
+        conflicts_resolved=1, files_resolved=["pnpm-lock.yaml"],
+        files_stale=["pnpm-lock.yaml"],
+        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+    )
+    result = rebase_status.render_status(r)
+    assert len(result) == 2
+    assert "regeneration failed" in result[1]
+    assert "pnpm-lock.yaml" in result[1]
+
+
+def test_render_status_no_stale_line_when_clean():
+    r = pr_state.RebaseSummary(
+        status="completed", target_base="origin/main", commits_replayed=1,
+        conflicts_resolved=0, files_resolved=[],
+        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+    )
+    assert len(rebase_status.render_status(r)) == 1
+
+
 def test_render_status_aborted():
     r = pr_state.RebaseSummary(
         status="aborted", updated_at="2026-06-20T00:00:00Z",

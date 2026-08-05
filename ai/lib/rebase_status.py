@@ -23,4 +23,10 @@ def render_status(r: RebaseSummary) -> list[str]:
         desc = f"resolved {r.conflicts_resolved} file(s) across {r.commits_replayed} commit(s)"
     if r.force_pushed:
         desc += ", force-pushed"
-    return [f"**Rebase**: {desc}"]
+    lines = [f"**Rebase**: {desc}"]
+    if r.files_stale:
+        lines.append(
+            f"**Rebase**: regeneration failed for {', '.join(r.files_stale)} — "
+            "content is the incoming side, unmerged"
+        )
+    return lines

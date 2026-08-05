@@ -2,6 +2,7 @@
 
 import importlib.util
 import importlib.machinery
+import os
 import subprocess
 import sys
 import tempfile
@@ -108,27 +109,27 @@ def test_remaining_rebase_commits_from_apply():
             assert pr_rebase_cli._remaining_rebase_commits(tmpdir) == 4
 
 
-# ── _conflict_report ───────────────────────────────────────────────────────
+# ── ConflictReport ─────────────────────────────────────────────────────────
 
 
 @mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2)
 @mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc1234", "fix: thing"))
 @mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["a.py"])
 def test_conflict_report_structure(_m1, _m2, _m3):
-    report = pr_rebase_cli._conflict_report("/fake")
-    assert report["status"] == "conflicts"
-    assert report["files"] == ["a.py"]
-    assert report["rebase_head"] == "abc1234"
-    assert report["rebase_head_subject"] == "fix: thing"
-    assert report["remaining_commits"] == 2
+    report = pr_rebase_cli.ConflictReport.from_repo("/fake")
+    assert report.status == "conflicts"
+    assert report.files == ["a.py"]
+    assert report.rebase_head == "abc1234"
+    assert report.rebase_head_subject == "fix: thing"
+    assert report.remaining_commits == 2
 
 
 @mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0)
 @mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("def5678", "feat: other"))
 @mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["b.py"])
 def test_conflict_report_custom_status(_m1, _m2, _m3):
-    report = pr_rebase_cli._conflict_report("/fake", status="conflicts_resuming")
-    assert report["status"] == "conflicts_resuming"
+    report = pr_rebase_cli.ConflictReport.from_repo("/fake", status="conflicts_resuming")
+    assert report.status == "conflicts_resuming"
 
 
 # ── _commits_ahead ──────────────────────────────────────────────────────────
@@ -144,6 +145,209 @@ def test_commits_ahead_non_numeric():
     fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
     with mock.patch("subprocess.run", return_value=fake_result):
         assert pr_rebase_cli._commits_ahead("/fake") == 0
+
+
+# ── _find_regenerator ──────────────────────────────────────────────────────
+
+
+def test_find_regenerator_known_lockfile():
+    result = pr_rebase_cli._find_regenerator("pnpm-lock.yaml")
+    assert result is not None
+    assert result.cmd == ("pnpm", "install", "--lockfile-only")
+
+
+def test_find_regenerator_go_sum():
+    result = pr_rebase_cli._find_regenerator("go.sum")
+    assert result is not None
+    assert result.cmd == ("go", "mod", "tidy")
+    assert result.stage_dir is True
+
+
+def test_find_regenerator_nested_path():
+    """Lookup uses basename, not full path."""
+    result = pr_rebase_cli._find_regenerator("packages/web/pnpm-lock.yaml")
+    assert result is not None
+    assert result.cmd == ("pnpm", "install", "--lockfile-only")
+
+
+def test_find_regenerator_unknown_file():
+    result = pr_rebase_cli._find_regenerator("main.go")
+    assert result is None
+
+
+def test_find_regenerator_all_entries_have_cmd():
+    """Every registry entry must carry a non-empty command tuple."""
+    for name, entry in pr_rebase_cli._LOCKFILE_REGENERATORS.items():
+        assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
+
+
+def test_find_regenerator_all_keys_are_basenames():
+    """Lookup is by basename — a key with a path separator could never match."""
+    for name in pr_rebase_cli._LOCKFILE_REGENERATORS:
+        assert os.path.basename(name) == name, f"{name} is not a bare basename"
+
+
+# ── _detect_mise ───────────────────────────────────────────────────────────
+
+
+def test_detect_mise_found(tmp_path):
+    (tmp_path / "mise.toml").write_text("[tools]\n")
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+
+
+def test_detect_mise_tool_versions(tmp_path):
+    (tmp_path / ".tool-versions").write_text("nodejs 20\n")
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+
+
+def test_detect_mise_in_ancestor(tmp_path):
+    subdir = tmp_path / "packages" / "web"
+    subdir.mkdir(parents=True)
+    (tmp_path / "mise.toml").write_text("[tools]\n")
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(subdir), str(tmp_path)) is True
+
+
+def test_detect_mise_not_installed(tmp_path):
+    (tmp_path / "mise.toml").write_text("[tools]\n")
+    with mock.patch("shutil.which", return_value=None):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+
+
+def test_detect_mise_no_config(tmp_path):
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+
+
+def test_detect_mise_stops_at_repo_root(tmp_path):
+    """Does not search above repo_root."""
+    repo = tmp_path / "repo"
+    subdir = repo / "packages" / "web"
+    subdir.mkdir(parents=True)
+    (tmp_path / "mise.toml").write_text("[tools]\n")  # above repo root
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(subdir), str(repo)) is False
+
+
+# ── _run_regeneration ──────────────────────────────────────────────────────
+
+
+def test_run_regeneration_bare_command(tmp_path):
+    lockfile = tmp_path / "pnpm-lock.yaml"
+    lockfile.write_text("old content")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+        result = pr_rebase_cli._run_regeneration(
+            pr_rebase_cli.RegenJob(
+                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+            ),
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["pnpm", "install"] in cmds
+    assert ["git", "add", "pnpm-lock.yaml"] in cmds
+
+
+def test_run_regeneration_with_mise(tmp_path):
+    lockfile = tmp_path / "pnpm-lock.yaml"
+    lockfile.write_text("old content")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True):
+        result = pr_rebase_cli._run_regeneration(
+            pr_rebase_cli.RegenJob(
+                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+            ),
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+
+def test_run_regeneration_bare_fails_retries_mise(tmp_path):
+    lockfile = tmp_path / "pnpm-lock.yaml"
+    lockfile.write_text("old content")
+    calls = []
+    run_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        if cmd == ["pnpm", "install"]:
+            run_count[0] += 1
+            return subprocess.CompletedProcess(args=cmd, returncode=127, stdout="", stderr="command not found")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        result = pr_rebase_cli._run_regeneration(
+            pr_rebase_cli.RegenJob(
+                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+            ),
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+
+def test_run_regeneration_stage_dir(tmp_path):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+        result = pr_rebase_cli._run_regeneration(
+            pr_rebase_cli.RegenJob(
+                regen_dir=str(tmp_path), cmd=("go", "mod", "tidy"),
+                stage_dir=True, files=["go.sum"],
+            ),
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["git", "add", "-u", "."] in cmds
+
+
+def test_run_regeneration_failure_returns_false(tmp_path):
+    def fake_run(cmd, **kwargs):
+        if cmd[0] in ("pnpm", "mise"):
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch("shutil.which", return_value=None):
+        result = pr_rebase_cli._run_regeneration(
+            pr_rebase_cli.RegenJob(
+                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+            ),
+            cwd=str(tmp_path),
+        )
+
+    assert result is False
 
 
 # ── _is_binary ─────────────────────────────────────────────────────────────
@@ -176,9 +380,8 @@ def test_is_generated_file_gitattributes(tmp_path):
         stdout="models.go: linguist-generated: true\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        result, method = pr_rebase_cli._is_generated_file("models.go", f, str(tmp_path))
-    assert result is True
-    assert method == "gitattributes"
+        signal = pr_rebase_cli._is_generated_file("models.go", f, str(tmp_path))
+    assert signal is pr_rebase_cli.GeneratedSignal.GITATTRIBUTES
 
 
 def test_is_generated_file_header_do_not_edit(tmp_path):
@@ -189,9 +392,8 @@ def test_is_generated_file_header_do_not_edit(tmp_path):
         stdout="service.pb.go: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        result, method = pr_rebase_cli._is_generated_file("service.pb.go", f, str(tmp_path))
-    assert result is True
-    assert method == "header"
+        signal = pr_rebase_cli._is_generated_file("service.pb.go", f, str(tmp_path))
+    assert signal is pr_rebase_cli.GeneratedSignal.HEADER
 
 
 def test_is_generated_file_header_at_generated(tmp_path):
@@ -202,9 +404,8 @@ def test_is_generated_file_header_at_generated(tmp_path):
         stdout="types_pb.ts: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        result, method = pr_rebase_cli._is_generated_file("types_pb.ts", f, str(tmp_path))
-    assert result is True
-    assert method == "header"
+        signal = pr_rebase_cli._is_generated_file("types_pb.ts", f, str(tmp_path))
+    assert signal is pr_rebase_cli.GeneratedSignal.HEADER
 
 
 def test_is_generated_file_not_generated(tmp_path):
@@ -215,9 +416,8 @@ def test_is_generated_file_not_generated(tmp_path):
         stdout="handler.go: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        result, method = pr_rebase_cli._is_generated_file("handler.go", f, str(tmp_path))
-    assert result is False
-    assert method == ""
+        signal = pr_rebase_cli._is_generated_file("handler.go", f, str(tmp_path))
+    assert signal is None
 
 
 def test_is_generated_file_missing_file(tmp_path):
@@ -226,10 +426,10 @@ def test_is_generated_file_missing_file(tmp_path):
         stdout="missing.go: linguist-generated: unspecified\n",
     )
     with mock.patch("subprocess.run", return_value=fake):
-        result, method = pr_rebase_cli._is_generated_file(
+        signal = pr_rebase_cli._is_generated_file(
             "missing.go", tmp_path / "missing.go", str(tmp_path),
         )
-    assert result is False
+    assert signal is None
 
 
 # ── _get_ours_content ──────────────────────────────────────────────────────
@@ -412,6 +612,79 @@ def test_parse_resolved_content_allows_equals_mid_line():
     assert reason == ""
 
 
+# ── _ai_suggest_regeneration ──────────────────────────────────────────────
+
+
+def test_ai_suggest_regeneration_returns_command(tmp_path):
+    subdir = tmp_path / "ui-admin"
+    subdir.mkdir()
+    (subdir / "package.json").write_text('{"name": "ui-admin"}')
+    (subdir / "pnpm-lock.yaml").write_text("lockfile content")
+
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("pnpm install", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration(
+            "ui-admin/generated.css", str(tmp_path),
+        )
+
+    assert result == ("pnpm", "install")
+
+
+def test_ai_suggest_regeneration_returns_none_response(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("NONE", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_ai_unavailable(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = False
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_ai_fails(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("", 1)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_empty_response(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_multiword_command(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("cargo generate-lockfile", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result == ("cargo", "generate-lockfile")
+
+
+def test_ai_suggest_regeneration_rejects_unknown_binary(tmp_path):
+    """AI-suggested command with unknown binary is rejected for safety."""
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("rm -rf /", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
 
@@ -435,7 +708,7 @@ def test_detect_delete_conflict_theirs_deleted():
     )
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") == "theirs_deleted"
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is pr_rebase_cli.DeleteSide.THEIRS_DELETED
 
 
 def test_detect_delete_conflict_ours_deleted():
@@ -446,7 +719,7 @@ def test_detect_delete_conflict_ours_deleted():
     )
     fake = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
     with mock.patch("subprocess.run", return_value=fake):
-        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") == "ours_deleted"
+        assert pr_rebase_cli._detect_delete_conflict("file.tsx", "/fake") is pr_rebase_cli.DeleteSide.OURS_DELETED
 
 
 def test_detect_delete_conflict_empty_output():
@@ -475,7 +748,9 @@ def test_resolve_delete_conflict_theirs_deleted():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_delete_conflict("file.tsx", "abc123", "/fake", "theirs_deleted")
+        result = pr_rebase_cli._resolve_delete_conflict(
+            "file.tsx", "abc123", "/fake", pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+        )
 
     assert result is True
     assert ["git", "rm", "--force", "file.tsx"] in calls
@@ -490,7 +765,9 @@ def test_resolve_delete_conflict_ours_deleted():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_delete_conflict("file.tsx", "abc123", "/fake", "ours_deleted")
+        result = pr_rebase_cli._resolve_delete_conflict(
+            "file.tsx", "abc123", "/fake", pr_rebase_cli.DeleteSide.OURS_DELETED,
+        )
 
     assert result is True
     assert ["git", "rm", "--force", "file.tsx"] in calls
@@ -504,59 +781,120 @@ def test_resolve_delete_conflict_git_rm_fails():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        result = pr_rebase_cli._resolve_delete_conflict("file.tsx", "abc123", "/fake", "theirs_deleted")
+        result = pr_rebase_cli._resolve_delete_conflict(
+            "file.tsx", "abc123", "/fake", pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+        )
 
     assert result is False
 
 
-# ── _resolve_one (delete conflicts) ──────────────────────────────────────
+# ── _classify_conflict ─────────────────────────────────────────────────────
 
 
-def test_resolve_one_delete_conflict_skips_ai():
-    """Modify/delete conflict is resolved via git rm without calling AI."""
+def test_classify_conflict_known_lockfile(tmp_path):
+    f = tmp_path / "pnpm-lock.yaml"
+    f.write_text("content")
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        plan = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
+    assert plan.regenerator.cmd == ("pnpm", "install", "--lockfile-only")
+
+
+def test_classify_conflict_go_sum(tmp_path):
+    f = tmp_path / "go.sum"
+    f.write_text("content")
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        plan = pr_rebase_cli._classify_conflict("go.sum", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
+    assert plan.regenerator.cmd == ("go", "mod", "tidy")
+
+
+def test_classify_conflict_generated_file(tmp_path):
+    f = tmp_path / "service.pb.go"
+    f.write_text("// Code generated. DO NOT EDIT.\npackage v1\n")
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None), \
+         mock.patch.object(
+             pr_rebase_cli, "_is_generated_file",
+             return_value=pr_rebase_cli.GeneratedSignal.HEADER,
+         ):
+        plan = pr_rebase_cli._classify_conflict("service.pb.go", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.ACCEPT_THEIRS
+    assert plan.signal is pr_rebase_cli.GeneratedSignal.HEADER
+
+
+def test_classify_conflict_delete_conflict(tmp_path):
+    f = tmp_path / "old.go"
+    f.write_text("content")
+    with mock.patch.object(
+        pr_rebase_cli, "_detect_delete_conflict",
+        return_value=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+    ):
+        plan = pr_rebase_cli._classify_conflict("old.go", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.DELETE
+    assert plan.delete_side is pr_rebase_cli.DeleteSide.THEIRS_DELETED
+
+
+def test_classify_conflict_binary_file(tmp_path):
+    f = tmp_path / "image.png"
+    f.write_bytes(b"\x89PNG\x00\x00")
+    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        plan = pr_rebase_cli._classify_conflict("image.png", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.BINARY_ERROR
+
+
+def test_classify_conflict_text_file(tmp_path):
+    f = tmp_path / "main.go"
+    f.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        plan = pr_rebase_cli._classify_conflict("main.go", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.AI_MERGE
+
+
+def test_classify_conflict_lockfile_takes_priority_over_generated(tmp_path):
+    """Registry match wins even if the file is also detected as generated."""
+    f = tmp_path / "pnpm-lock.yaml"
+    f.write_text("content")
+    with mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None), \
+         mock.patch.object(
+             pr_rebase_cli, "_is_generated_file",
+             return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
+         ):
+        plan = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+    assert plan.strategy is pr_rebase_cli.ConflictStrategy.REGENERATE
+
+
+def test_classify_delete_conflict_carries_side():
+    """Modify/delete conflict classifies as DELETE and records which side deleted."""
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath = "KanbanOverlay.tsx"
         full_path = Path(tmpdir) / filepath
-        full_path.write_text("some content without conflict markers\n")
-        go_dirs: set[Path] = set()
+        full_path.write_text("some content\n")
 
-        with mock.patch.object(
-            pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted",
-        ), mock.patch.object(
-            pr_rebase_cli, "_resolve_delete_conflict", return_value=True,
-        ) as mock_delete, mock.patch.object(
-            pr_rebase_cli, "_resolve_single_file",
-        ) as mock_ai:
-            result = pr_rebase_cli._resolve_one(
-                filepath, full_path, "e3e2fdf", "refactor(web): remove components",
-                tmpdir, go_dirs,
-            )
+        with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+             mock.patch.object(
+                 pr_rebase_cli, "_detect_delete_conflict",
+                 return_value=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+             ):
+            plan = pr_rebase_cli._classify_conflict(filepath, full_path, tmpdir)
 
-        assert result is True
-        mock_delete.assert_called_once_with(filepath, "e3e2fdf", tmpdir, "theirs_deleted")
-        mock_ai.assert_not_called()
+        assert plan.strategy is pr_rebase_cli.ConflictStrategy.DELETE
+        assert plan.delete_side is pr_rebase_cli.DeleteSide.THEIRS_DELETED
 
 
-def test_resolve_one_normal_conflict_falls_through_to_ai():
-    """Normal content conflict (no delete) falls through to AI resolution."""
+def test_classify_normal_conflict_as_ai_merge():
+    """Normal content conflict classifies as AI_MERGE."""
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath = "main.go"
         full_path = Path(tmpdir) / filepath
         full_path.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-        go_dirs: set[Path] = set()
 
-        with mock.patch.object(
-            pr_rebase_cli, "_detect_delete_conflict", return_value=None,
-        ), mock.patch.object(
-            pr_rebase_cli, "_resolve_single_file", return_value=filepath,
-        ) as mock_ai:
-            result = pr_rebase_cli._resolve_one(
-                filepath, full_path, "abc123", "feat: change",
-                tmpdir, go_dirs,
-            )
+        with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=None), \
+             mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+            plan = pr_rebase_cli._classify_conflict(filepath, full_path, tmpdir)
 
-        assert result is True
-        mock_ai.assert_called_once()
+        assert plan.strategy is pr_rebase_cli.ConflictStrategy.AI_MERGE
 
 
 # ── Chunked conflict resolution ──────────────────────────────────────────
@@ -582,70 +920,74 @@ def _make_large_file(num_lines, conflicts):
     return "".join(lines)
 
 
+def _block(index=1, start=0, end=0, conflict="", context_before="", context_after=""):
+    """Build a ConflictBlock with defaults for fields the test doesn't care about."""
+    return pr_rebase_cli.ConflictBlock(
+        index=index, start=start, end=end, conflict=conflict,
+        context_before=context_before, context_after=context_after,
+    )
+
+
 def test_extract_conflict_blocks_single():
     content = _make_large_file(300, [(50, "old", "new")])
     blocks = pr_rebase_cli._extract_conflict_blocks(content)
     assert len(blocks) == 1
-    assert blocks[0]["index"] == 1
-    assert blocks[0]["start"] == 50
-    assert blocks[0]["end"] == 54
-    assert "<<<<<<< HEAD" in blocks[0]["conflict"]
-    assert ">>>>>>> abc123" in blocks[0]["conflict"]
-    assert blocks[0]["context_before"].count("\n") == 30
-    assert blocks[0]["context_after"].count("\n") == 30
+    assert blocks[0].index == 1
+    assert blocks[0].start == 50
+    assert blocks[0].end == 54
+    assert "<<<<<<< HEAD" in blocks[0].conflict
+    assert ">>>>>>> abc123" in blocks[0].conflict
+    assert blocks[0].context_before.count("\n") == 30
+    assert blocks[0].context_after.count("\n") == 30
 
 
 def test_extract_conflict_blocks_multiple():
     content = _make_large_file(500, [(50, "a", "b"), (200, "c", "d")])
     blocks = pr_rebase_cli._extract_conflict_blocks(content)
     assert len(blocks) == 2
-    assert blocks[0]["index"] == 1
-    assert blocks[1]["index"] == 2
-    assert blocks[0]["start"] == 50
-    assert blocks[1]["start"] == 204
+    assert blocks[0].index == 1
+    assert blocks[1].index == 2
+    assert blocks[0].start == 50
+    assert blocks[1].start == 204
 
 
 def test_extract_conflict_blocks_at_file_start():
     content = "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\nrest\n"
     blocks = pr_rebase_cli._extract_conflict_blocks(content)
     assert len(blocks) == 1
-    assert blocks[0]["start"] == 0
-    assert blocks[0]["context_before"] == ""
+    assert blocks[0].start == 0
+    assert blocks[0].context_before == ""
 
 
 def test_extract_conflict_blocks_at_file_end():
     content = "line 1\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n"
     blocks = pr_rebase_cli._extract_conflict_blocks(content)
     assert len(blocks) == 1
-    assert blocks[0]["context_after"] == ""
+    assert blocks[0].context_after == ""
 
 
 def test_should_chunk_small_file():
     content = "x\n" * 100
-    blocks = [{"start": 10, "end": 15}]
-    assert pr_rebase_cli._should_chunk(content, blocks) is False
+    assert pr_rebase_cli._should_chunk(content, [_block(start=10, end=15)]) is False
 
 
 def test_should_chunk_large_file_small_conflict():
     content = "x\n" * 500
-    blocks = [{"start": 100, "end": 105}]
-    assert pr_rebase_cli._should_chunk(content, blocks) is True
+    assert pr_rebase_cli._should_chunk(content, [_block(start=100, end=105)]) is True
 
 
 def test_should_chunk_large_file_mostly_conflicts():
     content = "x\n" * 500
-    blocks = [{"start": 0, "end": 300}]
-    assert pr_rebase_cli._should_chunk(content, blocks) is False
+    assert pr_rebase_cli._should_chunk(content, [_block(start=0, end=300)]) is False
 
 
 def test_build_chunked_prompt_structure():
-    blocks = [{
-        "index": 1,
-        "start": 50, "end": 54,
-        "conflict": "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
-        "context_before": "before line\n",
-        "context_after": "after line\n",
-    }]
+    blocks = [_block(
+        index=1, start=50, end=54,
+        conflict="<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+        context_before="before line\n",
+        context_after="after line\n",
+    )]
     prompt = pr_rebase_cli._build_chunked_prompt(
         "main.go", blocks, "abc123", "feat: change",
         commit_diff="diff content",
@@ -693,7 +1035,7 @@ def test_parse_chunked_resolutions_surviving_markers():
 
 def test_splice_resolutions_single():
     content = "line 0\nline 1\n<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\nline 7\n"
-    blocks = [{"start": 2, "end": 6}]
+    blocks = [_block(start=2, end=6)]
     resolutions = ["merged\n"]
     result = pr_rebase_cli._splice_resolutions(content, blocks, resolutions)
     assert result == "line 0\nline 1\nmerged\nline 7\n"
@@ -768,7 +1110,7 @@ def test_resolve_file_conflicts_skips_binary():
         binary_file = Path(tmpdir) / "image.png"
         binary_file.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
         with mock.patch.object(
-            pr_rebase_cli, "_is_generated_file", return_value=(False, ""),
+            pr_rebase_cli, "_is_generated_file", return_value=None,
         ):
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["image.png"], tmpdir, "abc123", "feat: add image",
@@ -789,7 +1131,7 @@ def test_resolve_file_conflicts_accepts_theirs_for_generated():
         with (
             mock.patch.object(
                 pr_rebase_cli, "_is_generated_file",
-                return_value=(True, "gitattributes"),
+                return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
             mock.patch("subprocess.run", side_effect=fake_run),
         ):
@@ -797,7 +1139,7 @@ def test_resolve_file_conflicts_accepts_theirs_for_generated():
                 ["service.pb.go"], tmpdir, "abc123", "feat: add proto",
             )
 
-        assert result == ["service.pb.go"]
+        assert result.files == ["service.pb.go"]
         assert ["git", "checkout", "--theirs", "service.pb.go"] in calls
         assert ["git", "add", "service.pb.go"] in calls
 
@@ -816,7 +1158,7 @@ def test_resolve_file_conflicts_generated_before_binary():
         with (
             mock.patch.object(
                 pr_rebase_cli, "_is_generated_file",
-                return_value=(True, "gitattributes"),
+                return_value=pr_rebase_cli.GeneratedSignal.GITATTRIBUTES,
             ),
             mock.patch("subprocess.run", side_effect=fake_run),
         ):
@@ -824,7 +1166,7 @@ def test_resolve_file_conflicts_generated_before_binary():
                 ["data.bin"], tmpdir, "abc123", "feat: add data",
             )
 
-        assert result == ["data.bin"]
+        assert result.files == ["data.bin"]
         assert ["git", "checkout", "--theirs", "data.bin"] in calls
 
 
@@ -838,19 +1180,24 @@ def test_resolve_file_conflicts_handles_go_sum():
             calls.append((cmd, kwargs.get("cwd")))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.sum"], tmpdir, "abc123", "feat: deps",
             )
 
-        assert result == ["go.sum"]
+        assert result.files == ["go.sum"]
+        assert result.stale == []
         cmds = [c[0] for c in calls]
         assert ["git", "checkout", "--theirs", "go.sum"] in cmds
         assert ["git", "add", "go.sum"] in cmds
-        # Verify cwd is set on git commands
-        for cmd, cwd in calls:
+        for cmd, call_cwd in calls:
             if cmd[0] == "git":
-                assert cwd == tmpdir
+                assert call_cwd == tmpdir, f"{cmd} ran outside the worktree"
+        mock_regen.assert_called_once()
+        job = mock_regen.call_args[0][0]
+        assert job.cmd == ("go", "mod", "tidy")
+        assert job.stage_dir is True
 
 
 def test_resolve_file_conflicts_calls_claude():
@@ -886,7 +1233,7 @@ def test_resolve_file_conflicts_calls_claude():
                 ["main.go"], tmpdir, "abc123", "feat: refactor",
             )
 
-        assert result == ["main.go"]
+        assert result.files == ["main.go"]
         assert conflict_file.read_text() == "merged code\n"
         # git add must target the worktree
         git_add_calls = [(c, w) for c, w in calls if c == ["git", "add", "main.go"]]
@@ -979,40 +1326,97 @@ def test_resolve_file_conflicts_git_add_failure_returns_none():
         assert result is None
 
 
-def test_resolve_file_conflicts_go_mod_triggers_tidy():
+def test_resolve_file_conflicts_go_mod_uses_ai_merge():
+    """go.mod is hand-maintained — it goes through AI merge, not accept-theirs."""
     with tempfile.TemporaryDirectory() as tmpdir:
         go_mod = Path(tmpdir) / "go.mod"
         go_mod.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-        go_sum = Path(tmpdir) / "go.sum"
-        go_sum.write_text("existing sum")
 
-        resolved_output = "<<<RESOLVED>>>\nmodule example.com\n<<<END_RESOLVED>>>\n"
-        calls = []
-
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            if cmd[:3] == ["claude", "-p", "--bare"]:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0,
-                    stdout=resolved_output, stderr="",
-                )
-            if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
-            if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch.object(
+            pr_rebase_cli, "_resolve_single_file", return_value="go.mod",
+        ) as mock_ai, \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration") as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.mod"], tmpdir, "abc123", "feat: deps",
             )
 
-        assert result == ["go.mod"]
-        assert ["go", "mod", "tidy"] in calls
-        # Verify tracked changes staged after tidy (git add -u in go directory)
-        tidy_idx = calls.index(["go", "mod", "tidy"])
-        post_tidy = calls[tidy_idx + 1:]
-        assert ["git", "add", "-u"] in post_tidy
+        assert result.files == ["go.mod"]
+        mock_ai.assert_called_once()
+        mock_regen.assert_not_called()
+
+
+def test_resolve_file_conflicts_regenerates_pnpm_lockfile():
+    """pnpm-lock.yaml is accepted-theirs and regenerated — the original bug case."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lockfile = Path(tmpdir) / "pnpm-lock.yaml"
+        lockfile.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        calls = []
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs.get("cwd")))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["pnpm-lock.yaml"], tmpdir, "abc123", "feat: deps",
+            )
+
+        assert result.files == ["pnpm-lock.yaml"]
+        cmds = [c[0] for c in calls]
+        assert ["git", "checkout", "--theirs", "pnpm-lock.yaml"] in cmds
+        mock_regen.assert_called_once()
+        job = mock_regen.call_args[0][0]
+        assert job.cmd == ("pnpm", "install", "--lockfile-only")
+        assert job.stage_dir is False
+
+
+def test_resolve_file_conflicts_handles_delete_conflict():
+    """Delete conflicts route through _resolve_delete_conflict."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = "old_module.go"
+        f = Path(tmpdir) / filepath
+        f.write_text("content")
+
+        plan = pr_rebase_cli.ConflictPlan(
+            pr_rebase_cli.ConflictStrategy.DELETE,
+            delete_side=pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+        )
+        with mock.patch.object(
+            pr_rebase_cli, "_classify_conflict", return_value=plan,
+        ), mock.patch.object(
+            pr_rebase_cli, "_resolve_delete_conflict", return_value=True,
+        ) as mock_delete:
+            result = pr_rebase_cli._resolve_file_conflicts(
+                [filepath], tmpdir, "abc123", "feat: cleanup",
+            )
+
+        assert result.files == [filepath]
+        mock_delete.assert_called_once_with(
+            filepath, "abc123", tmpdir, pr_rebase_cli.DeleteSide.THEIRS_DELETED,
+        )
+
+
+def test_resolve_file_conflicts_regen_failure_warns():
+    """Regeneration failure warns, marks the file stale, and doesn't abort."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lockfile = Path(tmpdir) / "pnpm-lock.yaml"
+        lockfile.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=False), \
+             mock.patch.object(pr_rebase_cli.log, "warn") as mock_warn:
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["pnpm-lock.yaml"], tmpdir, "abc123", "feat: deps",
+            )
+
+        assert result.files == ["pnpm-lock.yaml"]
+        assert result.stale == ["pnpm-lock.yaml"]
+        mock_warn.assert_called_once()
+        assert "pnpm-lock.yaml" in mock_warn.call_args[0][0]
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────
@@ -1062,8 +1466,9 @@ def test_drive_to_completion_already_done():
 
     assert result == 0
     mock_success.assert_called_once()
-    _, kwargs = mock_success.call_args
-    assert kwargs.get("resolved") is None
+    tally = mock_success.call_args[0][3]
+    assert tally.files == []
+    assert tally.commits == 0
 
 
 def test_drive_to_completion_with_conflicts_fix():
@@ -1093,8 +1498,9 @@ def test_drive_to_completion_with_conflicts_fix():
     assert result == 0
     mock_step.assert_called_once()
     mock_success.assert_called_once()
-    _, kwargs = mock_success.call_args
-    assert kwargs["resolved"] == ([], 1)
+    tally = mock_success.call_args[0][3]
+    assert tally.files == []
+    assert tally.commits == 1
 
 
 def test_drive_to_completion_conflicts_no_fix():
@@ -1150,9 +1556,10 @@ def test_drive_to_completion_safety_valve():
 def test_step_conflicts_no_fix_reports():
     """Without --fix, reports conflicts and returns 3."""
     ctx = mock.MagicMock()
-    with mock.patch.object(pr_rebase_cli, "_save_conflicts_state"), \
-         mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, False, ["a.py"], [])
+    with mock.patch.object(pr_rebase_cli, "_report_conflicts_and_stop", return_value=3):
+        rc = pr_rebase_cli._step_conflicts(
+            "/fake", ctx, False, ["a.py"], pr_rebase_cli.ResolutionTally(),
+        )
 
     assert rc == 3
 
@@ -1160,28 +1567,82 @@ def test_step_conflicts_no_fix_reports():
 def test_step_conflicts_no_fix_saves_state():
     """Without --fix, saves conflicts state before returning."""
     ctx = mock.MagicMock()
-    with mock.patch.object(pr_rebase_cli, "_save_conflicts_state") as mock_save, \
-         mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
-        pr_rebase_cli._step_conflicts("/fake", ctx, False, ["a.py"], [])
+    saved = []
 
-    mock_save.assert_called_once_with(ctx)
+    def fake_save(self, saved_ctx):
+        saved.append((self.status, saved_ctx))
+
+    with mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", fake_save), \
+         mock.patch.object(pr_rebase_cli.ConflictReport, "from_repo") as mock_report:
+        pr_rebase_cli._step_conflicts(
+            "/fake", ctx, False, ["a.py"], pr_rebase_cli.ResolutionTally(),
+        )
+
+    assert saved == [(pr_rebase_cli.RebaseStatus.CONFLICTS, ctx)]
+    mock_report.return_value.emit.assert_called_once()
 
 
 def test_step_conflicts_fix_resolves():
     """With --fix, resolves conflicts via AI and returns None to continue."""
     ctx = mock.MagicMock()
-    all_resolved = []
+    tally = pr_rebase_cli.ResolutionTally()
 
     with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
-         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
+         mock.patch.object(
+             pr_rebase_cli, "_resolve_file_conflicts",
+             return_value=pr_rebase_cli.Resolution(files=["a.py"]),
+         ), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], all_resolved)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], tally)
 
     assert rc is None
-    assert all_resolved == ["a.py"]
+    assert tally.files == ["a.py"]
+    assert tally.stale == []
+
+
+def test_step_conflicts_records_stale_files():
+    """Files whose regeneration failed are carried into the tally as stale."""
+    ctx = mock.MagicMock()
+    tally = pr_rebase_cli.ResolutionTally()
+    resolution = pr_rebase_cli.Resolution(
+        files=["pnpm-lock.yaml"], stale=["pnpm-lock.yaml"],
+    )
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=resolution), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["pnpm-lock.yaml"], tally)
+
+    assert rc is None
+    assert tally.files == ["pnpm-lock.yaml"]
+    assert tally.stale == ["pnpm-lock.yaml"]
+
+
+def test_rebase_success_emits_stale_files():
+    """Stale files reach both the emitted JSON and the persisted state."""
+    ctx = mock.MagicMock()
+    tally = pr_rebase_cli.ResolutionTally(
+        files=["pnpm-lock.yaml"], stale=["pnpm-lock.yaml"], commits=1,
+    )
+    saved = []
+
+    with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=1), \
+         mock.patch.object(
+             pr_rebase_cli.RebaseOutcome, "save",
+             lambda self, c: saved.append(self),
+         ), \
+         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+        rc = pr_rebase_cli._rebase_success("/fake", ctx, False, tally)
+
+    assert rc == 0
+    assert saved[0].files_stale == ["pnpm-lock.yaml"]
+    assert mock_emit.call_args[0][0]["files_stale"] == ["pnpm-lock.yaml"]
 
 
 def test_step_conflicts_fix_resolution_fails_aborts():
@@ -1193,7 +1654,9 @@ def test_step_conflicts_fix_resolution_fails_aborts():
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
+        rc = pr_rebase_cli._step_conflicts(
+            "/fake", ctx, True, ["a.py"], pr_rebase_cli.ResolutionTally(),
+        )
 
     assert rc == 1
 
@@ -1202,10 +1665,11 @@ def test_step_conflicts_fix_ai_unavailable():
     """With --fix but AI unavailable, reports conflicts and returns 3."""
     ctx = mock.MagicMock()
     with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
-         mock.patch.object(pr_rebase_cli, "_save_conflicts_state"), \
-         mock.patch.object(pr_rebase_cli, "_conflict_report", return_value={"status": "conflicts"}):
+         mock.patch.object(pr_rebase_cli, "_report_conflicts_and_stop", return_value=3):
         mock_ai.is_available.return_value = False
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
+        rc = pr_rebase_cli._step_conflicts(
+            "/fake", ctx, True, ["a.py"], pr_rebase_cli.ResolutionTally(),
+        )
 
     assert rc == 3
 
@@ -1213,7 +1677,7 @@ def test_step_conflicts_fix_ai_unavailable():
 def test_step_conflicts_continue_fails_but_rebase_in_progress():
     """rebase --continue fails because next commit has conflicts — continue loop."""
     ctx = mock.MagicMock()
-    all_resolved = []
+    tally = pr_rebase_cli.ResolutionTally()
 
     def fake_run(cmd, **kwargs):
         r = subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -1225,14 +1689,17 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
     with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
-         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
+         mock.patch.object(
+             pr_rebase_cli, "_resolve_file_conflicts",
+             return_value=pr_rebase_cli.Resolution(files=["a.py"]),
+         ), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], all_resolved)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], tally)
 
     assert rc is None
-    assert all_resolved == ["a.py"]
+    assert tally.files == ["a.py"]
 
 
 def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
@@ -1251,11 +1718,16 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
     with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=0), \
          mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
-         mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=["a.py"]), \
+         mock.patch.object(
+             pr_rebase_cli, "_resolve_file_conflicts",
+             return_value=pr_rebase_cli.Resolution(files=["a.py"]),
+         ), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], [])
+        rc = pr_rebase_cli._step_conflicts(
+            "/fake", ctx, True, ["a.py"], pr_rebase_cli.ResolutionTally(),
+        )
 
     assert rc == 1
     assert abort_called

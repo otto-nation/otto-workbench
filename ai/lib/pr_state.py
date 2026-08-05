@@ -170,6 +170,7 @@ class RebaseSummary:
     commits_replayed: int = 0
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
+    files_stale: list[str] = field(default_factory=list)
     force_pushed: bool = False
     updated_at: str = ""
 

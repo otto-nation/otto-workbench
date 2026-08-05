@@ -599,6 +599,69 @@ def test_parse_resolved_content_allows_equals_mid_line():
     assert reason == ""
 
 
+# ── _ai_suggest_regeneration ──────────────────────────────────────────────
+
+
+def test_ai_suggest_regeneration_returns_command(tmp_path):
+    subdir = tmp_path / "ui-admin"
+    subdir.mkdir()
+    (subdir / "package.json").write_text('{"name": "ui-admin"}')
+    (subdir / "pnpm-lock.yaml").write_text("lockfile content")
+
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("pnpm install", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration(
+            "ui-admin/generated.css", str(tmp_path),
+        )
+
+    assert result == ["pnpm", "install"]
+
+
+def test_ai_suggest_regeneration_returns_none_response(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("NONE", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_ai_unavailable(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = False
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_ai_fails(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("", 1)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_empty_response(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result is None
+
+
+def test_ai_suggest_regeneration_multiword_command(tmp_path):
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+        mock_ai.is_available.return_value = True
+        mock_ai.prompt.return_value = ("cargo generate-lockfile", 0)
+        result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+    assert result == ["cargo", "generate-lockfile"]
+
+
 # ── _detect_delete_conflict ───────────────────────────────────────────────
 
 

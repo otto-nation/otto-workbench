@@ -812,6 +812,51 @@ def _resolve_chunked(
     return filepath
 
 
+def _ai_suggest_regeneration(filepath: str, cwd: str) -> list[str] | None:
+    """Ask AI to suggest a regeneration command for an unknown generated file.
+
+    Returns a command list or None if unavailable/unparseable.
+    """
+    if not ai_backend.is_available():
+        return None
+
+    target_dir = str(Path(cwd) / Path(filepath).parent)
+    try:
+        nearby = subprocess.run(
+            ["ls", "-1"],
+            capture_output=True, text=True, cwd=target_dir,
+        ).stdout.strip()
+    except Exception:
+        nearby = "(unavailable)"
+
+    prompt_text = (
+        "A merge conflict was resolved by accepting theirs for a generated file.\n"
+        f"File: {filepath}\n"
+        f"Project root: {cwd}\n"
+        f"Nearby files:\n{nearby}\n\n"
+        "What single shell command regenerates this file from its source?\n"
+        'Reply with ONLY the command (e.g. "pnpm install"), or "NONE" '
+        "if no regeneration is needed.\n"
+    )
+
+    stdout, rc = ai_backend.prompt(prompt_text)
+    if rc != 0 or not stdout.strip():
+        return None
+
+    response = stdout.strip().strip('"').strip("'")
+    if response.upper() == "NONE":
+        return None
+
+    parts = response.split()
+    if not parts:
+        return None
+
+    if _trail:
+        _trail.info("ai_suggest_regen", f"AI suggested: {response}",
+                    data={"filepath": filepath, "command": parts})
+    return parts
+
+
 def _classify_conflict(
     filepath: str, full_path: Path, cwd: str,
 ) -> tuple[str, Any]:
@@ -877,6 +922,14 @@ def _resolve_file_conflicts(
                 )
             if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
                 return None
+            ai_cmd = _ai_suggest_regeneration(filepath, cwd)
+            if ai_cmd:
+                regen_dir = str(full_path.parent)
+                cmd_tuple = tuple(ai_cmd)
+                key = (regen_dir, cmd_tuple)
+                if key not in pending_regens:
+                    pending_regens[key] = ([], False)
+                pending_regens[key][0].append(filepath)
             resolved.append(filepath)
 
         elif strategy == "delete":

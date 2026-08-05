@@ -181,6 +181,158 @@ def test_find_regenerator_all_entries_have_cmd():
         assert isinstance(entry["cmd"], list) and len(entry["cmd"]) > 0, f"{name} has invalid 'cmd'"
 
 
+# ── _detect_mise ───────────────────────────────────────────────────────────
+
+
+def test_detect_mise_found(tmp_path):
+    (tmp_path / "mise.toml").write_text("[tools]\n")
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+
+
+def test_detect_mise_tool_versions(tmp_path):
+    (tmp_path / ".tool-versions").write_text("nodejs 20\n")
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
+
+
+def test_detect_mise_in_ancestor(tmp_path):
+    subdir = tmp_path / "packages" / "web"
+    subdir.mkdir(parents=True)
+    (tmp_path / "mise.toml").write_text("[tools]\n")
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(subdir), str(tmp_path)) is True
+
+
+def test_detect_mise_not_installed(tmp_path):
+    (tmp_path / "mise.toml").write_text("[tools]\n")
+    with mock.patch("shutil.which", return_value=None):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+
+
+def test_detect_mise_no_config(tmp_path):
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is False
+
+
+def test_detect_mise_stops_at_repo_root(tmp_path):
+    """Does not search above repo_root."""
+    repo = tmp_path / "repo"
+    subdir = repo / "packages" / "web"
+    subdir.mkdir(parents=True)
+    (tmp_path / "mise.toml").write_text("[tools]\n")  # above repo root
+    with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        assert pr_rebase_cli._detect_mise(str(subdir), str(repo)) is False
+
+
+# ── _run_regeneration ──────────────────────────────────────────────────────
+
+
+def test_run_regeneration_bare_command(tmp_path):
+    lockfile = tmp_path / "pnpm-lock.yaml"
+    lockfile.write_text("old content")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+        result = pr_rebase_cli._run_regeneration(
+            str(tmp_path), ["pnpm", "install"], ["pnpm-lock.yaml"],
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["pnpm", "install"] in cmds
+    assert ["git", "add", "pnpm-lock.yaml"] in cmds
+
+
+def test_run_regeneration_with_mise(tmp_path):
+    lockfile = tmp_path / "pnpm-lock.yaml"
+    lockfile.write_text("old content")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True):
+        result = pr_rebase_cli._run_regeneration(
+            str(tmp_path), ["pnpm", "install"], ["pnpm-lock.yaml"],
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+
+def test_run_regeneration_bare_fails_retries_mise(tmp_path):
+    lockfile = tmp_path / "pnpm-lock.yaml"
+    lockfile.write_text("old content")
+    calls = []
+    run_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        if cmd == ["pnpm", "install"]:
+            run_count[0] += 1
+            return subprocess.CompletedProcess(args=cmd, returncode=127, stdout="", stderr="command not found")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
+        result = pr_rebase_cli._run_regeneration(
+            str(tmp_path), ["pnpm", "install"], ["pnpm-lock.yaml"],
+            cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["mise", "exec", "--", "pnpm", "install"] in cmds
+
+
+def test_run_regeneration_stage_dir(tmp_path):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("cwd")))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False):
+        result = pr_rebase_cli._run_regeneration(
+            str(tmp_path), ["go", "mod", "tidy"], ["go.sum"],
+            stage_dir=True, cwd=str(tmp_path),
+        )
+
+    assert result is True
+    cmds = [c[0] for c in calls]
+    assert ["git", "add", "-u"] in cmds
+
+
+def test_run_regeneration_failure_returns_false(tmp_path):
+    def fake_run(cmd, **kwargs):
+        if cmd[0] in ("pnpm", "mise"):
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch("shutil.which", return_value=None):
+        result = pr_rebase_cli._run_regeneration(
+            str(tmp_path), ["pnpm", "install"], ["pnpm-lock.yaml"],
+            cwd=str(tmp_path),
+        )
+
+    assert result is False
+
+
 # ── _is_binary ─────────────────────────────────────────────────────────────
 
 

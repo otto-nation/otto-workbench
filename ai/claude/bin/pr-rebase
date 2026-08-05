@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import traceback
@@ -182,6 +183,68 @@ _LOCKFILE_REGENERATORS: dict[str, dict] = {
 def _find_regenerator(filepath: str) -> dict | None:
     """Look up a regeneration command by lockfile basename."""
     return _LOCKFILE_REGENERATORS.get(os.path.basename(filepath))
+
+
+def _detect_mise(target_dir: str, repo_root: str) -> bool:
+    """Check if mise is available and configured for this directory."""
+    if not shutil.which("mise"):
+        return False
+    d = Path(target_dir).resolve()
+    root = Path(repo_root).resolve()
+    while True:
+        if (d / "mise.toml").is_file() or (d / ".tool-versions").is_file():
+            return True
+        if d == root or d.parent == d:
+            return False
+        d = d.parent
+
+
+def _run_regeneration(
+    regen_dir: str, cmd: list[str], files: list[str],
+    *, stage_dir: bool = False, cwd: str,
+) -> bool:
+    """Run a regeneration command and stage the result. Returns success."""
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, cwd=cwd,
+    ).stdout.strip() or cwd
+
+    use_mise = _detect_mise(regen_dir, repo_root)
+    run_cmd = ["mise", "exec", "--"] + cmd if use_mise else cmd
+
+    log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(regen_dir).name}/)")
+    r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
+
+    if r.returncode != 0 and not use_mise and r.returncode == 127:
+        if shutil.which("mise"):
+            log.info("Retrying with mise...")
+            run_cmd = ["mise", "exec", "--"] + cmd
+            r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
+
+    if r.returncode != 0:
+        _terr("regeneration", f"{' '.join(cmd)} failed in {regen_dir}",
+              data={"cmd": cmd, "exit_code": r.returncode, "stderr": r.stderr.strip()[:500]})
+        log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
+        if r.stderr.strip():
+            log.dim(r.stderr.strip()[:200])
+        return False
+
+    if stage_dir:
+        sr = subprocess.run(["git", "add", "-u"], cwd=regen_dir)
+        if sr.returncode != 0:
+            _terr("regeneration", f"git add -u failed in {regen_dir}")
+            log.warn(f"git add -u failed after regeneration in {Path(regen_dir).name}/")
+            return False
+    else:
+        for f in files:
+            if not _git_add(f, cwd):
+                return False
+
+    if _trail:
+        _trail.info("regeneration", f"regenerated {', '.join(files)}",
+                    data={"cmd": cmd, "dir": regen_dir, "mise": use_mise})
+    log.ok(f"Regenerated: {', '.join(files)}")
+    return True
 
 
 # ── Conflict resolution ────────────────────────────────────────────────────

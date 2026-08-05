@@ -91,6 +91,11 @@ tools:
     visibility: hidden
     description: "Rebase current branch onto origin/main with conflict detection and force-push"
 
+  - name: pr-describe
+    permission: false
+    visibility: hidden
+    description: "Revise the PR description against the repo's PR template once the branch stops moving"
+
   - name: ci-check
     permission: true
     visibility: hidden

@@ -45,6 +45,7 @@ _COMMANDS = {
     "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads"},
     "fix":      {"help": "Fix CI + review + comments"},
     "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase"},
+    "describe": {"help": "Revise the PR description",             "script": "pr-describe"},
     "gc":       {"help": "Clean up stale PR artifacts"},
 }
 
@@ -379,6 +380,16 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     if state.comments.updated_at and actionable > 0:
         log.blank()
         log.info(f"Comments: {actionable} actionable thread(s) — run pr comments --fix")
+
+    # Last, because the description has to describe the branch as it ends up.
+    # pr-describe re-resolves HEAD itself and no-ops when nothing landed, so
+    # this is free on a run where every fix pass was a skip. The user's argv is
+    # not forwarded: --fix and friends mean nothing here.
+    log.blank()
+    if _run_delegate(_COMMANDS["describe"], [], ctx,
+                     original_pr=_kw.get("original_pr"),
+                     original_branch=_kw.get("original_branch")) != 0:
+        exit_code = 1
 
     return exit_code
 

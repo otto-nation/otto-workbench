@@ -175,6 +175,20 @@ class RebaseSummary:
     updated_at: str = ""
 
 
+@dataclass
+class DescribeSummary:
+    """Snapshot written by ``pr describe``.
+
+    ``head_sha`` is what makes the pass commit-aware: a description already
+    written for the current HEAD does not need rewriting, so a repeated run is
+    a no-op instead of another AI call against an unchanged branch.
+    """
+    head_sha: str = ""
+    template_path: str = ""
+    changed: bool = False
+    updated_at: str = ""
+
+
 class ThreadAction(StrEnum):
     FIXED = "fixed"
     DEFERRED = "deferred"
@@ -251,6 +265,7 @@ class PRState:
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
     rebase: RebaseSummary = field(default_factory=RebaseSummary)
+    describe: DescribeSummary = field(default_factory=DescribeSummary)
     fix: FixSummary = field(default_factory=FixSummary)
     pending_comments: list[PendingComment] = field(default_factory=list)
     created_at: str = ""
@@ -331,6 +346,10 @@ def _rebase_from_dict(d: dict) -> RebaseSummary:
     return _serde_from_dict(RebaseSummary, d)
 
 
+def _describe_from_dict(d: dict) -> DescribeSummary:
+    return _serde_from_dict(DescribeSummary, d)
+
+
 def _fix_from_dict(d: dict) -> FixSummary:
     for t in d.get("threads", []):
         if "thread_id" in t and "id" not in t:
@@ -368,6 +387,7 @@ def state_from_dict(d: dict) -> PRState:
         comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
         triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
         rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
+        describe=_serde_from_dict(DescribeSummary, d.get("describe", {})),
         fix=_fix_from_dict(d.get("fix", {})),
         pending_comments=pending,
         created_at=d.get("created_at", ""),
@@ -492,6 +512,11 @@ def update_rebase(state: PRState, summary: RebaseSummary) -> None:
     state.rebase = summary
 
 
+def update_describe(state: PRState, summary: DescribeSummary) -> None:
+    """Replace describe summary."""
+    state.describe = summary
+
+
 def update_fix(state: PRState, summary: FixSummary) -> None:
     """Merge a fix pass into the accumulated fix summary.
 
@@ -569,6 +594,7 @@ _DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
     "comments": (_comments_from_dict, update_comments),
     "triage": (_triage_from_dict, update_triage),
     "rebase": (_rebase_from_dict, update_rebase),
+    "describe": (_describe_from_dict, update_describe),
     "fix": (_fix_from_dict, update_fix),
 }
 

@@ -51,6 +51,7 @@ from review_pipeline import (  # noqa: E402
 from review_static_analysis import (  # noqa: E402
     format_static_analysis, inject_static_analysis, run_static_analysis,
 )
+import vertex_preflight as _vp  # noqa: E402
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
 
@@ -118,6 +119,8 @@ def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_p
 
 def _run_orchestrate(trail, args, repo, session_log) -> None:
     _log_ai_backend(trail)
+    if not _vp.run_vertex_preflight(args.model, trail):
+        sys.exit(1)
     pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 
     prior_review = ""

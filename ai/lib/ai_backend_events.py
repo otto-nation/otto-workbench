@@ -29,6 +29,23 @@ class StreamEvent:
     tool_label: str
 
 
+# ── Write-tool recognition ───────────────────────────────────────────────────
+#
+# Owned here rather than in each backend: an agent that never calls one of
+# these produced nothing, and both the Pi steer and the post-hoc diagnosis in
+# review_agent need to ask the same question.
+
+WRITE_TOOL_NAMES = frozenset({"edit", "multiedit", "notebookedit", "write"})
+
+
+def is_write_tool(name: str) -> bool:
+    """Whether a tool can put content into a file.
+
+    Compared lowercased — Claude reports `Edit`, Pi reports `edit`.
+    """
+    return name.lower() in WRITE_TOOL_NAMES
+
+
 # ── Claude Code parser ────────────────────────────────────────────────────────
 
 
@@ -121,6 +138,26 @@ def parse_pi_event(raw_line: str) -> StreamEvent | None:
     if event_type == "message_update":
         return _parse_message_update_tool(data)
     return None
+
+
+def pi_write_tool_used(raw_line: str) -> bool:
+    """Whether a Pi event shows a file-writing tool being invoked."""
+    try:
+        data = json.loads(raw_line)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    event_type = data.get("type", "")
+    if event_type == "tool_execution_start":
+        return is_write_tool(data.get("toolName", "") or data.get("name", ""))
+    if event_type != "message_update":
+        return False
+    content = data.get("content", [])
+    if not isinstance(content, list):
+        return False
+    return any(
+        block.get("type") == "toolCall" and is_write_tool(block.get("name", ""))
+        for block in content
+    )
 
 
 def parse_pi_cost(raw_line: str) -> float | None:

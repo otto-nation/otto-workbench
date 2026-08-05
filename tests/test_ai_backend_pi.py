@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 from pathlib import Path
@@ -264,3 +265,66 @@ class TestExtensionFlag:
         import inspect
         sig = inspect.signature(ai_backend_pi._build_prompt_cmd)
         assert "extension" not in sig.parameters
+
+
+class TestWriteAwareSteer:
+    """The 80% steer names the write mechanism when nothing has been written."""
+
+    def _steer_text(self, *args):
+        """The message of the single steer command sent by _check_limits."""
+        proc = TestCheckLimits.MockProc(TestCheckLimits.MockStdin)
+        ai_backend_pi._check_limits(proc, *args)
+        steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
+        assert len(steers) == 1
+        return steers[0]["message"]
+
+    def test_unwritten_agent_is_told_how_to_write(self):
+        text = self._steer_text(8, 2.0, 10, 5.0, False, False)
+        assert ai_backend_pi._WRITE_FIRST in text
+        assert ai_backend_pi._WRAP_UP not in text
+
+    def test_written_agent_is_told_to_wrap_up(self):
+        text = self._steer_text(8, 2.0, 10, 5.0, False, True)
+        assert ai_backend_pi._WRAP_UP in text
+        assert ai_backend_pi._WRITE_FIRST not in text
+
+    def test_warning_context_is_kept_in_both_messages(self):
+        assert "8/10 turns" in self._steer_text(8, 2.0, 10, 5.0, False, False)
+        assert "8/10 turns" in self._steer_text(8, 2.0, 10, 5.0, False, True)
+
+    def test_budget_steer_is_also_write_aware(self):
+        text = self._steer_text(5, 4.1, 10, 5.0, False, False)
+        assert ai_backend_pi._WRITE_FIRST in text
+        assert "4.10/5.00 USD" in text
+
+    def test_default_assumes_nothing_was_written(self):
+        """Callers that cannot observe tool calls get the safe message."""
+        assert ai_backend_pi._WRITE_FIRST in self._steer_text(8, 2.0, 10, 5.0)
+
+
+class TestConsumeStreamTracksWrites:
+    """_consume_stream is what tells _check_limits whether a write happened."""
+
+    class MockProc:
+        def __init__(self, lines):
+            self.stdout = iter(lines)
+            self.stdin = TestCheckLimits.MockStdin()
+
+    def _steer_message(self, tool_name):
+        lines = [json.dumps({
+            "type": "message_update",
+            "content": [{"type": "toolCall", "name": tool_name, "arguments": {}}],
+        })]
+        lines += [json.dumps({"type": "turn_end"})] * 8
+        lines.append(json.dumps({"type": "agent_end"}))
+        proc = self.MockProc([l + "\n" for l in lines])
+        ai_backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
+        steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
+        assert len(steers) == 1
+        return steers[0]["message"]
+
+    def test_edit_call_earns_the_wrap_up_message(self):
+        assert ai_backend_pi._WRAP_UP in self._steer_message("edit")
+
+    def test_read_only_run_earns_the_write_first_message(self):
+        assert ai_backend_pi._WRITE_FIRST in self._steer_message("read")

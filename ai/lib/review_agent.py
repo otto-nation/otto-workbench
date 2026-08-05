@@ -15,6 +15,7 @@ from pathlib import Path
 
 import ai_backend
 import log
+from ai_backend_events import is_write_tool
 from review_common import preserve_log, restore_preserved
 
 DEFAULT_MAX_TURNS = 10
@@ -25,11 +26,6 @@ DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
 DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
 DIAG_NO_WRITE_TOOL_CALL = "never called a file-writing tool"
-
-# Tools that can put content into the output file. An agent that burned its
-# turns without calling one of these was thrashing, not working — say so
-# instead of reporting a bare turn count.
-_WRITE_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit", "Write"})
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -115,8 +111,10 @@ def _diagnose_missing_output(log_path: str) -> str:
             return DIAG_QUOTA_EXHAUSTED
         return DIAG_NO_RESULT_RECORD
     reason = _diagnose_result_type(results[-1])
+    # An agent that burned its turns without ever calling a write tool was
+    # thrashing, not working — say so instead of reporting a bare turn count.
     tools_used = _tool_names_used(records)
-    if tools_used and not (tools_used & _WRITE_TOOLS):
+    if tools_used and not any(is_write_tool(name) for name in tools_used):
         reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
     return reason
 
@@ -178,10 +176,6 @@ def _try_recover_output(log_path: str, output_path: str) -> bool:
         log.warn(f"Recovered review from denied write — saved to {output_path}")
         return True
     return False
-
-
-def _try_recover_review(job: "ReviewJob"):
-    _try_recover_output(job.session_log, job.review_file)
 
 
 # ── Quota throttle ─────────────────────────────────────────────────────────

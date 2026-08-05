@@ -66,10 +66,10 @@ from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
-    DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG,
+    DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG, DIAG_NO_WRITE_TOOL_CALL,
     _diagnose_missing_output, _is_model_error, _parse_session_cost,
     _resolve_model, _resolve_provider, _resolve_thinking_level,
-    _try_recover_output, _try_recover_review,
+    _try_recover_output,
     invoke_agent, is_transient_error,
 )
 
@@ -319,13 +319,17 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     agent = _effort_default(job.effort, "agent", "reviewer")
-    rc = invoke_agent(prompt, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
+
+    def invoke(text: str, turns: int) -> int:
+        return invoke_agent(text, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+
+    rc = invoke(prompt, max_turns)
     log.blank()
 
-    reason = ""
-    if not _has_output(job.review_file):
-        reason = _diagnose_missing_output(job.session_log)
-        _try_recover_review(job)
+    reason = _retry_missing_output(
+        invoke, prompt, job.session_log, job.review_file,
+        label="Review agent", max_turns=max_turns,
+    )
 
     if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
@@ -353,7 +357,80 @@ _FIX_RETRY_HINT = (
     "and move on.\n\n"
 )
 
+_NO_WRITE_HINT = (
+    "IMPORTANT: A previous attempt used every turn without ever calling a "
+    "file-writing tool. Write your output file FIRST, before any further "
+    "investigation: Read it — it already exists and is empty — then Edit it "
+    "with an empty `old_string` to insert the complete document. Refine it "
+    "with further edits only if turns remain.\n\n"
+)
+
 _NON_RECOVERABLE_REASONS = ("permission denied",)
+
+
+def _retry_hint_for(reason: str) -> str:
+    """The most specific hint the diagnosis supports.
+
+    Checked most-specific first: a no-write failure is also a max-turns
+    failure, and naming the write mechanism beats telling the agent to hurry.
+    """
+    if DIAG_NO_WRITE_TOOL_CALL in reason:
+        return _NO_WRITE_HINT
+    if _MAX_TURNS_REASON in reason:
+        return _RETRY_HINT
+    return ""
+
+
+def _retry_turns_for(reason: str, max_turns: int) -> int:
+    """Turn budget for a retry.
+
+    Only turn exhaustion earns a bigger budget — a transient API error or a
+    missing result record would fail identically with more turns. Doubling is
+    capped at the ceiling the group retry already uses, but never lowers a
+    budget that was scaled above it.
+    """
+    if _MAX_TURNS_REASON not in reason:
+        return max_turns
+    return min(max_turns * 2, max(RETRY_MAX_TURNS_GROUP, max_turns))
+
+
+def _retry_missing_output(
+    invoke: "Callable[[str, int], object]",
+    prompt: str, log_path: str, output_path: str,
+    *, label: str, max_turns: int,
+) -> str:
+    """Give an agent that produced no output a second attempt.
+
+    `invoke(prompt, max_turns)` runs the agent. Returns the diagnosed failure
+    reason, or "" once output exists.
+
+    Group reviews keep their own batch-level retry in `_retry_failed_groups`,
+    which adds a circuit breaker across groups. This covers the single-agent
+    phases, which used to give up after the first attempt.
+    """
+    if not _has_output(output_path):
+        _try_recover_output(log_path, output_path)
+    if _has_output(output_path):
+        return ""
+
+    reason = _diagnose_missing_output(log_path)
+    if not _is_retryable(reason):
+        return reason
+
+    turns = _retry_turns_for(reason, max_turns)
+    log.warn(f"{label} produced no output ({reason}) — retrying once ({turns} turns)")
+    log.blank()
+    prior = preserve_log(log_path)
+    invoke(_retry_hint_for(reason) + prompt, turns)
+    log.blank()
+
+    if not _has_output(output_path):
+        _try_recover_output(log_path, output_path)
+    # Diagnose before restoring: in a merged log the first attempt's tool calls
+    # would mask what the retry actually did.
+    retry_reason = "" if _has_output(output_path) else _diagnose_missing_output(log_path)
+    restore_preserved(log_path, prior)
+    return retry_reason
 
 
 def build_failures_section(
@@ -429,7 +506,7 @@ def _review_group(
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
     max_turns: int = DEFAULT_MAX_TURNS_GROUP,
-    retry_hint: bool = False,
+    retry_hint: str = "",
 ) -> tuple[int, str, "tuple[str, str] | None"]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
@@ -455,8 +532,7 @@ def _review_group(
         group_file_paths=grp.files,
         group_output=group_output, holistic_content=holistic_content,
     )
-    if retry_hint:
-        group_prompt = _RETRY_HINT + group_prompt
+    group_prompt = retry_hint + group_prompt
     model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL",
                            DEFAULT_MODEL_GROUP)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING",
@@ -503,14 +579,22 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     agent = _effort_default(job.effort, "agent", "reviewer")
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
-    invoke_agent(prompt, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
+
+    def invoke(text: str, turns: int) -> int:
+        return invoke_agent(text, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+
+    invoke(prompt, max_turns)
     log.blank()
+
+    reason = _retry_missing_output(
+        invoke, prompt, holistic_log, holistic_output,
+        label="Holistic scan", max_turns=max_turns,
+    )
 
     holistic_content = ""
     if _has_output(holistic_output):
         holistic_content = Path(holistic_output).read_text()
     else:
-        reason = _diagnose_missing_output(holistic_log)
         log.warn(f"Holistic scan produced no output ({reason}) — continuing without it")
 
     return holistic_content, holistic_output, holistic_log
@@ -534,8 +618,17 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
-    invoke_agent(prompt, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+
+    def invoke(text: str, turns: int) -> int:
+        return invoke_agent(text, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+
+    invoke(prompt, max_turns)
     log.blank()
+
+    reason = _retry_missing_output(
+        invoke, prompt, scout_log, scout_output,
+        label="Scout", max_turns=max_turns,
+    )
 
     if _has_output(scout_output):
         raw = Path(scout_output).read_text()
@@ -543,7 +636,6 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
         return format_leads_block(leads, no_scrutiny), scout_output, scout_log
 
-    reason = _diagnose_missing_output(scout_log)
     log.warn(f"Scout produced no output ({reason}) — continuing without leads")
     return "", scout_output, scout_log
 
@@ -574,8 +666,17 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
-    invoke_agent(prompt, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+
+    def invoke(text: str, turns: int) -> int:
+        return invoke_agent(text, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+
+    invoke(prompt, max_turns)
     log.blank()
+
+    reason = _retry_missing_output(
+        invoke, prompt, disprove_log, disprove_output,
+        label="Disprove gate", max_turns=max_turns,
+    )
 
     cost = _parse_session_cost(disprove_log) if disprove_log else 0.0
 
@@ -591,7 +692,6 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         else:
             log.info(f"Disprove gate: all {summary['survived']} findings survived")
     else:
-        reason = _diagnose_missing_output(disprove_log)
         log.warn(f"Disprove gate produced no output ({reason}) — keeping all findings")
 
     return disprove_log, cost
@@ -1013,15 +1113,12 @@ def _retry_failed_groups(
             continue
         idx, grp = group_by_name[name]
         turns = _retry_turns(reason, job)
-        # Substring, not equality — the reason carries a turn count and may
-        # carry a diagnostic suffix.
-        is_max_turns = _MAX_TURNS_REASON in reason
         log.info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
             max_turns=turns,
-            retry_hint=is_max_turns,
+            retry_hint=_retry_hint_for(reason),
         )
         if failure:
             still_failed.append(failure)
@@ -1192,15 +1289,6 @@ def _write_mechanical_fallback(
     Path(job.review_file).write_text(fallback)
 
 
-def _synthesis_is_transient_failure(review_file: str, synthesis_log: str) -> bool:
-    if _is_complete_review(review_file):
-        return False
-    if _has_output(review_file):
-        return False
-    reason = _diagnose_missing_output(synthesis_log)
-    return is_transient_error(reason)
-
-
 def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
@@ -1226,20 +1314,17 @@ def _phase_synthesis(
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
     agent = _effort_default(job.effort, "agent", "reviewer")
-    rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
+
+    def invoke(text: str, turns: int) -> int:
+        return invoke_agent(text, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+
+    rc = invoke(prompt, max_turns)
     log.blank()
 
-    if _synthesis_is_transient_failure(job.review_file, synthesis_log):
-        log.warn("Synthesis hit transient API error — retrying once...")
-        Path(job.review_file).write_text("")
-        prior_log = preserve_log(synthesis_log)
-        log.blank()
-        rc = invoke_agent(prompt, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=agent, throttle=job.throttle)
-        restore_preserved(synthesis_log, prior_log)
-        log.blank()
-
-    if not _has_output(job.review_file):
-        _try_recover_output(synthesis_log, job.review_file)
+    _retry_missing_output(
+        invoke, prompt, synthesis_log, job.review_file,
+        label="Synthesis", max_turns=max_turns,
+    )
 
     if _is_complete_review(job.review_file):
         _post_process_review(job)

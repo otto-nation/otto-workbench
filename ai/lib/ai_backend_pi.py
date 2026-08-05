@@ -38,7 +38,9 @@ import time
 from pathlib import Path
 
 import log
-from ai_backend_events import _log_stderr_on_failure, parse_pi_cost, parse_pi_event
+from ai_backend_events import (
+    _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_write_tool_used,
+)
 from log import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
@@ -177,8 +179,8 @@ def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
 # ── Stream progress (Pi RPC JSONL) ───────────────────────────────────────────
 
 
-def _display_event(raw_line: str, prev_tool: str, prefix: str) -> str:
-    event = parse_pi_event(raw_line)
+def _display_event(data: dict, prev_tool: str, prefix: str) -> str:
+    event = parse_pi_event(data)
     if not event or event.tool_label == prev_tool:
         return prev_tool
     with _print_lock:
@@ -197,12 +199,27 @@ def _parse_event_type(raw_line: str) -> tuple[str, dict]:
 
 BUDGET_WARN_THRESHOLD = 0.8
 
+# An agent that has already written its file just needs to finish. One that
+# has not is about to run out with nothing to show, so name the mechanism
+# rather than telling it to hurry.
+_WRAP_UP = "Wrap up your current analysis and write your output."
+_WRITE_FIRST = (
+    "You have NOT written your output file yet. Do that now: Read it — it "
+    "exists and is empty — then Edit it with an empty `old_string` to insert "
+    "your complete output. Refine it afterwards only if turns remain."
+)
+
+
+def _steer_message(warning: str, wrote_output: bool) -> str:
+    return f"{warning} {_WRAP_UP if wrote_output else _WRITE_FIRST}"
+
 
 def _check_limits(
     process: subprocess.Popen,
     turn_count: int, accumulated_cost: float,
     max_turns: int | None, max_budget: float | None,
     steered: bool = False,
+    wrote_output: bool = False,
 ) -> tuple[str | None, bool]:
     """Check turn and budget limits after a turn_end.
 
@@ -220,10 +237,12 @@ def _check_limits(
 
     if not steered:
         if max_budget is not None and accumulated_cost >= max_budget * BUDGET_WARN_THRESHOLD:
-            _send(process, {"type": "steer", "message": f"Budget warning: {accumulated_cost:.2f}/{max_budget:.2f} USD consumed. Wrap up your current analysis and write your output."})
+            warning = f"Budget warning: {accumulated_cost:.2f}/{max_budget:.2f} USD consumed."
+            _send(process, {"type": "steer", "message": _steer_message(warning, wrote_output)})
             steered = True
         elif max_turns is not None and turn_count >= int(max_turns * BUDGET_WARN_THRESHOLD):
-            _send(process, {"type": "steer", "message": f"Turn warning: {turn_count}/{max_turns} turns used. Wrap up your current analysis and write your output."})
+            warning = f"Turn warning: {turn_count}/{max_turns} turns used."
+            _send(process, {"type": "steer", "message": _steer_message(warning, wrote_output)})
             steered = True
 
     return None, steered
@@ -245,25 +264,27 @@ def _consume_stream(
     stop_reason = "completed"
     steered = False
     aborted = False
+    wrote_output = False
 
     for raw_line in process.stdout:
         log_file.write(raw_line)
         log_file.flush()
 
-        event_type, _ = _parse_event_type(raw_line)
+        event_type, data = _parse_event_type(raw_line)
 
         if event_type == "response":
             continue
 
-        prev_tool = _display_event(raw_line, prev_tool, prefix)
+        prev_tool = _display_event(data, prev_tool, prefix)
+        wrote_output = wrote_output or pi_write_tool_used(data)
 
-        msg_cost = parse_pi_cost(raw_line)
+        msg_cost = parse_pi_cost(data)
         if msg_cost is not None:
             accumulated_cost += msg_cost
 
         if event_type == "turn_end":
             turn_count += 1
-            stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered) if not aborted else (None, steered)
+            stop, steered = _check_limits(process, turn_count, accumulated_cost, max_turns, max_budget, steered, wrote_output) if not aborted else (None, steered)
             stop_reason, aborted = (stop, True) if stop else (stop_reason, aborted)
 
         if event_type == "agent_end":

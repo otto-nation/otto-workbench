@@ -81,9 +81,23 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     return _get_module().preflight(models, trail)
 
 
-def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
+def prompt(
+    text: str, *, model: str | None = None,
+    task: str | None = None, repo: str | None = None, pr: str | None = None,
+) -> tuple[str, int]:
     """Stateless text-in/text-out. Returns (response_text, exit_code)."""
-    return _get_module().prompt(text, model=model)
+    result = _get_module().prompt(text, model=model)
+    # Backends report (text, code, usage); tolerate the older pair so a backend that
+    # has not adopted the triple degrades to unmeasured rather than crashing dispatch.
+    if len(result) == 3:
+        reply, code, usage = result
+    else:
+        (reply, code), usage = result, None
+    _record(
+        entry_point="prompt", usage=usage, exit_code=code,
+        model=model, task=task, repo=repo, pr=pr,
+    )
+    return reply, code
 
 
 @dataclass(frozen=True)

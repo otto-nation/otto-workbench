@@ -12,10 +12,11 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import ai_usage
 import log
 import vertex_quota
 from ai_backend import AgentInvocation
-from ai_backend_events import _log_stderr_on_failure, parse_claude_event
+from ai_backend_events import _log_stderr_on_failure, claude_display_text, parse_claude_event
 from log import ANSI_DIM, ANSI_RESET, _print_lock
 
 
@@ -109,7 +110,7 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
     add_dir_args = []
     for d in inv.add_dirs:
         add_dir_args += ["--add-dir", d]
-    cmd = [*_base_cmd(), *add_dir_args]
+    cmd = [*_base_cmd(), "--output-format", "stream-json", *add_dir_args]
     if inv.max_turns is not None:
         cmd += ["--max-turns", str(inv.max_turns)]
     if inv.max_budget is not None:
@@ -120,7 +121,9 @@ def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
 
 
 def _build_prompt_cmd(model: str | None = None) -> list[str]:
-    cmd = ["claude", "-p", "--bare"]
+    # --output-format needs --print, which -p already supplies. Without it the reply
+    # carries no usage and every prompt() call goes unmeasured.
+    cmd = ["claude", "-p", "--bare", "--output-format", "json"]
     if model:
         cmd += ["--model", model]
     return cmd
@@ -153,13 +156,38 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     return vertex_quota.run_preflight(models, trail)
 
 
-def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
-    """Stateless text-in/text-out via claude -p."""
+def prompt(
+    text: str, *, model: str | None = None,
+) -> tuple[str, int, ai_usage.SessionUsage | None]:
+    """Stateless text-in/text-out via claude -p. Returns (text, exit_code, usage).
+
+    usage is None when the reply carried no envelope to measure.
+    """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True)
     if result.returncode != 0 and result.stderr:
         log.dim(result.stderr.strip())
-    return result.stdout, result.returncode
+    reply, usage = _unwrap_prompt_output(result.stdout)
+    return reply, result.returncode, usage
+
+
+def _unwrap_prompt_output(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
+    """Pull the reply text and usage out of a --output-format json envelope.
+
+    Falls back to the raw stdout if it is not the expected envelope, so a CLI
+    output change degrades to the previous behavior instead of breaking callers.
+    An unparseable reply yields no usage rather than a zeroed one — nothing was
+    measured, and a zero row would read as a free call.
+    """
+    try:
+        envelope = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        return stdout, None
+    if not isinstance(envelope, dict):
+        return stdout, None
+    usage = ai_usage.usage_from_records([envelope])
+    reply = envelope.get("result")
+    return (reply if isinstance(reply, str) else stdout), usage
 
 
 def invoke_agent(inv: AgentInvocation) -> int:
@@ -180,9 +208,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
 
 def invoke_fix(inv: AgentInvocation) -> int:
-    """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    # inv.session_log is accepted for interface parity with invoke_agent but is
-    # not used here — output is echoed to stderr, not streamed to a log file.
+    """Agent with workspace write access, progress echoed to stderr. Returns exit code."""
     cmd = _build_fix_cmd(inv)
     proc = subprocess.Popen(
         cmd,
@@ -192,7 +218,25 @@ def invoke_fix(inv: AgentInvocation) -> int:
         text=True,
     )
     _send_stdin(proc, inv.prompt)
-    for line in proc.stdout:
-        print(line, end="", file=sys.stderr)
+    _stream_fix_output(proc, inv.session_log)
     proc.wait()
     return proc.returncode
+
+
+def _stream_fix_output(proc: subprocess.Popen, session_log: str) -> None:
+    """Echo readable progress to stderr while capturing the raw stream for accounting.
+
+    stdout is stream-json now, so the raw lines it used to print would be unreadable.
+    """
+    sink = open(session_log, "w") if session_log else None
+    try:
+        for raw_line in proc.stdout:
+            if sink:
+                sink.write(raw_line)
+                sink.flush()
+            display = claude_display_text(raw_line)
+            if display:
+                print(display, file=sys.stderr, flush=True)
+    finally:
+        if sink:
+            sink.close()

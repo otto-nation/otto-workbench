@@ -79,8 +79,12 @@ def _extract_token_sources(rec: dict) -> list[tuple[str, dict]]:
     return [("", rec.get("usage", {}))]
 
 
-def parse_session_log(path: str) -> SessionUsage:
-    """Parse a session JSONL log file and return aggregated usage."""
+def usage_from_records(records: list[dict]) -> SessionUsage:
+    """Aggregate usage across `result` records.
+
+    Shared by the streamed session log and the single-envelope `--output-format json`
+    response, which carry the same record shape.
+    """
     cost = 0.0
     input_tokens = 0
     output_tokens = 0
@@ -88,17 +92,7 @@ def parse_session_log(path: str) -> SessionUsage:
     cache_write = 0
     duration_ms = 0
     cost_by_model: dict[str, float] = {}
-    try:
-        lines = Path(path).read_text().splitlines()
-    except OSError:
-        return SessionUsage()
-    for line in lines:
-        if '"type":"result"' not in line and '"type": "result"' not in line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for rec in records:
         if rec.get("type") != "result":
             continue
         cost += rec.get("total_cost_usd", 0) or 0
@@ -120,6 +114,23 @@ def parse_session_log(path: str) -> SessionUsage:
         duration_ms=duration_ms,
         cost_by_model=cost_by_model,
     )
+
+
+def parse_session_log(path: str) -> SessionUsage:
+    """Parse a session JSONL log file and return aggregated usage."""
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return SessionUsage()
+    records = []
+    for line in lines:
+        if '"type":"result"' not in line and '"type": "result"' not in line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return usage_from_records(records)
 
 
 def _iso_now() -> str:

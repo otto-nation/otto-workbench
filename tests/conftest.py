@@ -103,6 +103,19 @@ def rp():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_usage_ledger(tmp_path, monkeypatch):
+    """Point the global usage ledger at a temp dir for the duration of every test.
+
+    ai_backend records usage on every entry point, so any test that reaches the real
+    dispatch layer would otherwise append junk rows to the developer's own ledger.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import ai_usage
+    monkeypatch.setattr(ai_usage, "LEDGER_DIR", tmp_path / "usage-ledger")
+
+
+@pytest.fixture(autouse=True)
 def _clear_bot_login_cache():
     """Clear _get_bot_login lru_cache between tests."""
     yield

@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import time
+import urllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -20,6 +21,13 @@ from pathlib import Path
 
 import log
 from review_agent import _ANTHROPIC_MODEL_ENV, _resolve_model
+
+try:
+    from google.auth import default as _google_auth_default
+    from google.auth.transport.requests import Request as _GoogleAuthRequest
+    _HAS_GOOGLE_AUTH = True
+except ImportError:
+    _HAS_GOOGLE_AUTH = False
 
 _CACHE_TTL_SECS = 300
 _CACHE_DIR = Path("/tmp")
@@ -72,16 +80,15 @@ def resolve_vertex_model_id(alias: str) -> str:
 
 
 def _get_access_token() -> str | None:
-    try:
-        import google.auth
-        import google.auth.transport.requests
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        creds.refresh(google.auth.transport.requests.Request())
-        return creds.token
-    except Exception:
-        pass
+    if _HAS_GOOGLE_AUTH:
+        try:
+            creds, _ = _google_auth_default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            creds.refresh(_GoogleAuthRequest())
+            return creds.token
+        except Exception:
+            pass
     try:
         result = subprocess.run(
             ["gcloud", "auth", "application-default", "print-access-token"],

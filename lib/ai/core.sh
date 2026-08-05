@@ -184,14 +184,43 @@ load_gh_token() {
   return 1
 }
 
-# run_ai PROMPT [AGENT_OVERRIDE]
+# ceiling: AI_COMMAND is deliberately pluggable to non-Claude binaries, so this path
+# cannot route through ai_backend; usage is recovered from the raw response afterwards
+# instead. Route through the backend once every supported binary reports usage.
+# Only a response carrying a usage envelope produces a ledger record — configure
+# AI_COMMAND with `--output-format json` to get telemetry from Claude.
+
+# _ai_unwrap RAW_FILE
+# Tees stdin to RAW_FILE and emits the reply text, unwrapping a JSON envelope when
+# there is one. Passes stdin through untouched when the helper is unavailable.
+_ai_unwrap() {
+  local raw_file="$1"
+  if command -v ai-usage-log > /dev/null 2>&1; then
+    ai-usage-log unwrap --tee "$raw_file"
+    return 0
+  fi
+  cat
+}
+
+# _ai_record RAW_FILE TASK_LABEL
+# Appends a ledger record when the raw response carried measurable usage.
+_ai_record() {
+  local raw_file="$1" task_label="$2"
+  command -v ai-usage-log > /dev/null 2>&1 || return 0
+  ai-usage-log record --from-log "$raw_file" --script task \
+    --entry-point prompt --task "$task_label" --exit-code 0 || true
+}
+
+# run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]
 # Requires AI_COMMAND.
 # When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND
 # so different tasks can route to the appropriate agent.
+# TASK_LABEL names the call in the usage ledger.
 # Sets AI_RESPONSE.
 run_ai() {
   local prompt="$1"
   local agent_override="${2:-}"
+  local task_label="${3:-ai-task}"
 
   local cmd="$AI_COMMAND"
   if [[ -n "$agent_override" ]]; then
@@ -201,6 +230,9 @@ run_ai() {
     cmd=$(echo "$cmd" | sed "s/--agent [^ ]*/--agent $agent_override/")
   fi
 
+  local raw_file
+  raw_file=$(mktemp)
+
   # shellcheck disable=SC2086  # $cmd holds "binary [flags]"; word-splitting is intentional
   # Redirect stderr to /dev/null — MCP server errors and CLI noise must not pollute
   # the captured response. load_ai_command already validated the binary exists.
@@ -208,8 +240,12 @@ run_ai() {
   # Anchoring to \033 prevents the pattern from eating markdown checkboxes like [x] or [ ].
   # shellcheck disable=SC2034  # AI_RESPONSE is read by callers after run_ai returns
   AI_RESPONSE=$(echo "$prompt" | $cmd 2>/dev/null | \
+    _ai_unwrap "$raw_file" | \
     sed 's/\033\[[0-9;]*[a-zA-Z]//g' | \
     tr -d '\033\007\015' | \
     sed 's/^[> ]*//g' | \
     sed '/^```/d')
+
+  _ai_record "$raw_file" "$task_label"
+  rm -f "$raw_file"
 }

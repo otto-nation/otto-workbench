@@ -19,7 +19,7 @@ task --global ai:setup
 ```
 
 This creates `~/.config/task/taskfile.env` with:
-- `AI_COMMAND` — which AI tool to use (e.g., `claude -p --agent ci-cd`)
+- `AI_COMMAND` — which AI tool to use (e.g., `claude -p --output-format json --agent ci-cd`)
 - `GH_TOKEN` — GitHub PAT for PR automation (fine-grained, scoped to specific repos)
 - `ANTHROPIC_API_KEY` — optional, for isolating automation API usage
 
@@ -247,10 +247,26 @@ Override which AI tool the global Taskfile uses:
 
 ```bash
 # ~/.config/task/taskfile.env
-AI_COMMAND=claude -p --agent ci-cd
+AI_COMMAND=claude -p --output-format json --agent ci-cd
 ```
 
 Override per-project with `.taskfile/taskfile.env` in a project root.
+
+`--output-format json` is optional but recommended: it is what lets the call be
+recorded in the usage ledger (see below). Without it the response is still used
+normally, it just goes unmeasured. Non-Claude binaries (`copilot`) stay supported
+either way — they report no usage, so they record nothing.
+
+### Usage ledger
+
+Every AI call made through the workbench appends one record to a monthly JSONL
+file under `~/.config/workbench/usage/` — cost, tokens, cache hit rate, and the
+task that made the call. Python entry points record automatically via
+`ai_backend`; the two shell paths that cannot use it (`run-auto-task`, which needs
+slash commands, and `AI_COMMAND`, which is pluggable) go through `ai-usage-log`.
+
+A call that reports no usage records nothing rather than a zero row, so an
+unmeasured call is visibly absent instead of looking free.
 
 ### Running from a different directory
 

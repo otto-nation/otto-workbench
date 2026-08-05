@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Bridge shell-invoked AI calls into the global usage ledger.
+
+Python callers go through ai_backend, which records usage itself. Two paths cannot:
+run-auto-task needs slash commands, which ai_backend disables, and the Taskfile's
+AI_COMMAND is deliberately pluggable to non-Claude binaries. Both are shell, so they
+reach the ledger through this tool instead.
+
+  render   stdin JSONL -> readable stdout, raw stream teed to a file
+  unwrap   stdin --output-format json envelope -> reply text, raw teed to a file
+  record   parse a teed file and append one ledger record
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
+sys.path.insert(0, str(LIB_DIR))
+
+import ai_usage
+from ai_backend_events import claude_display_text
+
+
+def _tee(path: str | None):
+    return open(path, "w", encoding="utf-8") if path else None
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    """Echo a stream-json feed as human-readable text, keeping the raw stream.
+
+    Lines that are not Claude events pass through verbatim: stderr is merged into
+    this stream by the caller, and losing it would make failures undiagnosable.
+    """
+    sink = _tee(args.tee)
+    try:
+        for raw_line in sys.stdin:
+            if sink:
+                sink.write(raw_line)
+                sink.flush()
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            if not stripped.startswith("{"):
+                print(stripped, flush=True)
+                continue
+            display = claude_display_text(raw_line)
+            if display:
+                print(display, flush=True)
+    finally:
+        if sink:
+            sink.close()
+    return 0
+
+
+def cmd_unwrap(args: argparse.Namespace) -> int:
+    """Print the reply text from a JSON envelope, passing plain output through.
+
+    A non-Claude AI_COMMAND emits prose, not an envelope; that must survive intact.
+    """
+    stdout = sys.stdin.read()
+    sink = _tee(args.tee)
+    if sink:
+        sink.write(stdout)
+        sink.close()
+    try:
+        envelope = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        envelope = None
+    reply = envelope.get("result") if isinstance(envelope, dict) else None
+    sys.stdout.write(reply if isinstance(reply, str) else stdout)
+    return 0
+
+
+def _usage_from(path: str) -> ai_usage.SessionUsage | None:
+    """Read usage from a teed file, whether it holds JSONL or one JSON envelope."""
+    if not path or not Path(path).is_file():
+        return None
+    usage = ai_usage.parse_session_log(path)
+    if usage != ai_usage.SessionUsage():
+        return usage
+    try:
+        envelope = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(envelope, dict):
+        return None
+    envelope_usage = ai_usage.usage_from_records([envelope])
+    return envelope_usage if envelope_usage != ai_usage.SessionUsage() else None
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    """Append one ledger record, or none when the call produced nothing to measure."""
+    usage = _usage_from(args.from_log)
+    if usage is None:
+        return 0
+    ai_usage.record(
+        script=args.script, entry_point=args.entry_point, backend=args.backend,
+        model=args.model, usage=usage, exit_code=args.exit_code,
+        task=args.task, repo=args.repo, pr=args.pr,
+    )
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_render = sub.add_parser("render", help="stream-json on stdin to readable stdout")
+    p_render.add_argument("--tee", help="write the raw stream to this path")
+    p_render.set_defaults(func=cmd_render)
+
+    p_unwrap = sub.add_parser("unwrap", help="JSON envelope on stdin to reply text")
+    p_unwrap.add_argument("--tee", help="write the raw response to this path")
+    p_unwrap.set_defaults(func=cmd_unwrap)
+
+    p_record = sub.add_parser("record", help="append a ledger record from a teed file")
+    p_record.add_argument("--from-log", required=True, help="teed raw output to parse")
+    p_record.add_argument("--script", required=True, help="calling script name")
+    p_record.add_argument("--entry-point", required=True, help="prompt, agent, or fix")
+    p_record.add_argument("--backend", default="claude")
+    p_record.add_argument("--model", default=None)
+    p_record.add_argument("--exit-code", type=int, default=0)
+    p_record.add_argument("--task", default=None)
+    p_record.add_argument("--repo", default=None)
+    p_record.add_argument("--pr", default=None)
+    p_record.set_defaults(func=cmd_record)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

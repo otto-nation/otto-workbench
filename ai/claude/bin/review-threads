@@ -386,7 +386,8 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     )
 
     stdout, rc = agent_retry.retry_blank_response(
-        ai_backend.prompt, prompt, label="Triage", usable=_parses_as_json,
+        lambda text: ai_backend.prompt(text, task="comment-triage"),
+        prompt, label="Triage", usable=_parses_as_json,
     )
     if rc != 0:
         if trail:
@@ -635,6 +636,7 @@ def _invoke_fix_agent(
         max_turns=max_turns if max_turns is not None else FIX_MIN_TURNS,
         max_budget=max_budget if max_budget is not None else FIX_MIN_BUDGET,
         model=FIX_MODEL,
+        task="comment-fix",
     ))
 
 

@@ -136,6 +136,11 @@ tools:
     visibility: hidden
     description: "Run a Claude Code skill as a headless background session with output logging"
 
+  - name: ai-usage-log
+    permission: false
+    visibility: hidden
+    description: "Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record"
+
   - name: eval-models
     permission: false
     visibility: hidden

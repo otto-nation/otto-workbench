@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1344,6 +1345,101 @@ def test_constants_match_expected(cr):
     assert review_gc.PRUNE_MAX_FILES == 10
     assert len(cr.SEVERITY_PREFIXES) == 4
     assert len(cr.SEVERITY_JSON_KEYS) == 4
+
+
+# ── _validate_recover ─────────────────────────────────────────────────────────
+
+
+def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:
+    (review_dir / "pipeline.json").write_text(json.dumps({
+        "head_sha": head_sha, "group_names": ["g1", "g2"],
+        "synthesis_done": False, "synthesis_failed": "crashed",
+        "groups_done": [1], "groups_failed": {},
+    }))
+
+
+def test_validate_recover_accepts_matching_head(cr, tmp_path):
+    _write_partial_pipeline(tmp_path)
+    cr._validate_recover(tmp_path, "abc1234")
+
+
+def test_validate_recover_rejects_moved_head(cr, tmp_path):
+    _write_partial_pipeline(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        cr._validate_recover(tmp_path, "def5678")
+    assert exc.value.code == 1
+
+
+def test_validate_recover_skips_drift_check_without_head(cr, tmp_path):
+    """Empty head_sha means HEAD couldn't be determined — recover rather than block."""
+    _write_partial_pipeline(tmp_path)
+    cr._validate_recover(tmp_path, "")
+
+
+def test_validate_recover_without_pipeline_state(cr, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cr._validate_recover(tmp_path, "abc1234")
+    assert exc.value.code == 1
+
+
+# ── --recover with --self ─────────────────────────────────────────────────────
+
+
+def test_self_review_accepts_recover(cr, reviews_dir, monkeypatch):
+    """--recover is a top-level mode; --self must not reject it."""
+    monkeypatch.setattr(sys, "argv", ["claude-review", "--self", "--recover"])
+    monkeypatch.setattr(cr, "_migrate_legacy_reviews", lambda: None)
+    monkeypatch.setattr(cr, "_migrate_flat_reviews", lambda: None)
+    run_self = MagicMock()
+    monkeypatch.setattr(cr, "_run_self_review", run_self)
+
+    cr.main()
+
+    assert run_self.call_count == 1
+    assert run_self.call_args[0][0].recover is True
+
+
+def test_self_review_recover_reads_head_after_worktree_switch(cr, reviews_dir, monkeypatch):
+    """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
+    ctx = SimpleNamespace(
+        repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
+    )
+    monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(cr, "_resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(
+        cr.review_worktree, "switch_to_branch",
+        lambda branch, wt: cr.review_worktree.WorktreeResult(
+            path="/switched/wt", cleanup_ref=branch, is_fallback=False),
+    )
+    monkeypatch.setattr(
+        cr.pr_context, "head_sha",
+        lambda cwd=None: "fresh11" if cwd == "/switched/wt" else "stale00",
+    )
+    monkeypatch.setattr(cr, "_cleanup_self_review_worktree", lambda *a, **kw: None)
+    body = MagicMock()
+    monkeypatch.setattr(cr, "_run_self_review_body", body)
+
+    cr._run_self_review(SimpleNamespace(
+        positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
+        force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
+        model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
+        generated=False, recover=True, debug=False,
+    ))
+
+    assert body.call_args.kwargs["head_sha"] == "fresh11"
+
+
+def test_self_review_body_validates_recover(cr, tmp_path):
+    """recover=True reaches _validate_recover — no pipeline state aborts the run."""
+    with pytest.raises(SystemExit) as exc:
+        cr._run_self_review_body(
+            "owner/repo", "", str(tmp_path), "", 1,
+            False, None, None, False, MagicMock(),
+            self_review_dir=tmp_path, branch_name="feat/x",
+            recover=True, head_sha="abc1234",
+        )
+    assert exc.value.code == 1
 
 
 # ── _check_stale_review ───────────────────────────────────────────────────────

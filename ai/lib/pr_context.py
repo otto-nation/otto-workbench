@@ -115,6 +115,15 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
         pass
 
 
+def head_sha(cwd: str | None = None) -> str:
+    """Current HEAD sha of the worktree at *cwd*, or "" if it can't be read.
+
+    Use this when the worktree may have changed since ``resolve()`` — checking
+    out a PR or branch can move HEAD after the context was captured.
+    """
+    return _head_sha(cwd)
+
+
 def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
     """Fetch branch from remote and reset worktree to match, safely.
 

@@ -1056,24 +1056,55 @@ class TestCheckSerialAbort:
 
 
 class TestResolveModel:
+    def _clear_alias_envs(self, monkeypatch):
+        for key in ("ANTHROPIC_DEFAULT_SONNET_MODEL",
+                     "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                     "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
+            monkeypatch.delenv(key, raising=False)
+
     def test_explicit(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        self._clear_alias_envs(monkeypatch)
         assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
 
     def test_env_key(self, ro, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        self._clear_alias_envs(monkeypatch)
         assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
 
     def test_global_env(self, ro, monkeypatch):
         monkeypatch.delenv("UNUSED_KEY", raising=False)
         monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
+        self._clear_alias_envs(monkeypatch)
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
 
     def test_default_fallback(self, ro, monkeypatch):
         monkeypatch.delenv("UNUSED_KEY", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        self._clear_alias_envs(monkeypatch)
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
+
+    def test_alias_resolved_via_env(self, ro, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
+        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "claude-sonnet-5"
+
+    def test_explicit_alias_resolved(self, ro, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
+        assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "claude-opus-4-6"
+
+    def test_env_key_alias_resolved(self, ro, monkeypatch):
+        monkeypatch.setenv("MY_MODEL_KEY", "haiku")
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4-5@20251001")
+        assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "claude-haiku-4-5@20251001"
+
+    def test_full_model_id_not_resolved(self, ro, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        self._clear_alias_envs(monkeypatch)
+        assert ro._resolve_model("claude-sonnet-5", "SOME_KEY", "sonnet") == "claude-sonnet-5"
 
 
 # ── 20. _extract_heredoc ────────────────────────────────────────────────────

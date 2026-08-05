@@ -64,11 +64,21 @@ print(mod.DEFAULT_MODEL_SINGLE)
   [ "${lines[3]}" = "sonnet" ]
 }
 
+_clear_alias_envs() {
+  _py "
+import os
+for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
+    os.environ.pop(k, None)
+"
+}
+
 @test "_resolve_model: explicit override wins" {
   result=$(_py "
 import os
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
+    os.environ.pop(k, None)
 print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 ")
   [ "$result" = "haiku" ]
@@ -79,6 +89,8 @@ print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 import os
 os.environ['CLAUDE_REVIEW_GROUP_MODEL'] = 'haiku'
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
+    os.environ.pop(k, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
 ")
@@ -90,6 +102,8 @@ del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
 import os
 os.environ['CLAUDE_REVIEW_MODEL'] = 'haiku'
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
+    os.environ.pop(k, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 del os.environ['CLAUDE_REVIEW_MODEL']
 ")
@@ -101,9 +115,34 @@ del os.environ['CLAUDE_REVIEW_MODEL']
 import os
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
+    os.environ.pop(k, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 ")
   [ "$result" = "sonnet" ]
+}
+
+@test "_resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-5'
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
+")
+  [ "$result" = "claude-sonnet-5" ]
+}
+
+@test "_resolve_model: explicit alias resolved via ANTHROPIC_DEFAULT env" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL'] = 'claude-opus-4-6'
+print(mod._resolve_model('opus', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL']
+")
+  [ "$result" = "claude-opus-4-6" ]
 }
 
 # ── Prompt building ──────────────────────────────────────────────────────────

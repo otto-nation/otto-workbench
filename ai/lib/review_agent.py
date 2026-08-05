@@ -234,16 +234,30 @@ def _is_quota_error(log_path: str) -> bool:
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
+_ANTHROPIC_MODEL_ENV = {
+    "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "opus":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "haiku":  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+}
+
+
+def _resolve_alias(model: str) -> str:
+    env_key = _ANTHROPIC_MODEL_ENV.get(model)
+    if env_key:
+        return os.environ.get(env_key, model)
+    return model
+
+
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     if explicit:
-        return explicit
+        return _resolve_alias(explicit)
     from_env = os.environ.get(env_key)
     if from_env:
-        return from_env
+        return _resolve_alias(from_env)
     global_env = os.environ.get("CLAUDE_REVIEW_MODEL")
     if global_env:
-        return global_env
-    return default
+        return _resolve_alias(global_env)
+    return _resolve_alias(default)
 
 
 def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:

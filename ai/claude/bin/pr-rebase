@@ -163,11 +163,29 @@ class RegenQueue:
         return iter(self._jobs.values())
 
 
+@dataclass(frozen=True)
+class Resolution:
+    """Files resolved in one rebase step, and which of those have stale content.
+
+    A file is stale when it was staged from the incoming side but its
+    regeneration command failed, so it never got merged with the target
+    branch's changes.
+    """
+    files: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
+
+
 @dataclass
 class ResolutionTally:
     """Files resolved and commits that conflicted across a whole rebase."""
     files: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
     commits: int = 0
+
+    def absorb(self, resolution: Resolution) -> None:
+        """Fold one step's resolution into the running totals."""
+        self.files.extend(resolution.files)
+        self.stale.extend(resolution.stale)
 
 
 # ── Git helpers ─────────────────────────────────────────────────────────────
@@ -290,6 +308,10 @@ def _is_empty_patch(cwd: str) -> bool:
 
 # ── Lockfile regeneration registry ─────────────────────────────────────────
 
+# Keys are basenames — _find_regenerator looks up os.path.basename(filepath),
+# so a key containing a path separator would never match.
+# yarn and bun have no lockfile-only flag in the versions we target, so they
+# run a full install and its lifecycle scripts as a side effect of resolution.
 _LOCKFILE_REGENERATORS: dict[str, Regenerator] = {
     "go.sum":            Regenerator(("go", "mod", "tidy"), stage_dir=True),
     "pnpm-lock.yaml":    Regenerator(("pnpm", "install", "--lockfile-only")),
@@ -1067,7 +1089,7 @@ def _dispatch_conflict(
 
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
-) -> list[str] | None:
+) -> Resolution | None:
     """Resolve conflicted files via classify → dispatch → deferred regen."""
     resolved = []
     queue = RegenQueue()
@@ -1079,15 +1101,16 @@ def _resolve_file_conflicts(
             return None
         resolved.append(filepath)
 
-    regen_failures = []
+    stale = []
     for job in queue:
         if not _run_regeneration(job, cwd=cwd):
-            regen_failures.extend(job.files)
+            stale.extend(job.files)
 
-    if regen_failures:
-        log.warn(f"Regeneration failed for: {', '.join(regen_failures)} — lockfiles may be stale")
+    if stale:
+        _terr("regenerate", "regeneration failed", data={"files": stale})
+        log.warn(f"Regeneration failed for: {', '.join(stale)} — lockfiles may be stale")
 
-    return resolved
+    return Resolution(files=resolved, stale=stale)
 
 
 # ── Rebase lifecycle ───────────────────────────────────────────────────────
@@ -1182,7 +1205,7 @@ def _step_conflicts(
         log.error("AI conflict resolution failed — aborting rebase.")
         subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
         return 1
-    tally.files.extend(resolved)
+    tally.absorb(resolved)
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     unstaged = subprocess.run(
@@ -1383,6 +1406,7 @@ class RebaseOutcome:
     commits_replayed: int = 0
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
+    files_stale: list[str] = field(default_factory=list)
     force_pushed: bool | None = None
 
     def save(self, ctx: pr_context.ResolvedContext) -> None:
@@ -1393,6 +1417,7 @@ class RebaseOutcome:
             commits_replayed=self.commits_replayed,
             conflicts_resolved=self.conflicts_resolved,
             files_resolved=self.files_resolved,
+            files_stale=self.files_stale,
             force_pushed=self.force_pushed is True,
             updated_at=pr_state.now_iso(),
         ))
@@ -1404,6 +1429,7 @@ class RebaseOutcome:
             "commits_replayed": self.commits_replayed,
             "conflicts_resolved": self.conflicts_resolved,
             "files_resolved": self.files_resolved,
+            "files_stale": self.files_stale,
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed
@@ -1502,6 +1528,7 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
         commits_replayed=state.rebase.commits_replayed or _commits_ahead(cwd),
         conflicts_resolved=state.rebase.conflicts_resolved,
         files_resolved=state.rebase.files_resolved,
+        files_stale=state.rebase.files_stale,
         force_pushed=True,
     ).save(ctx)
     log.ok("Force-pushed successfully.")
@@ -1616,6 +1643,7 @@ def _rebase_success(
         commits_replayed=_commits_ahead(cwd),
         conflicts_resolved=tally.commits,
         files_resolved=tally.files,
+        files_stale=tally.stale,
         force_pushed=push_rc == 0 if fix else None,
     )
     outcome.save(ctx)

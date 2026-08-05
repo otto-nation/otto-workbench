@@ -480,6 +480,7 @@ def test_rebase_summary_defaults():
     assert rb.commits_replayed == 0
     assert rb.conflicts_resolved == 0
     assert rb.files_resolved == []
+    assert rb.files_stale == []
     assert rb.force_pushed is False
     assert rb.updated_at == ""
 
@@ -522,6 +523,31 @@ def test_state_roundtrip_with_rebase_data():
     assert restored.rebase.conflicts_resolved == 2
     assert restored.rebase.files_resolved == ["x.py"]
     assert restored.rebase.force_pushed is True
+
+
+def test_state_roundtrip_with_stale_files():
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    update_rebase(state, RebaseSummary(
+        target_base="origin/main", commits_replayed=1,
+        conflicts_resolved=1, files_resolved=["pnpm-lock.yaml"],
+        files_stale=["pnpm-lock.yaml"],
+        force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
+    ))
+    restored = state_from_dict(state_to_dict(state))
+    assert restored.rebase.files_stale == ["pnpm-lock.yaml"]
+
+
+def test_state_from_dict_without_files_stale():
+    """State files written before files_stale existed still load."""
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    update_rebase(state, RebaseSummary(
+        target_base="origin/main", commits_replayed=1,
+        conflicts_resolved=1, files_resolved=["x.py"],
+        force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
+    ))
+    d = state_to_dict(state)
+    del d["rebase"]["files_stale"]
+    assert state_from_dict(d).rebase.files_stale == []
 
 
 def test_save_preserves_rebase_data():

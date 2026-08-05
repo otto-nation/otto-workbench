@@ -12,7 +12,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+
+import log
+
+# One file per month: rotation falls out of the filename, --since can select files
+# without reading them, and nothing needs a pruning job.
+LEDGER_DIR = Path.home() / ".config" / "workbench" / "usage"
 
 
 @dataclass(frozen=True)
@@ -113,6 +120,82 @@ def parse_session_log(path: str) -> SessionUsage:
         duration_ms=duration_ms,
         cost_by_model=cost_by_model,
     )
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Telemetry must never break the call it is measuring, but a silent failure is what
+# let zeroed token counts survive unnoticed. Warn once per process: loud enough to
+# notice, quiet enough not to spam a pipeline running dozens of agents.
+_warned = False
+
+
+def record(
+    *,
+    script: str,
+    entry_point: str,
+    backend: str,
+    model: str | None,
+    usage: SessionUsage,
+    exit_code: int,
+    task: str | None = None,
+    repo: str | None = None,
+    pr: str | None = None,
+) -> None:
+    """Append one usage record to the global ledger. Never raises."""
+    global _warned
+    rec = {
+        "ts": _iso_now(),
+        "script": script,
+        "entry_point": entry_point,
+        "backend": backend,
+        "model": model,
+        "cost": usage.cost,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "cache_write_tokens": usage.cache_write_tokens,
+        "duration_ms": usage.duration_ms,
+        "exit_code": exit_code,
+    }
+    if usage.cost_by_model:
+        rec["cost_by_model"] = usage.cost_by_model
+    for key, value in (("task", task), ("repo", repo), ("pr", pr)):
+        if value:
+            rec[key] = value
+    try:
+        LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+        path = LEDGER_DIR / f"{datetime.now(timezone.utc):%Y-%m}.jsonl"
+        # One write of one sub-PIPE_BUF line: concurrent pipeline agents append to
+        # this file, and a single append-mode write is atomic at this size.
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+    except (OSError, TypeError, ValueError):
+        if not _warned:
+            _warned = True
+            log.warn(f"usage ledger unavailable at {LEDGER_DIR} — telemetry not recorded")
+
+
+def read_ledger() -> list[dict]:
+    """Read every ledger record, oldest month first. Skips unreadable lines."""
+    out: list[dict] = []
+    try:
+        files = sorted(LEDGER_DIR.glob("*.jsonl"))
+    except OSError:
+        return out
+    for path in files:
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out
 
 
 def merge(usages: list[SessionUsage]) -> SessionUsage:

@@ -1,6 +1,7 @@
 """Tests for ai_usage — session log parsing, usage normalization, aggregation."""
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+import ai_usage
 from ai_usage import SessionUsage, merge, normalize_usage, parse_session_log
 
 
@@ -183,3 +185,150 @@ def test_merge_sums_fields_and_per_model_cost():
 
 def test_merge_empty_returns_zero_usage():
     assert merge([]) == SessionUsage()
+
+
+# ── ledger ────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    d = tmp_path / "usage"
+    monkeypatch.setattr(ai_usage, "LEDGER_DIR", d)
+    monkeypatch.setattr(ai_usage, "_warned", False)
+    return d
+
+
+def _records(ledger_dir):
+    return [
+        json.loads(line)
+        for f in sorted(ledger_dir.glob("*.jsonl"))
+        for line in f.read_text().splitlines()
+    ]
+
+
+def test_record_appends_line(ledger):
+    ai_usage.record(
+        script="pr-rebase", entry_point="prompt", backend="claude",
+        model="claude-sonnet-4-6", usage=SessionUsage(cost=0.42, input_tokens=1200),
+        exit_code=0,
+    )
+    recs = _records(ledger)
+    assert len(recs) == 1
+    assert recs[0]["script"] == "pr-rebase"
+    assert recs[0]["entry_point"] == "prompt"
+    assert recs[0]["cost"] == pytest.approx(0.42)
+    assert recs[0]["input_tokens"] == 1200
+    assert recs[0]["exit_code"] == 0
+    assert recs[0]["ts"].endswith("Z")
+
+
+def test_record_appends_rather_than_truncates(ledger):
+    for i in range(3):
+        ai_usage.record(
+            script="ci-check", entry_point="fix", backend="claude", model=None,
+            usage=SessionUsage(input_tokens=i), exit_code=0,
+        )
+    assert [r["input_tokens"] for r in _records(ledger)] == [0, 1, 2]
+
+
+def test_record_writes_monthly_file(ledger):
+    ai_usage.record(
+        script="s", entry_point="prompt", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+    )
+    names = [p.name for p in ledger.glob("*.jsonl")]
+    assert len(names) == 1
+    assert re.fullmatch(r"\d{4}-\d{2}\.jsonl", names[0]), names[0]
+
+
+def test_record_creates_ledger_dir(ledger):
+    assert not ledger.exists()
+    ai_usage.record(
+        script="s", entry_point="prompt", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+    )
+    assert ledger.is_dir()
+
+
+def test_record_includes_optional_context(ledger):
+    ai_usage.record(
+        script="review-threads", entry_point="fix", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=1, task="comment-triage",
+        repo="otto-workbench", pr="596",
+    )
+    rec = _records(ledger)[0]
+    assert rec["task"] == "comment-triage"
+    assert rec["repo"] == "otto-workbench"
+    assert rec["pr"] == "596"
+    assert rec["exit_code"] == 1
+
+
+def test_record_omits_absent_optional_context(ledger):
+    ai_usage.record(
+        script="s", entry_point="prompt", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+    )
+    rec = _records(ledger)[0]
+    assert "task" not in rec
+    assert "repo" not in rec
+    assert "pr" not in rec
+
+
+def test_record_carries_per_model_cost(ledger):
+    ai_usage.record(
+        script="s", entry_point="agent", backend="claude", model=None,
+        usage=SessionUsage(cost_by_model={"sonnet": 1.5}), exit_code=0,
+    )
+    assert _records(ledger)[0]["cost_by_model"] == {"sonnet": 1.5}
+
+
+def test_record_never_raises_when_dir_unwritable(tmp_path, monkeypatch, capsys):
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    monkeypatch.setattr(ai_usage, "LEDGER_DIR", blocked / "usage")
+    monkeypatch.setattr(ai_usage, "_warned", False)
+    ai_usage.record(
+        script="s", entry_point="prompt", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+    )
+    assert "usage ledger" in capsys.readouterr().err
+
+
+def test_record_warns_only_once_per_process(tmp_path, monkeypatch, capsys):
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    monkeypatch.setattr(ai_usage, "LEDGER_DIR", blocked / "usage")
+    monkeypatch.setattr(ai_usage, "_warned", False)
+    for _ in range(3):
+        ai_usage.record(
+            script="s", entry_point="prompt", backend="claude", model=None,
+            usage=SessionUsage(), exit_code=0,
+        )
+    assert capsys.readouterr().err.count("usage ledger") == 1
+
+
+def test_record_line_is_newline_terminated_and_single_line(ledger):
+    ai_usage.record(
+        script="s", entry_point="prompt", backend="claude", model=None,
+        usage=SessionUsage(), exit_code=0,
+    )
+    content = next(ledger.glob("*.jsonl")).read_text()
+    assert content.endswith("\n")
+    assert content.count("\n") == 1
+
+
+def test_read_ledger_returns_records_across_months(ledger):
+    ledger.mkdir(parents=True)
+    (ledger / "2026-07.jsonl").write_text(json.dumps({"script": "a"}) + "\n")
+    (ledger / "2026-08.jsonl").write_text(json.dumps({"script": "b"}) + "\n")
+    assert [r["script"] for r in ai_usage.read_ledger()] == ["a", "b"]
+
+
+def test_read_ledger_missing_dir_returns_empty(ledger):
+    assert ai_usage.read_ledger() == []
+
+
+def test_read_ledger_skips_malformed_lines(ledger):
+    ledger.mkdir(parents=True)
+    (ledger / "2026-08.jsonl").write_text("{bad\n" + json.dumps({"script": "b"}) + "\n")
+    assert [r["script"] for r in ai_usage.read_ledger()] == ["b"]

@@ -24,6 +24,12 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
 DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
+DIAG_NO_WRITE_TOOL_CALL = "never called a file-writing tool"
+
+# Tools that can put content into the output file. An agent that burned its
+# turns without calling one of these was thrashing, not working — say so
+# instead of reporting a bare turn count.
+_WRITE_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit", "Write"})
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -46,11 +52,23 @@ def _try_parse_json(line: str) -> dict | None:
         return None
 
 
-def _parse_jsonl_records(log_path: str, record_type: str) -> list[dict]:
+def _read_jsonl(log_path: str) -> list[dict]:
+    """Every parseable record in the log, in order.
+
+    Callers that need more than one record type should read once and filter
+    with `_of_type` rather than making a pass per type.
+    """
     with open(log_path) as f:
-        lines = f.readlines()
-    parsed = (_try_parse_json(line) for line in lines)
-    return [d for d in parsed if d is not None and d.get("type") == record_type]
+        parsed = (_try_parse_json(line) for line in f)
+        return [d for d in parsed if d is not None]
+
+
+def _of_type(records: list[dict], record_type: str) -> list[dict]:
+    return [d for d in records if d.get("type") == record_type]
+
+
+def _parse_jsonl_records(log_path: str, record_type: str) -> list[dict]:
+    return _of_type(_read_jsonl(log_path), record_type)
 
 
 def _parse_session_cost(log_path: str) -> float:
@@ -72,15 +90,35 @@ def _diagnose_result_type(result: dict) -> str:
     return f"agent completed (subtype={subtype}) but did not write output"
 
 
+def _tool_names_used(records: list[dict]) -> set[str]:
+    """Names of every tool the agent invoked, per the session log.
+
+    Only the Claude backend writes `assistant` records with `tool_use` blocks;
+    for other backends this is empty and callers must not read that as "no
+    tools were used".
+    """
+    return {
+        block.get("name", "")
+        for record in _of_type(records, "assistant")
+        for block in record.get("message", {}).get("content", [])
+        if block.get("type") == "tool_use"
+    }
+
+
 def _diagnose_missing_output(log_path: str) -> str:
     if not Path(log_path).exists():
         return DIAG_NO_SESSION_LOG
-    results = _parse_jsonl_records(log_path, "result")
+    records = _read_jsonl(log_path)
+    results = _of_type(records, "result")
     if not results:
-        if _is_quota_error(log_path):
+        if _has_quota_retry(records):
             return DIAG_QUOTA_EXHAUSTED
         return DIAG_NO_RESULT_RECORD
-    return _diagnose_result_type(results[-1])
+    reason = _diagnose_result_type(results[-1])
+    tools_used = _tool_names_used(records)
+    if tools_used and not (tools_used & _WRITE_TOOLS):
+        reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
+    return reason
 
 
 def is_transient_error(reason: str) -> bool:
@@ -180,14 +218,17 @@ class QuotaThrottle:
 
 # ── Quota detection ────────────────────────────────────────────────────────
 
+def _has_quota_retry(records: list[dict]) -> bool:
+    return any(
+        r.get("subtype") == "api_retry" and r.get("error_status") == 429
+        for r in _of_type(records, "system")
+    )
+
+
 def _is_quota_error(log_path: str) -> bool:
     if not Path(log_path).exists():
         return False
-    records = _parse_jsonl_records(log_path, "system")
-    return any(
-        r.get("subtype") == "api_retry" and r.get("error_status") == 429
-        for r in records
-    )
+    return _has_quota_retry(_read_jsonl(log_path))
 
 
 # ── Model selection ───────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
 from string import Template
@@ -21,7 +22,7 @@ from review_common import (
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
-    _derive_path,
+    _derive_path, build_output_block, build_worktree_block,
 )
 from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
 from review_scout import (
@@ -576,6 +577,83 @@ def render_template(name: str, **kwargs) -> str:
     return tmpl.safe_substitute(**kwargs)
 
 
+@dataclass(frozen=True)
+class CommonSections:
+    """Sections shared by every template, built once per prompt."""
+
+    today: str
+    generator_version: str
+    pr_header: str
+    state_context: str
+    reviews_section: str
+    reply_threads: str
+    env_section: str
+    issue_section: str
+    delta_section: str
+    omitted_guidance: str
+    max_turns: int
+
+
+COMMON_SECTION_NAMES = frozenset(f.name for f in fields(CommonSections))
+
+
+class PromptBuilder:
+    """Collects the variables a template is rendered with.
+
+    One registry feeds both `safe_substitute` and the byte accounting, so a
+    value cannot be interpolated into a prompt without also counting against
+    the diff budget and appearing in the prompt-size stats.
+    """
+
+    def __init__(self, common: CommonSections):
+        self._common = common
+        self._vars: dict[str, object] = {}
+
+    def set(self, key: str, value) -> "PromptBuilder":
+        self._vars[key] = value
+        return self
+
+    def shared(self, *keys: str) -> "PromptBuilder":
+        """Register sections from `common` under their own names."""
+        unknown = sorted(set(keys) - COMMON_SECTION_NAMES)
+        if unknown:
+            raise KeyError(
+                f"not CommonSections fields: {', '.join(unknown)} — "
+                f"valid names are {', '.join(sorted(COMMON_SECTION_NAMES))}"
+            )
+        for key in keys:
+            self._vars[key] = getattr(self._common, key)
+        return self
+
+    def output(self, output_path: str, *, stdout_warning: bool = False) -> "PromptBuilder":
+        return self.set(
+            "output_block", build_output_block(output_path, stdout_warning=stdout_warning),
+        )
+
+    def worktree(self, wt_path: str) -> "PromptBuilder":
+        return self.set("worktree_block", build_worktree_block(wt_path))
+
+    def diff_budget(
+        self, job: ReviewJob, *,
+        file_filter: list[str] | None = None,
+        skip_file_contents: bool = False,
+        min_diff: int = MIN_DIFF_BYTES,
+    ) -> int:
+        """Bytes left for the diff, given everything registered so far.
+
+        Call this only after every non-preflight variable is registered —
+        anything set afterwards is not counted against the budget.
+        """
+        return _compute_diff_budget(
+            job, self._vars, file_filter=file_filter,
+            skip_file_contents=skip_file_contents, min_diff=min_diff,
+        )
+
+    @property
+    def vars(self) -> dict[str, object]:
+        return dict(self._vars)
+
+
 def _build_preflight_section(
     job: ReviewJob, file_filter: list[str] | None = None,
     skip_file_contents: bool = False,
@@ -594,12 +672,16 @@ def _build_preflight_section(
 
 def _compute_diff_budget(
     job: ReviewJob,
-    known_sections: dict[str, str],
+    known_sections: dict[str, object],
     skip_file_contents: bool = False,
     file_filter: list[str] | None = None,
     min_diff: int = MIN_DIFF_BYTES,
 ) -> int:
-    known_bytes = sum(len(v.encode()) for v in known_sections.values())
+    # `is not None`, not truthiness — a falsy value (0, False) still renders
+    # into the prompt and must count against the budget.
+    known_bytes = sum(
+        len(str(v).encode()) for v in known_sections.values() if v is not None
+    )
 
     pf = job.preflight
     non_diff_preflight = 0
@@ -627,7 +709,7 @@ def _compute_diff_budget(
     return max(min_diff, remaining)
 
 
-def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], job: ReviewJob, label: str = "") -> str:
+def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob, label: str = "") -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
     budget_kb = MAX_PROMPT_BYTES // 1024
@@ -635,7 +717,7 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, str], 
     section_sizes = {}
     parts = []
     for name, value in sections.items():
-        size = len(value.encode()) if value else 0
+        size = len(str(value).encode()) if value is not None else 0
         section_sizes[name] = size
         if size > 1024:
             parts.append(f"{name}={size // 1024}KB")
@@ -712,70 +794,42 @@ def _prompt_self_review(job, common, extra):
         "- Add any new findings from changes since the last review"
     ))
     prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
-    preflight = _build_preflight_section(job)
-    sections = {
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "prior_section": prior_section,
-        "reply_threads": common["reply_threads"],
-    }
-    kwargs = {
-        "branch_name": extra.get("branch_name", job.pr.head),
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "env_section": common["env_section"],
-        "issue_section": common["issue_section"],
-        "prior_section": prior_section,
-        "reply_threads": common["reply_threads"],
-        "review_file": job.review_file,
-        "generator_version": common["generator_version"],
-        "omitted_guidance": common["omitted_guidance"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    b = PromptBuilder(common)
+    b.shared(
+        "pr_header", "state_context", "delta_section", "reply_threads",
+        "env_section", "issue_section", "generator_version",
+        "omitted_guidance", "max_turns",
+    )
+    b.set("branch_name", extra.get("branch_name", job.pr.head))
+    b.set("repo", job.repo)
+    b.set("prior_section", prior_section)
+    b.output(job.review_file, stdout_warning=True)
+    b.set("preflight_data", _build_preflight_section(job))
+    return b, ""
 
 
 def _prompt_self_synthesis(job, common, extra):
-    holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
-    merged_content = extra["merged_content"]
-    sections = {
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "holistic_content": holistic_content,
-        "merged_content": merged_content,
-        "delta_section": common["delta_section"],
-        "reply_threads": common["reply_threads"],
-    }
+    b = PromptBuilder(common)
+    b.shared(
+        "pr_header", "state_context", "delta_section", "reply_threads",
+        "today", "generator_version", "max_turns",
+    )
+    b.set("branch_name", extra.get("branch_name", job.pr.head))
+    b.set("repo", job.repo)
+    b.set("pr_head_sha", job.pr.head_sha)
+    b.set("wt_path", job.wt_path)
+    b.set("prior_section", "")
+    b.set("group_count", extra["group_count"])
+    b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
+    b.set("merged_content", extra["merged_content"])
+    b.output(job.review_file)
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
-    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True, min_diff=0)
-    preflight = _build_preflight_section(job, skip_file_contents=True, max_diff_bytes=diff_budget)
-    sections["preflight_data"] = preflight
-    kwargs = {
-        "branch_name": extra.get("branch_name", job.pr.head),
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "pr_head_sha": job.pr.head_sha,
-        "holistic_content": holistic_content,
-        "group_count": extra["group_count"],
-        "merged_content": merged_content,
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "review_file": job.review_file,
-        "wt_path": job.wt_path,
-        "today": common["today"],
-        "prior_section": "",
-        "reply_threads": common["reply_threads"],
-        "generator_version": common["generator_version"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    diff_budget = b.diff_budget(job, skip_file_contents=True, min_diff=0)
+    b.set("preflight_data", _build_preflight_section(
+        job, skip_file_contents=True, max_diff_bytes=diff_budget,
+    ))
+    return b, ""
 
 
 def _prompt_single(job, common, extra):
@@ -787,65 +841,34 @@ def _prompt_single(job, common, extra):
         "- Add any new findings from changes since the last review"
     ))
     prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
-    preflight = _build_preflight_section(job)
-    sections = {
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "reviews_section": common["reviews_section"],
-        "prior_section": prior_section,
-        "reply_threads": common["reply_threads"],
-    }
-    kwargs = {
-        "pr_number": job.pr_number,
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "reviews_section": common["reviews_section"],
-        "env_section": common["env_section"],
-        "issue_section": common["issue_section"],
-        "prior_section": prior_section,
-        "reply_threads": common["reply_threads"],
-        "review_file": job.review_file,
-        "generator_version": common["generator_version"],
-        "omitted_guidance": common["omitted_guidance"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    b = PromptBuilder(common)
+    b.shared(
+        "pr_header", "state_context", "delta_section", "reviews_section",
+        "reply_threads", "env_section", "issue_section", "generator_version",
+        "omitted_guidance", "max_turns",
+    )
+    b.set("pr_number", job.pr_number)
+    b.set("repo", job.repo)
+    b.set("prior_section", prior_section)
+    b.output(job.review_file, stdout_warning=True)
+    b.set("preflight_data", _build_preflight_section(job))
+    return b, ""
 
 
 def _prompt_holistic(job, common, extra):
-    sections = {
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "all_files_formatted": job.pr.all_files_formatted,
-        "reviews_section": common["reviews_section"],
-        "issue_section": common["issue_section"],
-        "env_section": common["env_section"],
-        "delta_section": common["delta_section"],
-    }
-    diff_budget = _compute_diff_budget(job, sections)
-    preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
-    sections["preflight_data"] = preflight
-    kwargs = {
-        "pr_number": job.pr_number,
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "all_files_formatted": job.pr.all_files_formatted,
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "reviews_section": common["reviews_section"],
-        "issue_section": common["issue_section"],
-        "env_section": common["env_section"],
-        "holistic_output": extra["holistic_output"],
-        "omitted_guidance": common["omitted_guidance"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    b = PromptBuilder(common)
+    b.shared(
+        "pr_header", "state_context", "delta_section", "reviews_section",
+        "issue_section", "env_section", "omitted_guidance", "max_turns",
+    )
+    b.set("pr_number", job.pr_number)
+    b.set("repo", job.repo)
+    b.set("all_files_formatted", job.pr.all_files_formatted)
+    b.output(extra["holistic_output"])
+    b.set("preflight_data", _build_preflight_section(
+        job, max_diff_bytes=b.diff_budget(job),
+    ))
+    return b, ""
 
 
 def _prompt_group(job, common, extra):
@@ -864,20 +887,22 @@ def _prompt_group(job, common, extra):
     holistic_block = _build_holistic_block(
         extra.get("holistic_content", ""), job.pr.changed_files,
     )
-    pr_header = _build_pr_header(job.pr, job.ctx, file_filter=file_filter)
-    delta_section = _build_delta_section(job.preflight, file_filter=file_filter)
-    reply_threads = _build_reply_threads_section(job.reply_threads, file_filter=file_filter)
-    project_context = build_project_context(job.preflight, file_filter=group_files or None) if job.preflight else ""
-    sections = {
-        "pr_header": pr_header,
-        "holistic_block": holistic_block,
-        "issue_section": common["issue_section"],
-        "env_section": common["env_section"],
-        "delta_section": delta_section,
-        "prior_section": prior_section,
-        "reply_threads": reply_threads,
-    }
-    diff_budget = _compute_diff_budget(job, sections, file_filter=file_filter)
+    b = PromptBuilder(common)
+    b.shared("issue_section", "env_section", "omitted_guidance", "max_turns")
+    b.set("pr_number", job.pr_number)
+    b.set("repo", job.repo)
+    b.set("pr_header", _build_pr_header(job.pr, job.ctx, file_filter=file_filter))
+    b.set("delta_section", _build_delta_section(job.preflight, file_filter=file_filter))
+    b.set("reply_threads", _build_reply_threads_section(job.reply_threads, file_filter=file_filter))
+    b.set("project_context", build_project_context(job.preflight, file_filter=file_filter) if job.preflight else "")
+    b.set("holistic_block", holistic_block)
+    b.set("prior_section", prior_section)
+    b.set("group_idx", extra["group_idx"])
+    b.set("group_count", extra["group_count"])
+    b.set("group_name", extra["group_name"])
+    b.set("group_files_formatted", extra["group_files_formatted"])
+    b.output(extra["group_output"])
+    diff_budget = b.diff_budget(job, file_filter=file_filter)
 
     # When file contents blow the budget (common for generated-code groups),
     # drop them so the diff gets adequate space.
@@ -891,143 +916,77 @@ def _prompt_group(job, common, extra):
         if fc_bytes > 0:
             log.info(f"Dropping {fc_bytes // 1024}KB file contents for group to fit diff budget")
             skip_file_contents = True
-            diff_budget = _compute_diff_budget(
-                job, sections, file_filter=file_filter, skip_file_contents=True,
-            )
+            diff_budget = b.diff_budget(job, file_filter=file_filter, skip_file_contents=True)
 
-    sections["project_context"] = project_context
-    group_preflight = _build_preflight_section(
+    b.set("preflight_data", _build_preflight_section(
         job, file_filter=file_filter, skip_project_context=True,
         skip_file_contents=skip_file_contents,
         max_diff_bytes=diff_budget,
-    )
-    sections["preflight_data"] = group_preflight
-    kwargs = {
-        "pr_number": job.pr_number,
-        "repo": job.repo,
-        "pr_header": pr_header,
-        "group_idx": extra["group_idx"],
-        "group_count": extra["group_count"],
-        "group_name": extra["group_name"],
-        "holistic_block": holistic_block,
-        "project_context": project_context,
-        "group_files_formatted": extra["group_files_formatted"],
-        "preflight_data": group_preflight,
-        "delta_section": delta_section,
-        "issue_section": common["issue_section"],
-        "env_section": common["env_section"],
-        "group_output": extra["group_output"],
-        "prior_section": prior_section,
-        "reply_threads": reply_threads,
-        "omitted_guidance": common["omitted_guidance"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, str(extra["group_idx"])
+    ))
+    return b, str(extra["group_idx"])
 
 
 def _prompt_synthesis(job, common, extra):
-    holistic_content = extra.get("holistic_content") or "_No holistic assessment available._"
-    merged_content = extra["merged_content"]
-    sections = {
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "holistic_content": holistic_content,
-        "merged_content": merged_content,
-        "delta_section": common["delta_section"],
-        "reviews_section": common["reviews_section"],
-        "reply_threads": common["reply_threads"],
-    }
+    b = PromptBuilder(common)
+    b.shared(
+        "pr_header", "state_context", "delta_section", "reviews_section",
+        "reply_threads", "today", "generator_version", "max_turns",
+    )
+    b.set("pr_number", job.pr_number)
+    b.set("repo", job.repo)
+    b.set("pr_title", job.pr.title)
+    b.set("pr_head_sha", job.pr.head_sha)
+    b.set("wt_path", job.wt_path)
+    b.set("prior_section", "")
+    b.set("group_count", extra["group_count"])
+    b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
+    b.set("merged_content", extra["merged_content"])
+    b.output(job.review_file)
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
-    diff_budget = _compute_diff_budget(job, sections, skip_file_contents=True, min_diff=0)
-    preflight = _build_preflight_section(
+    diff_budget = b.diff_budget(job, skip_file_contents=True, min_diff=0)
+    b.set("preflight_data", _build_preflight_section(
         job, skip_file_contents=True, max_diff_bytes=diff_budget,
-    )
-    sections["preflight_data"] = preflight
-    kwargs = {
-        "pr_number": job.pr_number,
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "pr_title": job.pr.title,
-        "pr_head_sha": job.pr.head_sha,
-        "holistic_content": holistic_content,
-        "group_count": extra["group_count"],
-        "merged_content": merged_content,
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "reviews_section": common["reviews_section"],
-        "review_file": job.review_file,
-        "wt_path": job.wt_path,
-        "today": common["today"],
-        "prior_section": "",
-        "reply_threads": common["reply_threads"],
-        "generator_version": common["generator_version"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    ))
+    return b, ""
 
 
 def _prompt_fix(job, common, extra):
     review_content = ""
     if Path(job.review_file).exists():
         review_content = Path(job.review_file).read_text()
-    sections = {
-        "review_content": review_content,
-    }
-    kwargs = {
-        "branch_name": job.pr.head,
-        "repo": job.repo,
-        "review_content": review_content,
-        "review_file": job.review_file,
-        "wt_path": job.wt_path,
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    b = PromptBuilder(common)
+    b.shared("max_turns")
+    b.set("branch_name", job.pr.head)
+    b.set("repo", job.repo)
+    b.set("review_content", review_content)
+    b.set("review_file", job.review_file)
+    b.worktree(job.wt_path)
+    return b, ""
 
 
 def _prompt_scout(job, common, extra):
-    sections = {
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "all_files_formatted": job.pr.all_files_formatted,
-        "reviews_section": common["reviews_section"],
-        "issue_section": common["issue_section"],
-        "env_section": common["env_section"],
-        "delta_section": common["delta_section"],
-    }
-    diff_budget = _compute_diff_budget(job, sections)
-    preflight = _build_preflight_section(job, max_diff_bytes=diff_budget)
-    sections["preflight_data"] = preflight
-    kwargs = {
-        "pr_number": job.pr_number,
-        "repo": job.repo,
-        "pr_header": common["pr_header"],
-        "state_context": common["state_context"],
-        "all_files_formatted": job.pr.all_files_formatted,
-        "preflight_data": preflight,
-        "delta_section": common["delta_section"],
-        "reviews_section": common["reviews_section"],
-        "issue_section": common["issue_section"],
-        "env_section": common["env_section"],
-        "scout_output": extra["scout_output"],
-        "omitted_guidance": common["omitted_guidance"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    b = PromptBuilder(common)
+    b.shared(
+        "pr_header", "state_context", "delta_section", "reviews_section",
+        "issue_section", "env_section", "omitted_guidance", "max_turns",
+    )
+    b.set("pr_number", job.pr_number)
+    b.set("repo", job.repo)
+    b.set("all_files_formatted", job.pr.all_files_formatted)
+    b.output(extra["scout_output"])
+    b.set("preflight_data", _build_preflight_section(
+        job, max_diff_bytes=b.diff_budget(job),
+    ))
+    return b, ""
 
 
 def _prompt_disprove(job, common, extra):
-    review_content = extra.get("review_content", "")
-    sections = {
-        "review_content": review_content,
-    }
-    kwargs = {
-        "review_content": review_content,
-        "disprove_output": extra["disprove_output"],
-        "max_turns": common["max_turns"],
-    }
-    return sections, kwargs, ""
+    b = PromptBuilder(common)
+    b.shared("max_turns")
+    b.set("review_content", extra.get("review_content", ""))
+    b.output(extra["disprove_output"])
+    return b, ""
 
 
 _PROMPT_HANDLERS = {
@@ -1048,23 +1007,23 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     if handler is None:
         raise ValueError(f"Unknown template: {template_name}")
 
-    reply_threads_section = _build_reply_threads_section(job.reply_threads)
-    common = {
-        "today": date.today().isoformat(),
-        "generator_version": job.generator_version,
-        "pr_header": _build_pr_header(job.pr, job.ctx, viewer_role=job.viewer_role),
-        "state_context": _build_state_context_section(job),
-        "reviews_section": _build_reviews_section(job.ctx),
-        "reply_threads": reply_threads_section,
-        "env_section": _build_env_section(job.wt_path, preflight=job.preflight),
-        "issue_section": _build_issue_section(job.issue_link, job.issue_context),
-        "delta_section": _build_delta_section(job.preflight),
-        "omitted_guidance": _build_omitted_guidance(job.preflight, skip_omitted=(job.effort == "low")),
-        "max_turns": max_turns,
-    }
+    common = CommonSections(
+        today=date.today().isoformat(),
+        generator_version=job.generator_version,
+        pr_header=_build_pr_header(job.pr, job.ctx, viewer_role=job.viewer_role),
+        state_context=_build_state_context_section(job),
+        reviews_section=_build_reviews_section(job.ctx),
+        reply_threads=_build_reply_threads_section(job.reply_threads),
+        env_section=_build_env_section(job.wt_path, preflight=job.preflight),
+        issue_section=_build_issue_section(job.issue_link, job.issue_context),
+        delta_section=_build_delta_section(job.preflight),
+        omitted_guidance=_build_omitted_guidance(job.preflight, skip_omitted=(job.effort == "low")),
+        max_turns=max_turns,
+    )
 
-    sections, kwargs, label = handler(job, common, extra)
-    rendered = render_template(template_name, **kwargs)
-    return _log_prompt_size(template_name, rendered, sections, job, label=label)
+    builder, label = handler(job, common, extra)
+    template_vars = builder.vars
+    rendered = render_template(template_name, **template_vars)
+    return _log_prompt_size(template_name, rendered, template_vars, job, label=label)
 
 

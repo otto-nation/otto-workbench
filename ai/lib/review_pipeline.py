@@ -1013,7 +1013,9 @@ def _retry_failed_groups(
             continue
         idx, grp = group_by_name[name]
         turns = _retry_turns(reason, job)
-        is_max_turns = reason == _MAX_TURNS_REASON
+        # Substring, not equality — the reason carries a turn count and may
+        # carry a diagnostic suffix.
+        is_max_turns = _MAX_TURNS_REASON in reason
         log.info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,

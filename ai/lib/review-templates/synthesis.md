@@ -25,12 +25,13 @@ ${reviews_section}
 7. Check for cross-file concerns — do findings in one group imply issues in files from another group? Deduplicate: if the same issue appears in multiple group reviews (same file, same concern), keep the most complete version and drop the rest
 8. Add any cross-cutting findings
 9. Write ## Verdict (Approve / Request changes / Disapprove / Needs discussion) — Idioms findings do not affect the verdict. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead
-10. You MUST use the Write tool to write the COMPLETE review file to: ${review_file}
-    Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
-    The output file and its directory already exist — do NOT create directories or empty files.
+10. Save the COMPLETE review file as described under ## Output below
+
+## Output
+${output_block}
 
 ## Turn budget
-You have ${max_turns} turns total. Your FIRST action must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read source files before writing. Use remaining turns only for cross-file consistency checks (e.g., confirming a finding about file A aligns with how file B uses it) and Edit updates.
+You have ${max_turns} turns total. Your FIRST action must be writing the review file — all the content you need is already in this prompt. Do not read source files before writing. Use remaining turns only for cross-file consistency checks (e.g., confirming a finding about file A aligns with how file B uses it) and Edit updates.
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

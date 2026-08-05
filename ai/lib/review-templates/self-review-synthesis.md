@@ -26,12 +26,13 @@ ${delta_section}
 9. Add any cross-cutting findings
 10. Omit empty severity sections entirely
 11. Do NOT include a File Triage or Verdict section
-12. You MUST use the Write tool to write the COMPLETE review file to: ${review_file}
-    Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
-    The output file and its directory already exist — do NOT create directories or empty files.
+12. Save the COMPLETE review file as described under ## Output below
+
+## Output
+${output_block}
 
 ## Turn budget
-You have ${max_turns} turns total. Your FIRST action must be the Write tool to create the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
+You have ${max_turns} turns total. Your FIRST action must be writing the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

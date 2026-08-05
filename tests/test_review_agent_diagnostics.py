@@ -1,0 +1,105 @@
+"""Tests for review_agent failure diagnosis."""
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
+
+import review_agent
+import review_pipeline
+
+
+_TURNS = 16
+_MAX_TURNS_REASON = f"agent hit max turns ({_TURNS})"
+
+
+def _tool_use(name: str, **inp) -> str:
+    return json.dumps({
+        "type": "assistant",
+        "message": {"content": [{"type": "tool_use", "name": name, "input": inp}]},
+    })
+
+
+def _result(subtype: str = "error_max_turns", num_turns: int = _TURNS) -> str:
+    return json.dumps({
+        "type": "result", "subtype": subtype, "num_turns": num_turns,
+    })
+
+
+def _write_log(tmp_path: Path, *lines: str) -> str:
+    path = tmp_path / "session.jsonl"
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+class TestDiagnoseMissingOutput:
+    def test_max_turns_without_write_tool_names_the_thrash(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _tool_use("Read", file_path="/tmp/wt/a.py"),
+            _tool_use("Bash", command="ls"),
+            _result(),
+        )
+        reason = review_agent._diagnose_missing_output(log_path)
+        assert _MAX_TURNS_REASON in reason
+        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
+
+    def test_max_turns_with_edit_call_stays_plain(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _tool_use("Read", file_path="/tmp/out.md"),
+            _tool_use("Edit", file_path="/tmp/out.md", old_string=""),
+            _result(),
+        )
+        reason = review_agent._diagnose_missing_output(log_path)
+        assert reason == _MAX_TURNS_REASON
+
+    def test_no_assistant_records_stays_plain(self, tmp_path):
+        """Non-Claude backends log no tool_use — absence is not evidence."""
+        log_path = _write_log(tmp_path, _result())
+        reason = review_agent._diagnose_missing_output(log_path)
+        assert reason == _MAX_TURNS_REASON
+
+    def test_missing_log_unchanged(self, tmp_path):
+        reason = review_agent._diagnose_missing_output(str(tmp_path / "nope.jsonl"))
+        assert reason == review_agent.DIAG_NO_SESSION_LOG
+
+    def test_no_result_record_unchanged(self, tmp_path):
+        log_path = _write_log(tmp_path, _tool_use("Read", file_path="/tmp/a"))
+        reason = review_agent._diagnose_missing_output(log_path)
+        assert reason == review_agent.DIAG_NO_RESULT_RECORD
+
+
+class TestSinglePassRead:
+    def test_diagnosis_reads_the_log_once(self, tmp_path, monkeypatch):
+        log_path = _write_log(
+            tmp_path, _tool_use("Read", file_path="/tmp/a"), _result(),
+        )
+        reads = []
+        real = review_agent._read_jsonl
+        monkeypatch.setattr(
+            review_agent, "_read_jsonl",
+            lambda p: (reads.append(p), real(p))[1],
+        )
+        review_agent._diagnose_missing_output(log_path)
+        assert reads == [log_path]
+
+
+class TestMaxTurnsReasonMatching:
+    """The reason string carries a turn count and may carry a suffix."""
+
+    def _reason(self, tmp_path, *extra_lines):
+        log_path = _write_log(tmp_path, *extra_lines, _result())
+        return review_agent._diagnose_missing_output(log_path)
+
+    def test_plain_max_turns_is_retryable(self, tmp_path):
+        reason = self._reason(tmp_path)
+        assert review_pipeline._MAX_TURNS_REASON in reason
+        assert review_pipeline._is_retryable(reason)
+
+    def test_suffixed_max_turns_is_retryable(self, tmp_path):
+        reason = self._reason(tmp_path, _tool_use("Read", file_path="/tmp/a"))
+        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
+        assert review_pipeline._is_retryable(reason)
+        assert review_pipeline._MAX_TURNS_REASON in reason

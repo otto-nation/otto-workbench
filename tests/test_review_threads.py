@@ -1734,3 +1734,94 @@ class TestCommitLookupsUseDefaultBranch:
 
     def test_branch_commit_log_without_worktree(self, rt):
         assert rt._branch_commit_log(None) == ""
+
+
+# ── shared thrash guard wiring ──────────────────────────────────────────────
+
+
+def _write_thrash_log(path: Path) -> None:
+    """A clean completion whose only tool call never wrote anything."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join([
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {}},
+        ]}}),
+        json.dumps({"type": "result", "subtype": "success", "num_turns": 3}),
+    ]) + "\n")
+
+
+class TestFixPassThrashGuard:
+    """A fix agent that checked nothing off was thrashing, not working."""
+
+    def test_session_log_lives_under_the_worktree(self, rt, tmp_path):
+        assert rt._fix_session_log(tmp_path) == str(
+            tmp_path / "ignore" / "pr-comments" / "fix-session.jsonl")
+
+    def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
+        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
+            rt._invoke_fix_agent("PROMPT", tmp_path)
+        assert inv.call_args.kwargs["session_log"] == rt._fix_session_log(tmp_path)
+
+    def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
+        _write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [ ] fix the thing\n")
+        prompts = []
+
+        with patch.object(rt, "_invoke_fix_agent",
+                          side_effect=lambda p, *a, **k: prompts.append(p) or 0):
+            reason = rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
+
+        assert prompts == ["PROMPT", rt.agent_retry.FIX_RETRY_HINT + "PROMPT"]
+        assert rt.agent_retry.DIAG_NO_WRITE_TOOL_CALL in reason
+
+    def test_a_single_checked_box_counts_as_work(self, rt, tmp_path):
+        """Partial progress belongs to `_retry_fix_pass`, not to the guard."""
+        _write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
+
+        with patch.object(rt, "_invoke_fix_agent", return_value=0) as inv:
+            reason = rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
+
+        assert reason == ""
+        assert inv.call_count == 1
+
+    def test_missing_tracking_file_counts_as_no_work(self, rt, tmp_path):
+        assert rt._count_checked(tmp_path / "absent.md") == 0
+        assert rt._count_unchecked(tmp_path / "absent.md") == 0
+
+
+class TestTriageThrashGuard:
+    """Triage has no session log — an unparseable answer is the only signal."""
+
+    def test_parses_as_json_accepts_a_fenced_object(self, rt):
+        assert rt._parses_as_json("```json\n{\"threads\": []}\n```")
+
+    def test_parses_as_json_rejects_prose(self, rt):
+        assert not rt._parses_as_json("I was unable to complete the triage.")
+
+    def test_unparseable_triage_output_earns_one_retry(self, rt, tmp_path):
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        prompts = []
+
+        def prompt(text):
+            prompts.append(text)
+            return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
+
+        with (
+            patch.object(rt.ai_backend, "prompt", side_effect=prompt),
+            patch.object(rt, "_branch_commit_log", return_value=""),
+        ):
+            result, rc = rt._run_triage(report, tmp_path, {})
+
+        assert rc == 0
+        assert result is not None
+        assert len(prompts) == 2
+        assert prompts[1].startswith(rt.agent_retry.BLANK_RESPONSE_HINT)

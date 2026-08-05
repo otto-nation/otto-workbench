@@ -1023,3 +1023,52 @@ def test_run_ci_wait_times_out(capsys):
 
     stderr = capsys.readouterr().err
     assert "timeout" in stderr.lower()
+
+
+# ── shared thrash guard ───────────────────────────────────────────────────
+
+
+def _thrash_session_log(path):
+    """A clean completion whose only tool call never wrote anything."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join([
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {}},
+        ]}}),
+        json.dumps({"type": "result", "subtype": "success", "num_turns": 3}),
+    ]) + "\n")
+
+
+def _run_fix_with_tracking(tmp_path, tracking_body, invoke_fix):
+    """Drive _run_fix far enough to exercise the guard around the fix agent."""
+    tracking_dir = tmp_path / "ignore" / "ci-failures"
+    tracking_file = tracking_dir / "fix-tracking.md"
+    tracking_dir.mkdir(parents=True)
+    tracking_file.write_text(tracking_body)
+    _thrash_session_log(tracking_dir / "fix-session.jsonl")
+
+    ctx = MagicMock()
+    ctx.worktree_root = tmp_path
+    ctx.repo = "owner/repo"
+    ctx.branch = "feat/test"
+    report = {"failures": [{"job": "build"}], "run_number": 1}
+
+    with patch("ci_check._build_ci_tracking_file", return_value=1), \
+         patch("ci_check._rebase_if_behind", return_value=False), \
+         patch("ci_check._render_ci_fix_template", return_value="PROMPT"), \
+         patch("ci_check._commit_and_push", return_value=""), \
+         patch("ci_check.ai_backend.invoke_fix", side_effect=invoke_fix) as inv:
+        ci_check._run_fix(MagicMock(), report, ctx)
+    return inv
+
+
+def test_ci_fix_pass_that_checks_nothing_off_is_retried_with_the_hint(tmp_path):
+    inv = _run_fix_with_tracking(tmp_path, "- [ ] build\n", lambda *a, **k: 0)
+    prompts = [c.args[0] for c in inv.call_args_list]
+    assert prompts == ["PROMPT", ci_check.agent_retry.FIX_RETRY_HINT + "PROMPT"]
+
+
+def test_ci_fix_pass_with_a_checked_box_is_not_retried(tmp_path):
+    inv = _run_fix_with_tracking(tmp_path, "- [x] build\n", lambda *a, **k: 0)
+    assert inv.call_count == 1
+    assert inv.call_args.args[0] == "PROMPT"

@@ -26,7 +26,7 @@ import shutil
 import subprocess
 import sys
 import traceback
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
+import agent_retry
 import ai_backend
 import log
 import pr_context
@@ -624,6 +625,24 @@ def _has_conflict_markers(text: str) -> str | None:
     return None
 
 
+def _prompt_until_parsable(
+    prompt: str, *, label: str, usable: Callable[[str], bool],
+) -> tuple[str, int]:
+    """Send a prompt, retrying once if the answer cannot be parsed.
+
+    These calls have no session log, so an unparseable answer is the only
+    evidence that the agent burned a turn without doing the job — the same
+    thrash the review pipeline catches from its logs.
+    """
+    return agent_retry.retry_blank_response(
+        ai_backend.prompt, prompt, label=label, usable=usable,
+    )
+
+
+def _resolution_parses(stdout: str) -> bool:
+    return _parse_resolved_content(stdout)[0] is not None
+
+
 def _parse_resolved_content(stdout: str) -> tuple[str | None, str]:
     """Extract resolved file content from AI output.
 
@@ -833,7 +852,9 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
         f"--- FILE CONTENT ---\n{content}"
     )
 
-    stdout, rc = ai_backend.prompt(prompt)
+    stdout, rc = _prompt_until_parsable(
+        prompt, label=f"pre-push fix for {filepath}", usable=_resolution_parses,
+    )
     if rc != 0:
         log.error(f"AI fix failed for {filepath} (exit {rc})")
         return False
@@ -930,7 +951,10 @@ def _resolve_full_file(
         filepath, content, sha, subject,
         ours_content=ours_content, commit_diff=commit_diff,
     )
-    stdout, rc = ai_backend.prompt(prompt)
+    stdout, rc = _prompt_until_parsable(
+        prompt, label=f"conflict resolution for {filepath}",
+        usable=_resolution_parses,
+    )
     if rc != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
         log.error(f"ai prompt failed for {filepath} (exit {rc})")
@@ -969,7 +993,10 @@ def _resolve_chunked(
         "chunked_resolve", f"using chunked resolution for {filepath}",
         data={"blocks": len(blocks), "total_lines": content.count("\n") + 1},
     )
-    stdout, rc = ai_backend.prompt(prompt)
+    stdout, rc = _prompt_until_parsable(
+        prompt, label=f"chunked resolution for {filepath}",
+        usable=lambda s: _parse_chunked_resolutions(s, len(blocks))[0] is not None,
+    )
     if rc != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
         log.error(f"ai prompt failed for {filepath} (exit {rc})")
@@ -1020,7 +1047,10 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> tuple[str, ...] | None:
         "if no regeneration is needed.\n"
     )
 
-    stdout, rc = ai_backend.prompt(prompt_text)
+    stdout, rc = _prompt_until_parsable(
+        prompt_text, label=f"lockfile regeneration command for {filepath}",
+        usable=lambda s: bool(s.strip()),
+    )
     if rc != 0 or not stdout.strip():
         return None
 
@@ -1386,7 +1416,10 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
             f"{_RESOLVE_BEGIN}\n(your resolved content here)\n{_RESOLVE_END}\n\n"
             f"--- FILE CONTENT WITH CONFLICT MARKERS ---\n{content}"
         )
-        stdout, rc = ai_backend.prompt(prompt)
+        stdout, rc = _prompt_until_parsable(
+            prompt, label=f"stash conflict resolution for {filepath}",
+            usable=_resolution_parses,
+        )
         if rc != 0:
             log.error(f"AI resolution failed for stash conflict: {filepath}")
             continue

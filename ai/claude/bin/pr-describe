@@ -179,8 +179,7 @@ def run_describe(
         return 1
     title, body = fetched
 
-    default_branch = _git(wt_path, "symbolic-ref", "refs/remotes/origin/HEAD")
-    base = default_branch.rsplit("/", 1)[-1] or "main"
+    base = pr_context.default_branch(wt_path)
     commits = _git(wt_path, "log", "--oneline", f"origin/{base}..HEAD")
     changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
 

@@ -22,8 +22,7 @@ from pathlib import Path
 import log
 from review_agent import (
     DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG, DIAG_NO_WRITE_TOOL_CALL,
-    _diagnose_missing_output, _try_recover_output,
-    is_transient_error,
+    diagnose_missing_output, is_transient_error, try_recover_output,
 )
 from review_common import preserve_log, restore_preserved
 
@@ -76,7 +75,7 @@ def is_retryable(reason: str) -> bool:
         return True
     # A run that ended on its own terms without ever calling a write tool
     # produced nothing and gave no reason it could not have — the retry hint
-    # names the mechanism. `_diagnose_missing_output` withholds this label from
+    # names the mechanism. `diagnose_missing_output` withholds this label from
     # crashes, so it never makes a permanent error retryable.
     if DIAG_NO_WRITE_TOOL_CALL in reason:
         return True
@@ -139,7 +138,7 @@ def retry_unproductive(
     if produced():
         return ""
 
-    reason = _diagnose_missing_output(log_path)
+    reason = diagnose_missing_output(log_path)
     if not is_retryable(reason):
         return reason
 
@@ -154,7 +153,7 @@ def retry_unproductive(
         recover()
     # Diagnose before restoring: in a merged log the first attempt's tool calls
     # would mask what the retry actually did.
-    retry_reason = "" if produced() else _diagnose_missing_output(log_path)
+    retry_reason = "" if produced() else diagnose_missing_output(log_path)
     restore_preserved(log_path, prior)
     return retry_reason
 
@@ -195,7 +194,7 @@ def retry_missing_output(
         invoke, prompt, log_path,
         label=label, max_turns=max_turns,
         produced=lambda: has_output(output_path),
-        recover=lambda: _try_recover_output(log_path, output_path),
+        recover=lambda: try_recover_output(log_path, output_path),
     )
 
 

@@ -67,10 +67,9 @@ from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
-    _diagnose_missing_output, _is_model_error, _parse_session_cost,
-    _resolve_model, _resolve_provider, _resolve_thinking_level,
-    _try_recover_output,
-    invoke_agent,
+    _is_model_error, _parse_session_cost, _resolve_model, _resolve_provider,
+    _resolve_thinking_level, diagnose_missing_output, invoke_agent,
+    try_recover_output,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -472,9 +471,9 @@ def _review_group(
 
     failed = None
     if not _has_output(group_output):
-        _try_recover_output(group_log, group_output)
+        try_recover_output(group_log, group_output)
     if not _has_output(group_output):
-        reason = _diagnose_missing_output(group_log)
+        reason = diagnose_missing_output(group_log)
         log.warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = (grp.name, reason)
         if pipeline_state is not None:
@@ -886,7 +885,7 @@ def run_fix_pass(job: ReviewJob):
     result = _diff_findings(before_findings, after_findings)
 
     if not _fix_pass_made_progress(result) and result.skipped_count > 0:
-        reason = _diagnose_missing_output(fix_log)
+        reason = diagnose_missing_output(fix_log)
         log.warn(f"Fix pass made no progress ({reason})")
         if _is_retryable(reason):
             retry_turns = _fix_retry_budget(max_turns)

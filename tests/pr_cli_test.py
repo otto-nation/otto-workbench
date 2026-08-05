@@ -771,9 +771,15 @@ def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
 
 
 def _calls_containing(mock_run, script: str) -> list[list[str]]:
+    """Calls that invoked this script.
+
+    Matched on the basename of argv[0], not a suffix scan across every
+    argument: a --repo-dir whose path happened to end in a script name would
+    otherwise pass for an invocation of that script.
+    """
     return [
         call[0][0] for call in mock_run.call_args_list
-        if any(str(a).endswith(script) for a in call[0][0])
+        if Path(call[0][0][0]).name == script
     ]
 
 
@@ -786,7 +792,7 @@ def _first_call_containing(mock_run, script: str) -> list[str]:
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_describes_last(mock_load, mock_run):
-    """The description has to describe the branch as the fix passes leave it."""
+    """The description must reflect the branch state after all fix passes complete."""
     import pr_state
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     pr_state.update_review(state, pr_state.ReviewSummary(

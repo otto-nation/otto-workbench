@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from conftest import write_thrash_log
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -1028,24 +1030,13 @@ def test_run_ci_wait_times_out(capsys):
 # ── shared thrash guard ───────────────────────────────────────────────────
 
 
-def _thrash_session_log(path):
-    """A clean completion whose only tool call never wrote anything."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join([
-        json.dumps({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Read", "input": {}},
-        ]}}),
-        json.dumps({"type": "result", "subtype": "success", "num_turns": 3}),
-    ]) + "\n")
-
-
 def _run_fix_with_tracking(tmp_path, tracking_body, invoke_fix):
     """Drive _run_fix far enough to exercise the guard around the fix agent."""
     tracking_dir = tmp_path / "ignore" / "ci-failures"
     tracking_file = tracking_dir / "fix-tracking.md"
     tracking_dir.mkdir(parents=True)
     tracking_file.write_text(tracking_body)
-    _thrash_session_log(tracking_dir / "fix-session.jsonl")
+    write_thrash_log(tracking_dir / "fix-session.jsonl")
 
     ctx = MagicMock()
     ctx.worktree_root = tmp_path

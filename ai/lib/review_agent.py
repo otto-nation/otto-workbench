@@ -105,7 +105,12 @@ def _tool_names_used(records: list[dict]) -> set[str]:
     }
 
 
-def _diagnose_missing_output(log_path: str) -> str:
+def diagnose_missing_output(log_path: str) -> str:
+    """Why an agent run left no output, read from its session log.
+
+    Public because `agent_retry` decides retryability from the returned reason;
+    the DIAG_* constants above are the labels it matches on.
+    """
     if not Path(log_path).exists():
         return DIAG_NO_SESSION_LOG
     records = _read_jsonl(log_path)
@@ -173,7 +178,12 @@ def _collect_denied_contents(log_path: str) -> list[str]:
     return [_extract_denied_content(d) for d in denials]
 
 
-def _try_recover_output(log_path: str, output_path: str) -> bool:
+def try_recover_output(log_path: str, output_path: str) -> bool:
+    """Salvage a document the agent wrote but was denied permission to save.
+
+    Public because `agent_retry` runs this before writing a run off as
+    unproductive — the content is in the denial record either way.
+    """
     if not Path(log_path).exists():
         return False
     for content in _collect_denied_contents(log_path):

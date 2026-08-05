@@ -521,7 +521,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline._diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retries_on_zero_progress_max_turns(
@@ -574,7 +574,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline._diagnose_missing_output", return_value="agent error: overloaded")
+    @patch("review_pipeline.diagnose_missing_output", return_value="agent error: overloaded")
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_no_retry_on_non_retryable_reason(
@@ -586,7 +586,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline._diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retry_uses_increased_turns(

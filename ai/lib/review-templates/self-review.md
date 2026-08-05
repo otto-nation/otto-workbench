@@ -6,7 +6,7 @@ ${preflight_data}
 ${delta_section}
 ${env_section}
 
-## Output format
+## Review format
 
 Write the review as an actionable checklist. Use this exact structure:
 
@@ -52,9 +52,8 @@ Rules:
 - Do NOT include a Verdict section
 - Omit empty severity sections entirely (no "None" or "N/A")
 
-You MUST use the Write tool to write the review to: ${review_file}
-Do NOT print the review to stdout — it must be saved as a file using the Write tool.
-The output file and its directory already exist — do NOT create directories or empty files.
+## Output
+${output_block}
 
 ## Turn budget
 You have ${max_turns} turns (each turn can include multiple parallel tool calls).${omitted_guidance} Write the review file FIRST based on the diff and file contents — do not investigate before writing. Use remaining turns to verify Must-fix and Should-fix claims against the source and update the file via Edit. Batch independent lookups (e.g. multiple grep/find/read calls) into a single turn.

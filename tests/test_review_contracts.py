@@ -29,6 +29,10 @@ if str(LIB_DIR) not in sys.path:
 
 import review_common  # noqa: E402
 import review_findings  # noqa: E402
+import review_prompt  # noqa: E402
+from review_preflight import (  # noqa: E402
+    MAX_PROMPT_BYTES, PRContext, PRMetadata, PreflightData, ReviewJob,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -294,135 +298,229 @@ class TestFindingIdRegex:
             )
 
 
-# ── 4. TestTemplateVariableCoverage ──────────────────────────────────────────
+# ── 4. Template rendering contracts ──────────────────────────────────────────
+#
+# These render every template the way production does — through build_prompt or
+# through the script's own render function — rather than scraping handler source
+# for string literals. A placeholder that never gets a value survives
+# safe_substitute as a literal `${var}`, so rendering is the only way to see it.
 
 
-def _collect_string_literals_in_function(func_source: str) -> set[str]:
-    """Extract all string literal keys that appear in the function's source."""
-    # Match dict literal keys: "key": or 'key':
-    keys = set(re.findall(r'["\'](\w+)["\']\s*:', func_source))
-    # Also match bare string assignments like kwarg references
-    keys |= set(re.findall(r'["\'](\w+)["\']', func_source))
-    return keys
+def _make_review_job(**overrides) -> ReviewJob:
+    """A ReviewJob with every optional section populated."""
+    preflight = PreflightData(
+        diff=(
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1 +1 @@\n-old\n+new\n"
+        ),
+        commit_log="abc1234 feat: stuff",
+        file_contents={"a.py": "print(1)\n"},
+        file_permissions={"a.py": "100644"},
+        claude_md="# Project",
+        architecture_md="# Architecture",
+        omitted_files=["vendor/x.go"],
+        delta_diff="diff --git a/a.py b/a.py\n@@ -1 +1 @@\n-old\n+new\n",
+        delta_commit_log="abc1234 feat: stuff",
+        delta_files=["a.py"],
+        prior_head_sha="0000000",
+    )
+    pr = PRMetadata(
+        title="feat: thing", body="Body", head="user/feat/thing", base="main",
+        head_sha="abc1234", additions=10, deletions=5, changed_files=1,
+        files=[{"path": "a.py", "additions": 10, "deletions": 5}],
+    )
+    defaults = dict(
+        repo="owner/repo", pr_number="1", pr=pr,
+        ctx=PRContext(commits="abc1234 feat: stuff"),
+        wt_path="/tmp/wt", review_file="/tmp/reviews/review.md",
+        session_log="/tmp/reviews/session.jsonl", reviews_dir="/tmp/reviews",
+        issue_link="#42", issue_context="Issue body",
+        generator_version="test", preflight=preflight,
+        viewer_role="OWNER",
+    )
+    defaults.update(overrides)
+    return ReviewJob(**defaults)
 
 
-def _extract_name_pairs(dict_node: ast.Dict) -> dict[str, str]:
-    """Extract {key.id: val.id} from an ast.Dict where both key and val are ast.Name."""
-    pairs: dict[str, str] = {}
-    for key, val in zip(dict_node.keys, dict_node.values):
-        if isinstance(key, ast.Name) and isinstance(val, ast.Name):
-            pairs[key.id] = val.id
-    return pairs
+# Extra kwargs each handler-backed template needs, keyed by template filename.
+_BUILD_PROMPT_EXTRAS = {
+    review_common.TEMPLATE_SINGLE: {},
+    review_common.TEMPLATE_FIX: {},
+    review_common.TEMPLATE_SELF_REVIEW: {"branch_name": "user/feat/thing"},
+    review_common.TEMPLATE_HOLISTIC: {"holistic_output": "/tmp/reviews/holistic.md"},
+    review_common.TEMPLATE_SCOUT: {"scout_output": "/tmp/reviews/scout.md"},
+    review_common.TEMPLATE_DISPROVE: {
+        "disprove_output": "/tmp/reviews/disprove.md",
+        "review_content": "- [M1] something",
+    },
+    review_common.TEMPLATE_GROUP: {
+        "group_idx": 1, "group_count": 2, "group_name": "core",
+        "group_files_formatted": "- a.py",
+        "group_file_paths": ["a.py"],
+        "group_output": "/tmp/reviews/group-1.md",
+    },
+    review_common.TEMPLATE_SYNTHESIS: {
+        "group_count": 2, "merged_content": "## Must fix\n",
+    },
+    review_common.TEMPLATE_SELF_SYNTHESIS: {
+        "group_count": 2, "merged_content": "## Must fix\n",
+        "branch_name": "user/feat/thing",
+    },
+}
 
 
-def _parse_prompt_handlers_dict(tree: ast.Module) -> dict[str, str]:
-    """Extract {constant_name: func_name} from the _PROMPT_HANDLERS assignment."""
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(t, ast.Name) and t.id == "_PROMPT_HANDLERS"
-            for t in node.targets
-        ):
-            continue
-        if isinstance(node.value, ast.Dict):
-            return _extract_name_pairs(node.value)
-    return {}
+def _render_via_build_prompt(template_name: str, job: ReviewJob | None = None) -> str:
+    return review_prompt.build_prompt(
+        template_name, job or _make_review_job(), max_turns=15,
+        **_BUILD_PROMPT_EXTRAS[template_name],
+    )
 
 
-def _resolve_handler_map(handler_map: dict[str, str]) -> dict[str, str]:
-    """Resolve constant names to {template_filename: func_name}."""
-    constants = _collect_template_constants()
-    resolved: dict[str, str] = {}
-    for const_name, func_name in handler_map.items():
-        template_value = constants.get(const_name)
-        if template_value:
-            resolved[template_value] = func_name
-    return resolved
+def _render_fix_ci(cc) -> str:
+    return cc._render_ci_fix_template(
+        branch="user/feat/thing", repo="owner/repo",
+        failures_content="- [ ] test failed", tracking_file="/tmp/ci.md",
+        wt_path="/tmp/wt", max_turns=15,
+    )
 
 
-def _extract_handler_sources(
-    tree: ast.Module,
-    source_lines: list[str],
-    resolved_map: dict[str, str],
-) -> dict[str, str]:
-    """Extract source code of handler functions, keyed by template filename."""
-    func_to_templates: dict[str, list[str]] = {}
-    for tpl, fn in resolved_map.items():
-        func_to_templates.setdefault(fn, []).append(tpl)
-
-    handler_sources: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name not in func_to_templates:
-            continue
-        func_src = "\n".join(source_lines[node.lineno - 1 : node.end_lineno])
-        for tpl in func_to_templates[node.name]:
-            handler_sources[tpl] = func_src
-    return handler_sources
+def _render_fix_comments(rt) -> str:
+    return rt._render_fix_template(
+        branch="user/feat/thing", repo="owner/repo",
+        threads_content="- [ ] comment", tracking_file="/tmp/threads.md",
+        wt_path="/tmp/wt", max_turns=15,
+    )
 
 
-def _get_prompt_handler_sources() -> dict[str, str]:
-    """Map template name -> source code of its _prompt_* handler function."""
-    source = (LIB_DIR / "review_prompt.py").read_text()
-    tree = ast.parse(source)
-    source_lines = source.split("\n")
-
-    handler_map = _parse_prompt_handlers_dict(tree)
-    resolved_map = _resolve_handler_map(handler_map)
-    return _extract_handler_sources(tree, source_lines, resolved_map)
+def _unsubstituted(rendered: str) -> list[str]:
+    return sorted(set(re.findall(r"\$\{(\w+)\}", rendered)))
 
 
-def _get_common_kwargs_keys() -> set[str]:
-    """Extract the keys from the `common` dict built in build_prompt()."""
-    source = (LIB_DIR / "review_prompt.py").read_text()
-    tree = ast.parse(source)
+class TestTemplateRendering:
+    """Every template renders with all placeholders substituted."""
 
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name != "build_prompt":
-            continue
-        source_lines = source.split("\n")
-        func_src = "\n".join(source_lines[node.lineno - 1 : node.end_lineno])
-        return _collect_string_literals_in_function(func_src)
-    return set()
+    @pytest.mark.parametrize("template_name", sorted(_BUILD_PROMPT_EXTRAS))
+    def test_build_prompt_templates_fully_substituted(self, template_name):
+        rendered = _render_via_build_prompt(template_name)
+        left = _unsubstituted(rendered)
+        assert not left, (
+            f"{template_name} rendered with unsubstituted placeholders: "
+            + ", ".join(f"${{{v}}}" for v in left)
+        )
+
+    def test_fix_ci_template_fully_substituted(self, cc):
+        left = _unsubstituted(_render_fix_ci(cc))
+        assert not left, f"fix-ci.md left: {left}"
+
+    def test_fix_comments_template_fully_substituted(self, rt):
+        left = _unsubstituted(_render_fix_comments(rt))
+        assert not left, f"fix-comments.md left: {left}"
+
+    def test_every_template_is_covered(self):
+        """A new template must be added to this file's render coverage."""
+        covered = set(_BUILD_PROMPT_EXTRAS) | {
+            review_common.TEMPLATE_FIX_CI, review_common.TEMPLATE_FIX_COMMENTS,
+        }
+        uncovered = sorted(
+            name for name in _template_files() - covered
+            if _extract_template_vars(TEMPLATE_DIR / name)
+        )
+        assert not uncovered, (
+            "Templates with ${var} placeholders but no render coverage: "
+            + ", ".join(uncovered)
+        )
 
 
-class TestTemplateVariableCoverage:
-    """Template ${var} placeholders have corresponding kwargs in prompt handlers."""
+class TestOutputBlockContract:
+    """Agents run under `claude --bare`, which has no Write tool."""
 
-    @pytest.fixture(scope="class")
-    def handler_sources(self):
-        return _get_prompt_handler_sources()
+    # Phrasings that would tell an agent to use the unavailable Write tool.
+    _WRITE_MANDATE = re.compile(
+        r"(use|using|with|be)\s+the\s+Write\s+tool|Write\s+tool\s+to\s+(create|write|save)",
+        re.IGNORECASE,
+    )
 
-    @pytest.fixture(scope="class")
-    def common_keys(self):
-        return _get_common_kwargs_keys()
+    @pytest.mark.parametrize("template_name", sorted(_BUILD_PROMPT_EXTRAS))
+    def test_no_write_tool_mandate(self, template_name):
+        rendered = _render_via_build_prompt(template_name)
+        match = self._WRITE_MANDATE.search(rendered)
+        assert not match, (
+            f"{template_name} tells the agent to use the Write tool "
+            f"({match.group(0)!r}) — it does not exist under --bare"
+        )
 
-    @pytest.mark.parametrize("template_name", sorted(_template_files()))
-    def test_template_vars_referenced_in_handler(
-        self, template_name, handler_sources, common_keys,
-    ):
-        template_path = TEMPLATE_DIR / template_name
-        template_vars = _extract_template_vars(template_path)
-        if not template_vars:
-            pytest.skip(f"No ${{var}} placeholders in {template_name}")
+    @pytest.mark.parametrize(
+        "template_name, output_key",
+        [
+            (review_common.TEMPLATE_HOLISTIC, "holistic_output"),
+            (review_common.TEMPLATE_SCOUT, "scout_output"),
+            (review_common.TEMPLATE_DISPROVE, "disprove_output"),
+            (review_common.TEMPLATE_GROUP, "group_output"),
+        ],
+    )
+    def test_output_block_names_edit_and_path(self, template_name, output_key):
+        rendered = _render_via_build_prompt(template_name)
+        assert _BUILD_PROMPT_EXTRAS[template_name][output_key] in rendered
+        assert "Edit tool with an empty `old_string`" in rendered
 
-        handler_src = handler_sources.get(template_name)
-        if handler_src is None:
-            pytest.skip(f"No _prompt_* handler found for {template_name}")
+    @pytest.mark.parametrize(
+        "template_name",
+        [review_common.TEMPLATE_SYNTHESIS, review_common.TEMPLATE_SELF_SYNTHESIS,
+         review_common.TEMPLATE_SINGLE, review_common.TEMPLATE_SELF_REVIEW],
+    )
+    def test_review_file_templates_write_to_review_file(self, template_name):
+        rendered = _render_via_build_prompt(template_name)
+        assert "/tmp/reviews/review.md" in rendered
+        assert "Edit tool with an empty `old_string`" in rendered
 
-        handler_strings = _collect_string_literals_in_function(handler_src)
-        all_available = handler_strings | common_keys
+    @pytest.mark.parametrize("render", ["ci", "comments"])
+    def test_fix_templates_share_the_worktree_block(self, render, cc, rt):
+        rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
+        assert review_common.build_worktree_block("/tmp/wt") in rendered
 
-        missing = sorted(template_vars - all_available)
-        # safe_substitute won't error on missing vars, but they indicate drift
-        assert not missing, (
-            f"Template {template_name} uses ${{var}} placeholders not found "
-            f"as string literals in the handler or common dict:\n"
-            + "\n".join(f"  - ${{{v}}}" for v in missing)
+
+class TestPromptBudgetAccounting:
+    """Sections registered on the builder count against the diff budget.
+
+    The group handler once computed its budget before registering
+    `project_context` and never counted `group_files_formatted` at all, so those
+    bytes landed on top of a diff already sized to fill the budget.
+    """
+
+    # Enough per-file diffs to overflow the budget, so truncation is granular
+    # and the prompt sits right at the limit rather than dropping one big blob.
+    _PATHS = [f"f{i:03d}.py" for i in range(60)]
+
+    def _group_prompt(self, files_formatted: str) -> str:
+        job = _make_review_job()
+        job.pr.files = [
+            {"path": p, "additions": 1, "deletions": 0} for p in self._PATHS
+        ]
+        job.preflight.diff = "".join(
+            f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1 +1 @@\n"
+            + "+xxxxxxxxxxxxxxxxxxxx\n" * 500
+            for p in self._PATHS
+        )
+        job.preflight.file_contents = {}
+        extra = dict(_BUILD_PROMPT_EXTRAS[review_common.TEMPLATE_GROUP])
+        extra["group_file_paths"] = list(self._PATHS)
+        extra["group_files_formatted"] = files_formatted
+        return review_prompt.build_prompt(
+            review_common.TEMPLATE_GROUP, job, max_turns=15, **extra,
+        )
+
+    def test_large_section_shrinks_the_diff_instead_of_the_prompt_budget(self):
+        filler = "- filler.py\n" * 2000
+        small = self._group_prompt("- a.py")
+        large = self._group_prompt("- a.py\n" + filler)
+
+        assert len(small.encode()) <= MAX_PROMPT_BYTES
+        assert len(large.encode()) <= MAX_PROMPT_BYTES
+        # The filler must come out of the diff's share, not on top of it.
+        growth = len(large.encode()) - len(small.encode())
+        assert growth < len(filler.encode()) // 2, (
+            f"adding {len(filler)}B to group_files_formatted grew the prompt by "
+            f"{growth}B — the section is not counted against the diff budget"
         )
 
 

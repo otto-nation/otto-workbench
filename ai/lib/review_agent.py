@@ -24,6 +24,12 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
 DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
+DIAG_NO_WRITE_TOOL_CALL = "never called Edit or Write"
+
+# Tools that can put content into the output file. An agent that burned its
+# turns without calling one of these was thrashing, not working — say so
+# instead of reporting a bare turn count.
+_WRITE_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit", "Write"})
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -72,6 +78,21 @@ def _diagnose_result_type(result: dict) -> str:
     return f"agent completed (subtype={subtype}) but did not write output"
 
 
+def _tool_names_used(log_path: str) -> set[str]:
+    """Names of every tool the agent invoked, per the session log.
+
+    Only the Claude backend writes `assistant` records with `tool_use` blocks;
+    for other backends this is empty and callers must not read that as "no
+    tools were used".
+    """
+    return {
+        block.get("name", "")
+        for record in _parse_jsonl_records(log_path, "assistant")
+        for block in record.get("message", {}).get("content", [])
+        if block.get("type") == "tool_use"
+    }
+
+
 def _diagnose_missing_output(log_path: str) -> str:
     if not Path(log_path).exists():
         return DIAG_NO_SESSION_LOG
@@ -80,7 +101,11 @@ def _diagnose_missing_output(log_path: str) -> str:
         if _is_quota_error(log_path):
             return DIAG_QUOTA_EXHAUSTED
         return DIAG_NO_RESULT_RECORD
-    return _diagnose_result_type(results[-1])
+    reason = _diagnose_result_type(results[-1])
+    tools_used = _tool_names_used(log_path)
+    if tools_used and not (tools_used & _WRITE_TOOLS):
+        reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
+    return reason
 
 
 def is_transient_error(reason: str) -> bool:

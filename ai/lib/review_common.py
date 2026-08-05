@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
@@ -326,18 +326,48 @@ class SessionUsage:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     duration_ms: int = 0
+    cost_by_model: dict[str, float] = field(default_factory=dict)
 
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
 
+    @property
+    def billed_input(self) -> int:
+        """Input tokens the provider bills for, at their respective rates."""
+        return self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
 
-def _extract_token_sources(rec: dict) -> list[dict]:
-    """Return per-model usage dicts, preferring modelUsage over usage."""
+
+# The CLI emits two spellings for the same fields: modelUsage entries are camelCase,
+# the top-level usage block is snake_case. Accept both at the boundary rather than
+# picking one — backends differ, and a mismatch silently reports zero tokens.
+_USAGE_KEYS = {
+    "input_tokens": ("input_tokens", "inputTokens"),
+    "output_tokens": ("output_tokens", "outputTokens"),
+    "cache_read_tokens": ("cache_read_input_tokens", "cacheReadInputTokens"),
+    "cache_write_tokens": ("cache_creation_input_tokens", "cacheCreationInputTokens"),
+}
+
+
+def normalize_usage(src: dict) -> dict[str, int]:
+    """Map a usage dict in either CLI spelling onto canonical snake_case keys."""
+    out = {}
+    for canonical, aliases in _USAGE_KEYS.items():
+        value = next((src[a] for a in aliases if src.get(a) is not None), 0)
+        out[canonical] = value or 0
+    return out
+
+
+def _extract_token_sources(rec: dict) -> list[tuple[str, dict]]:
+    """Return (model, usage) pairs, preferring modelUsage over usage.
+
+    The top-level usage block reflects only the last model that ran, so modelUsage
+    is the only accurate source when a session spans several models.
+    """
     model_usage = rec.get("modelUsage")
     if model_usage:
-        return list(model_usage.values())
-    return [rec.get("usage", {})]
+        return list(model_usage.items())
+    return [("", rec.get("usage", {}))]
 
 
 def parse_session_log(path: str) -> SessionUsage:
@@ -348,6 +378,7 @@ def parse_session_log(path: str) -> SessionUsage:
     cache_read = 0
     cache_write = 0
     duration_ms = 0
+    cost_by_model: dict[str, float] = {}
     try:
         lines = Path(path).read_text().splitlines()
     except OSError:
@@ -362,11 +393,14 @@ def parse_session_log(path: str) -> SessionUsage:
         if rec.get("type") != "result":
             continue
         cost += rec.get("total_cost_usd", 0) or 0
-        for src in _extract_token_sources(rec):
-            input_tokens += src.get("input_tokens", 0) or 0
-            output_tokens += src.get("output_tokens", 0) or 0
-            cache_read += src.get("cache_read_input_tokens", 0) or 0
-            cache_write += src.get("cache_creation_input_tokens", 0) or 0
+        for model, src in _extract_token_sources(rec):
+            tokens = normalize_usage(src)
+            input_tokens += tokens["input_tokens"]
+            output_tokens += tokens["output_tokens"]
+            cache_read += tokens["cache_read_tokens"]
+            cache_write += tokens["cache_write_tokens"]
+            if model:
+                cost_by_model[model] = cost_by_model.get(model, 0.0) + (src.get("costUSD", 0) or 0)
         duration_ms += rec.get("duration_ms", 0) or 0
     return SessionUsage(
         cost=cost,
@@ -375,6 +409,7 @@ def parse_session_log(path: str) -> SessionUsage:
         cache_read_tokens=cache_read,
         cache_write_tokens=cache_write,
         duration_ms=duration_ms,
+        cost_by_model=cost_by_model,
     )
 
 

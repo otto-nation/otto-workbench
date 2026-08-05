@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
+import ai_usage
 from review_common import AgentKind
 
 ENV_AI_BACKEND = "AI_BACKEND"
@@ -31,6 +34,34 @@ def _backend() -> Backend:
         return Backend(os.environ.get(ENV_AI_BACKEND, Backend.CLAUDE))
     except ValueError:
         return Backend.CLAUDE
+
+
+def _script_name() -> str:
+    return Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "unknown"
+
+
+def _record(
+    *, entry_point: str, usage: ai_usage.SessionUsage | None, exit_code: int,
+    model: str | None, task: str | None, repo: str | None, pr: str | None,
+) -> None:
+    """Append one ledger record. A missing usage source records nothing —
+    an absent measurement is more honest than a zeroed one."""
+    if usage is None:
+        return
+    try:
+        ai_usage.record(
+            script=_script_name(), entry_point=entry_point, backend=_backend().value,
+            model=model, usage=usage, exit_code=exit_code,
+            task=task, repo=repo, pr=pr,
+        )
+    except Exception:  # noqa: BLE001 - telemetry must never break the measured call
+        pass
+
+
+def _usage_from_log(session_log: str) -> ai_usage.SessionUsage | None:
+    if not session_log or not Path(session_log).is_file():
+        return None
+    return ai_usage.parse_session_log(session_log)
 
 
 def _get_module() -> types.ModuleType:
@@ -62,6 +93,9 @@ class AgentInvocation:
     ``provider`` is honoured by the Pi backend and ignored by Claude Code,
     which has no --provider flag; ``thinking`` is likewise ignored there.
     Both stay on the object so callers do not branch on the backend.
+
+    ``task``, ``repo``, and ``pr`` are not passed to the backend at all: they
+    only label the usage ledger record for this call.
     """
 
     prompt: str
@@ -77,16 +111,31 @@ class AgentInvocation:
     thinking: str | None = None
     provider: str | None = None
     label: str = ""
+    task: str | None = None
+    repo: str | None = None
+    pr: str | None = None
+
+
+def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int) -> None:
+    _record(
+        entry_point=entry_point, usage=_usage_from_log(inv.session_log),
+        exit_code=exit_code, model=inv.model or None,
+        task=inv.task, repo=inv.repo, pr=inv.pr,
+    )
 
 
 def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with tool use and JSONL streaming. Returns exit code."""
-    return _get_module().invoke_agent(inv)
+    code = _get_module().invoke_agent(inv)
+    _record_invocation(inv, entry_point="agent", exit_code=code)
+    return code
 
 
 def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed. Returns exit code."""
-    return _get_module().invoke_fix(inv)
+    code = _get_module().invoke_fix(inv)
+    _record_invocation(inv, entry_point="fix", exit_code=code)
+    return code
 
 
 def is_available() -> bool:

@@ -211,9 +211,8 @@ print(type(cmd).__name__, "--thinking" not in cmd)
 @test "parse_pi_cost: extracts cost from message_end" {
   result=$(_py '
 from ai_backend_events import parse_pi_cost
-import json
-line = json.dumps({"type": "message_end", "message": {"usage": {"cost": {"input": 0.01, "output": 0.05, "total": 0.06}}}})
-print(f"{parse_pi_cost(line):.2f}")
+event = {"type": "message_end", "message": {"usage": {"cost": {"input": 0.01, "output": 0.05, "total": 0.06}}}}
+print(f"{parse_pi_cost(event):.2f}")
 ')
   [ "$result" = "0.06" ]
 }
@@ -221,9 +220,7 @@ print(f"{parse_pi_cost(line):.2f}")
 @test "parse_pi_cost: returns None for non-message_end" {
   result=$(_py '
 from ai_backend_events import parse_pi_cost
-import json
-line = json.dumps({"type": "turn_end"})
-print(parse_pi_cost(line))
+print(parse_pi_cost({"type": "turn_end"}))
 ')
   [ "$result" = "None" ]
 }
@@ -231,17 +228,16 @@ print(parse_pi_cost(line))
 @test "parse_pi_cost: returns None for missing cost" {
   result=$(_py '
 from ai_backend_events import parse_pi_cost
-import json
-line = json.dumps({"type": "message_end", "message": {}})
-print(parse_pi_cost(line))
+print(parse_pi_cost({"type": "message_end", "message": {}}))
 ')
   [ "$result" = "None" ]
 }
 
-@test "parse_pi_cost: returns None for invalid JSON" {
+@test "parse_pi_cost: returns None for an unparseable line" {
   result=$(_py '
 from ai_backend_events import parse_pi_cost
-print(parse_pi_cost("not json"))
+from ai_backend_pi import _parse_event_type
+print(parse_pi_cost(_parse_event_type("not json")[1]))
 ')
   [ "$result" = "None" ]
 }

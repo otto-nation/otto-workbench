@@ -618,7 +618,7 @@ class PromptBuilder:
         unknown = sorted(set(keys) - COMMON_SECTION_NAMES)
         if unknown:
             raise KeyError(
-                f"not CommonSections fields: {', '.join(unknown)} — "
+                f"not valid CommonSections fields: {', '.join(unknown)} — "
                 f"valid names are {', '.join(sorted(COMMON_SECTION_NAMES))}"
             )
         for key in keys:
@@ -808,13 +808,19 @@ def _prompt_self_review(job, common, extra):
     return b, ""
 
 
-def _prompt_self_synthesis(job, common, extra):
+def _synthesis_prompt(job, common, extra, *, shared: tuple[str, ...], ident: dict):
+    """Shared body of the PR and self-review synthesis prompts.
+
+    The two differ only in how the review is identified — PR number and title
+    vs branch name — and whether prior reviews are in scope.
+    """
     b = PromptBuilder(common)
     b.shared(
         "pr_header", "state_context", "delta_section", "reply_threads",
-        "today", "generator_version", "max_turns",
+        "today", "generator_version", "max_turns", *shared,
     )
-    b.set("branch_name", extra.get("branch_name", job.pr.head))
+    for key, value in ident.items():
+        b.set(key, value)
     b.set("repo", job.repo)
     b.set("pr_head_sha", job.pr.head_sha)
     b.set("wt_path", job.wt_path)
@@ -830,6 +836,13 @@ def _prompt_self_synthesis(job, common, extra):
         job, skip_file_contents=True, max_diff_bytes=diff_budget,
     ))
     return b, ""
+
+
+def _prompt_self_synthesis(job, common, extra):
+    return _synthesis_prompt(
+        job, common, extra, shared=(),
+        ident={"branch_name": extra.get("branch_name", job.pr.head)},
+    )
 
 
 def _prompt_single(job, common, extra):
@@ -855,7 +868,12 @@ def _prompt_single(job, common, extra):
     return b, ""
 
 
-def _prompt_holistic(job, common, extra):
+def _survey_prompt(job, common, extra, output_key: str):
+    """Shared body of the holistic and scout prompts.
+
+    Both survey the whole PR from identical inputs; only the output file
+    differs.
+    """
     b = PromptBuilder(common)
     b.shared(
         "pr_header", "state_context", "delta_section", "reviews_section",
@@ -864,11 +882,15 @@ def _prompt_holistic(job, common, extra):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("all_files_formatted", job.pr.all_files_formatted)
-    b.output(extra["holistic_output"])
+    b.output(extra[output_key])
     b.set("preflight_data", _build_preflight_section(
         job, max_diff_bytes=b.diff_budget(job),
     ))
     return b, ""
+
+
+def _prompt_holistic(job, common, extra):
+    return _survey_prompt(job, common, extra, "holistic_output")
 
 
 def _prompt_group(job, common, extra):
@@ -927,28 +949,10 @@ def _prompt_group(job, common, extra):
 
 
 def _prompt_synthesis(job, common, extra):
-    b = PromptBuilder(common)
-    b.shared(
-        "pr_header", "state_context", "delta_section", "reviews_section",
-        "reply_threads", "today", "generator_version", "max_turns",
+    return _synthesis_prompt(
+        job, common, extra, shared=("reviews_section",),
+        ident={"pr_number": job.pr_number, "pr_title": job.pr.title},
     )
-    b.set("pr_number", job.pr_number)
-    b.set("repo", job.repo)
-    b.set("pr_title", job.pr.title)
-    b.set("pr_head_sha", job.pr.head_sha)
-    b.set("wt_path", job.wt_path)
-    b.set("prior_section", "")
-    b.set("group_count", extra["group_count"])
-    b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
-    b.set("merged_content", extra["merged_content"])
-    b.output(job.review_file)
-    # Synthesis has all findings in merged_content — diff is supplementary,
-    # so allow it to shrink to 0 rather than blowing the budget.
-    diff_budget = b.diff_budget(job, skip_file_contents=True, min_diff=0)
-    b.set("preflight_data", _build_preflight_section(
-        job, skip_file_contents=True, max_diff_bytes=diff_budget,
-    ))
-    return b, ""
 
 
 def _prompt_fix(job, common, extra):
@@ -966,19 +970,7 @@ def _prompt_fix(job, common, extra):
 
 
 def _prompt_scout(job, common, extra):
-    b = PromptBuilder(common)
-    b.shared(
-        "pr_header", "state_context", "delta_section", "reviews_section",
-        "issue_section", "env_section", "omitted_guidance", "max_turns",
-    )
-    b.set("pr_number", job.pr_number)
-    b.set("repo", job.repo)
-    b.set("all_files_formatted", job.pr.all_files_formatted)
-    b.output(extra["scout_output"])
-    b.set("preflight_data", _build_preflight_section(
-        job, max_diff_bytes=b.diff_budget(job),
-    ))
-    return b, ""
+    return _survey_prompt(job, common, extra, "scout_output")
 
 
 def _prompt_disprove(job, common, extra):
@@ -1002,12 +994,8 @@ _PROMPT_HANDLERS = {
 }
 
 
-def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
-    handler = _PROMPT_HANDLERS.get(template_name)
-    if handler is None:
-        raise ValueError(f"Unknown template: {template_name}")
-
-    common = CommonSections(
+def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
+    return CommonSections(
         today=date.today().isoformat(),
         generator_version=job.generator_version,
         pr_header=_build_pr_header(job.pr, job.ctx, viewer_role=job.viewer_role),
@@ -1021,6 +1009,13 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
         max_turns=max_turns,
     )
 
+
+def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
+    handler = _PROMPT_HANDLERS.get(template_name)
+    if handler is None:
+        raise ValueError(f"Unknown template: {template_name}")
+
+    common = _build_common_sections(job, max_turns=max_turns)
     builder, label = handler(job, common, extra)
     template_vars = builder.vars
     rendered = render_template(template_name, **template_vars)

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import ai_backend
 import log
+from ai_backend_events import is_write_tool
 from review_common import preserve_log, restore_preserved
 
 DEFAULT_MAX_TURNS = 10
@@ -26,10 +27,9 @@ DIAG_NO_RESULT_RECORD = "no result record in session log"
 DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
 DIAG_NO_WRITE_TOOL_CALL = "never called a file-writing tool"
 
-# Tools that can put content into the output file. An agent that burned its
-# turns without calling one of these was thrashing, not working — say so
-# instead of reporting a bare turn count.
-_WRITE_TOOLS = frozenset({"Edit", "MultiEdit", "NotebookEdit", "Write"})
+# Load-bearing: both the no-write diagnosis and the transient-error check key
+# off this prefix to tell a crash apart from a run that ended on its own terms.
+AGENT_ERROR_PREFIX = "agent error:"
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -86,7 +86,7 @@ def _diagnose_result_type(result: dict) -> str:
     if result.get("is_error"):
         errors = result.get("errors", [])
         detail = errors[0] if errors else result.get("result", result.get("error", "unknown"))
-        return f"agent error: {detail}"
+        return f"{AGENT_ERROR_PREFIX} {detail}"
     return f"agent completed (subtype={subtype}) but did not write output"
 
 
@@ -115,14 +115,19 @@ def _diagnose_missing_output(log_path: str) -> str:
             return DIAG_QUOTA_EXHAUSTED
         return DIAG_NO_RESULT_RECORD
     reason = _diagnose_result_type(results[-1])
+    # An agent that ran to its own conclusion without ever calling a write tool
+    # was thrashing, not working — say so instead of reporting a bare turn
+    # count. A crash is excluded: the error already explains the missing output,
+    # and a retry would most likely reproduce it.
     tools_used = _tool_names_used(records)
-    if tools_used and not (tools_used & _WRITE_TOOLS):
+    crashed = reason.startswith(AGENT_ERROR_PREFIX)
+    if not crashed and tools_used and not any(is_write_tool(name) for name in tools_used):
         reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
     return reason
 
 
 def is_transient_error(reason: str) -> bool:
-    if not reason.startswith("agent error:"):
+    if not reason.startswith(AGENT_ERROR_PREFIX):
         return False
     return any(marker in reason for marker in _TRANSIENT_ERROR_MARKERS)
 
@@ -178,10 +183,6 @@ def _try_recover_output(log_path: str, output_path: str) -> bool:
         log.warn(f"Recovered review from denied write — saved to {output_path}")
         return True
     return False
-
-
-def _try_recover_review(job: "ReviewJob"):
-    _try_recover_output(job.session_log, job.review_file)
 
 
 # ── Quota throttle ─────────────────────────────────────────────────────────

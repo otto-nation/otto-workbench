@@ -12,7 +12,13 @@ from review_preflight import (
     PRContext, PRMetadata, PreflightData, ReviewJob,
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
 )
-from review_prompt import _build_delta_section, _build_pr_header, _compute_diff_budget
+from review_common import (
+    TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
+)
+from review_prompt import (
+    _PROMPT_HANDLERS, _build_common_sections, _build_delta_section, _build_pr_header,
+    _compute_diff_budget,
+)
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────
@@ -181,3 +187,32 @@ class TestComputeDiffBudget:
         )
         assert without_fc > with_fc
         assert without_fc - with_fc >= 200_000
+
+
+# ── Shared prompt bodies ────────────────────────────────────────────────────
+
+
+class TestSharedPromptBodies:
+    """The paired handlers must stay interchangeable apart from their variant."""
+
+    def _vars(self, template, **extra):
+        job = _make_job(_make_preflight())
+        common = _build_common_sections(job, max_turns=10)
+        builder, _ = _PROMPT_HANDLERS[template](job, common, extra)
+        return builder.vars
+
+    def test_scout_and_holistic_differ_only_in_output_target(self):
+        holistic = self._vars(TEMPLATE_HOLISTIC, holistic_output="/tmp/h.md")
+        scout = self._vars(TEMPLATE_SCOUT, scout_output="/tmp/s.md")
+        assert holistic.keys() == scout.keys()
+        differing = [k for k in holistic if holistic[k] != scout[k]]
+        assert differing == ["output_block"]
+
+    def test_synthesis_variants_differ_only_in_identity_and_prior_reviews(self):
+        shared_extra = dict(group_count=2, merged_content="m", holistic_content="h")
+        pr = self._vars(TEMPLATE_SYNTHESIS, **shared_extra)
+        self_ = self._vars(TEMPLATE_SELF_SYNTHESIS, **shared_extra)
+        assert set(pr) - set(self_) == {"pr_number", "pr_title", "reviews_section"}
+        assert set(self_) - set(pr) == {"branch_name"}
+        common_keys = set(pr) & set(self_)
+        assert all(pr[k] == self_[k] for k in common_keys)

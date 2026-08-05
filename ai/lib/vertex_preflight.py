@@ -12,15 +12,24 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
-import urllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import log
-from review_agent import _ANTHROPIC_MODEL_ENV, _resolve_model
+from review_agent import _ANTHROPIC_MODEL_ENV, _resolve_alias, _resolve_model
+from review_pipeline import (
+    DEFAULT_MODEL_DISPROVE,
+    DEFAULT_MODEL_FIX,
+    DEFAULT_MODEL_GROUP,
+    DEFAULT_MODEL_HOLISTIC,
+    DEFAULT_MODEL_SCOUT,
+    DEFAULT_MODEL_SINGLE,
+    DEFAULT_MODEL_SYNTHESIS,
+)
 
 try:
     from google.auth import default as _google_auth_default
@@ -30,7 +39,7 @@ except ImportError:
     _HAS_GOOGLE_AUTH = False
 
 _CACHE_TTL_SECS = 300
-_CACHE_DIR = Path("/tmp")
+_CACHE_DIR = Path(tempfile.gettempdir()) / f"vertex-preflight-{os.getuid()}"
 
 _REGIONAL_METRIC = (
     "aiplatform.googleapis.com"
@@ -42,13 +51,13 @@ _GLOBAL_METRIC = (
 )
 
 _PHASE_MODEL_SPECS = [
-    ("CLAUDE_REVIEW_SINGLE_MODEL", "sonnet"),
-    ("CLAUDE_REVIEW_GROUP_MODEL", "sonnet"),
-    ("CLAUDE_REVIEW_HOLISTIC_MODEL", "sonnet"),
-    ("CLAUDE_REVIEW_SCOUT_MODEL", "sonnet"),
-    ("CLAUDE_REVIEW_SYNTHESIS_MODEL", "sonnet"),
-    ("CLAUDE_REVIEW_DISPROVE_MODEL", "sonnet"),
-    ("CLAUDE_REVIEW_FIX_MODEL", "sonnet"),
+    ("CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE),
+    ("CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP),
+    ("CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC),
+    ("CLAUDE_REVIEW_SCOUT_MODEL", DEFAULT_MODEL_SCOUT),
+    ("CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS),
+    ("CLAUDE_REVIEW_DISPROVE_MODEL", DEFAULT_MODEL_DISPROVE),
+    ("CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX),
 ]
 
 
@@ -66,9 +75,7 @@ def resolve_vertex_model_id(alias: str) -> str:
     'sonnet' -> ANTHROPIC_DEFAULT_SONNET_MODEL -> 'claude-sonnet-5'
                -> 'anthropic-claude-sonnet-5'
     """
-    env_key = _ANTHROPIC_MODEL_ENV.get(alias)
-    resolved = os.environ.get(env_key) if env_key else None
-    model = resolved or alias
+    model = _resolve_alias(alias)
 
     # Strip @version suffix (e.g. claude-haiku-4-5@20251001 -> claude-haiku-4-5)
     if "@" in model:
@@ -123,7 +130,15 @@ def _check_cache(project: str, region: str) -> dict[str, str] | None:
 def _write_cache(project: str, region: str, models: dict[str, str]) -> None:
     path = _cache_key(project, region)
     try:
-        path.write_text(json.dumps({"ts": time.time(), "models": models}))
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(_CACHE_DIR, 0o700)
+        fd, tmp_path = tempfile.mkstemp(dir=_CACHE_DIR, prefix=".tmp-")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps({"ts": time.time(), "models": models}))
+            os.replace(tmp_path, path)
+        except OSError:
+            os.unlink(tmp_path)
     except OSError:
         pass
 

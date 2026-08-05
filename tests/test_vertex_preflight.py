@@ -10,8 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import urllib.error
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 
@@ -95,8 +93,8 @@ class TestFetchProvisionedModels:
     def _mock_urlopen(self, response_data):
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(response_data).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = False
         return mock_resp
 
     @patch("vertex_preflight.urllib.request.urlopen")

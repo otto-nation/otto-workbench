@@ -21,6 +21,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import traceback
@@ -158,6 +159,29 @@ def _is_empty_patch(cwd: str) -> bool:
         capture_output=True, cwd=cwd,
     )
     return staged.returncode == 0 and unstaged.returncode == 0
+
+
+# ── Lockfile regeneration registry ─────────────────────────────────────────
+
+_LOCKFILE_REGENERATORS: dict[str, dict] = {
+    "go.sum":            {"cmd": ["go", "mod", "tidy"], "stage_dir": True},
+    "go.mod":            {"cmd": ["go", "mod", "tidy"], "stage_dir": True},
+    "pnpm-lock.yaml":    {"cmd": ["pnpm", "install"]},
+    "package-lock.json": {"cmd": ["npm", "install"]},
+    "yarn.lock":         {"cmd": ["yarn", "install"]},
+    "bun.lock":          {"cmd": ["bun", "install"]},
+    "bun.lockb":         {"cmd": ["bun", "install"]},
+    "Cargo.lock":        {"cmd": ["cargo", "generate-lockfile"]},
+    "uv.lock":           {"cmd": ["uv", "lock"]},
+    "poetry.lock":       {"cmd": ["poetry", "lock", "--no-update"]},
+    "composer.lock":     {"cmd": ["composer", "install"]},
+    "Gemfile.lock":      {"cmd": ["bundle", "install"]},
+}
+
+
+def _find_regenerator(filepath: str) -> dict | None:
+    """Look up a regeneration command by lockfile basename."""
+    return _LOCKFILE_REGENERATORS.get(os.path.basename(filepath))
 
 
 # ── Conflict resolution ────────────────────────────────────────────────────

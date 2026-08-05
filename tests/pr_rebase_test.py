@@ -146,6 +146,41 @@ def test_commits_ahead_non_numeric():
         assert pr_rebase_cli._commits_ahead("/fake") == 0
 
 
+# ── _find_regenerator ──────────────────────────────────────────────────────
+
+
+def test_find_regenerator_known_lockfile():
+    result = pr_rebase_cli._find_regenerator("pnpm-lock.yaml")
+    assert result is not None
+    assert result["cmd"] == ["pnpm", "install"]
+
+
+def test_find_regenerator_go_sum():
+    result = pr_rebase_cli._find_regenerator("go.sum")
+    assert result is not None
+    assert result["cmd"] == ["go", "mod", "tidy"]
+    assert result.get("stage_dir") is True
+
+
+def test_find_regenerator_nested_path():
+    """Lookup uses basename, not full path."""
+    result = pr_rebase_cli._find_regenerator("packages/web/pnpm-lock.yaml")
+    assert result is not None
+    assert result["cmd"] == ["pnpm", "install"]
+
+
+def test_find_regenerator_unknown_file():
+    result = pr_rebase_cli._find_regenerator("main.go")
+    assert result is None
+
+
+def test_find_regenerator_all_entries_have_cmd():
+    """Every registry entry must have a 'cmd' key with a non-empty list."""
+    for name, entry in pr_rebase_cli._LOCKFILE_REGENERATORS.items():
+        assert "cmd" in entry, f"{name} missing 'cmd'"
+        assert isinstance(entry["cmd"], list) and len(entry["cmd"]) > 0, f"{name} has invalid 'cmd'"
+
+
 # ── _is_binary ─────────────────────────────────────────────────────────────
 
 

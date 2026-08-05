@@ -145,3 +145,20 @@ print('ok')
 @test "tarball includes reviewer agent" {
   [ -f "$TARBALL_ROOT/agents/reviewer.md" ]
 }
+
+# ── 12. Argument validation ────────────────────────────────────────────────
+
+@test "unknown flag is rejected without building a tarball" {
+  local probe_dir="$BATS_TEST_TMPDIR/probe"
+  mkdir -p "$probe_dir"
+  run bash -c "cd '$probe_dir' && '$REPO_ROOT/ai/claude/bin/build-otto-ai-tools-tarball' --tool-schema"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unknown option"* ]]
+  [ -z "$(find "$probe_dir" -name '*.tar.gz')" ]
+}
+
+@test "extra positional arguments are rejected" {
+  run "$REPO_ROOT/ai/claude/bin/build-otto-ai-tools-tarball" 1.0.0 extra
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"at most one argument"* ]]
+}

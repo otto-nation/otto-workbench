@@ -1,7 +1,10 @@
 """Dynamic MCP server for otto-workbench tools.
 
 Discovers tools by scanning configured directories for scripts that
-support ``--tool-schema``. Any MCP client can connect via stdio transport.
+support ``--tool-schema``. A candidate is only executed if its source
+carries one of ``DECLARATION_MARKERS`` — probing runs the script, and
+scripts that ignore unknown flags would do their real work instead of
+answering. Any MCP client can connect via stdio transport.
 """
 
 from __future__ import annotations
@@ -23,6 +26,17 @@ logger = logging.getLogger("otto-mcp")
 
 CONFIG_PATH = Path("~/.config/workbench/mcp-tools.json").expanduser()
 DISCOVERY_TIMEOUT = 2.0
+TOOL_SCHEMA_FLAG = "--tool-schema"
+
+# The two ways a script can implement the protocol: parse the flag itself, or
+# inherit it from ai/lib/tool_parser.py's ToolParser.
+DECLARATION_MARKERS = (b"--tool-schema", b"ToolParser")
+
+# Bytes of a candidate read when looking for a marker. Scripts declare the
+# protocol in their imports or argument parsing, well inside this bound.
+# ceiling: a compiled binary carrying a marker past this offset is skipped —
+# raise the cap if a tool dir ever holds one.
+DECLARATION_SCAN_BYTES = 256 * 1024
 
 
 # ── Tool Discovery ────────────────────────────────────────────────────────
@@ -78,11 +92,30 @@ def _is_executable(path: Path) -> bool:
         return False
 
 
+def _declares_tool_schema(script: Path) -> bool:
+    """True if *script* carries a protocol marker in its source.
+
+    Probing means executing, and a script that ignores unknown flags runs its
+    default action instead of answering — ``build-otto-ai-tools-tarball`` read
+    the flag as a version string and wrote a release archive into the CWD.
+    Reading the source first limits execution to scripts that could respond.
+    """
+    try:
+        with script.open("rb") as f:
+            head = f.read(DECLARATION_SCAN_BYTES)
+    except OSError as exc:
+        logger.debug("Cannot read %s: %s", script, exc)
+        return False
+    return any(marker in head for marker in DECLARATION_MARKERS)
+
+
 def _probe_tool(script: Path) -> dict | None:
     """Run ``script --tool-schema`` and return the JSON, or None."""
+    if not _declares_tool_schema(script):
+        return None
     try:
         result = subprocess.run(
-            [str(script), "--tool-schema"],
+            [str(script), TOOL_SCHEMA_FLAG],
             capture_output=True,
             text=True,
             timeout=DISCOVERY_TIMEOUT,

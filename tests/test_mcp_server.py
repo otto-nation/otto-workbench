@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from server import _args_to_cli, _extract_json, discover_tools
+from server import _args_to_cli, _declares_tool_schema, _extract_json, discover_tools
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────
@@ -138,6 +138,33 @@ class TestDiscovery:
         tools = discover_tools(config)
 
         assert len(tools) == 0
+
+    def test_script_without_the_flag_is_never_executed(self, tmp_path):
+        """A script that ignores unknown flags must not run during discovery."""
+        marker = tmp_path / "side-effect"
+        script = tmp_path / "destructive-script"
+        script.write_text(f"#!/bin/bash\ntouch '{marker}'\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
+        tools = discover_tools(config)
+
+        assert tools == {}
+        assert not marker.exists()
+
+    def test_tool_parser_import_counts_as_a_declaration(self, tmp_path):
+        """ToolParser-based scripts inherit the flag without naming it."""
+        script = tmp_path / "framework-tool"
+        script.write_text("#!/usr/bin/env python3\nfrom tool_parser import ToolParser\n")
+
+        assert _declares_tool_schema(script) is True
+
+    def test_skips_unreadable_script(self, tmp_path):
+        script = tmp_path / "unreadable"
+        script.write_text("#!/bin/bash\necho --tool-schema\n")
+        script.chmod(stat.S_IXUSR)
+
+        assert _declares_tool_schema(script) is False
 
     def test_skips_hidden_files(self, tmp_path):
         script = tmp_path / ".hidden-tool"

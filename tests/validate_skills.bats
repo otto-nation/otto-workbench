@@ -357,6 +357,67 @@ EOF
   [[ "$output" == *"missing SKILL.md"* ]]
 }
 
+# ── output_schema tool ───────────────────────────────────────────────────────
+
+# Helper: create an executable in the fake workbench's ai/claude/bin/
+_make_tool() {
+  local name="$1" body="$2"
+  local bin_dir="$FAKE_WORKBENCH/ai/claude/bin"
+  mkdir -p "$bin_dir"
+  printf '#!/usr/bin/env bash\n%s\n' "$body" > "$bin_dir/$name"
+  chmod +x "$bin_dir/$name"
+}
+
+# Helper: create a SKILL.md declaring an output_schema tool
+_make_skill_with_tool() {
+  local name="$1" tool="$2"
+  local dir="$FAKE_WORKBENCH/ai/claude/skills/$name"
+  mkdir -p "$dir"
+  cat > "$dir/SKILL.md" <<EOF
+---
+name: $name
+description: "Test skill description."
+source: otto-workbench/ai/claude/skills/$name/SKILL.md
+invocation: "/$name"
+trigger: "Use when testing output_schema"
+output_schema:
+  tool: $tool
+---
+EOF
+}
+
+@test "output_schema tool emitting a valid schema passes" {
+  _make_tool "good-tool" "echo '{\"name\": \"good-tool\", \"input_schema\": {}}'"
+  _make_skill_with_tool "schema-skill" "good-tool"
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"supports --tool-schema"* ]]
+}
+
+@test "output_schema tool that exits 0 without a schema fails" {
+  _make_tool "silent-tool" "exit 0"
+  _make_skill_with_tool "schema-skill" "silent-tool"
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid --tool-schema document"* ]]
+}
+
+@test "output_schema tool emitting JSON without required keys fails" {
+  _make_tool "partial-tool" "echo '{\"name\": \"partial-tool\"}'"
+  _make_skill_with_tool "schema-skill" "partial-tool"
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid --tool-schema document"* ]]
+}
+
+@test "output_schema tool exiting non-zero fails" {
+  _make_tool "broken-tool" "exit 1"
+  _make_skill_with_tool "schema-skill" "broken-tool"
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not support --tool-schema"* ]]
+}
+
 # ── Mixed valid and invalid ──────────────────────────────────────────────────
 
 @test "mixed valid and invalid reports correct error count" {

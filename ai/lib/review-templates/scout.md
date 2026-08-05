@@ -20,9 +20,7 @@ ${issue_section}
 ${env_section}
 
 ## Output
-You MUST use the Write tool to write to: ${scout_output}
-Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
-The output file and its directory already exist — do NOT create directories or empty files.
+${output_block}
 
 Format your output with exactly these two sections:
 

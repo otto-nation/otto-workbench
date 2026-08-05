@@ -28,10 +28,7 @@ For each unchecked finding (`- [ ]`) in the review above:
 ${review_file}
 
 ## Worktree
-PR branch checked out at: ${wt_path}
-
-All file reads and git commands MUST use this path directly (e.g. `git -C "${wt_path}" diff`).
-Never use command substitution `$(...)` to discover the worktree path — it triggers permission prompts.
+${worktree_block}
 
 ## Turn budget
 You have ${max_turns} turns. Process findings systematically — batch independent file reads into single turns.

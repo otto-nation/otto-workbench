@@ -641,7 +641,7 @@ def _render_ci_fix_template(
         repo=repo,
         failures_content=failures_content,
         tracking_file=tracking_file,
-        wt_path=wt_path,
+        worktree_block=review_common.build_worktree_block(wt_path),
         max_turns=str(max_turns),
     )
 

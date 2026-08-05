@@ -16,9 +16,7 @@ Default to SURVIVES when uncertain. Only mark FALSIFIED when you have a concrete
 ${review_content}
 
 ## Output
-You MUST use the Write tool to write to: ${disprove_output}
-Do NOT use Bash (cat, heredoc, python) to write the file — use the Write tool.
-The output file and its directory already exist — do NOT create directories or empty files.
+${output_block}
 
 Format — one line per finding:
 ```
@@ -36,4 +34,4 @@ Rules:
 - If a finding ID from the review doesn't appear in your output, it survives by default
 
 ## Turn budget
-You have ${max_turns} turns. Read the review carefully, then investigate each finding against the actual codebase. Write your verdicts file as your final action.
+You have ${max_turns} turns. Read the review carefully, then investigate each finding against the actual codebase. Write your verdicts file as your final action — do not spend turns idling once your verdicts are settled.

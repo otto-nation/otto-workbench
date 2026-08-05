@@ -25,6 +25,7 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
+CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
 
 
 # Session-scoped: the module is loaded once and shared across all tests.
@@ -72,3 +73,14 @@ def rt():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["review_threads"]
+
+
+@pytest.fixture(scope="session")
+def cc():
+    loader = importlib.machinery.SourceFileLoader("ci_check", str(CI_CHECK))
+    spec = importlib.util.spec_from_loader("ci_check", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ci_check"] = mod
+    spec.loader.exec_module(mod)
+    yield mod
+    del sys.modules["ci_check"]

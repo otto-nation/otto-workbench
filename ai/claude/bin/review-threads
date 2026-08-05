@@ -8,7 +8,7 @@ Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
   review-threads --fix
-  review-threads --resolve
+  review-threads --finish
 """
 
 import argparse
@@ -1016,16 +1016,18 @@ _NO_ISSUE = CreatedIssue()
 
 
 def _finalize_deferred(
+    state: pr_state.PRState,
     ctx: pr_context.ResolvedContext,
     threads_by_id: dict,
     trail: Trail | None = None,
 ) -> CreatedIssue:
-    """Create tracking issue and post deferred replies for items held from fix pass."""
-    wt_path = ctx.worktree_root
-    if not wt_path:
-        return _NO_ISSUE
-    state = pr_state.load_state(wt_path)
-    if not state or not state.fix.threads:
+    """Create tracking issue and post deferred replies for items held from fix pass.
+
+    Mutates `state` and leaves the save to the caller, which mutates the same
+    object either side of this call. Reading the file again here and saving
+    that copy would drop whatever the caller had already written.
+    """
+    if not ctx.worktree_root or not state.fix.threads:
         return _NO_ISSUE
 
     FA = pr_state.ThreadAction
@@ -1061,8 +1063,37 @@ def _finalize_deferred(
 
     state.fix.deferred_issue_id = issue.id
     state.fix.deferred_issue_url = issue.url
-    pr_state.save_state(wt_path, state)
     return issue
+
+
+def _finish_deferred_work(
+    ctx: pr_context.ResolvedContext,
+    report: PRReport,
+    trail: Trail | None = None,
+) -> None:
+    """Close out what the fix pass held back: replies, tracking issue, summary.
+
+    A phase of its own rather than a tail of `--fix`, because the summary is
+    withheld until the needs_human threads have been discussed — which by
+    definition has not happened while the fix pass is still running.
+
+    Reads state from disk rather than taking the caller's copy: the fix pass
+    writes its outcomes there, so a copy read before it ran would be missing
+    exactly the threads this phase exists to close out.
+    """
+    wt_path = ctx.worktree_root
+    if not wt_path or not ctx.pr_number:
+        return
+    state = pr_state.load_state(wt_path)
+    if state is None:
+        return
+    threads_by_id = {t.id: t for t in report.threads}
+    _post_push_deferred_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
+    _finalize_deferred(state, ctx, threads_by_id, trail=trail)
+    _render_deferred_summary(
+        state, report, ctx.repo, ctx.pr_number, threads_by_id,
+    )
+    pr_state.save_state(wt_path, state)
 
 
 def _resolve_fixed_threads(
@@ -1462,7 +1493,7 @@ def _post_push_deferred_replies(
 ) -> None:
     """Post fix replies and resolve threads that were deferred due to push failure.
 
-    Called during --resolve. Checks if the commit has since been pushed;
+    Called during --finish. Checks if the commit has since been pushed;
     if so, posts replies and resolves threads. Updates state.fix.commit_status.
     """
     fix = state.fix
@@ -1497,7 +1528,7 @@ def _render_deferred_summary(
 ) -> None:
     """Re-render fix summary from state and post it.
 
-    Called during --resolve after the deferred tracking issue has been created
+    Called during --finish after the deferred tracking issue has been created
     and stored in state.fix.  Rebuilds the summary body from FixSummary's
     structured data so the issue link renders inline — no string patching.
     Updates state.fix.summary_url and summary_deferred on success.
@@ -1577,7 +1608,7 @@ def _post_or_defer_summary(
     """Post summary immediately or defer to state when discussion is pending.
 
     Returns the comment URL if posted, None if deferred or nothing to post.
-    When deferred, the summary is re-rendered from FixSummary during --resolve.
+    When deferred, the summary is re-rendered from FixSummary during --finish.
     """
     if cp.status == "push_failed":
         log.info("Deferred fix summary — push failed, will post after push lands")
@@ -1594,7 +1625,7 @@ def _post_or_defer_summary(
             head_sha=head_sha,
         )
 
-    log.info("Deferred fix summary — will render from state on resolve")
+    log.info("Deferred fix summary — will render from state on --finish")
     return None
 
 
@@ -2065,7 +2096,7 @@ def _run_threads(trail, args, ctx) -> None:
                data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
 
     # Resolve verified threads if requested (or as part of triage)
-    if args.resolve or args.triage:
+    if args.finish or args.triage:
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
             log.info(f"Resolved {resolved_count} verified threads")
@@ -2143,13 +2174,6 @@ def _run_threads(trail, args, ctx) -> None:
             seen_review_body_comment_ids=current_review_ids,
             updated_at=pr_state.now_iso(),
         ))
-        if args.resolve:
-            threads_by_id = {t.id: t for t in report.threads}
-            _post_push_deferred_replies(st, repo, pr_number, threads_by_id)
-            issue = _finalize_deferred(ctx, threads_by_id, trail=trail)
-            st.fix.deferred_issue_id = issue.id
-            st.fix.deferred_issue_url = issue.url
-            _render_deferred_summary(st, report, repo, pr_number, threads_by_id)
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")
@@ -2202,16 +2226,21 @@ def _run_threads(trail, args, ctx) -> None:
             output = dataclasses.asdict(triage_result) if triage_result else {}
             output["issue_comments"] = report.issue_comments
             output["review_body_comments"] = report.review_body_comments
+    else:
+        output = dataclasses.asdict(report)
 
-        json.dump(output, sys.stdout, indent=2)
-        print()
-        sys.exit(0)
+    # After the fix pass, not before: a combined --fix --finish run would
+    # otherwise close out the previous run's deferred set and leave this one's
+    # untouched. Outside the state-update try/except, because a caller running
+    # this to close the loop needs a failure to be an error, not a log line.
+    if args.finish:
+        _finish_deferred_work(ctx, report, trail=trail)
 
-    json.dump(dataclasses.asdict(report), sys.stdout, indent=2)
+    json.dump(output, sys.stdout, indent=2)
     print()
 
 
-def main():
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", help="PR number")
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
@@ -2219,13 +2248,19 @@ def main():
                         help="Classify threads via AI and auto-resolve verified")
     parser.add_argument("--fix", action="store_true",
                         help="Triage threads and apply mechanical fixes via Claude agent")
-    parser.add_argument("--resolve", "--resolve-verified", action="store_true",
-                        dest="resolve",
-                        help="Resolve all verified threads on GitHub")
+    # --resolve is kept as an alias: resolution is not what this gates (--triage
+    # already resolves verified threads), but the flag shipped under that name.
+    parser.add_argument("--finish", "--resolve", "--resolve-verified",
+                        action="store_true", dest="finish",
+                        help="Close out deferred work: replies, tracking issue, summary")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
     add_trail_args(parser)
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = _build_parser().parse_args()
 
     if args.fix:
         args.triage = True

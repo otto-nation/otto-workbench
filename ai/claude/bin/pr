@@ -397,7 +397,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_pr: str | None = None,
                  original_branch: str | None = None) -> int:
-    """Delegate to review-threads, routing --triage and --resolve flags."""
+    """Delegate to review-threads, routing --triage, --fix and --finish flags."""
     return _run_delegate(_COMMANDS["comments"], list(argv), ctx,
                          original_pr=original_pr,
                          original_branch=original_branch)

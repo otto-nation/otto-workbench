@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -1225,34 +1227,133 @@ class TestFinalizeDeferredCarriesTheReason:
             ]),
         )
         pr_state.save_state(tmp_path, state)
+        ctx = pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="abc1234",
+        )
+        return state, ctx
+
+    def _run(self, rt, state, ctx):
+        captured = []
+        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies"):
+            create.side_effect = lambda deferred, *a, **kw: (
+                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+            )
+            rt._finalize_deferred(state, ctx, {})
+        return captured
+
+    def test_reason_survives_into_the_tracking_issue(self, rt, tmp_path):
+        state, ctx = self._state_with_deferred(tmp_path)
+        captured = self._run(rt, state, ctx)
+        assert [e.reason for e in captured] == ["agent could not auto-fix"]
+
+    def test_the_rest_of_the_outcome_survives_too(self, rt, tmp_path):
+        state, ctx = self._state_with_deferred(tmp_path)
+        entry = self._run(rt, state, ctx)[0]
+        assert (entry.id, entry.file, entry.line) == ("t1", "a.go", 7)
+        assert (entry.reviewer, entry.summary) == ("kgn", "rename the guard")
+
+    def test_the_caller_owns_the_save(self, rt, tmp_path):
+        """Saving its own read would drop whatever the caller already wrote."""
+        state, ctx = self._state_with_deferred(tmp_path)
+        state.fix.commit_status = "pushed"
+        self._run(rt, state, ctx)
+        assert state.fix.deferred_issue_id == "I_1"
+        on_disk = pr_state.load_state(tmp_path)
+        assert on_disk.fix.commit_status == ""
+        assert on_disk.fix.deferred_issue_id == ""
+
+
+# ── _finish_deferred_work ─────────────────────────────────────────────────
+
+
+class TestFinishDeferredWork:
+    """The close-out phase: push-deferred replies, tracking issue, summary."""
+
+    def _ctx(self, tmp_path):
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=tmp_path, head_sha="abc1234",
         )
 
-    def test_reason_survives_into_the_tracking_issue(self, rt, tmp_path):
-        ctx = self._state_with_deferred(tmp_path)
-        captured = []
-        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
-                patch.object(rt, "_post_deferred_replies"):
-            create.side_effect = lambda deferred, *a, **kw: (
-                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
-            )
-            rt._finalize_deferred(ctx, {})
-        assert [e.reason for e in captured] == ["agent could not auto-fix"]
+    def _save(self, tmp_path, **fix_kw):
+        pr_state.save_state(tmp_path, PRState(
+            identity=PRIdentity(
+                repo="owner/repo", branch="b", pr_number=42,
+                head_sha="abc1234", worktree_root=str(tmp_path),
+            ),
+            fix=FixSummary(**fix_kw),
+        ))
 
-    def test_the_rest_of_the_outcome_survives_too(self, rt, tmp_path):
-        ctx = self._state_with_deferred(tmp_path)
-        captured = []
-        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
-                patch.object(rt, "_post_deferred_replies"):
-            create.side_effect = lambda deferred, *a, **kw: (
-                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
-            )
-            rt._finalize_deferred(ctx, {})
-        entry = captured[0]
-        assert (entry.id, entry.file, entry.line) == ("t1", "a.go", 7)
-        assert (entry.reviewer, entry.summary) == ("kgn", "rename the guard")
+    def test_all_three_steps_run_in_order(self, rt, tmp_path):
+        self._save(tmp_path)
+        order = []
+        with patch.object(rt, "_post_push_deferred_replies",
+                          side_effect=lambda *a, **k: order.append("replies")), \
+                patch.object(rt, "_finalize_deferred",
+                             side_effect=lambda *a, **k: order.append("issue")), \
+                patch.object(rt, "_render_deferred_summary",
+                             side_effect=lambda *a, **k: order.append("summary")):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        assert order == ["replies", "issue", "summary"]
+
+    def test_state_written_by_the_steps_is_persisted(self, rt, tmp_path):
+        """The steps mutate in place; this phase is the one that saves."""
+        self._save(tmp_path)
+
+        def mark(state, *a, **k):
+            state.fix.commit_status = "pushed"
+
+        with patch.object(rt, "_post_push_deferred_replies", side_effect=mark), \
+                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        assert pr_state.load_state(tmp_path).fix.commit_status == "pushed"
+
+    def test_it_reads_state_from_disk_not_from_the_caller(self, rt, tmp_path):
+        """The fix pass writes its outcomes there; a stale copy would miss them."""
+        self._save(tmp_path, threads=[
+            ThreadOutcome(id="t9", action=ThreadAction.DEFERRED, reason="r"),
+        ])
+        seen = []
+        with patch.object(rt, "_post_push_deferred_replies",
+                          side_effect=lambda st, *a, **k: seen.extend(st.fix.threads)), \
+                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        assert [t.id for t in seen] == ["t9"]
+
+    def test_no_state_on_disk_is_a_no_op(self, rt, tmp_path):
+        with patch.object(rt, "_post_push_deferred_replies") as replies:
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        replies.assert_not_called()
+
+    def test_a_failing_step_propagates(self, rt, tmp_path):
+        """A caller closing the loop needs a failure to be an error, not a log line."""
+        self._save(tmp_path)
+        with patch.object(rt, "_post_push_deferred_replies"), \
+                patch.object(rt, "_finalize_deferred",
+                             side_effect=RuntimeError("gh down")), \
+                patch.object(rt, "_render_deferred_summary"):
+            with pytest.raises(RuntimeError):
+                rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+
+
+class TestFinishFlag:
+    """`--resolve` shipped under the wrong name; it still has to work."""
+
+    def test_finish_sets_finish(self, rt):
+        assert rt._build_parser().parse_args(["--finish"]).finish
+
+    def test_resolve_is_an_alias(self, rt):
+        assert rt._build_parser().parse_args(["--resolve"]).finish
+
+    def test_resolve_verified_is_an_alias(self, rt):
+        assert rt._build_parser().parse_args(["--resolve-verified"]).finish
+
+    def test_it_is_off_by_default(self, rt):
+        assert not rt._build_parser().parse_args([]).finish
 
 
 # ── _post_deferred_replies ────────────────────────────────────────────────

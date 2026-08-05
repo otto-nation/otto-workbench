@@ -1283,20 +1283,7 @@ def test_resolve_file_conflicts_go_mod_triggers_regeneration():
         go_mod = Path(tmpdir) / "go.mod"
         go_mod.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
 
-        resolved_output = "<<<RESOLVED>>>\nmodule example.com\n<<<END_RESOLVED>>>\n"
-        calls = []
-
         def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            if cmd[:3] == ["claude", "-p", "--bare"]:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0,
-                    stdout=resolved_output, stderr="",
-                )
-            if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
-            if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \

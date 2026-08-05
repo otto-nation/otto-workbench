@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -31,15 +33,10 @@ class TestDetectUnpushed:
 
     @patch("push_status.subprocess.run")
     def test_ahead_commits(self, mock_run):
+        """Range direction matters — an inverted range counts the wrong side."""
         mock_run.return_value = _make_result(0, "3\n")
         result = push_status.detect_unpushed(Path("/repo"), "feat/branch")
         assert result == 3
-
-    @patch("push_status.subprocess.run")
-    def test_counts_commits_ahead_of_remote(self, mock_run):
-        """Range direction matters — an inverted range counts the wrong side."""
-        mock_run.return_value = _make_result(0, "3\n")
-        push_status.detect_unpushed(Path("/repo"), "feat/branch")
         args, kwargs = mock_run.call_args
         assert args[0] == [
             "git", "rev-list", "--count", "origin/feat/branch..HEAD",
@@ -64,17 +61,14 @@ class TestDetectUnpushed:
 
 
 class TestRenderStatus:
-    def test_not_pushed(self):
-        result = push_status.render_status(Path("/repo"), "main", ahead=None)
-        assert result == ["**Push**: branch not pushed to remote"]
-
-    def test_up_to_date(self):
-        result = push_status.render_status(Path("/repo"), "main", ahead=0)
-        assert result == ["**Push**: up to date"]
-
-    def test_ahead_commits(self):
-        result = push_status.render_status(Path("/repo"), "main", ahead=4)
-        assert result == ["**Push**: 4 commit(s) not pushed"]
+    @pytest.mark.parametrize("ahead,expected", [
+        (None, "**Push**: branch not pushed to remote"),
+        (0, "**Push**: up to date"),
+        (4, "**Push**: 4 commit(s) not pushed"),
+    ])
+    def test_renders_each_push_state(self, ahead, expected):
+        result = push_status.render_status(Path("/repo"), "main", ahead=ahead)
+        assert result == [expected]
 
     @patch("push_status.detect_unpushed")
     def test_calls_detect_when_ahead_not_provided(self, mock_detect):

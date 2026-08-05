@@ -696,54 +696,102 @@ def test_resolve_delete_conflict_git_rm_fails():
     assert result is False
 
 
-# ── _resolve_one (delete conflicts) ──────────────────────────────────────
+# ── _classify_conflict ─────────────────────────────────────────────────────
 
 
-def test_resolve_one_delete_conflict_skips_ai():
-    """Modify/delete conflict is resolved via git rm without calling AI."""
+def test_classify_conflict_known_lockfile(tmp_path):
+    f = tmp_path / "pnpm-lock.yaml"
+    f.write_text("content")
+    strategy, ctx = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+    assert strategy == "regenerate"
+    assert ctx["cmd"] == ["pnpm", "install"]
+
+
+def test_classify_conflict_go_sum(tmp_path):
+    f = tmp_path / "go.sum"
+    f.write_text("content")
+    strategy, ctx = pr_rebase_cli._classify_conflict("go.sum", f, str(tmp_path))
+    assert strategy == "regenerate"
+    assert ctx["cmd"] == ["go", "mod", "tidy"]
+
+
+def test_classify_conflict_generated_file(tmp_path):
+    f = tmp_path / "service.pb.go"
+    f.write_text("// Code generated. DO NOT EDIT.\npackage v1\n")
+    with mock.patch.object(
+        pr_rebase_cli, "_is_generated_file", return_value=(True, "header"),
+    ):
+        strategy, ctx = pr_rebase_cli._classify_conflict("service.pb.go", f, str(tmp_path))
+    assert strategy == "accept_theirs"
+    assert ctx == "header"
+
+
+def test_classify_conflict_delete_conflict(tmp_path):
+    f = tmp_path / "old.go"
+    f.write_text("content")
+    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(False, "")), \
+         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted"):
+        strategy, ctx = pr_rebase_cli._classify_conflict("old.go", f, str(tmp_path))
+    assert strategy == "delete"
+    assert ctx == "theirs_deleted"
+
+
+def test_classify_conflict_binary_file(tmp_path):
+    f = tmp_path / "image.png"
+    f.write_bytes(b"\x89PNG\x00\x00")
+    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(False, "")), \
+         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        strategy, ctx = pr_rebase_cli._classify_conflict("image.png", f, str(tmp_path))
+    assert strategy == "binary_error"
+
+
+def test_classify_conflict_text_file(tmp_path):
+    f = tmp_path / "main.go"
+    f.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+    with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(False, "")), \
+         mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+        strategy, ctx = pr_rebase_cli._classify_conflict("main.go", f, str(tmp_path))
+    assert strategy == "ai_merge"
+
+
+def test_classify_conflict_lockfile_takes_priority_over_generated(tmp_path):
+    """Registry match wins even if the file is also detected as generated."""
+    f = tmp_path / "pnpm-lock.yaml"
+    f.write_text("content")
+    with mock.patch.object(
+        pr_rebase_cli, "_is_generated_file", return_value=(True, "gitattributes"),
+    ):
+        strategy, _ = pr_rebase_cli._classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
+    assert strategy == "regenerate"
+
+
+def test_classify_and_dispatch_delete_conflict():
+    """Modify/delete conflict classifies as 'delete' and resolves via git rm."""
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath = "KanbanOverlay.tsx"
         full_path = Path(tmpdir) / filepath
-        full_path.write_text("some content without conflict markers\n")
-        go_dirs: set[Path] = set()
+        full_path.write_text("some content\n")
 
-        with mock.patch.object(
-            pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted",
-        ), mock.patch.object(
-            pr_rebase_cli, "_resolve_delete_conflict", return_value=True,
-        ) as mock_delete, mock.patch.object(
-            pr_rebase_cli, "_resolve_single_file",
-        ) as mock_ai:
-            result = pr_rebase_cli._resolve_one(
-                filepath, full_path, "e3e2fdf", "refactor(web): remove components",
-                tmpdir, go_dirs,
-            )
+        with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(False, "")), \
+             mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value="theirs_deleted"):
+            strategy, ctx = pr_rebase_cli._classify_conflict(filepath, full_path, tmpdir)
 
-        assert result is True
-        mock_delete.assert_called_once_with(filepath, "e3e2fdf", tmpdir, "theirs_deleted")
-        mock_ai.assert_not_called()
+        assert strategy == "delete"
+        assert ctx == "theirs_deleted"
 
 
-def test_resolve_one_normal_conflict_falls_through_to_ai():
-    """Normal content conflict (no delete) falls through to AI resolution."""
+def test_classify_normal_conflict_as_ai_merge():
+    """Normal content conflict classifies as 'ai_merge'."""
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath = "main.go"
         full_path = Path(tmpdir) / filepath
         full_path.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-        go_dirs: set[Path] = set()
 
-        with mock.patch.object(
-            pr_rebase_cli, "_detect_delete_conflict", return_value=None,
-        ), mock.patch.object(
-            pr_rebase_cli, "_resolve_single_file", return_value=filepath,
-        ) as mock_ai:
-            result = pr_rebase_cli._resolve_one(
-                filepath, full_path, "abc123", "feat: change",
-                tmpdir, go_dirs,
-            )
+        with mock.patch.object(pr_rebase_cli, "_is_generated_file", return_value=(False, "")), \
+             mock.patch.object(pr_rebase_cli, "_detect_delete_conflict", return_value=None):
+            strategy, ctx = pr_rebase_cli._classify_conflict(filepath, full_path, tmpdir)
 
-        assert result is True
-        mock_ai.assert_called_once()
+        assert strategy == "ai_merge"
 
 
 # ── Chunked conflict resolution ──────────────────────────────────────────
@@ -1025,7 +1073,8 @@ def test_resolve_file_conflicts_handles_go_sum():
             calls.append((cmd, kwargs.get("cwd")))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.sum"], tmpdir, "abc123", "feat: deps",
             )
@@ -1034,10 +1083,10 @@ def test_resolve_file_conflicts_handles_go_sum():
         cmds = [c[0] for c in calls]
         assert ["git", "checkout", "--theirs", "go.sum"] in cmds
         assert ["git", "add", "go.sum"] in cmds
-        # Verify cwd is set on git commands
-        for cmd, cwd in calls:
-            if cmd[0] == "git":
-                assert cwd == tmpdir
+        mock_regen.assert_called_once()
+        regen_args = mock_regen.call_args
+        assert regen_args[0][1] == ["go", "mod", "tidy"]
+        assert regen_args[1]["stage_dir"] is True
 
 
 def test_resolve_file_conflicts_calls_claude():
@@ -1166,12 +1215,10 @@ def test_resolve_file_conflicts_git_add_failure_returns_none():
         assert result is None
 
 
-def test_resolve_file_conflicts_go_mod_triggers_tidy():
+def test_resolve_file_conflicts_go_mod_triggers_regeneration():
     with tempfile.TemporaryDirectory() as tmpdir:
         go_mod = Path(tmpdir) / "go.mod"
         go_mod.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-        go_sum = Path(tmpdir) / "go.sum"
-        go_sum.write_text("existing sum")
 
         resolved_output = "<<<RESOLVED>>>\nmodule example.com\n<<<END_RESOLVED>>>\n"
         calls = []
@@ -1189,17 +1236,43 @@ def test_resolve_file_conflicts_go_mod_triggers_tidy():
                 return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with mock.patch("subprocess.run", side_effect=fake_run):
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
             result = pr_rebase_cli._resolve_file_conflicts(
                 ["go.mod"], tmpdir, "abc123", "feat: deps",
             )
 
         assert result == ["go.mod"]
-        assert ["go", "mod", "tidy"] in calls
-        # Verify tracked changes staged after tidy (git add -u in go directory)
-        tidy_idx = calls.index(["go", "mod", "tidy"])
-        post_tidy = calls[tidy_idx + 1:]
-        assert ["git", "add", "-u"] in post_tidy
+        # go.mod is in registry — should be accepted-theirs + regenerated, not AI-merged
+        mock_regen.assert_called_once()
+        regen_args = mock_regen.call_args
+        assert regen_args[0][1] == ["go", "mod", "tidy"]
+
+
+def test_resolve_file_conflicts_regenerates_pnpm_lockfile():
+    """pnpm-lock.yaml is accepted-theirs and regenerated — the original bug case."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lockfile = Path(tmpdir) / "pnpm-lock.yaml"
+        lockfile.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
+
+        calls = []
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs.get("cwd")))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(pr_rebase_cli, "_run_regeneration", return_value=True) as mock_regen:
+            result = pr_rebase_cli._resolve_file_conflicts(
+                ["pnpm-lock.yaml"], tmpdir, "abc123", "feat: deps",
+            )
+
+        assert result == ["pnpm-lock.yaml"]
+        cmds = [c[0] for c in calls]
+        assert ["git", "checkout", "--theirs", "pnpm-lock.yaml"] in cmds
+        mock_regen.assert_called_once()
+        regen_args = mock_regen.call_args
+        assert regen_args[0][1] == ["pnpm", "install"]
+        assert regen_args[1].get("stage_dir", False) is False
 
 
 # ── _is_empty_patch ──────────────────────────────────────────────────────

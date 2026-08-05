@@ -29,6 +29,7 @@ import traceback
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
@@ -717,7 +718,7 @@ def _accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
         return False
     if not _git_add(filepath, cwd):
         return False
-    log.info(f"Accepted theirs: {filepath} (will regenerate)")
+    log.info(f"Accepted theirs: {filepath}")
     return True
 
 
@@ -811,90 +812,93 @@ def _resolve_chunked(
     return filepath
 
 
-def _resolve_one(
-    filepath: str, full_path: Path, sha: str, subject: str,
-    cwd: str, go_dirs: set[Path],
-) -> bool:
-    """Resolve a single conflicted file — dispatch by type."""
-    if filepath.endswith("go.sum"):
-        if _trail:
-            _trail.decision(
-                "special_file",
-                f"accepting theirs for {filepath}",
-                reason="auto-resolved file type (go.sum)",
-            )
-        ok = _accept_theirs_and_stage(filepath, full_path.parent, cwd)
-        if ok:
-            go_dirs.add(full_path.parent)
-        return ok
+def _classify_conflict(
+    filepath: str, full_path: Path, cwd: str,
+) -> tuple[str, Any]:
+    """Determine resolution strategy for a conflicted file.
+
+    Returns (strategy, context) where strategy is one of:
+      "regenerate"    — accept theirs and run a regeneration command
+      "accept_theirs" — accept theirs, no local regeneration
+      "delete"        — accept deletion (modify/delete conflict)
+      "binary_error"  — cannot resolve binary files
+      "ai_merge"      — resolve via AI
+    """
+    regen = _find_regenerator(filepath)
+    if regen is not None:
+        return ("regenerate", regen)
+
+    generated, method = _is_generated_file(filepath, full_path, cwd)
+    if generated:
+        return ("accept_theirs", method)
 
     delete_type = _detect_delete_conflict(filepath, cwd)
     if delete_type is not None:
-        return _resolve_delete_conflict(filepath, sha, cwd, delete_type)
+        return ("delete", delete_type)
 
-    result = _resolve_single_file(filepath, full_path, sha, subject, cwd)
-    if result is None:
-        return False
-    if _trail:
-        _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
-    if filepath.endswith("go.mod"):
-        go_dirs.add(full_path.parent)
-    return True
+    if _is_binary(full_path):
+        return ("binary_error", None)
 
-
-def _resolve_generated(filepath: str, full_path: Path, cwd: str, method: str) -> bool:
-    """Accept theirs for a generated file. Returns True on success."""
-    _trail and _trail.decision(
-        "generated_file", f"accepting theirs for {filepath}",
-        reason=f"generated file detected via {method}",
-    )
-    return _accept_theirs_and_stage(filepath, full_path.parent, cwd)
+    return ("ai_merge", None)
 
 
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
 ) -> list[str] | None:
-    """Resolve conflicted files via AI. Returns resolved paths or None on failure."""
+    """Resolve conflicted files via classify → dispatch → deferred regen."""
     resolved = []
-    go_dirs: set[Path] = set()
+    pending_regens: dict[tuple[str, tuple[str, ...]], tuple[list[str], bool]] = {}
 
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
+        strategy, context = _classify_conflict(filepath, full_path, cwd)
 
-        generated, method = _is_generated_file(filepath, full_path, cwd)
-        if generated and not _resolve_generated(filepath, full_path, cwd, method):
-            return None
-        if generated:
+        if strategy == "regenerate":
+            if _trail:
+                _trail.decision(
+                    "regenerate", f"accepting theirs for {filepath}",
+                    reason=f"lockfile with known regenerator: {' '.join(context['cmd'])}",
+                )
+            if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
+                return None
+            regen_dir = str(full_path.parent)
+            cmd_tuple = tuple(context["cmd"])
+            key = (regen_dir, cmd_tuple)
+            if key not in pending_regens:
+                pending_regens[key] = ([], context.get("stage_dir", False))
+            pending_regens[key][0].append(filepath)
             resolved.append(filepath)
-            continue
 
-        if _is_binary(full_path):
+        elif strategy == "accept_theirs":
+            if _trail:
+                _trail.decision(
+                    "generated_file", f"accepting theirs for {filepath}",
+                    reason=f"generated file detected via {context}",
+                )
+            if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
+                return None
+            resolved.append(filepath)
+
+        elif strategy == "delete":
+            if not _resolve_delete_conflict(filepath, sha, cwd, context):
+                return None
+            resolved.append(filepath)
+
+        elif strategy == "binary_error":
             _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
             log.error(f"Cannot resolve binary file: {filepath}")
             return None
 
-        ok = _resolve_one(filepath, full_path, sha, subject, cwd, go_dirs)
-        if not ok:
-            return None
-        resolved.append(filepath)
+        elif strategy == "ai_merge":
+            result = _resolve_single_file(filepath, full_path, sha, subject, cwd)
+            if result is None:
+                return None
+            if _trail:
+                _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
+            resolved.append(filepath)
 
-    # Regenerate go.sum for any directories with resolved go.mod/go.sum
-    for go_dir in go_dirs:
-        log.info(f"Running go mod tidy in {go_dir.name}/...")
-        r = subprocess.run(
-            ["go", "mod", "tidy"],
-            cwd=str(go_dir),
-            capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            _terr("resolve_conflicts", f"go mod tidy failed in {go_dir.name}", data={"stderr": r.stderr.strip()})
-            log.error(f"go mod tidy failed: {r.stderr.strip()}")
-            return None
-        r = subprocess.run(["git", "add", "-u"], cwd=str(go_dir))
-        if r.returncode != 0:
-            _terr("resolve_conflicts", f"git add -u failed in {go_dir.name}")
-            log.error(f"git add -u failed in {go_dir.name}")
-            return None
+    for (regen_dir, cmd_tuple), (files, stage_dir) in pending_regens.items():
+        _run_regeneration(regen_dir, list(cmd_tuple), files, stage_dir=stage_dir, cwd=cwd)
 
     return resolved
 

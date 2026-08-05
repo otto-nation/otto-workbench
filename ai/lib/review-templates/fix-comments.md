@@ -35,6 +35,7 @@ Process threads in this order to maximize fixes within the turn budget:
 ## Tracking file location
 ${tracking_file}
 
+## Worktree
 ${worktree_block}
 
 ## Turn budget

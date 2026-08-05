@@ -94,9 +94,9 @@ def build_output_block(output_path: str, *, stdout_warning: bool = False) -> str
     )
     return (
         f"Write your output to: {output_path}\n"
-        "The file already exists and is empty — use the Edit tool with an empty "
-        "`old_string` to insert the complete contents in a single call. Read the "
-        "file first if Edit requires it.\n"
+        "The file already exists and is empty — Read it, then use the Edit tool "
+        "with an empty `old_string` to insert the complete contents. That Read "
+        "plus one Edit is the entire write; do not build the file up in pieces.\n"
         "The Write tool is NOT available in this environment — do not attempt it, "
         "and do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
         f"directories or empty files.{stdout_line}"
@@ -104,9 +104,12 @@ def build_output_block(output_path: str, *, stdout_warning: bool = False) -> str
 
 
 def build_worktree_block(wt_path: str) -> str:
-    """Where the branch is checked out and how to address it."""
+    """Where the branch is checked out and how to address it.
+
+    Like `build_output_block`, this is the body only — the template owns the
+    `## Worktree` heading above the slot.
+    """
     return (
-        "## Worktree\n"
         f"Branch checked out at: {wt_path}\n"
         "\n"
         "All file reads and git commands MUST use this path directly "

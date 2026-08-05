@@ -24,7 +24,7 @@ CONSECUTIVE_FAIL_THRESHOLD = 3
 DIAG_NO_SESSION_LOG = "no session log found"
 DIAG_NO_RESULT_RECORD = "no result record in session log"
 DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
-DIAG_NO_WRITE_TOOL_CALL = "never called Edit or Write"
+DIAG_NO_WRITE_TOOL_CALL = "never called a file-writing tool"
 
 # Tools that can put content into the output file. An agent that burned its
 # turns without calling one of these was thrashing, not working — say so

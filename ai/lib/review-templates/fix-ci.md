@@ -26,6 +26,7 @@ For each unchecked failure (`- [ ]`) above:
 ## Tracking file location
 ${tracking_file}
 
+## Worktree
 ${worktree_block}
 
 ## Turn budget

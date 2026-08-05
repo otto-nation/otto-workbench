@@ -27,6 +27,7 @@ For each unchecked finding (`- [ ]`) in the review above:
 ## Review file location
 ${review_file}
 
+## Worktree
 ${worktree_block}
 
 ## Turn budget

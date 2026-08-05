@@ -668,7 +668,11 @@ def _compute_diff_budget(
     file_filter: list[str] | None = None,
     min_diff: int = MIN_DIFF_BYTES,
 ) -> int:
-    known_bytes = sum(len(str(v).encode()) for v in known_sections.values() if v)
+    # `is not None`, not truthiness — a falsy value (0, False) still renders
+    # into the prompt and must count against the budget.
+    known_bytes = sum(
+        len(str(v).encode()) for v in known_sections.values() if v is not None
+    )
 
     pf = job.preflight
     non_diff_preflight = 0
@@ -704,7 +708,7 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, object
     section_sizes = {}
     parts = []
     for name, value in sections.items():
-        size = len(str(value).encode()) if value else 0
+        size = len(str(value).encode()) if value is not None else 0
         section_sizes[name] = size
         if size > 1024:
             parts.append(f"{name}={size // 1024}KB")

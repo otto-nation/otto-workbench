@@ -442,40 +442,64 @@ class TestOutputBlockContract:
 
     @pytest.mark.parametrize("template_name", sorted(_BUILD_PROMPT_EXTRAS))
     def test_no_write_tool_mandate(self, template_name):
-        rendered = _render_via_build_prompt(template_name)
+        self._assert_no_mandate(
+            template_name, _render_via_build_prompt(template_name),
+        )
+
+    @pytest.mark.parametrize("render", ["ci", "comments"])
+    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt):
+        rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
+        self._assert_no_mandate(render, rendered)
+
+    def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
         assert not match, (
-            f"{template_name} tells the agent to use the Write tool "
+            f"{label} tells the agent to use the Write tool "
             f"({match.group(0)!r}) — it does not exist under --bare"
         )
 
-    @pytest.mark.parametrize(
-        "template_name, output_key",
-        [
-            (review_common.TEMPLATE_HOLISTIC, "holistic_output"),
-            (review_common.TEMPLATE_SCOUT, "scout_output"),
-            (review_common.TEMPLATE_DISPROVE, "disprove_output"),
-            (review_common.TEMPLATE_GROUP, "group_output"),
-        ],
-    )
-    def test_output_block_names_edit_and_path(self, template_name, output_key):
-        rendered = _render_via_build_prompt(template_name)
-        assert _BUILD_PROMPT_EXTRAS[template_name][output_key] in rendered
-        assert "Edit tool with an empty `old_string`" in rendered
+    # (template, output path, stdout_warning) — mirrors each handler's
+    # b.output(...) call, so the assertion compares against the block the
+    # builder actually produces rather than a restated copy of its wording.
+    _OUTPUT_BLOCKS = [
+        (review_common.TEMPLATE_HOLISTIC, "/tmp/reviews/holistic.md", False),
+        (review_common.TEMPLATE_SCOUT, "/tmp/reviews/scout.md", False),
+        (review_common.TEMPLATE_DISPROVE, "/tmp/reviews/disprove.md", False),
+        (review_common.TEMPLATE_GROUP, "/tmp/reviews/group-1.md", False),
+        (review_common.TEMPLATE_SYNTHESIS, "/tmp/reviews/review.md", False),
+        (review_common.TEMPLATE_SELF_SYNTHESIS, "/tmp/reviews/review.md", False),
+        (review_common.TEMPLATE_SINGLE, "/tmp/reviews/review.md", True),
+        (review_common.TEMPLATE_SELF_REVIEW, "/tmp/reviews/review.md", True),
+    ]
 
     @pytest.mark.parametrize(
-        "template_name",
-        [review_common.TEMPLATE_SYNTHESIS, review_common.TEMPLATE_SELF_SYNTHESIS,
-         review_common.TEMPLATE_SINGLE, review_common.TEMPLATE_SELF_REVIEW],
+        "template_name, output_path, stdout_warning", _OUTPUT_BLOCKS,
+        ids=[t for t, _, _ in _OUTPUT_BLOCKS],
     )
-    def test_review_file_templates_write_to_review_file(self, template_name):
+    def test_output_block_rendered_verbatim(
+        self, template_name, output_path, stdout_warning,
+    ):
         rendered = _render_via_build_prompt(template_name)
-        assert "/tmp/reviews/review.md" in rendered
-        assert "Edit tool with an empty `old_string`" in rendered
+        expected = review_common.build_output_block(
+            output_path, stdout_warning=stdout_warning,
+        )
+        assert expected in rendered
+
+    def test_every_output_writing_template_is_checked(self):
+        checked = {t for t, _, _ in self._OUTPUT_BLOCKS}
+        expected = {
+            name for name in _BUILD_PROMPT_EXTRAS
+            if "output_block" in _extract_template_vars(TEMPLATE_DIR / name)
+        }
+        assert expected == checked
 
     @pytest.mark.parametrize("render", ["ci", "comments"])
     def test_fix_templates_share_the_worktree_block(self, render, cc, rt):
         rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
+        assert review_common.build_worktree_block("/tmp/wt") in rendered
+
+    def test_fix_findings_shares_the_worktree_block(self):
+        rendered = _render_via_build_prompt(review_common.TEMPLATE_FIX)
         assert review_common.build_worktree_block("/tmp/wt") in rendered
 
 

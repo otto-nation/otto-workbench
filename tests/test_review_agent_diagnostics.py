@@ -10,6 +10,10 @@ import review_agent
 import review_pipeline
 
 
+_TURNS = 16
+_MAX_TURNS_REASON = f"agent hit max turns ({_TURNS})"
+
+
 def _tool_use(name: str, **inp) -> str:
     return json.dumps({
         "type": "assistant",
@@ -17,7 +21,7 @@ def _tool_use(name: str, **inp) -> str:
     })
 
 
-def _result(subtype: str = "error_max_turns", num_turns: int = 16) -> str:
+def _result(subtype: str = "error_max_turns", num_turns: int = _TURNS) -> str:
     return json.dumps({
         "type": "result", "subtype": subtype, "num_turns": num_turns,
     })
@@ -38,7 +42,7 @@ class TestDiagnoseMissingOutput:
             _result(),
         )
         reason = review_agent._diagnose_missing_output(log_path)
-        assert "agent hit max turns (16)" in reason
+        assert _MAX_TURNS_REASON in reason
         assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
 
     def test_max_turns_with_edit_call_stays_plain(self, tmp_path):
@@ -49,13 +53,13 @@ class TestDiagnoseMissingOutput:
             _result(),
         )
         reason = review_agent._diagnose_missing_output(log_path)
-        assert reason == "agent hit max turns (16)"
+        assert reason == _MAX_TURNS_REASON
 
     def test_no_assistant_records_stays_plain(self, tmp_path):
         """Non-Claude backends log no tool_use — absence is not evidence."""
         log_path = _write_log(tmp_path, _result())
         reason = review_agent._diagnose_missing_output(log_path)
-        assert reason == "agent hit max turns (16)"
+        assert reason == _MAX_TURNS_REASON
 
     def test_missing_log_unchanged(self, tmp_path):
         reason = review_agent._diagnose_missing_output(str(tmp_path / "nope.jsonl"))

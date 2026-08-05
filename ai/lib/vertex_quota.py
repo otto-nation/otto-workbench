@@ -20,10 +20,12 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import log
+from review_common import Phase
 
 try:
     from google.auth import default as _google_auth_default
@@ -52,12 +54,29 @@ _PUBLISHER_PREFIX = "anthropic-"
 _MODEL_ID_PREFIX = "claude-"
 
 
-@dataclass
+class QuotaVerdict(StrEnum):
+    """What a quota lookup established about one model.
+
+    ``UNKNOWN`` is distinct from ``PROVISIONED``: the check could not run
+    (no credentials, API error), so nothing was proven either way.
+    """
+
+    PROVISIONED = "provisioned"
+    NOT_PROVISIONED = "not_provisioned"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
 class VertexQuotaResult:
-    ok: bool
+    verdict: QuotaVerdict
     model: str
     error: str = ""
-    available_models: list[str] = field(default_factory=list)
+    available_models: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        """Whether the run may proceed — only a proven gap blocks it."""
+        return self.verdict is not QuotaVerdict.NOT_PROVISIONED
 
 
 def is_checkable(model: str) -> bool:
@@ -225,13 +244,13 @@ def check_quota(model: str, project: str, region: str) -> VertexQuotaResult:
     token = _get_access_token()
     if not token:
         log.warn("Vertex quota check skipped — could not obtain access token")
-        return VertexQuotaResult(ok=True, model=base_model)
+        return VertexQuotaResult(QuotaVerdict.UNKNOWN, base_model)
 
     try:
         models = _fetch_provisioned_models(project, region, token)
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         log.warn(f"Vertex quota check skipped — quota API error: {exc}")
-        return VertexQuotaResult(ok=True, model=base_model)
+        return VertexQuotaResult(QuotaVerdict.UNKNOWN, base_model)
 
     _write_cache(project, region, models)
     return _verdict(base_model, models, project, region)
@@ -241,16 +260,16 @@ def _verdict(
     base_model: str, provisioned: dict[str, str], project: str, region: str,
 ) -> VertexQuotaResult:
     if base_model in provisioned:
-        return VertexQuotaResult(ok=True, model=base_model)
+        return VertexQuotaResult(QuotaVerdict.PROVISIONED, base_model)
     return VertexQuotaResult(
-        ok=False, model=base_model,
+        QuotaVerdict.NOT_PROVISIONED, base_model,
         error=f"model '{base_model}' has no quota in project '{project}' region '{region}'",
-        available_models=sorted(provisioned.keys()),
+        available_models=tuple(sorted(provisioned.keys())),
     )
 
 
 def _report_failure(
-    result: VertexQuotaResult, phases: list[str], project: str, region: str,
+    result: VertexQuotaResult, phases: list[Phase], project: str, region: str,
 ) -> None:
     log.error(
         f"Vertex AI model '{result.model}' has no quota in"
@@ -258,11 +277,11 @@ def _report_failure(
     )
     if result.available_models:
         log.dim(f"  Available: {', '.join(result.available_models)}")
-    keys = ", ".join(f"CLAUDE_REVIEW_{p.upper()}_MODEL" for p in phases)
+    keys = ", ".join(Phase(p).model_env_key for p in phases)
     log.dim(f"  Fix: set {keys} to a provisioned model")
 
 
-def run_preflight(models: dict[str, list[str]], trail) -> bool:
+def run_preflight(models: dict[str, list[Phase]], trail) -> bool:
     """Check every model the run would use against Vertex quota.
 
     ``models`` maps a resolved model id to the phases requesting it.  Returns
@@ -290,7 +309,7 @@ def run_preflight(models: dict[str, list[str]], trail) -> bool:
     if skipped:
         log.dim(f"Vertex quota check skipped for CLI shorthand: {', '.join(skipped)}")
 
-    failures: list[tuple[VertexQuotaResult, list[str]]] = []
+    failures: list[tuple[VertexQuotaResult, list[Phase]]] = []
     checked = sorted(m for m in models if is_checkable(m))
     for model in checked:
         result = check_quota(model, project, region)
@@ -311,7 +330,7 @@ def run_preflight(models: dict[str, list[str]], trail) -> bool:
         reason="; ".join(result.error for result, _ in failures),
         data={"failures": [
             {"model": result.model, "phases": phases,
-             "available": result.available_models}
+             "available": list(result.available_models)}
             for result, phases in failures
         ]},
     )

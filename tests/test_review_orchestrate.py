@@ -1056,57 +1056,64 @@ class TestCheckSerialAbort:
 
 
 class TestResolveModel:
-    def _clear_alias_envs(self, monkeypatch):
-        for key in ("ANTHROPIC_DEFAULT_SONNET_MODEL",
-                     "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                     "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
-            monkeypatch.delenv(key, raising=False)
+    def _clear_alias_envs(self, ro, monkeypatch):
+        for alias in ro.ModelAlias:
+            monkeypatch.delenv(alias.env_key, raising=False)
+
+    def test_alias_env_keys_follow_convention(self, ro):
+        assert ro.ModelAlias.SONNET.env_key == "ANTHROPIC_DEFAULT_SONNET_MODEL"
+        assert ro.ModelAlias.OPUS.env_key == "ANTHROPIC_DEFAULT_OPUS_MODEL"
+        assert ro.ModelAlias.HAIKU.env_key == "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+
+    def test_parse_rejects_concrete_model_id(self, ro):
+        assert ro.ModelAlias.parse("claude-sonnet-5") is None
+        assert ro.ModelAlias.parse("sonnet") is ro.ModelAlias.SONNET
 
     def test_explicit(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
 
     def test_env_key(self, ro, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
 
     def test_global_env(self, ro, monkeypatch):
         monkeypatch.delenv("UNUSED_KEY", raising=False)
         monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
 
     def test_default_fallback(self, ro, monkeypatch):
         monkeypatch.delenv("UNUSED_KEY", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
 
     def test_alias_resolved_via_env(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "claude-sonnet-5"
 
     def test_explicit_alias_resolved(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
         assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "claude-opus-4-6"
 
     def test_env_key_alias_resolved(self, ro, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4-5@20251001")
         assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "claude-haiku-4-5@20251001"
 
     def test_full_model_id_not_resolved(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(monkeypatch)
+        self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("claude-sonnet-5", "SOME_KEY", "sonnet") == "claude-sonnet-5"
 
 
@@ -1114,33 +1121,34 @@ class TestResolveModel:
 
 
 class TestPhaseModel:
-    def _clean_env(self, monkeypatch):
+    def _clean_env(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        for phase in ("SINGLE", "HOLISTIC", "SCOUT", "GROUP",
-                      "SYNTHESIS", "DISPROVE", "FIX"):
-            monkeypatch.delenv(f"CLAUDE_REVIEW_{phase}_MODEL", raising=False)
-        for key in ("ANTHROPIC_DEFAULT_SONNET_MODEL",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
-            monkeypatch.delenv(key, raising=False)
+        for phase in ro.Phase:
+            monkeypatch.delenv(phase.model_env_key, raising=False)
+        for alias in ro.ModelAlias:
+            monkeypatch.delenv(alias.env_key, raising=False)
+
+    def test_phase_env_keys_follow_convention(self, ro):
+        assert ro.Phase.SCOUT.model_env_key == "CLAUDE_REVIEW_SCOUT_MODEL"
+        assert ro.Phase.SCOUT.thinking_env_key == "CLAUDE_REVIEW_SCOUT_THINKING"
 
     def test_default(self, ro, monkeypatch):
-        self._clean_env(monkeypatch)
+        self._clean_env(ro, monkeypatch)
         assert ro.phase_model("scout", "") == "sonnet"
 
     def test_env_key_derived_from_phase_name(self, ro, monkeypatch):
-        self._clean_env(monkeypatch)
+        self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "") == "claude-haiku-4-5"
         assert ro.phase_model("group", "") == "sonnet"
 
     def test_explicit_overrides_env(self, ro, monkeypatch):
-        self._clean_env(monkeypatch)
+        self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "claude-opus-5") == "claude-opus-5"
 
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
-        self._clean_env(monkeypatch)
+        self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
         monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
@@ -1148,10 +1156,25 @@ class TestPhaseModel:
         assert set(models["claude-sonnet-5"]) == set(ro.PHASE_MODEL_DEFAULTS) - {"scout"}
 
     def test_collect_covers_every_phase(self, ro, monkeypatch):
-        self._clean_env(monkeypatch)
+        self._clean_env(ro, monkeypatch)
         models = ro.collect_phase_models("")
         phases = [p for group in models.values() for p in group]
         assert sorted(phases) == sorted(ro.PHASE_MODEL_DEFAULTS)
+
+
+# ── 19c. enum_arg ───────────────────────────────────────────────────────────
+
+
+class TestEnumArg:
+    def test_converts_to_enum_member(self, ro):
+        assert ro.enum_arg(ro.Mode)("self") is ro.Mode.SELF
+
+    def test_error_lists_valid_choices(self, ro):
+        import argparse
+
+        with pytest.raises(argparse.ArgumentTypeError) as exc:
+            ro.enum_arg(ro.Effort)("bogus")
+        assert str(exc.value) == "invalid choice: 'bogus' (choose from 'low', 'medium', 'high')"
 
 
 # ── 20. _extract_heredoc ────────────────────────────────────────────────────
@@ -1576,7 +1599,7 @@ class TestBuildMechanicalFallback:
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_PR,
+            mode=ro.Mode.PR,
         )
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
         result = ro._build_mechanical_fallback(job, 3, merged)
@@ -1594,7 +1617,7 @@ class TestBuildMechanicalFallback:
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_SELF,
+            mode=ro.Mode.SELF,
         )
         merged = "## Nit\n- **[N1]** **`file.go:1`** — style\n"
         result = ro._build_mechanical_fallback(job, 2, merged)
@@ -1611,7 +1634,7 @@ class TestBuildMechanicalFallback:
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_PR,
+            mode=ro.Mode.PR,
         )
         merged = (
             "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
@@ -1636,7 +1659,7 @@ class TestWriteCleanReview:
             wt_path="/tmp/wt", review_file=str(review_file),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_PR,
+            mode=ro.Mode.PR,
         )
         ro._write_clean_review(job, 2)
         content = review_file.read_text()
@@ -1655,7 +1678,7 @@ class TestWriteCleanReview:
             wt_path="/tmp/wt", review_file=str(review_file),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_SELF,
+            mode=ro.Mode.SELF,
         )
         ro._write_clean_review(job, 2)
         content = review_file.read_text()
@@ -1766,7 +1789,7 @@ class TestPhaseSynthesis:
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_PR if mode == "pr" else ro.MODE_SELF,
+            mode=ro.Mode(mode),
         )
 
     @staticmethod
@@ -1943,7 +1966,7 @@ class TestSynthesisFailedTracking:
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_PR if mode == "pr" else ro.MODE_SELF,
+            mode=ro.Mode(mode),
         )
 
     def test_self_review_fallback_detected(self, ro, tmp_path, monkeypatch):
@@ -2036,7 +2059,7 @@ class TestRetryTurns:
             ctx=ro.PRContext(),
             wt_path=str(tmp_path), review_file=str(tmp_path / "r.md"),
             session_log=str(tmp_path / "s.jsonl"),
-            reviews_dir=str(tmp_path), mode=ro.MODE_PR,
+            reviews_dir=str(tmp_path), mode=ro.Mode.PR,
         )
 
     def test_max_turns_gets_doubled(self, ro, tmp_path):
@@ -2063,7 +2086,7 @@ class TestRetryFailedGroups:
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             reviews_dir=str(tmp_path),
-            mode=ro.MODE_PR,
+            mode=ro.Mode.PR,
         )
 
     def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):

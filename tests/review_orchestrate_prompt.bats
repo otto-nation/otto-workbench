@@ -58,9 +58,9 @@ print(sorted(set(mod.PHASE_MODEL_DEFAULTS.values())))
 
 @test "model defaults: registry covers every phase" {
   result=$(_py "
-print(sorted(mod.PHASE_MODEL_DEFAULTS))
+print(sorted(mod.PHASE_MODEL_DEFAULTS) == sorted(mod.Phase))
 ")
-  [ "$result" = "['disprove', 'fix', 'group', 'holistic', 'scout', 'single', 'synthesis']" ]
+  [ "$result" = "True" ]
 }
 
 @test "_resolve_model: explicit override wins" {

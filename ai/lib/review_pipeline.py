@@ -31,7 +31,7 @@ from review_common import (
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
-    MODE_SELF,
+    AgentKind, Effort, Mode, Phase, Thinking,
     PRIOR_DATE_RE,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
@@ -83,26 +83,25 @@ DEFAULT_MAX_TURNS_SINGLE = 15
 RETRY_MAX_TURNS_GROUP = 30
 _MAX_TURNS_REASON = "agent hit max turns"
 
-# Phase → default model. The override env key is derived by convention
-# (CLAUDE_REVIEW_<PHASE>_MODEL), so adding a phase means one entry here and
-# nothing else — preflight checks and callers both read this registry.
-PHASE_MODEL_DEFAULTS = {
-    "single": "sonnet",
-    "holistic": "sonnet",
-    "scout": "sonnet",
-    "group": "sonnet",
-    "synthesis": "sonnet",
-    "disprove": "sonnet",
-    "fix": "sonnet",
+# Phase → default model. Entries stay explicit rather than comprehension-built
+# so that giving one phase a different default is a one-line change.
+PHASE_MODEL_DEFAULTS: dict[Phase, str] = {
+    Phase.SINGLE: "sonnet",
+    Phase.HOLISTIC: "sonnet",
+    Phase.SCOUT: "sonnet",
+    Phase.GROUP: "sonnet",
+    Phase.SYNTHESIS: "sonnet",
+    Phase.DISPROVE: "sonnet",
+    Phase.FIX: "sonnet",
 }
 
-DEFAULT_THINKING_GROUP = "low"
-DEFAULT_THINKING_HOLISTIC = "medium"
-DEFAULT_THINKING_SCOUT = "low"
-DEFAULT_THINKING_SYNTHESIS = "medium"
-DEFAULT_THINKING_DISPROVE = "medium"
-DEFAULT_THINKING_SINGLE = "medium"
-DEFAULT_THINKING_FIX = "low"
+DEFAULT_THINKING_GROUP = Thinking.LOW
+DEFAULT_THINKING_HOLISTIC = Thinking.MEDIUM
+DEFAULT_THINKING_SCOUT = Thinking.LOW
+DEFAULT_THINKING_SYNTHESIS = Thinking.MEDIUM
+DEFAULT_THINKING_DISPROVE = Thinking.MEDIUM
+DEFAULT_THINKING_SINGLE = Thinking.MEDIUM
+DEFAULT_THINKING_FIX = Thinking.LOW
 
 DEFAULT_MAX_TURNS_SCOUT = 10
 DEFAULT_MAX_TURNS_DISPROVE = 15
@@ -116,22 +115,23 @@ OMITTED_FILE_TURNS = 2
 # ── Phase model resolution ───────────────────────────────────────────────────
 
 
-def phase_model(phase: str, explicit: str | None) -> str:
+def phase_model(phase: Phase, explicit: str | None) -> str:
     """Resolve the model for a pipeline phase (explicit > env > default)."""
+    phase = Phase(phase)
     return _resolve_model(
         explicit,
-        f"CLAUDE_REVIEW_{phase.upper()}_MODEL",
+        phase.model_env_key,
         PHASE_MODEL_DEFAULTS[phase],
     )
 
 
-def collect_phase_models(explicit: str | None) -> dict[str, list[str]]:
+def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
     """Map each model the pipeline would use to the phases that requested it.
 
     Callers use this to check every distinct model once up front and to name
     the env keys worth changing when one of them is unusable.
     """
-    models: dict[str, list[str]] = {}
+    models: dict[str, list[Phase]] = {}
     for phase in PHASE_MODEL_DEFAULTS:
         models.setdefault(phase_model(phase, explicit), []).append(phase)
     return models
@@ -139,9 +139,9 @@ def collect_phase_models(explicit: str | None) -> dict[str, list[str]]:
 
 # ── Effort presets ───────────────────────────────────────────────────────────
 
-EFFORT_PRESETS = {
-    "low": {
-        "thinking": "low",
+EFFORT_PRESETS: dict[Effort, dict] = {
+    Effort.LOW: {
+        "thinking": Thinking.LOW,
         "agent_budget": 3.0,
         "max_groups": 6,
         "multi_phase_line_threshold": 1000,
@@ -151,9 +151,9 @@ EFFORT_PRESETS = {
         "skip_scout": True,
         "skip_disprove": True,
         "skip_omitted_files": True,
-        "agent": "reviewer-lite",
+        "agent": AgentKind.REVIEWER_LITE,
     },
-    "medium": {
+    Effort.MEDIUM: {
         "thinking": None,
         "agent_budget": DEFAULT_MAX_BUDGET_PER_AGENT,
         "max_groups": 8,
@@ -164,10 +164,10 @@ EFFORT_PRESETS = {
         "skip_scout": False,
         "skip_disprove": False,
         "skip_omitted_files": False,
-        "agent": "reviewer",
+        "agent": AgentKind.REVIEWER,
     },
-    "high": {
-        "thinking": "high",
+    Effort.HIGH: {
+        "thinking": Thinking.HIGH,
         "agent_budget": 8.0,
         "max_groups": 16,
         "multi_phase_line_threshold": 500,
@@ -177,19 +177,19 @@ EFFORT_PRESETS = {
         "skip_scout": False,
         "skip_disprove": False,
         "skip_omitted_files": False,
-        "agent": "reviewer",
+        "agent": AgentKind.REVIEWER,
     },
 }
 
 
-def _effort_default(effort: str, key: str, fallback):
+def _effort_default(effort: Effort, key: str, fallback):
     preset = EFFORT_PRESETS.get(effort)
     if preset and key in preset:
         return preset[key]
     return fallback
 
 
-def _effort_thinking(effort: str, phase_default: str | None) -> str | None:
+def _effort_thinking(effort: Effort, phase_default: Thinking | None) -> Thinking | None:
     preset = EFFORT_PRESETS.get(effort)
     if preset:
         override = preset.get("thinking")
@@ -333,21 +333,21 @@ def _write_review_sidecar(job: ReviewJob):
 
 
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
-    template = TEMPLATE_SELF_REVIEW if job.mode == MODE_SELF else TEMPLATE_SINGLE
+    template = TEMPLATE_SELF_REVIEW if job.mode == Mode.SELF else TEMPLATE_SINGLE
     max_turns = DEFAULT_MAX_TURNS_SINGLE + _omitted_turns(job)
     prompt = build_prompt(
         template, job, max_turns=max_turns, branch_name=job.pr.head,
     )
-    label = f"branch {job.pr.head}" if job.mode == MODE_SELF else f"PR #{job.pr_number} ({job.pr.title})"
+    label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
     log.info(f"Running review agent on {label}...")
     log.blank()
     _touch(job.review_file)
-    model = phase_model("single", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SINGLE_THINKING",
+    model = phase_model(Phase.SINGLE, job.model)
+    thinking = _resolve_thinking_level(None, Phase.SINGLE.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SINGLE))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
-    agent = _effort_default(job.effort, "agent", "reviewer")
+    agent = _effort_default(job.effort, "agent", AgentKind.REVIEWER)
 
     # `rc` tracks the latest attempt so the failure message below reports the
     # retry's exit code, not the first attempt's.
@@ -569,13 +569,13 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
-    model = phase_model("group", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING",
+    model = phase_model(Phase.GROUP, job.model)
+    thinking = _resolve_thinking_level(None, Phase.GROUP.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_GROUP))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
 
     failed = None
     if not _has_output(group_output):
@@ -605,12 +605,12 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    model = phase_model("holistic", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_HOLISTIC_THINKING",
+    model = phase_model(Phase.HOLISTIC, job.model)
+    thinking = _resolve_thinking_level(None, Phase.HOLISTIC.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_HOLISTIC))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
-    agent = _effort_default(job.effort, "agent", "reviewer")
+    agent = _effort_default(job.effort, "agent", AgentKind.REVIEWER)
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
 
@@ -644,8 +644,8 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
-    model = phase_model("scout", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SCOUT_THINKING",
+    model = phase_model(Phase.SCOUT, job.model)
+    thinking = _resolve_thinking_level(None, Phase.SCOUT.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SCOUT))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
@@ -653,7 +653,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+        return invoke_agent(text, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
 
     invoke(prompt, max_turns)
     log.blank()
@@ -691,8 +691,8 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
-    model = phase_model("disprove", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_DISPROVE_THINKING",
+    model = phase_model(Phase.DISPROVE, job.model)
+    thinking = _resolve_thinking_level(None, Phase.DISPROVE.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_DISPROVE))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
@@ -700,7 +700,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent="reviewer-lite", throttle=job.throttle)
+        return invoke_agent(text, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
 
     invoke(prompt, max_turns)
     log.blank()
@@ -967,8 +967,8 @@ def run_fix_pass(job: ReviewJob):
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
     )
-    model = phase_model("fix", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING",
+    model = phase_model(Phase.FIX, job.model)
+    thinking = _resolve_thinking_level(None, Phase.FIX.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_FIX))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
@@ -977,7 +977,7 @@ def run_fix_pass(job: ReviewJob):
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
                  review_file=job.review_file, model=model, thinking_level=thinking,
                  provider=provider, max_turns=max_turns, max_budget=budget,
-                 agent="reviewer-lite", throttle=job.throttle)
+                 agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -1003,7 +1003,7 @@ def run_fix_pass(job: ReviewJob):
                          review_file=job.review_file, model=model,
                          thinking_level=thinking, provider=provider,
                          max_turns=retry_turns, max_budget=budget,
-                         agent="reviewer-lite", throttle=job.throttle)
+                         agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -1290,7 +1290,7 @@ def _build_mechanical_fallback(
         job, skipped_groups=skipped_groups, total_groups=group_count,
         status=status,
     )
-    if job.mode == MODE_SELF:
+    if job.mode == Mode.SELF:
         title = f"# Self-Review: {job.repo} — {job.pr.head}"
     else:
         title = f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}"
@@ -1303,7 +1303,7 @@ def _build_mechanical_fallback(
         meta_header=meta,
         group_count=group_count,
         summary_note=FALLBACK_SUMMARY,
-        include_verdict=(job.mode != MODE_SELF),
+        include_verdict=(job.mode != Mode.SELF),
         file_count=job.pr.changed_files,
         failures_section=failures_section,
     )
@@ -1332,7 +1332,7 @@ def _phase_synthesis(
     skipped_groups: int = 0,
 ) -> str:
     synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
-    synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == MODE_SELF else TEMPLATE_SYNTHESIS
+    synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == Mode.SELF else TEMPLATE_SYNTHESIS
 
     Path(job.review_file).write_text("")
 
@@ -1342,14 +1342,14 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
-    model = phase_model("synthesis", job.model)
-    thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SYNTHESIS_THINKING",
+    model = phase_model(Phase.SYNTHESIS, job.model)
+    thinking = _resolve_thinking_level(None, Phase.SYNTHESIS.thinking_env_key,
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SYNTHESIS))
     provider = _resolve_provider()
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
-    agent = _effort_default(job.effort, "agent", "reviewer")
+    agent = _effort_default(job.effort, "agent", AgentKind.REVIEWER)
 
     # `rc` tracks the latest attempt so the fallback warning below reports the
     # retry's exit code, not the first attempt's.
@@ -1447,7 +1447,7 @@ def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 
     meta = _build_meta_header(
         job, skipped_groups=skipped_groups, total_groups=group_count,
     )
-    if job.mode == MODE_SELF:
+    if job.mode == Mode.SELF:
         content = (
             f"# Self-Review: {job.repo} — {job.pr.head}\n"
             f"{meta}\n"
@@ -1545,7 +1545,7 @@ def _identify_incremental_skips(
 
 def _holistic_skip_reason(
     skip_holistic: bool, incremental: bool, group_count: int,
-    effort: str = "medium",
+    effort: Effort = Effort.MEDIUM,
 ) -> str | None:
     if incremental:
         return "incremental review"
@@ -1810,15 +1810,15 @@ def run_multi_phase(
 
 
 def _fetch_metadata(
-    repo: str, pr_number: str, mode: str, wt_path: str,
+    repo: str, pr_number: str, mode: Mode, wt_path: str,
 ) -> tuple[PRMetadata, PRContext, PRData | None]:
-    if mode == MODE_SELF and not pr_number:
+    if mode == Mode.SELF and not pr_number:
         log.info("Gathering branch metadata...")
         return fetch_branch_metadata(wt_path), PRContext(), None
     log.info("Fetching PR data...")
     with ThreadPoolExecutor(max_workers=2) as pool:
         pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
-        if mode == MODE_SELF:
+        if mode == Mode.SELF:
             return pr_future.result(), PRContext(), None
         pd_future = pool.submit(fetch_pr_data, repo, pr_number)
         pr_data = pd_future.result()

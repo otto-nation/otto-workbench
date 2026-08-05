@@ -9,6 +9,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import ai_backend
 
 
+class TestBackendSelection:
+    def test_defaults_to_claude(self, monkeypatch):
+        monkeypatch.delenv("AI_BACKEND", raising=False)
+        assert ai_backend._backend() is ai_backend.Backend.CLAUDE
+
+    def test_reads_env(self, monkeypatch):
+        monkeypatch.setenv("AI_BACKEND", "pi")
+        assert ai_backend._backend() is ai_backend.Backend.PI
+
+    def test_unrecognised_backend_falls_back_to_claude(self, monkeypatch):
+        monkeypatch.setenv("AI_BACKEND", "not-a-backend")
+        assert ai_backend._backend() is ai_backend.Backend.CLAUDE
+
+
 class TestPreflightDispatch:
     def test_routes_to_claude_backend(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "claude")

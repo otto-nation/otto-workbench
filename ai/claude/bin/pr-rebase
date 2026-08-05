@@ -332,6 +332,18 @@ def _find_regenerator(filepath: str) -> Regenerator | None:
     return _LOCKFILE_REGENERATORS.get(os.path.basename(filepath))
 
 
+# mise accepts any of these config filenames; a project may use any one of
+# them, so checking only the undotted mise.toml misses most real repos.
+_MISE_CONFIG_NAMES = (
+    "mise.toml",
+    ".mise.toml",
+    "mise.local.toml",
+    ".mise.local.toml",
+    ".config/mise.toml",
+    ".tool-versions",
+)
+
+
 def _detect_mise(target_dir: str, repo_root: str) -> bool:
     """Check if mise is available and configured for this directory."""
     if not shutil.which("mise"):
@@ -339,11 +351,19 @@ def _detect_mise(target_dir: str, repo_root: str) -> bool:
     d = Path(target_dir).resolve()
     root = Path(repo_root).resolve()
     while True:
-        if (d / "mise.toml").is_file() or (d / ".tool-versions").is_file():
+        if any((d / name).is_file() for name in _MISE_CONFIG_NAMES):
             return True
         if d == root or d.parent == d:
             return False
         d = d.parent
+
+
+def _try_run(cmd: list[str], *, cwd: str) -> subprocess.CompletedProcess | None:
+    """Run a command, returning None if the executable is not on PATH."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
 
 
 def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
@@ -358,13 +378,20 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     run_cmd = ["mise", "exec", "--"] + cmd if use_mise else cmd
 
     log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
-    r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=job.regen_dir)
+    r = _try_run(run_cmd, cwd=job.regen_dir)
 
-    if not use_mise and r.returncode == 127:
-        if shutil.which("mise"):
-            log.info("Retrying with mise...")
-            run_cmd = ["mise", "exec", "--"] + cmd
-            r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=job.regen_dir)
+    # A missing binary raises FileNotFoundError rather than exiting 127, and a
+    # tool-managed binary is only on PATH inside `mise exec`. Retry there.
+    if (r is None or r.returncode == 127) and not use_mise and shutil.which("mise"):
+        log.info("Retrying with mise...")
+        use_mise = True
+        r = _try_run(["mise", "exec", "--"] + cmd, cwd=job.regen_dir)
+
+    if r is None:
+        _terr("regeneration", f"{cmd[0]} not found for {job.regen_dir}",
+              data={"cmd": cmd})
+        log.warn(f"Regeneration failed: {cmd[0]} not found on PATH")
+        return False
 
     if r.returncode != 0:
         _terr("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",

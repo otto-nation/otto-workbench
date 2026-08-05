@@ -127,18 +127,23 @@ def _check_cache(project: str, region: str) -> dict[str, str] | None:
     return None
 
 
+def _atomic_write(path: Path, payload: str) -> None:
+    fd, tmp_path = tempfile.mkstemp(dir=_CACHE_DIR, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(payload)
+        os.replace(tmp_path, path)
+    except OSError:
+        os.unlink(tmp_path)
+        raise
+
+
 def _write_cache(project: str, region: str, models: dict[str, str]) -> None:
     path = _cache_key(project, region)
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(_CACHE_DIR, 0o700)
-        fd, tmp_path = tempfile.mkstemp(dir=_CACHE_DIR, prefix=".tmp-")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write(json.dumps({"ts": time.time(), "models": models}))
-            os.replace(tmp_path, path)
-        except OSError:
-            os.unlink(tmp_path)
+        _atomic_write(path, json.dumps({"ts": time.time(), "models": models}))
     except OSError:
         pass
 

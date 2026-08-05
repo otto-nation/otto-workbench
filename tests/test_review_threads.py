@@ -1704,3 +1704,33 @@ class TestSummaryMarker:
         with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         assert mock_post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+
+
+# ── default-branch resolution in commit lookups ────────────────────────────
+
+
+class TestCommitLookupsUseDefaultBranch:
+    """`origin/main` is not universal — a hardcoded base silently returns nothing."""
+
+    def test_branch_commit_log_uses_resolved_branch(self, rt, tmp_path):
+        with (
+            patch.object(rt, "_resolve_default_branch", return_value="trunk"),
+            patch.object(rt.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = "abc1234 fix: thing\n"
+            assert rt._branch_commit_log(tmp_path) == "abc1234 fix: thing"
+        assert "origin/trunk..HEAD" in run.call_args[0][0]
+
+    def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
+        with (
+            patch.object(rt, "_resolve_default_branch", return_value="trunk"),
+            patch.object(rt.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = "deadbeef\n"
+            assert rt._find_addressing_commit(tmp_path, "a.py") == "deadbeef"
+        assert "origin/trunk..HEAD" in run.call_args[0][0]
+
+    def test_branch_commit_log_without_worktree(self, rt):
+        assert rt._branch_commit_log(None) == ""

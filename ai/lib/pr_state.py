@@ -499,11 +499,22 @@ def update_fix(state: PRState, summary: FixSummary) -> None:
     supersedes an earlier outcome for the same thread, but never drops threads
     it did not touch.  A review cycle spans several rounds and the summary
     comment must account for all of them, not just the most recent pass.
+
+    The deferred tracking issue is likewise cycle-scoped: it is created once and
+    updated on later rounds.  A fix pass builds its FixSummary before knowing
+    about it, so an empty id/url means "not set this round", not "cleared" —
+    dropping it would make the next deferred round open a duplicate issue.
+    Every other field is per-round and taken from the incoming summary.
     """
     merged = {t.id: t for t in state.fix.threads}
     for outcome in summary.threads:
         merged[outcome.id] = outcome
-    state.fix = dataclass_replace(summary, threads=list(merged.values()))
+    state.fix = dataclass_replace(
+        summary,
+        threads=list(merged.values()),
+        deferred_issue_id=summary.deferred_issue_id or state.fix.deferred_issue_id,
+        deferred_issue_url=summary.deferred_issue_url or state.fix.deferred_issue_url,
+    )
 
 
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:

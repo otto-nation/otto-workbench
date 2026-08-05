@@ -122,7 +122,7 @@ def _gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
     return "\n".join(snippets)
 
 
-def _branch_commit_log(wt_path: Path | None, default_branch: str = "main") -> str:
+def _branch_commit_log(wt_path: Path | None) -> str:
     """Commit subjects on this branch, newest first.
 
     Triage sees code context from current HEAD, which already contains fixes made
@@ -132,9 +132,9 @@ def _branch_commit_log(wt_path: Path | None, default_branch: str = "main") -> st
     """
     if not wt_path:
         return ""
+    base = f"origin/{_resolve_default_branch(wt_path)}"
     result = subprocess.run(
-        ["git", "-C", str(wt_path), "log", "--format=%h %s",
-         f"origin/{default_branch}..HEAD"],
+        ["git", "-C", str(wt_path), "log", "--format=%h %s", f"{base}..HEAD"],
         capture_output=True, text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -282,8 +282,7 @@ def _assign_item_ids(comment_items: list[CommentItem]) -> None:
 
 
 def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
-                trail: Trail | None = None,
-                default_branch: str = "main") -> tuple[TriageResult | None, int]:
+                trail: Trail | None = None) -> tuple[TriageResult | None, int]:
     """Classify non-resolved threads and decompose top-level comments via AI.
 
     Returns (triage_result, exit_code). Caller handles stdout output.
@@ -298,7 +297,7 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     prompt = _build_triage_prompt(
         non_resolved, code_context,
         unseen_comments=unseen_comments or None,
-        commit_log=_branch_commit_log(repo_dir, default_branch),
+        commit_log=_branch_commit_log(repo_dir),
     )
 
     stdout, rc = ai_backend.prompt(prompt)
@@ -756,9 +755,10 @@ def _post_fix_replies(
 
 def _find_addressing_commit(wt_path: Path, filepath: str) -> str | None:
     """Find the most recent branch commit that modified a file."""
+    base = f"origin/{_resolve_default_branch(wt_path)}"
     result = subprocess.run(
         ["git", "-C", str(wt_path), "log", "-1", "--format=%H",
-         "origin/main..HEAD", "--", filepath],
+         f"{base}..HEAD", "--", filepath],
         capture_output=True, text=True,
     )
     sha = result.stdout.strip()
@@ -1641,10 +1641,11 @@ def _run_comment_fix(
     fixable_items = item_cls.fixable
     items_needs_human = item_cls.needs_human
     items_dismissed = item_cls.dismissed
+    items_already_addressed = item_cls.already_addressed
 
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
-    all_addressed = thread_cls.already_addressed + item_cls.already_addressed
+    all_addressed = thread_cls.already_addressed + items_already_addressed
 
     non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}
     accounted_ids = _accounted_thread_ids(
@@ -1671,7 +1672,7 @@ def _run_comment_fix(
     all_fixable = bool(fixable) or bool(fixable_items)
     has_items = (
         bool(fixable_items) or bool(items_needs_human)
-        or bool(items_dismissed) or bool(item_cls.already_addressed)
+        or bool(items_dismissed) or bool(items_already_addressed)
     )
 
     empty_result = CommentFixResult(

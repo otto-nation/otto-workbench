@@ -449,11 +449,37 @@ def test_find_comment_by_marker_prefers_latest():
         {"id": 11, "body": f"{MARKER}\nnew"},
     ])
     with patch.object(pr_comments, "_gh_rest", return_value=(0, listing)):
-        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == 11
+        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 11)
 
 
-def test_find_comment_by_marker_survives_bad_payload():
+def test_find_comment_by_marker_reports_lookup_failure():
+    """A failed listing must be distinguishable from an empty one."""
     import pr_comments
     for payload in ((1, ""), (0, "not json"), (0, '{"message": "Not Found"}')):
         with patch.object(pr_comments, "_gh_rest", return_value=payload):
-            assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) is None
+            assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (False, None)
+
+
+def test_find_comment_by_marker_reports_empty_listing():
+    import pr_comments
+    with patch.object(pr_comments, "_gh_rest", return_value=(0, "[]")):
+        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, None)
+
+
+def test_post_issue_comment_logs_when_lookup_fails():
+    """Falling back to a new comment on lookup failure must not be silent."""
+    import pr_comments
+    with patch.object(pr_comments, "_gh_rest", return_value=(1, "")), \
+         patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')), \
+         patch.object(pr_comments.log, "error") as err:
+        url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
+    assert url == "u"
+    err.assert_called_once()
+
+
+def test_patch_issue_comment_uses_patch_method():
+    import pr_comments
+    with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
+        assert pr_comments._patch_issue_comment("owner/repo", 11, "body") == "u"
+    assert post.call_args.kwargs["method"] == "PATCH"
+    assert post.call_args[0][0] == "repos/owner/repo/issues/comments/11"

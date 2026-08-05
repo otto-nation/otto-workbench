@@ -229,11 +229,11 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
-def _gh_post(endpoint: str, body: str) -> tuple[int, str]:
-    """POST JSON to a gh api REST endpoint. Returns (exit_code, stdout)."""
+def _gh_post(endpoint: str, body: str, method: str = "POST") -> tuple[int, str]:
+    """Send a JSON body to a gh api REST endpoint. Returns (exit_code, stdout)."""
     payload = json.dumps({"body": body})
     result = subprocess.run(
-        ["gh", "api", endpoint, "--method", "POST", "--input", "-"],
+        ["gh", "api", endpoint, "--method", method, "--input", "-"],
         input=payload, capture_output=True, text=True,
     )
     if result.returncode != 0 and result.stderr.strip():
@@ -260,9 +260,13 @@ def post_issue_comment(
     this each round leaves its own partial summary behind.
     """
     if marker:
-        existing_id = _find_comment_by_marker(repo, pr_number, marker)
+        found, existing_id = _find_comment_by_marker(repo, pr_number, marker)
         if existing_id:
             return _patch_issue_comment(repo, existing_id, body)
+        if not found:
+            # The lookup failed rather than came back empty, so an earlier
+            # comment may exist. Posting a duplicate beats dropping the update.
+            log.error("could not list PR comments — posting a new one instead of editing")
     endpoint = f"repos/{repo}/issues/{pr_number}/comments"
     code, out = _gh_post(endpoint, body)
     if code != 0:
@@ -273,37 +277,38 @@ def post_issue_comment(
         return None
 
 
-def _find_comment_by_marker(repo: str, pr_number: int, marker: str) -> int | None:
-    """Find an existing issue comment containing marker. Returns its ID or None."""
+def _find_comment_by_marker(
+    repo: str, pr_number: int, marker: str,
+) -> tuple[bool, int | None]:
+    """Find the newest issue comment containing marker.
+
+    Returns (lookup_succeeded, comment_id). The flag distinguishes "no such
+    comment" from "could not tell" — the caller treats those differently.
+    """
     code, out = _gh_rest(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
-        return None
+        return False, None
     try:
         comments = json.loads(out)
     except (json.JSONDecodeError, TypeError):
-        return None
+        return False, None
     if not isinstance(comments, list):
-        return None
+        return False, None
     for c in reversed(comments):
         if marker in (c.get("body") or ""):
-            return c.get("id")
-    return None
+            return True, c.get("id")
+    return True, None
 
 
 def _patch_issue_comment(repo: str, comment_id: int, body: str) -> str | None:
     """Edit an existing issue comment in place. Returns the comment URL or None."""
-    payload = json.dumps({"body": body})
-    result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/issues/comments/{comment_id}",
-         "--method", "PATCH", "--input", "-"],
-        input=payload, capture_output=True, text=True,
+    code, out = _gh_post(
+        f"repos/{repo}/issues/comments/{comment_id}", body, method="PATCH",
     )
-    if result.returncode != 0:
-        if result.stderr.strip():
-            log.error(f"gh api error: {result.stderr.strip()}")
+    if code != 0:
         return None
     try:
-        return json.loads(result.stdout).get("html_url")
+        return json.loads(out).get("html_url")
     except (json.JSONDecodeError, TypeError):
         return None
 

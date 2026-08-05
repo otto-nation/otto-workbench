@@ -939,3 +939,28 @@ def test_apply_state_update_fix():
         assert loaded.fix.commit_sha == "xyz"
         assert len(loaded.fix.threads) == 1
         assert loaded.fix.threads[0].action == ThreadAction.FIXED
+
+
+def test_update_fix_preserves_deferred_issue_across_rounds():
+    """A later round must not clear the tracking issue, or it opens a duplicate."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],
+        deferred_issue_id="ENG-456",
+        deferred_issue_url="https://linear.app/team/issue/ENG-456",
+        updated_at="t1",
+    ))
+    update_fix(state, FixSummary(
+        threads=[ThreadOutcome(id="t2", action=ThreadAction.FIXED)],
+        commit_sha="abc", commit_status="pushed", updated_at="t2",
+    ))
+    assert state.fix.deferred_issue_id == "ENG-456"
+    assert state.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456"
+
+
+def test_update_fix_replaces_deferred_issue_when_supplied():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(deferred_issue_id="ENG-1", deferred_issue_url="u1"))
+    update_fix(state, FixSummary(deferred_issue_id="ENG-2", deferred_issue_url="u2"))
+    assert state.fix.deferred_issue_id == "ENG-2"
+    assert state.fix.deferred_issue_url == "u2"

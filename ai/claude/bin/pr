@@ -38,6 +38,7 @@ from trail import Trail, add_trail_args
 # user's argv (e.g. claude-review gc …).
 
 _COMMANDS = {
+    "create":   {"help": "Create a PR (wraps task pr:create)"},
     "status":   {"help": "Show CI, review, and comment status dashboard"},
     "ci":       {"help": "Check CI failures",                     "script": "ci-check"},
     "review":   {"help": "Run code review",                       "script": "claude-review"},
@@ -419,6 +420,17 @@ def _gc_stale_pr_state(worktree_root: Path | None) -> int:
     return 1
 
 
+def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+    """Delegate PR creation to task pr:create."""
+    cmd = ["task", "--global"]
+    if ctx.worktree_root:
+        cmd.append(f"REPO_DIR={ctx.worktree_root}")
+    cmd.append("pr:create")
+    if argv:
+        cmd += ["--"] + list(argv)
+    return subprocess.run(cmd).returncode
+
+
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
     total = review_gc.gc_reviews() + review_gc.prune_merged_reviews()
@@ -435,6 +447,7 @@ def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 # Custom handlers for commands that need more than passthrough.
 _CUSTOM = {
+    "create":   cmd_create,
     "status":   cmd_status,
     "review":   cmd_review,
     "comments": cmd_comments,
@@ -443,7 +456,7 @@ _CUSTOM = {
 }
 
 # Commands that do not need a remote fetch before dispatch.
-_NO_UPDATE_COMMANDS = {"status", "gc", "rebase"}
+_NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
 
 
 def _build_usage() -> str:

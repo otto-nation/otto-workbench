@@ -157,7 +157,7 @@ def test_commands_registry_exists():
 
 def test_commands_registry_has_all_subcommands():
     # Keep this set in sync with _COMMANDS in ai/claude/bin/pr
-    expected = {"status", "ci", "review", "comments",
+    expected = {"create", "status", "ci", "review", "comments",
                 "fix", "rebase", "gc"}
     assert set(pr_cli._COMMANDS.keys()) == expected
 
@@ -177,12 +177,12 @@ def test_commands_with_script_key():
 
 def test_custom_handlers_are_registered():
     """_CUSTOM contains the expected non-pure-delegate commands."""
-    expected_custom = {"status", "review", "comments", "fix", "gc"}
+    expected_custom = {"create", "status", "review", "comments", "fix", "gc"}
     assert set(pr_cli._CUSTOM.keys()) == expected_custom
 
 
 def test_internal_commands_have_no_script():
-    internal = {"status", "fix", "gc"}
+    internal = {"create", "status", "fix", "gc"}
     for name in internal:
         assert "script" not in pr_cli._COMMANDS[name], f"{name} should not have 'script'"
 
@@ -821,3 +821,60 @@ def test_main_installs_sigint_handler(mock_resolve, mock_run):
         assert exc_info.value.code == 130
     finally:
         signal.signal(signal.SIGINT, original)
+
+
+# ── cmd_create ─────────────────────────────────────────────────────────────
+
+
+class TestCmdCreate:
+    """Tests for pr create subcommand."""
+
+    def _make_ctx(self, worktree_root="/tmp/test-repo"):
+        import pr_context
+        ctx = MagicMock(spec=pr_context.ResolvedContext)
+        ctx.worktree_root = Path(worktree_root)
+        ctx.repo = "owner/repo"
+        ctx.branch = "feat/test"
+        ctx.pr_number = None
+        ctx.head_sha = "abc123"
+        return ctx
+
+    @patch("pr_cli.subprocess.run")
+    def test_create_delegates_to_task(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        ctx = self._make_ctx()
+        rc = pr_cli.cmd_create(["--no-issue", "--draft"], ctx)
+        assert rc == 0
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "task"
+        assert "--global" in cmd
+        assert "pr:create" in cmd
+        assert "--" in cmd
+        after_sep = cmd[cmd.index("--") + 1:]
+        assert "--no-issue" in after_sep
+        assert "--draft" in after_sep
+
+    @patch("pr_cli.subprocess.run")
+    def test_create_passes_repo_dir(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        ctx = self._make_ctx("/tmp/my-worktree")
+        pr_cli.cmd_create([], ctx)
+        cmd = mock_run.call_args[0][0]
+        assert "REPO_DIR=/tmp/my-worktree" in cmd
+
+    @patch("pr_cli.subprocess.run")
+    def test_create_returns_nonzero_on_failure(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1)
+        ctx = self._make_ctx()
+        rc = pr_cli.cmd_create([], ctx)
+        assert rc == 1
+
+    @patch("pr_cli.subprocess.run")
+    def test_create_no_args_still_delegates(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        ctx = self._make_ctx()
+        rc = pr_cli.cmd_create([], ctx)
+        assert rc == 0
+        cmd = mock_run.call_args[0][0]
+        assert "pr:create" in cmd
+        assert "--" not in cmd, "empty argv should not produce a -- separator"

@@ -266,6 +266,186 @@ SCRIPT
   [ "$status" -eq 0 ]
 }
 
+# ── CLI: diff mode ────────────────────────────────────────────────────────
+
+_init_diff_repo() {
+  local dir="$1"
+  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+  GIT_CEILING_DIRECTORIES="$(dirname "$dir")"
+  export GIT_CEILING_DIRECTORIES
+  git -C "$dir" init -b main --quiet
+  git -C "$dir" config user.email "test@example.com"
+  git -C "$dir" config user.name "Test"
+  git -C "$dir" config core.hooksPath /dev/null
+}
+
+@test "validate-nesting --diff: catches new violations in added lines" {
+  _init_diff_repo "$TMPDIR"
+
+  # Base commit: clean file
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+clean_func() {
+  echo "ok"
+}
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+  git -C "$TMPDIR" tag base
+
+  # Feature commit: add deeply nested function
+  cat >> "$TMPDIR/script.sh" <<'SCRIPT'
+bad_func() {
+  if true; then
+    if true; then
+      if true; then
+        echo "too deep"
+      fi
+    fi
+  fi
+}
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "feat: add bad func" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff base
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bad_func"* ]]
+}
+
+@test "validate-nesting --diff: ignores pre-existing violations" {
+  _init_diff_repo "$TMPDIR"
+
+  # Base commit: already has deep nesting
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+existing_bad() {
+  if true; then
+    if true; then
+      if true; then
+        echo "already deep"
+      fi
+    fi
+  fi
+}
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+  git -C "$TMPDIR" tag base
+
+  # Feature commit: only adds a clean function
+  cat >> "$TMPDIR/script.sh" <<'SCRIPT'
+clean_func() {
+  echo "ok"
+}
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "feat: add clean func" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff base
+  [ "$status" -eq 0 ]
+}
+
+@test "validate-nesting --diff: no changed files exits 0" {
+  _init_diff_repo "$TMPDIR"
+
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+func() { echo "ok"; }
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+  git -C "$TMPDIR" tag base
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff base
+  [ "$status" -eq 0 ]
+}
+
+@test "validate-nesting --diff: skips deleted files" {
+  _init_diff_repo "$TMPDIR"
+
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+func() {
+  if true; then
+    if true; then
+      if true; then
+        echo "deep"
+      fi
+    fi
+  fi
+}
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+  git -C "$TMPDIR" tag base
+
+  git -C "$TMPDIR" rm script.sh --quiet
+  git -C "$TMPDIR" commit -m "remove script" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff base
+  [ "$status" -eq 0 ]
+}
+
+@test "validate-nesting --diff: composable with --max-depth" {
+  _init_diff_repo "$TMPDIR"
+
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+func() { echo "ok"; }
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+  git -C "$TMPDIR" tag base
+
+  # Depth 3 — fails default (2) but passes --max-depth 3
+  cat >> "$TMPDIR/script.sh" <<'SCRIPT'
+deep_func() {
+  if true; then
+    if true; then
+      if true; then
+        echo "depth 3"
+      fi
+    fi
+  fi
+}
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "feat: depth 3" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff base --max-depth 3
+  [ "$status" -eq 0 ]
+}
+
+@test "validate-nesting --diff: mutually exclusive with positional files" {
+  run "$VALIDATE_NESTING" --diff HEAD~1 somefile.sh
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"mutually exclusive"* ]]
+}
+
+@test "validate-nesting --diff: skips non-script files" {
+  _init_diff_repo "$TMPDIR"
+
+  echo "init" > "$TMPDIR/README.md"
+  git -C "$TMPDIR" add README.md
+  git -C "$TMPDIR" commit -m "init" --quiet
+  git -C "$TMPDIR" tag base
+
+  echo "updated" > "$TMPDIR/README.md"
+  git -C "$TMPDIR" add README.md
+  git -C "$TMPDIR" commit -m "update readme" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff base
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"0 files checked"* ]]
+}
+
 @test "validate-nesting: mixed bash, python, and go files" {
   local bash_f python_f go_f
   bash_f=$(_write_script "ok.sh" <<'SCRIPT'

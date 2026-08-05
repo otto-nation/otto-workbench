@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Validate that scripts do not exceed a maximum nesting depth per function.
 
-Usage: validate-nesting [--quiet] [--max-depth N] [file...]
+Usage: validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
 
 Checks nesting depth in bash, Python, and Go scripts. Each language has
 its own default max depth (bash/python: 2, go: 3) overridable with
 --max-depth.
 
 When no files are given, discovers all scripts in the repo by extension
-and shebang.
+and shebang. With --diff, only reports violations on lines added since
+BASE_REF (mutually exclusive with positional files).
 
 Exit code: 0 if all files pass, 1 if any exceed max depth.
 """
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -109,13 +111,74 @@ def _resolve_files(args, repo_root):
     return [(f, c) for f in args.files if (c := _get_checker(f))]
 
 
+def _parse_diff(diff_output: str) -> dict[str, set[int]]:
+    """Parse unified diff to extract added line numbers per file."""
+    files: dict[str, set[int]] = {}
+    current_file = None
+    current_line = 0
+    remaining = 0
+
+    for line in diff_output.splitlines():
+        if line.startswith('+++ b/'):
+            current_file = line[6:]
+            continue
+        if line.startswith('+++ /dev/null'):
+            current_file = None
+            continue
+        if line.startswith('@@'):
+            m = re.search(r'\+(\d+)(?:,(\d+))?', line)
+            current_line = int(m.group(1)) if m else current_line
+            remaining = int(m.group(2)) if m and m.group(2) else 1 if m else remaining
+            continue
+        if current_file is None or remaining <= 0:
+            continue
+        if line.startswith('+'):
+            files.setdefault(current_file, set()).add(current_line)
+            current_line += 1
+            remaining -= 1
+        elif line.startswith('-'):
+            pass  # removed line — does not advance new-file line counter
+        elif line.startswith('\\'):
+            pass  # "\ No newline at end of file" marker
+        else:
+            current_line += 1
+            remaining -= 1
+
+    return files
+
+
+def _resolve_diff_files(base_ref: str, repo_root: str):
+    """Resolve changed files and added line numbers from a diff against base_ref."""
+    diff_output = subprocess.check_output(
+        ['git', 'diff', f'{base_ref}...HEAD'],
+        stderr=subprocess.DEVNULL,
+    ).decode()
+
+    added_lines = _parse_diff(diff_output)
+    result = []
+    for relpath, lines in added_lines.items():
+        filepath = os.path.join(repo_root, relpath)
+        if not os.path.isfile(filepath):
+            continue
+        checker = _get_checker(filepath)
+        if checker:
+            result.append((filepath, checker, lines))
+    return sorted(result, key=lambda t: t[0])
+
+
 def main():
     parser = argparse.ArgumentParser(description='Validate script nesting depth.')
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
     parser.add_argument('--max-depth', type=int, default=None,
                         help='Maximum nesting depth (overrides per-language defaults)')
+    parser.add_argument('--diff', metavar='BASE_REF',
+                        help='Only check violations in lines added since BASE_REF')
     parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
     args = parser.parse_args()
+
+    if args.diff and args.files:
+        print('error: --diff and positional files are mutually exclusive', file=sys.stderr)
+        sys.exit(2)
 
     try:
         repo_root = subprocess.check_output(
@@ -124,16 +187,20 @@ def main():
     except (subprocess.CalledProcessError, FileNotFoundError):
         repo_root = os.getcwd()
 
-    file_checkers = _resolve_files(args, repo_root)
+    if args.diff:
+        file_checkers = _resolve_diff_files(args.diff, repo_root)
+    else:
+        file_checkers = [(f, c, None) for f, c in _resolve_files(args, repo_root)]
 
     errors = 0
-    for filepath, checker in file_checkers:
+    for filepath, checker, added_lines in file_checkers:
         max_depth = args.max_depth if args.max_depth is not None else checker.DEFAULT_MAX_DEPTH
         with open(filepath) as f:
             lines = f.readlines()
         violations = checker.check_nesting(lines, max_depth)
+        if added_lines is not None:
+            violations = [v for v in violations if v.line_number in added_lines]
         relpath = os.path.relpath(filepath, repo_root)
-
         if violations:
             errors += 1
             _report_violations(relpath, violations, max_depth)

@@ -71,6 +71,21 @@ class TestDiagnoseMissingOutput:
         assert reason == review_agent.DIAG_NO_RESULT_RECORD
 
 
+class TestSinglePassRead:
+    def test_diagnosis_reads_the_log_once(self, tmp_path, monkeypatch):
+        log_path = _write_log(
+            tmp_path, _tool_use("Read", file_path="/tmp/a"), _result(),
+        )
+        reads = []
+        real = review_agent._read_jsonl
+        monkeypatch.setattr(
+            review_agent, "_read_jsonl",
+            lambda p: (reads.append(p), real(p))[1],
+        )
+        review_agent._diagnose_missing_output(log_path)
+        assert reads == [log_path]
+
+
 class TestMaxTurnsReasonMatching:
     """The reason string carries a turn count and may carry a suffix."""
 

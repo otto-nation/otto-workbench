@@ -392,6 +392,12 @@ def _render_fix_comments(rt) -> str:
     )
 
 
+def _make_common_sections() -> review_prompt.CommonSections:
+    return review_prompt.CommonSections(
+        **{name: "" for name in review_prompt.COMMON_SECTION_NAMES},
+    )
+
+
 def _unsubstituted(rendered: str) -> list[str]:
     return sorted(set(re.findall(r"\$\{(\w+)\}", rendered)))
 
@@ -501,6 +507,43 @@ class TestOutputBlockContract:
     def test_fix_findings_shares_the_worktree_block(self):
         rendered = _render_via_build_prompt(review_common.TEMPLATE_FIX)
         assert review_common.build_worktree_block("/tmp/wt") in rendered
+
+
+class TestSharedSectionNames:
+    """`shared()` takes bare strings — catch typos statically, not at call time."""
+
+    def _shared_call_args(self) -> list[tuple[int, str]]:
+        tree = ast.parse((LIB_DIR / "review_prompt.py").read_text())
+        return [
+            (node.lineno, arg.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "shared"
+            for arg in node.args
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+        ]
+
+    def test_handlers_only_share_real_fields(self):
+        calls = self._shared_call_args()
+        assert calls, "found no shared() calls to check — did the API change?"
+        bad = [
+            f"review_prompt.py:{lineno} {name!r}"
+            for lineno, name in calls
+            if name not in review_prompt.COMMON_SECTION_NAMES
+        ]
+        assert not bad, "shared() called with non-CommonSections names: " + ", ".join(bad)
+
+    def test_unknown_name_raises_with_the_valid_set(self):
+        builder = review_prompt.PromptBuilder(_make_common_sections())
+        with pytest.raises(KeyError, match="pr_haeder"):
+            builder.shared("pr_haeder")
+
+    def test_every_common_field_is_reachable(self):
+        """A field no handler shares is dead weight on every prompt build."""
+        shared_names = {name for _, name in self._shared_call_args()}
+        unused = sorted(review_prompt.COMMON_SECTION_NAMES - shared_names)
+        assert not unused, f"CommonSections fields no handler uses: {unused}"
 
 
 class TestPromptBudgetAccounting:

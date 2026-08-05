@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
 from string import Template
@@ -594,6 +594,9 @@ class CommonSections:
     max_turns: int
 
 
+COMMON_SECTION_NAMES = frozenset(f.name for f in fields(CommonSections))
+
+
 class PromptBuilder:
     """Collects the variables a template is rendered with.
 
@@ -612,6 +615,12 @@ class PromptBuilder:
 
     def shared(self, *keys: str) -> "PromptBuilder":
         """Register sections from `common` under their own names."""
+        unknown = sorted(set(keys) - COMMON_SECTION_NAMES)
+        if unknown:
+            raise KeyError(
+                f"not CommonSections fields: {', '.join(unknown)} — "
+                f"valid names are {', '.join(sorted(COMMON_SECTION_NAMES))}"
+            )
         for key in keys:
             self._vars[key] = getattr(self._common, key)
         return self

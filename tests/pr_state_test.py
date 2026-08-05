@@ -755,7 +755,7 @@ def test_pr_state_has_fix_field():
     assert state.fix.commit_sha == ""
 
 
-def test_update_fix_replaces():
+def test_update_fix_replaces_scalar_fields():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     update_fix(state, FixSummary(
         threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
@@ -769,8 +769,53 @@ def test_update_fix_replaces():
         threads=[], commit_sha="", commit_status="no_changes",
         updated_at="t2",
     ))
-    assert state.fix.threads == []
+    assert state.fix.commit_sha == ""
     assert state.fix.commit_status == "no_changes"
+    assert state.fix.updated_at == "t2"
+
+
+def test_update_fix_accumulates_threads_across_rounds():
+    """A later pass must not drop threads processed in an earlier one."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        threads=[
+            ThreadOutcome(id="t1", action=ThreadAction.FIXED),
+            ThreadOutcome(id="t2", action=ThreadAction.DISMISSED),
+        ],
+        commit_sha="abc", commit_status="pushed", updated_at="t1",
+    ))
+    update_fix(state, FixSummary(
+        threads=[ThreadOutcome(id="t3", action=ThreadAction.ALREADY_ADDRESSED)],
+        commit_status="no_changes", updated_at="t2",
+    ))
+    assert [t.id for t in state.fix.threads] == ["t1", "t2", "t3"]
+    assert state.fix.threads[2].action == ThreadAction.ALREADY_ADDRESSED
+
+
+def test_update_fix_supersedes_same_thread():
+    """Re-processing a thread replaces its earlier outcome rather than duplicating it."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED, reason="too complex")],
+        updated_at="t1",
+    ))
+    update_fix(state, FixSummary(
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
+        commit_sha="abc", commit_status="pushed", updated_at="t2",
+    ))
+    assert len(state.fix.threads) == 1
+    assert state.fix.threads[0].action == ThreadAction.FIXED
+    assert state.fix.threads[0].reason == ""
+
+
+def test_update_fix_does_not_mutate_caller_summary():
+    """The merged list is a new object — the caller's FixSummary stays untouched."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)]))
+    incoming = FixSummary(threads=[ThreadOutcome(id="t2", action=ThreadAction.DISMISSED)])
+    update_fix(state, incoming)
+    assert [t.id for t in incoming.threads] == ["t2"]
+    assert [t.id for t in state.fix.threads] == ["t1", "t2"]
 
 
 def test_state_roundtrip_with_fix_data():
@@ -838,6 +883,24 @@ def test_save_preserves_fix_data():
         assert loaded.fix.threads[0].action == ThreadAction.FIXED
         assert loaded.fix.threads[1].reason == "invalid"
         assert loaded.fix.commit_sha == "def456"
+
+
+def test_already_addressed_action_roundtrips():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
+        update_fix(state, FixSummary(
+            threads=[ThreadOutcome(
+                id="t1", file="a.go", action=ThreadAction.ALREADY_ADDRESSED,
+                reason="the constructor already injects the logger",
+            )],
+            commit_status="no_changes",
+            updated_at="2026-07-14T00:00:00+00:00",
+        ))
+        save_state(root, state)
+        loaded = load_state(root)
+        assert loaded is not None
+        assert loaded.fix.threads[0].action == ThreadAction.ALREADY_ADDRESSED
 
 
 def test_load_state_without_fix_defaults_empty():

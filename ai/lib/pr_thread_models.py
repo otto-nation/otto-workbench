@@ -95,6 +95,7 @@ class ClassificationResult:
     fixable: list = field(default_factory=list)
     needs_human: list[CommentItem] = field(default_factory=list)
     dismissed: list[CommentItem] = field(default_factory=list)
+    already_addressed: list[CommentItem] = field(default_factory=list)
 
 
 # ── Fix tracking types ────────────────────────────────────────────────────
@@ -150,6 +151,7 @@ class CommentFixResult:
     fixed: list[CommentItem] = field(default_factory=list)
     needs_human: list[CommentItem] = field(default_factory=list)
     dismissed: list[CommentItem] = field(default_factory=list)
+    already_addressed: list[CommentItem] = field(default_factory=list)
     deferred: list[CommentItem] = field(default_factory=list)
     commit_sha: str | None = None
     commit_status: str = ""

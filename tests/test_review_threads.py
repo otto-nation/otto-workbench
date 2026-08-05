@@ -1566,3 +1566,141 @@ class TestClassifyTriageComplexity:
         result = rt._classify_triage_entries(entries)
         assert len(result.fixable) == 1
         assert len(result.needs_human) == 0
+
+
+# ── already_addressed verification ─────────────────────────────────────────
+
+
+class TestClassifyAlreadyAddressed:
+    """A suggestion the code already satisfies must not be routed to dismissed.
+
+    Triage sees current HEAD, which already contains fixes made earlier in the
+    same review cycle. Treating "the code already does this" as `invalid` posts
+    a reply telling the reviewer their suggestion was inapplicable — when it was
+    in fact the reason for the change.
+    """
+
+    def _entry(self, verification):
+        return CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn",
+            summary="drop the nil-logger guard",
+            classification="actionable_suggestion",
+            verification=verification, complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_already_addressed_gets_own_bucket(self, rt):
+        result = rt._classify_triage_entries([self._entry("already_addressed")])
+        assert len(result.already_addressed) == 1
+        assert result.dismissed == []
+        assert result.fixable == []
+        assert result.needs_human == []
+
+    def test_invalid_still_dismissed(self, rt):
+        result = rt._classify_triage_entries([self._entry("invalid")])
+        assert len(result.dismissed) == 1
+        assert result.already_addressed == []
+
+    def test_accounted_ids_include_already_addressed(self, rt):
+        result = rt._classify_triage_entries([self._entry("already_addressed")])
+        accounted = rt._accounted_thread_ids(
+            result.fixable, result.needs_human, result.dismissed,
+            result.already_addressed,
+        )
+        assert accounted == {"t1"}
+
+    def test_thread_outcomes_carry_already_addressed_action(self, rt):
+        entry = self._entry("already_addressed")
+        outcomes = rt._build_thread_outcomes([], [], [], [], [entry])
+        assert len(outcomes) == 1
+        assert outcomes[0].action == ThreadAction.ALREADY_ADDRESSED
+
+
+class TestTriagePromptVerificationValues:
+    """The prompt must define every verification value it asks for."""
+
+    def test_defines_all_four_values(self, rt):
+        prompt = rt._build_triage_prompt([], "diff")
+        for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
+            assert f"- {value}:" in prompt
+
+    def test_steers_away_from_invalid_for_satisfied_code(self, rt):
+        prompt = rt._build_triage_prompt([], "diff")
+        assert "is NEVER invalid" in prompt
+
+    def test_commit_log_included_when_present(self, rt):
+        prompt = rt._build_triage_prompt(
+            [], "diff", commit_log="abc1234 fix(logging): inject logger",
+        )
+        assert "abc1234 fix(logging): inject logger" in prompt
+        assert "already_addressed, not invalid" in prompt
+
+    def test_commit_log_omitted_when_empty(self, rt):
+        prompt = rt._build_triage_prompt([], "diff", commit_log="")
+        assert "Commits already made on this branch" not in prompt
+
+
+class TestAlreadyAddressedInSummary:
+    def test_rendered_as_addressed_not_dismissed(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        entry = CommentItem(
+            id="t1", summary="drop the guard", file="f.go", line=10, reviewer="kgn",
+        )
+        body = rt._build_summary_body(
+            [], [], [], cp, "owner/repo", 1, {}, already_addressed=[entry],
+        )
+        assert "1 already addressed" in body
+        assert "Already addressed" in body
+        assert "inapplicable" not in body
+
+    def test_deferred_summary_renders_already_addressed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="drop the guard", file="f.go", line=10,
+                              action=ThreadAction.ALREADY_ADDRESSED),
+                ThreadOutcome(id="t2", summary="complex", file="c.go", line=3,
+                              action=ThreadAction.DEFERRED),
+            ],
+            commit_status="no_changes",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        body = mock_post.call_args[0][2]
+        assert "drop the guard" in body
+        assert "Already addressed" in body
+
+
+# ── summary upsert ─────────────────────────────────────────────────────────
+
+
+class TestSummaryMarker:
+    """Each review round must edit one summary comment, not append a new one."""
+
+    def test_body_carries_marker(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=1)],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert body.startswith(rt._SUMMARY_MARKER)
+
+    def test_post_fix_summary_passes_marker(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._post_fix_summary(
+                [CommentItem(id="t1", summary="fix", file="a.py", line=1)],
+                [], [], cp, "owner/repo", 1, {},
+            )
+        assert mock_post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+
+    def test_deferred_summary_passes_marker(self, rt):
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="fix", file="a.py", line=1,
+                                   action=ThreadAction.FIXED)],
+            commit_status="no_changes", summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        assert mock_post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER

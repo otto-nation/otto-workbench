@@ -13,7 +13,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -180,6 +180,7 @@ class ThreadAction(StrEnum):
     DEFERRED = "deferred"
     NEEDS_HUMAN = "needs_human"
     DISMISSED = "dismissed"
+    ALREADY_ADDRESSED = "already_addressed"
 
 
 @dataclass
@@ -492,8 +493,17 @@ def update_rebase(state: PRState, summary: RebaseSummary) -> None:
 
 
 def update_fix(state: PRState, summary: FixSummary) -> None:
-    """Replace fix summary."""
-    state.fix = summary
+    """Merge a fix pass into the accumulated fix summary.
+
+    Thread outcomes accumulate across rounds, keyed by thread id — a later pass
+    supersedes an earlier outcome for the same thread, but never drops threads
+    it did not touch.  A review cycle spans several rounds and the summary
+    comment must account for all of them, not just the most recent pass.
+    """
+    merged = {t.id: t for t in state.fix.threads}
+    for outcome in summary.threads:
+        merged[outcome.id] = outcome
+    state.fix = dataclass_replace(summary, threads=list(merged.values()))
 
 
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:

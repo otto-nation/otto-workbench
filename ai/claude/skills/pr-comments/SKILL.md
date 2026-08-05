@@ -90,7 +90,8 @@ The `fix_pass` object contains:
 |-------|----------|
 | `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
 | `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
-| `dismissed` | Threads and items dismissed as non-actionable (approvals, duplicates, etc.) |
+| `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong |
+| `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
@@ -108,7 +109,7 @@ points, the triage step decomposes them into individual items. Each item has:
 | `source_id` | Original comment ID |
 | `source_type` | `"issue_comment"` or `"review_body"` |
 | `classification` | Same as threads: `actionable_suggestion`, `question`, `approval`, `conflicting` |
-| `verification` | For actionable items: `valid`, `invalid`, `needs_discussion` |
+| `verification` | For actionable items: `valid`, `already_addressed`, `invalid`, `needs_discussion` |
 | `summary` | One-line summary of the specific item |
 | `file` | File path if referenced (empty string if not) |
 | `line` | Line number if referenced (0 if not) |

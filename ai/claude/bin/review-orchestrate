@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 from trail import Trail, add_trail_args  # noqa: E402
+import ai_usage as _au  # noqa: E402
 import review_common as _rc  # noqa: E402
 import review_findings as _rf  # noqa: E402
 import review_preflight as _rp  # noqa: E402
@@ -52,7 +53,7 @@ from review_static_analysis import (  # noqa: E402
 )
 import ai_backend  # noqa: E402
 
-_SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
+_SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl)
 
 
 class _ProxyModule(type(sys.modules[__name__])):

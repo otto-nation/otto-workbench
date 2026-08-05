@@ -34,7 +34,7 @@ from eval_scoring import (  # noqa: E402
     parse_manifest,
     score_entry,
 )
-from review_common import SessionUsage, parse_session_log  # noqa: E402
+from ai_usage import SessionUsage, parse_session_log  # noqa: E402
 from review_findings import parse_findings  # noqa: E402
 
 _SELF_DIR = Path(__file__).resolve().parent

@@ -19,7 +19,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    count_severity, json_summary, parse_review_verdict, parse_session_log,
+    count_severity, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -241,77 +241,6 @@ def test_format_usage_total_includes_cache_reads(cr, tmp_path):
     result = cr._format_usage(log)
     assert "10k tokens" in result
     assert "(10k cached)" in result
-
-
-def test_parse_session_log_model_usage(tmp_path):
-    """modelUsage keys are camelCase in real CLI output — the top-level usage block is not."""
-    log = tmp_path / "session.jsonl"
-    log.write_text(json.dumps({
-        "type": "result",
-        "total_cost_usd": 2.0,
-        "duration_ms": 30000,
-        "usage": {
-            "input_tokens": 100,
-            "output_tokens": 200,
-            "cache_read_input_tokens": 0,
-            "cache_creation_input_tokens": 0,
-        },
-        "modelUsage": {
-            "claude-sonnet-4-20250514": {
-                "inputTokens": 500,
-                "outputTokens": 300,
-                "cacheReadInputTokens": 1000,
-                "cacheCreationInputTokens": 200,
-                "costUSD": 1.75,
-            },
-            "claude-haiku-4-5-20251001": {
-                "inputTokens": 100,
-                "outputTokens": 50,
-                "cacheReadInputTokens": 0,
-                "cacheCreationInputTokens": 0,
-                "costUSD": 0.25,
-            },
-        },
-    }) + "\n")
-    usage = parse_session_log(str(log))
-    assert usage.input_tokens == 600
-    assert usage.output_tokens == 350
-    assert usage.cache_read_tokens == 1000
-    assert usage.cache_write_tokens == 200
-    assert usage.cost == pytest.approx(2.0)
-
-
-def test_parse_session_log_model_usage_cost_by_model(tmp_path):
-    log = tmp_path / "session.jsonl"
-    log.write_text(json.dumps({
-        "type": "result",
-        "total_cost_usd": 2.0,
-        "duration_ms": 30000,
-        "modelUsage": {
-            "claude-sonnet-4-6": {"inputTokens": 8, "costUSD": 1.75},
-            "claude-haiku-4-5@20251001": {"inputTokens": 2, "costUSD": 0.25},
-        },
-    }) + "\n")
-    usage = parse_session_log(str(log))
-    assert usage.cost_by_model == pytest.approx({
-        "claude-sonnet-4-6": 1.75,
-        "claude-haiku-4-5@20251001": 0.25,
-    })
-
-
-def test_parse_session_log_no_model_usage_fallback(tmp_path):
-    """Backends without modelUsage (Pi) emit a snake_case top-level usage block."""
-    log = str(tmp_path / "session.jsonl")
-    _make_session_log(
-        log, cost=1.0, input_tokens=100, output_tokens=200,
-        cache_read=5000, cache_create=300,
-    )
-    usage = parse_session_log(log)
-    assert usage.input_tokens == 100
-    assert usage.output_tokens == 200
-    assert usage.cache_read_tokens == 5000
-    assert usage.cache_write_tokens == 300
-    assert usage.cost_by_model == {}
 
 
 def test_format_usage_model_usage_tokens(cr, tmp_path):

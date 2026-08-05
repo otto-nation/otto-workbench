@@ -472,8 +472,13 @@ def _get_pr_head_sha(repo: str, pr_number: str) -> str:
         return ""
 
 
-def _validate_recover(repo: str, pr_number: str, review_dir: Path) -> None:
-    """Validate pipeline state for --recover mode. Exits on failure."""
+def _validate_recover(review_dir: Path, head_sha: str) -> None:
+    """Validate pipeline state for --recover mode. Exits on failure.
+
+    ``head_sha`` is the current HEAD to compare the failed run against — the PR
+    head for PR reviews, the local worktree HEAD for self-reviews. An empty
+    value skips the drift check (HEAD could not be determined).
+    """
     pipeline_path = review_dir / FILENAME_PIPELINE_STATE
     if not pipeline_path.is_file():
         log.error("No pipeline state found — nothing to recover")
@@ -481,18 +486,17 @@ def _validate_recover(repo: str, pr_number: str, review_dir: Path) -> None:
     if read_pipeline_status(review_dir) == "completed":
         log.info("Nothing to recover — review is complete")
         sys.exit(0)
-    pr_head_sha = _get_pr_head_sha(repo, pr_number)
-    if not pr_head_sha:
+    if not head_sha:
         return
     try:
         pipeline_data = json.loads(pipeline_path.read_text())
     except (json.JSONDecodeError, OSError):
         log.error(f"Corrupt pipeline state: {review_dir}")
         sys.exit(1)
-    if pipeline_data.get("head_sha") != pr_head_sha:
+    if pipeline_data.get("head_sha") != head_sha:
         log.error(
             f"HEAD has moved since the failed review "
-            f"({pipeline_data.get('head_sha', '?')[:7]} → {pr_head_sha[:7]}); "
+            f"({pipeline_data.get('head_sha', '?')[:7]} → {head_sha[:7]}); "
             f"run `pr review` for a fresh review"
         )
         sys.exit(1)
@@ -846,7 +850,7 @@ def _run_review_pr(
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
     if recover:
-        _validate_recover(repo, pr_number, review_dir)
+        _validate_recover(review_dir, _get_pr_head_sha(repo, pr_number))
         has_pipeline_state = True
         force = True
     else:
@@ -972,11 +976,16 @@ def _run_self_review_body(
     no_holistic, max_cost, model, fix_pass, args,
     self_review_dir, branch_name, effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False,
+    recover=False, head_sha="",
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)
 
-    has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
+    if recover:
+        _validate_recover(self_review_dir, head_sha)
+        has_pipeline_state = True
+    else:
+        has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
     prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
 
     issue_context = ""
@@ -1069,6 +1078,7 @@ def _run_self_review(args) -> None:
     effort = args.effort
     max_groups = args.max_groups
     generated = args.generated
+    recover = getattr(args, "recover", False)
 
     is_pr = False
     is_branch = False
@@ -1126,6 +1136,7 @@ def _run_self_review(args) -> None:
             branch_name=ctx.branch or "",
             effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
+            recover=recover, head_sha=ctx.head_sha,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -1210,10 +1221,6 @@ def main() -> None:
 
     if parsed.recover and parsed.force:
         log.error("--recover and --force are mutually exclusive")
-        sys.exit(1)
-
-    if parsed.recover and parsed.self_review:
-        log.error("--recover is not supported with --self")
         sys.exit(1)
 
     if parsed.self_review:

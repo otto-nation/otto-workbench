@@ -26,10 +26,11 @@ import shutil
 import subprocess
 import sys
 import traceback
+from collections.abc import Iterator
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
@@ -59,6 +60,114 @@ _GIT_REBASE_APPLY_DIR = "rebase-apply"
 _GIT_REBASE_TODO = "git-rebase-todo"
 _GIT_REBASE_NEXT = "next"
 _GIT_REBASE_LAST = "last"
+
+
+# ── Types ───────────────────────────────────────────────────────────────────
+
+
+class ConflictStrategy(StrEnum):
+    """How a single conflicted file should be resolved."""
+    REGENERATE = "regenerate"
+    ACCEPT_THEIRS = "accept_theirs"
+    DELETE = "delete"
+    BINARY_ERROR = "binary_error"
+    AI_MERGE = "ai_merge"
+
+
+class DeleteSide(StrEnum):
+    """Which side of a modify/delete conflict removed the file."""
+    OURS_DELETED = "ours_deleted"
+    THEIRS_DELETED = "theirs_deleted"
+
+
+class GeneratedSignal(StrEnum):
+    """Which signal identified a file as generated."""
+    GITATTRIBUTES = "gitattributes"
+    HEADER = "header"
+
+
+class ParseFailure(StrEnum):
+    """Why AI output could not be parsed into resolved content."""
+    MISSING_BOTH_MARKERS = "missing_both_markers"
+    MISSING_BEGIN_MARKER = "missing_begin_marker"
+    MISSING_END_MARKER = "missing_end_marker"
+    END_BEFORE_BEGIN = "end_before_begin"
+    SURVIVING_CONFLICT_MARKER = "surviving_conflict_marker"
+    MISSING_BLOCK_MARKERS = "missing_markers_for_block"
+
+
+class RunMode(StrEnum):
+    """Mode selected by the CLI flags."""
+    FIX = "fix"
+    PUSH = "push"
+    REBASE_ONLY = "rebase-only"
+
+
+@dataclass(frozen=True)
+class Regenerator:
+    """A command that rebuilds a generated file from its source."""
+    cmd: tuple[str, ...]
+    stage_dir: bool = False
+
+
+@dataclass(frozen=True)
+class ConflictBlock:
+    """One conflict region within a file, with surrounding context."""
+    index: int
+    start: int
+    end: int
+    conflict: str
+    context_before: str
+    context_after: str
+
+    @property
+    def line_count(self) -> int:
+        return self.end - self.start + 1
+
+
+@dataclass(frozen=True)
+class ConflictPlan:
+    """Resolution strategy for a conflicted file, with strategy-specific detail."""
+    strategy: ConflictStrategy
+    regenerator: Regenerator | None = None
+    delete_side: DeleteSide | None = None
+    signal: GeneratedSignal | None = None
+
+
+@dataclass
+class RegenJob:
+    """A deferred regeneration command and the files it covers."""
+    regen_dir: str
+    cmd: tuple[str, ...]
+    stage_dir: bool = False
+    files: list[str] = field(default_factory=list)
+
+
+class RegenQueue:
+    """Deferred regeneration commands, deduplicated by (directory, command)."""
+
+    def __init__(self) -> None:
+        self._jobs: dict[tuple[str, tuple[str, ...]], RegenJob] = {}
+
+    def add(
+        self, regen_dir: Path, filepath: str,
+        cmd: tuple[str, ...], stage_dir: bool = False,
+    ) -> None:
+        key = (str(regen_dir), cmd)
+        job = self._jobs.setdefault(
+            key, RegenJob(regen_dir=str(regen_dir), cmd=cmd, stage_dir=stage_dir),
+        )
+        job.files.append(filepath)
+
+    def __iter__(self) -> Iterator[RegenJob]:
+        return iter(self._jobs.values())
+
+
+@dataclass
+class ResolutionTally:
+    """Files resolved and commits that conflicted across a whole rebase."""
+    files: list[str] = field(default_factory=list)
+    commits: int = 0
 
 
 # ── Git helpers ─────────────────────────────────────────────────────────────
@@ -127,18 +236,34 @@ def _remaining_rebase_commits(cwd: str) -> int:
     return 0
 
 
-def _conflict_report(cwd: str, status: str = "conflicts") -> dict:
-    """Build a conflict report dict for JSON output."""
-    conflicts = _detect_conflicts(cwd)
-    sha, subject = _rebase_head_info(cwd)
-    remaining = _remaining_rebase_commits(cwd)
-    return {
-        "status": status,
-        "files": conflicts,
-        "rebase_head": sha,
-        "rebase_head_subject": subject,
-        "remaining_commits": remaining,
-    }
+def _emit_json(report: dict) -> None:
+    """Write a report to stdout as indented JSON."""
+    json.dump(report, sys.stdout, indent=2)
+    print()
+
+
+@dataclass(frozen=True)
+class ConflictReport:
+    """Unresolved-conflict snapshot — the exit-code-3 payload on stdout."""
+    status: str
+    files: list[str]
+    rebase_head: str
+    rebase_head_subject: str
+    remaining_commits: int
+
+    @classmethod
+    def from_repo(cls, cwd: str, status: str = RebaseStatus.CONFLICTS.value) -> "ConflictReport":
+        sha, subject = _rebase_head_info(cwd)
+        return cls(
+            status=status,
+            files=_detect_conflicts(cwd),
+            rebase_head=sha,
+            rebase_head_subject=subject,
+            remaining_commits=_remaining_rebase_commits(cwd),
+        )
+
+    def emit(self) -> None:
+        _emit_json(asdict(self))
 
 
 def _commits_ahead(cwd: str) -> int:
@@ -165,22 +290,22 @@ def _is_empty_patch(cwd: str) -> bool:
 
 # ── Lockfile regeneration registry ─────────────────────────────────────────
 
-_LOCKFILE_REGENERATORS: dict[str, dict] = {
-    "go.sum":            {"cmd": ["go", "mod", "tidy"], "stage_dir": True},
-    "pnpm-lock.yaml":    {"cmd": ["pnpm", "install", "--lockfile-only"]},
-    "package-lock.json": {"cmd": ["npm", "install", "--package-lock-only"]},
-    "yarn.lock":         {"cmd": ["yarn", "install"]},
-    "bun.lock":          {"cmd": ["bun", "install"]},
-    "bun.lockb":         {"cmd": ["bun", "install"]},
-    "Cargo.lock":        {"cmd": ["cargo", "generate-lockfile"]},
-    "uv.lock":           {"cmd": ["uv", "lock"]},
-    "poetry.lock":       {"cmd": ["poetry", "lock", "--no-update"]},
-    "composer.lock":     {"cmd": ["composer", "update", "--lock"]},
-    "Gemfile.lock":      {"cmd": ["bundle", "lock"]},
+_LOCKFILE_REGENERATORS: dict[str, Regenerator] = {
+    "go.sum":            Regenerator(("go", "mod", "tidy"), stage_dir=True),
+    "pnpm-lock.yaml":    Regenerator(("pnpm", "install", "--lockfile-only")),
+    "package-lock.json": Regenerator(("npm", "install", "--package-lock-only")),
+    "yarn.lock":         Regenerator(("yarn", "install")),
+    "bun.lock":          Regenerator(("bun", "install")),
+    "bun.lockb":         Regenerator(("bun", "install")),
+    "Cargo.lock":        Regenerator(("cargo", "generate-lockfile")),
+    "uv.lock":           Regenerator(("uv", "lock")),
+    "poetry.lock":       Regenerator(("poetry", "lock", "--no-update")),
+    "composer.lock":     Regenerator(("composer", "update", "--lock")),
+    "Gemfile.lock":      Regenerator(("bundle", "lock")),
 }
 
 
-def _find_regenerator(filepath: str) -> dict | None:
+def _find_regenerator(filepath: str) -> Regenerator | None:
     """Look up a regeneration command by lockfile basename."""
     return _LOCKFILE_REGENERATORS.get(os.path.basename(filepath))
 
@@ -199,49 +324,47 @@ def _detect_mise(target_dir: str, repo_root: str) -> bool:
         d = d.parent
 
 
-def _run_regeneration(
-    regen_dir: str, cmd: list[str], files: list[str],
-    *, stage_dir: bool = False, cwd: str,
-) -> bool:
+def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     """Run a regeneration command and stage the result. Returns success."""
     repo_root = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True, text=True, cwd=cwd,
     ).stdout.strip() or cwd
 
-    use_mise = _detect_mise(regen_dir, repo_root)
+    cmd = list(job.cmd)
+    use_mise = _detect_mise(job.regen_dir, repo_root)
     run_cmd = ["mise", "exec", "--"] + cmd if use_mise else cmd
 
-    log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(regen_dir).name}/)")
-    r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
+    log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
+    r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=job.regen_dir)
 
     if not use_mise and r.returncode == 127:
         if shutil.which("mise"):
             log.info("Retrying with mise...")
             run_cmd = ["mise", "exec", "--"] + cmd
-            r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=regen_dir)
+            r = subprocess.run(run_cmd, capture_output=True, text=True, cwd=job.regen_dir)
 
     if r.returncode != 0:
-        _terr("regeneration", f"{' '.join(cmd)} failed in {regen_dir}",
+        _terr("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
               data={"cmd": cmd, "exit_code": r.returncode, "stderr": r.stderr.strip()[:500]})
         log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
         if r.stderr.strip():
             log.dim(r.stderr.strip()[:200])
         return False
 
-    if stage_dir:
-        sr = subprocess.run(["git", "add", "-u", "."], cwd=regen_dir)
+    if job.stage_dir:
+        sr = subprocess.run(["git", "add", "-u", "."], cwd=job.regen_dir)
         if sr.returncode != 0:
-            _terr("regeneration", f"git add -u failed in {regen_dir}")
-            log.warn(f"git add -u failed after regeneration in {Path(regen_dir).name}/")
+            _terr("regeneration", f"git add -u failed in {job.regen_dir}")
+            log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
             return False
-    elif not all(_git_add(f, cwd) for f in files):
+    elif not all(_git_add(f, cwd) for f in job.files):
         return False
 
     if _trail:
-        _trail.info("regeneration", f"regenerated {', '.join(files)}",
-                    data={"cmd": cmd, "dir": regen_dir, "mise": use_mise})
-    log.ok(f"Regenerated: {', '.join(files)}")
+        _trail.info("regeneration", f"regenerated {', '.join(job.files)}",
+                    data={"cmd": cmd, "dir": job.regen_dir, "mise": use_mise})
+    log.ok(f"Regenerated: {', '.join(job.files)}")
     return True
 
 
@@ -255,38 +378,40 @@ _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
 _GENERATED_HEADER_PATTERNS = ("DO NOT EDIT", "@generated", "Code generated")
 
 
-def _is_generated_file(filepath: str, full_path: Path, cwd: str) -> tuple[bool, str]:
+def _is_generated_file(
+    filepath: str, full_path: Path, cwd: str,
+) -> GeneratedSignal | None:
     """Detect generated files using repo-agnostic signals.
 
-    Returns (is_generated, detection_method).
+    Returns the signal that identified the file, or None if not generated.
     """
     r = subprocess.run(
         ["git", "check-attr", "linguist-generated", "--", filepath],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode == 0 and ": true" in r.stdout:
-        return True, "gitattributes"
+        return GeneratedSignal.GITATTRIBUTES
 
     try:
         with open(full_path) as f:
             header = "".join(f.readline() for _ in range(5))
         if any(p in header for p in _GENERATED_HEADER_PATTERNS):
-            return True, "header"
+            return GeneratedSignal.HEADER
     except OSError:
         pass
 
-    return False, ""
+    return None
 
 
-def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
+def _detect_delete_conflict(filepath: str, cwd: str) -> DeleteSide | None:
     """Detect modify/delete conflicts by checking git index stages.
 
     During a rebase, stage 2 = ours (target), stage 3 = theirs (branch commit).
     A missing stage means that side deleted the file.
 
     Returns:
-        "ours_deleted" if target deleted the file, branch modifies it
-        "theirs_deleted" if branch commit deletes the file, target has it
+        OURS_DELETED if target deleted the file, branch modifies it
+        THEIRS_DELETED if branch commit deletes the file, target has it
         None if both stages present (normal content conflict)
     """
     r = subprocess.run(
@@ -307,15 +432,17 @@ def _detect_delete_conflict(filepath: str, cwd: str) -> str | None:
         return None
 
     if 2 not in stages:
-        return "ours_deleted"
+        return DeleteSide.OURS_DELETED
     if 3 not in stages:
-        return "theirs_deleted"
+        return DeleteSide.THEIRS_DELETED
     return None
 
 
-def _resolve_delete_conflict(filepath: str, sha: str, cwd: str, delete_type: str) -> bool:
+def _resolve_delete_conflict(
+    filepath: str, sha: str, cwd: str, delete_side: DeleteSide,
+) -> bool:
     """Resolve a modify/delete conflict by accepting the deletion."""
-    if delete_type == "theirs_deleted":
+    if delete_side is DeleteSide.THEIRS_DELETED:
         reason = f"commit {sha} deletes this file"
     else:
         reason = f"deleted on target, commit {sha} modifies stale version"
@@ -447,13 +574,13 @@ def _parse_resolved_content(stdout: str) -> tuple[str | None, str]:
     begin = stdout.find(_RESOLVE_BEGIN)
     end = stdout.find(_RESOLVE_END)
     if begin == -1 and end == -1:
-        return None, "missing_both_markers"
+        return None, ParseFailure.MISSING_BOTH_MARKERS
     if begin == -1:
-        return None, "missing_begin_marker"
+        return None, ParseFailure.MISSING_BEGIN_MARKER
     if end == -1:
-        return None, "missing_end_marker"
+        return None, ParseFailure.MISSING_END_MARKER
     if end <= begin:
-        return None, "end_before_begin"
+        return None, ParseFailure.END_BEFORE_BEGIN
 
     resolved = stdout[begin + len(_RESOLVE_BEGIN):end]
     if resolved.startswith("\n"):
@@ -463,7 +590,7 @@ def _parse_resolved_content(stdout: str) -> tuple[str | None, str]:
 
     surviving = _has_conflict_markers(resolved)
     if surviving:
-        return None, f"surviving_conflict_marker:{surviving.strip()}"
+        return None, f"{ParseFailure.SURVIVING_CONFLICT_MARKER}:{surviving.strip()}"
 
     return resolved + "\n", ""
 
@@ -477,10 +604,10 @@ _CHUNKED_MAX_CONFLICT_RATIO = 0.5
 
 def _extract_conflict_blocks(
     content: str, context_lines: int = _CONFLICT_CONTEXT_LINES,
-) -> list[dict]:
+) -> list[ConflictBlock]:
     """Extract conflict blocks with surrounding context from file content."""
     lines = content.splitlines(keepends=True)
-    blocks = []
+    blocks: list[ConflictBlock] = []
     i = 0
     while i < len(lines):
         if not lines[i].startswith("<<<<<<< "):
@@ -495,34 +622,30 @@ def _extract_conflict_blocks(
         end = j
         ctx_start = max(0, start - context_lines)
         ctx_end = min(len(lines), end + 1 + context_lines)
-        blocks.append({
-            "index": len(blocks) + 1,
-            "start": start,
-            "end": end,
-            "conflict": "".join(lines[start:end + 1]),
-            "context_before": "".join(lines[ctx_start:start]),
-            "context_after": "".join(lines[end + 1:ctx_end]),
-        })
+        blocks.append(ConflictBlock(
+            index=len(blocks) + 1,
+            start=start,
+            end=end,
+            conflict="".join(lines[start:end + 1]),
+            context_before="".join(lines[ctx_start:start]),
+            context_after="".join(lines[end + 1:ctx_end]),
+        ))
         i = end + 1
     return blocks
 
 
-def _conflict_line_count(blocks: list[dict]) -> int:
-    """Total lines occupied by conflict markers across all blocks."""
-    return sum(b["end"] - b["start"] + 1 for b in blocks)
-
-
-def _should_chunk(content: str, blocks: list[dict]) -> bool:
+def _should_chunk(content: str, blocks: list[ConflictBlock]) -> bool:
     """Decide whether to use chunked resolution based on file size and conflict ratio."""
     total = content.count("\n") + 1
     if total <= _CHUNKED_MIN_LINES:
         return False
-    return _conflict_line_count(blocks) / total < _CHUNKED_MAX_CONFLICT_RATIO
+    conflict_lines = sum(b.line_count for b in blocks)
+    return conflict_lines / total < _CHUNKED_MAX_CONFLICT_RATIO
 
 
 def _build_chunked_prompt(
     filepath: str,
-    blocks: list[dict],
+    blocks: list[ConflictBlock],
     sha: str,
     subject: str,
     commit_diff: str | None = None,
@@ -553,13 +676,13 @@ def _build_chunked_prompt(
     )
 
     for block in blocks:
-        n = block["index"]
+        n = block.index
         parts.append(f"\n--- CONFLICT {n} ---\n")
-        if block["context_before"]:
-            parts.append(block["context_before"])
-        parts.append(block["conflict"])
-        if block["context_after"]:
-            parts.append(block["context_after"])
+        if block.context_before:
+            parts.append(block.context_before)
+        parts.append(block.conflict)
+        if block.context_after:
+            parts.append(block.context_after)
         parts.append(f"--- END CONFLICT {n} ---\n")
 
     parts.append(
@@ -569,7 +692,7 @@ def _build_chunked_prompt(
         "No explanation, no markdown fencing, no commentary outside the markers.\n\n"
     )
     for block in blocks:
-        n = block["index"]
+        n = block.index
         parts.append(
             f"{_RESOLVE_BEGIN}_{n}\n"
             f"(resolved content for conflict {n})\n"
@@ -593,7 +716,7 @@ def _parse_chunked_resolutions(
         begin = stdout.find(begin_marker)
         end = stdout.find(end_marker)
         if begin == -1 or end == -1 or end <= begin:
-            return None, f"missing_markers_for_block_{i}"
+            return None, f"{ParseFailure.MISSING_BLOCK_MARKERS}_{i}"
         resolved = stdout[begin + len(begin_marker):end]
         if resolved.startswith("\n"):
             resolved = resolved[1:]
@@ -601,18 +724,21 @@ def _parse_chunked_resolutions(
             resolved = resolved[:-1]
         surviving = _has_conflict_markers(resolved)
         if surviving:
-            return None, f"surviving_conflict_marker_in_block_{i}:{surviving.strip()}"
+            return None, (
+                f"{ParseFailure.SURVIVING_CONFLICT_MARKER}_in_block_{i}"
+                f":{surviving.strip()}"
+            )
         resolutions.append(resolved + "\n")
     return resolutions, ""
 
 
 def _splice_resolutions(
-    content: str, blocks: list[dict], resolutions: list[str],
+    content: str, blocks: list[ConflictBlock], resolutions: list[str],
 ) -> str:
     """Replace conflict markers in content with resolved text."""
     lines = content.splitlines(keepends=True)
     for block, resolution in reversed(list(zip(blocks, resolutions))):
-        lines[block["start"]:block["end"] + 1] = resolution.splitlines(keepends=True)
+        lines[block.start:block.end + 1] = resolution.splitlines(keepends=True)
     return "".join(lines)
 
 
@@ -776,7 +902,7 @@ def _resolve_full_file(
 
 def _resolve_chunked(
     filepath: str, full_path: Path, content: str,
-    blocks: list[dict], sha: str, subject: str, cwd: str,
+    blocks: list[ConflictBlock], sha: str, subject: str, cwd: str,
 ) -> str | None:
     """Resolve via chunked prompt (large files with small conflicts)."""
     commit_diff = _get_commit_diff(filepath, cwd)
@@ -809,10 +935,10 @@ def _resolve_chunked(
     return filepath
 
 
-def _ai_suggest_regeneration(filepath: str, cwd: str) -> list[str] | None:
+def _ai_suggest_regeneration(filepath: str, cwd: str) -> tuple[str, ...] | None:
     """Ask AI to suggest a regeneration command for an unknown generated file.
 
-    Returns a command list or None if unavailable/unparseable.
+    Returns a command tuple or None if unavailable/unparseable.
     """
     if not ai_backend.is_available():
         return None
@@ -844,126 +970,99 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> list[str] | None:
     if response.upper() == "NONE":
         return None
 
-    parts = response.split()
+    parts = tuple(response.split())
     if not parts:
         return None
 
-    safe_binaries = {entry["cmd"][0] for entry in _LOCKFILE_REGENERATORS.values()}
+    safe_binaries = {r.cmd[0] for r in _LOCKFILE_REGENERATORS.values()}
     if parts[0] not in safe_binaries:
         if _trail:
             _trail.info("ai_suggest_regen", f"AI suggested unknown binary: {parts[0]}",
-                        data={"filepath": filepath, "command": parts, "rejected": True})
+                        data={"filepath": filepath, "command": list(parts), "rejected": True})
         return None
 
     if _trail:
         _trail.info("ai_suggest_regen", f"AI suggested: {response}",
-                    data={"filepath": filepath, "command": parts})
+                    data={"filepath": filepath, "command": list(parts)})
     return parts
 
 
 def _classify_conflict(
     filepath: str, full_path: Path, cwd: str,
-) -> tuple[str, Any]:
-    """Determine resolution strategy for a conflicted file.
-
-    Returns (strategy, context) where strategy is one of:
-      "regenerate"    — accept theirs and run a regeneration command
-      "accept_theirs" — accept theirs, no local regeneration
-      "delete"        — accept deletion (modify/delete conflict)
-      "binary_error"  — cannot resolve binary files
-      "ai_merge"      — resolve via AI
-    """
-    delete_type = _detect_delete_conflict(filepath, cwd)
-    if delete_type is not None:
-        return ("delete", delete_type)
+) -> ConflictPlan:
+    """Determine the resolution strategy for a conflicted file."""
+    delete_side = _detect_delete_conflict(filepath, cwd)
+    if delete_side is not None:
+        return ConflictPlan(ConflictStrategy.DELETE, delete_side=delete_side)
 
     regen = _find_regenerator(filepath)
     if regen is not None:
-        return ("regenerate", regen)
+        return ConflictPlan(ConflictStrategy.REGENERATE, regenerator=regen)
 
-    generated, method = _is_generated_file(filepath, full_path, cwd)
-    if generated:
-        return ("accept_theirs", method)
+    signal = _is_generated_file(filepath, full_path, cwd)
+    if signal is not None:
+        return ConflictPlan(ConflictStrategy.ACCEPT_THEIRS, signal=signal)
 
     if _is_binary(full_path):
-        return ("binary_error", None)
+        return ConflictPlan(ConflictStrategy.BINARY_ERROR)
 
-    return ("ai_merge", None)
-
-
-def _queue_regen(
-    pending: dict, filepath: str, parent: Path,
-    cmd: list[str], stage_dir: bool = False,
-) -> None:
-    """Add a regeneration command to the deferred queue, deduplicating by (dir, cmd)."""
-    regen_dir = str(parent)
-    key = (regen_dir, tuple(cmd))
-    if key not in pending:
-        pending[key] = ([], stage_dir)
-    pending[key][0].append(filepath)
+    return ConflictPlan(ConflictStrategy.AI_MERGE)
 
 
 def _dispatch_regenerate(
-    filepath: str, full_path: Path, cwd: str, context: dict, pending: dict,
+    filepath: str, full_path: Path, cwd: str,
+    regenerator: Regenerator, queue: RegenQueue,
 ) -> bool:
-    """Handle 'regenerate' strategy. Returns False on failure."""
+    """Handle the REGENERATE strategy. Returns False on failure."""
     if _trail:
         _trail.decision(
             "regenerate", f"accepting theirs for {filepath}",
-            reason=f"lockfile with known regenerator: {' '.join(context['cmd'])}",
+            reason=f"lockfile with known regenerator: {' '.join(regenerator.cmd)}",
         )
     if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
         return False
-    _queue_regen(pending, filepath, full_path.parent, context["cmd"], context.get("stage_dir", False))
+    queue.add(full_path.parent, filepath, regenerator.cmd, regenerator.stage_dir)
     return True
 
 
 def _dispatch_accept_theirs(
-    filepath: str, full_path: Path, cwd: str, context: str, pending: dict,
+    filepath: str, full_path: Path, cwd: str,
+    signal: GeneratedSignal, queue: RegenQueue,
 ) -> bool:
-    """Handle 'accept_theirs' strategy. Returns False on failure."""
+    """Handle the ACCEPT_THEIRS strategy. Returns False on failure."""
     if _trail:
         _trail.decision(
             "generated_file", f"accepting theirs for {filepath}",
-            reason=f"generated file detected via {context}",
+            reason=f"generated file detected via {signal}",
         )
     if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
         return False
     ai_cmd = _ai_suggest_regeneration(filepath, cwd)
     if ai_cmd:
-        _queue_regen(pending, filepath, full_path.parent, ai_cmd)
+        queue.add(full_path.parent, filepath, ai_cmd)
     return True
 
 
 def _dispatch_conflict(
     filepath: str, full_path: Path, cwd: str,
-    strategy: str, context: Any,
-    sha: str, subject: str, pending: dict,
-) -> bool | None:
-    """Dispatch a single conflict by strategy. Returns True on success, None on fatal failure."""
-    if strategy == "regenerate":
-        if not _dispatch_regenerate(filepath, full_path, cwd, context, pending):
-            return None
-        return True
-    if strategy == "accept_theirs":
-        if not _dispatch_accept_theirs(filepath, full_path, cwd, context, pending):
-            return None
-        return True
-    if strategy == "delete":
-        if not _resolve_delete_conflict(filepath, sha, cwd, context):
-            return None
-        return True
-    if strategy == "binary_error":
+    plan: ConflictPlan, sha: str, subject: str, queue: RegenQueue,
+) -> bool:
+    """Dispatch a single conflict by strategy. Returns False on fatal failure."""
+    if plan.strategy is ConflictStrategy.REGENERATE:
+        return _dispatch_regenerate(filepath, full_path, cwd, plan.regenerator, queue)
+    if plan.strategy is ConflictStrategy.ACCEPT_THEIRS:
+        return _dispatch_accept_theirs(filepath, full_path, cwd, plan.signal, queue)
+    if plan.strategy is ConflictStrategy.DELETE:
+        return _resolve_delete_conflict(filepath, sha, cwd, plan.delete_side)
+    if plan.strategy is ConflictStrategy.BINARY_ERROR:
         _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
         log.error(f"Cannot resolve binary file: {filepath}")
-        return None
-    if strategy == "ai_merge":
-        if _resolve_single_file(filepath, full_path, sha, subject, cwd) is None:
-            return None
-        if _trail:
-            _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
-        return True
-    return None
+        return False
+    if _resolve_single_file(filepath, full_path, sha, subject, cwd) is None:
+        return False
+    if _trail:
+        _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
+    return True
 
 
 def _resolve_file_conflicts(
@@ -971,21 +1070,19 @@ def _resolve_file_conflicts(
 ) -> list[str] | None:
     """Resolve conflicted files via classify → dispatch → deferred regen."""
     resolved = []
-    pending_regens: dict[tuple[str, tuple[str, ...]], tuple[list[str], bool]] = {}
+    queue = RegenQueue()
 
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
-        strategy, context = _classify_conflict(filepath, full_path, cwd)
-        result = _dispatch_conflict(filepath, full_path, cwd, strategy, context, sha, subject, pending_regens)
-        if result is None:
+        plan = _classify_conflict(filepath, full_path, cwd)
+        if not _dispatch_conflict(filepath, full_path, cwd, plan, sha, subject, queue):
             return None
-        if result:
-            resolved.append(filepath)
+        resolved.append(filepath)
 
     regen_failures = []
-    for (regen_dir, cmd_tuple), (files, stage_dir) in pending_regens.items():
-        if not _run_regeneration(regen_dir, list(cmd_tuple), files, stage_dir=stage_dir, cwd=cwd):
-            regen_failures.extend(files)
+    for job in queue:
+        if not _run_regeneration(job, cwd=cwd):
+            regen_failures.extend(job.files)
 
     if regen_failures:
         log.warn(f"Regeneration failed for: {', '.join(regen_failures)} — lockfiles may be stale")
@@ -1013,19 +1110,17 @@ def _drive_to_completion(
 def _drive_loop(
     cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
 ) -> int:
-    all_resolved: list[str] = []
-    commits_conflicted = 0
+    tally = ResolutionTally()
 
     for _ in range(_MAX_REBASE_STEPS):
         if not _detect_rebase_in_progress(cwd):
-            resolved = (all_resolved, commits_conflicted) if commits_conflicted else None
-            return _rebase_success(cwd, ctx, fix, resolved=resolved)
+            return _rebase_success(cwd, ctx, fix, tally)
 
-        rc, conflict_found = _drive_one_step(cwd, ctx, fix, all_resolved)
+        rc, conflict_found = _drive_one_step(cwd, ctx, fix, tally)
         if rc is not None:
             return rc
         if conflict_found:
-            commits_conflicted += 1
+            tally.commits += 1
 
     _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
     log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
@@ -1035,43 +1130,37 @@ def _drive_loop(
 
 def _drive_one_step(
     cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
-    all_resolved: list[str],
+    tally: ResolutionTally,
 ) -> tuple[int | None, bool]:
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
         return _step_advance(cwd), False
 
-    rc = _step_conflicts(cwd, ctx, fix, conflicts, all_resolved)
+    rc = _step_conflicts(cwd, ctx, fix, conflicts, tally)
     if rc is not None:
         return rc, False
     return None, True
 
 
-def _save_conflicts_state(ctx: pr_context.ResolvedContext) -> None:
-    """Persist rebase state with status=conflicts."""
-    RebaseOutcome(status=RebaseStatus.CONFLICTS.value).save(ctx)
+def _report_conflicts_and_stop(cwd: str, ctx: pr_context.ResolvedContext) -> int:
+    """Persist status=conflicts, emit the report, and return the conflicts exit code."""
+    RebaseOutcome(status=RebaseStatus.CONFLICTS).save(ctx)
+    ConflictReport.from_repo(cwd).emit()
+    return 3
 
 
 def _step_conflicts(
     cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
-    conflicts: list[str], all_resolved: list[str],
+    conflicts: list[str], tally: ResolutionTally,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not fix:
-        _save_conflicts_state(ctx)
-        report = _conflict_report(cwd)
-        json.dump(report, sys.stdout, indent=2)
-        print()
-        return 3
+        return _report_conflicts_and_stop(cwd, ctx)
 
     if not ai_backend.is_available():
         _terr("resolve_conflicts", "AI backend unavailable")
         log.error("Cannot resolve conflicts — AI backend unavailable.")
-        _save_conflicts_state(ctx)
-        report = _conflict_report(cwd)
-        json.dump(report, sys.stdout, indent=2)
-        print()
-        return 3
+        return _report_conflicts_and_stop(cwd, ctx)
 
     sha, subject = _rebase_head_info(cwd)
     remaining = _remaining_rebase_commits(cwd)
@@ -1093,7 +1182,7 @@ def _step_conflicts(
         log.error("AI conflict resolution failed — aborting rebase.")
         subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
         return 1
-    all_resolved.extend(resolved)
+    tally.files.extend(resolved)
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     unstaged = subprocess.run(
@@ -1290,7 +1379,7 @@ def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
 @dataclass
 class RebaseOutcome:
     """Result of a rebase — owns state persistence and JSON reporting."""
-    status: str = RebaseStatus.COMPLETED.value
+    status: RebaseStatus = RebaseStatus.COMPLETED
     commits_replayed: int = 0
     conflicts_resolved: int = 0
     files_resolved: list[str] = field(default_factory=list)
@@ -1299,7 +1388,7 @@ class RebaseOutcome:
     def save(self, ctx: pr_context.ResolvedContext) -> None:
         state = _load_or_init(ctx)
         pr_state.update_rebase(state, pr_state.RebaseSummary(
-            status=self.status,
+            status=self.status.value,
             target_base=_TARGET_REF,
             commits_replayed=self.commits_replayed,
             conflicts_resolved=self.conflicts_resolved,
@@ -1311,15 +1400,14 @@ class RebaseOutcome:
 
     def emit(self) -> None:
         report: dict = {
-            "status": self.status,
+            "status": self.status.value,
             "commits_replayed": self.commits_replayed,
             "conflicts_resolved": self.conflicts_resolved,
             "files_resolved": self.files_resolved,
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed
-        json.dump(report, sys.stdout, indent=2)
-        print()
+        _emit_json(report)
 
 
 # ── Push helper ─────────────────────────────────────────────────────────────
@@ -1391,7 +1479,7 @@ def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     log.info("Aborting rebase...")
     r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
     if r.returncode == 0:
-        RebaseOutcome(status=RebaseStatus.ABORTED.value).save(ctx)
+        RebaseOutcome(status=RebaseStatus.ABORTED).save(ctx)
         log.ok("Rebase aborted.")
     return r.returncode
 
@@ -1506,20 +1594,19 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
 def _rebase_success(
     cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
-    resolved: tuple[list[str], int] | None = None,
+    tally: ResolutionTally | None = None,
 ) -> int:
     """Handle rebase completion — update state and optionally force-push."""
-    files_resolved = resolved[0] if resolved else []
-    conflicts_resolved = resolved[1] if resolved else 0
+    tally = tally or ResolutionTally()
 
     push_rc = 0
     if fix:
-        label = "Rebase complete" if not resolved else (
-            f"Rebase complete — resolved {len(files_resolved)} file(s) "
-            f"across {conflicts_resolved} commit(s)"
+        label = "Rebase complete" if not tally.commits else (
+            f"Rebase complete — resolved {len(tally.files)} file(s) "
+            f"across {tally.commits} commit(s)"
         )
         log.info(f"{label} — force-pushing...")
-        push_rc = _force_push(cwd, resolved_files=files_resolved or None)
+        push_rc = _force_push(cwd, resolved_files=tally.files or None)
         if push_rc == 0:
             _trail and _trail.info("force_push", "force-pushed to remote")
         else:
@@ -1527,8 +1614,8 @@ def _rebase_success(
 
     outcome = RebaseOutcome(
         commits_replayed=_commits_ahead(cwd),
-        conflicts_resolved=conflicts_resolved,
-        files_resolved=files_resolved,
+        conflicts_resolved=tally.commits,
+        files_resolved=tally.files,
         force_pushed=push_rc == 0 if fix else None,
     )
     outcome.save(ctx)
@@ -1589,8 +1676,13 @@ def main():
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             sys.exit(cmd_abort(cwd, ctx))
 
-        mode = "fix" if args.fix else "push" if args.push else "rebase-only"
-        _trail.decision("mode", f"selected {mode}", reason=f"--fix flag set" if args.fix else ("--no-push flag set" if not args.push else "default mode"))
+        if args.fix:
+            mode, reason = RunMode.FIX, "--fix flag set"
+        elif args.push:
+            mode, reason = RunMode.PUSH, "default mode"
+        else:
+            mode, reason = RunMode.REBASE_ONLY, "--no-push flag set"
+        _trail.decision("mode", f"selected {mode}", reason=reason)
         rc = cmd_start(cwd, ctx, args.fix)
 
         if rc == 0 and args.push and not args.fix:

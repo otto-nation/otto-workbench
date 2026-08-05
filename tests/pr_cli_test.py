@@ -828,7 +828,6 @@ def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
     assert pr_cli.cmd_fix([], ctx=_make_ctx()) == 1
 
 
-
 # ── positional target forwarding ────────────────────────────────────────────
 
 

@@ -393,9 +393,10 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     # A missing binary raises FileNotFoundError rather than exiting 127, and a
     # tool-managed binary is only on PATH inside `mise exec`. Retry there.
     if (r is None or r.returncode == 127) and not use_mise and shutil.which("mise"):
-        log.info("Retrying with mise...")
         use_mise = True
-        r = _try_run(["mise", "exec", "--"] + cmd, cwd=job.regen_dir)
+        run_cmd = ["mise", "exec", "--"] + cmd
+        log.info(f"Retrying with mise: {' '.join(run_cmd)}")
+        r = _try_run(run_cmd, cwd=job.regen_dir)
 
     if r is None:
         _terr("regeneration", f"could not run {cmd[0]} in {job.regen_dir}",

@@ -328,3 +328,9 @@ class TestConsumeStreamTracksWrites:
 
     def test_read_only_run_earns_the_write_first_message(self):
         assert ai_backend_pi._WRITE_FIRST in self._steer_message("read")
+
+
+class TestPreflight:
+    def test_always_passes(self):
+        """Pi resolves models itself — Vertex quota is not its config surface."""
+        assert ai_backend_pi.preflight({"claude-sonnet-5": ["group"]}, None) is True

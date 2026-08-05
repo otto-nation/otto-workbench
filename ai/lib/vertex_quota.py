@@ -1,9 +1,12 @@
-"""Vertex AI quota preflight check.
+"""Vertex AI quota checks for the Claude Code backend.
 
-Verifies that resolved models have quota allocations on the configured
-Vertex AI project/region before the pipeline spawns any agents.  Catches
-misconfigured model aliases (no quota entry) within ~1s instead of
-burning ~6 minutes on retries.
+Verifies that the models a run would use have quota allocations on the
+configured Vertex AI project/region before any agent is spawned.  Catches
+misconfigured model ids (no quota entry) within ~1s instead of burning
+~6 minutes on retries.
+
+Reached through ``ai_backend.preflight()`` — nothing outside the Claude
+backend should import this module.
 """
 
 from __future__ import annotations
@@ -20,16 +23,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import log
-from review_agent import _ANTHROPIC_MODEL_ENV, _resolve_alias, _resolve_model
-from review_pipeline import (
-    DEFAULT_MODEL_DISPROVE,
-    DEFAULT_MODEL_FIX,
-    DEFAULT_MODEL_GROUP,
-    DEFAULT_MODEL_HOLISTIC,
-    DEFAULT_MODEL_SCOUT,
-    DEFAULT_MODEL_SINGLE,
-    DEFAULT_MODEL_SYNTHESIS,
-)
 
 try:
     from google.auth import default as _google_auth_default
@@ -39,7 +32,7 @@ except ImportError:
     _HAS_GOOGLE_AUTH = False
 
 _CACHE_TTL_SECS = 300
-_CACHE_DIR = Path(tempfile.gettempdir()) / f"vertex-preflight-{os.getuid()}"
+_CACHE_DIR = Path(tempfile.gettempdir()) / f"vertex-quota-{os.getuid()}"
 
 _REGIONAL_METRIC = (
     "aiplatform.googleapis.com"
@@ -50,39 +43,41 @@ _GLOBAL_METRIC = (
     "%2Fglobal_online_prediction_input_tokens_per_minute_per_base_model"
 )
 
-_PHASE_MODEL_SPECS = [
-    ("CLAUDE_REVIEW_SINGLE_MODEL", DEFAULT_MODEL_SINGLE),
-    ("CLAUDE_REVIEW_GROUP_MODEL", DEFAULT_MODEL_GROUP),
-    ("CLAUDE_REVIEW_HOLISTIC_MODEL", DEFAULT_MODEL_HOLISTIC),
-    ("CLAUDE_REVIEW_SCOUT_MODEL", DEFAULT_MODEL_SCOUT),
-    ("CLAUDE_REVIEW_SYNTHESIS_MODEL", DEFAULT_MODEL_SYNTHESIS),
-    ("CLAUDE_REVIEW_DISPROVE_MODEL", DEFAULT_MODEL_DISPROVE),
-    ("CLAUDE_REVIEW_FIX_MODEL", DEFAULT_MODEL_FIX),
-]
+# Vertex namespaces Anthropic models under the publisher prefix, so quota
+# buckets are keyed as e.g. "anthropic-claude-sonnet-5".
+_PUBLISHER_PREFIX = "anthropic-"
+_MODEL_ID_PREFIX = "claude-"
 
 
 @dataclass
-class VertexPreflightResult:
+class VertexQuotaResult:
     ok: bool
     model: str
     error: str = ""
     available_models: list[str] = field(default_factory=list)
 
 
-def resolve_vertex_model_id(alias: str) -> str:
-    """Resolve a CLI alias to a Vertex base model name.
+def is_checkable(model: str) -> bool:
+    """Whether a model string is a concrete id we can match against quota.
 
-    'sonnet' -> ANTHROPIC_DEFAULT_SONNET_MODEL -> 'claude-sonnet-5'
-               -> 'anthropic-claude-sonnet-5'
+    CLI shorthands ("sonnet", "opus") only become concrete model ids inside
+    the Claude Code CLI, so there is nothing to look up — treat them as
+    unknown rather than reporting a bogus missing-quota failure.
     """
-    model = _resolve_alias(alias)
+    return model.startswith((_MODEL_ID_PREFIX, _PUBLISHER_PREFIX))
 
+
+def resolve_vertex_model_id(model: str) -> str:
+    """Map a concrete model id to its Vertex base model name.
+
+    'claude-sonnet-5' -> 'anthropic-claude-sonnet-5'
+    """
     # Strip @version suffix (e.g. claude-haiku-4-5@20251001 -> claude-haiku-4-5)
     if "@" in model:
         model = model.split("@")[0]
 
-    if not model.startswith("anthropic-"):
-        model = f"anthropic-{model}"
+    if not model.startswith(_PUBLISHER_PREFIX):
+        model = f"{_PUBLISHER_PREFIX}{model}"
     return model
 
 
@@ -111,7 +106,7 @@ def _get_access_token() -> str | None:
 def _cache_key(project: str, region: str) -> Path:
     raw = f"{project}:{region}"
     h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    return _CACHE_DIR / f"vertex-preflight-{h}.json"
+    return _CACHE_DIR / f"vertex-quota-{h}.json"
 
 
 def _check_cache(project: str, region: str) -> dict[str, str] | None:
@@ -183,7 +178,7 @@ def _parse_quota_buckets(
     for bucket in buckets:
         dims = bucket.get("dimensions") or {}
         base_model = dims.get("base_model")
-        if not base_model or not base_model.startswith("anthropic-"):
+        if not base_model or not base_model.startswith(_PUBLISHER_PREFIX):
             continue
         if not is_global and dims.get("region") != region:
             continue
@@ -193,107 +188,104 @@ def _parse_quota_buckets(
     return models
 
 
-def check_vertex_quota(
-    model_alias: str, project: str, region: str,
-) -> VertexPreflightResult:
-    base_model = resolve_vertex_model_id(model_alias)
+def check_quota(model: str, project: str, region: str) -> VertexQuotaResult:
+    base_model = resolve_vertex_model_id(model)
 
     cached = _check_cache(project, region)
     if cached is not None:
-        if base_model in cached:
-            return VertexPreflightResult(ok=True, model=base_model)
-        available = sorted(cached.keys())
-        return VertexPreflightResult(
-            ok=False, model=base_model,
-            error=f"model '{base_model}' has no quota in project '{project}' region '{region}'",
-            available_models=available,
-        )
+        return _verdict(base_model, cached, project, region)
 
     token = _get_access_token()
     if not token:
-        log.warn("Vertex preflight skipped — could not obtain access token")
-        return VertexPreflightResult(ok=True, model=base_model)
+        log.warn("Vertex quota check skipped — could not obtain access token")
+        return VertexQuotaResult(ok=True, model=base_model)
 
     try:
         models = _fetch_provisioned_models(project, region, token)
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-        log.warn(f"Vertex preflight skipped — quota API error: {exc}")
-        return VertexPreflightResult(ok=True, model=base_model)
+        log.warn(f"Vertex quota check skipped — quota API error: {exc}")
+        return VertexQuotaResult(ok=True, model=base_model)
 
     _write_cache(project, region, models)
+    return _verdict(base_model, models, project, region)
 
-    if base_model in models:
-        return VertexPreflightResult(ok=True, model=base_model)
 
-    available = sorted(models.keys())
-    return VertexPreflightResult(
+def _verdict(
+    base_model: str, provisioned: dict[str, str], project: str, region: str,
+) -> VertexQuotaResult:
+    if base_model in provisioned:
+        return VertexQuotaResult(ok=True, model=base_model)
+    return VertexQuotaResult(
         ok=False, model=base_model,
         error=f"model '{base_model}' has no quota in project '{project}' region '{region}'",
-        available_models=available,
+        available_models=sorted(provisioned.keys()),
     )
 
 
-def _collect_distinct_models(job_model: str) -> set[str]:
-    models = set()
-    explicit = job_model or None
-    for env_key, default in _PHASE_MODEL_SPECS:
-        models.add(_resolve_model(explicit, env_key, default))
-    return models
+def _report_failure(
+    result: VertexQuotaResult, phases: list[str], project: str, region: str,
+) -> None:
+    log.error(
+        f"Vertex AI model '{result.model}' has no quota in"
+        f" project '{project}' region '{region}'"
+    )
+    if result.available_models:
+        log.dim(f"  Available: {', '.join(result.available_models)}")
+    keys = ", ".join(f"CLAUDE_REVIEW_{p.upper()}_MODEL" for p in phases)
+    log.dim(f"  Fix: set {keys} to a provisioned model")
 
 
-def run_vertex_preflight(job_model: str, trail) -> bool:
-    """Run Vertex AI preflight if CLAUDE_CODE_USE_VERTEX=1.
+def run_preflight(models: dict[str, list[str]], trail) -> bool:
+    """Check every model the run would use against Vertex quota.
 
-    Returns True if pipeline should proceed, False to abort.
+    ``models`` maps a resolved model id to the phases requesting it.  Returns
+    True if the run should proceed, False to abort.  Any condition that leaves
+    quota unknown (not on Vertex, missing config, no credentials, API error)
+    proceeds — this gate only stops runs it can prove are misconfigured.
     """
     if os.environ.get("CLAUDE_CODE_USE_VERTEX") != "1":
         return True
 
-    project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
-    region = os.environ.get("CLOUD_ML_REGION")
-
-    if not project or not region:
-        missing = []
-        if not project:
-            missing.append("ANTHROPIC_VERTEX_PROJECT_ID")
-        if not region:
-            missing.append("CLOUD_ML_REGION")
-        log.warn(f"Vertex preflight skipped — missing env: {', '.join(missing)}")
-        trail.info("vertex_preflight", "skipped — missing env vars",
-                    data={"missing": missing})
+    missing = [
+        key for key in ("ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION")
+        if not os.environ.get(key)
+    ]
+    if missing:
+        log.warn(f"Vertex quota check skipped — missing env: {', '.join(missing)}")
+        trail.info("vertex_quota", "skipped — missing env vars",
+                   data={"missing": missing})
         return True
 
-    models = _collect_distinct_models(job_model)
-    failures: list[VertexPreflightResult] = []
+    project = os.environ["ANTHROPIC_VERTEX_PROJECT_ID"]
+    region = os.environ["CLOUD_ML_REGION"]
 
-    for model in sorted(models):
-        result = check_vertex_quota(model, project, region)
+    skipped = sorted(m for m in models if not is_checkable(m))
+    if skipped:
+        log.dim(f"Vertex quota check skipped for CLI shorthand: {', '.join(skipped)}")
+
+    failures: list[tuple[VertexQuotaResult, list[str]]] = []
+    checked = sorted(m for m in models if is_checkable(m))
+    for model in checked:
+        result = check_quota(model, project, region)
         if not result.ok:
-            failures.append(result)
+            failures.append((result, models[model]))
 
     if not failures:
-        trail.info("vertex_preflight", "passed",
-                    data={"models": sorted(models), "project": project, "region": region})
+        trail.info("vertex_quota", "passed",
+                   data={"checked": checked, "skipped": skipped,
+                         "project": project, "region": region})
         return True
 
-    for f in failures:
-        log.error(
-            f"Vertex AI model '{f.model}' has no quota in"
-            f" project '{project}' region '{region}'"
-        )
-        if f.available_models:
-            log.dim(f"  Available: {', '.join(f.available_models)}")
-        alias_env = next(
-            (env for alias, env in _ANTHROPIC_MODEL_ENV.items()
-             if resolve_vertex_model_id(alias) == f.model),
-            None,
-        )
-        if alias_env:
-            log.dim(f"  Fix: set {alias_env} to a provisioned model")
+    for result, phases in failures:
+        _report_failure(result, phases, project, region)
 
     trail.decision(
-        "vertex_preflight", "failed — model not provisioned",
-        reason="; ".join(f.error for f in failures),
-        data={"failures": [{"model": f.model, "available": f.available_models} for f in failures]},
+        "vertex_quota", "failed — model not provisioned",
+        reason="; ".join(result.error for result, _ in failures),
+        data={"failures": [
+            {"model": result.model, "phases": phases,
+             "available": result.available_models}
+            for result, phases in failures
+        ]},
     )
     return False

@@ -1,7 +1,7 @@
 """Pi CLI backend for ai_backend.
 
-Implements prompt(), invoke_agent(), and invoke_fix() by building
-`pi` commands and running them as subprocesses.
+Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
+building `pi` commands and running them as subprocesses.
 
 invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
   - Budget enforcement via accumulated message_end costs + get_session_stats
@@ -330,6 +330,15 @@ def _write_result_record(
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
+
+
+def preflight(models: dict[str, list[str]], trail) -> bool:
+    """No pre-run checks — Pi resolves models and provider routing itself.
+
+    ``models`` and ``trail`` are accepted for interface parity with the
+    Claude backend.
+    """
+    return True
 
 
 def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:

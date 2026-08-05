@@ -1,7 +1,7 @@
 """AI backend abstraction layer.
 
-Dispatches prompt(), invoke_agent(), and invoke_fix() to the correct
-backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
+Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
+correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
 """
 
 from __future__ import annotations
@@ -26,6 +26,15 @@ def _get_module() -> types.ModuleType:
     else:
         import ai_backend_claude as mod
     return mod
+
+
+def preflight(models: dict[str, list[str]], trail) -> bool:
+    """Verify the backend can serve the requested models before any run.
+
+    ``models`` maps each resolved model id to the phases requesting it.
+    Returns False to abort — backends fail open when they cannot tell.
+    """
+    return _get_module().preflight(models, trail)
 
 
 def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:

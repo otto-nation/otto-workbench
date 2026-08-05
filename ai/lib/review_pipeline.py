@@ -83,13 +83,18 @@ DEFAULT_MAX_TURNS_SINGLE = 15
 RETRY_MAX_TURNS_GROUP = 30
 _MAX_TURNS_REASON = "agent hit max turns"
 
-DEFAULT_MODEL_GROUP = "sonnet"
-DEFAULT_MODEL_HOLISTIC = "sonnet"
-DEFAULT_MODEL_SCOUT = "sonnet"
-DEFAULT_MODEL_SYNTHESIS = "sonnet"
-DEFAULT_MODEL_DISPROVE = "sonnet"
-DEFAULT_MODEL_SINGLE = "sonnet"
-DEFAULT_MODEL_FIX = "sonnet"
+# Phase → default model. The override env key is derived by convention
+# (CLAUDE_REVIEW_<PHASE>_MODEL), so adding a phase means one entry here and
+# nothing else — preflight checks and callers both read this registry.
+PHASE_MODEL_DEFAULTS = {
+    "single": "sonnet",
+    "holistic": "sonnet",
+    "scout": "sonnet",
+    "group": "sonnet",
+    "synthesis": "sonnet",
+    "disprove": "sonnet",
+    "fix": "sonnet",
+}
 
 DEFAULT_THINKING_GROUP = "low"
 DEFAULT_THINKING_HOLISTIC = "medium"
@@ -107,6 +112,30 @@ MAX_TURNS_FIX_CAP = 60
 RETRY_MAX_TURNS_FIX = 40
 
 OMITTED_FILE_TURNS = 2
+
+# ── Phase model resolution ───────────────────────────────────────────────────
+
+
+def phase_model(phase: str, explicit: str | None) -> str:
+    """Resolve the model for a pipeline phase (explicit > env > default)."""
+    return _resolve_model(
+        explicit,
+        f"CLAUDE_REVIEW_{phase.upper()}_MODEL",
+        PHASE_MODEL_DEFAULTS[phase],
+    )
+
+
+def collect_phase_models(explicit: str | None) -> dict[str, list[str]]:
+    """Map each model the pipeline would use to the phases that requested it.
+
+    Callers use this to check every distinct model once up front and to name
+    the env keys worth changing when one of them is unusable.
+    """
+    models: dict[str, list[str]] = {}
+    for phase in PHASE_MODEL_DEFAULTS:
+        models.setdefault(phase_model(phase, explicit), []).append(phase)
+    return models
+
 
 # ── Effort presets ───────────────────────────────────────────────────────────
 
@@ -313,8 +342,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     log.info(f"Running review agent on {label}...")
     log.blank()
     _touch(job.review_file)
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_SINGLE_MODEL",
-                           DEFAULT_MODEL_SINGLE)
+    model = phase_model("single", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SINGLE_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SINGLE))
     provider = _resolve_provider()
@@ -541,8 +569,7 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_GROUP_MODEL",
-                           DEFAULT_MODEL_GROUP)
+    model = phase_model("group", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_GROUP))
     provider = _resolve_provider()
@@ -578,8 +605,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_HOLISTIC_MODEL",
-                           DEFAULT_MODEL_HOLISTIC)
+    model = phase_model("holistic", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_HOLISTIC_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_HOLISTIC))
     provider = _resolve_provider()
@@ -618,8 +644,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_SCOUT_MODEL",
-                           DEFAULT_MODEL_SCOUT)
+    model = phase_model("scout", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SCOUT_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SCOUT))
     provider = _resolve_provider()
@@ -666,8 +691,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_DISPROVE_MODEL",
-                           DEFAULT_MODEL_DISPROVE)
+    model = phase_model("disprove", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_DISPROVE_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_DISPROVE))
     provider = _resolve_provider()
@@ -943,8 +967,7 @@ def run_fix_pass(job: ReviewJob):
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_FIX_MODEL",
-                           DEFAULT_MODEL_FIX)
+    model = phase_model("fix", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_FIX_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_FIX))
     provider = _resolve_provider()
@@ -1319,8 +1342,7 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
-    model = _resolve_model(job.model, "CLAUDE_REVIEW_SYNTHESIS_MODEL",
-                           DEFAULT_MODEL_SYNTHESIS)
+    model = phase_model("synthesis", job.model)
     thinking = _resolve_thinking_level(None, "CLAUDE_REVIEW_SYNTHESIS_THINKING",
                                        _effort_thinking(job.effort, DEFAULT_THINKING_SYNTHESIS))
     provider = _resolve_provider()

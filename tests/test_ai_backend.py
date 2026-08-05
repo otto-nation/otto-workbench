@@ -1,0 +1,32 @@
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
+
+import ai_backend
+
+
+class TestPreflightDispatch:
+    def test_routes_to_claude_backend(self, monkeypatch):
+        monkeypatch.setenv("AI_BACKEND", "claude")
+        import ai_backend_claude
+        monkeypatch.setattr(ai_backend_claude, "preflight", lambda models, trail: False)
+        assert ai_backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is False
+
+    def test_pi_backend_skips_vertex_quota(self, monkeypatch):
+        """Regression: Vertex env left exported must not abort a Pi run."""
+        monkeypatch.setenv("AI_BACKEND", "pi")
+        monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
+        monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
+        monkeypatch.setenv("CLOUD_ML_REGION", "us-east5")
+
+        import vertex_quota
+
+        def _unreachable(*args, **kwargs):
+            pytest.fail("Pi run reached the Vertex quota API")
+
+        monkeypatch.setattr(vertex_quota, "check_quota", _unreachable)
+        assert ai_backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True

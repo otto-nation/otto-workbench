@@ -1110,6 +1110,50 @@ class TestResolveModel:
         assert ro._resolve_model("claude-sonnet-5", "SOME_KEY", "sonnet") == "claude-sonnet-5"
 
 
+# ── 19b. phase_model / collect_phase_models ─────────────────────────────────
+
+
+class TestPhaseModel:
+    def _clean_env(self, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        for phase in ("SINGLE", "HOLISTIC", "SCOUT", "GROUP",
+                      "SYNTHESIS", "DISPROVE", "FIX"):
+            monkeypatch.delenv(f"CLAUDE_REVIEW_{phase}_MODEL", raising=False)
+        for key in ("ANTHROPIC_DEFAULT_SONNET_MODEL",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
+            monkeypatch.delenv(key, raising=False)
+
+    def test_default(self, ro, monkeypatch):
+        self._clean_env(monkeypatch)
+        assert ro.phase_model("scout", "") == "sonnet"
+
+    def test_env_key_derived_from_phase_name(self, ro, monkeypatch):
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        assert ro.phase_model("scout", "") == "claude-haiku-4-5"
+        assert ro.phase_model("group", "") == "sonnet"
+
+    def test_explicit_overrides_env(self, ro, monkeypatch):
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        assert ro.phase_model("scout", "claude-opus-5") == "claude-opus-5"
+
+    def test_collect_groups_phases_by_model(self, ro, monkeypatch):
+        self._clean_env(monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        models = ro.collect_phase_models("")
+        assert models["claude-haiku-4-5"] == ["scout"]
+        assert set(models["claude-sonnet-5"]) == set(ro.PHASE_MODEL_DEFAULTS) - {"scout"}
+
+    def test_collect_covers_every_phase(self, ro, monkeypatch):
+        self._clean_env(monkeypatch)
+        models = ro.collect_phase_models("")
+        phases = [p for group in models.values() for p in group]
+        assert sorted(phases) == sorted(ro.PHASE_MODEL_DEFAULTS)
+
+
 # ── 20. _extract_heredoc ────────────────────────────────────────────────────
 
 

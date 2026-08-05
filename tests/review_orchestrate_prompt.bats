@@ -51,17 +51,16 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 @test "model defaults: all phases use sonnet" {
   result=$(_py "
-print(mod.DEFAULT_MODEL_GROUP)
-print(mod.DEFAULT_MODEL_HOLISTIC)
-print(mod.DEFAULT_MODEL_SYNTHESIS)
-print(mod.DEFAULT_MODEL_SINGLE)
+print(sorted(set(mod.PHASE_MODEL_DEFAULTS.values())))
 ")
-  lines=()
-  while IFS= read -r line; do lines+=("$line"); done <<< "$result"
-  [ "${lines[0]}" = "sonnet" ]
-  [ "${lines[1]}" = "sonnet" ]
-  [ "${lines[2]}" = "sonnet" ]
-  [ "${lines[3]}" = "sonnet" ]
+  [ "$result" = "['sonnet']" ]
+}
+
+@test "model defaults: registry covers every phase" {
+  result=$(_py "
+print(sorted(mod.PHASE_MODEL_DEFAULTS))
+")
+  [ "$result" = "['disprove', 'fix', 'group', 'holistic', 'scout', 'single', 'synthesis']" ]
 }
 
 @test "_resolve_model: explicit override wins" {

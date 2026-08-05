@@ -46,12 +46,12 @@ from review_preflight import (  # noqa: E402
 from review_agent import QuotaThrottle  # noqa: E402
 from review_pipeline import (  # noqa: E402
     _effort_default, _effort_thinking, _fetch_metadata,
-    run_fix_pass, run_multi_phase, run_single_agent,
+    collect_phase_models, run_fix_pass, run_multi_phase, run_single_agent,
 )
 from review_static_analysis import (  # noqa: E402
     format_static_analysis, inject_static_analysis, run_static_analysis,
 )
-import vertex_preflight as _vp  # noqa: E402
+import ai_backend  # noqa: E402
 
 _SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
 
@@ -119,7 +119,7 @@ def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_p
 
 def _run_orchestrate(trail, args, repo, session_log) -> None:
     _log_ai_backend(trail)
-    if not _vp.run_vertex_preflight(args.model, trail):
+    if not ai_backend.preflight(collect_phase_models(args.model), trail):
         sys.exit(1)
     pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
 

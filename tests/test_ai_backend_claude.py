@@ -114,3 +114,17 @@ class TestPromptStderr:
         assert stdout == "response"
         captured = capsys.readouterr()
         assert captured.err == ""
+
+
+class TestPreflight:
+    def test_delegates_to_vertex_quota(self, monkeypatch):
+        seen = {}
+
+        def fake_run(models, trail):
+            seen["models"] = models
+            return False
+
+        monkeypatch.setattr(ai_backend_claude.vertex_quota, "run_preflight", fake_run)
+        models = {"claude-sonnet-5": ["group"]}
+        assert ai_backend_claude.preflight(models, object()) is False
+        assert seen["models"] == models

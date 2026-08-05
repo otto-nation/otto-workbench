@@ -59,11 +59,15 @@ JSON output is on stdout; status messages are on stderr.
   "commits_replayed": 22,
   "conflicts_resolved": 3,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
+  "files_stale": ["orc-lending/go.sum"],
   "force_pushed": true
 }
 ```
 
-Report commits replayed and any conflicts resolved. Done.
+Report commits replayed and any conflicts resolved. When `files_stale` is
+non-empty, those files were staged from the incoming side but their
+regeneration command failed — say so and tell the user to regenerate them
+manually. Done.
 
 **Exit 3 — conflicts detected (`--no-fix` mode only).** Parse the JSON:
 

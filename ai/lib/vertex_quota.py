@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import time
@@ -26,9 +27,11 @@ import log
 
 try:
     from google.auth import default as _google_auth_default
+    from google.auth.exceptions import GoogleAuthError as _GoogleAuthError
     from google.auth.transport.requests import Request as _GoogleAuthRequest
     _HAS_GOOGLE_AUTH = True
 except ImportError:
+    _GoogleAuthError = Exception
     _HAS_GOOGLE_AUTH = False
 
 _CACHE_TTL_SECS = 300
@@ -89,8 +92,8 @@ def _get_access_token() -> str | None:
             )
             creds.refresh(_GoogleAuthRequest())
             return creds.token
-        except Exception:
-            pass
+        except (_GoogleAuthError, OSError) as exc:
+            log.dim(f"google-auth unavailable ({exc}) — falling back to gcloud")
     try:
         result = subprocess.run(
             ["gcloud", "auth", "application-default", "print-access-token"],
@@ -109,9 +112,31 @@ def _cache_key(project: str, region: str) -> Path:
     return _CACHE_DIR / f"vertex-quota-{h}.json"
 
 
+def _cache_dir_ready() -> bool:
+    """Whether the cache dir is a real, private directory we own.
+
+    The path lives under a world-writable tmpdir on Linux, so another user can
+    pre-plant it as a symlink into a directory of their choosing. Anything that
+    is not a plain self-owned directory is refused outright — the cache is an
+    optimisation, and skipping it just means one more API call.
+    """
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        st = os.lstat(_CACHE_DIR)
+    except OSError:
+        return False
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return False
+    if st.st_mode & 0o077:
+        os.chmod(_CACHE_DIR, 0o700)
+    return True
+
+
 def _check_cache(project: str, region: str) -> dict[str, str] | None:
+    if not _cache_dir_ready():
+        return None
     path = _cache_key(project, region)
-    if not path.exists():
+    if not path.is_file() or path.is_symlink():
         return None
     try:
         data = json.loads(path.read_text())
@@ -134,11 +159,13 @@ def _atomic_write(path: Path, payload: str) -> None:
 
 
 def _write_cache(project: str, region: str, models: dict[str, str]) -> None:
-    path = _cache_key(project, region)
+    if not _cache_dir_ready():
+        return
     try:
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(_CACHE_DIR, 0o700)
-        _atomic_write(path, json.dumps({"ts": time.time(), "models": models}))
+        _atomic_write(
+            _cache_key(project, region),
+            json.dumps({"ts": time.time(), "models": models}),
+        )
     except OSError:
         pass
 

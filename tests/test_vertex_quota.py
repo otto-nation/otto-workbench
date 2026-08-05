@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import sys
 import time
 from pathlib import Path
@@ -244,6 +245,28 @@ class TestCache:
         path.write_text("not json")
         result = vq._check_cache("proj", "us-east5")
         assert result is None
+
+    def test_symlinked_cache_dir_is_refused(self, tmp_path, monkeypatch):
+        """A pre-planted symlink on a shared tmpdir must not be read or written."""
+        real = tmp_path / "attacker"
+        real.mkdir()
+        link = tmp_path / "cache"
+        link.symlink_to(real)
+        monkeypatch.setattr(vq, "_CACHE_DIR", link)
+
+        assert vq._cache_dir_ready() is False
+
+        vq._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-5": "1"})
+        assert list(real.iterdir()) == []
+        assert vq._check_cache("proj", "us-east5") is None
+
+    def test_loose_permissions_are_tightened(self, tmp_path, monkeypatch):
+        cache = tmp_path / "cache"
+        cache.mkdir(mode=0o755)
+        monkeypatch.setattr(vq, "_CACHE_DIR", cache)
+
+        assert vq._cache_dir_ready() is True
+        assert stat.S_IMODE(cache.stat().st_mode) == 0o700
 
 
 # ── run_preflight ────────────────────────────────────────────────────────────

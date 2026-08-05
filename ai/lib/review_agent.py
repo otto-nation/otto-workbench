@@ -236,15 +236,15 @@ def _is_quota_error(log_path: str) -> bool:
 
 _ANTHROPIC_MODEL_ENV = {
     "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "opus":   "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "haiku":  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "opus": "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 }
 
 
 def _resolve_alias(model: str) -> str:
     env_key = _ANTHROPIC_MODEL_ENV.get(model)
     if env_key:
-        return os.environ.get(env_key, model)
+        return os.environ.get(env_key) or model
     return model
 
 

@@ -64,14 +64,6 @@ print(mod.DEFAULT_MODEL_SINGLE)
   [ "${lines[3]}" = "sonnet" ]
 }
 
-_clear_alias_envs() {
-  _py "
-import os
-for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
-    os.environ.pop(k, None)
-"
-}
-
 @test "_resolve_model: explicit override wins" {
   result=$(_py "
 import os

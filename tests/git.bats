@@ -165,6 +165,19 @@ _make_identity_repo() {
   _assert_not_real_repo || return 1
 }
 
+# _refute_identity_rejection — the guard let the commit through.
+#
+# Past the guard the hook runs gitleaks, which is not installed on CI, so a
+# non-zero exit there is not a guard failure. Assert the run reached that stage.
+_refute_identity_rejection() {
+  [[ "$output" != *"placeholder identity"* ]] || return 1
+  if command -v gitleaks >/dev/null 2>&1; then
+    [ "$status" -eq 0 ]
+  else
+    [[ "$output" == *"gitleaks not found"* ]]
+  fi
+}
+
 @test "pre-commit rejects a placeholder email on a forge remote" {
   _make_identity_repo "Test" "test@test.com" "git@github.com:owner/repo.git"
 
@@ -199,8 +212,7 @@ _make_identity_repo() {
 
   run "$GIT_HOOKS_SRC_DIR/pre-commit"
 
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"placeholder identity"* ]]
+  _refute_identity_rejection
 }
 
 @test "pre-commit allows a real identity on a forge remote" {
@@ -209,8 +221,7 @@ _make_identity_repo() {
 
   run "$GIT_HOOKS_SRC_DIR/pre-commit"
 
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"placeholder identity"* ]]
+  _refute_identity_rejection
 }
 
 @test "all git hooks use portable shebang" {

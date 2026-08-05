@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import types
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 
 ENV_AI_BACKEND = "AI_BACKEND"
@@ -37,7 +38,7 @@ def _get_module() -> types.ModuleType:
     return mod
 
 
-def preflight(models: dict[str, list[str]], trail) -> bool:
+def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """Verify the backend can serve the requested models before any run.
 
     ``models`` maps each resolved model id to the phases requesting it.

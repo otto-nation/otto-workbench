@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import log
@@ -159,7 +160,7 @@ def _send_stdin(proc: subprocess.Popen, text: str) -> None:
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
-def preflight(models: dict[str, list[str]], trail) -> bool:
+def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """Check Vertex AI quota when the CLI is pointed at Vertex.
 
     No-ops on the first-party API, where model availability is not a

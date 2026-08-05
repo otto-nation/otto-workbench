@@ -49,7 +49,7 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
-@test "model defaults: all phases use sonnet" {
+@test "model defaults: single default value across all phases" {
   result=$(_py "
 print(sorted(set(mod.PHASE_MODEL_DEFAULTS.values())))
 ")
@@ -68,8 +68,8 @@ print(sorted(mod.PHASE_MODEL_DEFAULTS) == sorted(mod.Phase))
 import os
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
-for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
-    os.environ.pop(k, None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 ")
   [ "$result" = "haiku" ]
@@ -80,8 +80,8 @@ print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 import os
 os.environ['CLAUDE_REVIEW_GROUP_MODEL'] = 'haiku'
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
-for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
-    os.environ.pop(k, None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
 ")
@@ -93,8 +93,8 @@ del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
 import os
 os.environ['CLAUDE_REVIEW_MODEL'] = 'haiku'
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
-for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
-    os.environ.pop(k, None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 del os.environ['CLAUDE_REVIEW_MODEL']
 ")
@@ -106,8 +106,8 @@ del os.environ['CLAUDE_REVIEW_MODEL']
 import os
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
-for k in ('ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'):
-    os.environ.pop(k, None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 ")
   [ "$result" = "sonnet" ]

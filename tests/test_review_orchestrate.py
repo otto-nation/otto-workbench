@@ -1111,6 +1111,12 @@ class TestResolveModel:
         monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4-5@20251001")
         assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "claude-haiku-4-5@20251001"
 
+    def test_empty_alias_env_falls_back_to_alias(self, ro, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        self._clear_alias_envs(ro, monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "")
+        assert ro._resolve_model("sonnet", "SOME_KEY", "opus") == "sonnet"
+
     def test_full_model_id_not_resolved(self, ro, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
         self._clear_alias_envs(ro, monkeypatch)

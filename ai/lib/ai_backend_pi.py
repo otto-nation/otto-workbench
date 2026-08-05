@@ -35,6 +35,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import log
@@ -332,7 +333,7 @@ def _write_result_record(
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
-def preflight(models: dict[str, list[str]], trail) -> bool:
+def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """No pre-run checks — Pi resolves models and provider routing itself.
 
     ``models`` and ``trail`` are accepted for interface parity with the

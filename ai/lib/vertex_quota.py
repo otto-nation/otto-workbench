@@ -20,6 +20,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -269,7 +270,7 @@ def _verdict(
 
 
 def _report_failure(
-    result: VertexQuotaResult, phases: list[Phase], project: str, region: str,
+    result: VertexQuotaResult, phases: Sequence[str], project: str, region: str,
 ) -> None:
     log.error(
         f"Vertex AI model '{result.model}' has no quota in"
@@ -281,11 +282,11 @@ def _report_failure(
     log.dim(f"  Fix: set {keys} to a provisioned model")
 
 
-def run_preflight(models: dict[str, list[Phase]], trail) -> bool:
+def run_preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     """Check every model the run would use against Vertex quota.
 
-    ``models`` maps a resolved model id to the phases requesting it.  Returns
-    True if the run should proceed, False to abort.  Any condition that leaves
+    ``models`` maps a resolved model id to the ``Phase`` names requesting it.
+    Returns True if the run should proceed, False to abort.  Any condition that leaves
     quota unknown (not on Vertex, missing config, no credentials, API error)
     proceeds — this gate only stops runs it can prove are misconfigured.
     """
@@ -309,7 +310,7 @@ def run_preflight(models: dict[str, list[Phase]], trail) -> bool:
     if skipped:
         log.dim(f"Vertex quota check skipped for CLI shorthand: {', '.join(skipped)}")
 
-    failures: list[tuple[VertexQuotaResult, list[Phase]]] = []
+    failures: list[tuple[VertexQuotaResult, Sequence[str]]] = []
     checked = sorted(m for m in models if is_checkable(m))
     for model in checked:
         result = check_quota(model, project, region)
@@ -329,7 +330,7 @@ def run_preflight(models: dict[str, list[Phase]], trail) -> bool:
         "vertex_quota", "failed — model not provisioned",
         reason="; ".join(result.error for result, _ in failures),
         data={"failures": [
-            {"model": result.model, "phases": phases,
+            {"model": result.model, "phases": list(phases),
              "available": list(result.available_models)}
             for result, phases in failures
         ]},

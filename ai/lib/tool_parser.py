@@ -4,6 +4,10 @@ Scripts that use ToolParser automatically support ``--tool-schema``,
 which emits a JSON document describing the tool's name, description,
 input schema (derived from argparse actions), and output schema
 (explicitly annotated).
+
+MCP discovery only probes scripts whose source names ``ToolParser`` or
+``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
+the protocol some other way will not be discovered.
 """
 
 from __future__ import annotations

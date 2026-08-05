@@ -1114,6 +1114,10 @@ def _run_self_review(args) -> None:
         if wt_cleanup:
             wt_path = wt_cleanup.path
 
+    # Read HEAD after the switch — checking out a PR hard-resets the worktree to
+    # the remote head, so ctx.head_sha can predate the commit the pipeline recorded.
+    recover_head_sha = pr_context.head_sha(wt_path) if recover else ""
+
     repo_name = repo.split("/")[-1]
     branch_sanitized = (ctx.branch or "").replace("/", "-")
     self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
@@ -1136,7 +1140,7 @@ def _run_self_review(args) -> None:
             branch_name=ctx.branch or "",
             effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
-            recover=recover, head_sha=ctx.head_sha,
+            recover=recover, head_sha=recover_head_sha,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))

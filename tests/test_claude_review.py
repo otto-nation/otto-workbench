@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1396,6 +1397,37 @@ def test_self_review_accepts_recover(cr, reviews_dir, monkeypatch):
 
     assert run_self.call_count == 1
     assert run_self.call_args[0][0].recover is True
+
+
+def test_self_review_recover_reads_head_after_worktree_switch(cr, reviews_dir, monkeypatch):
+    """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
+    ctx = SimpleNamespace(
+        repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
+    )
+    monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(cr, "_resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(
+        cr.review_worktree, "switch_to_branch",
+        lambda branch, wt: cr.review_worktree.WorktreeResult(
+            path="/switched/wt", cleanup_ref=branch, is_fallback=False),
+    )
+    monkeypatch.setattr(
+        cr.pr_context, "head_sha",
+        lambda cwd=None: "fresh11" if cwd == "/switched/wt" else "stale00",
+    )
+    monkeypatch.setattr(cr, "_cleanup_self_review_worktree", lambda *a, **kw: None)
+    body = MagicMock()
+    monkeypatch.setattr(cr, "_run_self_review_body", body)
+
+    cr._run_self_review(SimpleNamespace(
+        positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
+        force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
+        model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
+        generated=False, recover=True, debug=False,
+    ))
+
+    assert body.call_args.kwargs["head_sha"] == "fresh11"
 
 
 def test_self_review_body_validates_recover(cr, tmp_path):

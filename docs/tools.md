@@ -245,30 +245,13 @@ claude-review post <pr_url_or_number>
 
 #### Model selection
 
-Each pipeline phase resolves its model as **`--model` flag > phase env var > global env var > default** (`sonnet` for every phase). The env key is derived from the phase name by convention:
-
-| Env var | Phase |
-|---------|-------|
-| `CLAUDE_REVIEW_MODEL` | All phases (global override) |
-| `CLAUDE_REVIEW_SINGLE_MODEL` | Single-agent review (small PRs) |
-| `CLAUDE_REVIEW_HOLISTIC_MODEL` | Holistic pass |
-| `CLAUDE_REVIEW_SCOUT_MODEL` | Scout pass |
-| `CLAUDE_REVIEW_GROUP_MODEL` | Per-group review |
-| `CLAUDE_REVIEW_SYNTHESIS_MODEL` | Finding synthesis |
-| `CLAUDE_REVIEW_DISPROVE_MODEL` | Disprove-it gate |
-| `CLAUDE_REVIEW_FIX_MODEL` | Fix pass |
+Each pipeline phase resolves its model as **`--model` flag > `CLAUDE_REVIEW_<PHASE>_MODEL` > `CLAUDE_REVIEW_MODEL` > phase default**. The phase names and their defaults live in `PHASE_MODEL_DEFAULTS` ([`ai/lib/review_pipeline.py`](../ai/lib/review_pipeline.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
 
 Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when those are set; otherwise the alias is passed to the CLI as-is.
 
 #### Vertex AI quota preflight
 
-When the Claude backend is pointed at Vertex AI (`CLAUDE_CODE_USE_VERTEX=1`), the review aborts before spending anything if a model it would use has no provisioned quota in the target project:
-
-| Env var | Purpose |
-|---------|---------|
-| `CLAUDE_CODE_USE_VERTEX` | `1` routes the CLI through Vertex AI and enables the quota check |
-| `ANTHROPIC_VERTEX_PROJECT_ID` | GCP project whose quota is inspected |
-| `CLOUD_ML_REGION` | Vertex region (e.g. `us-east5`) |
+When the Claude backend is pointed at Vertex AI, the review aborts before spending anything if a model it would use has no provisioned quota in the target project. The env vars are declared in [`ai/lib/vertex.env.yml`](../ai/lib/vertex.env.yml) and scaffolded into `~/.env.local`.
 
 The gate is fail-open: it only stops runs it can prove are misconfigured. It proceeds — with a note — when the CLI is not on Vertex, when project/region are unset, when there are no application-default credentials, when the Service Usage API errors, or when the model is a bare alias the CLI resolves internally. On failure it lists the provisioned models and names the `CLAUDE_REVIEW_<PHASE>_MODEL` keys worth changing. Quota lookups are cached per project/region for 5 minutes in `$TMPDIR/vertex-quota-<uid>/`.
 

@@ -15,7 +15,9 @@ _is_placeholder() {
   local pattern
   for pattern in "$@"; do
     # shellcheck disable=SC2053  # unquoted RHS is the point — these are globs
-    [[ "$value" == $pattern ]] && return 0
+    if [[ "$value" == $pattern ]]; then
+      return 0
+    fi
   done
   return 1
 }

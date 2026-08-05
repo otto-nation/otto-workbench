@@ -142,18 +142,27 @@ def _fetch_provisioned_models(
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read())
 
+    buckets = [
+        b for entry in data.get("consumerQuotaLimits", [])
+        for b in entry.get("quotaBuckets", [])
+    ]
+    return _parse_quota_buckets(buckets, region, is_global)
+
+
+def _parse_quota_buckets(
+    buckets: list[dict], region: str, is_global: bool,
+) -> dict[str, str]:
     models: dict[str, str] = {}
-    for limit_entry in data.get("consumerQuotaLimits", []):
-        for bucket in limit_entry.get("quotaBuckets", []):
-            dims = bucket.get("dimensions") or {}
-            base_model = dims.get("base_model")
-            if not base_model or not base_model.startswith("anthropic-"):
-                continue
-            if not is_global and dims.get("region") != region:
-                continue
-            effective = bucket.get("effectiveLimit")
-            if effective is not None:
-                models[base_model] = str(effective)
+    for bucket in buckets:
+        dims = bucket.get("dimensions") or {}
+        base_model = dims.get("base_model")
+        if not base_model or not base_model.startswith("anthropic-"):
+            continue
+        if not is_global and dims.get("region") != region:
+            continue
+        effective = bucket.get("effectiveLimit")
+        if effective is not None:
+            models[base_model] = str(effective)
     return models
 
 

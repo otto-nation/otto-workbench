@@ -10,6 +10,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import write_thrash_log
+import pr_context
+import pr_state
 from pr_comments import ThreadState
 from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
 from pr_thread_models import CommentItem, PRReport, ReportThread
@@ -1193,6 +1196,64 @@ class TestBuildDeferredIssueBody:
         assert "do thing" in body
         assert "a.go:1" in body
 
+    def test_a_missing_reason_renders_a_placeholder(self, rt):
+        """An empty cell would read as a table bug; a dash reads as "unstated"."""
+        deferred = [CommentItem(id="t1", file="a.go", line=1, summary="do thing")]
+        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        assert "—" in body
+
+
+# ── _finalize_deferred ────────────────────────────────────────────────────
+
+
+class TestFinalizeDeferredCarriesTheReason:
+    """The reason is the only column separating "agent gave up" from a decision."""
+
+    def _state_with_deferred(self, tmp_path):
+        state = PRState(
+            identity=PRIdentity(
+                repo="owner/repo", branch="b", pr_number=42,
+                head_sha="abc1234", worktree_root=str(tmp_path),
+            ),
+            fix=FixSummary(threads=[
+                ThreadOutcome(
+                    id="t1", file="a.go", line=7, reviewer="kgn",
+                    summary="rename the guard",
+                    action=ThreadAction.DEFERRED,
+                    reason="agent could not auto-fix",
+                ),
+            ]),
+        )
+        pr_state.save_state(tmp_path, state)
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="abc1234",
+        )
+
+    def test_reason_survives_into_the_tracking_issue(self, rt, tmp_path):
+        ctx = self._state_with_deferred(tmp_path)
+        captured = []
+        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies"):
+            create.side_effect = lambda deferred, *a, **kw: (
+                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+            )
+            rt._finalize_deferred(ctx, {})
+        assert [e.reason for e in captured] == ["agent could not auto-fix"]
+
+    def test_the_rest_of_the_outcome_survives_too(self, rt, tmp_path):
+        ctx = self._state_with_deferred(tmp_path)
+        captured = []
+        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies"):
+            create.side_effect = lambda deferred, *a, **kw: (
+                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+            )
+            rt._finalize_deferred(ctx, {})
+        entry = captured[0]
+        assert (entry.id, entry.file, entry.line) == ("t1", "a.go", 7)
+        assert (entry.reviewer, entry.summary) == ("kgn", "rename the guard")
+
 
 # ── _post_deferred_replies ────────────────────────────────────────────────
 
@@ -1739,17 +1800,6 @@ class TestCommitLookupsUseDefaultBranch:
 # ── shared thrash guard wiring ──────────────────────────────────────────────
 
 
-def _write_thrash_log(path: Path) -> None:
-    """A clean completion whose only tool call never wrote anything."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join([
-        json.dumps({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Read", "input": {}},
-        ]}}),
-        json.dumps({"type": "result", "subtype": "success", "num_turns": 3}),
-    ]) + "\n")
-
-
 class TestFixPassThrashGuard:
     """A fix agent that checked nothing off was thrashing, not working."""
 
@@ -1763,7 +1813,7 @@ class TestFixPassThrashGuard:
         assert inv.call_args.kwargs["session_log"] == rt._fix_session_log(tmp_path)
 
     def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
-        _write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [ ] fix the thing\n")
         prompts = []
@@ -1780,7 +1830,7 @@ class TestFixPassThrashGuard:
 
     def test_a_single_checked_box_counts_as_work(self, rt, tmp_path):
         """Partial progress belongs to `_retry_fix_pass`, not to the guard."""
-        _write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
 
@@ -1870,6 +1920,44 @@ class TestUnsupportedVerdictDowngrade:
         item = self._item(verification="valid", complexity="low")
         assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
         assert item.complexity == "low"
+
+    def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
+        """Joining a repo dir with an absolute path discards the repo dir."""
+        outside = tmp_path.parent / "outside.py"
+        outside.write_text("secret = 1\n")
+        item = self._item(evidence_file=str(outside), evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
+        """`..` reaching a file that really exists still is not this repo's code."""
+        (tmp_path.parent / "outside.py").write_text("secret = 1\n")
+        item = self._item(evidence_file="../outside.py", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_a_citation_past_the_end_of_the_file_is_downgraded(self, rt, tmp_path):
+        """A permalink to a line the file does not have highlights nothing."""
+        (tmp_path / "app.py").write_text("x = 1\n")
+        item = self._item(evidence_file="app.py", evidence_line=99)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_the_last_line_of_a_file_is_still_inside_it(self, rt, tmp_path):
+        (tmp_path / "app.py").write_text("a\nb\nc\n")
+        item = self._item(evidence_file="app.py", evidence_line=3)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+
+    def test_a_nested_citation_inside_the_repo_survives(self, rt, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
+        item = self._item(evidence_file="pkg/mod.py", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+
+    def test_a_citation_to_a_directory_is_downgraded(self, rt, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        item = self._item(evidence_file="pkg", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
 
 
 class TestEvidencePermalinks:

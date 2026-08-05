@@ -67,7 +67,10 @@ _APPLIED_REPLY_PREFIX = "Applied:"
 _ADDRESSED_REPLY_PREFIX = "Already addressed"
 _DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
-_FIX_RETRY_HINT = (
+# Not agent_retry.FIX_RETRY_HINT, which scolds an agent that produced nothing.
+# This one addresses an agent that produced something and is being handed the
+# remainder, so it points at the checklist rather than at the write mechanism.
+_FIX_RESUME_HINT = (
     "This is a RETRY of a prior fix pass. Some items were already fixed in the "
     "previous pass — focus only on unchecked items below. Work efficiently.\n\n"
 )
@@ -305,8 +308,32 @@ def _assign_item_ids(comment_items: list[CommentItem]) -> None:
 _UNSUPPORTED_VERDICTS = ("already_addressed", "invalid")
 
 _DOWNGRADE_REASON = (
-    "downgraded from {verdict}: triage cited no line to back the claim"
+    "downgraded from {verdict}: triage cited no line in this repo to back the claim"
 )
+
+
+def _evidence_is_real(repo_dir: Path, entry: CommentItem) -> bool:
+    """Whether the entry cites a line that actually exists inside `repo_dir`.
+
+    Both halves matter, and neither is checked by joining and stating the
+    result.  Containment needs the resolved paths compared, because joining a
+    directory with an absolute path discards the directory and a relative path
+    made of `..` walks straight out of the tree — either way a citation from
+    outside the repo would stat a real file and pass for verified.  The line
+    number needs the file's length, because a permalink past EOF highlights
+    nothing.
+    """
+    if not entry.has_evidence():
+        return False
+    root = repo_dir.resolve()
+    try:
+        cited = (root / entry.evidence_file).resolve()
+        if not cited.is_relative_to(root) or not cited.is_file():
+            return False
+        with cited.open(encoding="utf-8", errors="replace") as fh:
+            return entry.evidence_line <= sum(1 for _ in fh)
+    except OSError:
+        return False
 
 
 def _downgrade_unsupported_verdicts(
@@ -324,7 +351,7 @@ def _downgrade_unsupported_verdicts(
     for entry in entries:
         if entry.verification not in _UNSUPPORTED_VERDICTS:
             continue
-        if entry.has_evidence() and (repo_dir / entry.evidence_file).is_file():
+        if _evidence_is_real(repo_dir, entry):
             continue
         reason = _DOWNGRADE_REASON.format(verdict=entry.verification)
         if trail:
@@ -550,22 +577,13 @@ def _render_fix_template(
 
 @functools.cache
 def _resolve_default_branch(wt_path: Path) -> str:
-    """Resolve the repo's default branch name via origin/HEAD symbolic-ref.
+    """`pr_context.default_branch`, cached for the run.
 
-    Cached — the default branch cannot change mid-run, and several call sites
-    need it per file processed.
+    The default branch cannot change mid-run and several call sites need it per
+    file processed, so the shared resolver is memoised here rather than in the
+    library every script imports.
     """
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(wt_path), "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True, text=True,
-        )
-        ref = r.stdout.strip()
-        if ref:
-            return ref.replace("refs/remotes/origin/", "")
-    except Exception:
-        pass
-    return "main"
+    return pr_context.default_branch(wt_path)
 
 
 def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
@@ -1011,10 +1029,14 @@ def _finalize_deferred(
         return _NO_ISSUE
 
     FA = pr_state.ThreadAction
+    # `reason` carries why the thread was held back, and it is the only column
+    # in the tracking issue that distinguishes an agent that gave up from a
+    # decision anyone made. Rebuilding the item without it renders every row
+    # blank.
     deferred = [
         CommentItem(
             id=t.id, file=t.file, line=t.line,
-            reviewer=t.reviewer, summary=t.summary,
+            reviewer=t.reviewer, summary=t.summary, reason=t.reason,
         )
         for t in state.fix.threads if t.action == FA.DEFERRED
     ]
@@ -1079,7 +1101,7 @@ def _build_deferred_issue_body(
         permalink = _thread_permalink(entry, threads_by_id, repo, pr_number)
         thread_cell = f"[{summary}]({permalink})" if permalink else summary
         file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
-        reason = entry.reason
+        reason = entry.reason or "—"
         parts.append(f"| {thread_cell} | {file_cell} | {reason} |")
     parts.append("")
     return "\n".join(parts)
@@ -1757,7 +1779,7 @@ def _retry_fix_pass(
     retry_count = len(retry_fixable) + len(retry_items)
     retry_turns = _fix_retry_budget(original_turns)
 
-    prompt = _FIX_RETRY_HINT + _render_fix_template(
+    prompt = _FIX_RESUME_HINT + _render_fix_template(
         branch=ctx.branch,
         repo=ctx.repo,
         threads_content=tracking_file.read_text(),

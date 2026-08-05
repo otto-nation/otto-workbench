@@ -146,6 +146,73 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# ── Commit identity guard ────────────────────────────────────────────────────
+
+# _make_identity_repo NAME EMAIL [ORIGIN] — a staged temp repo committing as
+# NAME <EMAIL>. Omit ORIGIN for a repo with no remote.
+_make_identity_repo() {
+  local name="$1" email="$2" origin="${3:-}"
+  local dir="$TMPDIR/identity-repo"
+
+  git init -q "$dir"
+  [[ -z "$origin" ]] || git -C "$dir" remote add origin "$origin"
+  git -C "$dir" config user.name "$name"
+  git -C "$dir" config user.email "$email"
+  echo "hello" > "$dir/file.txt"
+  git -C "$dir" add file.txt
+
+  cd "$dir" || return 1
+  _assert_not_real_repo || return 1
+}
+
+@test "pre-commit rejects a placeholder email on a forge remote" {
+  _make_identity_repo "Test" "test@test.com" "git@github.com:owner/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"placeholder identity — email=test@test.com, name=Test"* ]]
+}
+
+@test "pre-commit rejects a placeholder name alongside a real email" {
+  _make_identity_repo "Test" "someone@company.com" "https://github.com/owner/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 1 ]
+  # Only the name is flagged — the email is real.
+  [[ "$output" == *"placeholder identity — name=Test"* ]]
+}
+
+@test "pre-commit rejects a placeholder identity from the environment" {
+  _make_identity_repo "Real Person" "real@users.noreply.github.com" \
+    "git@github.com:owner/repo.git"
+
+  run env GIT_AUTHOR_EMAIL="test@test.com" "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"placeholder identity — email=test@test.com"* ]]
+}
+
+@test "pre-commit allows a placeholder identity when there is no forge remote" {
+  _make_identity_repo "Test" "test@test.com"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"placeholder identity"* ]]
+}
+
+@test "pre-commit allows a real identity on a forge remote" {
+  _make_identity_repo "Real Person" "real@users.noreply.github.com" \
+    "git@github.com:owner/repo.git"
+
+  run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"placeholder identity"* ]]
+}
+
 @test "all git hooks use portable shebang" {
   local bad=()
   for hook in "$GIT_HOOKS_SRC_DIR"/*; do

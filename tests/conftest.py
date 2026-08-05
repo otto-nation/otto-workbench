@@ -21,6 +21,46 @@ def _clear_git_hook_env():
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _repo_config_path():
+    """The shared git config of the repo under test, or None if unresolvable.
+
+    In a worktree, ``.git`` is a file pointing at ``<common>/worktrees/<name>``;
+    the config lives two levels up, in the common dir.
+    """
+    dot_git = REPO_ROOT / ".git"
+    if dot_git.is_dir():
+        return dot_git / "config"
+    if not dot_git.is_file():
+        return None
+    gitdir = Path(dot_git.read_text().split(":", 1)[1].strip())
+    return gitdir.parent.parent / "config"
+
+
+_REPO_CONFIG = _repo_config_path()
+
+
+@pytest.fixture(autouse=True)
+def _guard_repo_config():
+    """Fail the test that writes git config into the repo under test.
+
+    Tests build throwaway repos under tmp_path, but a stray GIT_DIR or a
+    relative cwd sends `git config` to the real repo instead. Because worktrees
+    share one config file, the damage is repo-wide and permanent: every later
+    commit inherits the test identity.
+    """
+    if _REPO_CONFIG is None:
+        yield
+        return
+    before = _REPO_CONFIG.read_bytes() if _REPO_CONFIG.exists() else None
+    yield
+    after = _REPO_CONFIG.read_bytes() if _REPO_CONFIG.exists() else None
+    assert after == before, (
+        f"test wrote git config into the real repo: {_REPO_CONFIG}"
+    )
+
+
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"

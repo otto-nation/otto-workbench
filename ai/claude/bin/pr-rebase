@@ -236,10 +236,8 @@ def _run_regeneration(
             _terr("regeneration", f"git add -u failed in {regen_dir}")
             log.warn(f"git add -u failed after regeneration in {Path(regen_dir).name}/")
             return False
-    else:
-        for f in files:
-            if not _git_add(f, cwd):
-                return False
+    elif not all(_git_add(f, cwd) for f in files):
+        return False
 
     if _trail:
         _trail.info("regeneration", f"regenerated {', '.join(files)}",
@@ -887,6 +885,75 @@ def _classify_conflict(
     return ("ai_merge", None)
 
 
+def _queue_regen(
+    pending: dict, filepath: str, parent: Path,
+    cmd: list[str], stage_dir: bool = False,
+) -> None:
+    """Add a regeneration command to the deferred queue, deduplicating by (dir, cmd)."""
+    regen_dir = str(parent)
+    key = (regen_dir, tuple(cmd))
+    if key not in pending:
+        pending[key] = ([], stage_dir)
+    pending[key][0].append(filepath)
+
+
+def _dispatch_regenerate(
+    filepath: str, full_path: Path, cwd: str, context: dict, pending: dict,
+) -> bool:
+    """Handle 'regenerate' strategy. Returns False on failure."""
+    if _trail:
+        _trail.decision(
+            "regenerate", f"accepting theirs for {filepath}",
+            reason=f"lockfile with known regenerator: {' '.join(context['cmd'])}",
+        )
+    if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
+        return False
+    _queue_regen(pending, filepath, full_path.parent, context["cmd"], context.get("stage_dir", False))
+    return True
+
+
+def _dispatch_accept_theirs(
+    filepath: str, full_path: Path, cwd: str, context: str, pending: dict,
+) -> bool:
+    """Handle 'accept_theirs' strategy. Returns False on failure."""
+    if _trail:
+        _trail.decision(
+            "generated_file", f"accepting theirs for {filepath}",
+            reason=f"generated file detected via {context}",
+        )
+    if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
+        return False
+    ai_cmd = _ai_suggest_regeneration(filepath, cwd)
+    if ai_cmd:
+        _queue_regen(pending, filepath, full_path.parent, ai_cmd)
+    return True
+
+
+def _dispatch_conflict(
+    filepath: str, full_path: Path, cwd: str,
+    strategy: str, context: Any,
+    sha: str, subject: str, pending: dict,
+) -> bool | None:
+    """Dispatch a single conflict by strategy. Returns True (resolved), False (skip), None (fatal)."""
+    if strategy == "regenerate":
+        return True if _dispatch_regenerate(filepath, full_path, cwd, context, pending) else None
+    if strategy == "accept_theirs":
+        return True if _dispatch_accept_theirs(filepath, full_path, cwd, context, pending) else None
+    if strategy == "delete":
+        return True if _resolve_delete_conflict(filepath, sha, cwd, context) else None
+    if strategy == "binary_error":
+        _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
+        log.error(f"Cannot resolve binary file: {filepath}")
+        return None
+    if strategy == "ai_merge":
+        if _resolve_single_file(filepath, full_path, sha, subject, cwd) is None:
+            return None
+        if _trail:
+            _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
+        return True
+    return False
+
+
 def _resolve_file_conflicts(
     conflicts: list[str], cwd: str, sha: str, subject: str,
 ) -> list[str] | None:
@@ -897,57 +964,10 @@ def _resolve_file_conflicts(
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
         strategy, context = _classify_conflict(filepath, full_path, cwd)
-
-        if strategy == "regenerate":
-            if _trail:
-                _trail.decision(
-                    "regenerate", f"accepting theirs for {filepath}",
-                    reason=f"lockfile with known regenerator: {' '.join(context['cmd'])}",
-                )
-            if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
-                return None
-            regen_dir = str(full_path.parent)
-            cmd_tuple = tuple(context["cmd"])
-            key = (regen_dir, cmd_tuple)
-            if key not in pending_regens:
-                pending_regens[key] = ([], context.get("stage_dir", False))
-            pending_regens[key][0].append(filepath)
-            resolved.append(filepath)
-
-        elif strategy == "accept_theirs":
-            if _trail:
-                _trail.decision(
-                    "generated_file", f"accepting theirs for {filepath}",
-                    reason=f"generated file detected via {context}",
-                )
-            if not _accept_theirs_and_stage(filepath, full_path.parent, cwd):
-                return None
-            ai_cmd = _ai_suggest_regeneration(filepath, cwd)
-            if ai_cmd:
-                regen_dir = str(full_path.parent)
-                cmd_tuple = tuple(ai_cmd)
-                key = (regen_dir, cmd_tuple)
-                if key not in pending_regens:
-                    pending_regens[key] = ([], False)
-                pending_regens[key][0].append(filepath)
-            resolved.append(filepath)
-
-        elif strategy == "delete":
-            if not _resolve_delete_conflict(filepath, sha, cwd, context):
-                return None
-            resolved.append(filepath)
-
-        elif strategy == "binary_error":
-            _terr("resolve_conflicts", f"binary file: {filepath}", data={"filepath": filepath})
-            log.error(f"Cannot resolve binary file: {filepath}")
+        result = _dispatch_conflict(filepath, full_path, cwd, strategy, context, sha, subject, pending_regens)
+        if result is None:
             return None
-
-        elif strategy == "ai_merge":
-            result = _resolve_single_file(filepath, full_path, sha, subject, cwd)
-            if result is None:
-                return None
-            if _trail:
-                _trail.info("resolve_conflict", f"resolved {filepath}", data={"commit": sha, "method": "ai"})
+        if result:
             resolved.append(filepath)
 
     for (regen_dir, cmd_tuple), (files, stage_dir) in pending_regens.items():

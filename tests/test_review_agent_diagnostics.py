@@ -10,6 +10,8 @@ import review_agent
 import review_pipeline
 
 
+# Arbitrary — the diagnosis echoes whatever num_turns the result record carries,
+# so the value only has to be distinguishable from the pipeline's turn defaults.
 _TURNS = 16
 _MAX_TURNS_REASON = f"agent hit max turns ({_TURNS})"
 
@@ -60,6 +62,30 @@ class TestDiagnoseMissingOutput:
         log_path = _write_log(tmp_path, _result())
         reason = review_agent._diagnose_missing_output(log_path)
         assert reason == _MAX_TURNS_REASON
+
+    def test_crash_is_not_labelled_a_no_write_failure(self, tmp_path):
+        """The error explains the missing output; a retry would reproduce it."""
+        log_path = _write_log(
+            tmp_path,
+            _tool_use("Read", file_path="/tmp/a"),
+            json.dumps({
+                "type": "result", "subtype": "error", "is_error": True,
+                "result": "spawn ENOENT",
+            }),
+        )
+        reason = review_agent._diagnose_missing_output(log_path)
+        assert review_agent.DIAG_NO_WRITE_TOOL_CALL not in reason
+        assert not review_pipeline._is_retryable(reason)
+
+    def test_clean_completion_without_a_write_is_labelled(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _tool_use("Read", file_path="/tmp/a"),
+            json.dumps({"type": "result", "subtype": "success"}),
+        )
+        reason = review_agent._diagnose_missing_output(log_path)
+        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
+        assert review_pipeline._is_retryable(reason)
 
     def test_missing_log_unchanged(self, tmp_path):
         reason = review_agent._diagnose_missing_output(str(tmp_path / "nope.jsonl"))

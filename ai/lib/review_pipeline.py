@@ -365,7 +365,7 @@ _FIX_RETRY_HINT = (
 )
 
 _NO_WRITE_HINT = (
-    "IMPORTANT: A previous attempt used every turn without ever calling a "
+    "IMPORTANT: A previous attempt finished without ever calling a "
     "file-writing tool. Write your output file FIRST, before any further "
     "investigation: Read it — it already exists and is empty — then Edit it "
     "with an empty `old_string` to insert the complete document. Refine it "
@@ -378,8 +378,9 @@ _NON_RECOVERABLE_REASONS = ("permission denied",)
 def _retry_hint_for(reason: str) -> str:
     """The most specific hint the diagnosis supports.
 
-    Checked most-specific first: a no-write failure usually also hit max turns,
-    and naming the write mechanism beats telling the agent to hurry.
+    Checked most-specific first: the no-write label attaches to turn exhaustion
+    and to clean completions alike, and naming the write mechanism beats
+    telling the agent to hurry.
     """
     if DIAG_NO_WRITE_TOOL_CALL in reason:
         return _NO_WRITE_HINT
@@ -1072,8 +1073,10 @@ def _is_retryable(reason: str) -> bool:
         return False
     if _MAX_TURNS_REASON in reason:
         return True
-    # A clean completion that never called a write tool produced nothing and
-    # gave no reason it could not have — the retry hint names the mechanism.
+    # A run that ended on its own terms without ever calling a write tool
+    # produced nothing and gave no reason it could not have — the retry hint
+    # names the mechanism. `_diagnose_missing_output` withholds this label from
+    # crashes, so it never makes a permanent error retryable.
     if DIAG_NO_WRITE_TOOL_CALL in reason:
         return True
     if reason in (DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG):

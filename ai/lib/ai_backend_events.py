@@ -125,12 +125,12 @@ def _parse_message_update_tool(data: dict) -> StreamEvent | None:
     return None
 
 
-def parse_pi_event(raw_line: str) -> StreamEvent | None:
-    """Parse a Pi JSONL line into a StreamEvent, or None."""
-    try:
-        data = json.loads(raw_line)
-    except (json.JSONDecodeError, ValueError):
-        return None
+def parse_pi_event(data: dict) -> StreamEvent | None:
+    """Extract a StreamEvent from a parsed Pi event, or None.
+
+    The Pi consumers all take an already-parsed event: the stream loop parses
+    each line once and hands the same dict to every one of them.
+    """
     event_type = data.get("type", "")
     if event_type == "tool_execution_start":
         label = _pi_tool_label(data)
@@ -140,12 +140,8 @@ def parse_pi_event(raw_line: str) -> StreamEvent | None:
     return None
 
 
-def pi_write_tool_used(raw_line: str) -> bool:
-    """Whether a Pi event shows a file-writing tool being invoked."""
-    try:
-        data = json.loads(raw_line)
-    except (json.JSONDecodeError, ValueError):
-        return False
+def pi_write_tool_used(data: dict) -> bool:
+    """Whether a parsed Pi event shows a file-writing tool being invoked."""
     event_type = data.get("type", "")
     if event_type == "tool_execution_start":
         return is_write_tool(data.get("toolName", "") or data.get("name", ""))
@@ -160,15 +156,11 @@ def pi_write_tool_used(raw_line: str) -> bool:
     )
 
 
-def parse_pi_cost(raw_line: str) -> float | None:
-    """Extract per-message cost from a Pi message_end event.
+def parse_pi_cost(data: dict) -> float | None:
+    """Extract per-message cost from a parsed Pi message_end event.
 
     Returns the message's total cost in USD, or None if not a message_end.
     """
-    try:
-        data = json.loads(raw_line)
-    except (json.JSONDecodeError, ValueError):
-        return None
     if data.get("type") != "message_end":
         return None
     cost_obj = data.get("message", {}).get("usage", {}).get("cost", {})

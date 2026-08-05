@@ -27,6 +27,10 @@ DIAG_NO_RESULT_RECORD = "no result record in session log"
 DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
 DIAG_NO_WRITE_TOOL_CALL = "never called a file-writing tool"
 
+# Load-bearing: both the no-write diagnosis and the transient-error check key
+# off this prefix to tell a crash apart from a run that ended on its own terms.
+AGENT_ERROR_PREFIX = "agent error:"
+
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
     "ConnectionRefused",
@@ -82,7 +86,7 @@ def _diagnose_result_type(result: dict) -> str:
     if result.get("is_error"):
         errors = result.get("errors", [])
         detail = errors[0] if errors else result.get("result", result.get("error", "unknown"))
-        return f"agent error: {detail}"
+        return f"{AGENT_ERROR_PREFIX} {detail}"
     return f"agent completed (subtype={subtype}) but did not write output"
 
 
@@ -111,16 +115,19 @@ def _diagnose_missing_output(log_path: str) -> str:
             return DIAG_QUOTA_EXHAUSTED
         return DIAG_NO_RESULT_RECORD
     reason = _diagnose_result_type(results[-1])
-    # An agent that burned its turns without ever calling a write tool was
-    # thrashing, not working — say so instead of reporting a bare turn count.
+    # An agent that ran to its own conclusion without ever calling a write tool
+    # was thrashing, not working — say so instead of reporting a bare turn
+    # count. A crash is excluded: the error already explains the missing output,
+    # and a retry would most likely reproduce it.
     tools_used = _tool_names_used(records)
-    if tools_used and not any(is_write_tool(name) for name in tools_used):
+    crashed = reason.startswith(AGENT_ERROR_PREFIX)
+    if not crashed and tools_used and not any(is_write_tool(name) for name in tools_used):
         reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
     return reason
 
 
 def is_transient_error(reason: str) -> bool:
-    if not reason.startswith("agent error:"):
+    if not reason.startswith(AGENT_ERROR_PREFIX):
         return False
     return any(marker in reason for marker in _TRANSIENT_ERROR_MARKERS)
 

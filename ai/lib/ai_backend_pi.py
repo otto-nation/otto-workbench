@@ -179,8 +179,8 @@ def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
 # ── Stream progress (Pi RPC JSONL) ───────────────────────────────────────────
 
 
-def _display_event(raw_line: str, prev_tool: str, prefix: str) -> str:
-    event = parse_pi_event(raw_line)
+def _display_event(data: dict, prev_tool: str, prefix: str) -> str:
+    event = parse_pi_event(data)
     if not event or event.tool_label == prev_tool:
         return prev_tool
     with _print_lock:
@@ -270,15 +270,15 @@ def _consume_stream(
         log_file.write(raw_line)
         log_file.flush()
 
-        event_type, _ = _parse_event_type(raw_line)
+        event_type, data = _parse_event_type(raw_line)
 
         if event_type == "response":
             continue
 
-        prev_tool = _display_event(raw_line, prev_tool, prefix)
-        wrote_output = wrote_output or pi_write_tool_used(raw_line)
+        prev_tool = _display_event(data, prev_tool, prefix)
+        wrote_output = wrote_output or pi_write_tool_used(data)
 
-        msg_cost = parse_pi_cost(raw_line)
+        msg_cost = parse_pi_cost(data)
         if msg_cost is not None:
             accumulated_cost += msg_cost
 

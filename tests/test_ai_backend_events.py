@@ -1,6 +1,5 @@
 """Tests for write-tool recognition shared by the Pi steer and the diagnosis."""
 
-import json
 import sys
 from pathlib import Path
 
@@ -31,40 +30,44 @@ class TestIsWriteTool:
 
 class TestPiWriteToolUsed:
     def test_tool_execution_start_with_edit(self):
-        line = json.dumps({"type": "tool_execution_start", "toolName": "edit"})
-        assert events.pi_write_tool_used(line)
+        assert events.pi_write_tool_used({"type": "tool_execution_start", "toolName": "edit"})
 
     def test_tool_execution_start_with_name_key(self):
-        line = json.dumps({"type": "tool_execution_start", "name": "write"})
-        assert events.pi_write_tool_used(line)
+        assert events.pi_write_tool_used({"type": "tool_execution_start", "name": "write"})
 
     def test_tool_execution_start_with_read(self):
-        line = json.dumps({"type": "tool_execution_start", "toolName": "read"})
-        assert not events.pi_write_tool_used(line)
+        assert not events.pi_write_tool_used({"type": "tool_execution_start", "toolName": "read"})
 
     def test_message_update_with_edit_tool_call(self):
-        line = json.dumps({
+        assert events.pi_write_tool_used({
             "type": "message_update",
             "content": [
                 {"type": "text", "text": "writing"},
                 {"type": "toolCall", "name": "edit", "arguments": {"file_path": "/tmp/a"}},
             ],
         })
-        assert events.pi_write_tool_used(line)
 
     def test_message_update_without_write_tool_call(self):
-        line = json.dumps({
+        assert not events.pi_write_tool_used({
             "type": "message_update",
             "content": [{"type": "toolCall", "name": "grep", "arguments": {}}],
         })
-        assert not events.pi_write_tool_used(line)
 
     def test_message_update_with_non_list_content(self):
-        line = json.dumps({"type": "message_update", "content": "thinking"})
-        assert not events.pi_write_tool_used(line)
+        assert not events.pi_write_tool_used({"type": "message_update", "content": "thinking"})
 
     def test_unrelated_event(self):
-        assert not events.pi_write_tool_used(json.dumps({"type": "turn_end"}))
+        assert not events.pi_write_tool_used({"type": "turn_end"})
 
-    def test_malformed_line(self):
-        assert not events.pi_write_tool_used("not json")
+    def test_unparseable_line_yields_an_empty_event(self):
+        """_parse_event_type hands `{}` downstream rather than raising."""
+        assert not events.pi_write_tool_used({})
+
+
+class TestSingleParsePerLine:
+    def test_pi_consumers_all_take_a_parsed_event(self):
+        """One json.loads per stream line — the consumers share the dict."""
+        import inspect
+        for fn in (events.parse_pi_event, events.pi_write_tool_used, events.parse_pi_cost):
+            params = list(inspect.signature(fn).parameters)
+            assert params == ["data"], f"{fn.__name__} still takes a raw line"

@@ -1279,7 +1279,7 @@ class TestPostAlreadyAddressedReplies:
 
 class TestReplyDedup:
 
-    def test_dismissed_skips_when_reply_exists(self, rt):
+    def test_dismissed_skips_when_reply_exists(self, rt, tmp_path):
         dismissed = [CommentItem(id="t1", summary="not applicable")]
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[
@@ -1289,19 +1289,19 @@ class TestReplyDedup:
         }
         with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42,
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 0
         mock_reply.assert_not_called()
 
-    def test_dismissed_posts_when_no_prior_reply(self, rt):
+    def test_dismissed_posts_when_no_prior_reply(self, rt, tmp_path):
         dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
             count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42,
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 1
         mock_reply.assert_called_once()
@@ -1352,7 +1352,7 @@ class TestReplyDedup:
         assert count == 0
         mock_reply.assert_not_called()
 
-    def test_mixed_dedup_and_new(self, rt):
+    def test_mixed_dedup_and_new(self, rt, tmp_path):
         dismissed = [
             CommentItem(id="t1", summary="already replied"),
             CommentItem(id="t2", summary="new one", reasoning="reason"),
@@ -1366,7 +1366,7 @@ class TestReplyDedup:
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
             count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42,
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 1
         mock_reply.assert_called_once()
@@ -1825,3 +1825,109 @@ class TestTriageThrashGuard:
         assert result is not None
         assert len(prompts) == 2
         assert prompts[1].startswith(rt.agent_retry.BLANK_RESPONSE_HINT)
+
+
+# ── permalink-backed claims ─────────────────────────────────────────────────
+
+
+class TestUnsupportedVerdictDowngrade:
+    """A verdict posted to a reviewer is a claim; a claim needs a line."""
+
+    def _item(self, **kw):
+        kw.setdefault("verification", "invalid")
+        return CommentItem(id="t1", summary="s", **kw)
+
+    def test_uncited_invalid_becomes_needs_discussion(self, rt, tmp_path):
+        item = self._item(complexity="low")
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+        assert item.complexity == ""
+
+    def test_uncited_already_addressed_becomes_needs_discussion(self, rt, tmp_path):
+        item = self._item(verification="already_addressed")
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_reason_is_recorded_so_the_author_knows_why(self, rt, tmp_path):
+        item = self._item(reasoning="reviewer misread the guard")
+        rt._downgrade_unsupported_verdicts([item], tmp_path)
+        assert "reviewer misread the guard" in item.reasoning
+        assert "cited no line" in item.reasoning
+
+    def test_cited_verdict_that_exists_in_the_tree_survives(self, rt, tmp_path):
+        (tmp_path / "app.py").write_text("x = 1\n")
+        item = self._item(evidence_file="app.py", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert item.verification == "invalid"
+
+    def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, rt, tmp_path):
+        """A link to nothing is no better than no link."""
+        item = self._item(evidence_file="ghost.py", evidence_line=3)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_valid_verdicts_are_left_alone(self, rt, tmp_path):
+        item = self._item(verification="valid", complexity="low")
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert item.complexity == "low"
+
+
+class TestEvidencePermalinks:
+    """Every claim links to the code at a pinned SHA."""
+
+    def test_permalink_pins_the_sha(self, rt):
+        assert rt._blob_permalink("owner/repo", "abc123", "a/b.py", 7) == (
+            "https://github.com/owner/repo/blob/abc123/a/b.py#L7")
+
+    def test_uncited_entry_renders_no_link(self, rt):
+        entry = CommentItem(id="t1", summary="s")
+        assert rt._evidence_link(entry, "owner/repo", "abc123") == ""
+
+    def test_dismissal_carries_the_cited_line(self, rt, tmp_path):
+        dismissed = [CommentItem(
+            id="t1", summary="s", reasoning="the guard already returns early",
+            evidence_file="app.py", evidence_line=12,
+        )]
+        threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch.object(rt, "_get_head_sha", return_value="cafe123"),
+            patch("pr_comments.post_thread_reply", return_value=True) as reply,
+        ):
+            rt._post_dismissed_replies(dismissed, threads, "owner/repo", 42, tmp_path)
+        body = reply.call_args[0][3]
+        assert "blob/cafe123/app.py#L12" in body
+        assert "the guard already returns early" in body
+
+    def test_already_addressed_links_the_line_at_head(self, rt, tmp_path):
+        addressed = [CommentItem(
+            id="t1", summary="use the helper", file="app.py",
+            evidence_file="app.py", evidence_line=4,
+        )]
+        threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch.object(rt, "_get_head_sha", return_value="cafe123"),
+            patch.object(rt, "_find_addressing_commit", return_value="dead" * 10),
+            patch("pr_comments.post_thread_reply", return_value=True) as reply,
+        ):
+            rt._post_already_addressed_replies(
+                addressed, threads, "owner/repo", 42, tmp_path)
+        body = reply.call_args[0][3]
+        assert "blob/cafe123/app.py#L4" in body
+        assert "/commit/deaddeaddead" in body
+
+    def test_summary_file_cell_links_at_the_fix_commit(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=9)],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert "https://github.com/owner/repo/blob/abc1234/a.py#L9" in body
+
+    def test_summary_file_cell_stays_plain_without_a_sha(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=9)],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert "| `a.py:9` |" in body
+        assert "/blob/" not in body

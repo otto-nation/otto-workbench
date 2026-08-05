@@ -340,6 +340,9 @@ _MISE_CONFIG_NAMES = (
     "mise.local.toml",
     ".mise.local.toml",
     ".config/mise.toml",
+    ".config/mise/config.toml",
+    ".mise/config.toml",
+    "mise/config.toml",
     ".tool-versions",
 )
 
@@ -359,10 +362,16 @@ def _detect_mise(target_dir: str, repo_root: str) -> bool:
 
 
 def _try_run(cmd: list[str], *, cwd: str) -> subprocess.CompletedProcess | None:
-    """Run a command, returning None if the executable is not on PATH."""
+    """Run a command, returning None if it could not be launched.
+
+    subprocess.run raises instead of exiting 127 when the executable is absent,
+    not executable, or cwd is unusable. All of these mean the command never
+    ran, so the caller should fall back or report the file as stale.
+    """
     try:
         return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
-    except (FileNotFoundError, NotADirectoryError):
+    except OSError as exc:
+        log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
         return None
 
 
@@ -388,9 +397,9 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
         r = _try_run(["mise", "exec", "--"] + cmd, cwd=job.regen_dir)
 
     if r is None:
-        _terr("regeneration", f"{cmd[0]} not found for {job.regen_dir}",
+        _terr("regeneration", f"could not run {cmd[0]} in {job.regen_dir}",
               data={"cmd": cmd})
-        log.warn(f"Regeneration failed: {cmd[0]} not found on PATH")
+        log.warn(f"Regeneration failed: could not run {cmd[0]}")
         return False
 
     if r.returncode != 0:

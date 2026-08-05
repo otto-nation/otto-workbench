@@ -9,6 +9,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -209,9 +211,18 @@ def test_detect_mise_dotted_toml(tmp_path):
         assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
 
 
-def test_detect_mise_config_dir_toml(tmp_path):
-    (tmp_path / ".config").mkdir()
-    (tmp_path / ".config" / "mise.toml").write_text("[tools]\n")
+@pytest.mark.parametrize("rel", [
+    ".config/mise.toml",
+    ".config/mise/config.toml",
+    ".mise/config.toml",
+    "mise/config.toml",
+    "mise.local.toml",
+    ".mise.local.toml",
+])
+def test_detect_mise_nested_config_layouts(tmp_path, rel):
+    cfg = tmp_path / rel
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("[tools]\n")
     with mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         assert pr_rebase_cli._detect_mise(str(tmp_path), str(tmp_path)) is True
 
@@ -379,8 +390,34 @@ def test_run_regeneration_missing_binary_without_mise_returns_false(tmp_path):
     assert result is False
 
 
+def test_run_regeneration_not_executable_returns_false(tmp_path):
+    """A present-but-unexecutable binary raises PermissionError, not 127."""
+    (tmp_path / "pnpm-lock.yaml").write_text("old content")
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "pnpm":
+            raise PermissionError(13, "Permission denied: 'pnpm'")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=False), \
+         mock.patch("shutil.which", return_value=None):
+        result = pr_rebase_cli._run_regeneration(
+            pr_rebase_cli.RegenJob(
+                regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
+            ),
+            cwd=str(tmp_path),
+        )
+
+    assert result is False
+
+
 def test_run_regeneration_missing_binary_under_mise_returns_false(tmp_path):
-    """mise itself missing must not propagate FileNotFoundError."""
+    """Defensive: a launch failure under mise must not propagate as a traceback.
+
+    _detect_mise gates on shutil.which, so this pairing is unreachable in
+    production; the test pins _run_regeneration's own error handling.
+    """
     (tmp_path / "pnpm-lock.yaml").write_text("old content")
 
     def fake_run(cmd, **kwargs):
@@ -389,7 +426,8 @@ def test_run_regeneration_missing_binary_under_mise_returns_false(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True):
+         mock.patch.object(pr_rebase_cli, "_detect_mise", return_value=True), \
+         mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
         result = pr_rebase_cli._run_regeneration(
             pr_rebase_cli.RegenJob(
                 regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],

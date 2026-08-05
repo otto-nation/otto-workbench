@@ -83,7 +83,7 @@ _validate_output_schema() {
   fi
 
   # Exit 0 alone proves nothing — a script that ignores unknown flags also exits 0.
-  # Require the document the MCP server needs.
+  # Keys mirror REQUIRED_SCHEMA_KEYS in ai/claude/mcps/server.py.
   if jq -e 'has("name") and has("input_schema")' <<< "$schema_out" > /dev/null 2>&1; then
     _pass "$display: output_schema tool '$tool_name' supports --tool-schema"
   else

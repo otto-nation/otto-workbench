@@ -28,9 +28,15 @@ CONFIG_PATH = Path("~/.config/workbench/mcp-tools.json").expanduser()
 DISCOVERY_TIMEOUT = 2.0
 TOOL_SCHEMA_FLAG = "--tool-schema"
 
+# Keys every tool-schema document must carry. bin/local/validate-skills asserts
+# the same pair against declared output_schema tools.
+REQUIRED_SCHEMA_KEYS = ("name", "input_schema")
+
 # The two ways a script can implement the protocol: parse the flag itself, or
-# inherit it from ai/lib/tool_parser.py's ToolParser.
-DECLARATION_MARKERS = (b"--tool-schema", b"ToolParser")
+# inherit it from ai/lib/tool_parser.py's ToolParser. A prose mention of the flag
+# also matches — the scan is a cheap filter, not a guarantee, which is why tools
+# that take positional arguments must reject unknown flags on their own.
+DECLARATION_MARKERS = (TOOL_SCHEMA_FLAG.encode(), b"ToolParser")
 
 # Bytes of a candidate read when looking for a marker. Scripts declare the
 # protocol in their imports or argument parsing, well inside this bound.
@@ -124,7 +130,7 @@ def _probe_tool(script: Path) -> dict | None:
         if result.returncode != 0:
             return None
         schema = json.loads(result.stdout)
-        if "name" not in schema or "input_schema" not in schema:
+        if any(key not in schema for key in REQUIRED_SCHEMA_KEYS):
             return None
         schema["_script"] = str(script)
         return schema

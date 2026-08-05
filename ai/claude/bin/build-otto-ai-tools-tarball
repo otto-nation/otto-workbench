@@ -51,9 +51,11 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-# Reject flags and extra arguments. MCP tool discovery probes every executable
-# in ai/claude/bin with --tool-schema; without this, the flag was accepted as a
-# version string and the probe built a stray tarball into the caller's CWD.
+# Reject flags and extra arguments. MCP tool discovery probes executables in
+# ai/claude/bin with the schema flag; without this, it was accepted as a version
+# string and the probe built a stray tarball into the caller's CWD. Naming the
+# flag literally here would make this file look like a protocol implementation
+# to the source scan in ai/claude/mcps/server.py.
 if [[ "${1:-}" == -* ]]; then
   echo "ERROR: unknown option: $1" >&2
   echo "Usage: build-otto-ai-tools-tarball [VERSION]" >&2

@@ -159,6 +159,21 @@ class TestDiscovery:
 
         assert _declares_tool_schema(script) is True
 
+    def test_tarball_builder_is_not_a_probe_candidate(self):
+        """The script that motivated the guard must stay out of the probe path.
+
+        A prose mention of the flag matches the scan, so its comments deliberately
+        avoid the literal.
+        """
+        builder = (
+            Path(__file__).resolve().parent.parent
+            / "ai" / "claude" / "bin" / "build-otto-ai-tools-tarball"
+        )
+        if not builder.exists():
+            pytest.skip("builder not found")
+
+        assert _declares_tool_schema(builder) is False
+
     def test_skips_unreadable_script(self, tmp_path):
         script = tmp_path / "unreadable"
         script.write_text("#!/bin/bash\necho --tool-schema\n")

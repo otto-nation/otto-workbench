@@ -99,7 +99,7 @@ This sets `core.hooksPath` to point to the workbench's [`git/hooks/`](../git/hoo
 
 ## "refusing to commit with a placeholder identity"
 
-The commit identity is a test value. Rejected names are `test`, `your name`, and `unknown` (case-insensitive); rejected emails are `test@…` and anything at `test.com`, `example.com`, `example.org`, or `localhost`. Only repos with a GitHub/GitLab/Bitbucket remote are checked, so throwaway repos built by test suites are unaffected.
+The commit identity is a test value. Rejected names are `test`, `your name`, and `unknown` (case-insensitive); rejected emails are `test@…` and anything at `test.com`, `example.com`, `example.org`, or `localhost`. Only repos whose `origin` remote points at GitHub, GitLab, or Bitbucket are checked, so throwaway repos built by test suites are unaffected.
 
 A test suite that ran `git config` against the wrong repo is the usual cause — and in a bare-repo-plus-worktrees layout, one polluted `.git/config` mis-attributes commits from every worktree until someone notices.
 

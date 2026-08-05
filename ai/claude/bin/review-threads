@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import dataclasses
+import functools
 import json
 import re
 import subprocess
@@ -477,8 +478,13 @@ def _render_fix_template(
     return result
 
 
+@functools.cache
 def _resolve_default_branch(wt_path: Path) -> str:
-    """Resolve the repo's default branch name via origin/HEAD symbolic-ref."""
+    """Resolve the repo's default branch name via origin/HEAD symbolic-ref.
+
+    Cached — the default branch cannot change mid-run, and several call sites
+    need it per file processed.
+    """
     try:
         r = subprocess.run(
             ["git", "-C", str(wt_path), "symbolic-ref", "refs/remotes/origin/HEAD"],

@@ -229,6 +229,19 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def _paginated_json(endpoint: str) -> tuple[int, str]:
+    """Call a gh api REST endpoint across all pages. Returns (exit_code, stdout).
+
+    --slurp wraps the pages in an outer array, so the result is a list of pages
+    rather than a flat list of items.
+    """
+    result = subprocess.run(
+        ["gh", "api", "--paginate", "--slurp", endpoint],
+        capture_output=True, text=True,
+    )
+    return result.returncode, result.stdout
+
+
 def _gh_post(endpoint: str, body: str, method: str = "POST") -> tuple[int, str]:
     """Send a JSON body to a gh api REST endpoint. Returns (exit_code, stdout)."""
     payload = json.dumps({"body": body})
@@ -284,16 +297,20 @@ def _find_comment_by_marker(
 
     Returns (lookup_succeeded, comment_id). The flag distinguishes "no such
     comment" from "could not tell" — the caller treats those differently.
+
+    Paginated: the marker comment is posted on the first round of a review
+    cycle, so on a busy PR it is the one most likely to fall off page one.
     """
-    code, out = _gh_rest(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
+    code, out = _paginated_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
         return False, None
     try:
-        comments = json.loads(out)
+        pages = json.loads(out)
     except (json.JSONDecodeError, TypeError):
         return False, None
-    if not isinstance(comments, list):
+    if not isinstance(pages, list):
         return False, None
+    comments = [c for page in pages for c in page] if pages and isinstance(pages[0], list) else pages
     for c in reversed(comments):
         if marker in (c.get("body") or ""):
             return True, c.get("id")

@@ -11,8 +11,11 @@ if LIB_DIR not in sys.path:
 import review_common
 import review_findings
 import review_pipeline
-from review_common import Effort, Phase
+from review_common import Diagnosis, DiagnosisKind, Effort, Phase
 from review_findings import Finding
+
+_MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
+_AGENT_ERROR = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded")
 
 
 class TestCountUnchecked:
@@ -605,7 +608,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retries_on_zero_progress_max_turns(
@@ -658,7 +661,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value="agent error: overloaded")
+    @patch("review_pipeline.diagnose_missing_output", return_value=_AGENT_ERROR)
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_no_retry_on_non_retryable_reason(
@@ -670,7 +673,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retry_uses_increased_turns(
@@ -685,7 +688,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_never_runs_under_a_read_only_reviewer_agent(

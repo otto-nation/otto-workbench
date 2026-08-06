@@ -31,7 +31,8 @@ from review_common import (
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
-    AgentKind, Effort, Mode, Phase, Thinking,
+    AgentKind, Diagnosis, DiagnosisKind, Effort, Mode, Phase, Thinking,
+    NON_RECOVERABLE_ERROR_MARKERS,
     PRIOR_DATE_RE,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
@@ -76,7 +77,6 @@ from review_agent import (
 DEFAULT_MAX_COST = 20.0
 
 RETRY_MAX_TURNS_GROUP = agent_retry.RETRY_MAX_TURNS
-_MAX_TURNS_REASON = agent_retry.MAX_TURNS_REASON
 
 DISPROVE_MIN_FINDINGS = 3
 MAX_TURNS_FIX_CAP = 60
@@ -443,15 +443,17 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     invoke(prompt, max_turns)
     log.blank()
 
-    reason = _retry_missing_output(
+    diagnosis = _retry_missing_output(
         invoke, prompt, job.session_log, job.review_file,
         label="Review agent", max_turns=max_turns,
     )
 
     if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
-        reason = reason or "unknown"
-        log.error(f"review agent {detail} and produced no review file ({reason})")
+        log.error(
+            f"review agent {detail} and produced no review file "
+            f"({_reason(diagnosis)})"
+        )
         log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
@@ -468,11 +470,32 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 _RETRY_HINT = agent_retry.RETRY_HINT
 _FIX_RETRY_HINT = agent_retry.FIX_RETRY_HINT
 _NO_WRITE_HINT = agent_retry.NO_WRITE_HINT
-_NON_RECOVERABLE_REASONS = agent_retry.NON_RECOVERABLE_REASONS
 
 _retry_hint_for = agent_retry.hint_for
 _retry_turns_for = agent_retry.turns_for
 _retry_missing_output = agent_retry.retry_missing_output
+
+
+def _reason(diagnosis: "Diagnosis | None") -> str:
+    """The rendered reason for a phase that produced nothing.
+
+    A `None` only reaches here when the output disappeared after the retry
+    driver had already confirmed it — worth reporting, not worth crashing on.
+    """
+    return diagnosis.message if diagnosis else "unknown"
+
+
+@dataclass(frozen=True)
+class GroupFailure:
+    """One group review that produced nothing, and why.
+
+    Carried rather than the rendered message because the retry pass, the
+    consecutive-failure abort, and the circuit breaker all decide from the
+    diagnosis; only the merge and the failures table render it.
+    """
+
+    group: str
+    diagnosis: Diagnosis
 
 
 def build_failures_section(
@@ -503,7 +526,7 @@ def build_failures_section(
         lines.append(f"| {agent} | {reason} | {status} |")
 
     has_recoverable = any(
-        reason not in _NON_RECOVERABLE_REASONS
+        reason not in NON_RECOVERABLE_ERROR_MARKERS
         for _, reason, _ in rows
     )
     if has_recoverable:
@@ -549,7 +572,7 @@ def _review_group(
     pipeline_state: "PipelineState | None" = None,
     max_turns: int = PHASES[Phase.GROUP].max_turns,
     retry_hint: str = "",
-) -> tuple[int, str, "tuple[str, str] | None"]:
+) -> tuple[int, str, "GroupFailure | None"]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
@@ -558,7 +581,9 @@ def _review_group(
             log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
             return (i, group_output, None)
         log.warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
-        return (i, group_output, (grp.name, "output missing"))
+        return (i, group_output, GroupFailure(
+            grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
+        ))
 
     _touch(group_output)
 
@@ -583,11 +608,11 @@ def _review_group(
     if not _has_output(group_output):
         try_recover_output(group_log, group_output)
     if not _has_output(group_output):
-        reason = diagnose_missing_output(group_log)
-        log.warn(f"Group {i} ({grp.name}) produced no output ({reason})")
-        failed = (grp.name, reason)
+        diagnosis = diagnose_missing_output(group_log)
+        log.warn(f"Group {i} ({grp.name}) produced no output ({diagnosis.message})")
+        failed = GroupFailure(grp.name, diagnosis)
         if pipeline_state is not None:
-            _update_group_failed(job, i, reason, pipeline_state)
+            _update_group_failed(job, i, diagnosis.message, pipeline_state)
     else:
         _validate_group_output(group_output, grp.name)
         log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
@@ -617,7 +642,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     invoke(prompt, max_turns)
     log.blank()
 
-    reason = _retry_missing_output(
+    diagnosis = _retry_missing_output(
         invoke, prompt, holistic_log, holistic_output,
         label="Holistic scan", max_turns=max_turns,
     )
@@ -626,7 +651,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     if _has_output(holistic_output):
         holistic_content = Path(holistic_output).read_text()
     else:
-        log.warn(f"Holistic scan produced no output ({reason}) — continuing without it")
+        log.warn(
+            f"Holistic scan produced no output ({_reason(diagnosis)}) "
+            "— continuing without it"
+        )
 
     return holistic_content, holistic_output, holistic_log
 
@@ -651,7 +679,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     invoke(prompt, max_turns)
     log.blank()
 
-    reason = _retry_missing_output(
+    diagnosis = _retry_missing_output(
         invoke, prompt, scout_log, scout_output,
         label="Scout", max_turns=max_turns,
     )
@@ -662,7 +690,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
         return format_leads_block(leads, no_scrutiny), scout_output, scout_log
 
-    log.warn(f"Scout produced no output ({reason}) — continuing without leads")
+    log.warn(f"Scout produced no output ({_reason(diagnosis)}) — continuing without leads")
     return "", scout_output, scout_log
 
 
@@ -694,7 +722,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
     invoke(prompt, max_turns)
     log.blank()
 
-    reason = _retry_missing_output(
+    diagnosis = _retry_missing_output(
         invoke, prompt, disprove_log, disprove_output,
         label="Disprove gate", max_turns=max_turns,
     )
@@ -713,7 +741,10 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         else:
             log.info(f"Disprove gate: all {summary['survived']} findings survived")
     else:
-        log.warn(f"Disprove gate produced no output ({reason}) — keeping all findings")
+        log.warn(
+            f"Disprove gate produced no output ({_reason(diagnosis)}) "
+            "— keeping all findings"
+        )
 
     return disprove_log, cost
 
@@ -985,9 +1016,9 @@ def run_fix_pass(job: ReviewJob):
     result = _diff_findings(before_findings, after_findings)
 
     if not _fix_pass_made_progress(result) and result.skipped_count > 0:
-        reason = diagnose_missing_output(fix_log)
-        log.warn(f"Fix pass made no progress ({reason})")
-        if _is_retryable(reason):
+        diagnosis = diagnose_missing_output(fix_log)
+        log.warn(f"Fix pass made no progress ({diagnosis.message})")
+        if _is_retryable(diagnosis):
             retry_turns = _fix_retry_budget(max_turns)
             retry_prompt = _FIX_RETRY_HINT + build_prompt(
                 TEMPLATE_FIX, job, max_turns=retry_turns,
@@ -1015,15 +1046,15 @@ def run_fix_pass(job: ReviewJob):
 
 
 def _check_serial_abort(
-    i: int, group_count: int, reason: str, log_path: str,
-    consecutive: int, last_reason: str,
-) -> tuple[str, int, str]:
+    i: int, group_count: int, diagnosis: Diagnosis, log_path: str,
+    consecutive: int, last: "Diagnosis | None",
+) -> "tuple[str, int, Diagnosis | None]":
     if _is_model_error(log_path):
-        return f"Model not available — aborting remaining {group_count - i} groups", 0, ""
-    consecutive = consecutive + 1 if reason == last_reason else 1
+        return f"Model not available — aborting remaining {group_count - i} groups", 0, None
+    consecutive = consecutive + 1 if diagnosis == last else 1
     if consecutive >= CONSECUTIVE_FAIL_THRESHOLD:
-        return f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({reason}) — aborting remaining {group_count - i} groups", 0, ""
-    return "", consecutive, reason
+        return f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({diagnosis.message}) — aborting remaining {group_count - i} groups", 0, None
+    return "", consecutive, diagnosis
 
 
 def _run_serial_reviews(
@@ -1031,10 +1062,10 @@ def _run_serial_reviews(
     group_count: int, holistic_content: str,
     skip_groups: "set[int] | None",
     pipeline_state: "PipelineState | None",
-) -> "list[tuple[str, str]]":
-    failed_groups: list[tuple[str, str]] = []
+) -> "list[GroupFailure]":
+    failed_groups: list[GroupFailure] = []
     consecutive_same_reason = 0
-    last_reason = ""
+    last: Diagnosis | None = None
     group_turns = PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
     for i, grp in enumerate(groups, 1):
         skip = skip_groups is not None and i in skip_groups
@@ -1045,18 +1076,20 @@ def _run_serial_reviews(
         )
         if not failed:
             consecutive_same_reason = 0
-            last_reason = ""
+            last = None
             continue
         failed_groups.append(failed)
-        _, reason = failed
         group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
-        abort_msg, consecutive_same_reason, last_reason = _check_serial_abort(
-            i, group_count, reason, group_log, consecutive_same_reason, last_reason,
+        abort_msg, consecutive_same_reason, last = _check_serial_abort(
+            i, group_count, failed.diagnosis, group_log, consecutive_same_reason, last,
         )
         if not abort_msg:
             continue
         log.warn(abort_msg)
-        failed_groups.extend((remaining.name, f"skipped: {abort_msg}") for remaining in groups[i:])
+        failed_groups.extend(
+            GroupFailure(remaining.name, Diagnosis(DiagnosisKind.SKIPPED, detail=abort_msg))
+            for remaining in groups[i:]
+        )
         break
     return failed_groups
 
@@ -1066,7 +1099,7 @@ def _run_parallel_reviews(
     group_count: int, holistic_content: str, workers: int,
     skip_groups: "set[int] | None",
     pipeline_state: "PipelineState | None",
-) -> "list[tuple[str, str]]":
+) -> "list[GroupFailure]":
     log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
     log.blank()
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -1086,24 +1119,28 @@ def _run_parallel_reviews(
 _is_retryable = agent_retry.is_retryable
 
 
-def _retry_turns(reason: str, job: "ReviewJob") -> int:
+def _retry_turns(diagnosis: Diagnosis, job: "ReviewJob") -> int:
     extra = _omitted_turns(job)
-    if _MAX_TURNS_REASON in reason:
+    if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return RETRY_MAX_TURNS_GROUP + extra
     return PHASES[Phase.GROUP].max_turns + extra
 
 
+def _was_skipped(failure: "GroupFailure") -> bool:
+    return failure.diagnosis.kind is DiagnosisKind.SKIPPED
+
+
 def _retry_failed_groups(
-    failed_groups: "list[tuple[str, str]]",
+    failed_groups: "list[GroupFailure]",
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
     pipeline_state: "PipelineState | None",
-) -> "list[tuple[str, str]]":
-    retryable = [(name, reason) for name, reason in failed_groups if _is_retryable(reason)]
-    skipped = [(n, r) for n, r in failed_groups if r.startswith("skipped: ")]
+) -> "list[GroupFailure]":
+    retryable = [f for f in failed_groups if _is_retryable(f.diagnosis)]
+    skipped = [f for f in failed_groups if _was_skipped(f)]
     non_retryable = [
-        (n, r) for n, r in failed_groups
-        if not _is_retryable(r) and not r.startswith("skipped: ")
+        f for f in failed_groups
+        if not _is_retryable(f.diagnosis) and not _was_skipped(f)
     ]
     if not retryable:
         return failed_groups
@@ -1111,28 +1148,29 @@ def _retry_failed_groups(
     # Circuit breaker: if all groups failed with the same reason, the cause is
     # systemic (wrong credentials, model unavailable) — retries won't help.
     if len(failed_groups) >= CONSECUTIVE_FAIL_THRESHOLD:
-        reasons = {r for _, r in failed_groups if not r.startswith("skipped: ")}
+        reasons = {f.diagnosis for f in failed_groups if not _was_skipped(f)}
         if len(reasons) == 1:
             reason = reasons.pop()
-            log.warn(f"All {len(failed_groups)} groups failed with same error ({reason}) — skipping retries")
+            log.warn(f"All {len(failed_groups)} groups failed with same error ({reason.message}) — skipping retries")
             return failed_groups
 
     group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
 
     log.info(f"Retrying {len(retryable)} failed groups...")
-    still_failed: list[tuple[str, str]] = []
-    for name, reason in retryable:
+    still_failed: list[GroupFailure] = []
+    for failed in retryable:
+        name = failed.group
         if name not in group_by_name:
-            still_failed.append((name, reason))
+            still_failed.append(failed)
             continue
         idx, grp = group_by_name[name]
-        turns = _retry_turns(reason, job)
+        turns = _retry_turns(failed.diagnosis, job)
         log.info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
             max_turns=turns,
-            retry_hint=_retry_hint_for(reason),
+            retry_hint=_retry_hint_for(failed.diagnosis),
         )
         if failure:
             still_failed.append(failure)
@@ -1149,18 +1187,19 @@ def _retry_failed_groups(
 
 
 def _run_skipped_groups(
-    skipped: list[tuple],
+    skipped: "list[GroupFailure]",
     group_by_name: dict,
     job: ReviewJob,
     group_count: int,
     holistic_content: str,
     pipeline_state: dict,
-) -> list[tuple]:
+) -> "list[GroupFailure]":
     log.info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
-    failures: list[tuple] = []
-    for name, reason in skipped:
+    failures: list[GroupFailure] = []
+    for failed in skipped:
+        name = failed.group
         if name not in group_by_name:
-            failures.append((name, reason))
+            failures.append(failed)
             continue
         idx, grp = group_by_name[name]
         log.info(f"  Running skipped group: {name}")
@@ -1179,7 +1218,7 @@ def _phase_group_reviews(
     group_count: int, holistic_content: str, max_parallel: int,
     skip_groups: "set[int] | None" = None,
     pipeline_state: "PipelineState | None" = None,
-) -> "tuple[list[str], list[tuple[str, str]]]":
+) -> "tuple[list[str], list[GroupFailure]]":
     group_outputs = [_derive_path(job.review_file, FILENAME_GROUP.format(i)) for i in range(1, group_count + 1)]
 
     workers = min(max_parallel, group_count)
@@ -1200,15 +1239,15 @@ def _phase_group_reviews(
     return group_outputs, failed_groups
 
 
-def _phase_merge(group_outputs: list[str], failed_groups: "list[tuple[str, str]]") -> str:
+def _phase_merge(group_outputs: list[str], failed_groups: "list[GroupFailure]") -> str:
     log.info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 
     if failed_groups:
         merged_content += "\n## Review gaps\n"
         merged_content += "The following file groups were not reviewed due to agent failure:\n"
-        for name, reason in failed_groups:
-            merged_content += f"- {name}: {reason}\n"
+        for failed in failed_groups:
+            merged_content += f"- {failed.group}: {failed.diagnosis.message}\n"
 
     return merged_content
 
@@ -1586,7 +1625,7 @@ def _run_group_phase(
     job: ReviewJob, groups: list[Group], group_count: int,
     holistic_content: str, max_parallel: int,
     skip_groups: "set[int] | None", state: PipelineState,
-) -> tuple[list[str], "list[tuple[str, str]]", float]:
+) -> "tuple[list[str], list[GroupFailure], float]":
     group_outputs, failed_groups = _phase_group_reviews(
         groups, job, group_count, holistic_content, max_parallel,
         skip_groups=skip_groups, pipeline_state=state,
@@ -1607,7 +1646,7 @@ def _run_group_phase(
 def _run_synthesis_or_fallback(
     job: ReviewJob, state: PipelineState,
     holistic_content: str, group_count: int,
-    merged_content: str, failed_groups: "list[tuple[str, str]]",
+    merged_content: str, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
     groups: "list[Group] | None" = None,
 ) -> str:
@@ -1739,7 +1778,9 @@ def run_multi_phase(
     if cost_so_far > max_cost:
         log.warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
         group_outputs: list[str] = []
-        failed_groups: list[tuple[str, str]] = [(g.name, "budget exceeded") for g in groups]
+        failed_groups: list[GroupFailure] = [
+            GroupFailure(g.name, Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)) for g in groups
+        ]
     else:
         group_outputs, failed_groups, groups_cost = _run_group_phase(
             job, groups, group_count, holistic_content, max_parallel,

@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -18,19 +19,13 @@ import ai_backend
 import log
 from ai_backend import AgentInvocation
 from ai_backend_events import is_write_tool
-from review_common import preserve_log, restore_preserved
+from review_common import (
+    AGENT_ERROR_PREFIX, Diagnosis, DiagnosisKind,
+    preserve_log, restore_preserved,
+)
 
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 CONSECUTIVE_FAIL_THRESHOLD = 3
-
-DIAG_NO_SESSION_LOG = "no session log found"
-DIAG_NO_RESULT_RECORD = "no result record in session log"
-DIAG_QUOTA_EXHAUSTED = "quota exhausted (429)"
-DIAG_NO_WRITE_TOOL_CALL = "never called a file-writing tool"
-
-# Load-bearing: both the no-write diagnosis and the transient-error check key
-# off this prefix to tell a crash apart from a run that ended on its own terms.
-AGENT_ERROR_PREFIX = "agent error:"
 
 _TRANSIENT_ERROR_MARKERS = (
     "FailedToOpenSocket",
@@ -79,16 +74,21 @@ def _parse_session_cost(log_path: str) -> float:
     return sum(r.get("total_cost_usd", 0.0) for r in results)
 
 
-def _diagnose_result_type(result: dict) -> str:
+def _diagnose_result_type(result: dict) -> Diagnosis:
     subtype = result.get("subtype", "")
     if "max_turns" in subtype:
-        num_turns = result.get("num_turns", "?")
-        return f"agent hit max turns ({num_turns})"
+        return Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=result.get("num_turns"))
     if result.get("is_error"):
         errors = result.get("errors", [])
         detail = errors[0] if errors else result.get("result", result.get("error", "unknown"))
-        return f"{AGENT_ERROR_PREFIX} {detail}"
-    return f"agent completed (subtype={subtype}) but did not write output"
+        detail = str(detail)
+        kind = (
+            DiagnosisKind.TRANSIENT
+            if _detail_is_transient(detail)
+            else DiagnosisKind.AGENT_ERROR
+        )
+        return Diagnosis(kind, detail=detail)
+    return Diagnosis(DiagnosisKind.COMPLETED, detail=subtype)
 
 
 def _tool_names_used(records: list[dict]) -> set[str]:
@@ -119,39 +119,45 @@ def _tool_use_is_observable(records: list[dict]) -> bool:
     return bool(_of_type(records, "assistant"))
 
 
-def diagnose_missing_output(log_path: str) -> str:
+def diagnose_missing_output(log_path: str) -> Diagnosis:
     """Why an agent run left no output, read from its session log.
 
-    Public because `agent_retry` decides retryability from the returned reason;
-    the DIAG_* constants above are the labels it matches on.
+    Public because `agent_retry` decides retryability from the returned kind.
     """
     if not Path(log_path).exists():
-        return DIAG_NO_SESSION_LOG
+        return Diagnosis(DiagnosisKind.NO_SESSION_LOG)
     records = _read_jsonl(log_path)
     results = _of_type(records, "result")
     if not results:
         if _has_quota_retry(records):
-            return DIAG_QUOTA_EXHAUSTED
-        return DIAG_NO_RESULT_RECORD
-    reason = _diagnose_result_type(results[-1])
+            return Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)
+        return Diagnosis(DiagnosisKind.NO_RESULT_RECORD)
+    diagnosis = _diagnose_result_type(results[-1])
     # An agent that ran to its own conclusion without ever calling a write tool
     # was thrashing, not working — say so instead of reporting a bare turn
     # count. An agent that called no tool at all (a one-turn refusal, say) is
     # the clearest case of this, so it counts too. A crash is excluded: the
     # error already explains the missing output, and a retry would most likely
     # reproduce it.
+    crashed = diagnosis.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT)
+    if crashed or not _tool_use_is_observable(records):
+        return diagnosis
     tools_used = _tool_names_used(records)
-    crashed = reason.startswith(AGENT_ERROR_PREFIX)
+    # empty tools_used also satisfies this when observability is confirmed
     wrote = any(is_write_tool(name) for name in tools_used)
-    if not crashed and _tool_use_is_observable(records) and not wrote:
-        reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
-    return reason
+    if wrote:
+        return diagnosis
+    return replace(diagnosis, no_write_tool=True)
 
 
-def is_transient_error(reason: str) -> bool:
-    if not reason.startswith(AGENT_ERROR_PREFIX):
-        return False
-    return any(marker in reason for marker in _TRANSIENT_ERROR_MARKERS)
+def _detail_is_transient(detail: str) -> bool:
+    """Whether a backend error's text names a fault a second attempt could clear.
+
+    Only reached from `_diagnose_result_type`, which has already established
+    that the run crashed — a marker appearing in the output of a run that ended
+    on its own terms is not an error report.
+    """
+    return any(marker in detail for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 def _is_model_error(log_path: str) -> bool:

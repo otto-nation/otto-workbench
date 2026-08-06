@@ -2285,13 +2285,13 @@ class TestFixPassThrashGuard:
 
         with patch.object(rt, "_invoke_fix_agent",
                           side_effect=lambda p, *a, **k: prompts.append(p) or 0):
-            reason = rt._guarded_fix_pass(
+            diagnosis = rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
             )
 
         assert prompts == ["PROMPT", rt.agent_retry.FIX_RETRY_HINT + "PROMPT"]
-        assert rt.agent_retry.DIAG_NO_WRITE_TOOL_CALL in reason
+        assert diagnosis.no_write_tool
 
     def test_a_single_checked_box_counts_as_work(self, rt, tmp_path):
         """Partial progress belongs to `_retry_fix_pass`, not to the guard."""
@@ -2300,12 +2300,12 @@ class TestFixPassThrashGuard:
         tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
 
         with patch.object(rt, "_invoke_fix_agent", return_value=0) as inv:
-            reason = rt._guarded_fix_pass(
+            diagnosis = rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
             )
 
-        assert reason == ""
+        assert diagnosis is None
         assert inv.call_count == 1
 
     def test_missing_tracking_file_counts_as_no_work(self, rt, tmp_path):

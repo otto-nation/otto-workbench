@@ -20,19 +20,24 @@ from collections.abc import Callable
 from pathlib import Path
 
 import log
-from review_agent import (
-    DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG, DIAG_NO_WRITE_TOOL_CALL,
-    diagnose_missing_output, is_transient_error, try_recover_output,
+from review_agent import diagnose_missing_output, try_recover_output
+from review_common import (
+    Diagnosis, DiagnosisKind, preserve_log, restore_preserved,
 )
-from review_common import preserve_log, restore_preserved
-
-MAX_TURNS_REASON = "agent hit max turns"
 
 # Ceiling for a retry's turn budget. Group reviews arrived at this number and
 # every other phase inherited it; a single shared cap keeps the guard uniform.
 RETRY_MAX_TURNS = 30
 
-NON_RECOVERABLE_REASONS = ("permission denied",)
+# Kinds a second attempt could plausibly clear. Turn exhaustion and a run that
+# never called a write tool are the two the hints address directly; the rest are
+# faults in the run's surroundings rather than in the run itself.
+_RETRYABLE_KINDS = frozenset({
+    DiagnosisKind.MAX_TURNS,
+    DiagnosisKind.NO_RESULT_RECORD,
+    DiagnosisKind.NO_SESSION_LOG,
+    DiagnosisKind.TRANSIENT,
+})
 
 RETRY_HINT = (
     "IMPORTANT: A previous attempt ran out of turns before writing output. "
@@ -74,40 +79,32 @@ def has_output(path: str) -> bool:
     return p.exists() and p.stat().st_size > 0
 
 
-def is_retryable(reason: str) -> bool:
+def is_retryable(diagnosis: Diagnosis) -> bool:
     """Whether a second attempt could plausibly do better than the first."""
-    if reason.startswith("skipped: "):
-        return False
-    if MAX_TURNS_REASON in reason:
-        return True
     # A run that ended on its own terms without ever calling a write tool
     # produced nothing and gave no reason it could not have — the retry hint
-    # names the mechanism. `diagnose_missing_output` withholds this label from
+    # names the mechanism. `diagnose_missing_output` withholds this flag from
     # crashes, so it never makes a permanent error retryable.
-    if DIAG_NO_WRITE_TOOL_CALL in reason:
+    if diagnosis.no_write_tool:
         return True
-    if reason in (DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG):
-        return True
-    if is_transient_error(reason):
-        return True
-    return False
+    return diagnosis.kind in _RETRYABLE_KINDS
 
 
-def hint_for(reason: str) -> str:
+def hint_for(diagnosis: Diagnosis) -> str:
     """The most specific hint the diagnosis supports.
 
-    Checked most-specific first: the no-write label attaches to turn exhaustion
+    Checked most-specific first: the no-write flag attaches to turn exhaustion
     and to clean completions alike, and naming the write mechanism beats
     telling the agent to hurry.
     """
-    if DIAG_NO_WRITE_TOOL_CALL in reason:
+    if diagnosis.no_write_tool:
         return NO_WRITE_HINT
-    if MAX_TURNS_REASON in reason:
+    if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return RETRY_HINT
     return ""
 
 
-def turns_for(reason: str, max_turns: int) -> int:
+def turns_for(diagnosis: Diagnosis, max_turns: int) -> int:
     """Turn budget for a retry.
 
     Only turn exhaustion earns a bigger budget — a transient API error or a
@@ -115,7 +112,7 @@ def turns_for(reason: str, max_turns: int) -> int:
     capped at the shared ceiling, but never lowers a budget that was already
     scaled above it.
     """
-    if MAX_TURNS_REASON not in reason:
+    if diagnosis.kind is not DiagnosisKind.MAX_TURNS:
         return max_turns
     return min(max_turns * 2, max(RETRY_MAX_TURNS, max_turns))
 
@@ -129,8 +126,8 @@ def retry_unproductive(
     max_turns: int,
     produced: Callable[[], bool],
     recover: Callable[[], None] | None = None,
-    hint_select: Callable[[str], str] = hint_for,
-) -> str:
+    hint_select: Callable[[Diagnosis], str] = hint_for,
+) -> Diagnosis | None:
     """Give an agent that produced nothing a second attempt.
 
     `invoke(prompt, max_turns)` runs the agent and `produced()` reports whether
@@ -138,31 +135,34 @@ def retry_unproductive(
     for a fix pass.  `recover()`, when given, salvages output from the session
     log before the run is written off.
 
-    Returns the diagnosed failure reason, or "" once something was produced.
+    Returns the diagnosis, or None once something was produced.
     """
     if not produced() and recover:
         recover()
     if produced():
-        return ""
+        return None
 
-    reason = diagnose_missing_output(log_path)
-    if not is_retryable(reason):
-        return reason
+    diagnosis = diagnose_missing_output(log_path)
+    if not is_retryable(diagnosis):
+        return diagnosis
 
-    turns = turns_for(reason, max_turns)
-    log.warn(f"{label} produced no output ({reason}) — retrying once ({turns} turns)")
+    turns = turns_for(diagnosis, max_turns)
+    log.warn(
+        f"{label} produced no output ({diagnosis.message}) "
+        f"— retrying once ({turns} turns)"
+    )
     log.blank()
     prior = preserve_log(log_path)
-    invoke(hint_select(reason) + prompt, turns)
+    invoke(hint_select(diagnosis) + prompt, turns)
     log.blank()
 
     if not produced() and recover:
         recover()
     # Diagnose before restoring: in a merged log the first attempt's tool calls
     # would mask what the retry actually did.
-    retry_reason = "" if produced() else diagnose_missing_output(log_path)
+    retry_diagnosis = None if produced() else diagnose_missing_output(log_path)
     restore_preserved(log_path, prior)
-    return retry_reason
+    return retry_diagnosis
 
 
 def run_guarded(
@@ -174,8 +174,8 @@ def run_guarded(
     max_turns: int,
     produced: Callable[[], bool],
     recover: Callable[[], None] | None = None,
-    hint_select: Callable[[str], str] = hint_for,
-) -> str:
+    hint_select: Callable[[Diagnosis], str] = hint_for,
+) -> Diagnosis | None:
     """Run an agent and guard the result with `retry_unproductive`.
 
     `retry_unproductive` is post-hoc: it asks `produced()` before it invokes
@@ -195,7 +195,7 @@ def retry_missing_output(
     invoke: Callable[[str, int], int],
     prompt: str, log_path: str, output_path: str,
     *, label: str, max_turns: int,
-) -> str:
+) -> Diagnosis | None:
     """`retry_unproductive` for an agent whose output is a single file."""
     return retry_unproductive(
         invoke, prompt, log_path,

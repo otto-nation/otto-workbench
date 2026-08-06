@@ -159,6 +159,101 @@ def enum_arg(enum_cls: type[EnumT]) -> Callable[[str], EnumT]:
     return parse
 
 
+# ── Failure diagnosis ────────────────────────────────────────────────────────
+
+
+class DiagnosisKind(StrEnum):
+    """Why an agent run left no output.
+
+    Retry policy switches on this, so a member is added when a *decision* needs
+    to tell one outcome from another — not when a message needs new wording.
+    """
+
+    MAX_TURNS = "max_turns"
+    COMPLETED = "completed"
+    AGENT_ERROR = "agent_error"
+    TRANSIENT = "transient"
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    NO_SESSION_LOG = "no_session_log"
+    NO_RESULT_RECORD = "no_result_record"
+    # The three below are the pipeline's own verdicts, reached without ever
+    # reading a session log: a group the pipeline declined to run, one abandoned
+    # when the budget ran out, and one whose output vanished between passes.
+    SKIPPED = "skipped"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    OUTPUT_MISSING = "output_missing"
+    # Only reachable by reading a pipeline state file written before failures
+    # were structured. `detail` holds that file's rendered message verbatim.
+    UNKNOWN = "unknown"
+
+
+# Prefixes every backend crash. Load-bearing beyond rendering: the no-write
+# check and the transient-error check both use it to tell a crash apart from a
+# run that ended on its own terms.
+AGENT_ERROR_PREFIX = "agent error:"
+
+# A backend error whose text matches one of these will fail again the same way,
+# so no amount of retrying or recovery helps. Matched against `Diagnosis.detail`
+# the way `_TRANSIENT_ERROR_MARKERS` is — the error text is free-form, and these
+# are the fragments of it that carry a verdict.
+NON_RECOVERABLE_ERROR_MARKERS = ("permission denied",)
+
+_DIAGNOSIS_MESSAGES = {
+    DiagnosisKind.QUOTA_EXHAUSTED: "quota exhausted (429)",
+    DiagnosisKind.NO_SESSION_LOG: "no session log found",
+    DiagnosisKind.NO_RESULT_RECORD: "no result record in session log",
+    DiagnosisKind.BUDGET_EXCEEDED: "budget exceeded",
+    DiagnosisKind.OUTPUT_MISSING: "output missing",
+}
+
+NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    """A single agent run's failure, classified once and rendered on demand.
+
+    Frozen because two of the pipeline's decisions compare diagnoses for
+    equality — the consecutive-failure abort and the all-groups-failed circuit
+    breaker — and one of them puts them in a set.
+    """
+
+    kind: DiagnosisKind
+    no_write_tool: bool = False
+    detail: str = ""
+    # None when the backend reported no turn count; rendered as "?".
+    num_turns: int | None = None
+
+    @property
+    def message(self) -> str:
+        """The human-readable reason, as it appears in logs and review files."""
+        return self._base_message() + (
+            f" — {NO_WRITE_TOOL_SUFFIX}" if self.no_write_tool else ""
+        )
+
+    def _base_message(self) -> str:
+        if self.kind is DiagnosisKind.MAX_TURNS:
+            turns = self.num_turns if self.num_turns is not None else "?"
+            return f"agent hit max turns ({turns})"
+        if self.kind is DiagnosisKind.COMPLETED:
+            return f"agent completed (subtype={self.detail}) but did not write output"
+        if self.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT):
+            return f"{AGENT_ERROR_PREFIX} {self.detail}"
+        if self.kind is DiagnosisKind.SKIPPED:
+            return f"skipped: {self.detail}"
+        if self.kind is DiagnosisKind.UNKNOWN:
+            # A legacy state file could hold an empty reason; the failures table
+            # gets a word rather than a blank cell.
+            return self.detail or DiagnosisKind.UNKNOWN.value
+        return _DIAGNOSIS_MESSAGES[self.kind]
+
+    @property
+    def recoverable(self) -> bool:
+        """Whether `pr review --recover` could plausibly do better than this run."""
+        lowered = self.detail.lower()
+        return not any(m in lowered for m in NON_RECOVERABLE_ERROR_MARKERS)
+
+
 # ── Templates ────────────────────────────────────────────────────────────────
 
 TEMPLATE_SINGLE = "single-agent.md"

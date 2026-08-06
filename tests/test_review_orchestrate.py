@@ -1012,13 +1012,16 @@ class TestIsNextFindingOrSection:
 
 
 class TestCheckSerialAbort:
+    def _diagnosis(self, ro, detail: str):
+        return ro.Diagnosis(ro.DiagnosisKind.AGENT_ERROR, detail=detail)
+
     def test_model_error(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({
             "type": "result", "api_error_status": 404,
         }) + "\n")
-        msg, consec, reason = ro._check_serial_abort(
-            1, 5, "error", str(log), 0, "",
+        msg, consec, last = ro._check_serial_abort(
+            1, 5, self._diagnosis(ro, "error"), str(log), 0, None,
         )
         assert "Model not available" in msg
         assert "4" in msg  # 5 - 1 = 4 remaining
@@ -1026,27 +1029,58 @@ class TestCheckSerialAbort:
     def test_consecutive_threshold(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")
-        msg, consec, reason = ro._check_serial_abort(
-            3, 10, "same_reason", str(log),
-            ro.CONSECUTIVE_FAIL_THRESHOLD - 1, "same_reason",
+        same = self._diagnosis(ro, "same_reason")
+        msg, consec, last = ro._check_serial_abort(
+            3, 10, same, str(log), ro.CONSECUTIVE_FAIL_THRESHOLD - 1, same,
         )
         assert "consecutive failures" in msg
+        assert same.message in msg
+
+    def test_equal_diagnoses_count_together_regardless_of_identity(self, ro, tmp_path):
+        """Two runs failing the same way are separate objects with equal value."""
+        log = tmp_path / "session.jsonl"
+        log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")
+        msg, consec, last = ro._check_serial_abort(
+            2, 10, self._diagnosis(ro, "boom"), str(log), 1,
+            self._diagnosis(ro, "boom"),
+        )
+        assert msg == ""
+        assert consec == 2
+
+    def test_a_differing_turn_count_resets_the_streak(self, ro, tmp_path):
+        """The turn count is part of the diagnosis, so it parts the streak.
+
+        Unchanged from the string comparison this replaced, where the count was
+        embedded in the rendered reason. It holds together in practice only
+        because every group runs on the same turn budget and so exhausts at the
+        same count.
+        """
+        log = tmp_path / "session.jsonl"
+        log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")
+        msg, consec, last = ro._check_serial_abort(
+            3, 10, ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30), str(log),
+            ro.CONSECUTIVE_FAIL_THRESHOLD - 1,
+            ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=15),
+        )
+        assert msg == ""
+        assert consec == 1
 
     def test_different_reason_resets(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")
-        msg, consec, reason = ro._check_serial_abort(
-            2, 10, "new_reason", str(log), 2, "old_reason",
+        new = self._diagnosis(ro, "new_reason")
+        msg, consec, last = ro._check_serial_abort(
+            2, 10, new, str(log), 2, self._diagnosis(ro, "old_reason"),
         )
         assert msg == ""
         assert consec == 1
-        assert reason == "new_reason"
+        assert last == new
 
     def test_below_threshold(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")
-        msg, consec, reason = ro._check_serial_abort(
-            1, 10, "some_reason", str(log), 0, "",
+        msg, consec, last = ro._check_serial_abort(
+            1, 10, self._diagnosis(ro, "some_reason"), str(log), 0, None,
         )
         assert msg == ""
         assert consec == 1
@@ -1291,19 +1325,17 @@ class TestDiagnoseResultType:
     def test_max_turns(self, ro):
         result = {"subtype": "max_turns", "num_turns": 15}
         diag = ro._diagnose_result_type(result)
-        assert "max turns" in diag
-        assert "15" in diag
+        assert diag == ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=15)
 
     def test_error(self, ro):
         result = {"is_error": True, "errors": ["timeout"]}
         diag = ro._diagnose_result_type(result)
-        assert "error" in diag
-        assert "timeout" in diag
+        assert diag == ro.Diagnosis(ro.DiagnosisKind.AGENT_ERROR, detail="timeout")
 
     def test_completed_no_output(self, ro):
         result = {"subtype": "completed"}
         diag = ro._diagnose_result_type(result)
-        assert "did not write output" in diag
+        assert diag == ro.Diagnosis(ro.DiagnosisKind.COMPLETED, detail="completed")
 
 
 # ── 24. diagnose_missing_output ────────────────────────────────────────────
@@ -1316,23 +1348,23 @@ class TestDiagnoseMissingOutput:
             "type": "result", "subtype": "max_turns", "num_turns": 10,
         }) + "\n")
         result = ro.diagnose_missing_output(str(log))
-        assert "max turns" in result
+        assert result.kind is ro.DiagnosisKind.MAX_TURNS
 
     def test_no_log_file(self, ro, tmp_path):
         result = ro.diagnose_missing_output(str(tmp_path / "missing.jsonl"))
-        assert "no session log" in result
+        assert result.kind is ro.DiagnosisKind.NO_SESSION_LOG
 
     def test_empty_log(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text("")
         result = ro.diagnose_missing_output(str(log))
-        assert "no result record" in result
+        assert result.kind is ro.DiagnosisKind.NO_RESULT_RECORD
 
     def test_no_result_records(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "assistant", "message": "hi"}) + "\n")
         result = ro.diagnose_missing_output(str(log))
-        assert "no result record" in result
+        assert result.kind is ro.DiagnosisKind.NO_RESULT_RECORD
 
     def test_quota_exhausted_no_result(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
@@ -1341,7 +1373,7 @@ class TestDiagnoseMissingOutput:
             + json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}) + "\n"
         )
         result = ro.diagnose_missing_output(str(log))
-        assert "quota exhausted" in result.lower()
+        assert result.kind is ro.DiagnosisKind.QUOTA_EXHAUSTED
 
 
 # ── 25. _is_model_error ─────────────────────────────────────────────────────
@@ -2001,57 +2033,81 @@ class TestSynthesisFailedTracking:
 
 class TestIsRetryable:
     def test_max_turns_is_retryable(self, ro):
-        assert ro._is_retryable("agent hit max turns (16)") is True
+        assert ro._is_retryable(
+            ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=16)) is True
 
     def test_no_session_log_is_retryable(self, ro):
-        assert ro._is_retryable("no session log found") is True
+        assert ro._is_retryable(ro.Diagnosis(ro.DiagnosisKind.NO_SESSION_LOG)) is True
 
     def test_no_result_record_is_retryable(self, ro):
-        assert ro._is_retryable("no result record in session log") is True
+        assert ro._is_retryable(ro.Diagnosis(ro.DiagnosisKind.NO_RESULT_RECORD)) is True
 
     def test_model_error_not_retryable(self, ro):
-        assert ro._is_retryable("agent error: model not available") is False
+        assert ro._is_retryable(ro.Diagnosis(
+            ro.DiagnosisKind.AGENT_ERROR, detail="model not available")) is False
 
     def test_agent_error_not_retryable(self, ro):
-        assert ro._is_retryable("agent error: something broke") is False
+        assert ro._is_retryable(ro.Diagnosis(
+            ro.DiagnosisKind.AGENT_ERROR, detail="something broke")) is False
 
     def test_skipped_not_retryable(self, ro):
-        assert ro._is_retryable("skipped: 3 consecutive failures (agent hit max turns) — aborting") is False
+        assert ro._is_retryable(ro.Diagnosis(
+            ro.DiagnosisKind.SKIPPED,
+            detail="3 consecutive failures (agent hit max turns) — aborting")) is False
 
-    def test_skipped_other_reason_not_retryable(self, ro):
-        assert ro._is_retryable("skipped: Model not available — aborting remaining 4 groups") is False
-
-    def test_transient_socket_error_is_retryable(self, ro):
-        reason = "agent error: API Error: Connection to the API was lost (FailedToOpenSocket). This is usually temporary — try again."
-        assert ro._is_retryable(reason) is True
-
-    def test_transient_connection_refused_is_retryable(self, ro):
-        reason = "agent error: API Error: Connection to the API was lost (ConnectionRefused). This is usually temporary — try again."
-        assert ro._is_retryable(reason) is True
-
-    def test_transient_connection_reset_is_retryable(self, ro):
-        reason = "agent error: Connection to the API was lost (ConnectionReset)"
-        assert ro._is_retryable(reason) is True
-
-    def test_transient_etimedout_is_retryable(self, ro):
-        assert ro._is_retryable("agent error: ETIMEDOUT") is True
+    def test_transient_is_retryable(self, ro):
+        assert ro._is_retryable(ro.Diagnosis(
+            ro.DiagnosisKind.TRANSIENT, detail="ETIMEDOUT")) is True
 
 
-class TestIsTransientError:
-    def test_socket_error(self, ro):
-        assert ro.is_transient_error("agent error: API Error: Connection to the API was lost (FailedToOpenSocket).") is True
+class TestTransientClassification:
+    """Which backend errors the classifier files as TRANSIENT rather than fatal.
 
-    def test_connection_refused(self, ro):
-        assert ro.is_transient_error("agent error: ConnectionRefused") is True
+    Driven through `diagnose_missing_output` because the classifier is only
+    reached once a crash is established — a marker in the output of a run that
+    ended on its own terms is not an error report.
+    """
 
-    def test_non_agent_error_prefix(self, ro):
-        assert ro.is_transient_error("FailedToOpenSocket") is False
+    def _kind(self, ro, tmp_path, detail: str):
+        log = tmp_path / "session.jsonl"
+        log.write_text(json.dumps({
+            "type": "result", "subtype": "error", "is_error": True,
+            "result": detail,
+        }) + "\n")
+        return ro.diagnose_missing_output(str(log)).kind
 
-    def test_model_error_not_transient(self, ro):
-        assert ro.is_transient_error("agent error: model not available") is False
+    def test_socket_error(self, ro, tmp_path):
+        assert self._kind(
+            ro, tmp_path,
+            "API Error: Connection to the API was lost (FailedToOpenSocket).",
+        ) is ro.DiagnosisKind.TRANSIENT
 
-    def test_generic_agent_error_not_transient(self, ro):
-        assert ro.is_transient_error("agent error: something broke") is False
+    def test_connection_refused(self, ro, tmp_path):
+        assert self._kind(ro, tmp_path, "ConnectionRefused") is ro.DiagnosisKind.TRANSIENT
+
+    def test_connection_reset(self, ro, tmp_path):
+        assert self._kind(
+            ro, tmp_path, "Connection to the API was lost (ConnectionReset)",
+        ) is ro.DiagnosisKind.TRANSIENT
+
+    def test_etimedout(self, ro, tmp_path):
+        assert self._kind(ro, tmp_path, "ETIMEDOUT") is ro.DiagnosisKind.TRANSIENT
+
+    def test_model_error_not_transient(self, ro, tmp_path):
+        assert self._kind(
+            ro, tmp_path, "model not available") is ro.DiagnosisKind.AGENT_ERROR
+
+    def test_generic_agent_error_not_transient(self, ro, tmp_path):
+        assert self._kind(
+            ro, tmp_path, "something broke") is ro.DiagnosisKind.AGENT_ERROR
+
+    def test_a_marker_in_a_clean_run_is_not_an_error_report(self, ro, tmp_path):
+        """A successful run whose output happens to mention a socket fault."""
+        log = tmp_path / "session.jsonl"
+        log.write_text(json.dumps({
+            "type": "result", "subtype": "success", "result": "ECONNRESET",
+        }) + "\n")
+        assert ro.diagnose_missing_output(str(log)).kind is ro.DiagnosisKind.COMPLETED
 
 
 class TestRetryTurns:
@@ -2069,11 +2125,18 @@ class TestRetryTurns:
 
     def test_max_turns_gets_doubled(self, ro, tmp_path):
         job = self._job_no_omitted(ro, tmp_path)
-        assert ro._retry_turns("agent hit max turns (16)", job) == ro.RETRY_MAX_TURNS_GROUP
+        diagnosis = ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=16)
+        assert ro._retry_turns(diagnosis, job) == ro.RETRY_MAX_TURNS_GROUP
 
     def test_other_reason_gets_default(self, ro, tmp_path):
         job = self._job_no_omitted(ro, tmp_path)
-        assert ro._retry_turns("no session log found", job) == ro.PHASES[ro.Phase.GROUP].max_turns
+        diagnosis = ro.Diagnosis(ro.DiagnosisKind.NO_SESSION_LOG)
+        assert ro._retry_turns(diagnosis, job) == ro.PHASES[ro.Phase.GROUP].max_turns
+
+
+def _MAX_TURNS_16(ro):
+    """Turn exhaustion, the retryable failure these tests drive retries with."""
+    return ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=16)
 
 
 class TestRetryFailedGroups:
@@ -2112,7 +2175,7 @@ class TestRetryFailedGroups:
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
 
-        failed = [("grp-a", "agent hit max turns (16)")]
+        failed = [ro.GroupFailure("grp-a", _MAX_TURNS_16(ro))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
         assert result == []
         assert calls[-1] == ro.RETRY_MAX_TURNS_GROUP
@@ -2121,16 +2184,17 @@ class TestRetryFailedGroups:
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
 
-        failed = [("grp-a", "agent error: model not available")]
-        result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
-        assert len(result) == 1
-        assert result[0] == ("grp-a", "agent error: model not available")
+        failure = ro.GroupFailure("grp-a", ro.Diagnosis(
+            ro.DiagnosisKind.AGENT_ERROR, detail="model not available"))
+        result = ro._retry_failed_groups([failure], groups, job, 1, "", None)
+        assert result == [failure]
 
     def test_non_retryable_preserved(self, ro, tmp_path):
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
 
-        failed = [("grp-a", "agent error: something broke")]
+        failed = [ro.GroupFailure("grp-a", ro.Diagnosis(
+            ro.DiagnosisKind.AGENT_ERROR, detail="something broke"))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
         assert result == failed
 
@@ -2160,8 +2224,10 @@ class TestRetryFailedGroups:
         monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
 
         failed = [
-            ("grp-a", "agent hit max turns (16)"),
-            ("grp-b", "skipped: 3 consecutive failures (agent hit max turns) — aborting remaining 1 groups"),
+            ro.GroupFailure("grp-a", _MAX_TURNS_16(ro)),
+            ro.GroupFailure("grp-b", ro.Diagnosis(
+                ro.DiagnosisKind.SKIPPED,
+                detail="3 consecutive failures (agent hit max turns) — aborting remaining 1 groups")),
         ]
         result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
         assert result == []
@@ -2184,16 +2250,21 @@ class TestRetryFailedGroups:
 
         monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_pipeline, "diagnose_missing_output", lambda *a: "agent hit max turns (30)")
+        monkeypatch.setattr(
+            review_pipeline, "diagnose_missing_output",
+            lambda *a: ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30),
+        )
 
         failed = [
-            ("grp-a", "agent hit max turns (16)"),
-            ("grp-b", "skipped: 3 consecutive failures (agent hit max turns) — aborting"),
+            ro.GroupFailure("grp-a", _MAX_TURNS_16(ro)),
+            ro.GroupFailure("grp-b", ro.Diagnosis(
+                ro.DiagnosisKind.SKIPPED,
+                detail="3 consecutive failures (agent hit max turns) — aborting")),
         ]
         result = ro._retry_failed_groups(failed, groups, job, 2, "", None)
         # grp-a retry failed, so grp-b stays as skipped
         assert len(result) == 2
-        result_names = [n for n, _ in result]
+        result_names = [f.group for f in result]
         assert "grp-a" in result_names
         assert "grp-b" in result_names
 

@@ -154,12 +154,7 @@ def _extract_description(text: str) -> str | None:
     end = text.find(_DESCRIBE_END)
     if begin == -1 or end == -1 or end <= begin:
         return None
-    extracted = text[begin + len(_DESCRIBE_BEGIN):end]
-    if extracted.startswith("\n"):
-        extracted = extracted[1:]
-    if extracted.endswith("\n"):
-        extracted = extracted[:-1]
-    return extracted.strip() or None
+    return text[begin + len(_DESCRIBE_BEGIN):end].strip() or None
 
 
 def _usable_revision(text: str) -> bool:
@@ -241,7 +236,8 @@ def run_describe(
     revised = _extract_description(raw)
     if revised is None:
         # _usable_revision already passed, so this should not happen, but guard
-        # against a caller bypassing the check (e.g. --force with a bad response).
+        # against a caller that bypasses agent_retry.retry_blank_response and so
+        # never ran that check.
         if trail:
             trail.error("describe", "AI response missing extraction markers")
         log.error("ai response missing extraction markers — not posting to GitHub")

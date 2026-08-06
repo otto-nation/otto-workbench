@@ -539,6 +539,10 @@ def update_fix(state: PRState, summary: FixSummary) -> None:
         else:
             # Entries without an id cannot be de-duplicated; append rather than
             # colliding every one onto the "" key and losing all but the last.
+            # ceiling: this list only grows across rounds. No-id outcomes are
+            # rare and a cycle's rounds are bounded, so the growth is bounded in
+            # practice — de-dup on content if a cycle ever accumulates enough to
+            # bloat the state file or the summary comment.
             no_id.append(outcome)
     state.fix = dataclass_replace(
         summary,

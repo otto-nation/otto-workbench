@@ -248,7 +248,9 @@ class TestCIFixRetryHint:
     def test_an_undiagnosed_reason_falls_back_to_the_ci_wording(self):
         assert self._select("") == agent_retry.CI_FIX_RETRY_HINT
 
-    def test_the_ci_hint_does_not_talk_about_review_findings(self):
-        """It used to reuse FIX_RETRY_HINT, which is phrased for review findings."""
-        assert "findings" not in agent_retry.CI_FIX_RETRY_HINT
-        assert "failure" in agent_retry.CI_FIX_RETRY_HINT
+    def test_the_fallback_is_not_the_review_fix_hint(self):
+        """ci-check used to fall back to FIX_RETRY_HINT, phrased for review findings.
+
+        Pointing it back at that constant is the regression this guards.
+        """
+        assert self._select("") != agent_retry.FIX_RETRY_HINT

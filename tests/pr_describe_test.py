@@ -248,7 +248,7 @@ def test_prompt_carries_the_template_and_the_branch_contents(tmp_path):
          mock.patch.object(pr_describe_cli, "_git", return_value="deadbee fix: y"), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
-                           return_value=("B", 0)) as prompt:
+                           return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(tmp_path))
     text = prompt.call_args[0][0]
     assert "## Why" in text
@@ -263,6 +263,6 @@ def test_prompt_says_so_when_the_repo_ships_no_template(tmp_path):
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
-                           return_value=("B", 0)) as prompt:
+                           return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(tmp_path))
     assert "this repo ships none" in prompt.call_args[0][0]

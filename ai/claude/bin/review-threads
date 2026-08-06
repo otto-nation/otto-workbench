@@ -782,11 +782,7 @@ def _commit_and_push(
     wt_path: Path, fixed: int, deferred: int, trail: Trail | None = None,
 ) -> CommitPushResult:
     """Commit and push fixes. Returns structured result with status."""
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "diff", "--quiet"],
-        capture_output=True,
-    )
-    if result.returncode == 0:
+    if not review_common.has_uncommitted_changes(wt_path):
         return CommitPushResult(None, "no_changes", "")
 
     subprocess.run(

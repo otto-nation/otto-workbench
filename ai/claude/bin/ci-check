@@ -663,21 +663,14 @@ def _count_unchecked(path: Path) -> int:
 
 def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
     """Commit and push fixes if there are changes. Returns commit SHA or None."""
-    r = subprocess.run(
-        ["git", "-C", str(wt_path), "diff", "--quiet"],
-        capture_output=True,
-    )
-    if r.returncode == 0:
-        r2 = subprocess.run(
-            ["git", "-C", str(wt_path), "diff", "--cached", "--quiet"],
-            capture_output=True,
-        )
-        if r2.returncode == 0:
-            log.info("No changes to commit")
-            return None
+    if not review_common.has_uncommitted_changes(wt_path):
+        log.info("No changes to commit")
+        return None
 
+    # -A, not -u: a fix that adds files (tests, fixtures) would otherwise be
+    # dropped from the commit while still counted as fixed.
     subprocess.run(
-        ["git", "-C", str(wt_path), "add", "-u"],
+        ["git", "-C", str(wt_path), "add", "-A"],
         check=True,
     )
     msg = "fix: address CI failures"

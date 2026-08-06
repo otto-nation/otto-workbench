@@ -348,6 +348,20 @@ def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
     return r.stdout.strip()
 
 
+def has_uncommitted_changes(wt_path: str | Path) -> bool:
+    """Whether a worktree has unstaged, staged, or untracked changes.
+
+    Porcelain rather than `diff --quiet`: a fix agent that only adds files
+    (tests, fixtures) leaves the tracked diff empty, and a diff-only gate
+    skips the commit while the caller still reports the finding as fixed.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(wt_path), "status", "--porcelain"],
+        capture_output=True, text=True,
+    )
+    return bool(r.stdout.strip())
+
+
 # ── Review file helpers ─────────────────────────────────────────────────────
 
 

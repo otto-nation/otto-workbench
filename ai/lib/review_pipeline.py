@@ -37,6 +37,7 @@ from review_common import (
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
+    has_uncommitted_changes,
     preserve_log, restore_preserved,
     read_pipeline_status,
 )
@@ -746,18 +747,9 @@ def _count_unchecked(review_file: str) -> int:
     )
 
 
-def _has_uncommitted_changes(wt_path: str) -> bool:
-    """Check for unstaged, staged, or untracked changes."""
-    result = subprocess.run(
-        ["git", "-C", wt_path, "status", "--porcelain"],
-        capture_output=True, text=True,
-    )
-    return bool(result.stdout.strip())
-
-
 def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     """Commit source-file fixes applied by the fix-pass agent."""
-    if not _has_uncommitted_changes(job.wt_path):
+    if not has_uncommitted_changes(job.wt_path):
         return
 
     # -A, not -u: the fix agent creates new files (tests, fixtures) that -u

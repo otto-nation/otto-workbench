@@ -501,34 +501,41 @@ def _make_completed(returncode, stdout="", stderr=""):
 class TestCommitAndPush:
     """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
 
+    def _commit(self, rt, mock_run, dirty=True):
+        """Run _commit_and_push with a stubbed git and a known worktree state."""
+        with patch.object(rt.subprocess, "run", side_effect=mock_run), \
+                patch.object(rt.review_common, "has_uncommitted_changes",
+                             return_value=dirty):
+            return rt._commit_and_push(Path("/fake"), 1, 0)
+
     def test_no_changes(self, rt):
-        """git diff --quiet returns 0 → no_changes."""
+        """A clean worktree → no_changes."""
+        result = self._commit(rt, lambda cmd, **kw: _make_completed(0), dirty=False)
+        assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_untracked_only_changes_still_commit(self, rt):
+        """A fix that only adds files leaves the tracked diff empty — still commit."""
         calls = []
 
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
-            if "diff" in cmd:
-                return _make_completed(0)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 0, 0)
-        assert result.status == "no_changes"
-        assert result.sha is None
+        result = self._commit(rt, mock_run)
+        assert result.status == "pushed"
+        assert ["add", "-A"] == calls[0][-2:]
 
     def test_commit_failed(self, rt):
         """git commit returns non-zero → commit_failed with error text."""
         def mock_run(cmd, **kwargs):
-            if "diff" in cmd:
-                return _make_completed(1)
-            if "add" in cmd:
-                return _make_completed(0)
             if "commit" in cmd:
                 return _make_completed(1, stderr="hook failed\n")
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        result = self._commit(rt, mock_run)
         assert result.status == "commit_failed"
         assert result.sha is None
         assert "hook failed" in result.error
@@ -536,20 +543,13 @@ class TestCommitAndPush:
     def test_push_failed(self, rt):
         """git push returns non-zero → push_failed with SHA preserved."""
         def mock_run(cmd, **kwargs):
-            if "diff" in cmd:
-                return _make_completed(1)
-            if "add" in cmd:
-                return _make_completed(0)
-            if "commit" in cmd:
-                return _make_completed(0)
             if "rev-parse" in cmd:
                 return _make_completed(0, stdout="abc1234\n")
             if "push" in cmd:
                 return _make_completed(1, stderr="rejected\n")
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        result = self._commit(rt, mock_run)
         assert result.status == "push_failed"
         assert result.sha == "abc1234"
         assert "rejected" in result.error
@@ -557,20 +557,11 @@ class TestCommitAndPush:
     def test_success(self, rt):
         """git push returns 0 → pushed with SHA."""
         def mock_run(cmd, **kwargs):
-            if "diff" in cmd:
-                return _make_completed(1)
-            if "add" in cmd:
-                return _make_completed(0)
-            if "commit" in cmd:
-                return _make_completed(0)
             if "rev-parse" in cmd:
                 return _make_completed(0, stdout="abc1234\n")
-            if "push" in cmd:
-                return _make_completed(0)
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        result = self._commit(rt, mock_run)
         assert result.status == "pushed"
         assert result.sha == "abc1234"
         assert result.error == ""

@@ -67,6 +67,7 @@ REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
+EVAL_MODELS = REPO_ROOT / "ai" / "claude" / "bin" / "eval-models"
 
 
 def write_thrash_log(path) -> str:
@@ -147,6 +148,17 @@ def rt():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["review_threads"]
+
+
+@pytest.fixture(scope="session")
+def em():
+    loader = importlib.machinery.SourceFileLoader("eval_models", str(EVAL_MODELS))
+    spec = importlib.util.spec_from_loader("eval_models", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["eval_models"] = mod
+    spec.loader.exec_module(mod)
+    yield mod
+    del sys.modules["eval_models"]
 
 
 @pytest.fixture(scope="session")

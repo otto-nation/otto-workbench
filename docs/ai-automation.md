@@ -283,6 +283,24 @@ shows cost only: the CLI reports cost per model but tokens per session, so the
 token columns are left blank rather than counting one session against every
 model it used.
 
+### Evaluating AI quality
+
+The ledger says what a call cost; the eval harness says what it bought. `eval-models`
+runs each case in [`eval/corpus/`](../eval/corpus/) through a throwaway git repo and
+scores the result against that case's `manifest.json`.
+
+```bash
+eval-models --dry-run                          # validate the corpus, run nothing
+eval-models --models sonnet,opus --runs 3      # compare models
+eval-models --compare                          # diff against eval/results/ baselines
+eval-models --save-baselines                   # record new baselines
+```
+
+A manifest's `task` field picks how its case is run and scored — `review` when the
+field is absent, so older manifests keep working. Each task pairs a runner with a
+scorer in `ai/lib/eval_scoring_<task>.py`; the runner, the fixture repo, and the
+statistics over repeated runs are shared and know nothing about any one task.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

@@ -146,7 +146,7 @@ tools:
   - name: eval-models
     permission: false
     visibility: hidden
-    description: "Model evaluation runner — benchmarks review pipeline against a corpus of known-bad code"
+    description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"
 
   - name: otto-mcp-server
     permission: false

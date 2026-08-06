@@ -43,7 +43,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
 | `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
-| `eval-models` | Model evaluation runner — benchmarks review pipeline against a corpus of known-bad code |
+| `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
 | `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |

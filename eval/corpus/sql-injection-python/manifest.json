@@ -1,5 +1,6 @@
 {
   "name": "sql-injection-python",
+  "task": "review",
   "description": "User input is interpolated directly into SQL query string via f-string",
   "source": "synthetic",
   "language": "python",

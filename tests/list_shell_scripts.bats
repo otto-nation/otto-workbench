@@ -37,15 +37,23 @@ teardown() {
 }
 
 @test "list_shell_scripts: ignores a shebang below line 1" {
-  printf '#!/usr/bin/env bats\ncat > stub << EOF\n#!/bin/bash\nEOF\n' > "$ROOT/suite.bats"
+  printf '# notes\ncat > stub << EOF\n#!/bin/bash\nEOF\n' > "$ROOT/notes.txt"
 
   run list_shell_scripts "$ROOT"
 
   [ -z "$output" ]
 }
 
+@test "list_shell_scripts: selects bats suites" {
+  printf '#!/usr/bin/env bats\n@test "t" { true; }\n' > "$ROOT/suite.bats"
+
+  run list_shell_scripts "$ROOT"
+
+  [[ "$output" == "$ROOT/suite.bats" ]]
+}
+
 @test "list_shell_scripts: keeps real scripts when a heredoc file is present" {
-  printf '#!/usr/bin/env bats\ncat << EOF\n#!/bin/bash\nEOF\n' > "$ROOT/suite.bats"
+  printf '# notes\ncat << EOF\n#!/bin/bash\nEOF\n' > "$ROOT/notes.txt"
   printf '#!/usr/bin/env bash\necho hi\n' > "$ROOT/script.sh"
 
   run list_shell_scripts "$ROOT"

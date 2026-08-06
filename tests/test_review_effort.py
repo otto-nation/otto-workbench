@@ -114,7 +114,7 @@ class TestOmittedTurns:
         assert turns == review_pipeline.OMITTED_FILE_TURNS
 
     def test_no_omitted_files_returns_zero(self):
-        job = self._make_job(effort="medium")
+        job = self._make_job(effort=Effort.MEDIUM)
         assert review_pipeline._omitted_turns(job) == 0
 
 
@@ -128,15 +128,15 @@ class TestHolisticSkipReason:
         assert reason == "--no-holistic"
 
     def test_low_effort_skips(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort="low")
+        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort=Effort.LOW)
         assert reason == "effort=low"
 
     def test_medium_effort_does_not_skip(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort="medium")
+        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort=Effort.MEDIUM)
         assert reason is None
 
     def test_high_effort_does_not_skip(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort="high")
+        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort=Effort.HIGH)
         assert reason is None
 
     def test_few_groups_skips(self):
@@ -148,7 +148,7 @@ class TestHolisticSkipReason:
         assert reason is None
 
 
-def _make_job(tmp_path, effort="medium", mode="pr"):
+def _make_job(tmp_path, effort=Effort.MEDIUM, mode="pr"):
     review_file = str(tmp_path / "review.md")
     return ReviewJob(
         repo="org/repo", pr_number="42",

@@ -12,6 +12,10 @@ setup() {
   load 'review_orchestrate_helper'
   common_setup
   TMPDIR="$BATS_TEST_TMPDIR"
+  # Model resolution reads these; the developer's own shell usually has them set.
+  unset ANTHROPIC_DEFAULT_SONNET_MODEL
+  unset ANTHROPIC_DEFAULT_OPUS_MODEL
+  unset ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 teardown() {
@@ -43,9 +47,6 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 ')
   [ "$result" = "ok" ]
 }
-
-
-# ── Prompt building ──────────────────────────────────────────────────────────
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ ctx = mod.PRContext(commits="fix it", reviews="[]", review_comments="[]", commen
 job = mod.ReviewJob(
     repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
     wt_path="/tmp/wt", review_file="/tmp/review.md",
-    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/session.jsonl",
 )
 result = mod.build_prompt("single-agent.md", job, max_turns=15)
 print(result)
@@ -169,7 +170,7 @@ ctx = mod.PRContext()
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
     wt_path="/tmp/wt", review_file="/tmp/review.md",
-    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/session.jsonl",
 )
 result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
@@ -193,7 +194,7 @@ ctx = mod.PRContext()
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
     wt_path="/tmp/wt", review_file="/tmp/review.md",
-    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/session.jsonl",
 )
 result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
@@ -205,4 +206,3 @@ print("FOUND" if "Holistic context" in result else "MISSING")
 ')
   [ "$result" = "MISSING" ]
 }
-

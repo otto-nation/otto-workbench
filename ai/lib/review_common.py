@@ -18,7 +18,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
 
+import ai_usage
 import log
+from ai_usage import SessionUsage, parse_session_log
 from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
 
 
@@ -315,69 +317,6 @@ def review_meta_from_dict(d: dict) -> ReviewMeta:
     )
 
 
-# ── Session usage ────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class SessionUsage:
-    cost: float = 0.0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-    duration_ms: int = 0
-
-    @property
-    def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
-
-
-def _extract_token_sources(rec: dict) -> list[dict]:
-    """Return per-model usage dicts, preferring modelUsage over usage."""
-    model_usage = rec.get("modelUsage")
-    if model_usage:
-        return list(model_usage.values())
-    return [rec.get("usage", {})]
-
-
-def parse_session_log(path: str) -> SessionUsage:
-    """Parse a session JSONL log file and return aggregated usage."""
-    cost = 0.0
-    input_tokens = 0
-    output_tokens = 0
-    cache_read = 0
-    cache_write = 0
-    duration_ms = 0
-    try:
-        lines = Path(path).read_text().splitlines()
-    except OSError:
-        return SessionUsage()
-    for line in lines:
-        if '"type":"result"' not in line and '"type": "result"' not in line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if rec.get("type") != "result":
-            continue
-        cost += rec.get("total_cost_usd", 0) or 0
-        for src in _extract_token_sources(rec):
-            input_tokens += src.get("input_tokens", 0) or 0
-            output_tokens += src.get("output_tokens", 0) or 0
-            cache_read += src.get("cache_read_input_tokens", 0) or 0
-            cache_write += src.get("cache_creation_input_tokens", 0) or 0
-        duration_ms += rec.get("duration_ms", 0) or 0
-    return SessionUsage(
-        cost=cost,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cache_read_tokens=cache_read,
-        cache_write_tokens=cache_write,
-        duration_ms=duration_ms,
-    )
-
-
 # ── Log preservation for retries ─────────────────────────────────────────────
 
 
@@ -407,6 +346,20 @@ def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
     if check and r.returncode != 0:
         return ""
     return r.stdout.strip()
+
+
+def has_uncommitted_changes(wt_path: str | Path) -> bool:
+    """Whether a worktree has unstaged, staged, or untracked changes.
+
+    Porcelain rather than `diff --quiet`: a fix agent that only adds files
+    (tests, fixtures) leaves the tracked diff empty, and a diff-only gate
+    skips the commit while the caller still reports the finding as fixed.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(wt_path), "status", "--porcelain"],
+        capture_output=True, text=True,
+    )
+    return bool(r.stdout.strip())
 
 
 # ── Review file helpers ─────────────────────────────────────────────────────
@@ -465,21 +418,11 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     """Aggregate usage from session and post-session logs."""
     if not review_dir:
         return SessionUsage()
-    usages = [
+    return ai_usage.merge([
         parse_session_log(str(review_dir / n))
         for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
         if (review_dir / n).is_file()
-    ]
-    if not usages:
-        return SessionUsage()
-    return SessionUsage(
-        cost=sum(u.cost for u in usages),
-        input_tokens=sum(u.input_tokens for u in usages),
-        output_tokens=sum(u.output_tokens for u in usages),
-        cache_read_tokens=sum(u.cache_read_tokens for u in usages),
-        cache_write_tokens=sum(u.cache_write_tokens for u in usages),
-        duration_ms=sum(u.duration_ms for u in usages),
-    )
+    ])
 
 
 def _read_pipeline_data(review_dir: Path | None) -> dict | None:

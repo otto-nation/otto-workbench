@@ -67,6 +67,29 @@ def _claude_tool_label(block: dict) -> str:
     return name
 
 
+def claude_display_text(raw_line: str) -> str:
+    """Render a Claude stream-json line as the text a human should see.
+
+    Assistant prose is returned verbatim, tool use as its progress label. Used by
+    invoke_fix, which echoed raw stdout before it asked for structured output.
+    """
+    try:
+        data = json.loads(raw_line)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if data.get("type") != "assistant":
+        return ""
+    parts = []
+    for block in data.get("message", {}).get("content", []):
+        if block.get("type") == "text" and block.get("text"):
+            parts.append(block["text"])
+            continue
+        label = _claude_tool_label(block)
+        if label:
+            parts.append(f"▸ {label}")
+    return "\n".join(parts)
+
+
 def parse_claude_event(raw_line: str) -> StreamEvent | None:
     """Parse a Claude stream-json line into a StreamEvent, or None."""
     try:

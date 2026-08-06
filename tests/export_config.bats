@@ -81,7 +81,7 @@ _build_tarball() {
 @test "_profile_excludes_skill: returns non-zero when profiles.yml missing" {
   local orig="$AI_SRC_DIR"
   AI_SRC_DIR="$TMPDIR/no-such-dir"
-  ! _profile_excludes_skill "server" "dream"
+  run ! _profile_excludes_skill "server" "dream"
   AI_SRC_DIR="$orig"
 }
 

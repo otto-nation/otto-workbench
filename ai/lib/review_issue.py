@@ -12,6 +12,7 @@ import tempfile
 from dataclasses import dataclass, field
 
 import log
+import publishing
 import review_common
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
@@ -335,6 +336,9 @@ def create_issue(
     opts: dict | None = None,
 ) -> CreatedIssue | None:
     """Create an issue in the configured tracker. Returns None on failure."""
+    if not publishing.enabled():
+        publishing.draft(f"create {provider} issue: {title}", description)
+        return None
     if provider == "linear":
         return _create_linear(team, title, description, parent_id)
     if provider == "github":
@@ -351,6 +355,9 @@ def update_issue(
     opts: dict | None = None,
 ) -> bool:
     """Update an existing issue's description. Returns True on success."""
+    if not publishing.enabled():
+        publishing.draft(f"update {provider} issue {issue_id}", description)
+        return False
     if provider == "linear":
         return _update_linear(issue_id, description)
     if provider == "github":

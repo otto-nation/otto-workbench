@@ -13,7 +13,7 @@ setup() {
 }
 
 teardown() {
-  cd "$ORIG_DIR"
+  cd "$ORIG_DIR" || return 1
   rm -rf "$TMPDIR"
   common_teardown
 }

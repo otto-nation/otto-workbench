@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -234,6 +236,12 @@ def test_fetch_issue_context_github_subprocess_failure(capsys):
 
 
 # ── create_issue ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _publishing_allowed(publishing_on):
+    """These cover what a write does once it is allowed; the gate itself is
+    covered in pr_comments_test.py."""
 
 
 def test_create_issue_linear():

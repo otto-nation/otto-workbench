@@ -19,7 +19,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    count_severity, json_summary, parse_review_verdict, parse_session_log,
+    count_severity, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -243,61 +243,18 @@ def test_format_usage_total_includes_cache_reads(cr, tmp_path):
     assert "(10k cached)" in result
 
 
-def test_parse_session_log_model_usage(tmp_path):
-    log = tmp_path / "session.jsonl"
-    log.write_text(json.dumps({
-        "type": "result",
-        "total_cost_usd": 2.0,
-        "duration_ms": 30000,
-        "usage": {
-            "input_tokens": 100,
-            "output_tokens": 200,
-            "cache_read_input_tokens": 0,
-            "cache_creation_input_tokens": 0,
-        },
-        "modelUsage": {
-            "claude-sonnet-4-20250514": {
-                "input_tokens": 500,
-                "output_tokens": 300,
-                "cache_read_input_tokens": 1000,
-                "cache_creation_input_tokens": 200,
-            },
-            "claude-haiku-4-5-20251001": {
-                "input_tokens": 100,
-                "output_tokens": 50,
-                "cache_read_input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-            },
-        },
-    }) + "\n")
-    usage = parse_session_log(str(log))
-    assert usage.input_tokens == 600
-    assert usage.output_tokens == 350
-    assert usage.cache_read_tokens == 1000
-    assert usage.cache_write_tokens == 200
-    assert usage.cost == pytest.approx(2.0)
-
-
-def test_parse_session_log_no_model_usage_fallback(tmp_path):
-    log = str(tmp_path / "session.jsonl")
-    _make_session_log(log, cost=1.0, input_tokens=100, output_tokens=200)
-    usage = parse_session_log(log)
-    assert usage.input_tokens == 100
-    assert usage.output_tokens == 200
-
-
 def test_format_usage_model_usage_tokens(cr, tmp_path):
     log = str(tmp_path / "session.jsonl")
     _make_session_log(
         log, cost=2.0, input_tokens=100, output_tokens=200, duration_ms=10000,
         model_usage={
             "claude-sonnet-4-20250514": {
-                "input_tokens": 500, "output_tokens": 300,
-                "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200,
+                "inputTokens": 500, "outputTokens": 300,
+                "cacheReadInputTokens": 1000, "cacheCreationInputTokens": 200,
             },
             "claude-haiku-4-5-20251001": {
-                "input_tokens": 100, "output_tokens": 50,
-                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                "inputTokens": 100, "outputTokens": 50,
+                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
             },
         },
     )
@@ -1094,6 +1051,59 @@ def test_gc_preserves_active_pipeline(cr, reviews_dir):
 
     assert d.exists()
     assert (d / "group-1.jsonl").exists()
+
+
+# ── stray files at the reviews root ──────────────────────────────────────────
+
+STALE_MTIME = (1622505600, 1622505600)
+
+
+def test_gc_removes_stale_stray_files(cr, reviews_dir):
+    strays = ("check_hunks.py", "backfill_pr842.sql", "earning_pr829.go")
+    for name in strays:
+        p = reviews_dir / name
+        p.write_text("scratch")
+        os.utime(str(p), STALE_MTIME)
+
+    cleaned = review_gc.gc_reviews(reviews_dir)
+
+    assert cleaned == len(strays)
+    for name in strays:
+        assert not (reviews_dir / name).exists()
+
+
+def test_gc_removes_stranded_flat_artifacts(cr, reviews_dir):
+    """Suffixed leftovers from the flat layout whose `.md` is gone are unclaimable."""
+    stranded = reviews_dir / "maximum-1403.holistic.jsonl"
+    stranded.write_text("{}")
+    os.utime(str(stranded), STALE_MTIME)
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert not stranded.exists()
+
+
+def test_gc_keeps_flat_artifacts_the_migration_still_claims(cr, reviews_dir):
+    """A flat `.md` at the root means the startup migration owns its siblings."""
+    for name in ("maximum-1403.md", "maximum-1403.holistic.jsonl"):
+        p = reviews_dir / name
+        p.write_text("{}")
+        os.utime(str(p), STALE_MTIME)
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert (reviews_dir / "maximum-1403.md").exists()
+    assert (reviews_dir / "maximum-1403.holistic.jsonl").exists()
+
+
+def test_gc_preserves_recent_stray_files(cr, reviews_dir):
+    """A stray from a run still in flight is not garbage yet."""
+    stray = reviews_dir / "check_hunks.py"
+    stray.write_text("scratch")
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert stray.exists()
 
 
 # ── prune_merged_reviews ─────────────────────────────────────────────────────

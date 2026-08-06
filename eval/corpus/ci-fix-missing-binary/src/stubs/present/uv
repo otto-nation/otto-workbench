@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stands in for uv on the check that runs with the toolchain installed.
+exit 0

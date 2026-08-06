@@ -8,6 +8,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import review_common
 import review_findings
 import review_pipeline
 from review_common import Effort, Phase
@@ -102,40 +103,58 @@ class TestCommitFixes:
         job.review_file = str(tmp_path / "review.md")
         return job
 
+    @patch("review_pipeline.has_uncommitted_changes", return_value=False)
     @patch("review_pipeline.subprocess.run")
-    def test_no_diff_returns_early(self, mock_run, tmp_path):
-        job = self._make_job(tmp_path)
-        mock_run.return_value = MagicMock(returncode=0)
-        review_pipeline._commit_fixes(job, fixed=3, skipped=1)
-        assert mock_run.call_count == 2  # unstaged + staged checks
+    def test_no_diff_returns_early(self, mock_run, mock_dirty, tmp_path):
+        review_pipeline._commit_fixes(self._make_job(tmp_path), fixed=3, skipped=1)
+        mock_run.assert_not_called()
 
+    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
     @patch("review_pipeline._push_fixes")
     @patch("review_pipeline.subprocess.run")
-    def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
+    def test_commits_with_counts(self, mock_run, mock_push, mock_dirty, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=1),
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         review_pipeline._commit_fixes(job, fixed=3, skipped=1)
-        commit_call = mock_run.call_args_list[2]
+        commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "3 fixed, 1 skipped" in msg
 
+    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
     @patch("review_pipeline._push_fixes")
     @patch("review_pipeline.subprocess.run")
-    def test_zero_fixed_omits_count_from_message(self, mock_run, mock_push, tmp_path):
+    def test_zero_fixed_omits_count_from_message(
+        self, mock_run, mock_push, mock_dirty, tmp_path,
+    ):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=1),
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         review_pipeline._commit_fixes(job, fixed=0, skipped=2)
-        commit_call = mock_run.call_args_list[2]
+        commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
+
+    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_untracked_only_changes_are_staged(
+        self, mock_run, mock_push, mock_dirty, tmp_path,
+    ):
+        """A fix agent that only adds new files must still get them committed."""
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        review_pipeline._commit_fixes(job, fixed=1, skipped=0)
+        add_call = mock_run.call_args_list[0][0][0]
+        assert add_call[-2:] == ["add", "-A"]
+        assert mock_run.call_count == 2
 
 
 class TestParseCheckboxState:
@@ -309,84 +328,107 @@ class TestCommitFixesWithSummary:
         job.review_file = str(tmp_path / "review.md")
         return job
 
+    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
     @patch("review_pipeline._push_fixes")
     @patch("review_pipeline.subprocess.run")
-    def test_commit_includes_summary(self, mock_run, mock_push, tmp_path):
+    def test_commit_includes_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=1),
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
         review_pipeline._commit_fixes(job, fixed=1, skipped=1, summary=summary)
-        commit_call = mock_run.call_args_list[2]
+        commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "1 fixed, 1 skipped" in msg
         assert "corrected condition" in msg
         assert "needs design" in msg
 
+    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
     @patch("review_pipeline._push_fixes")
     @patch("review_pipeline.subprocess.run")
-    def test_commit_without_summary(self, mock_run, mock_push, tmp_path):
+    def test_commit_without_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=1),
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         review_pipeline._commit_fixes(job, fixed=2, skipped=0, summary="")
-        commit_call = mock_run.call_args_list[2]
+        commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "2 fixed, 0 skipped" in msg
         assert msg.count("\n\n") == 1
 
 
 class TestHasUncommittedChanges:
-    @patch("review_pipeline.subprocess.run")
+    """The commit gate for every fix pass — pipeline, ci-check, review-threads."""
+
+    @patch("review_common.subprocess.run")
     def test_unstaged_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1)
-        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
+        mock_run.return_value = MagicMock(returncode=0, stdout=" M handler.go\n")
+        assert review_common.has_uncommitted_changes("/tmp/wt") is True
         assert mock_run.call_count == 1
 
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_common.subprocess.run")
     def test_staged_only_changes(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0),  # unstaged clean
-            MagicMock(returncode=1),  # staged dirty
-        ]
-        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
-        assert mock_run.call_count == 2
+        mock_run.return_value = MagicMock(returncode=0, stdout="M  handler.go\n")
+        assert review_common.has_uncommitted_changes("/tmp/wt") is True
 
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_common.subprocess.run")
+    def test_untracked_only_changes(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="?? tests/run_ai.bats\n")
+        assert review_common.has_uncommitted_changes("/tmp/wt") is True
+
+    @patch("review_common.subprocess.run")
     def test_no_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
-        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is False
-        assert mock_run.call_count == 2
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        assert review_common.has_uncommitted_changes("/tmp/wt") is False
+
+    @patch("review_common.subprocess.run")
+    def test_accepts_a_path_object(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        review_common.has_uncommitted_changes(Path("/tmp/wt"))
+        assert mock_run.call_args[0][0][2] == "/tmp/wt"
 
 
-class TestCommitFixesStagedChanges:
+class TestPushFixes:
     def _make_job(self, tmp_path):
         job = MagicMock()
         job.wt_path = str(tmp_path / "worktree")
-        job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.log")
     @patch("review_pipeline.subprocess.run")
-    def test_staged_only_changes_still_commit(self, mock_run, mock_push, tmp_path):
-        job = self._make_job(tmp_path)
-        mock_run.side_effect = [
-            MagicMock(returncode=0),  # unstaged clean
-            MagicMock(returncode=1),  # staged dirty
-            MagicMock(returncode=0),  # git add -u
-            MagicMock(returncode=0, stdout="", stderr=""),  # git commit
-        ]
-        review_pipeline._commit_fixes(job, fixed=3, skipped=0)
-        assert mock_run.call_count == 4
-        commit_call = mock_run.call_args_list[3]
-        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
-        assert "3 fixed, 0 skipped" in msg
+    def test_diverged_push_suggests_force_with_lease(self, mock_run, mock_log, tmp_path):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stderr="! [rejected] main -> main (non-fast-forward)",
+        )
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        msg = mock_log.error.call_args[0][0]
+        assert "diverged" in msg
+        assert "--force-with-lease" in msg
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_hook_failure_does_not_suggest_force_push(self, mock_run, mock_log, tmp_path):
+        """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stderr="SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs",
+        )
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        msg = mock_log.error.call_args[0][0]
+        assert "--force-with-lease" not in msg
+        assert "committed locally but not pushed" in msg
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        mock_log.error.assert_not_called()
 
 
 class TestReconcileCheckboxes:
@@ -422,6 +464,48 @@ class TestReconcileCheckboxes:
         review.write_text(original)
         review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
         assert review.read_text() == original
+
+    @patch("review_pipeline._changed_source_files")
+    def test_checks_findings_on_extensionless_scripts(self, mock_changed, tmp_path):
+        """A finding on a bin script must reconcile, or it reports as skipped."""
+        mock_changed.return_value = {"ai/claude/bin/ci-check"}
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `ai/claude/bin/ci-check:777` — No session_log\n"
+        )
+        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        assert "- [x] **[M1]**" in review.read_text()
+
+
+class TestChangedSourceFiles:
+    @patch("review_pipeline.subprocess.run")
+    def test_includes_untracked_files(self, mock_run):
+        """A fix that only adds a new test file still fixed the finding."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="src/auth.go\n"),
+            MagicMock(returncode=0, stdout="tests/run_ai.bats\n"),
+        ]
+        assert review_pipeline._changed_source_files("/wt") == {
+            "src/auth.go", "tests/run_ai.bats",
+        }
+
+    @patch("review_pipeline.subprocess.run")
+    def test_untracked_query_excludes_ignored_files(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=0, stdout=""),
+        ]
+        review_pipeline._changed_source_files("/wt")
+        assert "--exclude-standard" in mock_run.call_args_list[1][0][0]
+
+    @patch("review_pipeline.subprocess.run")
+    def test_diff_failure_still_reports_untracked(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=128, stdout=""),
+            MagicMock(returncode=0, stdout="tests/new.bats\n"),
+        ]
+        assert review_pipeline._changed_source_files("/wt") == {"tests/new.bats"}
 
 
 class TestTurnBudgetScaling:
@@ -515,7 +599,6 @@ class TestRunFixPassRetry:
         job = MagicMock()
         job.review_file = str(review_file)
         job.wt_path = str(tmp_path)
-        job.reviews_dir = str(tmp_path)
         job.model = None
         job.effort = Effort.MEDIUM
         return job

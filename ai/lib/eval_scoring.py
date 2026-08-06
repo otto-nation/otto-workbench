@@ -1,7 +1,9 @@
-"""Evaluation scoring for model review benchmarks.
+"""Evaluation scoring, aggregation, and baseline comparison.
 
-Matches actual review findings against expected findings from a corpus
-manifest and produces precision, recall, severity accuracy, and cost metrics.
+Task-agnostic: what a run *is* and how it is scored belongs to the task
+(`eval_scoring_review`, `eval_scoring_cifix`, ...). What lives here is the shape
+of a score, the statistics over repeated runs, and the baseline diff — the parts
+every task shares.
 """
 
 from __future__ import annotations
@@ -9,33 +11,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from review_findings import Finding
-
-
-@dataclass(frozen=True)
-class ExpectedFinding:
-    severity: tuple[str, ...]
-    path: str
-    line_range: tuple[int, int]
-    category: str
-    description_contains: str = ""
-
-
-@dataclass
-class MatchResult:
-    expected: ExpectedFinding
-    matched: bool = False
-    matched_finding_id: str = ""
-    severity_exact: bool = False
-    matched_severity: str = ""
-
 
 @dataclass
 class ScoringResult:
+    """One scored run. `matches` holds task-defined match records, opaque here."""
     entry_name: str
     model: str
     run_index: int
-    matches: list[MatchResult] = field(default_factory=list)
+    matches: list = field(default_factory=list)
     false_positive_ids: list[str] = field(default_factory=list)
     recall: float = 0.0
     precision: float = 0.0
@@ -46,117 +29,8 @@ class ScoringResult:
     duration_ms: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
-
-
-def parse_manifest(
-    manifest: dict,
-) -> tuple[list[ExpectedFinding], int, list[str]]:
-    expected = []
-    for e in manifest.get("expected", []):
-        lr = e.get("line_range", [0, 0])
-        expected.append(ExpectedFinding(
-            severity=tuple(e.get("severity", [])),
-            path=e.get("path", ""),
-            line_range=(lr[0], lr[1]),
-            category=e.get("category", ""),
-            description_contains=e.get("description_contains", ""),
-        ))
-    fp_max = manifest.get("false_positives_max", 0)
-    tags = manifest.get("tags", [])
-    return expected, fp_max, tags
-
-
-def _path_matches(actual_path: str, expected_path: str) -> bool:
-    if actual_path == expected_path:
-        return True
-    return actual_path.endswith("/" + expected_path)
-
-
-def _finding_matches(actual: Finding, exp: ExpectedFinding) -> bool:
-    if not _path_matches(actual.path, exp.path):
-        return False
-    if actual.line is None:
-        return False
-    lo, hi = exp.line_range
-    if not (lo <= actual.line <= hi):
-        return False
-    if actual.severity not in exp.severity:
-        return False
-    if exp.description_contains:
-        if exp.description_contains.lower() not in actual.body.lower():
-            return False
-    return True
-
-
-def _find_match(
-    exp: ExpectedFinding, actuals: list[Finding], used: set[int],
-) -> MatchResult:
-    mr = MatchResult(expected=exp)
-    for i, actual in enumerate(actuals):
-        if i in used or not _finding_matches(actual, exp):
-            continue
-        mr.matched = True
-        mr.matched_finding_id = actual.id
-        mr.matched_severity = actual.severity
-        mr.severity_exact = actual.severity == exp.severity[0]
-        used.add(i)
-        break
-    return mr
-
-
-def match_findings(
-    expected: list[ExpectedFinding],
-    actuals: list[Finding],
-) -> tuple[list[MatchResult], list[str]]:
-    used: set[int] = set()
-    results = [_find_match(exp, actuals, used) for exp in expected]
-
-    false_positive_ids = [
-        actuals[i].id for i in range(len(actuals)) if i not in used
-    ]
-    return results, false_positive_ids
-
-
-def score_entry(
-    entry_name: str,
-    model: str,
-    run_index: int,
-    expected: list[ExpectedFinding],
-    actuals: list[Finding],
-    false_positives_max: int,
-    cost_usd: float = 0.0,
-    duration_ms: int = 0,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-) -> ScoringResult:
-    matches, fp_ids = match_findings(expected, actuals)
-    matched_count = sum(1 for m in matches if m.matched)
-    total_expected = len(expected)
-    total_actual = len(actuals)
-
-    recall = matched_count / total_expected if total_expected else 0.0
-    precision = matched_count / total_actual if total_actual else (
-        1.0 if total_expected == 0 else 0.0
-    )
-    sev_exact = sum(1 for m in matches if m.severity_exact)
-    sev_acc = sev_exact / matched_count if matched_count else 0.0
-
-    return ScoringResult(
-        entry_name=entry_name,
-        model=model,
-        run_index=run_index,
-        matches=matches,
-        false_positive_ids=fp_ids,
-        recall=recall,
-        precision=precision,
-        severity_accuracy=sev_acc,
-        false_positive_count=len(fp_ids),
-        false_positive_ok=len(fp_ids) <= false_positives_max,
-        cost_usd=cost_usd,
-        duration_ms=duration_ms,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-    )
+    billed_input: int = 0
+    cache_read_ratio: float = 0.0
 
 
 def aggregate_runs(results: list[ScoringResult]) -> dict:
@@ -167,6 +41,8 @@ def aggregate_runs(results: list[ScoringResult]) -> dict:
             "severity_accuracy_mean": 0.0,
             "false_positive_mean": 0.0,
             "cost_mean": 0.0, "duration_mean_ms": 0,
+            "billed_input_mean": 0.0, "output_tokens_mean": 0.0,
+            "cache_read_ratio_mean": 0.0,
         }
 
     def _mean(vals: list[float]) -> float:
@@ -194,6 +70,9 @@ def aggregate_runs(results: list[ScoringResult]) -> dict:
         "false_positive_mean": _mean(fps),
         "cost_mean": _mean(costs),
         "duration_mean_ms": int(_mean(durations)),
+        "billed_input_mean": _mean([float(r.billed_input) for r in results]),
+        "output_tokens_mean": _mean([float(r.output_tokens) for r in results]),
+        "cache_read_ratio_mean": _mean([r.cache_read_ratio for r in results]),
     }
 
 
@@ -227,7 +106,15 @@ def format_summary_table(
     return "\n".join(rows)
 
 
+# Version 2 added the token metrics the CI ratchet gates on. Version 1 baselines
+# still load: a metric they never recorded is ungated, not failing.
+SCHEMA_VERSION = 2
+_SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+
 _ENTRY_METRIC_KEYS = {"recall_mean", "precision_mean"}
+_OPTIONAL_METRIC_KEYS = {
+    "billed_input_mean", "output_tokens_mean", "cache_read_ratio_mean",
+}
 
 
 def _validate_entry(name: str, entry: object) -> list[str]:
@@ -238,6 +125,9 @@ def _validate_entry(name: str, entry: object) -> list[str]:
         if key not in entry:
             errors.append(f"entry '{name}': missing {key}")
         elif not isinstance(entry[key], (int, float)):
+            errors.append(f"entry '{name}': {key} must be a number")
+    for key in _OPTIONAL_METRIC_KEYS & set(entry):
+        if not isinstance(entry[key], (int, float)):
             errors.append(f"entry '{name}': {key} must be a number")
     if "runs" in entry and not isinstance(entry["runs"], list):
         errors.append(f"entry '{name}': runs must be a list")
@@ -251,7 +141,7 @@ def validate_baseline_schema(data: object) -> list[str]:
 
     if "schema_version" not in data:
         errors.append("missing required field: schema_version")
-    elif data["schema_version"] != 1:
+    elif data["schema_version"] not in _SUPPORTED_SCHEMA_VERSIONS:
         errors.append(f"unsupported schema_version: {data['schema_version']}")
 
     if "model" not in data:
@@ -270,6 +160,17 @@ def validate_baseline_schema(data: object) -> list[str]:
     return errors
 
 
+# Tokens are where the money is: 15% headroom on the two metrics that carry the
+# bill. The cache-read floor is a separate shape — an absolute minimum, not a
+# delta — because a caching regression shows up as the ratio collapsing, and the
+# baseline it collapsed from is not the interesting number.
+TOKEN_REGRESSION_RATIO = 0.15
+CACHE_READ_FLOOR = 0.60
+
+_RELATIVE_TOKEN_METRICS = ("billed_input_mean", "output_tokens_mean")
+_DISPLAY_METRICS = ("cost_mean", "duration_mean_ms")
+
+
 def _compare_metric(
     baseline_val: float, current_val: float,
     threshold: float, higher_is_better: bool,
@@ -284,6 +185,72 @@ def _compare_metric(
         "current": current_val,
         "delta": delta,
         "regression": regression,
+        "gated": True,
+    }
+
+
+def _compare_relative(baseline_val: float, current_val: float, ratio: float) -> dict:
+    """Growth past `ratio` of the baseline. Exactly at the ratio is still within budget."""
+    return {
+        "baseline": baseline_val,
+        "current": current_val,
+        "delta": current_val - baseline_val,
+        "regression": current_val > baseline_val * (1 + ratio),
+        "gated": True,
+    }
+
+
+def _compare_floor(baseline_val: float, current_val: float, floor: float) -> dict:
+    """An absolute minimum. Movement above the floor is noise, not a regression."""
+    return {
+        "baseline": baseline_val,
+        "current": current_val,
+        "delta": current_val - baseline_val,
+        "regression": current_val < floor,
+        "gated": True,
+    }
+
+
+def _gate_quality_metrics(base: dict, cur: dict, threshold: float) -> dict[str, dict]:
+    """Finding quality — unchanged behavior: any drop past the noise floor gates."""
+    metrics = {
+        key: _compare_metric(base.get(key, 0.0), cur.get(key, 0.0),
+                             threshold, higher_is_better=True)
+        for key in ("recall_mean", "precision_mean", "severity_accuracy_mean")
+    }
+    metrics["false_positive_mean"] = _compare_metric(
+        base.get("false_positive_mean", 0.0), cur.get("false_positive_mean", 0.0),
+        0.5, higher_is_better=False,
+    )
+    return metrics
+
+
+def _gate_token_metrics(base: dict, cur: dict) -> dict[str, dict]:
+    """Token spend. A metric absent from either side is unknown, so it stays ungated."""
+    metrics: dict[str, dict] = {}
+    for key in _RELATIVE_TOKEN_METRICS:
+        # A zero baseline means the run was never measured — nothing to ratchet against.
+        if key not in base or key not in cur or base[key] <= 0:
+            continue
+        metrics[key] = _compare_relative(base[key], cur[key], TOKEN_REGRESSION_RATIO)
+
+    key = "cache_read_ratio_mean"
+    if key in base and key in cur:
+        metrics[key] = _compare_floor(base[key], cur[key], CACHE_READ_FLOOR)
+    return metrics
+
+
+def _display_metrics(base: dict, cur: dict) -> dict[str, dict]:
+    """Reported, never gated: model prices and machine load make these flap."""
+    return {
+        key: {
+            "baseline": base.get(key, 0.0),
+            "current": cur.get(key, 0.0),
+            "delta": cur.get(key, 0.0) - base.get(key, 0.0),
+            "regression": False,
+            "gated": False,
+        }
+        for key in _DISPLAY_METRICS if key in base or key in cur
     }
 
 
@@ -292,37 +259,14 @@ def _compare_entry_pair(
     entry_name: str, model_label: str,
     threshold: float,
 ) -> tuple[dict[str, dict], list[tuple[str, str, str, float]]]:
-    metrics: dict[str, dict] = {}
-    regs: list[tuple[str, str, str, float]] = []
+    metrics = _gate_quality_metrics(base_entry, cur_model, threshold)
+    metrics.update(_gate_token_metrics(base_entry, cur_model))
+    metrics.update(_display_metrics(base_entry, cur_model))
 
-    for key in ("recall_mean", "precision_mean", "severity_accuracy_mean"):
-        m = _compare_metric(
-            base_entry.get(key, 0.0), cur_model.get(key, 0.0),
-            threshold, higher_is_better=True,
-        )
-        metrics[key] = m
-        if m["regression"]:
-            regs.append((entry_name, model_label, key, m["delta"]))
-
-    fp_m = _compare_metric(
-        base_entry.get("false_positive_mean", 0.0),
-        cur_model.get("false_positive_mean", 0.0),
-        0.5, higher_is_better=False,
-    )
-    metrics["false_positive_mean"] = fp_m
-    if fp_m["regression"]:
-        regs.append((entry_name, model_label, "false_positive_mean", fp_m["delta"]))
-
-    cost_base = base_entry.get("cost_mean", 0.0)
-    cost_threshold = cost_base * 0.5 if cost_base > 0 else 0.5
-    cost_m = _compare_metric(
-        cost_base, cur_model.get("cost_mean", 0.0),
-        cost_threshold, higher_is_better=False,
-    )
-    # ceiling: cost is informational-only — not added to regs because relative
-    # thresholds are model-dependent and unsuitable for hard gating
-    metrics["cost_mean"] = cost_m
-
+    regs = [
+        (entry_name, model_label, key, m["delta"])
+        for key, m in metrics.items() if m["regression"]
+    ]
     return metrics, regs
 
 
@@ -372,39 +316,49 @@ def compare_baselines(
     return out
 
 
+_COUNT_METRICS = {
+    "billed_input_mean", "output_tokens_mean", "duration_mean_ms",
+    "false_positive_mean",
+}
+
+
+def _format_values(metric_name: str, m: dict) -> tuple[str, str, str]:
+    if metric_name == "cost_mean":
+        return (f"${m['baseline']:.2f}", f"${m['current']:.2f}",
+                f"{m['delta']:+.2f}")
+    if metric_name in _COUNT_METRICS:
+        return (f"{m['baseline']:,.1f}", f"{m['current']:,.1f}",
+                f"{m['delta']:+,.1f}")
+    return (f"{m['baseline']:.0%}", f"{m['current']:.0%}", f"{m['delta']:+.0%}")
+
+
 def _format_metric_row(
     entry: str, model: str, metric_name: str, m: dict,
 ) -> str:
-    if metric_name == "cost_mean":
-        base_s = f"${m['baseline']:.2f}"
-        cur_s = f"${m['current']:.2f}"
-        delta_s = f"{m['delta']:+.2f}"
-    elif metric_name == "false_positive_mean":
-        base_s = f"{m['baseline']:.1f}"
-        cur_s = f"{m['current']:.1f}"
-        delta_s = f"{m['delta']:+.1f}"
-    else:
-        base_s = f"{m['baseline']:.0%}"
-        cur_s = f"{m['current']:.0%}"
-        delta_s = f"{m['delta']:+.0%}"
+    base_s, cur_s, delta_s = _format_values(metric_name, m)
 
+    # "changed", not "improved": a delta that stays inside the threshold can
+    # still be movement in the wrong direction.
     if m["regression"]:
         status = "REGRESSED"
-    elif m["delta"] != 0:
-        status = "improved"
     else:
-        status = "-"
+        status = "changed" if m["delta"] != 0 else "-"
+
+    gate = "ungated" if not m.get("gated", True) else \
+        ("fail" if m["regression"] else "pass")
 
     display_name = metric_name.replace("_mean", "").replace("_", " ")
     return (
         f"| {entry} | {model} | {display_name} "
-        f"| {base_s} | {cur_s} | {delta_s} | {status} |"
+        f"| {base_s} | {cur_s} | {delta_s} | {status} | {gate} |"
     )
 
 
 def format_comparison_table(comparison: dict) -> str:
-    header = "| Entry | Model | Metric | Baseline | Current | Delta | Status |"
-    sep = "|---|---|---|---|---|---|---|"
+    header = (
+        "| Entry | Model | Metric | Baseline | Current | Delta | Status | Gate |"
+    )
+    sep = "|---|---|---|---|---|---|---|---|"
     rows = [header, sep]
 
     for (entry, model), metrics in sorted(comparison.get("comparisons", {}).items()):
@@ -412,8 +366,8 @@ def format_comparison_table(comparison: dict) -> str:
             rows.append(_format_metric_row(entry, model, metric_name, m))
 
     for entry, model in comparison.get("new_entries", []):
-        rows.append(f"| {entry} | {model} | - | - | - | - | new |")
+        rows.append(f"| {entry} | {model} | - | - | - | - | new | - |")
     for entry, model in comparison.get("missing_entries", []):
-        rows.append(f"| {entry} | {model} | - | - | - | - | missing |")
+        rows.append(f"| {entry} | {model} | - | - | - | - | missing | - |")
 
     return "\n".join(rows)

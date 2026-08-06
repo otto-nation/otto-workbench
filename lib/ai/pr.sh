@@ -223,7 +223,7 @@ _pr_generate_single_commit() {
 
   if [[ "$PR_HAS_TEMPLATE" = "true" ]]; then
     echo "→ Single commit — using commit message as title, AI filling template"
-    run_ai "$(prompt_pr_single_commit "$commit_subject" "$commit_body" "$changed_files")"
+    run_ai "$(prompt_pr_single_commit "$commit_subject" "$commit_body" "$changed_files")" "" "pr-description"
     PR_DESCRIPTION="${AI_RESPONSE:-$PR_TEMPLATE}"
   elif [[ -n "$commit_body" ]]; then
     echo "→ Single commit — skipping AI, using commit message directly"
@@ -249,7 +249,7 @@ $(echo "$changed_files" | sed 's/^/- /')
 _pr_generate_multi_commit() {
   local branch="$1" issue="$2" commits="$3" commit_count="$4" changed_files="$5"
 
-  run_ai "$(prompt_pr_multi_commit "$branch" "$issue" "$commits" "$commit_count" "$changed_files")"
+  run_ai "$(prompt_pr_multi_commit "$branch" "$issue" "$commits" "$commit_count" "$changed_files")" "" "pr-description"
 
   # shellcheck disable=SC2016  # backticks in single-quoted sed pattern are literal, not shell expansions
   PR_TITLE=$(echo "$AI_RESPONSE" | grep "^$PR_TITLE_MARKER" | sed "s/^$PR_TITLE_MARKER //" | head -1 | tr -d '\n\r' | sed 's/^`//;s/`$//')

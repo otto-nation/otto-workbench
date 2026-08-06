@@ -6,11 +6,11 @@ setup() {
   source_lib
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
-  cd "$TMPDIR"
+  cd "$TMPDIR" || return 1
 }
 
 teardown() {
-  cd "$ORIG_DIR"
+  cd "$ORIG_DIR" || return 1
   rm -rf "$TMPDIR"
   common_teardown
 }

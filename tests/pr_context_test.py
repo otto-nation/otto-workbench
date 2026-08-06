@@ -247,7 +247,11 @@ def test_default_branch_is_not_hardcoded_to_main(mock_run):
 @patch("pr_context.subprocess.run")
 def test_default_branch_falls_back_when_origin_head_is_unset(mock_run):
     """An unfetched clone has no origin/HEAD; callers need a base ref anyway."""
-    mock_run.return_value = MagicMock(returncode=1, stdout="")
+    # returncode is not inspected — the implementation only checks stdout.strip()
+    # for truthiness.  A zero exit with empty stdout is the real trigger for the
+    # "main" fallback (git symbolic-ref exits 0 but prints nothing when origin/HEAD
+    # is unset on some git versions).
+    mock_run.return_value = MagicMock(returncode=0, stdout="")
     assert default_branch() == "main"
 
 
@@ -262,7 +266,9 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
         returncode=0, stdout="refs/remotes/origin/main\n",
     )
     default_branch("/wt/feature")
-    assert mock_run.call_args[0][0][:3] == ["git", "-C", "/wt/feature"]
+    # Scoped via subprocess's cwd, matching every other git call in this module.
+    assert mock_run.call_args.kwargs["cwd"] == "/wt/feature"
+    assert mock_run.call_args[0][0][0] == "git"
 
 
 # ── Bare-repo worktree resolution ─────────────────────────────────────────

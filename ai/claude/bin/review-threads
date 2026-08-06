@@ -582,6 +582,11 @@ def _resolve_default_branch(wt_path: Path) -> str:
     The default branch cannot change mid-run and several call sites need it per
     file processed, so the shared resolver is memoised here rather than in the
     library every script imports.
+
+    The cache is process-global (no `cache_clear` exposed).  Safe for a single
+    CLI invocation, but a test harness that exercises multiple worktree paths
+    with different mocked git state must call `_resolve_default_branch.cache_clear()`
+    between cases to avoid stale results from an earlier call.
     """
     return pr_context.default_branch(wt_path)
 
@@ -1100,11 +1105,19 @@ def _resolve_fixed_threads(
     fixed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
 ) -> int:
-    """Resolve fixed threads on GitHub. Returns count resolved."""
+    """Resolve fixed threads on GitHub. Returns count resolved.
+
+    Entries absent from threads_by_id are silently skipped — they are either
+    comment items with synthetic IDs (ic-…/rb-…) that are not real review
+    threads, or items added by callers for a different purpose.  Do not add
+    comment items to `fixed` expecting them to be resolved here.
+    """
     resolved = 0
     for entry in fixed:
         thread = threads_by_id.get(entry.id)
-        if thread and thread.is_resolved:
+        if thread is None:
+            continue
+        if thread.is_resolved:
             continue
         if pc.resolve_thread(entry.id):
             resolved += 1

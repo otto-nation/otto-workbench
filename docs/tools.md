@@ -315,7 +315,7 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--finish]` | Fetch and manage PR review threads |
+| `comments [--triage] [--fix] [--finish]` | Fetch and manage PR review threads (see phases below) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
@@ -330,12 +330,14 @@ because the summary is meant to describe a finished conversation.
 `--finish` closes out what `--fix` held back: replies on threads whose commit
 had not yet been pushed, a tracking issue for the deferred ones, and the
 summary comment. It is a second invocation on purpose — the discussion has to
-happen in between. Combining them (`--fix --finish`) works and closes out that
+happen in between. ⚠️ Combining them (`--fix --finish`) works and closes out that
 run's deferred set, but posts a summary nobody has replied to yet.
 
-`--resolve` and `--resolve-verified` are aliases for `--finish`. The old name
-was misleading: resolving verified threads happens under `--triage`, which
-`--fix` implies, so the flag never gated resolution.
+`--resolve` is an alias for `--finish`. `--resolve-verified` is the historical
+name from `claude-review threads` (see above) — both flags are now accepted by
+`pr comments` for backwards compatibility, but the canonical name is `--finish`.
+The old name was misleading: resolving verified threads happens under `--triage`,
+which `--fix` implies, so the flag never gated resolution.
 
 **`pr describe` is commit-aware:**
 
@@ -346,7 +348,9 @@ it unconditionally at the end of every run. `--force` ignores the recorded SHA;
 
 The template is read from the first of `.github/pull_request_template.md`,
 `.github/PULL_REQUEST_TEMPLATE.md`, `pull_request_template.md`, or
-`PULL_REQUEST_TEMPLATE.md`, falling back to Summary / Changes / Testing.
+`PULL_REQUEST_TEMPLATE.md`. Repos with no file at any of these four paths silently
+get the built-in fallback (Summary / Changes / Testing only); a differently-named
+template file is not detected.
 
 **Push status in `pr status`:**
 

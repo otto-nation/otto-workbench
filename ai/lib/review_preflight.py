@@ -822,7 +822,9 @@ def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMe
     )
 
 
-def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
+def fetch_pr_metadata(
+    repo: str, pr_number: str, pin_sha: str = "", wt_path: str = "",
+) -> PRMetadata:
     raw = _run([
         "gh", "pr", "view", pr_number, "--repo", repo,
         "--json", "title,body,headRefName,baseRefName,headRefOid,"
@@ -833,19 +835,36 @@ def fetch_pr_metadata(repo: str, pr_number: str) -> PRMetadata:
         log.error(f"failed to fetch PR #{pr_number} from {repo}")
         sys.exit(1)
     data = json.loads(raw)
+    head_sha = data["headRefOid"]
+    additions = data["additions"]
+    deletions = data["deletions"]
+    changed_files = data["changedFiles"]
+    files = [
+        {"path": f["path"], "additions": f["additions"], "deletions": f["deletions"]}
+        for f in data["files"]
+    ]
+
+    # --recover completes a run against the commit it started from, so the
+    # changeset must come from the pinned checkout rather than the moved PR head.
+    if pin_sha and pin_sha != head_sha and wt_path:
+        numstat = _run(
+            ["git", "diff", "--numstat", f"origin/{data['baseRefName']}...HEAD"],
+            cwd=wt_path,
+        )
+        files, additions, deletions = _parse_numstat(numstat)
+        changed_files = len(files)
+        head_sha = pin_sha
+
     return PRMetadata(
         title=data["title"],
         body=data.get("body") or "",
         head=data["headRefName"],
         base=data["baseRefName"],
-        head_sha=data["headRefOid"],
-        additions=data["additions"],
-        deletions=data["deletions"],
-        changed_files=data["changedFiles"],
-        files=[
-            {"path": f["path"], "additions": f["additions"], "deletions": f["deletions"]}
-            for f in data["files"]
-        ],
+        head_sha=head_sha,
+        additions=additions,
+        deletions=deletions,
+        changed_files=changed_files,
+        files=files,
         is_draft=data.get("isDraft", False),
         labels=[l["name"] for l in data.get("labels", [])],
         author=(data.get("author") or {}).get("login", ""),

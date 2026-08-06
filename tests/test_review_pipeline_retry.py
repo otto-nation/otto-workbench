@@ -1,4 +1,4 @@
-"""Tests for the shared missing-output retry used by single-agent phases."""
+"""Tests for the single-agent retry and multi-phase recovery resolution."""
 
 import json
 import sys
@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_agent
 import review_pipeline
+import review_preflight
 
 _TURNS = 15
 _MAX_TURNS = f"agent hit max turns ({_TURNS})"
@@ -196,3 +197,55 @@ class TestRetryMissingOutput:
         assert self._run(invoke, log_path, str(output)) == ""
         assert invoke.calls == []
         assert "## Summary" in output.read_text()
+
+
+_PINNED_SHA = "old1234"
+_GROUPS = [review_preflight.Group(name="g1", files=["a.py"], lines=10)]
+
+
+def _recovery_job(tmp_path: Path, head_sha: str) -> review_pipeline.ReviewJob:
+    return review_pipeline.ReviewJob(
+        repo="org/repo", pr_number="1",
+        pr=review_pipeline.PRMetadata(
+            title="t", body="", head="b", base="main", head_sha=head_sha,
+            additions=1, deletions=1, changed_files=1, files=[]),
+        ctx=review_pipeline.PRContext(), wt_path=str(tmp_path),
+        review_file=str(tmp_path / "review.md"), session_log=str(tmp_path / "s.jsonl"),
+        reviews_dir=str(tmp_path),
+    )
+
+
+def _write_failed_state(tmp_path: Path) -> Path:
+    path = tmp_path / "pipeline.json"
+    path.write_text(json.dumps({
+        "head_sha": _PINNED_SHA, "group_names": ["g1"], "holistic_done": True,
+        "groups_done": [], "groups_failed": {"0": "quota"},
+        "synthesis_done": False, "synthesis_failed": "",
+    }))
+    return path
+
+
+class TestResolveRecoveryPinnedMetadata:
+    """--recover pins job metadata to the failed run's SHA so state survives."""
+
+    def test_pinned_metadata_resumes_the_partial_pipeline(self, tmp_path):
+        state_path = _write_failed_state(tmp_path)
+        job = _recovery_job(tmp_path, _PINNED_SHA)
+
+        _, skip_groups, skip_holistic, state = review_pipeline._resolve_recovery(
+            job, _GROUPS,
+        )
+
+        assert state is not None
+        assert skip_holistic is True
+        assert skip_groups is None
+        assert state_path.exists()
+
+    def test_unpinned_metadata_discards_the_state(self, tmp_path):
+        state_path = _write_failed_state(tmp_path)
+        job = _recovery_job(tmp_path, "new5678")
+
+        _, _, _, state = review_pipeline._resolve_recovery(job, _GROUPS)
+
+        assert state is None
+        assert not state_path.exists()

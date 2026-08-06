@@ -68,6 +68,37 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
     return WorktreeResult(path=fallback_path, cleanup_ref=fallback_path, is_fallback=True)
 
 
+def detached_worktree_at(sha: str, repo_dir: str, label: str) -> WorktreeResult | None:
+    """Create a throwaway detached worktree at *sha*, or None if it is unreachable.
+
+    Used by --recover to pin a partially-completed review to the commit it was
+    started from. Detaching leaves every branch ref untouched, so this is safe to
+    run against a repo whose worktrees hold the user's live development state.
+    """
+    probe = subprocess.run(
+        ["git", "-C", repo_dir, "cat-file", "-e", f"{sha}^{{commit}}"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode != 0:
+        return None
+
+    path = f"{repo_dir}/{WORKTREE_FALLBACK_DIR}/{label}"
+
+    subprocess.run(
+        ["git", "-C", repo_dir, "worktree", "remove", "--force", path],
+        capture_output=True, text=True,
+    )
+
+    result = subprocess.run(
+        ["git", "-C", repo_dir, "worktree", "add", "--detach", path, sha],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    return WorktreeResult(path=path, cleanup_ref=path, is_fallback=True)
+
+
 def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
     log.info(f"Switching to branch {branch}...")
 

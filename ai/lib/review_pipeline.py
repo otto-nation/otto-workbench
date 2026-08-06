@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from pathlib import Path
 
@@ -1781,6 +1781,29 @@ def run_multi_phase(
         )
 
 
+def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:
+    """PR narrative over the worktree's own diff surface.
+
+    Self-review reads files out of the worktree, so the SHA and changed-file
+    list have to come from git. Taking them from GitHub silently drops every
+    unpushed commit: the diff is local but the file list is not, so the review
+    never opens the files those commits touched.
+    """
+    if pr.head_sha != local.head_sha:
+        log.info(
+            f"Reviewing local HEAD {local.head_sha[:7]} "
+            f"(PR head is {pr.head_sha[:7]})"
+        )
+    return replace(
+        pr,
+        head_sha=local.head_sha,
+        additions=local.additions,
+        deletions=local.deletions,
+        changed_files=local.changed_files,
+        files=local.files,
+    )
+
+
 def _fetch_metadata(
     repo: str, pr_number: str, mode: Mode, wt_path: str,
 ) -> tuple[PRMetadata, PRContext, PRData | None]:
@@ -1791,7 +1814,8 @@ def _fetch_metadata(
     with ThreadPoolExecutor(max_workers=2) as pool:
         pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
         if mode == Mode.SELF:
-            return pr_future.result(), PRContext(), None
+            pr = pr_future.result()
+            return _with_local_diff(pr, fetch_branch_metadata(wt_path, pr.base)), PRContext(), None
         pd_future = pool.submit(fetch_pr_data, repo, pr_number)
         pr_data = pd_future.result()
         ctx = fetch_pr_context(repo, pr_number, pr_data)

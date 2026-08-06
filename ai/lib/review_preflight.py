@@ -169,7 +169,6 @@ DEFAULT_MAX_PARALLEL = 1
 HOLISTIC_MIN_GROUPS = 8
 
 DEFAULT_BASE_BRANCH = "main"
-GIT_RANGE_TO_HEAD = f"origin/{DEFAULT_BASE_BRANCH}..HEAD"
 
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
@@ -721,15 +720,16 @@ def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:
     return files, total_add, total_del
 
 
-def fetch_branch_metadata(wt_path: str) -> PRMetadata:
+def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMetadata:
     head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
     branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
+    log_range = f"origin/{base}..HEAD"
 
-    log_output = _run(["git", "log", GIT_RANGE_TO_HEAD, "--oneline"], cwd=wt_path)
+    log_output = _run(["git", "log", log_range, "--oneline"], cwd=wt_path)
     first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
     title = first_subject
 
-    numstat = _run(["git", "diff", "--numstat", GIT_RANGE_TO_HEAD], cwd=wt_path)
+    numstat = _run(["git", "diff", "--numstat", f"origin/{base}...HEAD"], cwd=wt_path)
     files, total_add, total_del = _parse_numstat(numstat)
 
     # Fall back to uncommitted changes when there are no commits on the
@@ -742,7 +742,7 @@ def fetch_branch_metadata(wt_path: str) -> PRMetadata:
         title=title,
         body="",
         head=branch,
-        base=DEFAULT_BASE_BRANCH,
+        base=base,
         head_sha=head_sha,
         additions=total_add,
         deletions=total_del,

@@ -893,10 +893,13 @@ def run_fix_pass(job: ReviewJob):
     budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
     log.info("Fix pass — applying review findings...")
     log.blank()
+    # No AgentKind: every reviewer persona is instructed never to modify source
+    # files, which contradicts this phase's prompt. Passing None runs the
+    # default agent, which can edit the branch.
     invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
                  review_file=job.review_file, model=model, thinking_level=thinking,
                  provider=provider, max_turns=max_turns, max_budget=budget,
-                 agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+                 agent=None, throttle=job.throttle)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -922,7 +925,7 @@ def run_fix_pass(job: ReviewJob):
                          review_file=job.review_file, model=model,
                          thinking_level=thinking, provider=provider,
                          max_turns=retry_turns, max_budget=budget,
-                         agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+                         agent=None, throttle=job.throttle)
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)

@@ -55,6 +55,7 @@ def severity_by_key(key: str) -> SeverityConfig:
 
 
 SECTION_FILE_TRIAGE = "File Triage"
+SECTION_STATIC_ANALYSIS = "Static Analysis"
 
 
 def plural(n: int) -> str:

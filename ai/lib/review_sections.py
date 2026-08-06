@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from review_common import SECTION_FILE_TRIAGE, SEVERITIES
+from review_common import SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS, SEVERITIES
 from review_findings import _extract_section
 
 POSITION_BEFORE = "before_findings"
@@ -43,7 +43,7 @@ KNOWN_SECTIONS: list[SectionConfig] = [
                   heading="## Summary", trailing_separator=True),
     SectionConfig("verdict", "Verdict", POSITION_BEFORE,
                   heading="### Verdict", strip_action=True, subsection_of="summary"),
-    SectionConfig("static_analysis", "Static Analysis", POSITION_AFTER),
+    SectionConfig("static_analysis", SECTION_STATIC_ANALYSIS, POSITION_AFTER),
 ]
 
 _KNOWN_BY_HEADER: dict[str, SectionConfig] = {

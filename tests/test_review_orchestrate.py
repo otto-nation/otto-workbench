@@ -3497,6 +3497,28 @@ class TestFetchBranchMetadata:
         paths = [f["path"] for f in pr.files]
         assert paths == ["feat.go"]
 
+    def test_the_base_ref_is_fetched_before_the_range_is_built(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        # Origin is added but never fetched, so origin/main does not resolve and
+        # the fork point would collapse to HEAD — hiding every commit.
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(repo)], cwd=str(repo),
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        self._commit_all(repo, "add feat")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+
     def test_base_argument_selects_the_diff_range(self, ro, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()

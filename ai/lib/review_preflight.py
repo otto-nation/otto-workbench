@@ -249,6 +249,16 @@ def _file_permissions(path: Path) -> str:
         return "?"
 
 
+def _fetch_base(wt_path: str, base: str) -> None:
+    """Refresh ``origin/<base>``.
+
+    Every range in a review is anchored to that ref, so each entry point
+    refreshes it before reading. A stale ref would otherwise put the file list
+    and the diff on two different fork points.
+    """
+    _run(["git", "fetch", "origin", base], cwd=wt_path, check=False)
+
+
 def _fork_point(wt_path: str, base: str) -> str:
     """Commit the branch forked from, or ``HEAD`` when the base is unreachable.
 
@@ -287,7 +297,14 @@ def _join_nonempty(*parts: str) -> str:
 
 
 def _worktree_diff(wt_path: str, since: str) -> str:
-    """Every change from ``since`` to the working tree, untracked files included."""
+    """Every change from ``since`` to the working tree, untracked files included.
+
+    ``since`` bounds the tracked half only. Untracked files have no history to
+    compare against, so they come through whole every time — on a delta review
+    that means one lingering across runs is re-shown rather than dropped.
+    """
+    # ceiling: untracked files ignore `since`; upgrade to diffing against the
+    # prior review's copy if repeated deltas start drowning in re-shown files.
     return _join_nonempty(
         _run(["git", "diff", since], cwd=wt_path),
         _diff_untracked(wt_path, _untracked_files(wt_path)),
@@ -335,7 +352,7 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
 def _collect_git_data(
     wt_path: str, base: str, pr_files: list[dict], include_worktree: bool = False,
 ) -> tuple[str, str]:
-    _run(["git", "fetch", "origin", base], cwd=wt_path, check=False)
+    _fetch_base(wt_path, base)
     commit_log = _run(
         ["git", "log", "--stat", "--reverse", f"origin/{base}..HEAD"], cwd=wt_path,
     )
@@ -774,6 +791,7 @@ def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:
 
 
 def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMetadata:
+    _fetch_base(wt_path, base)
     head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
     branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
     log_range = f"origin/{base}..HEAD"

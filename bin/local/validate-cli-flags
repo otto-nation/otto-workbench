@@ -42,7 +42,9 @@ _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); echo -e "  ${RED}â
 BIN_DIR="$_SCRIPT_ROOT/ai/claude/bin"
 
 # Internal scripts allowed to use --repo as slug (not user-facing)
-REPO_SLUG_ALLOWLIST="review-orchestrate"
+# ai-usage-log: --repo is a ledger data field recorded alongside --pr, not a
+# location to resolve â€” there is no directory for --repo-dir to point at
+REPO_SLUG_ALLOWLIST="review-orchestrate ai-usage-log"
 
 # Scripts with known --repo alias violations pending replacement
 # claude-review: being rewritten in Python on isaac-refactor-claude_review_to_python

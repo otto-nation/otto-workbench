@@ -618,5 +618,5 @@ class TestRunFixPassRetry:
         job = self._make_job(tmp_path)
         review_pipeline.run_fix_pass(job)
         assert mock_invoke.call_count == 2
-        agents = [c[1]["agent"] for c in mock_invoke.call_args_list]
+        agents = [c.args[0].agent for c in mock_invoke.call_args_list]
         assert agents == [None, None]

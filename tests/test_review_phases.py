@@ -58,7 +58,7 @@ class TestPhaseMaxTurnsDefaults:
 
 
 class TestPhaseAgentPins:
-    """Four phases are pinned to reviewer-lite regardless of --effort.
+    """Three phases are pinned to reviewer-lite regardless of --effort.
 
     They receive pre-collected data and do no context gathering, so raising
     effort must not upgrade them. A change to this mapping should be a
@@ -67,15 +67,22 @@ class TestPhaseAgentPins:
 
     def test_pinned_phases(self):
         pinned = {p for p, s in review_pipeline.PHASES.items() if s.agent is not None}
-        assert pinned == {Phase.GROUP, Phase.SCOUT, Phase.DISPROVE, Phase.FIX}
+        assert pinned == {Phase.GROUP, Phase.SCOUT, Phase.DISPROVE}
 
     def test_pinned_phases_use_reviewer_lite(self):
-        for phase in (Phase.GROUP, Phase.SCOUT, Phase.DISPROVE, Phase.FIX):
+        for phase in (Phase.GROUP, Phase.SCOUT, Phase.DISPROVE):
             assert review_pipeline.PHASES[phase].agent is AgentKind.REVIEWER_LITE
 
     def test_effort_derived_phases(self):
-        derived = {p for p, s in review_pipeline.PHASES.items() if s.agent is None}
+        derived = {
+            p for p, s in review_pipeline.PHASES.items()
+            if s.agent is None and not s.edits
+        }
         assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
+
+    def test_only_the_fix_phase_edits(self):
+        editing = {p for p, s in review_pipeline.PHASES.items() if s.edits}
+        assert editing == {Phase.FIX}
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):
@@ -97,6 +104,11 @@ class TestPhaseRunnerResolution:
         for effort in Effort:
             runner = review_pipeline.PhaseRunner(_job(tmp_path, effort), Phase.GROUP)
             assert runner.agent is AgentKind.REVIEWER_LITE
+
+    def test_editing_phase_takes_no_agent_at_any_effort(self, tmp_path):
+        for effort in Effort:
+            runner = review_pipeline.PhaseRunner(_job(tmp_path, effort), Phase.FIX)
+            assert runner.agent is None
 
     def test_unpinned_phase_follows_effort(self, tmp_path):
         low = review_pipeline.PhaseRunner(_job(tmp_path, Effort.LOW), Phase.HOLISTIC)

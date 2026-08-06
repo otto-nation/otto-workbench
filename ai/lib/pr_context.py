@@ -119,14 +119,65 @@ def resolve(
     )
 
 
+def _worktree_is_dirty(cwd: str) -> bool:
+    """Whether *cwd* has uncommitted changes."""
+    r = subprocess.run(
+        ["git", "-C", cwd, "status", "--porcelain"],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def _unpushed_count(cwd: str, branch: str) -> int:
+    """Commits in *cwd* that origin/*branch* does not have.
+
+    Only meaningful once origin/<branch> has been fetched — against a stale
+    remote ref this over-reports, which is the safe direction for callers
+    using it to decide whether a hard reset would destroy work.
+    """
+    r = subprocess.run(
+        ["git", "-C", cwd, "rev-list", f"origin/{branch}..HEAD", "--count"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return 0
+    return int(r.stdout.strip())
+
+
+def _reset_blocker(wt_path: str, branch: str) -> str | None:
+    """Why hard-resetting *wt_path* to origin/*branch* would destroy work.
+
+    Returns None when the reset is safe. Call only after fetching the branch.
+    """
+    current = _current_branch_quiet(wt_path)
+    if current != branch:
+        return f"it is on {current or 'detached HEAD'}, not {branch}"
+    if _worktree_is_dirty(wt_path):
+        return "it has uncommitted changes"
+    unpushed = _unpushed_count(wt_path, branch)
+    if unpushed:
+        return f"it has {unpushed} unpushed commit(s)"
+    return None
+
+
 def fetch_and_reset(wt_path: str, branch: str) -> None:
-    """Fetch branch from origin and hard-reset worktree to match."""
+    """Fetch branch from origin and hard-reset worktree to match.
+
+    Skips the reset unless *wt_path* is actually on *branch*, clean, and fully
+    pushed. Callers locate this worktree by branch, but find_worktree_for_branch
+    can return one that merely has the right directory name — resetting it
+    unconditionally destroys whatever is actually checked out there.
+    """
     try:
         subprocess.run(
             ["git", "-C", wt_path, "fetch", "origin", branch],
             capture_output=True, text=True, check=True,
         )
     except Exception:
+        return
+    blocker = _reset_blocker(wt_path, branch)
+    if blocker:
+        log.warn(f"Not resetting {wt_path} to origin/{branch} — {blocker}")
         return
     try:
         subprocess.run(
@@ -162,11 +213,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         log.info(f"Worktree is on {current}, not {ctx.branch} — skipping update to remote")
         return ctx
 
-    r = subprocess.run(
-        ["git", "-C", cwd, "status", "--porcelain"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0 and r.stdout.strip():
+    if _worktree_is_dirty(cwd):
         log.warn("Worktree has uncommitted changes — skipping update to remote")
         return ctx
 
@@ -189,11 +236,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
     if local_sha == remote_sha:
         return ctx
 
-    r = subprocess.run(
-        ["git", "-C", cwd, "rev-list", f"origin/{ctx.branch}..HEAD", "--count"],
-        capture_output=True, text=True,
-    )
-    unpushed = int(r.stdout.strip()) if r.returncode == 0 else 0
+    unpushed = _unpushed_count(cwd, ctx.branch)
     if unpushed > 0:
         log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
         return ctx
@@ -433,6 +476,11 @@ def find_worktree_for_branch(
     Prefers an exact ``[branch]`` tag match from ``git worktree list``.
     Falls back to matching by sanitized directory name (slashes to dashes)
     so detached-HEAD worktrees are still found.
+
+    The name fallback only accepts a worktree git reports no branch for. A
+    worktree named ``main/`` with someone else's branch checked out is not the
+    main worktree, and callers that reset or check out what they get back
+    would clobber that branch.
     """
     try:
         r = subprocess.run(
@@ -446,7 +494,7 @@ def find_worktree_for_branch(
     for line in r.stdout.splitlines():
         if f"[{branch}]" in line:
             return Path(line.split()[0])
-        if dir_fallback is not None:
+        if dir_fallback is not None or "[" in line:
             continue
         wt_path = line.split()[0]
         if Path(wt_path).name == sanitized:

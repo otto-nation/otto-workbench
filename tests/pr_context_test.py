@@ -94,19 +94,75 @@ def test_require_worktree_exits_with_actionable_message(capsys):
 # ── fetch_and_reset ────────────────────────────────────────────────────────
 
 
+def _safe_reset_runs():
+    """subprocess.run results for a worktree that is safe to hard-reset."""
+    return [
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="feat/x\n"),     # rev-parse --abbrev-ref
+        MagicMock(returncode=0, stdout=""),             # status --porcelain (clean)
+        MagicMock(returncode=0, stdout="0\n"),          # rev-list (0 unpushed)
+        MagicMock(returncode=0),                        # reset --hard
+    ]
+
+
 @patch("pr_context.subprocess.run")
 def test_fetch_and_reset_runs_fetch_then_reset(mock_run):
-    mock_run.return_value = MagicMock(returncode=0)
+    mock_run.side_effect = _safe_reset_runs()
     fetch_and_reset("/wt", "feat/x")
-    assert mock_run.call_count == 2
+    assert mock_run.call_count == 5
     fetch_call = mock_run.call_args_list[0].args[0]
     assert "fetch" in fetch_call
     assert "origin" in fetch_call
     assert "feat/x" in fetch_call
-    reset_call = mock_run.call_args_list[1].args[0]
+    reset_call = mock_run.call_args_list[4].args[0]
     assert "reset" in reset_call
     assert "--hard" in reset_call
     assert "origin/feat/x" in reset_call
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_when_on_another_branch(mock_run, mock_log):
+    """Regression: resetting main/ while a feature branch sits in it ate two commits."""
+    runs = _safe_reset_runs()
+    runs[1] = MagicMock(returncode=0, stdout="feat/other\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "main")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "not main" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_on_uncommitted_changes(mock_run, mock_log):
+    runs = _safe_reset_runs()
+    runs[2] = MagicMock(returncode=0, stdout=" M file.py\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "uncommitted" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_on_unpushed_commits(mock_run, mock_log):
+    runs = _safe_reset_runs()
+    runs[3] = MagicMock(returncode=0, stdout="2\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "2 unpushed" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_on_detached_head(mock_run, mock_log):
+    runs = _safe_reset_runs()
+    runs[1] = MagicMock(returncode=0, stdout="HEAD\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "detached HEAD" in mock_log.warn.call_args.args[0]
 
 
 @patch("pr_context.subprocess.run", side_effect=Exception("network error"))
@@ -293,6 +349,41 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
     # Scoped via subprocess's cwd, matching every other git call in this module.
     assert mock_run.call_args.kwargs["cwd"] == "/wt/feature"
     assert mock_run.call_args[0][0][0] == "git"
+
+
+# ── find_worktree_for_branch ──────────────────────────────────────────────
+
+
+_WORKTREE_LIST_HIJACKED = (
+    "/repo             (bare)\n"
+    "/repo/main        f94475d [feat/x]\n"
+    "/repo/feat-other  abc1234 [feat/other]\n"
+)
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_prefers_exact_tag(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    assert find_worktree_for_branch("feat/other") == Path("/repo/feat-other")
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run):
+    """Regression: /repo/main holding feat/x was returned as main's worktree.
+
+    review-threads then hard-reset it to origin/main, destroying feat/x.
+    """
+    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    assert find_worktree_for_branch("main") is None
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout="/repo       (bare)\n/repo/main  f94475d (detached HEAD)\n",
+    )
+    assert find_worktree_for_branch("main") == Path("/repo/main")
 
 
 # ── Bare-repo worktree resolution ─────────────────────────────────────────

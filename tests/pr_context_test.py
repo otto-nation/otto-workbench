@@ -47,7 +47,6 @@ def test_parse_pr_input_simple_branch_raises():
 
 
 def test_resolved_context_is_frozen():
-    import pytest
     ctx = ResolvedContext(
         repo="owner/repo", branch="main", pr_number=1,
         worktree_root=Path("/tmp"), head_sha="abc",

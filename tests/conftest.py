@@ -145,3 +145,19 @@ def cc():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["ci_check"]
+
+
+def assert_no_worktree_exit(capsys, branch, fn, *args, **kwargs):
+    """Assert *fn* refuses to run without a worktree, and says what to do.
+
+    Every entry point that calls ResolvedContext.require_worktree() fails the
+    same way by design, so the message is asserted from one place — the point
+    of the accessor is that there is exactly one message to get right.
+    """
+    with pytest.raises(SystemExit) as exc:
+        fn(*args, **kwargs)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert f"No worktree for {branch!r}" in err
+    assert f"wt switch {branch}" in err
+    assert "--repo-dir" in err

@@ -12,7 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import write_thrash_log
+from conftest import assert_no_worktree_exit, write_thrash_log
 import pr_context
 import pr_state
 from pr_comments import ThreadState
@@ -2145,19 +2145,10 @@ class TestWorktreeGuard:
             worktree_root=None, head_sha="abc1234",
         )
 
-    def _assert_guidance(self, capsys):
-        err = capsys.readouterr().err
-        assert "No worktree for 'isaac/feat/x'" in err
-        assert "wt switch isaac/feat/x" in err
-
     def test_run_threads_exits_before_touching_github(self, rt, capsys):
-        with pytest.raises(SystemExit) as exc:
-            rt._run_threads(None, None, self._ctx())
-        assert exc.value.code == 1
-        self._assert_guidance(capsys)
+        assert_no_worktree_exit(capsys, "isaac/feat/x",
+                                rt._run_threads, None, None, self._ctx())
 
     def test_finish_deferred_work_exits_with_guidance(self, rt, capsys):
-        with pytest.raises(SystemExit) as exc:
-            rt._finish_deferred_work(self._ctx(), PRReport())
-        assert exc.value.code == 1
-        self._assert_guidance(capsys)
+        assert_no_worktree_exit(capsys, "isaac/feat/x",
+                                rt._finish_deferred_work, self._ctx(), PRReport())

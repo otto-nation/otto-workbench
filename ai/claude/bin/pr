@@ -114,7 +114,15 @@ def _parse_review_summary(output: str) -> dict | None:
 
 def _update_review_state(summary_data: dict,
                          ctx: pr_context.ResolvedContext) -> None:
-    """Update pr_state from a parsed review summary dict."""
+    """Update pr_state from a parsed review summary dict.
+
+    Best-effort: the caller has already done the real work (a review, a repair),
+    and the review file it produced is user-scoped and survives. A bare repo with
+    no worktree has nowhere to cache the `pr status` snapshot, which is not worth
+    failing a review that worked — so this opts out rather than requiring one.
+    """
+    if ctx.worktree_root is None:
+        return
     findings = summary_data.get("findings", {})
     finding_counts = {
         k: v for k, v in findings.items()
@@ -269,11 +277,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
         return rc
     pr_num = str(ctx.pr_number)
     review = find_review_file(ctx.repo, pr_num)
-    # Caching the summary needs somewhere to write it, but reviewing a PR does
-    # not need a local worktree — `pr review 123` from a bare repo is valid.
-    # The review file itself is user-scoped and survives; only the `pr status`
-    # snapshot is skipped, matching claude-review's own best-effort write.
-    if review and ctx.worktree_root:
+    if review:
         data = build_review_summary(ctx.repo, pr_num, str(review))
         _update_review_state(data, ctx)
     return rc

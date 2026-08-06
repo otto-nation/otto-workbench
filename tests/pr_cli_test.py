@@ -28,6 +28,8 @@ sys.modules.setdefault("pr_cli", pr_cli)
 
 import pr_state  # noqa: E402
 
+from conftest import assert_no_worktree_exit  # noqa: E402
+
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
 
@@ -940,23 +942,24 @@ class TestCmdCreate:
 # ── worktree_root guards ───────────────────────────────────────────────────
 
 
-def _assert_no_worktree_exit(capsys, fn, *args):
-    """Every entry point that needs a worktree fails the same actionable way."""
-    with pytest.raises(SystemExit) as exc:
-        fn(*args)
-    assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "No worktree for 'feat/test'" in err
-    assert "wt switch feat/test" in err
-
-
 def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
-    _assert_no_worktree_exit(capsys, pr_cli.cmd_status, [], _make_ctx(worktree_root=None))
+    assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_status,
+                            [], _make_ctx(worktree_root=None))
 
 
 def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
-    _assert_no_worktree_exit(capsys, pr_cli.cmd_fix, [], _make_ctx(worktree_root=None))
+    assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_fix,
+                            [], _make_ctx(worktree_root=None))
 
 
 def test_load_or_init_without_a_worktree_exits_with_guidance(capsys):
-    _assert_no_worktree_exit(capsys, pr_cli._load_or_init, _make_ctx(worktree_root=None))
+    assert_no_worktree_exit(capsys, "feat/test", pr_cli._load_or_init,
+                            _make_ctx(worktree_root=None))
+
+
+def test_review_state_cache_is_skipped_without_a_worktree():
+    """A review that worked must not fail over a snapshot nobody asked for."""
+    ctx = _make_ctx(worktree_root=None)
+    with patch("pr_cli.pr_state.save_state") as save:
+        pr_cli._update_review_state({"findings": {"M": 1}}, ctx)
+    save.assert_not_called()

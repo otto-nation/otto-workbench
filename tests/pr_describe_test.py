@@ -6,8 +6,6 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -24,6 +22,8 @@ _spec.loader.exec_module(pr_describe_cli)
 
 import pr_context  # noqa: E402
 import pr_state  # noqa: E402
+
+from conftest import assert_no_worktree_exit  # noqa: E402
 
 
 def _ctx(tmp_path, head_sha="aaaa111", pr_number=7):
@@ -281,9 +281,5 @@ def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
         worktree_root=None,
         head_sha="aaaa111",
     )
-    with pytest.raises(SystemExit) as exc:
-        pr_describe_cli.run_describe(ctx)
-    assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "No worktree for 'isaac/feat/x'" in err
-    assert "wt switch isaac/feat/x" in err
+    assert_no_worktree_exit(capsys, "isaac/feat/x",
+                            pr_describe_cli.run_describe, ctx)

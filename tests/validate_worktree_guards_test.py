@@ -59,6 +59,14 @@ def main(ctx):
 """) == []
 
 
+def test_lambda_shares_the_enclosing_guard(tmp_path):
+    assert _check(tmp_path, """
+def cmd_gc(ctx):
+    if ctx.worktree_root:
+        run(key=lambda: ctx.worktree_root)
+""") == []
+
+
 def test_other_receiver_is_ignored(tmp_path):
     """PRIdentity.worktree_root is a plain str, so only ctx/self match."""
     assert _check(tmp_path, """
@@ -71,8 +79,9 @@ def test_file_without_the_field_is_skipped(tmp_path):
     assert _check(tmp_path, "def f(ctx):\n    return ctx.branch\n") == []
 
 
-def test_syntax_error_is_tolerated(tmp_path):
+def test_syntax_error_is_tolerated_but_reported(tmp_path, capsys):
     assert _check(tmp_path, "def f(ctx:\n    ctx.worktree_root\n") == []
+    assert "unparseable, not checked" in capsys.readouterr().err
 
 
 # ── rejected patterns ────────────────────────────────────────────────────
@@ -107,6 +116,44 @@ def callee(ctx):
     return run(ctx.worktree_root)
 """)
     assert [(v.line, v.scope) for v in violations] == [(7, "callee")]
+
+
+def test_a_guard_after_the_use_does_not_count(tmp_path):
+    """The scope tests the field, but not before dereferencing it."""
+    violations = _check(tmp_path, """
+def cmd_ci(ctx):
+    log(ctx.worktree_root)
+    if not ctx.worktree_root:
+        return 1
+""")
+    assert [v.line for v in violations] == [3]
+
+
+def test_binding_the_field_before_testing_it_is_not_a_use(tmp_path):
+    """You cannot test an alias you have not assigned yet."""
+    assert _check(tmp_path, """
+def cmd_ci(ctx):
+    toplevel = ctx.worktree_root
+    if not toplevel:
+        return 1
+""") == []
+
+
+def test_binding_without_any_guard_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def cmd_ci(ctx):
+    toplevel = ctx.worktree_root
+    return run(toplevel)
+""")
+    assert [v.line for v in violations] == [3]
+
+
+def test_lambda_without_a_guard_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def cmd_gc(ctx):
+    return run(key=lambda: ctx.worktree_root)
+""")
+    assert [v.line for v in violations] == [3]
 
 
 def test_str_coercion_is_flagged(tmp_path):

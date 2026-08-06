@@ -15,7 +15,13 @@ enforces that every reference does one or the other.
 
 The unit of analysis is a function scope: a reference is accepted when the same
 scope tests either ctx.worktree_root or a local assigned from it (the guard
-clause pattern).  Scopes without any such test are reported.
+clause pattern) at or above the reference's line.  A reference that runs before
+every test in its scope is reported, as is a scope that never tests at all.
+
+Known limit: guards are matched on the literal receiver names in RECEIVERS, so a
+context bound to some other local (`c = ctx; c.worktree_root`) is invisible here.
+Widening that needs real name resolution; the convention is to call the parameter
+`ctx`, and code that does is fully covered.
 
 Exit code: 0 if all files pass, 1 if any have violations.
 """
@@ -39,7 +45,9 @@ ACCESSOR = 'require_worktree'
 SEARCH_DIRS = ('ai',)
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
 
-SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+# A lambda is deliberately not a scope: it shares the enclosing function's guard,
+# and treating it as one would both hide its references and flag them as unguarded.
+SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 TEST_NODES = (ast.If, ast.IfExp, ast.While, ast.Assert)
 
 
@@ -77,31 +85,44 @@ def _tests_of(node) -> list:
     return []
 
 
-def _tested_names(scope) -> set[str]:
-    """Everything referenced from a boolean-test position within *scope*."""
-    tested: set[str] = set()
-    tests = [t for node in _scope_nodes(scope) for t in _tests_of(node)]
-    inner = [n for test in tests for n in ast.walk(test)]
-    tested.update(FIELD for n in inner if _is_ref(n))
-    tested.update(n.id for n in inner if isinstance(n, ast.Name))
-    return tested
+def _alias_assigns(scope) -> list:
+    """Bindings straight off the field — `toplevel = ctx.worktree_root`."""
+    return [n for n in _scope_nodes(scope)
+            if isinstance(n, ast.Assign) and _is_ref(n.value)]
 
 
 def _aliases(scope) -> set[str]:
-    """Locals assigned directly from the field — `toplevel = ctx.worktree_root`."""
-    assigns = [n for n in _scope_nodes(scope)
-               if isinstance(n, ast.Assign) and _is_ref(n.value)]
-    return {t.id for a in assigns for t in a.targets if isinstance(t, ast.Name)}
+    return {t.id for a in _alias_assigns(scope)
+            for t in a.targets if isinstance(t, ast.Name)}
+
+
+def _is_guard(test, aliases: set[str]) -> bool:
+    """True if this test decides whether the field is present."""
+    inner = list(ast.walk(test))
+    return (any(_is_ref(n) for n in inner)
+            or any(isinstance(n, ast.Name) and n.id in aliases for n in inner))
+
+
+def _guard_line(scope) -> int | None:
+    """The first line of *scope* that tests the field, or None if none does."""
+    aliases = _aliases(scope)
+    tests = [t for node in _scope_nodes(scope) for t in _tests_of(node)]
+    return min((t.lineno for t in tests if _is_guard(t, aliases)), default=None)
 
 
 def _check_scope(scope, name: str) -> list[Violation]:
     refs = [n for n in _scope_nodes(scope) if _is_ref(n)]
     if not refs:
         return []
-    tested = _tested_names(scope)
-    if FIELD in tested or (_aliases(scope) & tested):
-        return []
-    return [Violation(line=n.lineno, scope=name) for n in refs]
+    guard = _guard_line(scope)
+    if guard is None:
+        return [Violation(line=n.lineno, scope=name) for n in refs]
+    # A reference that runs before every test in the scope is unguarded no matter
+    # what the tail of the function does.  Binding the field to a local is exempt:
+    # you cannot test an alias you have not assigned yet.
+    bound = {id(a.value) for a in _alias_assigns(scope)}
+    early = [n for n in refs if n.lineno < guard and id(n) not in bound]
+    return [Violation(line=n.lineno, scope=name) for n in early]
 
 
 def check_file(filepath: str) -> list[Violation]:
@@ -111,7 +132,10 @@ def check_file(filepath: str) -> list[Violation]:
         return []
     try:
         tree = ast.parse(source, filename=filepath)
-    except SyntaxError:
+    except SyntaxError as exc:
+        # Silence here would read as "clean" for a file this check never saw.
+        print(f'{RED}!{NC} {filepath}: unparseable, not checked ({exc})',
+              file=sys.stderr)
         return []
     scopes = [(tree, '<module>')]
     scopes += [(n, n.name) for n in ast.walk(tree)
@@ -130,9 +154,10 @@ def _is_python(path: str) -> bool:
         return False
     try:
         with open(path, 'rb') as f:
-            return b'python' in f.readline()
+            first = f.readline()
     except OSError:
         return False
+    return first.startswith(b'#!') and b'python' in first
 
 
 def discover_scripts(repo_root: str) -> list[str]:
@@ -179,7 +204,7 @@ def main():
                         help='Files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    repo_root = _WORKBENCH_DIR
     files = args.files if args.files else discover_scripts(repo_root)
 
     errors = 0

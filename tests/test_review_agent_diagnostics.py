@@ -165,10 +165,14 @@ class TestWritableDirs:
         captured = {}
         monkeypatch.setattr(
             review_agent.ai_backend, "invoke_agent",
-            lambda *a, **kw: captured.update(kw) or 0,
+            lambda inv: captured.update(add_dirs=inv.add_dirs) or 0,
         )
         review_agent.invoke_agent(
-            "prompt", "/tmp/session.jsonl", "/tmp/wt", artifact_dir,
+            review_agent.AgentInvocation(
+                prompt="prompt",
+                session_log="/tmp/session.jsonl",
+                add_dirs=review_agent.build_add_dirs("/tmp/wt", artifact_dir),
+            ),
         )
         return captured["add_dirs"]
 

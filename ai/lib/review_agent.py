@@ -142,10 +142,8 @@ def diagnose_missing_output(log_path: str) -> str:
     # reproduce it.
     tools_used = _tool_names_used(records)
     crashed = reason.startswith(AGENT_ERROR_PREFIX)
-    # empty tools_used also satisfies this when observability is confirmed
-    if not crashed and _tool_use_is_observable(records) and not any(
-        is_write_tool(name) for name in tools_used
-    ):
+    wrote = any(is_write_tool(name) for name in tools_used)
+    if not crashed and _tool_use_is_observable(records) and not wrote:
         reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
     return reason
 
@@ -299,15 +297,16 @@ def _resolve_alias(model: str) -> str:
 
 
 def _select_model(explicit: str | None, env_key: str, default: str) -> str:
+    """The winning model name by precedence, before any alias resolution."""
     if explicit:
-        return _resolve_alias(explicit)
+        return explicit
     from_env = os.environ.get(env_key)
     if from_env:
-        return _resolve_alias(from_env)
+        return from_env
     global_env = os.environ.get("CLAUDE_REVIEW_MODEL")
     if global_env:
-        return _resolve_alias(global_env)
-    return _resolve_alias(default)
+        return global_env
+    return default
 
 
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
@@ -367,5 +366,3 @@ def invoke_agent(
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc
-
-

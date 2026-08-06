@@ -48,9 +48,6 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
   [ "$result" = "ok" ]
 }
 
-
-# ── Prompt building ──────────────────────────────────────────────────────────
-
 # ── Model selection ───────────────────────────────────────────────────────────
 
 @test "model defaults: single default value across all phases" {
@@ -117,31 +114,6 @@ print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
   [ "$result" = "sonnet" ]
 }
 
-@test "_resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
-  result=$(_py "
-import os
-os.environ.pop('CLAUDE_REVIEW_MODEL', None)
-os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
-os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-5'
-print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
-del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
-")
-  [ "$result" = "claude-sonnet-5" ]
-}
-
-@test "_resolve_model: explicit alias resolved via ANTHROPIC_DEFAULT env" {
-  result=$(_py "
-import os
-os.environ.pop('CLAUDE_REVIEW_MODEL', None)
-os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL'] = 'claude-opus-4-6'
-print(mod._resolve_model('opus', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
-del os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL']
-")
-  [ "$result" = "claude-opus-4-6" ]
-  result=$(_py "
-import os
-os.environ.pop('CLAUDE_REVIEW_MODEL', None)
-os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
 @test "_resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
   result=$(_py "
 import os
@@ -234,4 +206,3 @@ print("FOUND" if "Holistic context" in result else "MISSING")
 ')
   [ "$result" = "MISSING" ]
 }
-

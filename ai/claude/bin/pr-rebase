@@ -627,16 +627,20 @@ def _has_conflict_markers(text: str) -> str | None:
 
 
 def _prompt_until_parsable(
-    prompt: str, *, label: str, usable: Callable[[str], bool],
+    prompt: str, *, label: str, usable: Callable[[str], bool], task: str,
 ) -> tuple[str, int]:
     """Send a prompt, retrying once if the answer cannot be parsed.
 
     These calls have no session log, so an unparseable answer is the only
     evidence that the agent burned a turn without doing the job — the same
     thrash the review pipeline catches from its logs.
+
+    `task` is required so every prompt lands in the usage ledger under a name;
+    a retry bills twice, which is only visible if both attempts are attributed.
     """
     return agent_retry.retry_blank_response(
-        ai_backend.prompt, prompt, label=label, usable=usable,
+        lambda text: ai_backend.prompt(text, task=task),
+        prompt, label=label, usable=usable,
     )
 
 

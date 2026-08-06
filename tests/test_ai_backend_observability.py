@@ -56,7 +56,7 @@ class TestBuildPromptCmd:
 
 class TestBuildFixCmd:
     def test_requests_stream_json_output(self):
-        cmd = ai_backend_claude._build_fix_cmd(add_dirs=[])
+        cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
         assert "--output-format" in cmd
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
 
@@ -135,9 +135,11 @@ class TestPromptRecordsToLedger:
         """An agent that died before its result record is unmeasured, not free."""
         session_log = tmp_path / "session.jsonl"
         session_log.write_text('{"type":"assistant"}\n')
-        mod = types.SimpleNamespace(invoke_agent=lambda prompt, log, **kw: 1)
+        mod = types.SimpleNamespace(invoke_agent=lambda inv: 1)
         monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        ai_backend.invoke_agent("p", session_log=str(session_log), add_dirs=[])
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", session_log=str(session_log),
+        ))
         assert list(ledger.glob("*.jsonl")) == []
 
     def test_backend_returning_pair_still_works(self, ledger, monkeypatch):
@@ -165,12 +167,14 @@ class TestFixWritesSessionLog:
         log = tmp_path / "fix.jsonl"
         lines = [json.dumps(RESULT_ENVELOPE) + "\n"]
         self._fake_proc(monkeypatch, lines)
-        ai_backend_claude.invoke_fix("p", session_log=str(log), add_dirs=[])
+        ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(
+            prompt="p", session_log=str(log),
+        ))
         assert ai_usage.parse_session_log(str(log)).cost == pytest.approx(0.42)
 
     def test_no_session_log_path_does_not_crash(self, monkeypatch, capsys):
         self._fake_proc(monkeypatch, [json.dumps(RESULT_ENVELOPE) + "\n"])
-        assert ai_backend_claude.invoke_fix("p", add_dirs=[]) == 0
+        assert ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(prompt="p")) == 0
 
     def test_streams_assistant_text_not_raw_json(self, monkeypatch, capsys):
         event = {
@@ -178,7 +182,7 @@ class TestFixWritesSessionLog:
             "message": {"content": [{"type": "text", "text": "patching the file"}]},
         }
         self._fake_proc(monkeypatch, [json.dumps(event) + "\n"])
-        ai_backend_claude.invoke_fix("p", add_dirs=[])
+        ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
         err = capsys.readouterr().err
         assert "patching the file" in err
         assert '"type"' not in err
@@ -191,7 +195,7 @@ class TestFixWritesSessionLog:
             ]},
         }
         self._fake_proc(monkeypatch, [json.dumps(event) + "\n"])
-        ai_backend_claude.invoke_fix("p", add_dirs=[])
+        ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
         assert "Read main.go" in capsys.readouterr().err
 
 
@@ -236,8 +240,25 @@ def _scan_call_sites(source: Path) -> tuple[int, list[str]]:
     return len(calls), missing
 
 
+def _is_agent_invocation(node: ast.expr) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    fn = node.func
+    name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+    return name == "AgentInvocation"
+
+
+def _invocation_node(call: ast.Call) -> ast.Call:
+    """The node whose keywords carry the invocation's settings.
+
+    Call sites build an AgentInvocation inline and pass it positionally, so
+    session_log sits on that constructor rather than on invoke_fix itself.
+    """
+    return next((a for a in call.args if _is_agent_invocation(a)), call)
+
+
 def _has_session_log(call: ast.Call) -> bool:
-    for kw in call.keywords:
+    for kw in _invocation_node(call).keywords:
         if kw.arg != "session_log":
             continue
         empty = isinstance(kw.value, ast.Constant) and not kw.value.value
@@ -270,9 +291,13 @@ class TestFixCallSitesPassSessionLog:
         assert found >= 3, f"expected to find invoke_fix call sites, found {found}"
 
     @pytest.mark.parametrize("src,expected", [
-        ('ai_backend.invoke_fix(p, session_log=str(d / "s.jsonl"), add_dirs=[])', True),
-        ('ai_backend.invoke_fix(p, add_dirs=[], task="ci-fix")', False),
-        ('ai_backend.invoke_fix(p, session_log="", add_dirs=[])', False),
+        ('ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, '
+         'session_log=str(d / "s.jsonl")))', True),
+        ('ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, task="ci-fix"))',
+         False),
+        ('ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, session_log=""))',
+         False),
+        ('ai_backend.invoke_fix(AgentInvocation(prompt=p, session_log=log))', True),
     ])
     def test_scanner_detects_missing_session_log(self, src, expected):
         call = next(_invoke_fix_calls(ast.parse(src)))

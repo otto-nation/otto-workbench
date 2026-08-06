@@ -263,14 +263,12 @@ class PhaseRunner:
 
     def invocation(
         self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "", review_file: str = "",
+        max_turns: int | None = None, label: str = "",
     ) -> AgentInvocation:
         return AgentInvocation(
             prompt=prompt,
             session_log=session_log,
-            add_dirs=build_add_dirs(
-                self.job.wt_path, self.job.reviews_dir, review_file,
-            ),
+            add_dirs=build_add_dirs(self.job.wt_path, self.job.artifact_dir),
             agent=self.agent,
             max_turns=self.max_turns if max_turns is None else max_turns,
             max_budget=self.budget,
@@ -282,13 +280,10 @@ class PhaseRunner:
 
     def invoke(
         self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "", review_file: str = "",
+        max_turns: int | None = None, label: str = "",
     ) -> int:
         return invoke_agent(
-            self.invocation(
-                prompt, session_log,
-                max_turns=max_turns, label=label, review_file=review_file,
-            ),
+            self.invocation(prompt, session_log, max_turns=max_turns, label=label),
             throttle=self.job.throttle,
         )
 

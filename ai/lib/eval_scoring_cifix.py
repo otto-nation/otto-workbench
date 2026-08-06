@@ -91,8 +91,8 @@ class CiFixTask:
         if pre_code == 0:
             return _unfixable(repo_dir, log_dir, pre_output)
 
-        rc = ai_backend.invoke_fix(
-            _PROMPT.format(
+        rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
+            prompt=_PROMPT.format(
                 repo_dir=repo_dir,
                 command=" ".join(verify_command(manifest)),
                 exit_code=pre_code,
@@ -102,10 +102,10 @@ class CiFixTask:
             add_dirs=[repo_dir],
             max_turns=FIX_MAX_TURNS,
             max_budget=FIX_MAX_BUDGET,
-            model=opts.model or None,
+            model=opts.model or "",
             task="eval-ci-fix",
             repo="eval/corpus",
-        )
+        ))
 
         post_code, post_output = run_verify(repo_dir, manifest, opts.timeout)
         return RunArtifacts(

@@ -140,8 +140,8 @@ class TestCiFixTaskRun:
         _rm(artifacts)
 
     def test_reports_fixed_when_the_agent_makes_verify_pass(self, tmp_path, monkeypatch):
-        def fake_fix(prompt, *, add_dirs, **kw):
-            Path(add_dirs[0], "fixed").write_text("yes")
+        def fake_fix(inv):
+            Path(inv.add_dirs[0], "fixed").write_text("yes")
             return 0
 
         monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)
@@ -167,10 +167,8 @@ class TestCiFixTaskRun:
     def test_hands_the_agent_the_repo_and_the_failure(self, tmp_path, monkeypatch):
         seen = {}
 
-        def fake_fix(prompt, *, add_dirs, **kw):
-            seen["prompt"] = prompt
-            seen["add_dirs"] = add_dirs
-            seen.update(kw)
+        def fake_fix(inv):
+            seen.update(vars(inv))
             return 0
 
         monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)

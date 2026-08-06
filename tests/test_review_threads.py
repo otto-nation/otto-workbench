@@ -1378,7 +1378,7 @@ class TestFinishDeferredWork:
     def test_all_three_steps_run_in_order(self, rt, tmp_path):
         self._save(tmp_path)
         order = []
-        with patch.object(rt, "_post_push_deferred_replies",
+        with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda *a, **k: order.append("replies")), \
                 patch.object(rt, "_finalize_deferred",
                              side_effect=lambda *a, **k: order.append("issue")), \
@@ -1394,7 +1394,7 @@ class TestFinishDeferredWork:
         def mark(state, *a, **k):
             state.fix.commit_status = "pushed"
 
-        with patch.object(rt, "_post_push_deferred_replies", side_effect=mark), \
+        with patch.object(rt, "_post_pending_fix_replies", side_effect=mark), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
@@ -1406,7 +1406,7 @@ class TestFinishDeferredWork:
             ThreadOutcome(id="t9", action=ThreadAction.DEFERRED, reason="r"),
         ])
         seen = []
-        with patch.object(rt, "_post_push_deferred_replies",
+        with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.threads)), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
@@ -1414,14 +1414,14 @@ class TestFinishDeferredWork:
         assert [t.id for t in seen] == ["t9"]
 
     def test_no_state_on_disk_is_a_no_op(self, rt, tmp_path):
-        with patch.object(rt, "_post_push_deferred_replies") as replies:
+        with patch.object(rt, "_post_pending_fix_replies") as replies:
             rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
         replies.assert_not_called()
 
     def test_a_failing_step_propagates(self, rt, tmp_path):
         """A caller closing the loop needs a failure to be an error, not a log line."""
         self._save(tmp_path)
-        with patch.object(rt, "_post_push_deferred_replies"), \
+        with patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_finalize_deferred",
                              side_effect=RuntimeError("gh down")), \
                 patch.object(rt, "_render_deferred_summary"):
@@ -2057,7 +2057,7 @@ class TestTriageThrashGuard:
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []
 
-        def prompt(text):
+        def prompt(text, **kw):
             prompts.append(text)
             return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
 

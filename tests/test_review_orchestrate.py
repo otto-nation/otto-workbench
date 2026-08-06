@@ -2222,7 +2222,6 @@ class TestDensitySkipping:
         files = [{"path": "big.py", "additions": 2, "deletions": 1}]
         job = self._make_job(ro, tmp_path, files)
 
-        import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
 
@@ -2235,7 +2234,6 @@ class TestDensitySkipping:
         files = [{"path": "small.py", "additions": 1, "deletions": 0}]
         job = self._make_job(ro, tmp_path, files)
 
-        import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
 
@@ -2247,7 +2245,6 @@ class TestDensitySkipping:
         files = [{"path": "refactored.py", "additions": 80, "deletions": 70}]
         job = self._make_job(ro, tmp_path, files)
 
-        import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
 
@@ -2328,6 +2325,8 @@ class TestPromptStats:
         assert isinstance(stats, list)
         assert len(stats) == 1
         assert stats[0]["template"] == "test"
+
+
 # ── post_process_findings ───────────────────────────────────────────────────
 
 
@@ -2540,7 +2539,6 @@ class TestIsQuotaError:
         log = tmp_path / "session.jsonl"
         log.write_text("")
         assert ro._is_quota_error(str(log)) is False
-
 
 
 # ── format_preflight_data ──────────────────────────────────────────────

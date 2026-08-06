@@ -1097,7 +1097,7 @@ def _finish_deferred_work(
     if state is None:
         return
     threads_by_id = {t.id: t for t in report.threads}
-    _post_push_deferred_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
+    _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _finalize_deferred(state, ctx, threads_by_id, trail=trail)
     _render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,

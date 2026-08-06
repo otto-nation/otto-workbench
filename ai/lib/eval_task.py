@@ -113,7 +113,12 @@ def _review_task() -> EvalTask:
     return ReviewTask()
 
 
-_TASK_FACTORIES = {DEFAULT_TASK: _review_task}
+def _cifix_task() -> EvalTask:
+    from eval_scoring_cifix import CiFixTask
+    return CiFixTask()
+
+
+_TASK_FACTORIES = {DEFAULT_TASK: _review_task, "ci-fix": _cifix_task}
 
 
 def get_task(name: str) -> EvalTask:

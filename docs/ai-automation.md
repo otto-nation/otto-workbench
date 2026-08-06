@@ -301,6 +301,18 @@ field is absent, so older manifests keep working. Each task pairs a runner with 
 scorer in `ai/lib/eval_scoring_<task>.py`; the runner, the fixture repo, and the
 statistics over repeated runs are shared and know nothing about any one task.
 
+| Task | What the case holds | How it is scored |
+|---|---|---|
+| `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
+| `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
+
+A `ci-fix` case also ships a `reference-fix/` overlay: the same relative paths,
+already corrected. The harness never reads it. The test suite does, to prove the
+case fails before the fix and passes after it — an oracle that cannot fail, or
+cannot be satisfied, measures nothing. Because CI failures are usually
+environment-shaped, these cases put stub binaries on `PATH` rather than depending
+on what the host happens to have installed, so they fail the same way everywhere.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

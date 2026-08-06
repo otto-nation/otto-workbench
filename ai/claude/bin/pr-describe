@@ -176,8 +176,8 @@ def _apply_body(repo: str, pr_number: int, body: str) -> bool:
     return True
 
 
-def _persist(ctx: pr_context.ResolvedContext, summary: DescribeSummary) -> None:
-    wt = ctx.require_worktree()
+def _persist(wt: Path, ctx: pr_context.ResolvedContext,
+             summary: DescribeSummary) -> None:
     state = pr_state.load_or_init(
         worktree_root=wt, repo=ctx.repo, branch=ctx.branch,
         pr_number=ctx.pr_number, head_sha=ctx.head_sha,
@@ -228,7 +228,7 @@ def run_describe(
     raw = stdout.strip()
     if raw == _NO_CHANGE:
         log.info("Description already matches the template — no change")
-        _persist(ctx, DescribeSummary(
+        _persist(wt_path, ctx, DescribeSummary(
             head_sha=ctx.head_sha, template_path=template_path,
             changed=False, updated_at=pr_state.now_iso(),
         ))
@@ -255,7 +255,7 @@ def run_describe(
     if trail:
         trail.info("describe", "description revised",
                    data={"template": template_path, "head_sha": ctx.head_sha})
-    _persist(ctx, DescribeSummary(
+    _persist(wt_path, ctx, DescribeSummary(
         head_sha=ctx.head_sha, template_path=template_path,
         changed=True, updated_at=pr_state.now_iso(),
     ))
@@ -285,7 +285,8 @@ def main():
     )
     trail = Trail.start(
         script="pr-describe",
-        artifact_dir=str(ctx.require_worktree() / pr_state.STATE_DIR),
+        artifact_dir=(str(ctx.worktree_root / pr_state.STATE_DIR)
+                      if ctx.worktree_root else "/tmp"),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=args.debug,
     )

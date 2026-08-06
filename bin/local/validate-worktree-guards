@@ -77,11 +77,16 @@ def _scope_nodes(scope):
 
 
 def _tests_of(node) -> list:
-    """The boolean-test expressions a node contributes, if any."""
+    """(line, test) for each boolean test a node contributes, if any.
+
+    The line is the owning node's, not the test's: a ternary evaluates its test
+    before its body whichever line the test is written on, so a multi-line
+    `x if ctx.worktree_root else y` must not read as a guard after the fact.
+    """
     if isinstance(node, TEST_NODES):
-        return [node.test]
+        return [(node.lineno, node.test)]
     if isinstance(node, ast.comprehension):
-        return list(node.ifs)
+        return [(t.lineno, t) for t in node.ifs]
     return []
 
 
@@ -106,8 +111,8 @@ def _is_guard(test, aliases: set[str]) -> bool:
 def _guard_line(scope) -> int | None:
     """The first line of *scope* that tests the field, or None if none does."""
     aliases = _aliases(scope)
-    tests = [t for node in _scope_nodes(scope) for t in _tests_of(node)]
-    return min((t.lineno for t in tests if _is_guard(t, aliases)), default=None)
+    tests = [pair for node in _scope_nodes(scope) for pair in _tests_of(node)]
+    return min((line for line, t in tests if _is_guard(t, aliases)), default=None)
 
 
 def _check_scope(scope, name: str) -> list[Violation]:

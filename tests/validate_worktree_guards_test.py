@@ -67,6 +67,15 @@ def cmd_gc(ctx):
 """) == []
 
 
+def test_ternary_guard_wrapped_across_lines_is_clean(tmp_path):
+    """A ternary's test runs first however the expression is wrapped."""
+    assert _check(tmp_path, """
+def main(ctx):
+    trail(dir=(str(ctx.worktree_root / STATE)
+               if ctx.worktree_root else "/tmp"))
+""") == []
+
+
 def test_other_receiver_is_ignored(tmp_path):
     """PRIdentity.worktree_root is a plain str, so only ctx/self match."""
     assert _check(tmp_path, """

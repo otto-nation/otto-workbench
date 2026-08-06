@@ -283,3 +283,13 @@ def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
     )
     assert_no_worktree_exit(capsys, "isaac/feat/x",
                             pr_describe_cli.run_describe, ctx)
+
+
+def test_no_pr_reports_before_demanding_a_worktree(capsys):
+    """The trail directory degrades, so the no-PR path is not blocked by it."""
+    ctx = pr_context.ResolvedContext(
+        repo="owner/repo", branch="isaac/feat/x", pr_number=None,
+        worktree_root=None, head_sha="aaaa111",
+    )
+    assert pr_describe_cli.run_describe(ctx) == 0
+    assert "nothing to describe" in capsys.readouterr().err

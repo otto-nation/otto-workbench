@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from review_common import AgentKind, Thinking
+from review_common import AgentKind
 
 ENV_AI_BACKEND = "AI_BACKEND"
 
@@ -71,7 +71,10 @@ class AgentInvocation:
     max_turns: int | None = None
     max_budget: float | None = None
     model: str = ""
-    thinking: Thinking | None = None
+    # Not the closed `Thinking` enum: this is read from the environment via
+    # _resolve_thinking_level() and can carry values outside that set (e.g.
+    # "xhigh"), same as `model` can carry values outside `ModelAlias`.
+    thinking: str | None = None
     provider: str | None = None
     label: str = ""
 

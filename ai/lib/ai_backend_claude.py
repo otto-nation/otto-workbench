@@ -181,6 +181,8 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
 def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
+    # inv.session_log is accepted for interface parity with invoke_agent but is
+    # not used here — output is echoed to stderr, not streamed to a log file.
     cmd = _build_fix_cmd(inv)
     proc = subprocess.Popen(
         cmd,

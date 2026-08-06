@@ -10,6 +10,7 @@ if LIB_DIR not in sys.path:
 
 import review_findings
 import review_pipeline
+from review_common import Phase
 from review_findings import Finding
 
 
@@ -426,7 +427,7 @@ class TestReconcileCheckboxes:
 class TestTurnBudgetScaling:
     def test_small_review_uses_default(self):
         turns = review_pipeline._fix_turn_budget(5)
-        assert turns == review_pipeline.DEFAULT_MAX_TURNS_FIX
+        assert turns == review_pipeline.PHASES[Phase.FIX].max_turns
 
     def test_large_review_scales_up(self):
         turns = review_pipeline._fix_turn_budget(25)

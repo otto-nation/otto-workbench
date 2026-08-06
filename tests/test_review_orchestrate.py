@@ -1159,13 +1159,13 @@ class TestPhaseModel:
         monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
         assert models["claude-haiku-4-5"] == ["scout"]
-        assert set(models["claude-sonnet-5"]) == set(ro.PHASE_MODEL_DEFAULTS) - {"scout"}
+        assert set(models["claude-sonnet-5"]) == set(ro.PHASES) - {"scout"}
 
     def test_collect_covers_every_phase(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         models = ro.collect_phase_models("")
         phases = [p for group in models.values() for p in group]
-        assert sorted(phases) == sorted(ro.PHASE_MODEL_DEFAULTS)
+        assert sorted(phases) == sorted(ro.PHASES)
 
 
 # ── 19c. enum_arg ───────────────────────────────────────────────────────────
@@ -2074,7 +2074,7 @@ class TestRetryTurns:
 
     def test_other_reason_gets_default(self, ro, tmp_path):
         job = self._job_no_omitted(ro, tmp_path)
-        assert ro._retry_turns("no session log found", job) == ro.DEFAULT_MAX_TURNS_GROUP
+        assert ro._retry_turns("no session log found", job) == ro.PHASES[ro.Phase.GROUP].max_turns
 
 
 class TestRetryFailedGroups:

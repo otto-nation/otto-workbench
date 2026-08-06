@@ -323,7 +323,7 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--finish] [--post] [--reply ID --body-file PATH]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
+| `comments [--triage] [--fix] [--finish] [--post] [--reply <ID> --body-file <PATH>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
@@ -358,8 +358,9 @@ with no way to tell which stands.
 
 `--reply <id> --body-file <path>` accepts a thread node ID, any comment
 `databaseId` in the thread, or a `...#discussion_r<id>` URL, and warns when the
-body carries no `blob/<sha>/` permalink to back its claims. Use it instead of
-`gh api .../replies`, which bypasses the dedup entirely.
+body carries no `blob/<sha>/` permalink to back its claims. Pass `-` as the path
+to read the body from stdin. Use it instead of `gh api .../replies`, which
+bypasses the dedup entirely.
 
 **`pr describe` is commit-aware:**
 

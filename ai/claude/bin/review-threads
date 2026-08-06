@@ -872,25 +872,29 @@ def _post_thread_replies(
     pr_number: int,
     body_fn: Callable[[CommentItem], str],
 ) -> int:
-    """Reply to each thread entry using body_fn to build the message body.
+    """Leave one reply per thread, building each body with body_fn.
 
-    One reply per thread, edited in place across rounds rather than stacked.
-    Guarding per verdict instead — skip if this thread already has an "Applied:"
-    reply — left a thread dismissed in round one and fixed in round two holding
-    both, telling the reviewer their point did not apply and that we acted on it.
+    Whichever verdict a round reaches, it lands in the same place: our standing
+    reply on that thread, replaced. Returns the number of threads replied to.
     """
-    posted = 0
+    replied = 0
+    edited = 0
     for entry in entries:
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
             continue
+        was_standing = _our_last_reply_id(thread) is not None
         # ceiling: thread.comments is not refreshed after a post, so two replies
         # to one thread within a single run would still stack. Unreachable while
         # the reply categories stay a partition of the triage verdicts; refetch
         # the thread here if that ever stops holding.
-        if _upsert_thread_reply(thread, repo, pr_number, body_fn(entry)):
-            posted += 1
-    return posted
+        if not _upsert_thread_reply(thread, repo, pr_number, body_fn(entry)):
+            continue
+        replied += 1
+        edited += was_standing
+    if edited:
+        log.info(f"Edited {edited} standing repl{'y' if edited == 1 else 'ies'} in place")
+    return replied
 
 
 def _post_fix_replies(
@@ -918,7 +922,7 @@ def _post_fix_replies(
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Posted {posted} thread replies")
+        log.info(f"Replied on {posted} fixed thread(s)")
     return posted
 
 
@@ -1010,7 +1014,7 @@ def _post_already_addressed_replies(
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Posted {posted} already-addressed replies")
+        log.info(f"Replied on {posted} already-addressed thread(s)")
     return posted
 
 
@@ -1071,7 +1075,7 @@ def _post_deferred_replies(
 
     posted = _post_thread_replies(deferred, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Posted {posted} deferred thread replies")
+        log.info(f"Replied on {posted} deferred thread(s)")
     return posted
 
 
@@ -2377,15 +2381,19 @@ def _find_reply_target(
     return None
 
 
-def _read_reply_body(body_file: str | None) -> str:
-    """Read a reply body from a file, or from stdin when given '-'."""
+def _read_reply_body(body_file: str | None) -> str | None:
+    """Read a reply body from a file, or from stdin when given '-'.
+
+    None for a path that is not there, "" for a file that is: a mistyped path
+    and an empty draft need different advice.
+    """
     if not body_file:
-        return ""
+        return None
     if body_file == "-":
         return sys.stdin.read().strip()
     path = Path(body_file)
     if not path.is_file():
-        return ""
+        return None
     return path.read_text(encoding="utf-8").strip()
 
 
@@ -2398,8 +2406,12 @@ def _run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | No
     reply to the same one-per-thread rule as a generated one.
     """
     body = _read_reply_body(body_file)
+    if body is None:
+        missing = f"--body-file not found: {body_file}" if body_file else "--reply needs --body-file"
+        log.error(missing)
+        return 1
     if not body:
-        log.error("--reply needs a non-empty --body-file")
+        log.error(f"--body-file is empty: {body_file}")
         return 1
 
     repo = ctx.repo

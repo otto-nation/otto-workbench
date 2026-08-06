@@ -1605,11 +1605,28 @@ class TestRunReply:
             assert rt._run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
         post.assert_not_called()
 
-    def test_errors_on_an_empty_body_before_touching_github(self, rt, tmp_path):
-        with patch.object(rt, "fetch_pr_data") as fetch_pr:
+    def test_errors_when_the_reply_call_fails(self, rt, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply", return_value=False), \
+             patch.object(rt.log, "error") as err:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 1
+        err.assert_called_once()
+
+    def test_distinguishes_a_missing_body_file_from_an_empty_one(self, rt, tmp_path):
+        empty = tmp_path / "empty.md"
+        empty.write_text("   ")
+        with patch.object(rt, "fetch_pr_data") as fetch_pr, \
+             patch.object(rt.log, "error") as err:
             assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", None) == 1
             assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", "/nope.md") == 1
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(empty)) == 1
         fetch_pr.assert_not_called()
+        messages = [c[0][0] for c in err.call_args_list]
+        assert "not found" in messages[1]
+        assert "empty" in messages[2]
 
 
 # ── _post_deferred_replies ────────────────────────────────────────────────
@@ -1763,11 +1780,29 @@ class TestReplyUpsert:
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as post, \
              patch("pr_comments.patch_thread_reply") as edit:
-            rt._post_dismissed_replies(
+            count = rt._post_dismissed_replies(
                 dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
+        assert count == 1
         edit.assert_not_called()
         assert post.call_args[0][2] == 111
+
+    @pytest.mark.parametrize("state,failing", [
+        (ThreadState.ADDRESSED, "patch_thread_reply"),
+        (ThreadState.NEW, "post_thread_reply"),
+    ])
+    def test_a_failed_call_is_not_counted(self, rt, tmp_path, state, failing):
+        """replies_posted feeds the run summary, so a silent failure would inflate it."""
+        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        thread = _standing_reply_thread()
+        thread.state = state
+        with patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.patch_thread_reply", return_value=True), \
+             patch(f"pr_comments.{failing}", return_value=False):
+            count = rt._post_dismissed_replies(
+                dismissed, {"t1": thread}, "owner/repo", 42, tmp_path,
+            )
+        assert count == 0
 
     def test_a_fix_replaces_an_earlier_dismissal(self, rt):
         """The #2633 regression: round one dismissed the thread, round two fixed it.

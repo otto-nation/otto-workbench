@@ -3210,6 +3210,64 @@ class TestCollectPreflightData:
         assert "func hello" in data.diff
         assert "main.go" in data.file_contents
 
+    def _repo_with_worktree_changes(self, repo):
+        """Branch with one commit, one uncommitted edit and one untracked file."""
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        (repo / "helper.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "main.go").write_text("package main\nfunc committed() {}\n")
+        self._commit_all(repo, "add committed")
+        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
+        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
+
+    def test_self_mode_diff_spans_the_whole_worktree(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._repo_with_worktree_changes(repo)
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        job = ro.ReviewJob(
+            repo="r", pr_number="", pr=pr, ctx=ro.PRContext(),
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+            mode="self",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "func committed" in data.diff
+        assert "func uncommitted" in data.diff
+        assert "func untracked" in data.diff
+        assert set(data.file_contents) == {"main.go", "helper.go", "extra.go"}
+
+    def test_pr_mode_diff_stops_at_head(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._repo_with_worktree_changes(repo)
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=1, deletions=0, changed_files=1,
+            files=[{"path": "main.go", "additions": 1, "deletions": 0}],
+        )
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ro.PRContext(),
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            reviews_dir=str(tmp_path),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "func committed" in data.diff
+        assert "func uncommitted" not in data.diff
+        assert "func untracked" not in data.diff
+
     def test_low_density_large_file_omitted_from_contents(self, ro, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -3365,41 +3423,46 @@ class TestFetchBranchMetadata:
         pr = ro.fetch_branch_metadata(str(repo))
         assert pr.changed_files == 1
 
-    def test_prefers_committed_diff_over_uncommitted_when_commits_exist(
+    def test_committed_uncommitted_and_untracked_changes_all_appear(
         self, ro, tmp_path,
     ):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
         (repo / "main.go").write_text("package main\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        (repo / "helper.go").write_text("package main\n")
+        (repo / ".gitignore").write_text("secret.txt\n")
+        self._commit_all(repo, "init")
         self._add_origin(repo)
         subprocess.run(
             ["git", "checkout", "-b", "feat", "-q"],
             cwd=str(repo), check=True, capture_output=True,
         )
         (repo / "main.go").write_text("package main\nfunc committed() {}\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "add committed"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
-        # Also add an uncommitted file that should NOT appear
-        (repo / "extra.go").write_text("uncommitted\n")
+        self._commit_all(repo, "add committed")
+        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
+        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
+        (repo / "secret.txt").write_text("ignored\n")
 
         pr = ro.fetch_branch_metadata(str(repo))
-        assert pr.changed_files == 1
-        paths = [f["path"] for f in pr.files]
-        assert "main.go" in paths
-        assert "extra.go" not in paths
+        paths = sorted(f["path"] for f in pr.files)
+        assert paths == ["extra.go", "helper.go", "main.go"]
+        assert pr.changed_files == 3
+        assert "secret.txt" not in paths
+
+    def test_untracked_files_are_counted_as_whole_file_additions(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        self._add_origin(repo)
+        (repo / "new.go").write_text("one\ntwo\nthree\n")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert pr.files == [{"path": "new.go", "additions": 3, "deletions": 0}]
+        assert pr.additions == 3
+        assert pr.deletions == 0
 
     def test_commits_on_base_are_not_reported_as_branch_changes(self, ro, tmp_path):
         repo = tmp_path / "repo"

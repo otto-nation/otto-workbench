@@ -247,7 +247,9 @@ claude-review post <pr_url_or_number>
 
 #### What self-review reads
 
-`--self` reviews the worktree, not the remote branch. The head SHA and the changed-file list come from `git`, so unpushed commits are still reviewed. When the branch already has a PR, its title, body and labels supply context but do not define the diff — the review logs the local head whenever it differs from the PR's.
+`--self` reviews the worktree, not the remote branch. Everything that differs from the base branch is in scope: unpushed commits, staged and unstaged edits, and untracked files (`.gitignore` still applies). The head SHA and the changed-file list come from `git`, never from GitHub. When the branch already has a PR, its title, body and labels supply context but do not define the diff — the review logs the local head whenever it differs from the PR's.
+
+Re-reviews narrow to what changed since the prior review, and that delta follows the same rule — uncommitted work done since the last `--self` run is picked up. PR mode is unaffected: it reviews the pushed commits only.
 
 #### Model selection
 

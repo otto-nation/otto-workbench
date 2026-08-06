@@ -58,7 +58,7 @@ SECTION_FILE_TRIAGE = "File Triage"
 
 
 def plural(n: int) -> str:
-    """Return the plural suffix for a count — `f"{n} file{plural(n)}"`."""
+    """Return the plural suffix for a count — `f"{total} finding{plural(total)}"`."""
     return "" if n == 1 else "s"
 
 

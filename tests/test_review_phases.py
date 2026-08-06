@@ -176,3 +176,26 @@ class TestPhaseRunnerInvocation:
             "P", job.session_log, review_file="/elsewhere/review.md",
         )
         assert "/elsewhere" in inv.add_dirs
+
+
+class TestNoDuplicateDefaults:
+    """One owner per default. A second copy drifts silently."""
+
+    def test_max_cost_defined_once(self):
+        import review_preflight
+
+        assert not hasattr(review_preflight, "DEFAULT_MAX_COST")
+        assert hasattr(review_pipeline, "DEFAULT_MAX_COST")
+
+    def test_turn_and_budget_defaults_not_in_preflight(self):
+        import review_preflight
+
+        for name in (
+            "DEFAULT_MAX_TURNS",
+            "DEFAULT_MAX_TURNS_GROUP",
+            "DEFAULT_MAX_TURNS_HOLISTIC",
+            "DEFAULT_MAX_TURNS_SYNTHESIS",
+            "DEFAULT_MAX_TURNS_SINGLE",
+            "DEFAULT_MAX_BUDGET_PER_AGENT",
+        ):
+            assert not hasattr(review_preflight, name), f"{name} is a stale copy"

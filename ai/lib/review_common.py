@@ -74,9 +74,8 @@ class Phase(StrEnum):
     """A stage of the review pipeline.
 
     Override env keys are derived from the member name, so adding a phase means
-    one member here plus one ``PHASE_MODEL_DEFAULTS`` entry — callers, preflight
-    checks, and failure hints all read the derived keys rather than spelling
-    them out.
+    one member here plus one ``PHASES`` entry — callers, preflight checks, and
+    failure hints all read the derived keys rather than spelling them out.
     """
 
     SINGLE = "single"

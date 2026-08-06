@@ -79,7 +79,7 @@ class TestEffortPresets:
 
 
 class TestOmittedTurns:
-    def _make_job(self, effort="medium", omitted_files=None):
+    def _make_job(self, effort=Effort.MEDIUM, omitted_files=None):
         from review_preflight import PreflightData, PRContext, PRMetadata, ReviewJob
         pr = PRMetadata(
             title="test", body="", head="main", base="main",
@@ -99,17 +99,17 @@ class TestOmittedTurns:
         )
 
     def test_medium_adds_turns_for_omitted(self):
-        job = self._make_job(effort="medium", omitted_files=["big.py", "huge.py"])
+        job = self._make_job(effort=Effort.MEDIUM, omitted_files=["big.py", "huge.py"])
         turns = review_pipeline._omitted_turns(job)
         assert turns == 2 * review_pipeline.OMITTED_FILE_TURNS
 
     def test_low_skips_omitted_turns(self):
-        job = self._make_job(effort="low", omitted_files=["big.py", "huge.py"])
+        job = self._make_job(effort=Effort.LOW, omitted_files=["big.py", "huge.py"])
         turns = review_pipeline._omitted_turns(job)
         assert turns == 0
 
     def test_high_adds_turns_for_omitted(self):
-        job = self._make_job(effort="high", omitted_files=["big.py"])
+        job = self._make_job(effort=Effort.HIGH, omitted_files=["big.py"])
         turns = review_pipeline._omitted_turns(job)
         assert turns == review_pipeline.OMITTED_FILE_TURNS
 

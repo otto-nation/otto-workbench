@@ -10,7 +10,7 @@ if LIB_DIR not in sys.path:
 
 import review_findings
 import review_pipeline
-from review_common import Phase
+from review_common import Effort, Phase
 from review_findings import Finding
 
 
@@ -517,7 +517,7 @@ class TestRunFixPassRetry:
         job.wt_path = str(tmp_path)
         job.reviews_dir = str(tmp_path)
         job.model = None
-        job.effort = None
+        job.effort = Effort.MEDIUM
         return job
 
     @patch("review_pipeline._commit_fixes")

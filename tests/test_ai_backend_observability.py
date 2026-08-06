@@ -4,6 +4,7 @@ Only invoke_agent asked for --output-format, so prompt() and invoke_fix() produc
 nothing parseable and every pr-rebase and review-threads call went unmeasured.
 """
 
+import ast
 import json
 import subprocess
 import sys
@@ -11,6 +12,8 @@ import types
 from pathlib import Path
 
 import pytest
+
+AI_DIR = Path(__file__).resolve().parent.parent / "ai"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -190,3 +193,79 @@ class TestFixWritesSessionLog:
         self._fake_proc(monkeypatch, [json.dumps(event) + "\n"])
         ai_backend_claude.invoke_fix("p", add_dirs=[])
         assert "Read main.go" in capsys.readouterr().err
+
+
+def _is_python_source(path: Path) -> bool:
+    """A .py file, or an extensionless bin script with a python3 shebang."""
+    if path.suffix == ".py":
+        return True
+    if not path.is_file() or path.suffix:
+        return False
+    try:
+        return "python3" in path.read_text().split("\n", 1)[0]
+    except (UnicodeDecodeError, OSError):
+        return False
+
+
+def _ai_sources() -> list[Path]:
+    candidates = list((AI_DIR / "lib").glob("*.py"))
+    candidates.extend((AI_DIR / "claude" / "bin").iterdir())
+    return sorted(p for p in candidates if _is_python_source(p))
+
+
+def _invoke_fix_calls(tree: ast.Module):
+    """Yield every ``ai_backend.invoke_fix(...)`` Call node in a parsed module."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not isinstance(fn, ast.Attribute) or fn.attr != "invoke_fix":
+            continue
+        if isinstance(fn.value, ast.Name) and fn.value.id == "ai_backend":
+            yield node
+
+
+def _has_session_log(call: ast.Call) -> bool:
+    for kw in call.keywords:
+        if kw.arg != "session_log":
+            continue
+        empty = isinstance(kw.value, ast.Constant) and not kw.value.value
+        return not empty
+    return False
+
+
+class TestFixCallSitesPassSessionLog:
+    """Every ai_backend.invoke_fix() call site must supply a session_log.
+
+    session_log defaults to "" and _usage_from_log("") short-circuits to None, so an
+    omission writes zero ledger rows while the call still succeeds and still carries
+    its task= label. The gap is invisible until someone audits spend, which is how
+    `pr ci --fix` and `pr comments --fix` went unmeasured.
+    """
+
+    def test_all_call_sites_supply_a_session_log(self):
+        offenders = []
+        found = 0
+        for source in _ai_sources():
+            tree = ast.parse(source.read_text(), filename=str(source))
+            for call in _invoke_fix_calls(tree):
+                found += 1
+                if not _has_session_log(call):
+                    offenders.append(f"  - {source.name}:{call.lineno}")
+
+        assert not offenders, (
+            "invoke_fix() call sites missing a non-empty session_log "
+            "(these produce no usage ledger records):\n" + "\n".join(offenders)
+        )
+        # Guard the scanner itself: a matcher that silently matches nothing
+        # would make this test pass forever.
+        assert found >= 3, f"expected to find invoke_fix call sites, found {found}"
+
+    @pytest.mark.parametrize("src,expected", [
+        ('ai_backend.invoke_fix(p, session_log=str(d / "s.jsonl"), add_dirs=[])', True),
+        ('ai_backend.invoke_fix(p, add_dirs=[], task="ci-fix")', False),
+        ('ai_backend.invoke_fix(p, session_log="", add_dirs=[])', False),
+    ])
+    def test_scanner_detects_missing_session_log(self, src, expected):
+        call = next(_invoke_fix_calls(ast.parse(src)))
+        assert _has_session_log(call) is expected

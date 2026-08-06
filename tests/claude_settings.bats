@@ -281,12 +281,13 @@ _get_pr_create_hook() {
 # it were the command itself.
 #
 # ceiling: the hook strips quoted spans with two sed passes, which mis-handles
-# escaped quotes and embedded apostrophes. An unpaired apostrophe re-pairs with
-# a later quote, so `echo it's; cd /x && ls 'q'` strips the real cd away (missed
-# block) and other inputs can keep a fragment that matches (spurious block).
-# Both outcomes cost at most one permission prompt — these guardrails steer
-# command style, they are not a security boundary. Upgrade to a real tokenizer
-# if either misfire shows up on a command worth running.
+# escaped quotes and embedded apostrophes, in both directions. An unpaired
+# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
+# the real cd away and is not blocked; an escaped quote ends a span early, so
+# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
+# expansion. Both outcomes cost at most one permission prompt — these guardrails
+# steer command style, they are not a security boundary. Upgrade to a real
+# tokenizer if either misfire shows up on a command worth running.
 
 @test "the four first-line checks live in exactly one hook" {
   local needle count

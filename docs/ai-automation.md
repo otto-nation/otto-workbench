@@ -140,7 +140,7 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 
 ### `/pr-comments [<pr_number_or_branch>]`
 
-Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
+Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then draft replies for approval before publishing with --post. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
 
 ```
 /pr-comments [<pr_number_or_branch>]
@@ -373,6 +373,25 @@ scratch files ended up sitting beside unrelated reviews.
 `pr gc` collects loose files at the reviews root once they are a week old. A flat
 `<name>.md` and its suffixed siblings are left alone: those are input to the
 startup migration that folds the old flat layout into directories.
+
+### Drafts, and what it takes to publish
+
+`pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
+summary, thread resolutions, and deferral tracking issues are all printed to
+stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes, commits,
+and pushes are unaffected — the gate covers only what other people can see.
+
+The default is draft because a review reply is public the moment it lands: an
+incorrect claim has to be retracted in front of the reviewer, and a wrong
+deferral issue has to be closed. Reading the drafts first costs one command:
+
+```bash
+pr comments --fix          # triage, fix, commit, push — drafts the replies
+pr comments --resolve --post   # publish once the drafts read correctly
+```
+
+A draft run leaves state untouched, so nothing is recorded as posted and a later
+`--post` run picks up the same queue.
 
 ### Running from a different directory
 

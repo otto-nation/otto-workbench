@@ -31,6 +31,7 @@ import ai_backend
 import pr_comments as pc
 import pr_context
 import pr_state
+import publishing
 from pr_comments import ThreadState
 import review_common
 import review_issue
@@ -1495,24 +1496,28 @@ def _post_fix_summary(
     url = pc.post_issue_comment(repo, pr_number, body, marker=_SUMMARY_MARKER)
     if url:
         log.info(f"Posted fix summary: {url}")
-    else:
+    elif publishing.enabled():
         log.error("failed to post fix summary")
     return url
 
 
-def _post_push_deferred_replies(
+def _post_pending_fix_replies(
     state: pr_state.PRState,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
 ) -> None:
-    """Post fix replies and resolve threads that were deferred due to push failure.
+    """Send the fix replies the fix pass produced but did not deliver.
 
-    Called during --finish. Checks if the commit has since been pushed;
-    if so, posts replies and resolves threads. Updates state.fix.commit_status.
+    Two ways a reply ends up here: the push failed, so there was no commit for
+    the reply to cite, or the run was a draft. Called during --finish, which is
+    the second chance for both. A reply may not go out until its commit is
+    actually on the remote.
     """
     fix = state.fix
-    if fix.commit_status != "push_failed" or not fix.commit_sha:
+    if not fix.commit_sha:
+        return
+    if fix.commit_status != "push_failed" and not fix.replies_pending:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
@@ -1520,21 +1525,22 @@ def _post_push_deferred_replies(
         log.info("Push still pending — skipping deferred replies")
         return
 
-    fix.commit_status = "pushed"
-
     FA = pr_state.ThreadAction
     fixed_threads = [t for t in fix.threads if t.action == FA.FIXED]
 
-    if not fixed_threads:
-        return
+    if fixed_threads:
+        items = [
+            CommentItem(id=t.id, file=t.file, line=t.line,
+                        reviewer=t.reviewer, summary=t.summary)
+            for t in fixed_threads
+        ]
+        _post_fix_replies(items, threads_by_id, repo, pr_number, fix.commit_sha)
+        _resolve_fixed_threads(items, threads_by_id)
 
-    items = [
-        CommentItem(id=t.id, file=t.file, line=t.line,
-                    reviewer=t.reviewer, summary=t.summary)
-        for t in fixed_threads
-    ]
-    _post_fix_replies(items, threads_by_id, repo, pr_number, fix.commit_sha)
-    _resolve_fixed_threads(items, threads_by_id)
+    # A draft delivered nothing, so the queue has to survive for the next run.
+    if publishing.enabled():
+        fix.commit_status = "pushed"
+        fix.replies_pending = False
 
 
 def _render_deferred_summary(
@@ -1554,11 +1560,16 @@ def _render_deferred_summary(
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
+    status = fix.commit_status
     if fix.commit_status == "push_failed" and fix.commit_sha:
         if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
             log.info("Push still pending — keeping summary deferred")
             return
-        fix.commit_status = "pushed"
+        status = "pushed"
+        # Same reason as the deferred-reply queue: only a run that actually
+        # publishes may retire push_failed, or the queue is lost silently.
+        if publishing.enabled():
+            fix.commit_status = status
 
     FA = pr_state.ThreadAction
     resolved_or_addressed = {
@@ -1582,7 +1593,7 @@ def _render_deferred_summary(
 
     cp = CommitPushResult(
         sha=fix.commit_sha or None,
-        status=fix.commit_status,
+        status=status,
         error="",
     )
     body = _build_summary_body(
@@ -1601,8 +1612,29 @@ def _render_deferred_summary(
         log.info(f"Posted deferred fix summary: {url}")
         fix.summary_url = url
         fix.summary_deferred = False
-    else:
+    elif publishing.enabled():
         log.error("failed to post deferred fix summary")
+
+
+def _summary_still_owed(
+    fixed: list,
+    needs_human: list,
+    deferred: list,
+    dismissed: list,
+    commit_status: str,
+    has_unaccounted: bool,
+) -> bool:
+    """Whether --resolve must re-render the fix summary later.
+
+    Discussion that is still open, or a commit that never reached the remote,
+    both make the summary premature. So does a draft run: it printed the summary
+    instead of posting it, so everything it had to say is still owed.
+    """
+    if deferred or needs_human or has_unaccounted:
+        return True
+    if commit_status == "push_failed":
+        return True
+    return not publishing.enabled() and bool(fixed or dismissed)
 
 
 def _post_or_defer_summary(
@@ -2029,9 +2061,9 @@ def _run_comment_fix(
     all_fixed = tracking.fixed + tracking.fixed_items
     all_deferred = tracking.deferred + tracking.deferred_items
 
-    pending_deferred = (
-        bool(all_deferred) or bool(all_needs_human)
-        or cp.status == "push_failed" or has_unaccounted
+    pending_deferred = _summary_still_owed(
+        all_fixed, all_needs_human, all_deferred, all_dismissed,
+        cp.status, has_unaccounted,
     )
 
     summary_url = _post_or_defer_summary(
@@ -2053,6 +2085,7 @@ def _run_comment_fix(
         commit_sha=cp.sha or "",
         commit_status=cp.status,
         replies_posted=replies_posted,
+        replies_pending=bool(tracking.fixed) and not publishing.enabled(),
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and pending_deferred,
         has_comment_items=has_items,
@@ -2189,6 +2222,7 @@ def _run_threads(trail, args, ctx) -> None:
             seen_review_body_comment_ids=current_review_ids,
             updated_at=pr_state.now_iso(),
         ))
+
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")
@@ -2268,6 +2302,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--finish", "--resolve", "--resolve-verified",
                         action="store_true", dest="finish",
                         help="Close out deferred work: replies, tracking issue, summary")
+    parser.add_argument("--post", action="store_true",
+                        help="Publish replies, summaries, and resolutions "
+                             "(default: print drafts to stderr and post nothing)")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
     add_trail_args(parser)
@@ -2279,6 +2316,10 @@ def main():
 
     if args.fix:
         args.triage = True
+    if args.post:
+        publishing.enable()
+    else:
+        log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
 
     ctx = pr_context.resolve(
         pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,

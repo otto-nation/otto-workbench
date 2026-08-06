@@ -4,14 +4,20 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pr_comments
 import pr_state
+import publishing
+import review_issue
 from pr_comments import (
     load_state, save_state, empty_state, compute_thread_state, sync_threads,
     render_dashboard, render_status, render_triage_status, render_fix_status,
@@ -407,7 +413,6 @@ MARKER = "<!-- pr-comments:summary -->"
 
 
 def test_post_issue_comment_posts_new_without_marker():
-    import pr_comments
     with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post, \
          patch.object(pr_comments, "_find_comment_by_marker",
                       autospec=True) as find:
@@ -424,7 +429,6 @@ def _pages(*pages):
 
 def test_post_issue_comment_edits_existing_marked_comment():
     """A second round must update the first round's summary, not append to it."""
-    import pr_comments
     listing = _pages([
         {"id": 10, "body": "unrelated"},
         {"id": 11, "body": f"{MARKER}\nround one"},
@@ -439,7 +443,6 @@ def test_post_issue_comment_edits_existing_marked_comment():
 
 
 def test_post_issue_comment_posts_new_when_marker_absent():
-    import pr_comments
     listing = _pages([{"id": 10, "body": "unrelated"}])
     with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)), \
          patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
@@ -449,7 +452,6 @@ def test_post_issue_comment_posts_new_when_marker_absent():
 
 
 def test_find_comment_by_marker_prefers_latest():
-    import pr_comments
     listing = _pages([
         {"id": 10, "body": f"{MARKER}\nold"},
         {"id": 11, "body": f"{MARKER}\nnew"},
@@ -460,7 +462,6 @@ def test_find_comment_by_marker_prefers_latest():
 
 def test_find_comment_by_marker_spans_pages():
     """The marker comment is posted first, so on a busy PR it is not on page one."""
-    import pr_comments
     listing = _pages(
         [{"id": 10, "body": f"{MARKER}\nround one"}],
         [{"id": 11, "body": "unrelated"}],
@@ -471,7 +472,6 @@ def test_find_comment_by_marker_spans_pages():
 
 def test_find_comment_by_marker_accepts_flat_listing():
     """A single unslurped page must still be readable."""
-    import pr_comments
     listing = json.dumps([{"id": 12, "body": f"{MARKER}\nonly"}])
     with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
         assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 12)
@@ -479,21 +479,18 @@ def test_find_comment_by_marker_accepts_flat_listing():
 
 def test_find_comment_by_marker_reports_lookup_failure():
     """A failed listing must be distinguishable from an empty one."""
-    import pr_comments
     for payload in ((1, ""), (0, "not json"), (0, '{"message": "Not Found"}')):
         with patch.object(pr_comments, "_paginated_json", return_value=payload):
             assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (False, None)
 
 
 def test_find_comment_by_marker_reports_empty_listing():
-    import pr_comments
     with patch.object(pr_comments, "_paginated_json", return_value=(0, "[]")):
         assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, None)
 
 
 def test_post_issue_comment_logs_when_lookup_fails():
     """Falling back to a new comment on lookup failure must not be silent."""
-    import pr_comments
     with patch.object(pr_comments, "_paginated_json", return_value=(1, "")), \
          patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')), \
          patch.object(pr_comments.log, "error") as err:
@@ -503,8 +500,74 @@ def test_post_issue_comment_logs_when_lookup_fails():
 
 
 def test_patch_issue_comment_uses_patch_method():
-    import pr_comments
     with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
         assert pr_comments._patch_issue_comment("owner/repo", 11, "body") == "u"
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == "repos/owner/repo/issues/comments/11"
+
+
+# ── Publishing gate ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def no_subprocess(monkeypatch):
+    """Any external call in draft mode is a bug, so make one impossible to miss."""
+    def boom(*a, **kw):
+        raise AssertionError(f"a subprocess ran in draft mode: {a}")
+    monkeypatch.setattr(pr_comments.subprocess, "run", boom)
+    monkeypatch.setattr(review_issue.subprocess, "run", boom)
+
+
+class TestPublishingGate:
+    """Nothing reaches GitHub until --post says so."""
+
+    def test_defaults_to_drafts(self):
+        assert publishing.enabled() is False
+
+    def test_thread_reply_is_not_posted(self, no_subprocess):
+        assert pr_comments.post_thread_reply("o/r", 1, 99, "body") is False
+
+    def test_issue_comment_is_not_posted(self, no_subprocess):
+        assert pr_comments.post_issue_comment("o/r", 1, "body") is None
+
+    def test_thread_is_not_resolved(self, no_subprocess):
+        assert pr_comments.resolve_thread("PRRT_1") is False
+
+    def test_draft_body_goes_to_stderr(self, no_subprocess, capsys):
+        pr_comments.post_thread_reply("o/r", 1, 99, "the reply text")
+        captured = capsys.readouterr()
+        assert "the reply text" in captured.err
+        assert captured.out == ""
+
+    def test_enable_opens_the_gate(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            pr_comments.subprocess, "run",
+            lambda *a, **kw: calls.append(a) or SimpleNamespace(
+                returncode=0, stdout='{"html_url": "u"}', stderr="",
+            ),
+        )
+        publishing.enable()
+        assert pr_comments.post_thread_reply("o/r", 1, 99, "body") is True
+        assert len(calls) == 1
+
+
+class TestIssueTrackerGate:
+    """A tracking issue is as public as a reply — same gate.
+
+    Deferral issues were filed from an incorrect review claim once; drafting them
+    keeps that mistake on this machine.
+    """
+
+    def test_issue_is_not_created(self, no_subprocess):
+        created = review_issue.create_issue(
+            "linear", "ENG", "title", "description",
+        )
+        assert created is None
+
+    def test_issue_is_not_updated(self, no_subprocess):
+        assert review_issue.update_issue("linear", "ENG-1", "description") is False
+
+    def test_draft_names_the_provider_and_title(self, no_subprocess, capsys):
+        review_issue.create_issue("linear", "ENG", "the issue title", "body")
+        assert "the issue title" in capsys.readouterr().err

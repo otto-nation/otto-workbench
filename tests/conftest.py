@@ -117,6 +117,26 @@ def _isolate_usage_ledger(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _drafts_only(monkeypatch):
+    """Close the publishing gate for every test.
+
+    The gate is a single process-global flag, so one test that opens it would
+    otherwise leave the next one free to write to GitHub for real.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import publishing
+    monkeypatch.setattr(publishing, "_enabled", False)
+
+
+@pytest.fixture
+def publishing_on(monkeypatch):
+    """Open the gate, for tests covering what a write does once it is allowed."""
+    import publishing
+    monkeypatch.setattr(publishing, "_enabled", True)
+
+
+@pytest.fixture(autouse=True)
 def _clear_bot_login_cache():
     """Clear _get_bot_login lru_cache between tests."""
     yield

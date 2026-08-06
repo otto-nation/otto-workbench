@@ -2136,7 +2136,7 @@ class TestRetryTurns:
         assert ro._retry_turns(diagnosis, job) == ro.PHASES[ro.Phase.GROUP].max_turns
 
 
-def _MAX_TURNS_16(ro):
+def _max_turns_16(ro):
     """Turn exhaustion, the retryable failure these tests drive retries with."""
     return ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=16)
 
@@ -2177,7 +2177,7 @@ class TestRetryFailedGroups:
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
 
-        failed = [ro.GroupFailure("grp-a", _MAX_TURNS_16(ro))]
+        failed = [ro.GroupFailure("grp-a", _max_turns_16(ro))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
         assert result == []
         assert calls[-1] == ro.RETRY_MAX_TURNS_GROUP
@@ -2226,7 +2226,7 @@ class TestRetryFailedGroups:
         monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
 
         failed = [
-            ro.GroupFailure("grp-a", _MAX_TURNS_16(ro)),
+            ro.GroupFailure("grp-a", _max_turns_16(ro)),
             ro.GroupFailure("grp-b", ro.Diagnosis(
                 ro.DiagnosisKind.SKIPPED,
                 detail="3 consecutive failures (agent hit max turns) — aborting remaining 1 groups")),
@@ -2258,7 +2258,7 @@ class TestRetryFailedGroups:
         )
 
         failed = [
-            ro.GroupFailure("grp-a", _MAX_TURNS_16(ro)),
+            ro.GroupFailure("grp-a", _max_turns_16(ro)),
             ro.GroupFailure("grp-b", ro.Diagnosis(
                 ro.DiagnosisKind.SKIPPED,
                 detail="3 consecutive failures (agent hit max turns) — aborting")),
@@ -3887,6 +3887,18 @@ class TestBuildFailuresSection:
             synthesis_done=True, synthesis_failed="",
         )
         assert "pr review --recover" in build_failures_section(state, [])
+
+    def test_no_recover_hint_when_every_group_is_unrecoverable(self):
+        from review_common import Diagnosis, DiagnosisKind
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        denial = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied")
+        state = PipelineState(
+            head_sha="abc", group_names=["g1", "g2"],
+            groups_done=[], groups_failed={1: denial, 2: denial},
+            synthesis_done=True, synthesis_failed="",
+        )
+        assert "pr review --recover" not in build_failures_section(state, [])
 
     def test_recover_hint_offered_for_max_turns(self):
         from review_common import Diagnosis, DiagnosisKind

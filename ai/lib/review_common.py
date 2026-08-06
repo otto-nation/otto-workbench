@@ -20,6 +20,7 @@ from typing import TypeVar
 
 import ai_usage
 import log
+import serde
 from ai_usage import SessionUsage, parse_session_log
 from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
 
@@ -252,6 +253,27 @@ class Diagnosis:
         """Whether `pr review --recover` could plausibly do better than this run."""
         lowered = self.detail.lower()
         return not any(m in lowered for m in NON_RECOVERABLE_ERROR_MARKERS)
+
+
+def hydrate_failures(raw: dict) -> dict[int, Diagnosis]:
+    """A state file's `groups_failed`, in either of the two formats it can hold.
+
+    The single hydration path for pipeline state — every reader goes through
+    here, so a schema change cannot break one of them silently.
+
+    JSON serializes dict keys as strings and `serde.from_dict` coerces values
+    but not keys, so the int conversion lives here. A file written before
+    diagnoses were typed holds the rendered reason; keep it verbatim under
+    `UNKNOWN` so a `--recover` run against an in-flight review still renders
+    its failures.
+    """
+    return {
+        int(k): (
+            serde.from_dict(Diagnosis, v) if isinstance(v, dict)
+            else Diagnosis(DiagnosisKind.UNKNOWN, detail=str(v))
+        )
+        for k, v in raw.items()
+    }
 
 
 # ── Templates ────────────────────────────────────────────────────────────────
@@ -590,7 +612,7 @@ def build_failure_detail(review_dir: Path | None) -> str:
     data = _read_pipeline_data(review_dir)
     if data is None:
         return ""
-    groups_failed = data.get("groups_failed", {})
+    groups_failed = hydrate_failures(data.get("groups_failed", {}))
     synthesis_failed = data.get("synthesis_failed", "")
     group_names = data.get("group_names", [])
 
@@ -601,7 +623,7 @@ def build_failure_detail(review_dir: Path | None) -> str:
     if groups_failed:
         n_failed = len(groups_failed)
         n_total = len(group_names)
-        reasons = sorted(set(groups_failed.values()))
+        reasons = sorted({d.message for d in groups_failed.values()})
         if n_failed >= n_total and n_total > 0:
             parts.append(f"all groups failed: {', '.join(reasons)}")
         else:

@@ -614,6 +614,31 @@ def test_build_failure_detail_groups_failed(cr, tmp_path):
     assert "agent hit max turns" in result
 
 
+def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
+    """The format `_write_pipeline_state` actually produces.
+
+    This reader parses pipeline.json itself rather than going through
+    `_read_pipeline_state`, so it has to hydrate the nested records too.
+    """
+    from review_common import build_failure_detail
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
+        "synthesis_done": True, "synthesis_failed": "",
+        "groups_done": [1],
+        "groups_failed": {
+            "2": {"kind": "quota_exhausted", "no_write_tool": False,
+                  "detail": "", "num_turns": None},
+            "3": {"kind": "max_turns", "no_write_tool": False,
+                  "detail": "", "num_turns": 5},
+        },
+    }))
+    result = build_failure_detail(tmp_path)
+    assert "2/3 groups failed" in result
+    assert "quota exhausted (429)" in result
+    assert "agent hit max turns (5)" in result
+
+
 def test_build_failure_detail_synthesis_failed(cr, tmp_path):
     from review_common import build_failure_detail
     pipeline = tmp_path / "pipeline.json"

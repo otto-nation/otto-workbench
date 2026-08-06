@@ -39,6 +39,7 @@ from review_common import (
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
     has_uncommitted_changes,
+    hydrate_failures,
     preserve_log, restore_preserved,
     read_pipeline_status,
 )
@@ -327,30 +328,13 @@ def _write_pipeline_state(job: ReviewJob, state: PipelineState):
     os.replace(tmp, dest)
 
 
-def _hydrate_failure(raw) -> Diagnosis:
-    """One `groups_failed` entry, from either state format.
-
-    A state file written before diagnoses were typed holds the rendered
-    string; keep it verbatim under `UNKNOWN` so a `--recover` run against an
-    in-flight review still renders its failures table.
-    """
-    if isinstance(raw, dict):
-        return serde.from_dict(Diagnosis, raw)
-    return Diagnosis(DiagnosisKind.UNKNOWN, detail=str(raw))
-
-
 def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
     path = Path(_pipeline_state_path(job))
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text())
-        # JSON serializes dict keys as strings — convert back to int.
-        # serde.from_dict coerces dict values but not keys, so this stays here.
-        groups_failed_raw = data.get("groups_failed", {})
-        groups_failed = {
-            int(k): _hydrate_failure(v) for k, v in groups_failed_raw.items()
-        }
+        groups_failed = hydrate_failures(data.get("groups_failed", {}))
         return PipelineState(
             head_sha=data["head_sha"],
             group_names=data["group_names"],
@@ -469,7 +453,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
         log.error(
             f"review agent {detail} and produced no review file "
-            f"({_reason(diagnosis)})"
+            f"({_render_reason(diagnosis)})"
         )
         log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
@@ -493,7 +477,7 @@ _retry_turns_for = agent_retry.turns_for
 _retry_missing_output = agent_retry.retry_missing_output
 
 
-def _reason(diagnosis: "Diagnosis | None") -> str:
+def _render_reason(diagnosis: "Diagnosis | None") -> str:
     """The rendered reason for a phase that produced nothing.
 
     A `None` only reaches here when the output disappeared after the retry
@@ -670,7 +654,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         holistic_content = Path(holistic_output).read_text()
     else:
         log.warn(
-            f"Holistic scan produced no output ({_reason(diagnosis)}) "
+            f"Holistic scan produced no output ({_render_reason(diagnosis)}) "
             "— continuing without it"
         )
 
@@ -708,7 +692,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
         return format_leads_block(leads, no_scrutiny), scout_output, scout_log
 
-    log.warn(f"Scout produced no output ({_reason(diagnosis)}) — continuing without leads")
+    log.warn(f"Scout produced no output ({_render_reason(diagnosis)}) — continuing without leads")
     return "", scout_output, scout_log
 
 
@@ -760,7 +744,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
             log.info(f"Disprove gate: all {summary['survived']} findings survived")
     else:
         log.warn(
-            f"Disprove gate produced no output ({_reason(diagnosis)}) "
+            f"Disprove gate produced no output ({_render_reason(diagnosis)}) "
             "— keeping all findings"
         )
 

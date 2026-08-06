@@ -29,11 +29,11 @@
           },
           {
             "type": "command",
-            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^[A-Z_][A-Z0-9_]*= ]]; then echo 'BLOCKED: VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See bash-tool.md.' >&2; exit 2; fi"
+            "command": "command=$(jq -r '.tool_input.command // empty'); stripped=$(printf '%s' \"$command\" | sed -e \"s/'[^']*'//g\" -e 's/\"[^\"]*\"//g'); re='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='; if [[ \"$stripped\" =~ $re ]]; then echo 'BLOCKED: VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See bash-tool.md.' >&2; exit 2; fi"
           },
           {
             "type": "command",
-            "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" =~ ^cd[[:space:]] ]] && [[ \"$command\" == *'&&'* || \"$command\" == *';'* ]]; then echo 'BLOCKED: Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See bash-tool.md.' >&2; exit 2; fi"
+            "command": "command=$(jq -r '.tool_input.command // empty'); stripped=$(printf '%s' \"$command\" | sed -e \"s/'[^']*'//g\" -e 's/\"[^\"]*\"//g'); re='(^|[;&|][[:space:]]*)cd[[:space:]]'; if [[ \"$stripped\" =~ $re ]] && [[ \"$stripped\" == *'&&'* || \"$stripped\" == *';'* ]]; then echo 'BLOCKED: Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See bash-tool.md.' >&2; exit 2; fi"
           },
           {
             "type": "command",
@@ -50,6 +50,10 @@
           {
             "type": "command",
             "command": "command=$(jq -r '.tool_input.command // empty'); if [[ \"$command\" == *'$('* ]]; then echo 'BLOCKED: Command substitution $(...) triggers an unsuppressible permission prompt. Run the inner command first, then use the result in the next call. See bash-tool.md.' >&2; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "command=$(jq -r '.tool_input.command // empty'); stripped=$(printf '%s' \"$command\" | sed -e \"s/'[^']*'//g\" -e 's/\"[^\"]*\"//g'); re='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\\(\\)|function[[:space:]])'; if [[ \"$stripped\" =~ $re ]]; then echo 'BLOCKED: A shell function definition makes the whole command unanalyzable (Contains function_definition) — the allow list is skipped entirely, so it prompts every time. Write the command directly with absolute paths. See bash-tool.md.' >&2; exit 2; fi"
           }
         ]
       },

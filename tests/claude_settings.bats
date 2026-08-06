@@ -267,6 +267,72 @@ _get_pr_create_hook() {
   [ "$status" -eq 0 ]
 }
 
+# ── statement-anchored Bash guardrails ──────────────────────────────────────
+# These three hooks match at the start of any statement, not just the start of
+# the command — a leading no-op token must not be a way around them.
+
+_get_bash_hook() {
+  jq -r --arg needle "$1" '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
+    select(.command | contains($needle)) | .command' "$SETTINGS"
+}
+
+@test "funcdef hook: blocks a cd() no-op stub wrapping a grep" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" '{"tool_input":{"command":"cd() { :; }; W=/tmp/x; grep -rn foo \"$W/tests/\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"function_definition"* ]]
+}
+
+@test "funcdef hook: blocks the function keyword form" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" '{"tool_input":{"command":"function run { echo hi; }; run"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "funcdef hook: allows a plain grep with parens inside quotes" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"grep -rnE '(worktree list|worktree_list)' /tmp/x/tests/ | head -40\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "var hook: blocks a VAR=value prefix at the start" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"W=/tmp/x grep -rn foo /tmp/x"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "var hook: blocks a VAR=value assignment after a leading token" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"true; W=/tmp/x; grep -rn foo /tmp/x"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "var hook: allows uppercase flag values mid-command" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"docker run -e FOO=bar alpine"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "cd hook: blocks a compound cd after a leading token" {
+  local hook
+  hook=$(_get_bash_hook "Compound cd")
+  run _run_hook "$hook" '{"tool_input":{"command":"mkdir -p /tmp/x; cd /tmp/x && ls"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "cd hook: allows a cd nested inside a quoted argument" {
+  local hook
+  hook=$(_get_bash_hook "Compound cd")
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"bash -c 'cd /tmp/x && ls'\"}}"
+  [ "$status" -eq 0 ]
+}
+
 # ── sync-settings.jq integrity ───────────────────────────────────────────────
 
 @test "sync-settings.jq file exists" {

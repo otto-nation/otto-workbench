@@ -105,16 +105,16 @@ class TestCommitFixes:
     @patch("review_pipeline.subprocess.run")
     def test_no_diff_returns_early(self, mock_run, tmp_path):
         job = self._make_job(tmp_path)
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
         review_pipeline._commit_fixes(job, fixed=3, skipped=1)
-        assert mock_run.call_count == 2  # unstaged + staged checks
+        assert mock_run.call_count == 1  # status check only
 
     @patch("review_pipeline._push_fixes")
     @patch("review_pipeline.subprocess.run")
     def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=1),
+            MagicMock(returncode=0, stdout=" M handler.go\n"),
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
@@ -128,7 +128,7 @@ class TestCommitFixes:
     def test_zero_fixed_omits_count_from_message(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=1),
+            MagicMock(returncode=0, stdout=" M handler.go\n"),
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
@@ -136,6 +136,21 @@ class TestCommitFixes:
         commit_call = mock_run.call_args_list[2]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
+
+    @patch("review_pipeline._push_fixes")
+    @patch("review_pipeline.subprocess.run")
+    def test_untracked_only_changes_are_staged(self, mock_run, mock_push, tmp_path):
+        """A fix agent that only adds new files must still get them committed."""
+        job = self._make_job(tmp_path)
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="?? tests/run_ai.bats\n"),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        review_pipeline._commit_fixes(job, fixed=1, skipped=0)
+        add_call = mock_run.call_args_list[1][0][0]
+        assert add_call[-2:] == ["add", "-A"]
+        assert mock_run.call_count == 3
 
 
 class TestParseCheckboxState:
@@ -345,24 +360,24 @@ class TestCommitFixesWithSummary:
 class TestHasUncommittedChanges:
     @patch("review_pipeline.subprocess.run")
     def test_unstaged_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1)
+        mock_run.return_value = MagicMock(returncode=0, stdout=" M handler.go\n")
         assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
         assert mock_run.call_count == 1
 
     @patch("review_pipeline.subprocess.run")
     def test_staged_only_changes(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0),  # unstaged clean
-            MagicMock(returncode=1),  # staged dirty
-        ]
+        mock_run.return_value = MagicMock(returncode=0, stdout="M  handler.go\n")
         assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
-        assert mock_run.call_count == 2
+
+    @patch("review_pipeline.subprocess.run")
+    def test_untracked_only_changes(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="?? tests/run_ai.bats\n")
+        assert review_pipeline._has_uncommitted_changes("/tmp/wt") is True
 
     @patch("review_pipeline.subprocess.run")
     def test_no_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
         assert review_pipeline._has_uncommitted_changes("/tmp/wt") is False
-        assert mock_run.call_count == 2
 
 
 class TestCommitFixesStagedChanges:
@@ -377,16 +392,54 @@ class TestCommitFixesStagedChanges:
     def test_staged_only_changes_still_commit(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
-            MagicMock(returncode=0),  # unstaged clean
-            MagicMock(returncode=1),  # staged dirty
-            MagicMock(returncode=0),  # git add -u
+            MagicMock(returncode=0, stdout="M  handler.go\n"),  # staged dirty
+            MagicMock(returncode=0),  # git add -A
             MagicMock(returncode=0, stdout="", stderr=""),  # git commit
         ]
         review_pipeline._commit_fixes(job, fixed=3, skipped=0)
-        assert mock_run.call_count == 4
-        commit_call = mock_run.call_args_list[3]
+        assert mock_run.call_count == 3
+        commit_call = mock_run.call_args_list[2]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "3 fixed, 0 skipped" in msg
+
+
+class TestPushFixes:
+    def _make_job(self, tmp_path):
+        job = MagicMock()
+        job.wt_path = str(tmp_path / "worktree")
+        return job
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_diverged_push_suggests_force_with_lease(self, mock_run, mock_log, tmp_path):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stderr="! [rejected] main -> main (non-fast-forward)",
+        )
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        msg = mock_log.error.call_args[0][0]
+        assert "diverged" in msg
+        assert "--force-with-lease" in msg
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_hook_failure_does_not_suggest_force_push(self, mock_run, mock_log, tmp_path):
+        """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stderr="SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs",
+        )
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        msg = mock_log.error.call_args[0][0]
+        assert "--force-with-lease" not in msg
+        assert "committed locally but not pushed" in msg
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        mock_log.error.assert_not_called()
 
 
 class TestReconcileCheckboxes:

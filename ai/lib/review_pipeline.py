@@ -747,18 +747,12 @@ def _count_unchecked(review_file: str) -> int:
 
 
 def _has_uncommitted_changes(wt_path: str) -> bool:
-    """Check for both unstaged and staged changes."""
-    unstaged = subprocess.run(
-        ["git", "-C", wt_path, "diff", "--quiet"],
-        capture_output=True,
+    """Check for unstaged, staged, or untracked changes."""
+    result = subprocess.run(
+        ["git", "-C", wt_path, "status", "--porcelain"],
+        capture_output=True, text=True,
     )
-    if unstaged.returncode != 0:
-        return True
-    staged = subprocess.run(
-        ["git", "-C", wt_path, "diff", "--cached", "--quiet"],
-        capture_output=True,
-    )
-    return staged.returncode != 0
+    return bool(result.stdout.strip())
 
 
 def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
@@ -766,8 +760,10 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     if not _has_uncommitted_changes(job.wt_path):
         return
 
+    # -A, not -u: the fix agent creates new files (tests, fixtures) that -u
+    # drops from the commit while the summary still reports them as fixed.
     subprocess.run(
-        ["git", "-C", job.wt_path, "add", "-u"],
+        ["git", "-C", job.wt_path, "add", "-A"],
         capture_output=True, check=True,
     )
 
@@ -789,6 +785,20 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     _push_fixes(job)
 
 
+_DIVERGED_MARKERS = (
+    "non-fast-forward",
+    "fetch first",
+    "updates were rejected",
+    "behind its remote",
+)
+
+
+def _is_diverged(stderr: str) -> bool:
+    """Whether a push rejection came from divergence rather than a hook."""
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _DIVERGED_MARKERS)
+
+
 def _push_fixes(job: ReviewJob):
     """Push committed fixes to the remote."""
     result = subprocess.run(
@@ -800,9 +810,16 @@ def _push_fixes(job: ReviewJob):
         return
 
     stderr = result.stderr.strip()
+    if _is_diverged(stderr):
+        log.error(
+            f"push failed — branch diverged. Run:\n"
+            f"  git -C '{job.wt_path}' push --force-with-lease\n"
+            f"stderr: {stderr}"
+        )
+        return
+
     log.error(
-        f"push failed — branch may have diverged. Run:\n"
-        f"  git -C '{job.wt_path}' push --force-with-lease\n"
+        f"push failed — fixes are committed locally but not pushed:\n"
         f"stderr: {stderr}"
     )
 

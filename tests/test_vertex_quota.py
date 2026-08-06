@@ -168,6 +168,52 @@ class TestFetchProvisionedModels:
         assert len(models) == 1
 
 
+# ── _covering_bucket ─────────────────────────────────────────────────────────
+
+
+class TestCoveringBucket:
+    """Which bucket a model draws on — the version's own, or its family's."""
+
+    _BUCKETS = {
+        "anthropic-claude-sonnet": "50000000",
+        "anthropic-claude-sonnet-4-6": "2000000",
+        "anthropic-claude-opus-4-7": "16000000",
+    }
+
+    def test_the_versioned_bucket_wins_when_it_exists(self):
+        assert vq._covering_bucket(
+            "anthropic-claude-sonnet-4-6", self._BUCKETS,
+        ) == "anthropic-claude-sonnet-4-6"
+
+    def test_a_version_without_its_own_bucket_falls_back_to_the_family(self):
+        assert vq._covering_bucket(
+            "anthropic-claude-sonnet-5", self._BUCKETS,
+        ) == "anthropic-claude-sonnet"
+
+    def test_a_family_with_no_bucket_at_all_matches_nothing(self):
+        """opus has versioned buckets but no family bucket — 4-8 is unproven."""
+        assert vq._covering_bucket("anthropic-claude-opus-4-8", self._BUCKETS) is None
+
+    def test_a_typo_matches_nothing(self):
+        assert vq._covering_bucket("anthropic-claude-sonnett-5", self._BUCKETS) is None
+
+    def test_a_bucket_coarser_than_a_family_does_not_rescue_a_typo(self):
+        """The walk stops at the family tier.
+
+        Were it to keep descending, an all-Claude bucket would match every
+        misspelled family and the check would never block anything.
+        """
+        buckets = {"anthropic-claude": "1", "anthropic": "1"}
+        assert vq._covering_bucket("anthropic-claude-sonnett-5", buckets) is None
+        assert vq._covering_bucket("anthropic-claude-sonnet", buckets) is None
+
+    def test_a_prefix_only_matches_on_a_segment_boundary(self):
+        """"sonnet-4" must not match the "sonnet-4-6" bucket by string prefix."""
+        assert vq._covering_bucket(
+            "anthropic-claude-sonnet-4", {"anthropic-claude-sonnet-4-6": "1"},
+        ) is None
+
+
 # ── check_quota ──────────────────────────────────────────────────────────────
 
 
@@ -186,6 +232,7 @@ class TestCheckQuota:
     @patch("vertex_quota._get_access_token", return_value="tok")
     @patch("vertex_quota._check_cache", return_value=None)
     def test_model_not_found_fails(self, _cache, _token, mock_fetch):
+        """No bucket for the version and none for the family either."""
         mock_fetch.return_value = {
             "anthropic-claude-sonnet-4-5": "2000000",
             "anthropic-claude-sonnet-4-6": "2000000",
@@ -194,6 +241,24 @@ class TestCheckQuota:
         assert not result.ok
         assert "claude-sonnet-5" in result.error
         assert "anthropic-claude-sonnet-4-5" in result.available_models
+
+    @patch("vertex_quota._fetch_provisioned_models")
+    @patch("vertex_quota._get_access_token", return_value="tok")
+    @patch("vertex_quota._check_cache", return_value=None)
+    def test_a_new_version_passes_on_the_family_bucket(self, _cache, _token, mock_fetch):
+        """A model newer than the project's per-version buckets must not block.
+
+        claude-sonnet-5 serves against anthropic-claude-sonnet on a project
+        whose newest versioned bucket is 4-6; an exact-match check aborted
+        every review run against it.
+        """
+        mock_fetch.return_value = {
+            "anthropic-claude-sonnet": "50000000",
+            "anthropic-claude-sonnet-4-6": "2000000",
+        }
+        result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
+        assert result.ok
+        assert result.verdict is vq.QuotaVerdict.PROVISIONED
 
     @patch("vertex_quota._get_access_token", return_value=None)
     @patch("vertex_quota._check_cache", return_value=None)

@@ -524,27 +524,6 @@ class TestRunFixPassRetry:
     @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
     @patch("review_pipeline.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
-    def test_never_runs_under_a_read_only_reviewer_agent(
-        self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
-    ):
-        """Both the first attempt and the retry must be able to edit the branch.
-
-        Every AgentKind is a review persona told never to modify source files,
-        which flatly contradicts the fix prompt's "apply the fix using the Edit
-        tool". Passing one made the pass a coin-flip on whether the model obeyed
-        the system prompt or the task.
-        """
-        job = self._make_job(tmp_path)
-        review_pipeline.run_fix_pass(job)
-        assert mock_invoke.call_count == 2
-        agents = [c[1]["agent"] for c in mock_invoke.call_args_list]
-        assert agents == [None, None]
-
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retries_on_zero_progress_max_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
     ):
@@ -619,3 +598,24 @@ class TestRunFixPassRetry:
         assert retry_call[1]["max_turns"] == review_pipeline._fix_retry_budget(
             review_pipeline._fix_turn_budget(2),
         )
+
+    @patch("review_pipeline._commit_fixes")
+    @patch("review_pipeline._reconcile_checkboxes")
+    @patch("review_pipeline.diagnose_missing_output", return_value="agent hit max turns (20)")
+    @patch("review_pipeline.invoke_agent")
+    @patch("review_pipeline.build_prompt", return_value="prompt")
+    def test_never_runs_under_a_read_only_reviewer_agent(
+        self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
+    ):
+        """Both the first attempt and the retry must be able to edit the branch.
+
+        Every AgentKind is a review persona told never to modify source files,
+        which flatly contradicts the fix prompt's "apply the fix using the Edit
+        tool". Passing one made the pass a coin-flip on whether the model obeyed
+        the system prompt or the task.
+        """
+        job = self._make_job(tmp_path)
+        review_pipeline.run_fix_pass(job)
+        assert mock_invoke.call_count == 2
+        agents = [c[1]["agent"] for c in mock_invoke.call_args_list]
+        assert agents == [None, None]

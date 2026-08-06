@@ -142,6 +142,7 @@ def diagnose_missing_output(log_path: str) -> str:
     # reproduce it.
     tools_used = _tool_names_used(records)
     crashed = reason.startswith(AGENT_ERROR_PREFIX)
+    # empty tools_used also satisfies this when observability is confirmed
     if not crashed and _tool_use_is_observable(records) and not any(
         is_write_tool(name) for name in tools_used
     ):

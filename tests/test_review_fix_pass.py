@@ -476,6 +476,48 @@ class TestReconcileCheckboxes:
         review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
         assert review.read_text() == original
 
+    @patch("review_pipeline._changed_source_files")
+    def test_checks_findings_on_extensionless_scripts(self, mock_changed, tmp_path):
+        """A finding on a bin script must reconcile, or it reports as skipped."""
+        mock_changed.return_value = {"ai/claude/bin/ci-check"}
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `ai/claude/bin/ci-check:777` — No session_log\n"
+        )
+        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        assert "- [x] **[M1]**" in review.read_text()
+
+
+class TestChangedSourceFiles:
+    @patch("review_pipeline.subprocess.run")
+    def test_includes_untracked_files(self, mock_run):
+        """A fix that only adds a new test file still fixed the finding."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="src/auth.go\n"),
+            MagicMock(returncode=0, stdout="tests/run_ai.bats\n"),
+        ]
+        assert review_pipeline._changed_source_files("/wt") == {
+            "src/auth.go", "tests/run_ai.bats",
+        }
+
+    @patch("review_pipeline.subprocess.run")
+    def test_untracked_query_excludes_ignored_files(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=0, stdout=""),
+        ]
+        review_pipeline._changed_source_files("/wt")
+        assert "--exclude-standard" in mock_run.call_args_list[1][0][0]
+
+    @patch("review_pipeline.subprocess.run")
+    def test_diff_failure_still_reports_untracked(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=128, stdout=""),
+            MagicMock(returncode=0, stdout="tests/new.bats\n"),
+        ]
+        assert review_pipeline._changed_source_files("/wt") == {"tests/new.bats"}
+
 
 class TestTurnBudgetScaling:
     def test_small_review_uses_default(self):

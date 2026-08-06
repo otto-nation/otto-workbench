@@ -834,14 +834,20 @@ def _count_checked(review_file: str) -> int:
 
 
 def _changed_source_files(wt_path: str) -> set[str]:
-    """Return set of changed files (staged + unstaged) relative to HEAD."""
-    result = subprocess.run(
-        ["git", "-C", wt_path, "diff", "HEAD", "--name-only"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return set()
-    return {f for f in result.stdout.strip().splitlines() if f}
+    """Return set of changed files (staged, unstaged, and untracked)."""
+    changed: set[str] = set()
+    # Untracked files count: a fix that only adds a test file still fixed the
+    # finding, and diff-only detection would report it as skipped.
+    for args in (["diff", "HEAD", "--name-only"],
+                 ["ls-files", "--others", "--exclude-standard"]):
+        result = subprocess.run(
+            ["git", "-C", wt_path, *args],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            continue
+        changed.update(f for f in result.stdout.strip().splitlines() if f)
+    return changed
 
 
 def _count_changed_source_files(wt_path: str) -> int:

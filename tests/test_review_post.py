@@ -78,6 +78,20 @@ class TestExtractPath:
         )
         assert path == "app/(auth)/(dashboard)/page.tsx"
 
+    def test_extensionless_script_path(self, rp):
+        """Bin scripts have no extension; a pathless finding never reconciles."""
+        path, line, end = rp._extract_path("`ai/claude/bin/ci-check:777`")
+        assert (path, line, end) == ("ai/claude/bin/ci-check", 777, None)
+
+    def test_extensionless_script_path_with_range(self, rp):
+        path, line, end = rp._extract_path("**`git/hooks/pre-push-workbench:124-131`**")
+        assert (path, line, end) == ("git/hooks/pre-push-workbench", 124, 131)
+
+    def test_slashless_code_span_is_not_a_path(self, rp):
+        """A bare identifier in a code span is prose, not an extensionless path."""
+        path, line, end = rp._extract_path("`session_log` defaults to empty")
+        assert (path, line, end) == ("", None, None)
+
 
 class TestExtractBodyText:
     def test_em_dash_separator(self, rp):

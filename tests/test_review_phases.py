@@ -76,3 +76,97 @@ class TestPhaseAgentPins:
     def test_effort_derived_phases(self):
         derived = {p for p, s in review_pipeline.PHASES.items() if s.agent is None}
         assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
+
+
+def _job(tmp_path, effort=Effort.MEDIUM):
+    from review_preflight import PRContext, PRMetadata, ReviewJob
+
+    return ReviewJob(
+        repo="org/repo", pr_number="42",
+        pr=PRMetadata("t", "", "head", "main", "abc123", 100, 5, 3, []),
+        ctx=PRContext(), wt_path=str(tmp_path),
+        review_file=str(tmp_path / "review.md"),
+        session_log=str(tmp_path / "session.jsonl"),
+        reviews_dir=str(tmp_path),
+        effort=effort,
+    )
+
+
+class TestPhaseRunnerResolution:
+    def test_pinned_phase_ignores_effort(self, tmp_path):
+        for effort in Effort:
+            runner = review_pipeline.PhaseRunner(_job(tmp_path, effort), Phase.GROUP)
+            assert runner.agent is AgentKind.REVIEWER_LITE
+
+    def test_unpinned_phase_follows_effort(self, tmp_path):
+        low = review_pipeline.PhaseRunner(_job(tmp_path, Effort.LOW), Phase.HOLISTIC)
+        assert low.agent is AgentKind.REVIEWER_LITE
+        high = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.HOLISTIC)
+        assert high.agent is AgentKind.REVIEWER
+
+    def test_budget_comes_from_effort(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.SCOUT)
+        assert runner.budget == 8.0
+
+    def test_thinking_prefers_effort_override(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
+        assert runner.thinking is Thinking.HIGH
+
+    def test_thinking_falls_back_to_phase_default(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.GROUP)
+        assert runner.thinking is Thinking.LOW
+
+    def test_max_turns_comes_from_phase(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.SCOUT)
+        assert runner.max_turns == 10
+
+    def test_provider_reads_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_REVIEW_PROVIDER", "vertex")
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        assert runner.provider == "vertex"
+
+    def test_model_reads_phase_env_key(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.SCOUT)
+        assert runner.model == "claude-haiku-4-5"
+
+    def test_thinking_reads_phase_env_key(self, tmp_path, monkeypatch):
+        # Every existing call site resolved thinking through
+        # _resolve_thinking_level, which layers a per-phase (and a global)
+        # env override on top of the effort/phase default — PhaseRunner must
+        # keep that layering rather than reading _phase_thinking() bare.
+        monkeypatch.setenv("CLAUDE_REVIEW_GROUP_THINKING", "xhigh")
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        assert runner.thinking == "xhigh"
+
+    def test_thinking_reads_global_env_key(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
+        monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        assert runner.thinking == "xhigh"
+
+
+class TestPhaseRunnerInvocation:
+    def test_carries_resolved_values(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
+        inv = runner.invocation("PROMPT", "/tmp/g.jsonl", label="grp")
+        assert inv.prompt == "PROMPT"
+        assert inv.session_log == "/tmp/g.jsonl"
+        assert inv.agent is AgentKind.REVIEWER_LITE
+        assert inv.thinking is Thinking.HIGH
+        assert inv.max_budget == 8.0
+        assert inv.max_turns == 15
+        assert inv.label == "grp"
+
+    def test_max_turns_override(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        inv = runner.invocation("P", "/tmp/g.jsonl", max_turns=42)
+        assert inv.max_turns == 42
+
+    def test_review_file_widens_add_dirs(self, tmp_path):
+        job = _job(tmp_path)
+        runner = review_pipeline.PhaseRunner(job, Phase.SINGLE)
+        inv = runner.invocation(
+            "P", job.session_log, review_file="/elsewhere/review.md",
+        )
+        assert "/elsewhere" in inv.add_dirs

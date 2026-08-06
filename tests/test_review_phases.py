@@ -178,6 +178,57 @@ class TestPhaseRunnerInvocation:
         assert "/elsewhere" in inv.add_dirs
 
 
+class TestPhaseRunnerReachesBackend:
+    """PhaseRunner.invoke() must reach ai_backend.invoke_agent with the
+    fully-resolved AgentInvocation and must wait on the job's throttle.
+
+    Every other pipeline test stubs review_pipeline.invoke_agent (or
+    review_agent.invoke_agent), which swallows any argument shape. Patching
+    one layer deeper, at ai_backend.invoke_agent, keeps the seam between
+    PhaseRunner and the backend under test.
+    """
+
+    class _RecordingThrottle:
+        def __init__(self):
+            self.waited = False
+
+        def wait_if_needed(self):
+            self.waited = True
+
+    def test_invoke_forwards_invocation_and_throttle(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
+        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_MODEL", raising=False)
+        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
+
+        import review_agent
+
+        seen = {}
+
+        def fake_backend_invoke(inv):
+            seen["inv"] = inv
+            return 0
+
+        monkeypatch.setattr(review_agent.ai_backend, "invoke_agent", fake_backend_invoke)
+
+        job = _job(tmp_path, Effort.HIGH)
+        job.throttle = self._RecordingThrottle()
+
+        rc = review_pipeline.PhaseRunner(job, Phase.GROUP).invoke(
+            "PROMPT", job.session_log,
+        )
+
+        assert rc == 0
+        assert job.throttle.waited
+        inv = seen["inv"]
+        assert inv.agent is AgentKind.REVIEWER_LITE
+        assert inv.model == "sonnet"
+        assert inv.thinking is Thinking.HIGH
+        assert inv.max_budget == 8.0
+        assert inv.max_turns == 15
+
+
 class TestNoDuplicateDefaults:
     """One owner per default. A second copy drifts silently."""
 

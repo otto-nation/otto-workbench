@@ -1,7 +1,7 @@
 """Claude Code CLI backend for ai_backend.
 
-Implements prompt(), invoke_agent(), and invoke_fix() by building
-`claude -p` commands and running them as subprocesses.
+Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
+building `claude -p` commands and running them as subprocesses.
 """
 
 from __future__ import annotations
@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import log
+import vertex_quota
 from ai_backend_events import _log_stderr_on_failure, parse_claude_event
 from log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -156,6 +158,15 @@ def _send_stdin(proc: subprocess.Popen, text: str) -> None:
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
+
+
+def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
+    """Check Vertex AI quota when the CLI is pointed at Vertex.
+
+    No-ops on the first-party API, where model availability is not a
+    per-project allocation the client can inspect ahead of time.
+    """
+    return vertex_quota.run_preflight(models, trail)
 
 
 def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:

@@ -19,7 +19,7 @@ from pathlib import Path
 import log
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_common import (
-    FILE_STAT_FMT, MODE_PR, PRIOR_SHA_RE,
+    FILE_STAT_FMT, Effort, Mode, PRIOR_SHA_RE,
     _run,
 )
 from review_dedup import _get_bot_login
@@ -103,11 +103,11 @@ class ReviewJob:
     issue_link: str = ""
     issue_context: str = ""
     prior_review: str = ""
-    mode: str = MODE_PR
+    mode: Mode = Mode.PR
     generator_version: str = ""
     preflight: "PreflightData | None" = None
     model: str = ""
-    effort: str = "medium"
+    effort: Effort = Effort.MEDIUM
     include_generated: bool = False
     reply_threads: dict = field(default_factory=dict)
     verification: dict | None = None
@@ -169,11 +169,6 @@ DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
-
-DEFAULT_MODEL_GROUP = "sonnet"
-DEFAULT_MODEL_HOLISTIC = "sonnet"
-DEFAULT_MODEL_SYNTHESIS = "sonnet"
-DEFAULT_MODEL_SINGLE = "sonnet"
 
 DEFAULT_BASE_BRANCH = "main"
 GIT_RANGE_TO_HEAD = f"origin/{DEFAULT_BASE_BRANCH}..HEAD"

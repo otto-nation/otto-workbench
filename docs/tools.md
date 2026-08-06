@@ -243,6 +243,20 @@ claude-review post <pr_url_or_number>
 
 `--no-post` and `--post` are mutually exclusive.
 
+#### Model selection
+
+Each pipeline phase resolves its model as **`--model` flag > `CLAUDE_REVIEW_<PHASE>_MODEL` > `CLAUDE_REVIEW_MODEL` > phase default**. The phase names and their defaults live in `PHASE_MODEL_DEFAULTS` ([`ai/lib/review_pipeline.py`](../ai/lib/review_pipeline.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
+
+Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when those are set; otherwise the alias is passed to the CLI as-is.
+
+#### Vertex AI quota preflight
+
+When the Claude backend is pointed at Vertex AI, the review aborts before spending anything if a model it would use has no provisioned quota in the target project. The env vars are declared in [`ai/lib/vertex.env.yml`](../ai/lib/vertex.env.yml) and scaffolded into `~/.env.local`.
+
+The gate is fail-open: it only stops runs it can prove are misconfigured. It proceeds — with a note — when the CLI is not on Vertex, when project/region are unset, when there are no application-default credentials, when the Service Usage API errors, or when the model is a bare alias the CLI resolves internally. On failure it lists the provisioned models and names the `CLAUDE_REVIEW_<PHASE>_MODEL` keys worth changing. Quota lookups are cached per project/region for 5 minutes in `$TMPDIR/vertex-quota-<uid>/`.
+
+Requires application-default credentials (`gcloud auth application-default login`) with read access to `serviceusage.googleapis.com`. The check is skipped entirely on non-Claude backends (`AI_BACKEND=pi`).
+
 ### `claude-rules`
 
 Manages local Claude Code rule additions not tracked in the workbench.

@@ -6,13 +6,17 @@ Both scripts import from here instead of defining their own constants.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import TypeVar
 
 import log
 from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
@@ -55,8 +59,93 @@ SECTION_FILE_TRIAGE = "File Triage"
 
 # ── Modes ────────────────────────────────────────────────────────────────────
 
-MODE_PR = "pr"
-MODE_SELF = "self"
+
+class Mode(StrEnum):
+    """What the review is reviewing: an open PR or the working branch."""
+
+    PR = "pr"
+    SELF = "self"
+
+
+# ── Phases ───────────────────────────────────────────────────────────────────
+
+
+class Phase(StrEnum):
+    """A stage of the review pipeline.
+
+    Override env keys are derived from the member name, so adding a phase means
+    one member here plus one ``PHASE_MODEL_DEFAULTS`` entry — callers, preflight
+    checks, and failure hints all read the derived keys rather than spelling
+    them out.
+    """
+
+    SINGLE = "single"
+    HOLISTIC = "holistic"
+    SCOUT = "scout"
+    GROUP = "group"
+    SYNTHESIS = "synthesis"
+    DISPROVE = "disprove"
+    FIX = "fix"
+
+    @property
+    def model_env_key(self) -> str:
+        return f"CLAUDE_REVIEW_{self.upper()}_MODEL"
+
+    @property
+    def thinking_env_key(self) -> str:
+        return f"CLAUDE_REVIEW_{self.upper()}_THINKING"
+
+
+# ── Agent tuning ─────────────────────────────────────────────────────────────
+
+
+class Effort(StrEnum):
+    """Review depth. Selects a preset of budgets, thresholds, and phase skips."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class Thinking(StrEnum):
+    """Extended-thinking level passed through to the backend."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class AgentKind(StrEnum):
+    """Which reviewer agent definition a phase runs under.
+
+    ``REVIEWER_LITE`` skips context gathering, so it only suits phases that are
+    handed everything they need up front.
+    """
+
+    REVIEWER = "reviewer"
+    REVIEWER_LITE = "reviewer-lite"
+
+
+EnumT = TypeVar("EnumT", bound=StrEnum)
+
+
+def enum_arg(enum_cls: type[EnumT]) -> Callable[[str], EnumT]:
+    """An argparse ``type`` that converts to ``enum_cls`` by value.
+
+    Passing the enum class directly as ``type=`` drops the valid-value list from
+    the error message, because a failed conversion never reaches argparse's own
+    ``choices`` check — so the message is reproduced here.
+    """
+    def parse(value: str) -> EnumT:
+        try:
+            return enum_cls(value)
+        except ValueError:
+            choices = ", ".join(repr(str(m)) for m in enum_cls)
+            raise argparse.ArgumentTypeError(
+                f"invalid choice: {value!r} (choose from {choices})"
+            ) from None
+
+    return parse
 
 
 # ── Templates ────────────────────────────────────────────────────────────────

@@ -73,10 +73,14 @@ def _has_wildcard_import(tree: ast.Module) -> bool:
 
 
 def _names_from_import(node: ast.ImportFrom | ast.Import) -> set[str]:
-    """Extract bound names from an import statement, excluding wildcard imports."""
+    """Extract bound names from an import statement, excluding wildcard imports.
+
+    An unaliased dotted ``import a.b`` binds only the top-level package ``a``,
+    so submodule paths are truncated to match what the name resolves to.
+    """
     if isinstance(node, ast.ImportFrom):
         return {alias.asname or alias.name for alias in node.names if alias.name != "*"}
-    return {alias.asname or alias.name for alias in node.names}
+    return {alias.asname or alias.name.split(".")[0] for alias in node.names}
 
 
 def _names_from_assign_targets(targets: list[ast.AST]) -> set[str]:
@@ -261,3 +265,22 @@ def test_bare_refs_resolvable(source_path: Path):
         f"without import or definition (will be NameError at runtime):\n"
         + "\n".join(f"  - {name}" for name in missing)
     )
+
+
+def test_dotted_import_binds_top_level_package():
+    """``import a.b`` binds ``a``, not ``a.b`` — submodule use is not a bare ref."""
+    tree = ast.parse("import urllib.request\n\ndef f():\n    urllib.request.urlopen('')\n")
+
+    available = _collect_available_names(tree)
+
+    assert "urllib" in available
+    assert not _collect_bare_refs(tree) - available
+
+
+def test_aliased_dotted_import_binds_alias_only():
+    """``import a.b as c`` binds ``c`` only — ``a`` stays unavailable."""
+    tree = ast.parse("import os.path as p\n")
+
+    available = _collect_available_names(tree)
+
+    assert available == {"p"}

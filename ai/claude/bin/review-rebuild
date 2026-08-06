@@ -20,7 +20,7 @@ from trail import Trail, add_trail_args
 from review_common import (
     FILENAME_GROUP,
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
-    MODE_SELF,
+    Mode,
 )
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
@@ -66,7 +66,7 @@ def _build_meta_header(meta: dict) -> str:
 
 def _build_title(meta: dict, repo: str, pr: str) -> str:
     mode = meta.get("mode", "")
-    if mode == MODE_SELF:
+    if mode == Mode.SELF:
         head_ref = meta.get("head_ref", "unknown")
         return f"# Self-Review: {repo} — {head_ref}"
     title = meta.get("title", "")
@@ -131,7 +131,7 @@ def main():
             meta_header=meta_header,
             group_count=len(group_files),
             summary_note=REBUILD_SUMMARY,
-            include_verdict=(mode != MODE_SELF),
+            include_verdict=(mode != Mode.SELF),
             file_count=meta.get("changed_files", 0),
         )
 

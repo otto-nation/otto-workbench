@@ -49,19 +49,18 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
-@test "model defaults: all phases use sonnet" {
+@test "model defaults: single default value across all phases" {
   result=$(_py "
-print(mod.DEFAULT_MODEL_GROUP)
-print(mod.DEFAULT_MODEL_HOLISTIC)
-print(mod.DEFAULT_MODEL_SYNTHESIS)
-print(mod.DEFAULT_MODEL_SINGLE)
+print(sorted(set(mod.PHASE_MODEL_DEFAULTS.values())))
 ")
-  lines=()
-  while IFS= read -r line; do lines+=("$line"); done <<< "$result"
-  [ "${lines[0]}" = "sonnet" ]
-  [ "${lines[1]}" = "sonnet" ]
-  [ "${lines[2]}" = "sonnet" ]
-  [ "${lines[3]}" = "sonnet" ]
+  [ "$result" = "['sonnet']" ]
+}
+
+@test "model defaults: registry covers every phase" {
+  result=$(_py "
+print(sorted(mod.PHASE_MODEL_DEFAULTS) == sorted(mod.Phase))
+")
+  [ "$result" = "True" ]
 }
 
 @test "_resolve_model: explicit override wins" {
@@ -69,6 +68,8 @@ print(mod.DEFAULT_MODEL_SINGLE)
 import os
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 ")
   [ "$result" = "haiku" ]
@@ -79,6 +80,8 @@ print(mod._resolve_model('haiku', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 import os
 os.environ['CLAUDE_REVIEW_GROUP_MODEL'] = 'haiku'
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
 ")
@@ -90,6 +93,8 @@ del os.environ['CLAUDE_REVIEW_GROUP_MODEL']
 import os
 os.environ['CLAUDE_REVIEW_MODEL'] = 'haiku'
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 del os.environ['CLAUDE_REVIEW_MODEL']
 ")
@@ -101,9 +106,34 @@ del os.environ['CLAUDE_REVIEW_MODEL']
 import os
 os.environ.pop('CLAUDE_REVIEW_MODEL', None)
 os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+for a in mod.ModelAlias:
+    os.environ.pop(a.env_key, None)
 print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
 ")
   [ "$result" = "sonnet" ]
+}
+
+@test "_resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-5'
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
+")
+  [ "$result" = "claude-sonnet-5" ]
+}
+
+@test "_resolve_model: explicit alias resolved via ANTHROPIC_DEFAULT env" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL'] = 'claude-opus-4-6'
+print(mod._resolve_model('opus', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL']
+")
+  [ "$result" = "claude-opus-4-6" ]
 }
 
 # ── Prompt building ──────────────────────────────────────────────────────────

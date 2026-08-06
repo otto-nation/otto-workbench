@@ -625,6 +625,7 @@ def _fix_session_log(wt_path: Path) -> str:
 def _invoke_fix_agent(
     prompt: str, wt_path: Path, main_wt_path: Path | None = None,
     max_turns: int | None = None, max_budget: float | None = None,
+    repo: str | None = None, pr_number: int | None = None,
 ) -> int:
     """Run AI agent to apply fixes. Returns exit code."""
     dirs = [str(wt_path)]
@@ -638,12 +639,15 @@ def _invoke_fix_agent(
         max_budget=max_budget if max_budget is not None else FIX_MIN_BUDGET,
         model=FIX_MODEL,
         task="comment-fix",
+        repo=repo,
+        pr=str(pr_number) if pr_number else None,
     ))
 
 
 def _guarded_fix_pass(
     prompt: str, wt_path: Path, main_wt: Path | None, tracking_file: Path,
     *, max_turns: int, max_budget: float, label: str,
+    repo: str | None = None, pr_number: int | None = None,
 ) -> str:
     """Run the fix agent, retrying once if it checked nothing off.
 
@@ -656,6 +660,7 @@ def _guarded_fix_pass(
     def invoke(text: str, turns: int) -> int:
         return _invoke_fix_agent(
             text, wt_path, main_wt, max_turns=turns, max_budget=max_budget,
+            repo=repo, pr_number=pr_number,
         )
 
     return agent_retry.run_guarded(
@@ -1872,6 +1877,7 @@ def _retry_fix_pass(
         prompt, wt_path, main_wt, tracking_file,
         max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count),
         label="Fix retry pass",
+        repo=ctx.repo, pr_number=pr_number,
     )
     log.blank()
 
@@ -2013,6 +2019,7 @@ def _run_comment_fix(
     unproductive = _guarded_fix_pass(
         prompt, wt_path, main_wt, tracking_file,
         max_turns=max_turns, max_budget=max_budget, label="Fix pass",
+        repo=ctx.repo, pr_number=report.pr_number,
     )
     log.blank()
 

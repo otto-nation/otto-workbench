@@ -803,7 +803,6 @@ def _run_fix(trail, report: dict, ctx) -> int:
             agent_retry.hint_for(reason) or agent_retry.CI_FIX_RETRY_HINT
         ),
     )
-    )
 
     fixed = _count_checked(tracking_file)
     skipped = _count_unchecked(tracking_file)

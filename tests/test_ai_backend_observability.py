@@ -126,6 +126,17 @@ class TestPromptRecordsToLedger:
         assert ai_backend.prompt("hi") == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
 
+    def test_agent_session_log_without_result_records_nothing(
+        self, ledger, monkeypatch, tmp_path,
+    ):
+        """An agent that died before its result record is unmeasured, not free."""
+        session_log = tmp_path / "session.jsonl"
+        session_log.write_text('{"type":"assistant"}\n')
+        mod = types.SimpleNamespace(invoke_agent=lambda prompt, log, **kw: 1)
+        monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
+        ai_backend.invoke_agent("p", session_log=str(session_log), add_dirs=[])
+        assert list(ledger.glob("*.jsonl")) == []
+
     def test_backend_returning_pair_still_works(self, ledger, monkeypatch):
         """A backend that has not adopted the usage triple must not crash dispatch."""
         mod = types.SimpleNamespace(prompt=lambda text, **kw: ("answer", 0))

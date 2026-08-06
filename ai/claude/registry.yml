@@ -83,8 +83,10 @@ tools:
 
   - name: otto-log
     permission: true
-    visibility: brief
-    description: "Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors"
+    visibility: full
+    description: "Query trail files and AI usage across otto-workbench scripts — audit trail plus cost and token stats"
+    when_to_use: "Tracing what an AI script did (recent, query, show, list) or seeing what AI calls cost across scripts, tasks, models, and days (stats)"
+    usage: "otto-log recent  |  otto-log list --script pr  |  otto-log show <invocation>  |  otto-log stats [--since 7d] [--by script|task|model|day] [--json]"
 
   - name: pr-rebase
     permission: false

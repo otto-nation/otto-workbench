@@ -268,6 +268,21 @@ slash commands, and `AI_COMMAND`, which is pluggable) go through `ai-usage-log`.
 A call that reports no usage records nothing rather than a zero row, so an
 unmeasured call is visibly absent instead of looking free.
 
+Query it with `otto-log stats`:
+
+```bash
+otto-log stats                      # last 7 days, grouped by script
+otto-log stats --since 24h          # any h/d/m window
+otto-log stats --by task            # or: script, model, day
+otto-log stats --by day --json      # one JSON object per row
+```
+
+Columns are calls, cost, billed input (input + cache read + cache write), output
+tokens, cache-read share of billed input, and median duration. `--by model`
+shows cost only: the CLI reports cost per model but tokens per session, so the
+token columns are left blank rather than counting one session against every
+model it used.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

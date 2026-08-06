@@ -223,6 +223,16 @@ def invoke_fix(inv: AgentInvocation) -> int:
     return proc.returncode
 
 
+def _stream_fix_line(raw_line: str, sink) -> None:
+    """Capture one raw line and echo its readable form, if it has one."""
+    if sink:
+        sink.write(raw_line)
+        sink.flush()
+    display = claude_display_text(raw_line)
+    if display:
+        print(display, file=sys.stderr, flush=True)
+
+
 def _stream_fix_output(proc: subprocess.Popen, session_log: str) -> None:
     """Echo readable progress to stderr while capturing the raw stream for accounting.
 
@@ -231,12 +241,7 @@ def _stream_fix_output(proc: subprocess.Popen, session_log: str) -> None:
     sink = open(session_log, "w") if session_log else None
     try:
         for raw_line in proc.stdout:
-            if sink:
-                sink.write(raw_line)
-                sink.flush()
-            display = claude_display_text(raw_line)
-            if display:
-                print(display, file=sys.stderr, flush=True)
+            _stream_fix_line(raw_line, sink)
     finally:
         if sink:
             sink.close()

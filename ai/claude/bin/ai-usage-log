@@ -29,6 +29,22 @@ def _tee(path: str | None):
     return open(path, "w", encoding="utf-8") if path else None
 
 
+def _render_line(raw_line: str, sink) -> None:
+    """Tee one line and print its readable form, if it has one."""
+    if sink:
+        sink.write(raw_line)
+        sink.flush()
+    stripped = raw_line.strip()
+    if not stripped:
+        return
+    if not stripped.startswith("{"):
+        print(stripped, flush=True)
+        return
+    display = claude_display_text(raw_line)
+    if display:
+        print(display, flush=True)
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     """Echo a stream-json feed as human-readable text, keeping the raw stream.
 
@@ -38,18 +54,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     sink = _tee(args.tee)
     try:
         for raw_line in sys.stdin:
-            if sink:
-                sink.write(raw_line)
-                sink.flush()
-            stripped = raw_line.strip()
-            if not stripped:
-                continue
-            if not stripped.startswith("{"):
-                print(stripped, flush=True)
-                continue
-            display = claude_display_text(raw_line)
-            if display:
-                print(display, flush=True)
+            _render_line(raw_line, sink)
     finally:
         if sink:
             sink.close()

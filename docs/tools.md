@@ -31,7 +31,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
-| `otto-log` | Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors |
+| `otto-log` | Query trail files and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
 | `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
@@ -42,6 +42,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
+| `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
 | `eval-models` | Model evaluation runner — benchmarks review pipeline against a corpus of known-bad code |
 | `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |

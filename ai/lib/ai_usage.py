@@ -79,6 +79,16 @@ def _extract_token_sources(rec: dict) -> list[tuple[str, dict]]:
     return [("", rec.get("usage", {}))]
 
 
+def _fold_record(rec: dict, totals: dict[str, int], cost_by_model: dict[str, float]) -> None:
+    """Fold one result record's per-model tokens and cost into the running totals."""
+    for model, src in _extract_token_sources(rec):
+        tokens = normalize_usage(src)
+        for key in totals:
+            totals[key] += tokens[key]
+        if model:
+            cost_by_model[model] = cost_by_model.get(model, 0.0) + (src.get("costUSD", 0) or 0)
+
+
 def usage_from_records(records: list[dict]) -> SessionUsage:
     """Aggregate usage across `result` records.
 
@@ -86,33 +96,20 @@ def usage_from_records(records: list[dict]) -> SessionUsage:
     response, which carry the same record shape.
     """
     cost = 0.0
-    input_tokens = 0
-    output_tokens = 0
-    cache_read = 0
-    cache_write = 0
     duration_ms = 0
+    totals = dict.fromkeys(_USAGE_KEYS, 0)
     cost_by_model: dict[str, float] = {}
     for rec in records:
         if rec.get("type") != "result":
             continue
         cost += rec.get("total_cost_usd", 0) or 0
-        for model, src in _extract_token_sources(rec):
-            tokens = normalize_usage(src)
-            input_tokens += tokens["input_tokens"]
-            output_tokens += tokens["output_tokens"]
-            cache_read += tokens["cache_read_tokens"]
-            cache_write += tokens["cache_write_tokens"]
-            if model:
-                cost_by_model[model] = cost_by_model.get(model, 0.0) + (src.get("costUSD", 0) or 0)
+        _fold_record(rec, totals, cost_by_model)
         duration_ms += rec.get("duration_ms", 0) or 0
     return SessionUsage(
         cost=cost,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cache_read_tokens=cache_read,
-        cache_write_tokens=cache_write,
         duration_ms=duration_ms,
         cost_by_model=cost_by_model,
+        **totals,
     )
 
 
@@ -189,23 +186,45 @@ def record(
             log.warn(f"usage ledger unavailable at {LEDGER_DIR} — telemetry not recorded")
 
 
-def read_ledger() -> list[dict]:
-    """Read every ledger record, oldest month first. Skips unreadable lines."""
+def _ledger_record(line: str, cutoff_ts: str) -> dict | None:
+    """Parse one ledger line, or None if it is unreadable or older than the cutoff."""
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    ts = rec.get("ts", "")
+    if cutoff_ts and ts and ts < cutoff_ts:
+        return None
+    return rec
+
+
+def _read_month(path: Path, cutoff_ts: str) -> list[dict]:
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    parsed = (_ledger_record(line, cutoff_ts) for line in lines)
+    return [rec for rec in parsed if rec is not None]
+
+
+def read_ledger(since: datetime | None = None) -> list[dict]:
+    """Read ledger records, oldest month first. Skips unreadable lines.
+
+    `since` drops whole month files by filename before any of them are opened —
+    that is what the monthly split bought — then drops older records within the
+    boundary month. A record with no timestamp is kept: it predates nothing
+    knowable, and dropping it would silently hide cost.
+    """
     out: list[dict] = []
     try:
         files = sorted(LEDGER_DIR.glob("*.jsonl"))
     except OSError:
         return out
+    cutoff_ts = f"{since:%Y-%m-%dT%H:%M:%SZ}" if since else ""
+    if since:
+        files = [p for p in files if p.stem >= f"{since:%Y-%m}"]
     for path in files:
-        try:
-            lines = path.read_text().splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        out.extend(_read_month(path, cutoff_ts))
     return out
 
 

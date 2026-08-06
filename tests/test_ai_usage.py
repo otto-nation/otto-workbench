@@ -3,6 +3,7 @@
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -332,3 +333,34 @@ def test_read_ledger_skips_malformed_lines(ledger):
     ledger.mkdir(parents=True)
     (ledger / "2026-08.jsonl").write_text("{bad\n" + json.dumps({"script": "b"}) + "\n")
     assert [r["script"] for r in ai_usage.read_ledger()] == ["b"]
+
+
+def _write_month(ledger, month, *records):
+    ledger.mkdir(parents=True, exist_ok=True)
+    body = "".join(json.dumps(r) + "\n" for r in records)
+    (ledger / f"{month}.jsonl").write_text(body)
+
+
+def test_read_ledger_since_drops_older_records(ledger):
+    _write_month(
+        ledger, "2026-08",
+        {"script": "old", "ts": "2026-08-01T00:00:00Z"},
+        {"script": "new", "ts": "2026-08-20T00:00:00Z"},
+    )
+    since = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    assert [r["script"] for r in ai_usage.read_ledger(since=since)] == ["new"]
+
+
+def test_read_ledger_since_skips_month_files_before_cutoff(ledger):
+    """Selection is by filename — the point of the monthly split."""
+    _write_month(ledger, "2026-06", {"script": "stale", "ts": "2026-08-20T00:00:00Z"})
+    _write_month(ledger, "2026-08", {"script": "current", "ts": "2026-08-20T00:00:00Z"})
+    since = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    assert [r["script"] for r in ai_usage.read_ledger(since=since)] == ["current"]
+
+
+def test_read_ledger_since_keeps_records_without_timestamps(ledger):
+    """A record with no ts predates nothing knowable — dropping it would hide cost."""
+    _write_month(ledger, "2026-08", {"script": "untimed"})
+    since = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    assert [r["script"] for r in ai_usage.read_ledger(since=since)] == ["untimed"]

@@ -59,9 +59,16 @@ def _record(
 
 
 def _usage_from_log(session_log: str) -> ai_usage.SessionUsage | None:
+    """Read usage from a session log, or None when the log carries no result record.
+
+    A log that exists but reports nothing — the agent died before its result record,
+    or the backend does not emit one — is unmeasured, not free. Returning zeros here
+    would put a $0.00 row in the ledger and understate what the pipeline costs.
+    """
     if not session_log or not Path(session_log).is_file():
         return None
-    return ai_usage.parse_session_log(session_log)
+    usage = ai_usage.parse_session_log(session_log)
+    return usage if usage != ai_usage.SessionUsage() else None
 
 
 def _get_module() -> types.ModuleType:

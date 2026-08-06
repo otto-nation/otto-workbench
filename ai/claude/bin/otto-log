@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Query trail files across otto-workbench AI scripts.
+"""Query trail files and AI usage across otto-workbench scripts.
 
 Discovers trail.jsonl files from worktree (.workbench/), review artifacts
 (~/.config/workbench/reviews/), and standalone tool logs (~/.config/workbench/logs/).
+The `stats` subcommand reads the global AI usage ledger instead — a separate,
+monthly-rotated store that every AI call appends to.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
@@ -18,6 +21,7 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
+import ai_usage
 import log
 from trail import TRAIL_FILENAME
 from pr_state import STATE_DIR as WORKBENCH_DIR
@@ -194,6 +198,144 @@ def _format_show(events: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ── Usage stats ───────────────────────────────────────────────────────────
+
+STATS_GROUPINGS = ("script", "task", "model", "day")
+
+# A session can span several models. The CLI reports cost per model but tokens only
+# per session, so grouping by model splits the cost and leaves the token columns
+# unattributed rather than counting one session's tokens against every model it used.
+_UNATTRIBUTED_TOKENS = "model"
+
+_NO_GROUP = "—"
+_BILLED_KEYS = ("input_tokens", "cache_read_tokens", "cache_write_tokens")
+_STATS_HEADER = ("GROUP", "CALLS", "COST", "BILLED IN", "OUTPUT", "CACHE", "MED TIME")
+
+
+def _cost_shares(rec: dict, by: str) -> list[tuple[str, float]]:
+    """Return the (group, cost) pairs one ledger record contributes to."""
+    cost = rec.get("cost") or 0.0
+    if by != _UNATTRIBUTED_TOKENS:
+        group = rec.get("ts", "")[:10] if by == "day" else rec.get(by)
+        return [(group or _NO_GROUP, cost)]
+    by_model = rec.get("cost_by_model") or {}
+    if by_model:
+        return list(by_model.items())
+    return [(rec.get("model") or _NO_GROUP, cost)]
+
+
+def _new_group() -> dict:
+    return {
+        "calls": 0, "cost": 0.0, "billed_input": 0,
+        "output_tokens": 0, "cache_read_tokens": 0, "durations": [],
+    }
+
+
+def _accumulate(group: dict, rec: dict, cost: float, attribute_tokens: bool) -> None:
+    group["calls"] += 1
+    group["cost"] += cost or 0.0
+    duration = rec.get("duration_ms") or 0
+    if duration:
+        group["durations"].append(duration)
+    if not attribute_tokens:
+        return
+    group["billed_input"] += sum(rec.get(k) or 0 for k in _BILLED_KEYS)
+    group["output_tokens"] += rec.get("output_tokens") or 0
+    group["cache_read_tokens"] += rec.get("cache_read_tokens") or 0
+
+
+def _finalize_group(name: str, group: dict, attribute_tokens: bool) -> dict:
+    durations = group["durations"]
+    billed = group["billed_input"] if attribute_tokens else None
+    cache_read = group["cache_read_tokens"] if attribute_tokens else None
+    return {
+        "group": name,
+        "calls": group["calls"],
+        "cost": group["cost"],
+        "billed_input": billed,
+        "output_tokens": group["output_tokens"] if attribute_tokens else None,
+        "cache_read_tokens": cache_read,
+        "cache_read_ratio": (cache_read / billed) if billed else None,
+        "median_duration_ms": int(statistics.median(durations)) if durations else None,
+    }
+
+
+def aggregate_usage(records: list[dict], by: str) -> list[dict]:
+    """Roll ledger records into one row per group, most expensive first."""
+    attribute_tokens = by != _UNATTRIBUTED_TOKENS
+    groups: dict[str, dict] = {}
+    for rec in records:
+        for name, cost in _cost_shares(rec, by):
+            _accumulate(groups.setdefault(name, _new_group()), rec, cost, attribute_tokens)
+    rows = [_finalize_group(name, g, attribute_tokens) for name, g in groups.items()]
+    if by == "day":
+        return sorted(rows, key=lambda r: r["group"])
+    return sorted(rows, key=lambda r: r["cost"], reverse=True)
+
+
+def _fmt_tokens(n: int | None) -> str:
+    if n is None:
+        return _NO_GROUP
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+def _fmt_duration(ms: int | None) -> str:
+    if ms is None:
+        return _NO_GROUP
+    if ms >= 60_000:
+        return f"{ms / 60_000:.1f}m"
+    return f"{ms / 1000:.1f}s"
+
+
+def _stats_cells(row: dict) -> tuple[str, ...]:
+    ratio = row["cache_read_ratio"]
+    return (
+        str(row["group"]),
+        str(row["calls"]),
+        f"${row['cost']:.4f}",
+        _fmt_tokens(row["billed_input"]),
+        _fmt_tokens(row["output_tokens"]),
+        _NO_GROUP if ratio is None else f"{ratio * 100:.0f}%",
+        _fmt_duration(row["median_duration_ms"]),
+    )
+
+
+def _sum_column(rows: list[dict], key: str) -> int:
+    return sum(r[key] or 0 for r in rows)
+
+
+def _totals_row(rows: list[dict]) -> dict:
+    billed = _sum_column(rows, "billed_input")
+    cache_read = _sum_column(rows, "cache_read_tokens")
+    return {
+        "group": "TOTAL",
+        "calls": _sum_column(rows, "calls"),
+        "cost": sum(r["cost"] for r in rows),
+        "billed_input": billed or None,
+        "output_tokens": _sum_column(rows, "output_tokens") or None,
+        "cache_read_tokens": cache_read or None,
+        "cache_read_ratio": (cache_read / billed) if billed else None,
+        # A median of per-group medians is not a median of anything.
+        "median_duration_ms": None,
+    }
+
+
+def format_stats_table(rows: list[dict]) -> str:
+    cells = [_STATS_HEADER, *(_stats_cells(r) for r in rows), _stats_cells(_totals_row(rows))]
+    widths = [max(len(c) for c in column) for column in zip(*cells)]
+    lines = []
+    for cell_row in cells:
+        head = cell_row[0].ljust(widths[0])
+        rest = "  ".join(c.rjust(w) for c, w in zip(cell_row[1:], widths[1:]))
+        lines.append(f"{head}  {rest}")
+    lines[0] = f"{ANSI_BOLD}{lines[0]}{ANSI_RESET}"
+    return "\n".join(lines)
+
+
 # ── Commands ──────────────────────────────────────────────────────────────
 
 def cmd_recent(args):
@@ -280,6 +422,20 @@ def cmd_list(args):
             print(f"{inv_id}  {script:<20} {ts}  {n:>3} events  {duration}")
 
 
+def cmd_stats(args):
+    records = ai_usage.read_ledger(since=_parse_since(args.since))
+    rows = aggregate_usage(records, args.by)
+    if not rows:
+        print(f"No AI usage recorded in the last {args.since}.")
+        return
+    if args.json:
+        for row in rows:
+            print(json.dumps(row, separators=(",", ":")))
+        return
+    print(f"AI usage — last {args.since}, by {args.by}")
+    print(format_stats_table(rows))
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
@@ -315,6 +471,16 @@ def main():
     p_list.add_argument("--since", help="Time window (e.g. 2h, 1d)")
     p_list.add_argument("--json", action="store_true", help="Output raw JSONL")
 
+    # stats
+    p_stats = sub.add_parser("stats", help="Aggregate AI cost and token usage")
+    p_stats.add_argument("--since", default="7d", help="Time window (e.g. 24h, 7d)")
+    p_stats.add_argument(
+        "--by", default="script", choices=STATS_GROUPINGS, help="Group rows by",
+    )
+    p_stats.add_argument(
+        "--json", action="store_true", help="Output one JSON object per group",
+    )
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -325,6 +491,7 @@ def main():
         "query": cmd_query,
         "show": cmd_show,
         "list": cmd_list,
+        "stats": cmd_stats,
     }
     commands[args.command](args)
 

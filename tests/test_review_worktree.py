@@ -12,7 +12,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_worktree import WorktreeResult, setup_pr_worktree, switch_to_branch, switch_to_pr_branch, cleanup_worktree
+from review_worktree import (
+    WorktreeResult, cleanup_worktree, detached_worktree_at, setup_pr_worktree,
+    switch_to_branch, switch_to_pr_branch,
+)
 
 
 # ── WorktreeResult ────────────────────────────────────────────────────────────
@@ -184,6 +187,83 @@ def test_setup_pr_worktree_raises_on_total_failure(mock_run):
 
     with pytest.raises(RuntimeError, match="Failed to create worktree"):
         setup_pr_worktree("owner/repo", 42, "/repos/repo")
+
+
+# ── detached_worktree_at ──────────────────────────────────────────────────────
+
+
+def _detach_side_effect(local_shas: list[str], fetchable: str = "", add_rc: int = 0):
+    """Simulate a repo that holds *local_shas* and can fetch *fetchable*."""
+    calls = []
+
+    def side_effect(cmd, **kwargs):
+        calls.append(cmd)
+        m = MagicMock()
+        m.stdout = ""
+        if "cat-file" in cmd:
+            m.returncode = 0 if any(s in cmd[-1] for s in local_shas) else 1
+        elif "fetch" in cmd:
+            m.returncode = 0
+            if fetchable and fetchable in cmd:
+                local_shas.append(fetchable)
+        elif "worktree" in cmd and "add" in cmd:
+            m.returncode = add_rc
+        else:
+            m.returncode = 0
+        return m
+
+    return side_effect, calls
+
+
+@patch("review_worktree.subprocess.run")
+def test_detached_worktree_at_checks_out_a_local_commit(mock_run):
+    mock_run.side_effect, calls = _detach_side_effect(["abc1234"])
+
+    result = detached_worktree_at("abc1234", "/repos/repo", "recover-pr-42")
+
+    assert result == WorktreeResult(
+        path="/repos/repo/.worktrees/recover-pr-42",
+        cleanup_ref="/repos/repo/.worktrees/recover-pr-42",
+        is_fallback=True,
+    )
+    assert not [c for c in calls if "fetch" in c]
+
+
+@patch("review_worktree.subprocess.run")
+def test_detached_worktree_at_sanitizes_the_label(mock_run):
+    mock_run.side_effect, _ = _detach_side_effect(["abc1234"])
+
+    result = detached_worktree_at("abc1234", "/repos/repo", "recover-feat/x")
+
+    assert result is not None
+    assert result.path == "/repos/repo/.worktrees/recover-feat-x"
+
+
+@patch("review_worktree.subprocess.run")
+def test_detached_worktree_at_fetches_a_missing_commit(mock_run):
+    mock_run.side_effect, calls = _detach_side_effect([], fetchable="abc1234")
+
+    result = detached_worktree_at("abc1234", "/repos/repo", "recover-pr-42")
+
+    assert result is not None
+    assert [c for c in calls if "fetch" in c] == [
+        ["git", "-C", "/repos/repo", "fetch", "origin", "abc1234"]
+    ]
+
+
+@patch("review_worktree.subprocess.run")
+def test_detached_worktree_at_returns_none_when_unfetchable(mock_run):
+    mock_run.side_effect, calls = _detach_side_effect([])
+
+    assert detached_worktree_at("abc1234", "/repos/repo", "recover-pr-42") is None
+    assert not [c for c in calls if "worktree" in c and "add" in c]
+
+
+@patch("review_worktree.subprocess.run")
+def test_detached_worktree_at_returns_none_when_add_fails(mock_run):
+    mock_run.side_effect, _ = _detach_side_effect(["abc1234"], add_rc=1)
+
+    assert detached_worktree_at("abc1234", "/repos/repo", "recover-pr-42") is None
 
 
 # ── switch_to_branch ──────────────────────────────────────────────────────────

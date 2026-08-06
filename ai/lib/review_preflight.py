@@ -825,6 +825,11 @@ def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMe
 def fetch_pr_metadata(
     repo: str, pr_number: str, pin_sha: str = "", wt_path: str = "",
 ) -> PRMetadata:
+    """Fetch PR metadata, optionally pinned to an earlier commit.
+
+    ``pin_sha`` is the commit a --recover run must complete against; ``wt_path``
+    is a checkout of it. Both must be set for pinning to take effect.
+    """
     raw = _run([
         "gh", "pr", "view", pr_number, "--repo", repo,
         "--json", "title,body,headRefName,baseRefName,headRefOid,"

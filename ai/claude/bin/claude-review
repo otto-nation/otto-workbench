@@ -520,7 +520,7 @@ def _recover_drifted(recover_sha: str, wt_path: str) -> bool:
 
 def _pin_recover_worktree(
     recover_sha: str, wt_path: str, repo_dir: str, label: str,
-) -> tuple[str, "review_worktree.WorktreeResult | None"]:
+) -> tuple[str, review_worktree.WorktreeResult | None]:
     """Check the recovered commit out into a throwaway worktree when HEAD moved.
 
     Returns the path the review should run against and the worktree to clean up
@@ -533,11 +533,10 @@ def _pin_recover_worktree(
     if pinned is None:
         log.error(
             f"Commit {recover_sha[:7]} from the failed review is no longer "
-            f"available locally — run `pr review` for a fresh review"
+            f"available — run `pr review` for a fresh review"
         )
         sys.exit(1)
 
-    log.info(f"Completing the run at {recover_sha[:7]}")
     return pinned.path, pinned
 
 
@@ -913,18 +912,22 @@ def _run_review_pr(
                data={"repo_root": repo_root, "pr_head": pr_head})
 
     wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
-    wt_path, pinned_wt = _pin_recover_worktree(
-        recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
-    )
 
-    session_log = str(review_dir / FILENAME_SESSION)
-    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
-
-    trail.info("delegate_orchestrate", "delegating to review-orchestrate",
-               data={"wt_path": wt_path, "max_parallel": max_parallel,
-                     "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
-
+    # _pin_recover_worktree can exit, so it runs under the same finally as the
+    # review itself — otherwise a fallback PR worktree would be left on disk.
+    pinned_wt = None
     try:
+        wt_path, pinned_wt = _pin_recover_worktree(
+            recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
+        )
+
+        session_log = str(review_dir / FILENAME_SESSION)
+        prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+        trail.info("delegate_orchestrate", "delegating to review-orchestrate",
+                   data={"wt_path": wt_path, "max_parallel": max_parallel,
+                         "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
+
         _run_review_body(
             pr_number, repo, review_file, review_dir, wt_path,
             session_log, prior_review_path, issue_link, issue_context,
@@ -1046,7 +1049,7 @@ def _run_self_review_body(
         sys.exit(1)
 
     review_wt_path, pinned_wt = _pin_recover_worktree(
-        recover_sha, wt_path, wt_path, f"recover-{branch_name.replace('/', '-')}",
+        recover_sha, wt_path, wt_path, f"recover-{branch_name}",
     )
     orchestrate_args = _build_orchestrate_args(
         pr_number=pr_number, repo=repo, review_file=review_file,

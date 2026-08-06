@@ -1414,12 +1414,14 @@ def test_resolve_recover_sha_completed_review(cr, tmp_path):
 
 
 def test_pin_recover_worktree_noop_when_head_matches(cr, monkeypatch):
-    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "abc1234")
+    head_sha = MagicMock(return_value="abc1234")
+    monkeypatch.setattr(cr.pr_context, "head_sha", head_sha)
     detach = MagicMock()
     monkeypatch.setattr(cr.review_worktree, "detached_worktree_at", detach)
 
     assert cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l") == ("/wt", None)
     assert detach.call_count == 0
+    assert head_sha.call_args.args == ("/wt",)
 
 
 def test_pin_recover_worktree_checks_out_pinned_commit(cr, monkeypatch):
@@ -1576,6 +1578,37 @@ def test_self_review_body_rejects_fix_on_drifted_recover(cr, tmp_path, monkeypat
             recover=True, head_sha="def5678",
         )
     assert exc.value.code == 1
+
+
+def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, monkeypatch):
+    """No drift means no throwaway checkout, so --fix edits the real worktree."""
+    _write_partial_pipeline(tmp_path)
+    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "abc1234")
+    detach = MagicMock()
+    monkeypatch.setattr(cr.review_worktree, "detached_worktree_at", detach)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", MagicMock())
+    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+                        lambda wt: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(cr.review_issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(cr.review_issue, "fetch_issue_context",
+                        lambda *a: SimpleNamespace(link="", context=""))
+    run = MagicMock(return_value=SimpleNamespace(returncode=1))
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    monkeypatch.setattr(cr, "_fail_orchestration",
+                        MagicMock(side_effect=SystemExit(1)))
+
+    with pytest.raises(SystemExit):
+        cr._run_self_review_body(
+            "owner/repo", "", str(tmp_path), "", 1,
+            False, None, None, True, MagicMock(),
+            self_review_dir=tmp_path, branch_name="feat/x",
+            recover=True, head_sha="abc1234",
+        )
+
+    orchestrate_args = run.call_args[0][0]
+    assert orchestrate_args[orchestrate_args.index("--repo-dir") + 1] == str(tmp_path)
+    assert "--fix" in orchestrate_args
+    assert detach.call_count == 0
 
 
 # ── _check_stale_review ───────────────────────────────────────────────────────

@@ -75,14 +75,17 @@ def detached_worktree_at(sha: str, repo_dir: str, label: str) -> WorktreeResult 
     started from. Detaching leaves every branch ref untouched, so this is safe to
     run against a repo whose worktrees hold the user's live development state.
     """
-    probe = subprocess.run(
-        ["git", "-C", repo_dir, "cat-file", "-e", f"{sha}^{{commit}}"],
-        capture_output=True, text=True,
-    )
-    if probe.returncode != 0:
-        return None
+    if not _has_commit(sha, repo_dir):
+        # A force-push can leave the recorded commit unreferenced locally while
+        # the remote still serves it by SHA, so try one fetch before giving up.
+        subprocess.run(
+            ["git", "-C", repo_dir, "fetch", "origin", sha],
+            capture_output=True, text=True,
+        )
+        if not _has_commit(sha, repo_dir):
+            return None
 
-    path = f"{repo_dir}/{WORKTREE_FALLBACK_DIR}/{label}"
+    path = f"{repo_dir}/{WORKTREE_FALLBACK_DIR}/{label.replace('/', '-')}"
 
     subprocess.run(
         ["git", "-C", repo_dir, "worktree", "remove", "--force", path],
@@ -181,6 +184,14 @@ def cleanup_worktree(result: WorktreeResult | None, repo_dir: str) -> None:
         )
     except Exception:
         pass
+
+
+def _has_commit(sha: str, repo_dir: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", repo_dir, "cat-file", "-e", f"{sha}^{{commit}}"],
+        capture_output=True, text=True,
+    )
+    return result.returncode == 0
 
 
 def _is_shallow(repo_dir: str) -> bool:

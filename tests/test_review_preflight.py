@@ -172,7 +172,10 @@ class TestFetchPRMetadataPinned:
         )
 
         assert pr.head_sha == "oldsha0"
-        assert [f["path"] for f in pr.files] == ["old.py", "shared.py"]
+        assert pr.files == [
+            {"path": "old.py", "additions": 10, "deletions": 2},
+            {"path": "shared.py", "additions": 5, "deletions": 0},
+        ]
         assert (pr.additions, pr.deletions, pr.changed_files) == (15, 2, 2)
         assert pr.title == "feat: something"
 

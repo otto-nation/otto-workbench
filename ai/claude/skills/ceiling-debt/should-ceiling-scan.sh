@@ -11,4 +11,4 @@ set -e
 
 repo_root="${1:-$(git rev-parse --show-toplevel 2>/dev/null)}" || exit 1
 
-python3 "$HOME/.claude/bin/ceiling-scan" --check "$repo_root"
+python3 "$HOME/.local/bin/ceiling-scan" --check "$repo_root"

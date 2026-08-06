@@ -327,6 +327,12 @@ statistics over repeated runs are shared and know nothing about any one task.
 | `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
 
+A `review` finding counts as matched when its path, severity, and description all
+line up and its line range *overlaps* the manifest's `line_range` — not when its
+start line falls inside the window. Reviewers routinely anchor a range at the
+enclosing declaration, and containment scored those as a miss and a false positive
+at once, penalising a correct finding twice.
+
 A `ci-fix` case also ships a `reference-fix/` overlay: the same relative paths,
 already corrected. The harness never reads it. The test suite does, to prove the
 case fails before the fix and passes after it — an oracle that cannot fail, or

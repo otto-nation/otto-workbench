@@ -71,7 +71,11 @@ def _finding_matches(actual: Finding, exp: ExpectedFinding) -> bool:
     if actual.line is None:
         return False
     lo, hi = exp.line_range
-    if not (lo <= actual.line <= hi):
+    # Overlap, not containment of the start line: reviewers routinely anchor a
+    # range at the enclosing declaration (`service.go:12-14` for a bug on 13).
+    # Containment scored those as a miss *and* a false positive — double-counted
+    # against a finding that was correct.
+    if not (actual.line <= hi and (actual.end_line or actual.line) >= lo):
         return False
     if actual.severity not in exp.severity:
         return False

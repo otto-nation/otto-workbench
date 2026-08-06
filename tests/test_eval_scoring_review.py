@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -29,10 +32,11 @@ def _finding(
     path: str = "handler.go",
     line: int | None = 14,
     body: str = "unchecked error return",
+    end_line: int | None = None,
 ) -> Finding:
     return Finding(
         id=id, severity=severity, seq=seq,
-        path=path, line=line, end_line=None, body=body,
+        path=path, line=line, end_line=end_line, body=body,
     )
 
 
@@ -126,6 +130,27 @@ class TestMatchFindings:
         act2 = [_finding(line=20)]
         matches2, _ = match_findings(exp, act2)
         assert matches2[0].matched
+
+    def test_range_starting_before_the_window_still_matches(self):
+        """A finding anchored at the enclosing declaration covers the bug."""
+        exp = [ExpectedFinding(("M",), "service.go", (13, 19), "correctness")]
+        act = [_finding(path="service.go", line=12, end_line=14)]
+        matches, fp = match_findings(exp, act)
+        assert matches[0].matched
+        assert fp == []
+
+    def test_range_ending_after_the_window_still_matches(self):
+        exp = [ExpectedFinding(("M",), "service.go", (10, 13), "correctness")]
+        act = [_finding(path="service.go", line=13, end_line=25)]
+        matches, _ = match_findings(exp, act)
+        assert matches[0].matched
+
+    def test_range_entirely_outside_the_window_does_not_match(self):
+        exp = [ExpectedFinding(("M",), "service.go", (30, 40), "correctness")]
+        act = [_finding(path="service.go", line=12, end_line=14)]
+        matches, fp = match_findings(exp, act)
+        assert not matches[0].matched
+        assert fp == ["M1"]
 
     def test_description_contains_match(self):
         exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "c", "error")]
@@ -313,3 +338,37 @@ class TestReviewTask:
         assert result.billed_input == 1000
         assert result.cache_read_ratio == 0.9
         assert result.output_tokens == 20
+
+
+# ── TestCorpusExpectations ──────────────────────────────────────────────────
+
+
+CORPUS = REPO_ROOT / "eval" / "corpus"
+_REVIEW_MANIFESTS = [
+    p for p in sorted(CORPUS.glob("*/manifest.json"))
+    if json.loads(p.read_text()).get("expected")
+]
+
+
+@pytest.mark.parametrize(
+    "manifest_path", _REVIEW_MANIFESTS, ids=lambda p: p.parent.name,
+)
+class TestCorpusExpectations:
+    """An expectation nobody can satisfy scores as a permanent 0% recall.
+
+    Cheap structural checks only — that the target file exists and the window
+    lies inside it. Whether the window covers the planted defect is the eval
+    run's job, not this suite's.
+    """
+
+    def test_expected_paths_and_ranges_resolve(self, manifest_path):
+        manifest = json.loads(manifest_path.read_text())
+        expected, _, _ = parse_manifest(manifest)
+        for exp in expected:
+            src = manifest_path.parent / "src" / exp.path
+            assert src.is_file(), f"{exp.path} not in {manifest_path.parent.name}/src"
+            line_count = len(src.read_text().splitlines())
+            lo, hi = exp.line_range
+            assert 1 <= lo <= hi <= line_count, (
+                f"{exp.path}: line_range {exp.line_range} outside 1..{line_count}"
+            )

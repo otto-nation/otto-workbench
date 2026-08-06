@@ -61,7 +61,7 @@ messages on stderr.
 | `pr comments` | `review-threads` | script (updates state directly) |
 | `pr comments --triage` | `review-threads --triage` | script (updates state directly) |
 | `pr comments --fix` | `review-threads --fix` | script (updates state directly) |
-| `pr comments --resolve` | `review-threads --resolve` | script (updates state directly) |
+| `pr comments --finish` | `review-threads --finish` | script (updates state directly) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
 | `pr gc` | none (local via `review_gc`) | none |
 | `pr fix` | `claude-review` (--fix), `ci-check` (--fix) | none |

@@ -1,8 +1,10 @@
 """Tests for pr_comments library."""
 
+import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -396,3 +398,112 @@ def test_render_fix_status_deferred_issue():
     lines = render_fix_status(f)
     assert any("ENG-456" in line for line in lines)
     assert any("tracked in" in line for line in lines)
+
+
+# ── post_issue_comment upsert ──────────────────────────────────────────────
+
+
+MARKER = "<!-- pr-comments:summary -->"
+
+
+def test_post_issue_comment_posts_new_without_marker():
+    import pr_comments
+    with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post, \
+         patch.object(pr_comments, "_find_comment_by_marker") as find:
+        url = pr_comments.post_issue_comment("owner/repo", 1, "body")
+    assert url == "u"
+    post.assert_called_once()
+    find.assert_not_called()
+
+
+def _pages(*pages):
+    """Encode gh api --paginate --slurp output: an outer array of pages."""
+    return json.dumps(list(pages))
+
+
+def test_post_issue_comment_edits_existing_marked_comment():
+    """A second round must update the first round's summary, not append to it."""
+    import pr_comments
+    listing = _pages([
+        {"id": 10, "body": "unrelated"},
+        {"id": 11, "body": f"{MARKER}\nround one"},
+    ])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)), \
+         patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn, \
+         patch.object(pr_comments, "_gh_post") as post:
+        url = pr_comments.post_issue_comment("owner/repo", 1, "round two", marker=MARKER)
+    assert url == "u2"
+    patch_fn.assert_called_once_with("owner/repo", 11, "round two")
+    post.assert_not_called()
+
+
+def test_post_issue_comment_posts_new_when_marker_absent():
+    import pr_comments
+    listing = _pages([{"id": 10, "body": "unrelated"}])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)), \
+         patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
+        url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
+    assert url == "u"
+    post.assert_called_once()
+
+
+def test_find_comment_by_marker_prefers_latest():
+    import pr_comments
+    listing = _pages([
+        {"id": 10, "body": f"{MARKER}\nold"},
+        {"id": 11, "body": f"{MARKER}\nnew"},
+    ])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 11)
+
+
+def test_find_comment_by_marker_spans_pages():
+    """The marker comment is posted first, so on a busy PR it is not on page one."""
+    import pr_comments
+    listing = _pages(
+        [{"id": 10, "body": f"{MARKER}\nround one"}],
+        [{"id": 11, "body": "unrelated"}],
+    )
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 10)
+
+
+def test_find_comment_by_marker_accepts_flat_listing():
+    """A single unslurped page must still be readable."""
+    import pr_comments
+    listing = json.dumps([{"id": 12, "body": f"{MARKER}\nonly"}])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 12)
+
+
+def test_find_comment_by_marker_reports_lookup_failure():
+    """A failed listing must be distinguishable from an empty one."""
+    import pr_comments
+    for payload in ((1, ""), (0, "not json"), (0, '{"message": "Not Found"}')):
+        with patch.object(pr_comments, "_paginated_json", return_value=payload):
+            assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (False, None)
+
+
+def test_find_comment_by_marker_reports_empty_listing():
+    import pr_comments
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, "[]")):
+        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, None)
+
+
+def test_post_issue_comment_logs_when_lookup_fails():
+    """Falling back to a new comment on lookup failure must not be silent."""
+    import pr_comments
+    with patch.object(pr_comments, "_paginated_json", return_value=(1, "")), \
+         patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')), \
+         patch.object(pr_comments.log, "error") as err:
+        url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
+    assert url == "u"
+    err.assert_called_once()
+
+
+def test_patch_issue_comment_uses_patch_method():
+    import pr_comments
+    with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
+        assert pr_comments._patch_issue_comment("owner/repo", 11, "body") == "u"
+    assert post.call_args.kwargs["method"] == "PATCH"
+    assert post.call_args[0][0] == "repos/owner/repo/issues/comments/11"

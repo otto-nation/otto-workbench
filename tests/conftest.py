@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -26,6 +27,26 @@ REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
+
+
+def write_thrash_log(path) -> str:
+    """Write the session log of a clean completion that never wrote anything.
+
+    This is the shape the shared thrash guard exists to catch — the agent ended
+    on its own terms, so there is no error to blame it for. Every `pr` script
+    that drives an agent needs the same fixture, so it lives here rather than
+    once per test module. Returns the path as a str, which is what the guard's
+    callers take.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join([
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {}},
+        ]}}),
+        json.dumps({"type": "result", "subtype": "success", "num_turns": 3}),
+    ]) + "\n")
+    return str(path)
 
 
 # Session-scoped: the module is loaded once and shared across all tests.

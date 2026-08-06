@@ -432,6 +432,28 @@ def find_worktree_for_branch(
     return dir_fallback
 
 
+def default_branch(cwd: str | Path | None = None) -> str:
+    """The repo's default branch name, from origin/HEAD.
+
+    Falls back to "main" whenever git cannot answer — an unfetched clone has no
+    origin/HEAD, and every caller needs a base ref more than it needs an error.
+
+    Deliberately uncached: this is imported by every `pr` script, and a
+    module-level cache here would outlive the tests that set up their own repos.
+    Call sites that need it per-file wrap it in their own cache.
+    """
+    try:
+        args = ["git"] + (["-C", str(cwd)] if cwd else []) + [
+            "symbolic-ref", "refs/remotes/origin/HEAD",
+        ]
+        ref = subprocess.run(
+            args, capture_output=True, text=True,
+        ).stdout.strip()
+    except Exception:
+        return "main"
+    return ref.replace("refs/remotes/origin/", "") if ref else "main"
+
+
 def resolve_bare_repo_worktree(
     cwd: str | None, branch: str | None,
 ) -> Path | None:
@@ -445,16 +467,4 @@ def resolve_bare_repo_worktree(
         if wt:
             return wt
 
-    default_branch = "main"
-    try:
-        r = subprocess.run(
-            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True, text=True, cwd=cwd,
-        )
-        ref = r.stdout.strip()
-        if ref:
-            default_branch = ref.replace("refs/remotes/origin/", "")
-    except Exception:
-        pass
-
-    return find_worktree_for_branch(default_branch, cwd)
+    return find_worktree_for_branch(default_branch(cwd), cwd)

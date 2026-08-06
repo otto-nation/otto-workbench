@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from pr_context import (
-    _parse_pr_input, _resolve_branch, resolve_bare_repo_worktree,
+    _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
     find_worktree_for_branch, ResolvedContext, update_to_remote,
     fetch_and_reset,
 )
@@ -223,6 +223,46 @@ def test_resolve_branch_returns_hint_on_failure(mock_current, mock_run):
 def test_resolve_branch_returns_stdout(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout="isaac/feat/resolved_branch\n")
     assert _resolve_branch("resolved") == "isaac/feat/resolved_branch"
+
+
+# ── Default branch ────────────────────────────────────────────────────────
+
+
+@patch("pr_context.subprocess.run")
+def test_default_branch_strips_the_remote_prefix(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="refs/remotes/origin/main\n",
+    )
+    assert default_branch() == "main"
+
+
+@patch("pr_context.subprocess.run")
+def test_default_branch_is_not_hardcoded_to_main(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="refs/remotes/origin/trunk\n",
+    )
+    assert default_branch() == "trunk"
+
+
+@patch("pr_context.subprocess.run")
+def test_default_branch_falls_back_when_origin_head_is_unset(mock_run):
+    """An unfetched clone has no origin/HEAD; callers need a base ref anyway."""
+    mock_run.return_value = MagicMock(returncode=1, stdout="")
+    assert default_branch() == "main"
+
+
+@patch("pr_context.subprocess.run", side_effect=OSError("no git"))
+def test_default_branch_falls_back_when_git_is_missing(mock_run):
+    assert default_branch() == "main"
+
+
+@patch("pr_context.subprocess.run")
+def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="refs/remotes/origin/main\n",
+    )
+    default_branch("/wt/feature")
+    assert mock_run.call_args[0][0][:3] == ["git", "-C", "/wt/feature"]
 
 
 # ── Bare-repo worktree resolution ─────────────────────────────────────────

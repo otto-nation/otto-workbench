@@ -90,7 +90,8 @@ The `fix_pass` object contains:
 |-------|----------|
 | `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
 | `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
-| `dismissed` | Threads and items dismissed as non-actionable (approvals, duplicates, etc.) |
+| `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong |
+| `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
@@ -108,7 +109,7 @@ points, the triage step decomposes them into individual items. Each item has:
 | `source_id` | Original comment ID |
 | `source_type` | `"issue_comment"` or `"review_body"` |
 | `classification` | Same as threads: `actionable_suggestion`, `question`, `approval`, `conflicting` |
-| `verification` | For actionable items: `valid`, `invalid`, `needs_discussion` |
+| `verification` | For actionable items: `valid`, `already_addressed`, `invalid`, `needs_discussion` |
 | `summary` | One-line summary of the specific item |
 | `file` | File path if referenced (empty string if not) |
 | `line` | Line number if referenced (0 if not) |
@@ -120,7 +121,8 @@ or `rb-`) are comment items; regular thread IDs are inline review threads.
 
 **Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
 
-**If `needs_human` is empty and no unseen comments:** done — no further action needed.
+**If `needs_human` and `deferred` are both empty and no unseen comments:**
+done — no further action needed.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
@@ -128,24 +130,30 @@ Ask the user what to do for each:
 - **Skip** — move on
 - **Reply** — compose a reply to the reviewer
 
-When investigating `needs_human` threads, use the main worktree as a
-read-only reference for code outside the PR diff — imports, callers,
+**If `deferred` is non-empty:** present each the same way, with the same
+options plus **Track it** — file the thread on the deferred tracking issue via
+`--finish`. A deferred thread is one the agent attempted twice and could not
+land, not one anyone decided to postpone; filing it away is a decision the user
+makes per thread, never a default.
+
+When investigating `needs_human` or `deferred` threads, use the main worktree
+as a read-only reference for code outside the PR diff — imports, callers,
 existing patterns, or shared utilities. The script updates the main
 worktree to `origin/main` before the fix pass, so it reflects the
 current baseline. Find it via `wt switch main --no-cd --format json --no-hooks`.
 
-**Do not** attempt to fix `skipped` threads — the agent already determined
-they require judgment.
+**Do not** attempt to fix `dismissed` threads — the agent already determined
+the reviewer's premise was factually wrong.
 
 **Fallback for raw comments**: if `comment_items` is empty but unseen
 `issue_comments` or `review_body_comments` exist (e.g., when running without
 `--fix`/`--triage`), present unseen ones with the author and a summary as before.
 
-### Step 4: Handle remaining threads and resolve
+### Step 4: Handle remaining threads and close out
 
 The script automatically posts per-thread replies (with summary and commit link)
 after fixing and pushing. When `summary_deferred` is true, the summary issue
-comment is posted by `--resolve` after all discussion is complete — not during
+comment is posted by `--finish` after all discussion is complete — not during
 the fix pass. No manual reply posting needed.
 
 For manual replies to `needs_human` threads, use the `databaseId` from the thread's first comment:
@@ -157,11 +165,16 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
 REPLY_BODY
 ```
 
-After all manual work is done, resolve verified threads:
+After all manual work is done, close out the deferred work — replies whose
+commit had not yet been pushed, the tracking issue for threads the user chose
+to track, and the summary comment:
 
 ```bash
-pr comments --resolve [--repo-dir <PATH>]
+pr comments --finish [--repo-dir <PATH>]
 ```
+
+Run this only after Step 3 is complete. It posts the summary, which is meant to
+describe a finished conversation.
 
 Print summary: fixes applied, replies posted, threads resolved, threads still open.
 
@@ -170,6 +183,8 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 ## Constraints
 
 - Never apply fixes without user confirmation for `needs_human` items
+- Never file a `deferred` thread on the tracking issue without the user
+  choosing to — deferral is a decision, not a fallback for a failed fix pass
 - Never auto-resolve contested or ambiguous threads — only verified ones
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans
 - If conflicting suggestions exist, flag both and apply neither until resolved

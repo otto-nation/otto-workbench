@@ -1224,7 +1224,7 @@ class TestExtractDeniedContent:
         assert ro._extract_denied_content(denial) == ""
 
 
-# ── 22. _try_recover_output ─────────────────────────────────────────────────
+# ── 22. try_recover_output ─────────────────────────────────────────────────
 
 
 class TestTryRecoverOutput:
@@ -1237,7 +1237,7 @@ class TestTryRecoverOutput:
                 "tool_input": {"content": "## Must fix\n- **[M1]** finding\n"}
             }],
         }) + "\n")
-        assert ro._try_recover_output(str(log), str(output)) is True
+        assert ro.try_recover_output(str(log), str(output)) is True
         assert output.exists()
         assert "## Must fix" in output.read_text()
 
@@ -1250,14 +1250,14 @@ class TestTryRecoverOutput:
                 "tool_input": {"command": "cat << EOF\n## Should fix\ncontent\nEOF"}
             }],
         }) + "\n")
-        assert ro._try_recover_output(str(log), str(output)) is True
+        assert ro.try_recover_output(str(log), str(output)) is True
         assert "## Should fix" in output.read_text()
 
     def test_no_denials(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         output = tmp_path / "output.md"
         log.write_text(json.dumps({"type": "result", "permission_denials": []}) + "\n")
-        assert ro._try_recover_output(str(log), str(output)) is False
+        assert ro.try_recover_output(str(log), str(output)) is False
 
     def test_denial_no_section_headers(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
@@ -1268,10 +1268,10 @@ class TestTryRecoverOutput:
                 "tool_input": {"content": "just text no sections"}
             }],
         }) + "\n")
-        assert ro._try_recover_output(str(log), str(output)) is False
+        assert ro.try_recover_output(str(log), str(output)) is False
 
     def test_missing_log_file(self, ro, tmp_path):
-        assert ro._try_recover_output(
+        assert ro.try_recover_output(
             str(tmp_path / "missing.jsonl"),
             str(tmp_path / "output.md"),
         ) is False
@@ -1299,7 +1299,7 @@ class TestDiagnoseResultType:
         assert "did not write output" in diag
 
 
-# ── 24. _diagnose_missing_output ────────────────────────────────────────────
+# ── 24. diagnose_missing_output ────────────────────────────────────────────
 
 
 class TestDiagnoseMissingOutput:
@@ -1308,23 +1308,23 @@ class TestDiagnoseMissingOutput:
         log.write_text(json.dumps({
             "type": "result", "subtype": "max_turns", "num_turns": 10,
         }) + "\n")
-        result = ro._diagnose_missing_output(str(log))
+        result = ro.diagnose_missing_output(str(log))
         assert "max turns" in result
 
     def test_no_log_file(self, ro, tmp_path):
-        result = ro._diagnose_missing_output(str(tmp_path / "missing.jsonl"))
+        result = ro.diagnose_missing_output(str(tmp_path / "missing.jsonl"))
         assert "no session log" in result
 
     def test_empty_log(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text("")
-        result = ro._diagnose_missing_output(str(log))
+        result = ro.diagnose_missing_output(str(log))
         assert "no result record" in result
 
     def test_no_result_records(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "assistant", "message": "hi"}) + "\n")
-        result = ro._diagnose_missing_output(str(log))
+        result = ro.diagnose_missing_output(str(log))
         assert "no result record" in result
 
     def test_quota_exhausted_no_result(self, ro, tmp_path):
@@ -1333,7 +1333,7 @@ class TestDiagnoseMissingOutput:
             json.dumps({"type": "system", "subtype": "init"}) + "\n"
             + json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}) + "\n"
         )
-        result = ro._diagnose_missing_output(str(log))
+        result = ro.diagnose_missing_output(str(log))
         assert "quota exhausted" in result.lower()
 
 
@@ -1840,7 +1840,7 @@ class TestPhaseSynthesis:
         self._patch_pipeline(
             monkeypatch, ro,
             invoke_agent=mock_invoke,
-            _try_recover_output=lambda *a: False,
+            try_recover_output=lambda *a: False,
         )
 
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
@@ -1913,7 +1913,7 @@ class TestPhaseSynthesis:
         self._patch_pipeline(
             monkeypatch, ro,
             invoke_agent=mock_invoke,
-            _try_recover_output=lambda *a: False,
+            try_recover_output=lambda *a: False,
         )
 
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
@@ -1940,7 +1940,7 @@ class TestPhaseSynthesis:
         self._patch_pipeline(
             monkeypatch, ro,
             invoke_agent=mock_invoke,
-            _try_recover_output=lambda *a: False,
+            try_recover_output=lambda *a: False,
         )
 
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
@@ -2187,7 +2187,7 @@ class TestRetryFailedGroups:
 
         monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_pipeline, "_diagnose_missing_output", lambda *a: "agent hit max turns (30)")
+        monkeypatch.setattr(review_pipeline, "diagnose_missing_output", lambda *a: "agent hit max turns (30)")
 
         failed = [
             ("grp-a", "agent hit max turns (16)"),

@@ -29,6 +29,7 @@ from typing import TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
+import agent_retry
 import ai_backend
 import ci_failures as ci
 import pr_context
@@ -774,12 +775,28 @@ def _run_fix(trail, report: dict, ctx) -> int:
         max_turns=FIX_MAX_TURNS,
     )
 
-    rc = ai_backend.invoke_fix(
-        prompt,
-        add_dirs=[str(toplevel)],
-        max_turns=FIX_MAX_TURNS,
-        max_budget=FIX_MAX_BUDGET,
-        model=FIX_MODEL,
+    session_log = str(tracking_dir / "fix-session.jsonl")
+    rc = 0
+
+    def invoke(text: str, turns: int) -> int:
+        nonlocal rc
+        rc = ai_backend.invoke_fix(
+            text,
+            session_log=session_log,
+            add_dirs=[str(toplevel)],
+            max_turns=turns,
+            max_budget=FIX_MAX_BUDGET,
+            model=FIX_MODEL,
+        )
+        return rc
+
+    # An agent that finishes having checked nothing off was thrashing; the
+    # shared guard gives it one more attempt with a hint naming the mechanism.
+    agent_retry.run_guarded(
+        invoke, prompt, session_log,
+        label="CI fix pass", max_turns=FIX_MAX_TURNS,
+        produced=lambda: _count_checked(tracking_file) > 0,
+        hint_select=lambda reason: agent_retry.FIX_RETRY_HINT,
     )
 
     fixed = _count_checked(tracking_file)

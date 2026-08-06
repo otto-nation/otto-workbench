@@ -43,7 +43,7 @@ class TestDiagnoseMissingOutput:
             _tool_use("Bash", command="ls"),
             _result(),
         )
-        reason = review_agent._diagnose_missing_output(log_path)
+        reason = review_agent.diagnose_missing_output(log_path)
         assert _MAX_TURNS_REASON in reason
         assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
 
@@ -54,13 +54,13 @@ class TestDiagnoseMissingOutput:
             _tool_use("Edit", file_path="/tmp/out.md", old_string=""),
             _result(),
         )
-        reason = review_agent._diagnose_missing_output(log_path)
+        reason = review_agent.diagnose_missing_output(log_path)
         assert reason == _MAX_TURNS_REASON
 
     def test_no_assistant_records_stays_plain(self, tmp_path):
         """Non-Claude backends log no tool_use — absence is not evidence."""
         log_path = _write_log(tmp_path, _result())
-        reason = review_agent._diagnose_missing_output(log_path)
+        reason = review_agent.diagnose_missing_output(log_path)
         assert reason == _MAX_TURNS_REASON
 
     def test_crash_is_not_labelled_a_no_write_failure(self, tmp_path):
@@ -73,7 +73,7 @@ class TestDiagnoseMissingOutput:
                 "result": "spawn ENOENT",
             }),
         )
-        reason = review_agent._diagnose_missing_output(log_path)
+        reason = review_agent.diagnose_missing_output(log_path)
         assert review_agent.DIAG_NO_WRITE_TOOL_CALL not in reason
         assert not review_pipeline._is_retryable(reason)
 
@@ -83,17 +83,17 @@ class TestDiagnoseMissingOutput:
             _tool_use("Read", file_path="/tmp/a"),
             json.dumps({"type": "result", "subtype": "success"}),
         )
-        reason = review_agent._diagnose_missing_output(log_path)
+        reason = review_agent.diagnose_missing_output(log_path)
         assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
         assert review_pipeline._is_retryable(reason)
 
     def test_missing_log_unchanged(self, tmp_path):
-        reason = review_agent._diagnose_missing_output(str(tmp_path / "nope.jsonl"))
+        reason = review_agent.diagnose_missing_output(str(tmp_path / "nope.jsonl"))
         assert reason == review_agent.DIAG_NO_SESSION_LOG
 
     def test_no_result_record_unchanged(self, tmp_path):
         log_path = _write_log(tmp_path, _tool_use("Read", file_path="/tmp/a"))
-        reason = review_agent._diagnose_missing_output(log_path)
+        reason = review_agent.diagnose_missing_output(log_path)
         assert reason == review_agent.DIAG_NO_RESULT_RECORD
 
 
@@ -108,7 +108,7 @@ class TestSinglePassRead:
             review_agent, "_read_jsonl",
             lambda p: (reads.append(p), real(p))[1],
         )
-        review_agent._diagnose_missing_output(log_path)
+        review_agent.diagnose_missing_output(log_path)
         assert reads == [log_path]
 
 
@@ -117,7 +117,7 @@ class TestMaxTurnsReasonMatching:
 
     def _reason(self, tmp_path, *extra_lines):
         log_path = _write_log(tmp_path, *extra_lines, _result())
-        return review_agent._diagnose_missing_output(log_path)
+        return review_agent.diagnose_missing_output(log_path)
 
     def test_plain_max_turns_is_retryable(self, tmp_path):
         reason = self._reason(tmp_path)

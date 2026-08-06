@@ -5,11 +5,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import eval_scoring
 from eval_scoring import (
     ScoringResult,
     aggregate_runs,
@@ -257,3 +260,183 @@ class TestFormatComparisonTable:
         table = format_comparison_table({"comparisons": {}, "new_entries": [], "missing_entries": []})
         lines = table.strip().split("\n")
         assert len(lines) == 2
+
+    def test_reports_whether_a_metric_was_gated(self):
+        """A gate that hides what it ignored trains people to ignore the gate."""
+        comparison = {
+            "comparisons": {
+                ("e", "m"): {
+                    "cost_mean": {
+                        "baseline": 0.03, "current": 0.30,
+                        "delta": 0.27, "regression": False, "gated": False,
+                    },
+                    "recall_mean": {
+                        "baseline": 0.8, "current": 0.8,
+                        "delta": 0.0, "regression": False, "gated": True,
+                    },
+                },
+            },
+            "new_entries": [],
+            "missing_entries": [],
+        }
+        table = format_comparison_table(comparison)
+        assert "Gate" in table
+        assert "ungated" in table
+        assert "pass" in table
+
+
+# ── TestTokenRatchet ───────────────────────────────────────────────────────
+
+
+def _token_baseline(**overrides) -> dict:
+    entry = {
+        "recall_mean": 0.8,
+        "precision_mean": 0.9,
+        "severity_accuracy_mean": 0.5,
+        "false_positive_mean": 1.0,
+        "cost_mean": 0.03,
+        "billed_input_mean": 1000.0,
+        "output_tokens_mean": 1000.0,
+        "cache_read_ratio_mean": 0.85,
+    }
+    entry.update(overrides)
+    return {"schema_version": 2, "model": "sonnet", "entries": {"test-entry": entry}}
+
+
+def _token_current(**overrides) -> dict:
+    entry = {
+        "recall_mean": 0.8,
+        "precision_mean": 0.9,
+        "severity_accuracy_mean": 0.5,
+        "false_positive_mean": 1.0,
+        "cost_mean": 0.03,
+        "billed_input_mean": 1000.0,
+        "output_tokens_mean": 1000.0,
+        "cache_read_ratio_mean": 0.85,
+    }
+    entry.update(overrides)
+    return {"entries": {"test-entry": {"sonnet": entry}}}
+
+
+def _regressed(result: dict) -> set[str]:
+    return {r[2] for r in result["regressions"]}
+
+
+class TestTokenRatchet:
+    def test_flat_token_usage_is_not_a_regression(self):
+        result = compare_baselines({"sonnet": _token_baseline()}, _token_current())
+        assert result["regressions"] == []
+
+    def test_billed_input_exactly_at_the_threshold_is_allowed(self):
+        """15% is the budget, not the trigger — the gate fires past it."""
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(billed_input_mean=1150.0))
+        assert "billed_input_mean" not in _regressed(result)
+
+    def test_billed_input_just_past_the_threshold_regresses(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(billed_input_mean=1151.0))
+        assert "billed_input_mean" in _regressed(result)
+
+    def test_output_tokens_exactly_at_the_threshold_is_allowed(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(output_tokens_mean=1150.0))
+        assert "output_tokens_mean" not in _regressed(result)
+
+    def test_output_tokens_just_past_the_threshold_regresses(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(output_tokens_mean=1151.0))
+        assert "output_tokens_mean" in _regressed(result)
+
+    def test_fewer_tokens_is_never_a_regression(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()},
+            _token_current(billed_input_mean=10.0, output_tokens_mean=10.0))
+        assert result["regressions"] == []
+
+    def test_cache_read_ratio_below_the_floor_regresses(self):
+        """The #584 failure mode: caching silently stops and the bill triples."""
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.59))
+        assert "cache_read_ratio_mean" in _regressed(result)
+
+    def test_cache_read_ratio_at_the_floor_is_allowed(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.60))
+        assert "cache_read_ratio_mean" not in _regressed(result)
+
+    def test_cache_ratio_drop_above_the_floor_is_allowed(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.70))
+        assert "cache_read_ratio_mean" not in _regressed(result)
+
+    def test_cost_is_reported_but_never_gates(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cost_mean=3.0))
+        assert "cost_mean" not in _regressed(result)
+        metrics = result["comparisons"][("test-entry", "sonnet")]
+        assert metrics["cost_mean"]["current"] == 3.0
+        assert metrics["cost_mean"]["gated"] is False
+
+    def test_a_baseline_without_token_metrics_is_ungated(self):
+        """Old baselines keep working — a missing metric is unknown, not passing."""
+        baseline = _token_baseline()
+        for key in ("billed_input_mean", "output_tokens_mean", "cache_read_ratio_mean"):
+            del baseline["entries"]["test-entry"][key]
+        result = compare_baselines(
+            {"sonnet": baseline},
+            _token_current(billed_input_mean=99999.0, cache_read_ratio_mean=0.0))
+        assert result["regressions"] == []
+
+    def test_a_zero_baseline_is_ungated(self):
+        """A zero means the run was never measured, so there is nothing to ratchet."""
+        result = compare_baselines(
+            {"sonnet": _token_baseline(billed_input_mean=0.0)},
+            _token_current(billed_input_mean=50000.0))
+        assert "billed_input_mean" in result["comparisons"][("test-entry", "sonnet")] \
+            or "billed_input_mean" not in _regressed(result)
+        assert "billed_input_mean" not in _regressed(result)
+
+    def test_a_finding_score_drop_still_gates(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(recall_mean=0.5))
+        assert "recall_mean" in _regressed(result)
+
+
+class TestTokenAggregation:
+    def test_aggregate_exposes_the_gated_token_metrics(self):
+        runs = [
+            ScoringResult("e", "m", 0, billed_input=1000, output_tokens=100,
+                          cache_read_ratio=0.8),
+            ScoringResult("e", "m", 1, billed_input=2000, output_tokens=200,
+                          cache_read_ratio=0.9),
+        ]
+        agg = aggregate_runs(runs)
+        assert agg["billed_input_mean"] == 1500.0
+        assert agg["output_tokens_mean"] == 150.0
+        assert agg["cache_read_ratio_mean"] == pytest.approx(0.85)
+
+    def test_no_runs_still_reports_the_token_keys(self):
+        agg = aggregate_runs([])
+        assert agg["billed_input_mean"] == 0.0
+        assert agg["output_tokens_mean"] == 0.0
+        assert agg["cache_read_ratio_mean"] == 0.0
+
+
+class TestSchemaVersion:
+    def test_current_version_is_accepted(self):
+        data = _valid_baseline()
+        data["schema_version"] = eval_scoring.SCHEMA_VERSION
+        assert validate_baseline_schema(data) == []
+
+    def test_the_previous_version_still_loads(self):
+        """Baselines predating the token metrics must not be rejected outright."""
+        data = _valid_baseline()
+        data["schema_version"] = 1
+        assert validate_baseline_schema(data) == []
+
+    def test_token_metrics_must_be_numbers_when_present(self):
+        data = _valid_baseline()
+        data["entries"]["unchecked-error-go"]["billed_input_mean"] = "lots"
+        errors = validate_baseline_schema(data)
+        assert any("billed_input_mean" in e and "number" in e for e in errors)

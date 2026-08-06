@@ -313,6 +313,34 @@ cannot be satisfied, measures nothing. Because CI failures are usually
 environment-shaped, these cases put stub binaries on `PATH` rather than depending
 on what the host happens to have installed, so they fail the same way everywhere.
 
+### What the eval gates on
+
+`--compare` diffs a run against the baselines in `eval/results/` and exits `2` on a
+regression. The gate is deliberately narrow — a gate that flaps gets disabled:
+
+| Metric | Gate |
+|---|---|
+| billed input tokens | fail past 15% growth |
+| output tokens | fail past 15% growth |
+| recall, precision, severity accuracy | fail on any drop past the noise threshold |
+| false positives | fail past +0.5 per case |
+| cache-read ratio | fail below 60% |
+| cost, duration | reported, never gated |
+
+Tokens are gated and cost is not because tokens are what the change controls; the
+dollar figure also moves with model prices, and duration moves with machine load.
+The cache-read floor is an absolute minimum rather than a delta: a prompt-prefix
+change that silently disables caching shows up as the ratio collapsing, and the
+value it collapsed from is not the interesting number.
+
+Baselines written before a metric existed leave it ungated rather than failing, so
+an older baseline still loads. The comparison table marks every metric `pass`,
+`fail`, or `ungated` — including the ones that cannot fail.
+
+The [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on
+demand. It is not a pull-request check: each run spends real money on real model
+calls. Without `ANTHROPIC_API_KEY` configured it validates the corpus and stops.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

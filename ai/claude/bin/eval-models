@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 from eval_scoring import (  # noqa: E402
+    SCHEMA_VERSION,
     ScoringResult,
     aggregate_runs,
     compare_baselines,
@@ -96,7 +97,7 @@ def _build_baseline(
     entry_results: dict[str, dict],
 ) -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "model": model_label,
         "effort": effort,
         "runs_per_entry": runs_per_entry,
@@ -235,12 +236,11 @@ def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
         manifest = entry["manifest"]
         task = get_task(task_name(manifest))
         src_files = list(Path(entry["src_dir"]).iterdir())
-        print(
-            f"  {entry['name']} [{task.name}]: "
-            f"{len(manifest.get('expected', []))} expectations, "
-            f"{len(src_files)} source files, tags={manifest.get('tags', [])}",
-            file=sys.stderr,
-        )
+        detail = f"{len(src_files)} source files, tags={manifest.get('tags', [])}"
+        # Only review cases carry expectations; ci-fix is scored by its own command.
+        if manifest.get("expected"):
+            detail = f"{len(manifest['expected'])} expectations, {detail}"
+        print(f"  {entry['name']} [{task.name}]: {detail}", file=sys.stderr)
     print(f"\nTotal runs: {len(entries) * runs_per_entry}", file=sys.stderr)
     return {}, 0
 
@@ -322,14 +322,16 @@ def _run_comparison(
         print("\nNo baselines found for comparison.", file=sys.stderr)
         return 0
     comparison = compare_baselines(baselines, output)
+    # The whole table goes out, gated metrics and ungated alike — a gate that
+    # hides the numbers it did not act on trains people to ignore it.
     print("\n" + format_comparison_table(comparison))
-    if comparison["regressions"]:
-        print(
-            f"\n{len(comparison['regressions'])} regression(s) detected.",
-            file=sys.stderr,
-        )
-        return 2
-    return 0
+    regressions = comparison["regressions"]
+    if not regressions:
+        return 0
+    print(f"\n{len(regressions)} regression(s) detected:", file=sys.stderr)
+    for entry, model, metric, delta in regressions:
+        print(f"  {entry} / {model}: {metric} {delta:+,.2f}", file=sys.stderr)
+    return 2
 
 
 def main():

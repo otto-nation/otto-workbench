@@ -3,7 +3,7 @@
 # Bash-only (uses local, arrays, and prompt helpers).
 #
 # Functions: install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch,
-#            resolve_layers, is_disabled, install_hook_dispatcher
+#            list_shell_scripts, resolve_layers, is_disabled, install_hook_dispatcher
 
 [[ -n "${_LIB_FILES_SH:-}" ]] && return
 _LIB_FILES_SH=1
@@ -188,6 +188,20 @@ sync_component_bin() {
   shopt -s extglob
   symlink_dir "$component_bin" "$LOCAL_BIN_DIR" "!(*.*)" --prune
   shopt -u extglob
+}
+
+# list_shell_scripts ROOT — prints every file under ROOT whose *first* line is a
+# shell shebang, one per line, sorted. Skips .git, ignore/, __pycache__, and .py.
+# The awk pass is what anchors to line 1: `grep -r` is line-based, so a shebang
+# inside a heredoc (as in a bats fixture) would otherwise select the file.
+list_shell_scripts() {
+  local root="$1"
+  local shebang_re='^#!.*(/(ba)?sh|/env (ba)?sh)'
+  grep -rlE "$shebang_re" "$root" \
+    --exclude-dir='.git' --exclude-dir='ignore' --exclude-dir='__pycache__' \
+    --exclude='*.py' \
+    | sort \
+    | xargs awk -v re="$shebang_re" 'FNR == 1 && $0 ~ re { print FILENAME }'
 }
 
 # resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF

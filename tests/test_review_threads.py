@@ -2024,7 +2024,9 @@ class TestUnsupportedVerdictDowngrade:
 
     def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
         """Joining a repo dir with an absolute path discards the repo dir."""
-        outside = tmp_path.parent / "outside.py"
+        # Use a name unique to this test's tmp_path to avoid colliding with the
+        # traversal test when both run in the same session directory.
+        outside = tmp_path.parent / f"outside_abs_{tmp_path.name}.py"
         outside.write_text("secret = 1\n")
         item = self._item(evidence_file=str(outside), evidence_line=1)
         assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
@@ -2032,8 +2034,11 @@ class TestUnsupportedVerdictDowngrade:
 
     def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
         """`..` reaching a file that really exists still is not this repo's code."""
-        (tmp_path.parent / "outside.py").write_text("secret = 1\n")
-        item = self._item(evidence_file="../outside.py", evidence_line=1)
+        # Use a name unique to this test's tmp_path to avoid colliding with the
+        # absolute-citation test when both run in the same session directory.
+        outside_name = f"outside_trav_{tmp_path.name}.py"
+        (tmp_path.parent / outside_name).write_text("secret = 1\n")
+        item = self._item(evidence_file=f"../{outside_name}", evidence_line=1)
         assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 

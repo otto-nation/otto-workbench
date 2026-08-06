@@ -531,12 +531,18 @@ def update_fix(state: PRState, summary: FixSummary) -> None:
     dropping it would make the next deferred round open a duplicate issue.
     Every other field is per-round and taken from the incoming summary.
     """
-    merged = {t.id: t for t in state.fix.threads}
+    merged = {t.id: t for t in state.fix.threads if t.id}
+    no_id: list[ThreadOutcome] = [t for t in state.fix.threads if not t.id]
     for outcome in summary.threads:
-        merged[outcome.id] = outcome
+        if outcome.id:
+            merged[outcome.id] = outcome
+        else:
+            # Entries without an id cannot be de-duplicated; append rather than
+            # colliding every one onto the "" key and losing all but the last.
+            no_id.append(outcome)
     state.fix = dataclass_replace(
         summary,
-        threads=list(merged.values()),
+        threads=list(merged.values()) + no_id,
         deferred_issue_id=summary.deferred_issue_id or state.fix.deferred_issue_id,
         deferred_issue_url=summary.deferred_issue_url or state.fix.deferred_issue_url,
     )

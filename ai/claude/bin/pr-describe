@@ -49,11 +49,21 @@ _FALLBACK_TEMPLATE = "## Summary\n\n## Changes\n\n## Testing"
 # taken as the replacement body.
 _NO_CHANGE = "DESCRIPTION_CURRENT"
 
+# Extraction markers: the model wraps the revised description in these so we can
+# parse and validate the response before posting it to GitHub.
+_DESCRIBE_BEGIN = "<<<DESCRIPTION>>>"
+_DESCRIBE_END = "<<<END_DESCRIPTION>>>"
+
 
 def _git(cwd: Path, *args: str) -> str:
     r = subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, text=True,
     )
+    if r.returncode != 0:
+        # Silent fallback is intentional — the prompt degrades gracefully to
+        # "(none)" for commits/changed files rather than aborting the pass.
+        # Log so a bad revision (e.g. unfetched origin/<base>) is diagnosable.
+        log.warn(f"git {' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
@@ -127,13 +137,37 @@ Rules:
 If the current description already satisfies the template and describes the
 branch accurately, reply with exactly {_NO_CHANGE} and nothing else.
 
-Otherwise reply with the complete revised description in markdown and nothing
-else — no preamble, no fencing, no commentary."""
+Otherwise wrap the complete revised description in {_DESCRIBE_BEGIN} and \
+{_DESCRIBE_END} markers — no preamble, no fencing, nothing outside the markers:
+{_DESCRIBE_BEGIN}
+(your revised description here)
+{_DESCRIBE_END}"""
+
+
+def _extract_description(text: str) -> str | None:
+    """Extract the revised description from between the extraction markers.
+
+    Returns None when either marker is missing or the content is blank —
+    the caller must not post an unparseable response to GitHub.
+    """
+    begin = text.find(_DESCRIBE_BEGIN)
+    end = text.find(_DESCRIBE_END)
+    if begin == -1 or end == -1 or end <= begin:
+        return None
+    extracted = text[begin + len(_DESCRIBE_BEGIN):end]
+    if extracted.startswith("\n"):
+        extracted = extracted[1:]
+    if extracted.endswith("\n"):
+        extracted = extracted[:-1]
+    return extracted.strip() or None
 
 
 def _usable_revision(text: str) -> bool:
-    """An empty answer would blank the description; treat it as a thrash."""
-    return bool(text.strip())
+    """The response must be the no-change sentinel or contain parseable markers."""
+    t = text.strip()
+    if t == _NO_CHANGE:
+        return True
+    return _extract_description(t) is not None
 
 
 def _apply_body(repo: str, pr_number: int, body: str) -> bool:
@@ -195,14 +229,23 @@ def run_describe(
         log.error("ai prompt failed")
         return 1
 
-    revised = stdout.strip()
-    if revised == _NO_CHANGE:
+    raw = stdout.strip()
+    if raw == _NO_CHANGE:
         log.info("Description already matches the template — no change")
         _persist(ctx, DescribeSummary(
             head_sha=ctx.head_sha, template_path=template_path,
             changed=False, updated_at=pr_state.now_iso(),
         ))
         return 0
+
+    revised = _extract_description(raw)
+    if revised is None:
+        # _usable_revision already passed, so this should not happen, but guard
+        # against a caller bypassing the check (e.g. --force with a bad response).
+        if trail:
+            trail.error("describe", "AI response missing extraction markers")
+        log.error("ai response missing extraction markers — not posting to GitHub")
+        return 1
 
     if dry_run:
         print(revised)

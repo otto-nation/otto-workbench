@@ -218,6 +218,9 @@ class TestSharedRetryability:
     def test_skipped_is_not_retryable(self):
         assert not agent_retry.is_retryable("skipped: 3 consecutive failures")
 
+    # hint_for priority order: no-write > max-turns > nothing.
+    # These three tests pin that ordering — changing precedence must update all three.
+
     def test_no_write_hint_beats_the_max_turns_hint(self):
         both = f"{_MAX_TURNS} — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
         assert agent_retry.hint_for(both) == agent_retry.NO_WRITE_HINT

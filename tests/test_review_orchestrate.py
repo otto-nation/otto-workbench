@@ -3852,18 +3852,62 @@ class TestBuildFailuresSection:
         assert "fallback" in result
 
     def test_no_recover_hint_for_permission_errors(self):
+        """The reason a denial really produces, not the bare marker.
+
+        The check this replaced compared the whole rendered reason against the
+        marker tuple, so it never fired on `agent error: permission denied`.
+        """
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_pipeline import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[],
-            groups_failed={1: Diagnosis(DiagnosisKind.UNKNOWN, detail="permission denied")},
+            groups_failed={
+                1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied"),
+            },
             synthesis_done=True, synthesis_failed="",
         )
         result = build_failures_section(state, [])
         assert "## Agent Failures" in result
+        assert "agent error: permission denied" in result
         assert "pr review --recover" not in result
+
+    def test_recover_hint_survives_one_recoverable_failure(self):
+        from review_common import Diagnosis, DiagnosisKind
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["g1", "g2"],
+            groups_done=[],
+            groups_failed={
+                1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied"),
+                2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5),
+            },
+            synthesis_done=True, synthesis_failed="",
+        )
+        assert "pr review --recover" in build_failures_section(state, [])
+
+    def test_recover_hint_offered_for_max_turns(self):
+        from review_common import Diagnosis, DiagnosisKind
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["g1"],
+            groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
+            synthesis_done=True, synthesis_failed="",
+        )
+        assert "pr review --recover" in build_failures_section(state, [])
+
+    def test_synthesis_failure_alone_stays_recoverable(self):
+        from review_preflight import PipelineState
+        from review_pipeline import build_failures_section
+        state = PipelineState(
+            head_sha="abc", group_names=["g1"],
+            groups_done=[1], groups_failed={},
+            synthesis_done=True, synthesis_failed="mechanical fallback",
+        )
+        assert "pr review --recover" in build_failures_section(state, [])
 
 
 def test_meta_status_constant_format():

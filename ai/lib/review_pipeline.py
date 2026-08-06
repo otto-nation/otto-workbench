@@ -33,7 +33,6 @@ from review_common import (
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
     AgentKind, Diagnosis, DiagnosisKind, Effort, Mode, Phase, Thinking,
-    NON_RECOVERABLE_ERROR_MARKERS,
     PRIOR_DATE_RE,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
@@ -543,11 +542,12 @@ def build_failures_section(
     for agent, reason, status in rows:
         lines.append(f"| {agent} | {reason} | {status} |")
 
-    has_recoverable = any(
-        reason not in NON_RECOVERABLE_ERROR_MARKERS
-        for _, reason, _ in rows
-    )
-    if has_recoverable:
+    recoverable = [d.recoverable for d in state.groups_failed.values()]
+    # Synthesis carries no diagnosis — its failures are pipeline outcomes and a
+    # re-run can always do better, so it never suppresses the hint.
+    if state.synthesis_failed:
+        recoverable.append(True)
+    if any(recoverable):
         lines.append("")
         lines.append("Run `pr review --recover` to retry failed agents.")
 

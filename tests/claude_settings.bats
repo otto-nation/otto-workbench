@@ -135,9 +135,16 @@ _run_hook() {
   echo "$tool_input" | bash -c "$hook_cmd" 2>&1
 }
 
+# The VAR=, compound-cd, brace-expansion, and function-definition checks share a
+# single hook — it strips quoted spans off the first line once, then runs each
+# regex. Selecting by a phrase from any one message returns that same command.
+_get_bash_hook() {
+  jq -r --arg needle "$1" '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
+    select(.command | contains($needle)) | .command' "$SETTINGS"
+}
+
 _get_brace_hook() {
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
-    select(.command | test("Brace expansion")) | .command' "$SETTINGS"
+  _get_bash_hook "Brace expansion"
 }
 
 _get_branch_hook() {
@@ -268,14 +275,20 @@ _get_pr_create_hook() {
 }
 
 # ── statement-anchored Bash guardrails ──────────────────────────────────────
-# These three hooks match at the start of any statement, not just the start of
-# the command — a leading no-op token must not be a way around them. They scope
-# to the first line so a heredoc body being written to a file is not scanned as
-# if it were the command itself.
+# These checks match at the start of any statement, not just the start of the
+# command — a leading no-op token must not be a way around them. They scope to
+# the first line so a heredoc body being written to a file is not scanned as if
+# it were the command itself.
 
-_get_bash_hook() {
-  jq -r --arg needle "$1" '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
-    select(.command | contains($needle)) | .command' "$SETTINGS"
+@test "the four first-line checks live in exactly one hook" {
+  local needle count
+  for needle in "function_definition" "VAR=value" "Compound cd" "Brace expansion"; do
+    count=$(_get_bash_hook "$needle" | wc -l | tr -d ' ')
+    [ "$count" -eq 1 ] || {
+      echo "'$needle' matched $count hooks — the quote-stripping preamble was duplicated"
+      return 1
+    }
+  done
 }
 
 @test "funcdef hook: blocks a cd() no-op stub wrapping a grep" {

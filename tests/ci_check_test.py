@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from conftest import write_thrash_log
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -703,6 +705,7 @@ def test_commits_behind_main_returns_zero_on_non_numeric():
 def _mock_ctx(worktree_root="/tmp/wt", branch="feat/auth"):
     ctx = MagicMock()
     ctx.worktree_root = Path(worktree_root)
+    ctx.require_worktree.return_value = Path(worktree_root)
     ctx.branch = branch
     return ctx
 
@@ -745,6 +748,21 @@ def test_rebase_if_behind_continues_on_failure():
         result = ci_check._rebase_if_behind(trail, report, _mock_ctx())
     assert result is False
     trail.warn.assert_called()
+
+
+def test_rebase_if_behind_without_a_worktree_exits_with_guidance(capsys):
+    """A rebase needs somewhere to run — "--repo-dir None" is not it."""
+    import pr_context
+    ctx = pr_context.ResolvedContext(
+        repo="owner/repo", branch="feat/auth", pr_number=42,
+        worktree_root=None, head_sha="abc1234",
+    )
+    with pytest.raises(SystemExit) as exc:
+        ci_check._rebase_if_behind(MagicMock(), {"behind_main": 3}, ctx)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "No worktree for 'feat/auth'" in err
+    assert "wt switch feat/auth" in err
 
 
 # ── _parse_test_artifact ─────────────────────────────────────────────

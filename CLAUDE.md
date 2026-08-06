@@ -17,6 +17,7 @@ bin/local/validate-components        # check component tier contracts
 bin/local/validate-migrations        # check migration file conventions
 bin/local/validate-skills            # check SKILL.md frontmatter conventions
 bin/local/validate-cli-flags         # check CLI flag conventions (--repo, --pr/--branch exclusivity)
+bin/local/validate-worktree-guards   # check ctx.worktree_root is guarded or via require_worktree()
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
 git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conventions.sh
 otto-workbench changelog       # show recent changes from conventional commits

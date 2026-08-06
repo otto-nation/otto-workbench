@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Validate that ctx.worktree_root is never dereferenced without a guard.
+
+Usage: bin/local/validate-worktree-guards [--quiet] [file...]
+
+pr_context.ResolvedContext.worktree_root is Path | None — a bare repo with no
+worktree checked out on the branch legitimately resolves to None.  Handing that
+None onward produces a TypeError, a FileNotFoundError: 'None', or the literal
+string "None" inside a git invocation, always several frames from the cause.
+
+A consumer that cannot work without a worktree calls ctx.require_worktree(),
+which returns a Path or exits with one actionable message.  A consumer that can
+work without one tests the field first, making the opt-out visible.  This check
+enforces that every reference does one or the other.
+
+The unit of analysis is a function scope: a reference is accepted when the same
+scope tests either ctx.worktree_root or a local assigned from it (the guard
+clause pattern).  Scopes without any such test are reported.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import ast
+import os
+import sys
+from dataclasses import dataclass
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+# Only the resolved-context field is optional.  pr_state.PRIdentity has a
+# worktree_root of its own that is a plain str, so match on the receiver too.
+FIELD = 'worktree_root'
+RECEIVERS = {'ctx', 'self'}
+ACCESSOR = 'require_worktree'
+
+SEARCH_DIRS = ('ai',)
+SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
+
+SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+TEST_NODES = (ast.If, ast.IfExp, ast.While, ast.Assert)
+
+
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    scope: str
+
+
+# ── AST analysis ─────────────────────────────────────────────────────────────
+
+
+def _is_ref(node) -> bool:
+    """True for `ctx.worktree_root` / `self.worktree_root`."""
+    return (isinstance(node, ast.Attribute) and node.attr == FIELD
+            and isinstance(node.value, ast.Name) and node.value.id in RECEIVERS)
+
+
+def _scope_nodes(scope):
+    """Yield every node under *scope*, not descending into nested scopes."""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, SCOPE_NODES):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _tests_of(node) -> list:
+    """The boolean-test expressions a node contributes, if any."""
+    if isinstance(node, TEST_NODES):
+        return [node.test]
+    if isinstance(node, ast.comprehension):
+        return list(node.ifs)
+    return []
+
+
+def _tested_names(scope) -> set[str]:
+    """Everything referenced from a boolean-test position within *scope*."""
+    tested: set[str] = set()
+    tests = [t for node in _scope_nodes(scope) for t in _tests_of(node)]
+    inner = [n for test in tests for n in ast.walk(test)]
+    tested.update(FIELD for n in inner if _is_ref(n))
+    tested.update(n.id for n in inner if isinstance(n, ast.Name))
+    return tested
+
+
+def _aliases(scope) -> set[str]:
+    """Locals assigned directly from the field — `toplevel = ctx.worktree_root`."""
+    assigns = [n for n in _scope_nodes(scope)
+               if isinstance(n, ast.Assign) and _is_ref(n.value)]
+    return {t.id for a in assigns for t in a.targets if isinstance(t, ast.Name)}
+
+
+def _check_scope(scope, name: str) -> list[Violation]:
+    refs = [n for n in _scope_nodes(scope) if _is_ref(n)]
+    if not refs:
+        return []
+    tested = _tested_names(scope)
+    if FIELD in tested or (_aliases(scope) & tested):
+        return []
+    return [Violation(line=n.lineno, scope=name) for n in refs]
+
+
+def check_file(filepath: str) -> list[Violation]:
+    with open(filepath) as f:
+        source = f.read()
+    if FIELD not in source:
+        return []
+    try:
+        tree = ast.parse(source, filename=filepath)
+    except SyntaxError:
+        return []
+    scopes = [(tree, '<module>')]
+    scopes += [(n, n.name) for n in ast.walk(tree)
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    found = [v for scope, name in scopes for v in _check_scope(scope, name)]
+    return sorted(found, key=lambda v: v.line)
+
+
+# ── Discovery ────────────────────────────────────────────────────────────────
+
+
+def _is_python(path: str) -> bool:
+    if path.endswith('.py'):
+        return True
+    if os.path.splitext(path)[1] or not os.access(path, os.X_OK):
+        return False
+    try:
+        with open(path, 'rb') as f:
+            return b'python' in f.readline()
+    except OSError:
+        return False
+
+
+def discover_scripts(repo_root: str) -> list[str]:
+    found = []
+    roots = [os.path.join(repo_root, d) for d in SEARCH_DIRS]
+    walked = [(dp, dn, fn) for root in roots for dp, dn, fn in os.walk(root)]
+    for dirpath, dirnames, filenames in walked:
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        paths = [os.path.join(dirpath, f) for f in filenames]
+        found += [p for p in paths if _is_python(p)]
+    return sorted(found)
+
+
+# ── Reporting ────────────────────────────────────────────────────────────────
+
+
+def _report_violations(relpath: str, violations: list[Violation]) -> None:
+    print(f'{RED}✗{NC} {relpath}: unguarded ctx.{FIELD}', file=sys.stderr)
+    for v in violations:
+        print(f'    line {v.line}: {DIM}in {v.scope}(){NC}', file=sys.stderr)
+    print(f'    {DIM}use ctx.{ACCESSOR}() to require one, '
+          f'or test the field to opt out{NC}', file=sys.stderr)
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, '
+              f'no unguarded ctx.{FIELD}')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files dereference '
+              f'ctx.{FIELD} without a guard', file=sys.stderr)
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that ctx.worktree_root is never dereferenced unguarded.')
+    parser.add_argument('--quiet', action='store_true',
+                        help='Only show failures and summary')
+    parser.add_argument('files', nargs='*',
+                        help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    files = args.files if args.files else discover_scripts(repo_root)
+
+    errors = 0
+    for filepath in files:
+        violations = check_file(filepath)
+        relpath = os.path.relpath(filepath, repo_root)
+        errors += 1 if violations else 0
+        if violations:
+            _report_violations(relpath, violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(len(files), errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

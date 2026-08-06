@@ -51,6 +51,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-errexit` | Validates bash scripts for dangerous && patterns that silently exit under set -e |
 | `validate-skills` | Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing |
 | `validate-cli-flags` | Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity |
+| `validate-worktree-guards` | Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree() |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |

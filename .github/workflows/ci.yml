@@ -71,6 +71,9 @@ jobs:
       - name: Validate errexit safety
         run: python3 bin/local/validate-errexit --quiet
 
+      - name: Validate worktree_root guards
+        run: python3 bin/local/validate-worktree-guards --quiet
+
       - name: Validate eval baselines
         run: bash bin/local/validate-eval-baselines
 

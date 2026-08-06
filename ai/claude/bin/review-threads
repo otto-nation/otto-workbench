@@ -1032,7 +1032,7 @@ def _finalize_deferred(
     object either side of this call. Reading the file again here and saving
     that copy would drop whatever the caller had already written.
     """
-    if not ctx.worktree_root or not state.fix.threads:
+    if not state.fix.threads:
         return _NO_ISSUE
 
     FA = pr_state.ThreadAction
@@ -1086,8 +1086,8 @@ def _finish_deferred_work(
     writes its outcomes there, so a copy read before it ran would be missing
     exactly the threads this phase exists to close out.
     """
-    wt_path = ctx.worktree_root
-    if not wt_path or not ctx.pr_number:
+    wt_path = ctx.require_worktree()
+    if not ctx.pr_number:
         return
     state = pr_state.load_state(wt_path)
     if state is None:
@@ -1208,8 +1208,7 @@ def _create_or_update_deferred_issue(
     if not deferred:
         return CreatedIssue(id=existing_issue_id)
 
-    root_path = str(ctx.worktree_root) if ctx.worktree_root else None
-    provider_info = review_issue.load_issue_provider(root_path)
+    provider_info = review_issue.load_issue_provider(str(ctx.require_worktree()))
     provider = provider_info.name
 
     body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
@@ -2077,7 +2076,7 @@ def _run_threads(trail, args, ctx) -> None:
     repo = ctx.repo
     pr_number = ctx.pr_number
     branch = ctx.branch
-    toplevel = ctx.worktree_root
+    toplevel = ctx.require_worktree()
     head_sha = ctx.head_sha
 
     owner, repo_name = repo.split("/", 1)
@@ -2287,7 +2286,7 @@ def main():
         log.error("No PR found for current branch")
         sys.exit(1)
     branch = ctx.branch
-    toplevel = ctx.worktree_root
+    toplevel = ctx.require_worktree()
     head_sha = ctx.head_sha
 
     trail = Trail.start(

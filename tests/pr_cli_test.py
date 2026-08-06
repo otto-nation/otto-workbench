@@ -935,3 +935,28 @@ class TestCmdCreate:
         cmd = mock_run.call_args[0][0]
         assert "pr:create" in cmd
         assert "--" not in cmd, "empty argv should not produce a -- separator"
+
+
+# ── worktree_root guards ───────────────────────────────────────────────────
+
+
+def _assert_no_worktree_exit(capsys, fn, *args):
+    """Every entry point that needs a worktree fails the same actionable way."""
+    with pytest.raises(SystemExit) as exc:
+        fn(*args)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "No worktree for 'feat/test'" in err
+    assert "wt switch feat/test" in err
+
+
+def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
+    _assert_no_worktree_exit(capsys, pr_cli.cmd_status, [], _make_ctx(worktree_root=None))
+
+
+def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
+    _assert_no_worktree_exit(capsys, pr_cli.cmd_fix, [], _make_ctx(worktree_root=None))
+
+
+def test_load_or_init_without_a_worktree_exits_with_guidance(capsys):
+    _assert_no_worktree_exit(capsys, pr_cli._load_or_init, _make_ctx(worktree_root=None))

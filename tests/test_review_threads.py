@@ -2131,3 +2131,33 @@ class TestEvidencePermalinks:
         )
         assert "| `a.py:9` |" in body
         assert "/blob/" not in body
+
+
+# ── worktree_root guards ────────────────────────────────────────────────────
+
+
+class TestWorktreeGuard:
+    """Both entry points fail the same actionable way with no worktree."""
+
+    def _ctx(self):
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="isaac/feat/x", pr_number=42,
+            worktree_root=None, head_sha="abc1234",
+        )
+
+    def _assert_guidance(self, capsys):
+        err = capsys.readouterr().err
+        assert "No worktree for 'isaac/feat/x'" in err
+        assert "wt switch isaac/feat/x" in err
+
+    def test_run_threads_exits_before_touching_github(self, rt, capsys):
+        with pytest.raises(SystemExit) as exc:
+            rt._run_threads(None, None, self._ctx())
+        assert exc.value.code == 1
+        self._assert_guidance(capsys)
+
+    def test_finish_deferred_work_exits_with_guidance(self, rt, capsys):
+        with pytest.raises(SystemExit) as exc:
+            rt._finish_deferred_work(self._ctx(), PRReport())
+        assert exc.value.code == 1
+        self._assert_guidance(capsys)

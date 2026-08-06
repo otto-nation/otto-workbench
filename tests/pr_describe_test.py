@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -266,3 +268,22 @@ def test_prompt_says_so_when_the_repo_ships_no_template(tmp_path):
                            return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(tmp_path))
     assert "this repo ships none" in prompt.call_args[0][0]
+
+
+# ── worktree_root guards ──────────────────────────────────────────────────
+
+
+def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
+    ctx = pr_context.ResolvedContext(
+        repo="owner/repo",
+        branch="isaac/feat/x",
+        pr_number=7,
+        worktree_root=None,
+        head_sha="aaaa111",
+    )
+    with pytest.raises(SystemExit) as exc:
+        pr_describe_cli.run_describe(ctx)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "No worktree for 'isaac/feat/x'" in err
+    assert "wt switch isaac/feat/x" in err

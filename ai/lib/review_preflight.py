@@ -155,11 +155,9 @@ class PipelineState:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MULTI_PHASE_LINE_THRESHOLD = 500
-MULTI_PHASE_FILE_THRESHOLD = 10
 MAX_GROUP_LINES = 800
 MAX_GROUP_FILES = 15
 DEFAULT_MAX_PARALLEL = 1
-DEFAULT_MAX_GROUPS = 12
 HOLISTIC_MIN_GROUPS = 8
 
 DEFAULT_BASE_BRANCH = "main"

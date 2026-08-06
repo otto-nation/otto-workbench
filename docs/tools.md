@@ -246,7 +246,7 @@ claude-review post <pr_url_or_number>
 
 #### Model selection
 
-Each pipeline phase resolves its model as **`--model` flag > `CLAUDE_REVIEW_<PHASE>_MODEL` > `CLAUDE_REVIEW_MODEL` > phase default**. The phase names and their defaults live in `PHASE_MODEL_DEFAULTS` ([`ai/lib/review_pipeline.py`](../ai/lib/review_pipeline.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
+Each pipeline phase resolves its model as **`--model` flag > `CLAUDE_REVIEW_<PHASE>_MODEL` > `CLAUDE_REVIEW_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/review_pipeline.py`](../ai/lib/review_pipeline.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
 
 Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when those are set; otherwise the alias is passed to the CLI as-is.
 

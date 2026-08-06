@@ -121,3 +121,24 @@ class TestRunnerDispatch:
         args.keep_temp = True
         em._run_single(entry, "", "(default)", 0, args)
         assert Path(task.temp_dir).exists()
+
+
+class TestReportRun:
+    """false_positives_max is only a budget if exceeding it is visible."""
+
+    def _report(self, em, capsys, *, fp_count, fp_ok):
+        result = ScoringResult(
+            "", "", 0, recall=1.0,
+            false_positive_count=fp_count, false_positive_ok=fp_ok,
+        )
+        em._report_run(eval_task.RunArtifacts(), result, 1)
+        return capsys.readouterr().err
+
+    def test_over_budget_is_called_out(self, em, capsys):
+        assert "FP: 5 (over budget)" in self._report(
+            em, capsys, fp_count=5, fp_ok=False)
+
+    def test_within_budget_is_not_annotated(self, em, capsys):
+        err = self._report(em, capsys, fp_count=2, fp_ok=True)
+        assert "FP: 2" in err
+        assert "over budget" not in err

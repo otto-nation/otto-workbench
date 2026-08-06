@@ -192,9 +192,12 @@ def _report_run(artifacts, result: ScoringResult, total_expected: int) -> None:
         file=sys.stderr,
     )
     matched = sum(1 for m in result.matches if m.matched)
+    # Without this note false_positives_max sets a field nobody reads: the budget
+    # is recorded in the baseline JSON and never surfaces where a human looks.
+    over = "" if result.false_positive_ok else " (over budget)"
     print(
         f"  recall: {result.recall:.0%} ({matched}/{total_expected}), "
-        f"FP: {result.false_positive_count}",
+        f"FP: {result.false_positive_count}{over}",
         file=sys.stderr,
     )
 

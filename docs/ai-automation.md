@@ -333,6 +333,11 @@ start line falls inside the window. Reviewers routinely anchor a range at the
 enclosing declaration, and containment scored those as a miss and a false positive
 at once, penalising a correct finding twice.
 
+A `review` manifest's `false_positives_max` is a noise budget: findings outside every
+expectation are counted, and a run over the budget is marked `(over budget)` next to
+its FP count. It annotates rather than fails — `--compare` gates on movement away from
+the baseline, so an absolute bar here would fire on cases that have never met it.
+
 A `ci-fix` case also ships a `reference-fix/` overlay: the same relative paths,
 already corrected. The harness never reads it. The test suite does, to prove the
 case fails before the fix and passes after it — an oracle that cannot fail, or

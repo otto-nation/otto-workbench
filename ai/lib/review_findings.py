@@ -71,8 +71,14 @@ PATH_SECTION_RE = re.compile(
     r"|"
     r"`(.+?)`"
 )
+# Second alternative matches extensionless scripts (ai/claude/bin/ci-check).
+# A slash is required so prose in a code span is not mistaken for a path.
 FIRST_FILE_RE = re.compile(
-    r"([a-zA-Z0-9_/().:-]+\.\w+)"
+    r"("
+    r"[a-zA-Z0-9_/().:-]+\.\w+"
+    r"|"
+    r"[a-zA-Z0-9_.()-]+(?:/[a-zA-Z0-9_.()-]+)+"
+    r")"
     r"(?::(\d+)(?:[-–](\d+))?)?"
 )
 

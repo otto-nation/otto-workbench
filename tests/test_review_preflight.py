@@ -35,7 +35,6 @@ def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:
         wt_path="/tmp/fake",
         review_file="/tmp/review.md",
         session_log="/tmp/session.log",
-        reviews_dir="/tmp/reviews",
         prior_review=prior_review,
     )
 
@@ -57,3 +56,17 @@ class TestCollectDeltaSameSha:
         job = _make_job(head_sha="abc123", prior_review="no sha marker here")
         result = rp._collect_delta(job)
         assert result == ("", "", [], "")
+
+
+class TestArtifactDir:
+    """Where a review's files live is derived from the review file, not passed in."""
+
+    def test_is_the_review_file_directory(self):
+        job = _make_job(head_sha="abc123", prior_review="")
+        job.review_file = "/tmp/reviews/owner-repo-42/review.md"
+        assert job.artifact_dir == "/tmp/reviews/owner-repo-42"
+
+    def test_is_not_the_reviews_root(self):
+        job = _make_job(head_sha="abc123", prior_review="")
+        job.review_file = "/tmp/reviews/owner-repo-42/review.md"
+        assert job.artifact_dir != "/tmp/reviews"

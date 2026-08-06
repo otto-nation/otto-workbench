@@ -11,15 +11,16 @@ setup() {
   # Prevent git from discovering the parent workbench repo during parallel test runs
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
   # Re-derive TASKFILE_ENV for the test HOME (constants.sh resolves at source time)
+  # shellcheck disable=SC2034  # read by load_gh_token in lib/summary.sh
   TASKFILE_ENV="$HOME/.config/task/taskfile.env"
   # Ensure GH_TOKEN is not inherited from the test runner environment
   unset GH_TOKEN
-  cd "$TMPDIR"
+  cd "$TMPDIR" || return 1
 }
 
 teardown() {
   export HOME="$ORIG_HOME"
-  cd "$ORIG_DIR"
+  cd "$ORIG_DIR" || return 1
   rm -rf "$TMPDIR"
   unset GH_TOKEN
   common_teardown

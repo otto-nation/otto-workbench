@@ -94,7 +94,7 @@ class TestOmittedTurns:
         return ReviewJob(
             repo="test/repo", pr_number="1", pr=pr,
             ctx=PRContext(), wt_path="/tmp", review_file="/tmp/review.md",
-            session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/log.jsonl",
             effort=effort, preflight=preflight,
         )
 
@@ -156,7 +156,6 @@ def _make_job(tmp_path, effort=Effort.MEDIUM, mode="pr"):
         ctx=PRContext(), wt_path=str(tmp_path),
         review_file=review_file,
         session_log=str(tmp_path / "session.jsonl"),
-        reviews_dir=str(tmp_path),
         effort=effort, mode=mode,
     )
 

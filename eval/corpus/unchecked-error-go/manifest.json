@@ -1,5 +1,6 @@
 {
   "name": "unchecked-error-go",
+  "task": "review",
   "description": "Database query error return value is silently discarded, causing silent empty-string results on failure",
   "source": "synthetic",
   "language": "go",
@@ -7,7 +8,7 @@
     {
       "severity": ["M", "S"],
       "path": "handler.go",
-      "line_range": [14, 14],
+      "line_range": [13, 13],
       "category": "correctness",
       "description_contains": "error"
     }

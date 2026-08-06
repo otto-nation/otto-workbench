@@ -150,7 +150,7 @@ def _make_job(preflight=None):
     return ReviewJob(
         repo="r", pr_number="1", pr=pr, ctx=ctx,
         wt_path="/tmp/w", review_file="/tmp/r.md",
-        session_log="/tmp/l.jsonl", reviews_dir="/tmp/reviews",
+        session_log="/tmp/l.jsonl",
         preflight=preflight,
     )
 

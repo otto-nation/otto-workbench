@@ -19,7 +19,7 @@ task --global ai:setup
 ```
 
 This creates `~/.config/task/taskfile.env` with:
-- `AI_COMMAND` — which AI tool to use (e.g., `claude -p --agent ci-cd`)
+- `AI_COMMAND` — which AI tool to use (e.g., `claude -p --output-format json --agent ci-cd`)
 - `GH_TOKEN` — GitHub PAT for PR automation (fine-grained, scoped to specific repos)
 - `ANTHROPIC_API_KEY` — optional, for isolating automation API usage
 
@@ -140,7 +140,7 @@ Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, run
 
 ### `/pr-comments [<pr_number_or_branch>]`
 
-Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
+Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then draft replies for approval before publishing with --post. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
 
 ```
 /pr-comments [<pr_number_or_branch>]
@@ -247,10 +247,162 @@ Override which AI tool the global Taskfile uses:
 
 ```bash
 # ~/.config/task/taskfile.env
-AI_COMMAND=claude -p --agent ci-cd
+AI_COMMAND=claude -p --output-format json --agent ci-cd
 ```
 
 Override per-project with `.taskfile/taskfile.env` in a project root.
+
+### Which model a review phase uses
+
+Every review phase resolves its model through one chain, most specific first:
+
+1. an explicit `--model` on the command
+2. the phase's own key — `CLAUDE_REVIEW_GROUP_MODEL`, `CLAUDE_REVIEW_HOLISTIC_MODEL`,
+   `CLAUDE_REVIEW_SINGLE_MODEL`, `CLAUDE_REVIEW_SCOUT_MODEL`,
+   `CLAUDE_REVIEW_DISPROVE_MODEL`, `CLAUDE_REVIEW_FIX_MODEL`,
+   `CLAUDE_REVIEW_SYNTHESIS_MODEL`
+3. `CLAUDE_REVIEW_MODEL`, which covers every phase at once
+4. the phase's built-in default
+
+Whichever wins, a bare tier alias (`sonnet`, `opus`, `haiku`) is then resolved
+through `ANTHROPIC_DEFAULT_SONNET_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` /
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`. An alias names a tier, not a deployment — on
+Vertex and Bedrock the account provisions a specific model ID, and that is where
+it lives. A concrete model ID anywhere in the chain passes through untouched.
+
+The Claude CLI does this resolution itself; the Pi backend does not, so the
+workbench resolves it before dispatch and both backends land on the same model.
+
+`--output-format json` is optional but recommended: it is what lets the call be
+recorded in the usage ledger (see below). Without it the response is still used
+normally, it just goes unmeasured. Non-Claude binaries (`copilot`) stay supported
+either way — they report no usage, so they record nothing.
+
+### Usage ledger
+
+Every AI call made through the workbench appends one record to a monthly JSONL
+file under `~/.config/workbench/usage/` — cost, tokens, cache hit rate, and the
+task that made the call. Python entry points record automatically via
+`ai_backend`; the two shell paths that cannot use it (`run-auto-task`, which needs
+slash commands, and `AI_COMMAND`, which is pluggable) go through `ai-usage-log`.
+
+A call that reports no usage records nothing rather than a zero row, so an
+unmeasured call is visibly absent instead of looking free.
+
+Query it with `otto-log stats`:
+
+```bash
+otto-log stats                      # last 7 days, grouped by script
+otto-log stats --since 24h          # any h/d/m window
+otto-log stats --by task            # or: script, model, day
+otto-log stats --by day --json      # one JSON object per row
+```
+
+Columns are calls, cost, billed input (input + cache read + cache write), output
+tokens, cache-read share of billed input, and median duration. `--by model`
+shows cost only: the CLI reports cost per model but tokens per session, so the
+token columns are left blank rather than counting one session against every
+model it used.
+
+### Evaluating AI quality
+
+The ledger says what a call cost; the eval harness says what it bought. `eval-models`
+runs each case in [`eval/corpus/`](../eval/corpus/) through a throwaway git repo and
+scores the result against that case's `manifest.json`.
+
+```bash
+eval-models --dry-run                          # validate the corpus, run nothing
+eval-models --models sonnet,opus --runs 3      # compare models
+eval-models --compare                          # diff against eval/results/ baselines
+eval-models --save-baselines                   # record new baselines
+```
+
+A manifest's `task` field picks how its case is run and scored — `review` when the
+field is absent, so older manifests keep working. Each task pairs a runner with a
+scorer in `ai/lib/eval_scoring_<task>.py`; the runner, the fixture repo, and the
+statistics over repeated runs are shared and know nothing about any one task.
+
+| Task | What the case holds | How it is scored |
+|---|---|---|
+| `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
+| `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
+
+A `review` finding counts as matched when its path, severity, and description all
+line up and its line range *overlaps* the manifest's `line_range` — not when its
+start line falls inside the window. Reviewers routinely anchor a range at the
+enclosing declaration, and containment scored those as a miss and a false positive
+at once, penalising a correct finding twice.
+
+A `review` manifest's `false_positives_max` is a noise budget: findings outside every
+expectation are counted, and a run over the budget is marked `(over budget)` next to
+its FP count. It annotates rather than fails — `--compare` gates on movement away from
+the baseline, so an absolute bar here would fire on cases that have never met it.
+
+A `ci-fix` case also ships a `reference-fix/` overlay: the same relative paths,
+already corrected. The harness never reads it. The test suite does, to prove the
+case fails before the fix and passes after it — an oracle that cannot fail, or
+cannot be satisfied, measures nothing. Because CI failures are usually
+environment-shaped, these cases put stub binaries on `PATH` rather than depending
+on what the host happens to have installed, so they fail the same way everywhere.
+
+### What the eval gates on
+
+`--compare` diffs a run against the baselines in `eval/results/` and exits `2` on a
+regression. The gate is deliberately narrow — a gate that flaps gets disabled:
+
+| Metric | Gate |
+|---|---|
+| billed input tokens | fail past 15% growth |
+| output tokens | fail past 15% growth |
+| recall, precision, severity accuracy | fail on any drop past the noise threshold |
+| false positives | fail past +0.5 per case |
+| cache-read ratio | fail below 60% |
+| cost, duration | reported, never gated |
+
+Tokens are gated and cost is not because tokens are what the change controls; the
+dollar figure also moves with model prices, and duration moves with machine load.
+The cache-read floor is an absolute minimum rather than a delta: a prompt-prefix
+change that silently disables caching shows up as the ratio collapsing, and the
+value it collapsed from is not the interesting number.
+
+Baselines written before a metric existed leave it ungated rather than failing, so
+an older baseline still loads. The comparison table marks every metric `pass`,
+`fail`, or `ungated` — including the ones that cannot fail.
+
+The [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on
+demand. It is not a pull-request check: each run spends real money on real model
+calls. Without `ANTHROPIC_API_KEY` configured it validates the corpus and stops.
+
+### Where review artifacts live
+
+Each review owns a directory under `~/.config/workbench/reviews/` — `review.md`
+plus its session logs, group outputs, and pipeline state. The directory is derived
+from the review file's path, and it is the only place outside the worktree that
+review agents may write to. Granting the shared reviews root instead is how agent
+scratch files ended up sitting beside unrelated reviews.
+
+`pr gc` collects loose files at the reviews root once they are a week old. A flat
+`<name>.md` and its suffixed siblings are left alone: those are input to the
+startup migration that folds the old flat layout into directories.
+
+### Drafts, and what it takes to publish
+
+`pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
+summary, thread resolutions, and deferral tracking issues are all printed to
+stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes, commits,
+and pushes are unaffected — the gate covers only what other people can see.
+
+The default is draft because a review reply is public the moment it lands: an
+incorrect claim has to be retracted in front of the reviewer, and a wrong
+deferral issue has to be closed. Reading the drafts first costs one command:
+
+```bash
+pr comments --fix          # triage, fix, commit, push — drafts the replies
+pr comments --resolve --post   # publish once the drafts read correctly
+```
+
+A draft run leaves state untouched, so nothing is recorded as posted and a later
+`--post` run picks up the same queue.
 
 ### Running from a different directory
 

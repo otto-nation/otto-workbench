@@ -106,7 +106,7 @@ class TestPromptStderr:
             ai_backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        stdout, rc = ai_backend_claude.prompt("test prompt")
+        stdout, rc, _ = ai_backend_claude.prompt("test prompt")
         assert rc == 1
         captured = capsys.readouterr()
         assert "API rate limit exceeded" in captured.err
@@ -117,7 +117,7 @@ class TestPromptStderr:
             ai_backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        stdout, rc = ai_backend_claude.prompt("test prompt")
+        stdout, rc, _ = ai_backend_claude.prompt("test prompt")
         assert rc == 0
         assert stdout == "response"
         captured = capsys.readouterr()

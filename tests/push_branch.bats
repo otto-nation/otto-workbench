@@ -7,7 +7,7 @@ setup_file() {
   make_git_remote "$SHARED_REMOTE" "$tmp_local"
   # Push the feature branch so clone_from_shared_remote can check it out,
   # but tests start with it as a local-only branch (no upstream tracking).
-  cd "$tmp_local"
+  cd "$tmp_local" || return 1
   git push "$SHARED_REMOTE" feature/test --quiet
   cd /
   rm -rf "$tmp_local"

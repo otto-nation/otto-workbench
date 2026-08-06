@@ -10,7 +10,7 @@ archive management, and interactive prompts.
 
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
-    --repo-dir PATH --reviews-dir PATH [--session-log PATH] \
+    --repo-dir PATH [--session-log PATH] \
     [--prior-review PATH] [--issue URL] [--issue-context JSON]
 """
 
@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 from trail import Trail, add_trail_args  # noqa: E402
+import ai_usage as _au  # noqa: E402
 import review_common as _rc  # noqa: E402
 import review_findings as _rf  # noqa: E402
 import review_preflight as _rp  # noqa: E402
@@ -52,7 +53,7 @@ from review_static_analysis import (  # noqa: E402
 )
 import ai_backend  # noqa: E402
 
-_SUBMODULES = (_rc, _rf, _rp, _rpmt, _ra, _rpl)
+_SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl)
 
 
 class _ProxyModule(type(sys.modules[__name__])):
@@ -129,7 +130,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     job = ReviewJob(
         repo=repo, pr_number=args.pr, pr=pr, ctx=ctx,
         wt_path=args.repo_dir, review_file=args.review_file,
-        session_log=session_log, reviews_dir=args.reviews_dir,
+        session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
@@ -221,7 +222,6 @@ def main():
     parser.add_argument("--repo-dir", "--worktree",
                         required=True, help="Worktree path")
     parser.add_argument("--repo", default="", help="Repository name (owner/repo)")
-    parser.add_argument("--reviews-dir", required=True, help="Reviews directory")
     parser.add_argument("--session-log", help="Session log path")
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")
     parser.add_argument("--issue", default="", help="Issue URL")

@@ -67,6 +67,7 @@ REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
+EVAL_MODELS = REPO_ROOT / "ai" / "claude" / "bin" / "eval-models"
 
 
 def write_thrash_log(path) -> str:
@@ -103,6 +104,39 @@ def rp():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_usage_ledger(tmp_path, monkeypatch):
+    """Point the global usage ledger at a temp dir for the duration of every test.
+
+    ai_backend records usage on every entry point, so any test that reaches the real
+    dispatch layer would otherwise append junk rows to the developer's own ledger.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import ai_usage
+    monkeypatch.setattr(ai_usage, "LEDGER_DIR", tmp_path / "usage-ledger")
+
+
+@pytest.fixture(autouse=True)
+def _drafts_only(monkeypatch):
+    """Close the publishing gate for every test.
+
+    The gate is a single process-global flag, so one test that opens it would
+    otherwise leave the next one free to write to GitHub for real.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import publishing
+    monkeypatch.setattr(publishing, "_enabled", False)
+
+
+@pytest.fixture
+def publishing_on(monkeypatch):
+    """Open the gate, for tests covering what a write does once it is allowed."""
+    import publishing
+    monkeypatch.setattr(publishing, "_enabled", True)
+
+
+@pytest.fixture(autouse=True)
 def _clear_bot_login_cache():
     """Clear _get_bot_login lru_cache between tests."""
     yield
@@ -134,6 +168,17 @@ def rt():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["review_threads"]
+
+
+@pytest.fixture(scope="session")
+def em():
+    loader = importlib.machinery.SourceFileLoader("eval_models", str(EVAL_MODELS))
+    spec = importlib.util.spec_from_loader("eval_models", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["eval_models"] = mod
+    spec.loader.exec_module(mod)
+    yield mod
+    del sys.modules["eval_models"]
 
 
 @pytest.fixture(scope="session")

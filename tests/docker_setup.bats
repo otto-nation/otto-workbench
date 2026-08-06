@@ -23,6 +23,7 @@ setup() {
   # We extract just the function definitions for unit testing
   . "$REPO_ROOT/lib/ui.sh"
   DOCKER_RUNTIME_ALIASES="$FAKE_STATE/docker-aliases.zsh"
+  # shellcheck disable=SC2034  # read by the docker sync steps via lib/constants.sh
   WORKBENCH_STATE_DIR="$FAKE_STATE"
 }
 

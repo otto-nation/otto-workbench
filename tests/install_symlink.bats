@@ -27,6 +27,7 @@ teardown() {
   echo "content" > "$TMPDIR/main/script"
 
   WORKBENCH_DIR="$TMPDIR/feature-branch"
+  # shellcheck disable=SC2034  # read by install_symlink in lib/files.sh
   WORKBENCH_STABLE_DIR="$TMPDIR/main"
 
   install_symlink "$TMPDIR/feature-branch/script" "$TMPDIR/link"
@@ -56,6 +57,7 @@ teardown() {
   # First run: old symlink pointing to a different worktree
   ln -s "$TMPDIR/old-wt/script" "$TMPDIR/link"
 
+  # shellcheck disable=SC2034  # read by install_symlink in lib/files.sh
   WORKBENCH_DIR="$TMPDIR/current-wt"
   WORKBENCH_STABLE_DIR="$TMPDIR/main"
 

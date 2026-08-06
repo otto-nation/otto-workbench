@@ -36,6 +36,8 @@ Reuse ladder — stop at the first rung that solves the problem:
 - Never swallow errors silently — propagate them or return an explicit error. Key/map lookups on external data (DB, API, user input) must use safe-access patterns (comma-ok in Go, `.get()` in Python, `in` checks in JS) and handle the missing-key case
 - Fix review findings in the current PR. Defer one to a tracking issue or a follow-up PR only when I have explicitly agreed to that deferral — ask, don't assume
 - When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic
+- When a linter (nesting depth, ShellCheck, errexit, bare-refs) flags a file the current change set touched, fix every violation in that file — not only the one that failed the check. Pre-existing violations in a file we already modified are in scope; violations in files we did not touch are not
+- Never delete or move a spec, plan, doc, or test file to get past a failing pre-push or pre-commit check. Fix the underlying violation, or stop and ask — bypassing the check by removing its input silently discards work
 
 ## Debugging
 

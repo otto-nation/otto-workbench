@@ -445,6 +445,7 @@ teardown() {
   state_append_list "ai.tools" "claude"
   state_append_list "ai.tools" "serena"
 
+  # shellcheck disable=SC2034  # passed to state_load_selections by name (nameref)
   local AVAILABLE=("claude" "rtk")
   local RESULT=()
   run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT AVAILABLE

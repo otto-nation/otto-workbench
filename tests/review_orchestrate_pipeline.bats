@@ -166,7 +166,7 @@ job = mod.ReviewJob(
         title="t", body="", head="b", base="main", head_sha="abc",
         additions=10, deletions=5, changed_files=2, files=[]),
     ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/nonexistent.md",
-    session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/log.jsonl",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
 cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
@@ -187,7 +187,7 @@ job = mod.ReviewJob(
         title="t", body="", head="b", base="main", head_sha="abc123",
         additions=10, deletions=5, changed_files=2, files=[]),
     ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/test/review.md",
-    session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/log.jsonl",
 )
 groups = [mod.Group("g1", ["a.go"], 10), mod.Group("g2", ["b.go"], 20)]
 cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
@@ -210,7 +210,7 @@ job = mod.ReviewJob(
         title="t", body="", head="b", base="main", head_sha="new_sha",
         additions=10, deletions=5, changed_files=2, files=[]),
     ctx=mod.PRContext(), wt_path="/tmp", review_file="$TMPDIR/stale/review.md",
-    session_log="/tmp/log.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/log.jsonl",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
 cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
@@ -253,7 +253,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="42",
     pr=mod.PRMetadata("t","b","h","base","abc123",10,5,3,[]),
     ctx=mod.PRContext(), wt_path=d, review_file=review_file,
-    session_log=f"{d}/session.jsonl", reviews_dir=d,
+    session_log=f"{d}/session.jsonl",
 )
 
 cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
@@ -290,7 +290,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="42",
     pr=mod.PRMetadata("t","b","h","base","abc123",10,5,1,[]),
     ctx=mod.PRContext(), wt_path=d, review_file=review_file,
-    session_log=f"{d}/session.jsonl", reviews_dir=d,
+    session_log=f"{d}/session.jsonl",
 )
 
 cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
@@ -327,7 +327,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="42",
     pr=mod.PRMetadata("t","b","h","base","abc123",10,5,2,[]),
     ctx=mod.PRContext(), wt_path=d, review_file=review_file,
-    session_log=f"{d}/session.jsonl", reviews_dir=d,
+    session_log=f"{d}/session.jsonl",
 )
 
 cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
@@ -367,7 +367,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="42",
     pr=mod.PRMetadata("t","b","h","base","abc123",10,5,3,[]),
     ctx=mod.PRContext(), wt_path=d, review_file=review_file,
-    session_log=f"{d}/session.jsonl", reviews_dir=d,
+    session_log=f"{d}/session.jsonl",
 )
 
 cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
@@ -396,7 +396,7 @@ job = mod.ReviewJob(
     pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc123',
         additions=10, deletions=5, changed_files=1, files=[]),
     ctx=mod.PRContext(), wt_path='/tmp/wt', review_file=review_file,
-    session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+    session_log='/tmp/s.jsonl',
 )
 mod._write_pipeline_state(job, state)
 loaded = mod._read_pipeline_state(job)
@@ -424,7 +424,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/nonexistent-review.md',
-        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='/tmp/s.jsonl',
     )
     result = mod._read_pipeline_state(job)
 print(result)
@@ -443,7 +443,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='/tmp/s.jsonl',
     )
     result = mod._read_pipeline_state(job)
 print(result)
@@ -472,7 +472,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='/tmp/s.jsonl',
     )
     cost = mod._sum_existing_costs(job, state)
 print(f'{cost:.2f}')
@@ -496,7 +496,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='/tmp/s.jsonl',
     )
     cost = mod._sum_existing_costs(job, state)
 print(f'{cost:.2f}')
@@ -553,7 +553,6 @@ with contextlib.redirect_stdout(io.StringIO()):
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
         session_log='$TMPDIR/session.jsonl',
-        reviews_dir='/tmp/reviews',
     )
     mod._consolidate_logs(
         job,
@@ -591,7 +590,6 @@ with contextlib.redirect_stdout(io.StringIO()):
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
         session_log='$TMPDIR/session.jsonl',
-        reviews_dir='/tmp/reviews',
     )
     mod._cleanup_intermediates(
         job,
@@ -626,7 +624,6 @@ with contextlib.redirect_stdout(io.StringIO()):
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
         session_log='$TMPDIR/session.jsonl',
-        reviews_dir='/tmp/reviews',
     )
     mod._cleanup_intermediates(
         job,
@@ -654,7 +651,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             files=[{'path': 'a.go', 'additions': 10, 'deletions': 5}]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='$TMPDIR/s.jsonl',
     )
     grp = mod.Group(name='services', files=['a.go'], lines=15)
     idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
@@ -678,7 +675,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             files=[{'path': 'a.go', 'additions': 10, 'deletions': 5}]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='$TMPDIR/s.jsonl',
     )
     grp = mod.Group(name='services', files=['a.go'], lines=15)
     idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
@@ -749,7 +746,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='/tmp/s.jsonl',
     )
     mod._update_group_done(job, 3, state)
     mod._update_group_done(job, 2, state)
@@ -783,7 +780,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="42",
     pr=mod.PRMetadata("t","b","h","base","abc123",10,5,2,[]),
     ctx=mod.PRContext(), wt_path=d, review_file=review_file,
-    session_log=f"{d}/session.jsonl", reviews_dir=d,
+    session_log=f"{d}/session.jsonl",
 )
 
 mod._write_pipeline_state(job, state)
@@ -816,7 +813,7 @@ job = mod.ReviewJob(
     repo="org/repo", pr_number="42",
     pr=mod.PRMetadata("t","b","h","base","abc123",10,5,2,[]),
     ctx=mod.PRContext(), wt_path=d, review_file=review_file,
-    session_log=f"{d}/session.jsonl", reviews_dir=d,
+    session_log=f"{d}/session.jsonl",
 )
 
 loaded = mod._read_pipeline_state(job)
@@ -841,7 +838,7 @@ with contextlib.redirect_stdout(io.StringIO()):
             additions=1, deletions=0, changed_files=1, files=[]),
         ctx=mod.PRContext(), wt_path='/tmp/wt',
         review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl', reviews_dir='/tmp/reviews',
+        session_log='/tmp/s.jsonl',
     )
     mod._update_group_failed(job, 2, 'agent hit max turns (10)', state)
     mod._update_group_failed(job, 3, 'agent error: model not available', state)

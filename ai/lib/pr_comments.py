@@ -14,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import log
+import publishing
 from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
 from review_github import (
     PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
@@ -242,8 +243,17 @@ def _paginated_json(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+# ── GitHub writes ────────────────────────────────────────────────────────────
+
 def _gh_post(endpoint: str, body: str, method: str = "POST") -> tuple[int, str]:
-    """Send a JSON body to a gh api REST endpoint. Returns (exit_code, stdout)."""
+    """Send a JSON body to a gh api REST endpoint. Returns (exit_code, stdout).
+
+    A draft reports failure rather than success: every "posted" counter
+    downstream reads this exit code, and nothing was posted.
+    """
+    if not publishing.enabled():
+        publishing.draft(endpoint, body)
+        return 1, ""
     payload = json.dumps({"body": body})
     result = subprocess.run(
         ["gh", "api", endpoint, "--method", method, "--input", "-"],
@@ -433,6 +443,9 @@ def fetch_review_body_comments(
 
 def resolve_thread(thread_id: str) -> bool:
     """Resolve a review thread on GitHub via GraphQL mutation."""
+    if not publishing.enabled():
+        publishing.draft(f"resolve thread {thread_id}")
+        return False
     query = json.dumps({
         "query": GRAPHQL_RESOLVE,
         "variables": {"threadId": thread_id},

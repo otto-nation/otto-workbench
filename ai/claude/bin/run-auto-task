@@ -37,6 +37,24 @@ log_dir="${CLAUDE_LOG_DIR:-$CLAUDE_DIR/logs}"
 mkdir -p "$log_dir"
 timestamp="$(date +%Y%m%d-%H%M%S)"
 log_file="${log_dir}/${skill}-${timestamp}.log"
+raw_file="${log_file%.log}.jsonl"
 
-nohup claude -p "/$skill" --bare --permission-mode bypassPermissions \
-  > "$log_file" 2>&1 & disown
+# ceiling: bypasses ai_backend so the skill can use slash commands, which
+# _base_cmd() disables; route through the backend once it takes a slash-commands flag.
+# Until then the raw stream is teed here and rendered back to readable text, so the
+# call still lands in the usage ledger without the log turning into JSONL.
+if ! command -v ai-usage-log > /dev/null 2>&1; then
+  nohup claude -p "/$skill" --bare --permission-mode bypassPermissions \
+    > "$log_file" 2>&1 & disown
+  exit 0
+fi
+
+(
+  trap '' HUP
+  claude -p "/$skill" --bare --permission-mode bypassPermissions \
+    --output-format stream-json --verbose 2>&1 |
+    ai-usage-log render --tee "$raw_file" > "$log_file"
+  rc="${PIPESTATUS[0]}"
+  ai-usage-log record --from-log "$raw_file" --script run-auto-task \
+    --entry-point agent --task "$skill" --exit-code "$rc" || true
+) > /dev/null 2>&1 & disown

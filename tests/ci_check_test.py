@@ -1065,3 +1065,38 @@ def test_ci_fix_pass_with_a_checked_box_is_not_retried(tmp_path):
     inv = _run_fix_with_tracking(tmp_path, "- [x] build\n", lambda *a, **k: 0)
     assert inv.call_count == 1
     assert inv.call_args.args[0].prompt == "PROMPT"
+
+
+# ── _commit_and_push ──────────────────────────────────────────────────────
+
+
+def _run_commit_and_push(dirty):
+    """Run _commit_and_push against a stubbed git. Returns (sha, git argv list)."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return MagicMock(
+            returncode=0,
+            stdout="abc1234\n" if "rev-parse" in cmd else "",
+            stderr="",
+        )
+
+    with patch.object(ci_check.subprocess, "run", side_effect=fake_run), \
+         patch.object(ci_check.review_common, "has_uncommitted_changes",
+                      return_value=dirty):
+        sha = ci_check._commit_and_push(Path("/fake"), 1, 0)
+    return sha, calls
+
+
+def test_commit_and_push_skips_a_clean_worktree():
+    sha, calls = _run_commit_and_push(dirty=False)
+    assert sha is None
+    assert calls == []
+
+
+def test_commit_and_push_stages_untracked_files():
+    """A fix that only adds files must land in the commit, not be dropped by -u."""
+    sha, calls = _run_commit_and_push(dirty=True)
+    assert sha == "abc1234"
+    assert calls[0][-2:] == ["add", "-A"]

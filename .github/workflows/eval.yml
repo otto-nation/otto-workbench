@@ -1,0 +1,91 @@
+name: Eval
+
+# Not a pull-request gate: every run spends real money on real model calls.
+# It runs on a schedule and on demand, and fails when a model's token spend or
+# finding quality regresses past the ratchet in ai/lib/eval_scoring.py.
+on:
+  schedule:
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      models:
+        description: Comma-separated models to evaluate
+        required: false
+        default: sonnet
+      runs:
+        description: Runs per corpus case
+        required: false
+        default: '3'
+
+permissions:
+  contents: read
+
+# Cron and workflow_dispatch can overlap; queue rather than cancel since these
+# runs cost real money and a cancelled run's spend is not recovered.
+concurrency:
+  group: eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    name: Corpus eval
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Costs nothing and needs no credentials: proves every manifest names a
+      # task the runner can resolve before anything is spent.
+      - name: Validate the corpus
+        run: python3 ai/claude/bin/eval-models --dry-run
+
+      - name: Check for credentials
+        id: creds
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+            echo "No ANTHROPIC_API_KEY configured — skipping the eval run." \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install the Claude Code CLI
+        if: steps.creds.outputs.available == 'true'
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          echo "Claude Code CLI: $(claude --version)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the eval and compare against baselines
+        id: run
+        if: steps.creds.outputs.available == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_MODELS: ${{ inputs.models || 'sonnet' }}
+          EVAL_RUNS: ${{ inputs.runs || '3' }}
+        run: |
+          set -o pipefail
+          rc=0
+          python3 ai/claude/bin/eval-models \
+            --models "$EVAL_MODELS" --runs "$EVAL_RUNS" --compare \
+            2>&1 | tee eval-output.txt || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
+      # Every metric goes in the summary, gated and ungated alike. A gate that
+      # only shows what it failed on trains people to stop reading it.
+      - name: Publish the results
+        if: steps.creds.outputs.available == 'true'
+        run: |
+          {
+            echo "## Eval results"
+            echo ""
+            echo '```'
+            cat eval-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ steps.run.outputs.rc }}" != "0" ]]; then
+            echo "::error::eval-models exited ${{ steps.run.outputs.rc }}"
+            exit 1
+          fi

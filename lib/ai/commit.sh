@@ -72,7 +72,7 @@ _build_commit_prompt() {
     diff_content=$(_compact_diff "$diff_content")
   fi
 
-  run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble")"
+  run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble")" "" "commit-message"
   AI_MSG="$AI_RESPONSE"
 }
 

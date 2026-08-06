@@ -11,12 +11,13 @@ import json
 import os
 import threading
 import time
+from enum import StrEnum
 from pathlib import Path
 
 import ai_backend
 import log
 from ai_backend_events import is_write_tool
-from review_common import preserve_log, restore_preserved
+from review_common import AgentKind, preserve_log, restore_preserved
 
 DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
@@ -234,16 +235,46 @@ def _is_quota_error(log_path: str) -> bool:
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
+class ModelAlias(StrEnum):
+    """Short model names that resolve to a concrete model id via env override.
+
+    Anything not listed here is already a concrete id and passes through
+    untouched.
+    """
+
+    SONNET = "sonnet"
+    OPUS = "opus"
+    HAIKU = "haiku"
+
+    @property
+    def env_key(self) -> str:
+        return f"ANTHROPIC_DEFAULT_{self.upper()}_MODEL"
+
+    @classmethod
+    def parse(cls, model: str) -> ModelAlias | None:
+        try:
+            return cls(model)
+        except ValueError:
+            return None
+
+
+def _resolve_alias(model: str) -> str:
+    alias = ModelAlias.parse(model)
+    if alias is None:
+        return model
+    return os.environ.get(alias.env_key) or model
+
+
 def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     if explicit:
-        return explicit
+        return _resolve_alias(explicit)
     from_env = os.environ.get(env_key)
     if from_env:
-        return from_env
+        return _resolve_alias(from_env)
     global_env = os.environ.get("CLAUDE_REVIEW_MODEL")
     if global_env:
-        return global_env
-    return default
+        return _resolve_alias(global_env)
+    return _resolve_alias(default)
 
 
 def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:
@@ -287,8 +318,8 @@ def invoke_agent(
     model: str | None = None,
     thinking_level: str | None = None,
     provider: str | None = None,
-    agent: str = "reviewer",
-    throttle: "QuotaThrottle | None" = None,
+    agent: AgentKind = AgentKind.REVIEWER,
+    throttle: QuotaThrottle | None = None,
 ) -> int:
     add_dirs = [reviews_dir, wt_path]
     if review_file:

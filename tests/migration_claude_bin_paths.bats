@@ -77,6 +77,18 @@ JSON
   [ "$(cat "$SETTINGS")" = "$after_first" ]
 }
 
+@test "preserves the original file mode" {
+  cat > "$SETTINGS" <<'JSON'
+{"statusLine":{"command":"$HOME/.claude/bin/workbench-statusline"}}
+JSON
+  chmod 600 "$SETTINGS"
+
+  run _run_migration
+  [ "$status" -eq 0 ]
+  run stat -f '%Lp' "$SETTINGS"
+  [ "$output" = "600" ]
+}
+
 @test "no-op when there is no settings file" {
   run _run_migration
   [ "$status" -eq 0 ]

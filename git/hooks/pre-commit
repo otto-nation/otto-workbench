@@ -1,11 +1,73 @@
 #!/usr/bin/env bash
-# Pre-commit hook: scans staged changes for secrets before they enter history.
+# Pre-commit hook: rejects placeholder commit identities, then scans staged
+# changes for secrets before they enter history.
 # Installed globally by git/steps.sh → ~/.git-hooks/pre-commit
 #
 # For global protection (all repos), the workbench install configures
 # a global hooks dir at ~/.git-hooks/ — see git/steps.sh.
 
 set -euo pipefail
+
+# _is_placeholder VALUE PATTERN... — true when VALUE matches any PATTERN.
+_is_placeholder() {
+  local value="$1"
+  shift
+  local pattern
+  for pattern in "$@"; do
+    # shellcheck disable=SC2053  # unquoted RHS is the point — these are globs
+    if [[ "$value" == $pattern ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _assert_real_identity — refuses to commit under a test-suite identity.
+#
+# A test that writes git config into the wrong repo leaves user.name and
+# user.email behind permanently, and every later commit inherits them silently.
+# Branch names derive from user.name too, so the damage reaches refs. Only
+# enforced on repos with a forge remote: throwaway repos created by tests
+# legitimately commit as "Test <test@test.com>".
+#
+# Reads GIT_AUTHOR_IDENT rather than user.name/user.email, so the check also
+# sees identities coming from GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL — the form git
+# itself exports to hooks, and the one a test harness is most likely to leak.
+_assert_real_identity() {
+  local origin
+  origin="$(git remote get-url origin 2>/dev/null || true)"
+  _is_placeholder "$origin" '*github.com*' '*gitlab.com*' '*bitbucket.org*' || return 0
+
+  local ident
+  ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null || true)"
+  [[ -n "$ident" ]] || return 0
+
+  # "Name <email> <timestamp> <tz>"
+  local name email
+  name="${ident%% <*}"
+  email="${ident#*<}"
+  email="${email%%>*}"
+
+  # bash 3.2 (macOS system bash) has no ${var,,}
+  local name_lower
+  name_lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+
+  local bad=""
+  _is_placeholder "$email" 'test@*' '*@test.com' '*@example.com' '*@example.org' '*@localhost' \
+    && bad="email=$email"
+  _is_placeholder "$name_lower" 'test' 'your name' 'unknown' \
+    && bad="${bad:+$bad, }name=$name"
+  [[ -n "$bad" ]] || return 0
+
+  echo "✗ refusing to commit with a placeholder identity — $bad"
+  git config --show-origin --get-regexp '^user\.(name|email)$' 2>/dev/null | sed 's/^/  /'
+  echo "  a test suite most likely wrote this — check the files above, and"
+  echo "  GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL if it is not there. Then verify:"
+  echo "    git var GIT_AUTHOR_IDENT"
+  exit 1
+}
+
+_assert_real_identity
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "✗ gitleaks not found — run: brew install gitleaks"

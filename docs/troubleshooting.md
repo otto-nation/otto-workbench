@@ -97,6 +97,23 @@ task dev:setup
 
 This sets `core.hooksPath` to point to the workbench's [`git/hooks/`](../git/hooks/) directory.
 
+## "refusing to commit with a placeholder identity"
+
+The commit identity is a test value. Rejected names are `test`, `your name`, and `unknown` (case-insensitive); rejected emails are `test@…` and anything at `test.com`, `example.com`, `example.org`, or `localhost`. Only repos whose `origin` remote points at GitHub, GitLab, or Bitbucket are checked, so throwaway repos built by test suites are unaffected.
+
+A test suite that ran `git config` against the wrong repo is the usual cause — and in a bare-repo-plus-worktrees layout, one polluted `.git/config` mis-attributes commits from every worktree until someone notices.
+
+The hook prints the file each value came from. Remove them there:
+
+```bash
+git config --unset user.name     # add --global or --file <path> to match the origin shown
+git var GIT_AUTHOR_IDENT         # confirm the identity that will be used
+```
+
+If the hook printed no config origins, the identity is coming from `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` in the environment instead.
+
+Commits already made under the bad identity keep it — rewriting them requires `git filter-branch --env-filter` plus a force push.
+
 ## "merge conflict" in `~/.claude/settings.json`
 
 The AI sync merges `settings.json` rather than overwriting. If you see unexpected values, re-sync:

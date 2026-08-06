@@ -54,6 +54,12 @@ _GLOBAL_METRIC = (
 _PUBLISHER_PREFIX = "anthropic-"
 _MODEL_ID_PREFIX = "claude-"
 
+# Segments in the coarsest bucket a model may match: the publisher and model
+# prefixes plus the family, e.g. "anthropic-claude-sonnet".
+_FAMILY_TIER_SEGMENTS = len(
+    f"{_PUBLISHER_PREFIX}{_MODEL_ID_PREFIX}".rstrip("-").split("-")
+) + 1
+
 
 class QuotaVerdict(StrEnum):
     """What a quota lookup established about one model.
@@ -266,13 +272,15 @@ def _covering_bucket(base_model: str, provisioned: Mapping[str, str]) -> str | N
     and serves under its family's allocation, so an exact-key miss does not
     mean the model is unusable — it usually means the model is new.
 
-    Walk from the most specific name to the least and take the first bucket
-    that exists. A name whose family is unknown to the project matches nothing,
-    which is the case worth blocking: a typo, or a model this project genuinely
-    cannot serve.
+    Walk from the most specific name down to the family and take the first
+    bucket that exists. A name whose family is unknown to the project matches
+    nothing, which is the case worth blocking: a typo, or a model this project
+    genuinely cannot serve. The walk stops at the family tier so that a bucket
+    coarser than a family, should Vertex ever publish one, cannot make a
+    misspelled family look served.
     """
     parts = base_model.split("-")
-    for cut in range(len(parts), 0, -1):
+    for cut in range(len(parts), _FAMILY_TIER_SEGMENTS - 1, -1):
         candidate = "-".join(parts[:cut])
         if candidate in provisioned:
             return candidate

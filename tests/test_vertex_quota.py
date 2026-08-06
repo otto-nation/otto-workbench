@@ -197,6 +197,16 @@ class TestCoveringBucket:
     def test_a_typo_matches_nothing(self):
         assert vq._covering_bucket("anthropic-claude-sonnett-5", self._BUCKETS) is None
 
+    def test_a_bucket_coarser_than_a_family_does_not_rescue_a_typo(self):
+        """The walk stops at the family tier.
+
+        Were it to keep descending, an all-Claude bucket would match every
+        misspelled family and the check would never block anything.
+        """
+        buckets = {"anthropic-claude": "1", "anthropic": "1"}
+        assert vq._covering_bucket("anthropic-claude-sonnett-5", buckets) is None
+        assert vq._covering_bucket("anthropic-claude-sonnet", buckets) is None
+
     def test_a_prefix_only_matches_on_a_segment_boundary(self):
         """"sonnet-4" must not match the "sonnet-4-6" bucket by string prefix."""
         assert vq._covering_bucket(

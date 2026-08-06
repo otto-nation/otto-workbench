@@ -333,7 +333,7 @@ def _make_review_job(**overrides) -> ReviewJob:
         repo="owner/repo", pr_number="1", pr=pr,
         ctx=PRContext(commits="abc1234 feat: stuff"),
         wt_path="/tmp/wt", review_file="/tmp/reviews/review.md",
-        session_log="/tmp/reviews/session.jsonl", reviews_dir="/tmp/reviews",
+        session_log="/tmp/reviews/session.jsonl",
         issue_link="#42", issue_context="Issue body",
         generator_version="test", preflight=preflight,
         viewer_role="OWNER",

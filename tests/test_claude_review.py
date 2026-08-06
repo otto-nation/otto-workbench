@@ -1053,6 +1053,59 @@ def test_gc_preserves_active_pipeline(cr, reviews_dir):
     assert (d / "group-1.jsonl").exists()
 
 
+# ── stray files at the reviews root ──────────────────────────────────────────
+
+STALE_MTIME = (1622505600, 1622505600)
+
+
+def test_gc_removes_stale_stray_files(cr, reviews_dir):
+    strays = ("check_hunks.py", "backfill_pr842.sql", "earning_pr829.go")
+    for name in strays:
+        p = reviews_dir / name
+        p.write_text("scratch")
+        os.utime(str(p), STALE_MTIME)
+
+    cleaned = review_gc.gc_reviews(reviews_dir)
+
+    assert cleaned == len(strays)
+    for name in strays:
+        assert not (reviews_dir / name).exists()
+
+
+def test_gc_removes_stranded_flat_artifacts(cr, reviews_dir):
+    """Suffixed leftovers from the flat layout whose `.md` is gone are unclaimable."""
+    stranded = reviews_dir / "maximum-1403.holistic.jsonl"
+    stranded.write_text("{}")
+    os.utime(str(stranded), STALE_MTIME)
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert not stranded.exists()
+
+
+def test_gc_keeps_flat_artifacts_the_migration_still_claims(cr, reviews_dir):
+    """A flat `.md` at the root means the startup migration owns its siblings."""
+    for name in ("maximum-1403.md", "maximum-1403.holistic.jsonl"):
+        p = reviews_dir / name
+        p.write_text("{}")
+        os.utime(str(p), STALE_MTIME)
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert (reviews_dir / "maximum-1403.md").exists()
+    assert (reviews_dir / "maximum-1403.holistic.jsonl").exists()
+
+
+def test_gc_preserves_recent_stray_files(cr, reviews_dir):
+    """A stray from a run still in flight is not garbage yet."""
+    stray = reviews_dir / "check_hunks.py"
+    stray.write_text("scratch")
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert stray.exists()
+
+
 # ── prune_merged_reviews ─────────────────────────────────────────────────────
 
 

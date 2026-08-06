@@ -178,7 +178,7 @@ ctx = mod.PRContext(commits="fix it", reviews="[]", review_comments="[]", commen
 job = mod.ReviewJob(
     repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
     wt_path="/tmp/wt", review_file="/tmp/review.md",
-    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/session.jsonl",
 )
 result = mod.build_prompt("single-agent.md", job, max_turns=15)
 print(result)
@@ -198,7 +198,7 @@ ctx = mod.PRContext()
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
     wt_path="/tmp/wt", review_file="/tmp/review.md",
-    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/session.jsonl",
 )
 result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
@@ -222,7 +222,7 @@ ctx = mod.PRContext()
 job = mod.ReviewJob(
     repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
     wt_path="/tmp/wt", review_file="/tmp/review.md",
-    session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+    session_log="/tmp/session.jsonl",
 )
 result = mod.build_prompt("group.md", job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",

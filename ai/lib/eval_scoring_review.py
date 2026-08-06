@@ -156,16 +156,13 @@ def score_entry(
     )
 
 
-def _run_orchestrate(
-    repo_dir: str, reviews_dir: str, review_file: str, opts: RunOptions,
-) -> int:
+def _run_orchestrate(repo_dir: str, review_file: str, opts: RunOptions) -> int:
     cmd = [
         sys.executable, str(_REVIEW_ORCHESTRATE),
         "--mode", "self",
         "--effort", opts.effort,
         "--repo-dir", repo_dir,
         "--review-file", review_file,
-        "--reviews-dir", reviews_dir,
         "--repo", "eval/corpus",
     ]
     if opts.model:
@@ -200,17 +197,17 @@ class ReviewTask:
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         repo_dir = create_temp_repo(str(case_dir / "src"), prefix="eval-review-")
-        reviews_dir = tempfile.mkdtemp(prefix="eval-reviews-")
-        review_file = str(Path(reviews_dir) / "review.md")
-        session_log = str(Path(reviews_dir) / "session.jsonl")
+        artifact_dir = tempfile.mkdtemp(prefix="eval-reviews-")
+        review_file = str(Path(artifact_dir) / "review.md")
+        session_log = str(Path(artifact_dir) / "session.jsonl")
 
-        exit_code = _run_orchestrate(repo_dir, reviews_dir, review_file, opts)
+        exit_code = _run_orchestrate(repo_dir, review_file, opts)
         findings, usage = parse_review_output(review_file, session_log)
 
         return RunArtifacts(
             exit_code=exit_code,
             usage=usage,
-            temp_dirs=[repo_dir, reviews_dir],
+            temp_dirs=[repo_dir, artifact_dir],
             data={"findings": findings, "summary": f"findings: {len(findings)}"},
         )
 

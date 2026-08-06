@@ -362,6 +362,18 @@ The [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on
 demand. It is not a pull-request check: each run spends real money on real model
 calls. Without `ANTHROPIC_API_KEY` configured it validates the corpus and stops.
 
+### Where review artifacts live
+
+Each review owns a directory under `~/.config/workbench/reviews/` — `review.md`
+plus its session logs, group outputs, and pipeline state. The directory is derived
+from the review file's path, and it is the only place outside the worktree that
+review agents may write to. Granting the shared reviews root instead is how agent
+scratch files ended up sitting beside unrelated reviews.
+
+`pr gc` collects loose files at the reviews root once they are a week old. A flat
+`<name>.md` and its suffixed siblings are left alone: those are input to the
+startup migration that folds the old flat layout into directories.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

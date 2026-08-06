@@ -441,10 +441,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = runner.invoke(
-            text, job.session_log,
-            max_turns=turns, review_file=job.review_file,
-        )
+        rc = runner.invoke(text, job.session_log, max_turns=turns)
         return rc
 
     invoke(prompt, max_turns)
@@ -966,9 +963,7 @@ def run_fix_pass(job: ReviewJob):
     runner = PhaseRunner(job, Phase.FIX)
     log.info("Fix pass — applying review findings...")
     log.blank()
-    runner.invoke(
-        prompt, fix_log, max_turns=max_turns, review_file=job.review_file,
-    )
+    runner.invoke(prompt, fix_log, max_turns=max_turns)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -990,10 +985,7 @@ def run_fix_pass(job: ReviewJob):
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
             prior_log = preserve_log(fix_log)
             log.blank()
-            runner.invoke(
-                retry_prompt, fix_log,
-                max_turns=retry_turns, review_file=job.review_file,
-            )
+            runner.invoke(retry_prompt, fix_log, max_turns=retry_turns)
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -1327,9 +1319,7 @@ def _phase_synthesis(
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = runner.invoke(
-            text, synthesis_log, max_turns=turns, review_file=job.review_file,
-        )
+        rc = runner.invoke(text, synthesis_log, max_turns=turns)
         return rc
 
     invoke(prompt, max_turns)

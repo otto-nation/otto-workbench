@@ -252,21 +252,8 @@ class TestScriptName:
 
 
 class TestBuildAddDirs:
-    def test_review_dir_appended_when_distinct(self):
+    def test_artifact_dir_and_worktree_only(self):
         import review_agent
 
-        dirs = review_agent.build_add_dirs(
-            "/wt", "/reviews", "/elsewhere/review.md",
-        )
-        assert dirs == ["/reviews", "/wt", "/elsewhere"]
-
-    def test_review_dir_omitted_when_already_covered(self):
-        import review_agent
-
-        dirs = review_agent.build_add_dirs("/wt", "/reviews", "/reviews/review.md")
-        assert dirs == ["/reviews", "/wt"]
-
-    def test_no_review_file(self):
-        import review_agent
-
-        assert review_agent.build_add_dirs("/wt", "/reviews") == ["/reviews", "/wt"]
+        dirs = review_agent.build_add_dirs("/wt", "/reviews/pr-42")
+        assert dirs == ["/reviews/pr-42", "/wt"]

@@ -693,7 +693,6 @@ def _build_orchestrate_args(
         "--repo", repo,
         "--review-file", str(review_file),
         "--repo-dir", wt_path,
-        "--reviews-dir", str(REVIEWS_DIR),
         "--session-log", session_log,
     ]
     if pr_number:

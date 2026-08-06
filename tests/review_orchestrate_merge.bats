@@ -366,7 +366,7 @@ ctx = mod.PRContext()
 job = mod.ReviewJob(
     repo='org/repo', pr_number='1', pr=pr, ctx=ctx,
     wt_path='/tmp/wt', review_file='/tmp/review.md',
-    session_log='/tmp/session.jsonl', reviews_dir='/tmp/reviews',
+    session_log='/tmp/session.jsonl',
     prior_review='## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n- [ ] **[M2]** src/db.go:20 — db bug',
 )
 result = mod.build_prompt(mod.TEMPLATE_GROUP, job, max_turns=15,

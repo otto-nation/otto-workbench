@@ -339,14 +339,9 @@ def _resolve_provider() -> str | None:
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 
-def build_add_dirs(wt_path: str, reviews_dir: str, review_file: str = "") -> list[str]:
+def build_add_dirs(wt_path: str, artifact_dir: str) -> list[str]:
     """Directories the agent may read outside its cwd."""
-    add_dirs = [reviews_dir, wt_path]
-    if review_file:
-        review_dir = str(Path(review_file).parent)
-        if review_dir not in (reviews_dir, wt_path):
-            add_dirs.append(review_dir)
-    return add_dirs
+    return [artifact_dir, wt_path]
 
 
 def _invoke_once(inv: AgentInvocation) -> int:

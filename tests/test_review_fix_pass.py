@@ -515,7 +515,6 @@ class TestRunFixPassRetry:
         job = MagicMock()
         job.review_file = str(review_file)
         job.wt_path = str(tmp_path)
-        job.reviews_dir = str(tmp_path)
         job.model = None
         job.effort = Effort.MEDIUM
         return job

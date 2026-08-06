@@ -279,6 +279,14 @@ _get_pr_create_hook() {
 # command — a leading no-op token must not be a way around them. They scope to
 # the first line so a heredoc body being written to a file is not scanned as if
 # it were the command itself.
+#
+# ceiling: the hook strips quoted spans with two sed passes, which mis-handles
+# escaped quotes and embedded apostrophes. An unpaired apostrophe re-pairs with
+# a later quote, so `echo it's; cd /x && ls 'q'` strips the real cd away (missed
+# block) and other inputs can keep a fragment that matches (spurious block).
+# Both outcomes cost at most one permission prompt — these guardrails steer
+# command style, they are not a security boundary. Upgrade to a real tokenizer
+# if either misfire shows up on a command worth running.
 
 @test "the four first-line checks live in exactly one hook" {
   local needle count

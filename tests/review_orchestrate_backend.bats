@@ -21,7 +21,7 @@ teardown() {
 @test "_build_agent_cmd: includes max-turns when set" {
   result=$(_py '
 import ai_backend_claude as abc
-cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"], max_turns=10)
+cmd = abc._build_agent_cmd(abc.AgentInvocation(prompt="", add_dirs=["/tmp/reviews", "/tmp/wt"], max_turns=10))
 print("--max-turns" in cmd, cmd[cmd.index("--max-turns") + 1] if "--max-turns" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -31,7 +31,7 @@ print("--max-turns" in cmd, cmd[cmd.index("--max-turns") + 1] if "--max-turns" i
 @test "_build_agent_cmd: includes max-budget-usd when set" {
   result=$(_py '
 import ai_backend_claude as abc
-cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"], max_budget=5.0)
+cmd = abc._build_agent_cmd(abc.AgentInvocation(prompt="", add_dirs=["/tmp/reviews", "/tmp/wt"], max_budget=5.0))
 print("--max-budget-usd" in cmd, cmd[cmd.index("--max-budget-usd") + 1] if "--max-budget-usd" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -41,7 +41,7 @@ print("--max-budget-usd" in cmd, cmd[cmd.index("--max-budget-usd") + 1] if "--ma
 @test "_build_agent_cmd: omits flags when None" {
   result=$(_py '
 import ai_backend_claude as abc
-cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"])
+cmd = abc._build_agent_cmd(abc.AgentInvocation(prompt="", add_dirs=["/tmp/reviews", "/tmp/wt"]))
 print("--max-turns" not in cmd and "--max-budget-usd" not in cmd)
 ')
   [ "$result" = "True" ]
@@ -50,7 +50,7 @@ print("--max-turns" not in cmd and "--max-budget-usd" not in cmd)
 @test "_build_agent_cmd: includes model when set" {
   result=$(_py '
 import ai_backend_claude as abc
-cmd = abc._build_agent_cmd(add_dirs=["/tmp/reviews", "/tmp/wt"], model="sonnet")
+cmd = abc._build_agent_cmd(abc.AgentInvocation(prompt="", add_dirs=["/tmp/reviews", "/tmp/wt"], model="sonnet"))
 print("--model" in cmd, cmd[cmd.index("--model") + 1] if "--model" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -162,7 +162,7 @@ EOF
 @test "pi _build_agent_cmd: uses --mode rpc" {
   result=$(_py '
 import ai_backend_pi as abp
-cmd = abp._build_agent_cmd()
+cmd = abp._build_agent_cmd(abp.AgentInvocation(prompt=""))
 print("--mode" in cmd, cmd[cmd.index("--mode") + 1] if "--mode" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -172,7 +172,7 @@ print("--mode" in cmd, cmd[cmd.index("--mode") + 1] if "--mode" in cmd else "")
 @test "pi _build_agent_cmd: includes --thinking when set" {
   result=$(_py '
 import ai_backend_pi as abp
-cmd = abp._build_agent_cmd(thinking_level="medium")
+cmd = abp._build_agent_cmd(abp.AgentInvocation(prompt="", thinking="medium"))
 print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -182,7 +182,7 @@ print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in c
 @test "pi _build_agent_cmd: omits --thinking when None" {
   result=$(_py '
 import ai_backend_pi as abp
-cmd = abp._build_agent_cmd()
+cmd = abp._build_agent_cmd(abp.AgentInvocation(prompt=""))
 print("--thinking" not in cmd)
 ')
   [ "$result" = "True" ]
@@ -191,17 +191,17 @@ print("--thinking" not in cmd)
 @test "pi _build_fix_cmd: includes --thinking when set" {
   result=$(_py '
 import ai_backend_pi as abp
-cmd = abp._build_fix_cmd(thinking_level="low")
+cmd = abp._build_fix_cmd(abp.AgentInvocation(prompt="", thinking="low"))
 print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
   [[ "$result" == *"low"* ]]
 }
 
-@test "claude _build_agent_cmd: accepts thinking_level without error" {
+@test "claude _build_agent_cmd: accepts thinking without error" {
   result=$(_py '
 import ai_backend_claude as abc
-cmd = abc._build_agent_cmd(add_dirs=["/tmp"], thinking_level="high")
+cmd = abc._build_agent_cmd(abc.AgentInvocation(prompt="", add_dirs=["/tmp"], thinking="high"))
 print(type(cmd).__name__, "--thinking" not in cmd)
 ')
   [[ "$result" == *"list"* ]]

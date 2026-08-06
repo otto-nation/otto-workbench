@@ -10,6 +10,7 @@ if LIB_DIR not in sys.path:
 
 import review_findings
 import review_pipeline
+from review_common import Effort, Phase
 from review_findings import Finding
 
 
@@ -426,7 +427,7 @@ class TestReconcileCheckboxes:
 class TestTurnBudgetScaling:
     def test_small_review_uses_default(self):
         turns = review_pipeline._fix_turn_budget(5)
-        assert turns == review_pipeline.DEFAULT_MAX_TURNS_FIX
+        assert turns == review_pipeline.PHASES[Phase.FIX].max_turns
 
     def test_large_review_scales_up(self):
         turns = review_pipeline._fix_turn_budget(25)
@@ -516,7 +517,7 @@ class TestRunFixPassRetry:
         job.wt_path = str(tmp_path)
         job.reviews_dir = str(tmp_path)
         job.model = None
-        job.effort = None
+        job.effort = Effort.MEDIUM
         return job
 
     @patch("review_pipeline._commit_fixes")
@@ -532,7 +533,7 @@ class TestRunFixPassRetry:
         review_pipeline.run_fix_pass(job)
         assert mock_invoke.call_count == 2
         retry_call = mock_invoke.call_args_list[1]
-        assert retry_call[0][0].startswith("IMPORTANT: A previous attempt")
+        assert retry_call[0][0].prompt.startswith("IMPORTANT: A previous attempt")
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
@@ -595,7 +596,7 @@ class TestRunFixPassRetry:
         job = self._make_job(tmp_path)
         review_pipeline.run_fix_pass(job)
         retry_call = mock_invoke.call_args_list[1]
-        assert retry_call[1]["max_turns"] == review_pipeline._fix_retry_budget(
+        assert retry_call[0][0].max_turns == review_pipeline._fix_retry_budget(
             review_pipeline._fix_turn_budget(2),
         )
 
@@ -617,5 +618,5 @@ class TestRunFixPassRetry:
         job = self._make_job(tmp_path)
         review_pipeline.run_fix_pass(job)
         assert mock_invoke.call_count == 2
-        agents = [c[1]["agent"] for c in mock_invoke.call_args_list]
+        agents = [c.args[0].agent for c in mock_invoke.call_args_list]
         assert agents == [None, None]

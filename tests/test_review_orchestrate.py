@@ -1159,13 +1159,13 @@ class TestPhaseModel:
         monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
         assert models["claude-haiku-4-5"] == ["scout"]
-        assert set(models["claude-sonnet-5"]) == set(ro.PHASE_MODEL_DEFAULTS) - {"scout"}
+        assert set(models["claude-sonnet-5"]) == set(ro.PHASES) - {"scout"}
 
     def test_collect_covers_every_phase(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         models = ro.collect_phase_models("")
         phases = [p for group in models.values() for p in group]
-        assert sorted(phases) == sorted(ro.PHASE_MODEL_DEFAULTS)
+        assert sorted(phases) == sorted(ro.PHASES)
 
 
 # ── 19c. enum_arg ───────────────────────────────────────────────────────────
@@ -1814,10 +1814,10 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
         review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
-            Path(kwargs.get("review_file", job.review_file)).write_text(review_content)
-            Path(log).write_text("")
+            Path(job.review_file).write_text(review_content)
+            Path(inv.session_log).write_text("")
             return 0
 
         self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
@@ -1832,9 +1832,9 @@ class TestPhaseSynthesis:
     def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
-            Path(log).write_text("")
+            Path(inv.session_log).write_text("")
             return 1
 
         self._patch_pipeline(
@@ -1853,11 +1853,11 @@ class TestPhaseSynthesis:
     def test_incomplete_output_falls_back(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
             # Write incomplete review (no Summary or Verdict headers)
-            Path(kwargs.get("review_file", job.review_file)).write_text("# Review\nSome partial content\n")
-            Path(log).write_text("")
+            Path(job.review_file).write_text("# Review\nSome partial content\n")
+            Path(inv.session_log).write_text("")
             return 0
 
         self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
@@ -1874,17 +1874,17 @@ class TestPhaseSynthesis:
         review_content = "# Review: org/repo#42 — test PR\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
         calls = []
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
             calls.append(len(calls))
             if len(calls) == 1:
-                Path(log).write_text(
+                Path(inv.session_log).write_text(
                     '{"type":"result","subtype":"success","is_error":true,'
                     '"result":"API Error: Connection to the API was lost (FailedToOpenSocket)."}\n'
                 )
                 return 1
-            Path(kwargs.get("review_file", job.review_file)).write_text(review_content)
-            Path(log).write_text("")
+            Path(job.review_file).write_text(review_content)
+            Path(inv.session_log).write_text("")
             return 0
 
         self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
@@ -1901,10 +1901,10 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
         calls = []
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
             calls.append(len(calls))
-            Path(log).write_text(
+            Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","is_error":true,'
                 '"result":"API Error: Connection to the API was lost (FailedToOpenSocket)."}\n'
             )
@@ -1928,10 +1928,10 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
         calls = []
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
             calls.append(len(calls))
-            Path(log).write_text(
+            Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","is_error":true,'
                 '"result":"agent error: something broke"}\n'
             )
@@ -2074,7 +2074,7 @@ class TestRetryTurns:
 
     def test_other_reason_gets_default(self, ro, tmp_path):
         job = self._job_no_omitted(ro, tmp_path)
-        assert ro._retry_turns("no session log found", job) == ro.DEFAULT_MAX_TURNS_GROUP
+        assert ro._retry_turns("no session log found", job) == ro.PHASES[ro.Phase.GROUP].max_turns
 
 
 class TestRetryFailedGroups:
@@ -2102,13 +2102,12 @@ class TestRetryFailedGroups:
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
 
         calls = []
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
-            turns = kwargs.get("max_turns", 15)
-            calls.append(turns)
+            calls.append(inv.max_turns)
             output_path = str(tmp_path / "group-1.md")
             Path(output_path).write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
-            Path(log).write_text("")
+            Path(inv.session_log).write_text("")
             return 0
 
         monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
@@ -2147,15 +2146,15 @@ class TestRetryFailedGroups:
         ]
 
         calls = []
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
-            name = kwargs.get("label", "")
+            name = inv.label
             calls.append(name)
             if name == "grp-a":
-                Path(reviews_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+                Path(job.reviews_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
             elif name == "grp-b":
-                Path(reviews_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
-            Path(log).write_text("")
+                Path(job.reviews_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
+            Path(inv.session_log).write_text("")
             return 0
 
         monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
@@ -2180,9 +2179,9 @@ class TestRetryFailedGroups:
             ro.Group(name="grp-b", files=["b.go"], lines=100),
         ]
 
-        def mock_invoke(prompt, log, wt, reviews_dir, **kwargs):
+        def mock_invoke(inv, **kwargs):
             from pathlib import Path
-            Path(log).write_text("")
+            Path(inv.session_log).write_text("")
             return 1
 
         monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)

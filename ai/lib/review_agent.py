@@ -16,10 +16,10 @@ from pathlib import Path
 
 import ai_backend
 import log
+from ai_backend import AgentInvocation
 from ai_backend_events import is_write_tool
-from review_common import AgentKind, preserve_log, restore_preserved
+from review_common import preserve_log, restore_preserved
 
-DEFAULT_MAX_TURNS = 10
 DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
@@ -324,56 +324,38 @@ def _resolve_provider() -> str | None:
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 
-def _invoke_once(prompt, session_log, add_dirs, agent, max_turns, max_budget,
-                  model, thinking_level, provider, label):
-    prior_log = preserve_log(session_log)
-    rc = ai_backend.invoke_agent(
-        prompt, session_log,
-        add_dirs=add_dirs, agent=agent,
-        max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level,
-        provider=provider, label=label,
-    )
-    restore_preserved(session_log, prior_log)
-    return rc
-
-
-def invoke_agent(
-    prompt: str, session_log: str, wt_path: str, reviews_dir: str,
-    label: str = "", review_file: str = "",
-    max_turns: int | None = DEFAULT_MAX_TURNS,
-    max_budget: float | None = DEFAULT_MAX_BUDGET_PER_AGENT,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-    agent: AgentKind | None = AgentKind.REVIEWER,
-    throttle: QuotaThrottle | None = None,
-) -> int:
+def build_add_dirs(wt_path: str, reviews_dir: str, review_file: str = "") -> list[str]:
+    """Directories the agent may read outside its cwd."""
     add_dirs = [reviews_dir, wt_path]
     if review_file:
         review_dir = str(Path(review_file).parent)
         if review_dir not in (reviews_dir, wt_path):
             add_dirs.append(review_dir)
+    return add_dirs
 
+
+def _invoke_once(inv: AgentInvocation) -> int:
+    prior_log = preserve_log(inv.session_log)
+    rc = ai_backend.invoke_agent(inv)
+    restore_preserved(inv.session_log, prior_log)
+    return rc
+
+
+def invoke_agent(
+    inv: AgentInvocation, *, throttle: QuotaThrottle | None = None,
+) -> int:
     if throttle:
         throttle.wait_if_needed()
 
-    rc = ai_backend.invoke_agent(
-        prompt, session_log,
-        add_dirs=add_dirs, agent=agent,
-        max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level,
-        provider=provider, label=label,
-    )
-    if rc != 0 and model and _is_quota_error(session_log):
+    rc = ai_backend.invoke_agent(inv)
+    if rc != 0 and inv.model and _is_quota_error(inv.session_log):
         if throttle:
-            wait = throttle.report_exhausted(model)
+            wait = throttle.report_exhausted(inv.model)
             time.sleep(wait)
         else:
-            log.warn(f"Quota exhausted on {model} — retrying once after 30s backoff")
+            log.warn(f"Quota exhausted on {inv.model} — retrying once after 30s backoff")
             time.sleep(30)
-        rc = _invoke_once(prompt, session_log, add_dirs, agent, max_turns,
-                          max_budget, model, thinking_level, provider, label)
+        rc = _invoke_once(inv)
     return rc
 
 

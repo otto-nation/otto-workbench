@@ -51,14 +51,14 @@ print("ok" if "${" not in result or "issue_section" in result else "fail")
 
 @test "model defaults: single default value across all phases" {
   result=$(_py "
-print(sorted(set(mod.PHASE_MODEL_DEFAULTS.values())))
+print(sorted({s.model for s in mod.PHASES.values()}))
 ")
   [ "$result" = "['sonnet']" ]
 }
 
 @test "model defaults: registry covers every phase" {
   result=$(_py "
-print(sorted(mod.PHASE_MODEL_DEFAULTS) == sorted(mod.Phase))
+print(sorted(mod.PHASES) == sorted(mod.Phase))
 ")
   [ "$result" = "True" ]
 }

@@ -409,7 +409,8 @@ MARKER = "<!-- pr-comments:summary -->"
 def test_post_issue_comment_posts_new_without_marker():
     import pr_comments
     with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post, \
-         patch.object(pr_comments, "_find_comment_by_marker") as find:
+         patch.object(pr_comments, "_find_comment_by_marker",
+                      autospec=True) as find:
         url = pr_comments.post_issue_comment("owner/repo", 1, "body")
     assert url == "u"
     post.assert_called_once()

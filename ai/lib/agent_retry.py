@@ -54,6 +54,13 @@ FIX_RETRY_HINT = (
     "and move on.\n\n"
 )
 
+CI_FIX_RETRY_HINT = (
+    "IMPORTANT: A previous attempt ran out of turns investigating without fixing "
+    "any failure. Start with the first failing check and apply edits IMMEDIATELY. "
+    "Skip failures that need a human decision — annotate them with "
+    "*(skipped — reason)* and move on.\n\n"
+)
+
 BLANK_RESPONSE_HINT = (
     "IMPORTANT: A previous attempt returned an answer that could not be parsed. "
     "Emit the requested markers exactly as specified and put nothing outside "

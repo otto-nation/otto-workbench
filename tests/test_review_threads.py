@@ -1559,12 +1559,18 @@ class TestResolveFixedThreads:
         assert count == 0
         mock_resolve.assert_not_called()
 
-    def test_resolves_thread_absent_from_threads_by_id(self, rt):
-        fixed = [CommentItem(id="t1")]
-        with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+    def test_skips_an_entry_absent_from_threads_by_id(self, rt):
+        """A synthetic comment id (ic-…/rb-…) is not a resolvable review thread.
+
+        Regression: these used to fall through to an unconditional
+        `resolve_thread`, spending a GraphQL mutation per comment item on an id
+        the API cannot resolve. It failed silently, so nothing surfaced it.
+        """
+        fixed = [CommentItem(id="ic-123")]
+        with patch("pr_comments.resolve_thread") as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, {})
-        assert count == 1
-        mock_resolve.assert_called_once_with("t1")
+        assert count == 0
+        mock_resolve.assert_not_called()
 
     def test_counts_only_successful_resolves(self, rt):
         fixed = [CommentItem(id="t1"), CommentItem(id="t2")]

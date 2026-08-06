@@ -266,7 +266,9 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
         returncode=0, stdout="refs/remotes/origin/main\n",
     )
     default_branch("/wt/feature")
-    assert mock_run.call_args[0][0][:3] == ["git", "-C", "/wt/feature"]
+    # Scoped via subprocess's cwd, matching every other git call in this module.
+    assert mock_run.call_args.kwargs["cwd"] == "/wt/feature"
+    assert mock_run.call_args[0][0][0] == "git"
 
 
 # ── Bare-repo worktree resolution ─────────────────────────────────────────

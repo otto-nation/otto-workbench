@@ -231,3 +231,24 @@ class TestSharedRetryability:
 
     def test_a_reason_with_no_matching_hint_adds_nothing(self):
         assert agent_retry.hint_for("agent error: overloaded") == ""
+
+
+class TestCIFixRetryHint:
+    """ci-check's fallback hint, for when the diagnosis suggests nothing better."""
+
+    def _select(self, reason: str) -> str:
+        """The selector ci-check installs — kept in sync with its call site."""
+        return agent_retry.hint_for(reason) or agent_retry.CI_FIX_RETRY_HINT
+
+    def test_a_diagnosed_reason_still_wins(self):
+        """The fallback must not mask a hint that names the actual mechanism."""
+        assert self._select(_MAX_TURNS) == agent_retry.RETRY_HINT
+        assert self._select(_NO_WRITE) == agent_retry.NO_WRITE_HINT
+
+    def test_an_undiagnosed_reason_falls_back_to_the_ci_wording(self):
+        assert self._select("") == agent_retry.CI_FIX_RETRY_HINT
+
+    def test_the_ci_hint_does_not_talk_about_review_findings(self):
+        """It used to reuse FIX_RETRY_HINT, which is phrased for review findings."""
+        assert "findings" not in agent_retry.CI_FIX_RETRY_HINT
+        assert "failure" in agent_retry.CI_FIX_RETRY_HINT

@@ -8,11 +8,11 @@ setup() {
   ORIG_DIR="$PWD"
   ORIG_PATH="$PATH"
   TMPDIR="$(mktemp -d)"
-  cd "$TMPDIR"
+  cd "$TMPDIR" || exit
 }
 
 teardown() {
-  cd "$ORIG_DIR"
+  cd "$ORIG_DIR" || exit
   PATH="$ORIG_PATH"
   rm -rf "$TMPDIR"
   common_teardown
@@ -68,7 +68,7 @@ SCRIPT
 @test "run_ai tees the raw response and records usage when ai-usage-log is present" {
   make_fake_ai_cmd fake-ai 0
   make_fake_usage_log
-  AI_COMMAND="fake-ai"
+  export AI_COMMAND="fake-ai"
   PATH="$TMPDIR/bin:$PATH"
 
   run_ai "prompt" "" "my-task"
@@ -82,7 +82,7 @@ SCRIPT
 @test "run_ai records the AI command's real exit code, not a hardcoded 0" {
   make_fake_ai_cmd fake-ai 1
   make_fake_usage_log
-  AI_COMMAND="fake-ai"
+  export AI_COMMAND="fake-ai"
   PATH="$TMPDIR/bin:$PATH"
 
   run_ai "prompt" "" "my-task"
@@ -94,7 +94,7 @@ SCRIPT
 
 @test "run_ai falls back to plain output when ai-usage-log is absent" {
   make_fake_ai_cmd fake-ai 0
-  AI_COMMAND="fake-ai"
+  export AI_COMMAND="fake-ai"
   PATH="$TMPDIR/bin:$PATH"
 
   run_ai "prompt" "" "my-task"

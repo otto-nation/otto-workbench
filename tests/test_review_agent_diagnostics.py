@@ -23,6 +23,13 @@ def _tool_use(name: str, **inp) -> str:
     })
 
 
+def _text(text: str) -> str:
+    return json.dumps({
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": text}]},
+    })
+
+
 def _result(subtype: str = "error_max_turns", num_turns: int = _TURNS) -> str:
     return json.dumps({
         "type": "result", "subtype": subtype, "num_turns": num_turns,
@@ -81,6 +88,22 @@ class TestDiagnoseMissingOutput:
         log_path = _write_log(
             tmp_path,
             _tool_use("Read", file_path="/tmp/a"),
+            json.dumps({"type": "result", "subtype": "success"}),
+        )
+        reason = review_agent.diagnose_missing_output(log_path)
+        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
+        assert review_pipeline._is_retryable(reason)
+
+    def test_refusal_without_any_tool_call_is_labelled(self, tmp_path):
+        """A one-turn refusal calls no tool at all — the clearest no-write case.
+
+        Regression: this used to fall through unlabelled, because an empty tool
+        set was read as "cannot tell" rather than "called nothing", leaving the
+        fix pass unable to retry an agent that simply declined the task.
+        """
+        log_path = _write_log(
+            tmp_path,
+            _text("I'm configured as a review-only assistant; I won't apply fixes."),
             json.dumps({"type": "result", "subtype": "success"}),
         )
         reason = review_agent.diagnose_missing_output(log_path)

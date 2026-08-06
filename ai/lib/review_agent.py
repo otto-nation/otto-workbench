@@ -263,6 +263,10 @@ def _is_quota_error(log_path: str) -> bool:
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
+# A tier alias names a tier, not a deployment. On Vertex and Bedrock the account
+# provisions a specific model ID, and ANTHROPIC_DEFAULT_* is where that ID lives.
+# The Claude CLI resolves these itself; Pi does not, so resolving here gives both
+# backends the same answer and keeps the precedence chain in one place.
 class ModelAlias(StrEnum):
     """Short model names that resolve to a concrete model id via env override.
 
@@ -287,13 +291,14 @@ class ModelAlias(StrEnum):
 
 
 def _resolve_alias(model: str) -> str:
+    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through."""
     alias = ModelAlias.parse(model)
     if alias is None:
         return model
     return os.environ.get(alias.env_key) or model
 
 
-def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
+def _select_model(explicit: str | None, env_key: str, default: str) -> str:
     if explicit:
         return _resolve_alias(explicit)
     from_env = os.environ.get(env_key)
@@ -303,6 +308,16 @@ def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
     if global_env:
         return _resolve_alias(global_env)
     return _resolve_alias(default)
+
+
+def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
+    """Pick the model for a phase, then map any tier alias to its provisioned ID.
+
+    Precedence: explicit argument, the phase's own key, CLAUDE_REVIEW_MODEL, the
+    built-in default. Whichever wins is resolved through ANTHROPIC_DEFAULT_* — so
+    naming a tier anywhere in the chain honors the deployment configured for it.
+    """
+    return _resolve_alias(_select_model(explicit, env_key, default))
 
 
 def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:

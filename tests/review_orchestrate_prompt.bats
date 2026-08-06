@@ -12,6 +12,10 @@ setup() {
   load 'review_orchestrate_helper'
   common_setup
   TMPDIR="$BATS_TEST_TMPDIR"
+  # Model resolution reads these; the developer's own shell usually has them set.
+  unset ANTHROPIC_DEFAULT_SONNET_MODEL
+  unset ANTHROPIC_DEFAULT_OPUS_MODEL
+  unset ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 teardown() {
@@ -113,6 +117,31 @@ print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
   [ "$result" = "sonnet" ]
 }
 
+@test "_resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL'] = 'claude-sonnet-5'
+print(mod._resolve_model(None, 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_SONNET_MODEL']
+")
+  [ "$result" = "claude-sonnet-5" ]
+}
+
+@test "_resolve_model: explicit alias resolved via ANTHROPIC_DEFAULT env" {
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL'] = 'claude-opus-4-6'
+print(mod._resolve_model('opus', 'CLAUDE_REVIEW_GROUP_MODEL', 'sonnet'))
+del os.environ['ANTHROPIC_DEFAULT_OPUS_MODEL']
+")
+  [ "$result" = "claude-opus-4-6" ]
+  result=$(_py "
+import os
+os.environ.pop('CLAUDE_REVIEW_MODEL', None)
+os.environ.pop('CLAUDE_REVIEW_GROUP_MODEL', None)
 @test "_resolve_model: alias resolved via ANTHROPIC_DEFAULT env" {
   result=$(_py "
 import os

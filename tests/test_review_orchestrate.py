@@ -1055,6 +1055,15 @@ class TestCheckSerialAbort:
 # ── 19. _resolve_model ──────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def no_model_env(monkeypatch):
+    """A clean slate — the developer's own shell usually has these set."""
+    for key in ("CLAUDE_REVIEW_MODEL", "UNUSED_KEY", "MY_MODEL_KEY",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
+        monkeypatch.delenv(key, raising=False)
+
+
 class TestResolveModel:
     def _clear_alias_envs(self, ro, monkeypatch):
         for alias in ro.ModelAlias:
@@ -1069,27 +1078,25 @@ class TestResolveModel:
         assert ro.ModelAlias.parse("claude-sonnet-5") is None
         assert ro.ModelAlias.parse("sonnet") is ro.ModelAlias.SONNET
 
-    def test_explicit(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
+    def test_explicit(self, ro, no_model_env):
         assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
 
-    def test_env_key(self, ro, monkeypatch):
+    def test_env_key(self, ro, no_model_env, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
+
         assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
 
-    def test_global_env(self, ro, monkeypatch):
-        monkeypatch.delenv("UNUSED_KEY", raising=False)
+    def test_global_env(self, ro, no_model_env, monkeypatch):
         monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
         self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
 
-    def test_default_fallback(self, ro, monkeypatch):
-        monkeypatch.delenv("UNUSED_KEY", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
+    def test_global_env_alias_resolved(self, ro, no_model_env, monkeypatch):
+        monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
+        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "claude-opus-4-6"
+
+    def test_default_fallback(self, ro, no_model_env):
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
 
     def test_alias_resolved_via_env(self, ro, monkeypatch):

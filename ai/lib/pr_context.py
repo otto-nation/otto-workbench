@@ -463,21 +463,30 @@ def create_worktree_for_branch(
     path template puts it, keeping tooling-created worktrees in the same
     layout as hand-created ones.
     """
-    try:
-        r = subprocess.run(
-            ["wt", "switch", branch, "--no-cd", "--no-hooks", "--format", "json", "-y"]
-            + (["-C", cwd] if cwd else []),
-            capture_output=True, text=True,
-        )
-    except Exception:
-        log.warn("worktrunk (wt) is not available — cannot create a worktree")
-        return None
-    path = parse_wt_switch_path(r.stdout)
+    path = wt_switch(branch, cwd)
     if not path:
         log.warn(f"Could not create a worktree for {branch}")
         return None
     log.info(f"Created worktree for {branch} at {path}")
     return Path(path)
+
+
+def wt_switch(ref: str, cwd: str | None = None) -> str | None:
+    """Path of the worktree ``wt switch`` lands on for *ref*, or None.
+
+    *ref* is anything worktrunk accepts — a branch name or a ``pr:<n>`` ref.
+    Non-interactive and hook-free so it is safe to call from tooling.
+    """
+    try:
+        r = subprocess.run(
+            ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y"]
+            + (["-C", cwd] if cwd else []),
+            capture_output=True, text=True,
+        )
+    except Exception:
+        log.warn("worktrunk (wt) is not available — cannot switch worktrees")
+        return None
+    return parse_wt_switch_path(r.stdout)
 
 
 def parse_wt_switch_path(stdout: str) -> str | None:

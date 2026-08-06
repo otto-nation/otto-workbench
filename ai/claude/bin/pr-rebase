@@ -1643,7 +1643,8 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
 def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     """Start a fresh rebase onto the target ref."""
-    if ctx.branch in ("main", "master"):
+    default = pr_context.default_branch(cwd)
+    if ctx.branch == default:
         _terr("preflight", f"on protected branch {ctx.branch}")
         log.error("Cannot rebase — currently on protected branch.")
         return 1
@@ -1665,7 +1666,7 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
         # branch's worktree. Checking out here would leave a feature branch
         # sitting in main/, where the next tool that syncs main/ to
         # origin/<default> hard-resets the branch out from under it.
-        if ctx.current_branch == pr_context.default_branch(cwd):
+        if ctx.current_branch == default:
             _terr("preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
             log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
             log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")

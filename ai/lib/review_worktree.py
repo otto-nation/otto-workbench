@@ -163,14 +163,6 @@ def _is_shallow(repo_dir: str) -> bool:
 
 
 def _wt_switch(ref: str, repo_dir: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y", "-C", repo_dir],
-            capture_output=True, text=True,
-        )
-        return pr_context.parse_wt_switch_path(result.stdout)
-    except Exception:
-        pass
-    return None
+    return pr_context.wt_switch(ref, repo_dir)
 
 

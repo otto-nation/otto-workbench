@@ -96,7 +96,8 @@ def _tool_names_used(records: list[dict]) -> set[str]:
 
     Only the Claude backend writes `assistant` records with `tool_use` blocks;
     for other backends this is empty and callers must not read that as "no
-    tools were used".
+    tools were used". Guard with `_tool_use_is_observable` before drawing that
+    conclusion.
     """
     return {
         block.get("name", "")
@@ -104,6 +105,18 @@ def _tool_names_used(records: list[dict]) -> set[str]:
         for block in record.get("message", {}).get("content", [])
         if block.get("type") == "tool_use"
     }
+
+
+def _tool_use_is_observable(records: list[dict]) -> bool:
+    """Whether an empty `_tool_names_used` means "no tools" or "cannot tell".
+
+    Derived from the log rather than the active backend, because a log can
+    outlive the run that wrote it. Any `assistant` record means the log is in
+    the Claude backend's shape, where every tool call is recorded — so an empty
+    tool set is a real absence. The Pi backend emits RPC events instead and
+    tracks writes via `pi_write_tool_used`, so its logs stay unreadable here.
+    """
+    return bool(_of_type(records, "assistant"))
 
 
 def diagnose_missing_output(log_path: str) -> str:
@@ -123,11 +136,16 @@ def diagnose_missing_output(log_path: str) -> str:
     reason = _diagnose_result_type(results[-1])
     # An agent that ran to its own conclusion without ever calling a write tool
     # was thrashing, not working — say so instead of reporting a bare turn
-    # count. A crash is excluded: the error already explains the missing output,
-    # and a retry would most likely reproduce it.
+    # count. An agent that called no tool at all (a one-turn refusal, say) is
+    # the clearest case of this, so it counts too. A crash is excluded: the
+    # error already explains the missing output, and a retry would most likely
+    # reproduce it.
     tools_used = _tool_names_used(records)
     crashed = reason.startswith(AGENT_ERROR_PREFIX)
-    if not crashed and tools_used and not any(is_write_tool(name) for name in tools_used):
+    # empty tools_used also satisfies this when observability is confirmed
+    if not crashed and _tool_use_is_observable(records) and not any(
+        is_write_tool(name) for name in tools_used
+    ):
         reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
     return reason
 
@@ -328,7 +346,7 @@ def invoke_agent(
     model: str | None = None,
     thinking_level: str | None = None,
     provider: str | None = None,
-    agent: AgentKind = AgentKind.REVIEWER,
+    agent: AgentKind | None = AgentKind.REVIEWER,
     throttle: QuotaThrottle | None = None,
 ) -> int:
     add_dirs = [reviews_dir, wt_path]

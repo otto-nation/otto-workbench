@@ -120,6 +120,10 @@ class AgentKind(StrEnum):
 
     ``REVIEWER_LITE`` skips context gathering, so it only suits phases that are
     handed everything they need up front.
+
+    Every member here is a review persona forbidden from editing the workspace.
+    Phases that write to the branch pass ``None`` instead of an ``AgentKind`` —
+    see ``run_fix_pass``.
     """
 
     REVIEWER = "reviewer"

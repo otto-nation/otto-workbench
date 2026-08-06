@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from dataclasses import dataclass
 
@@ -163,25 +162,13 @@ def _is_shallow(repo_dir: str) -> bool:
         return False
 
 
-def _parse_wt_path(stdout: str) -> str | None:
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        data = json.loads(line)
-        path = data.get("path", "")
-        if path:
-            return path
-    return None
-
-
 def _wt_switch(ref: str, repo_dir: str) -> str | None:
     try:
         result = subprocess.run(
             ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y", "-C", repo_dir],
             capture_output=True, text=True,
         )
-        return _parse_wt_path(result.stdout)
+        return pr_context.parse_wt_switch_path(result.stdout)
     except Exception:
         pass
     return None

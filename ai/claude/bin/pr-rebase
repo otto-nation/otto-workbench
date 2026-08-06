@@ -1660,6 +1660,16 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
 
     if ctx.current_branch != ctx.branch:
         display = ctx.current_branch or "detached HEAD"
+        # Defense in depth: pr_context now creates a worktree per branch, but
+        # --repo-dir bypasses that and can point straight at the default
+        # branch's worktree. Checking out here would leave a feature branch
+        # sitting in main/, where the next tool that syncs main/ to
+        # origin/<default> hard-resets the branch out from under it.
+        if ctx.current_branch == pr_context.default_branch(cwd):
+            _terr("preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
+            log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
+            log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")
+            return 1
         log.info(f"Worktree on {display}, checking out {ctx.branch}...")
         co = subprocess.run(
             ["git", "checkout", "-B", ctx.branch, f"origin/{ctx.branch}"],

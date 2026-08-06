@@ -7,6 +7,7 @@ review-threads, and review_common.detect_repo().
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -453,6 +454,47 @@ def find_worktree_for_branch(
     return dir_fallback
 
 
+def create_worktree_for_branch(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Create a worktree for *branch*, or None if it can't be created.
+
+    Delegates to ``wt switch`` so the worktree lands wherever worktrunk's
+    path template puts it, keeping tooling-created worktrees in the same
+    layout as hand-created ones.
+    """
+    try:
+        r = subprocess.run(
+            ["wt", "switch", branch, "--no-cd", "--no-hooks", "--format", "json", "-y"]
+            + (["-C", cwd] if cwd else []),
+            capture_output=True, text=True,
+        )
+    except Exception:
+        log.warn("worktrunk (wt) is not available — cannot create a worktree")
+        return None
+    path = parse_wt_switch_path(r.stdout)
+    if not path:
+        log.warn(f"Could not create a worktree for {branch}")
+        return None
+    log.info(f"Created worktree for {branch} at {path}")
+    return Path(path)
+
+
+def parse_wt_switch_path(stdout: str) -> str | None:
+    """Pull the ``path`` field out of ``wt switch --format json`` output."""
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            path = json.loads(line).get("path", "")
+        except json.JSONDecodeError:
+            continue
+        if path:
+            return path
+    return None
+
+
 def default_branch(cwd: str | Path | None = None) -> str:
     """The repo's default branch name, from origin/HEAD.
 
@@ -478,12 +520,18 @@ def resolve_bare_repo_worktree(
 ) -> Path | None:
     """Best-effort worktree discovery for bare repos.
 
-    Tries the requested branch first (with fuzzy resolution),
-    then the default branch.
+    Tries the requested branch first (with fuzzy resolution), then creates a
+    worktree for it. Only falls back to the default branch's worktree when no
+    branch was requested at all.
+
+    Never substitutes another branch's worktree for an explicitly requested
+    branch: callers check the branch out, so handing back the default branch's
+    worktree makes them displace it. See create_worktree_for_branch.
     """
     if branch:
         wt = _find_worktree_by_branch(branch, cwd)
         if wt:
             return wt
+        return create_worktree_for_branch(branch, cwd)
 
     return find_worktree_for_branch(default_branch(cwd), cwd)

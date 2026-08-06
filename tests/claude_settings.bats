@@ -269,7 +269,9 @@ _get_pr_create_hook() {
 
 # ── statement-anchored Bash guardrails ──────────────────────────────────────
 # These three hooks match at the start of any statement, not just the start of
-# the command — a leading no-op token must not be a way around them.
+# the command — a leading no-op token must not be a way around them. They scope
+# to the first line so a heredoc body being written to a file is not scanned as
+# if it were the command itself.
 
 _get_bash_hook() {
   jq -r --arg needle "$1" '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
@@ -330,6 +332,31 @@ _get_bash_hook() {
   local hook
   hook=$(_get_bash_hook "Compound cd")
   run _run_hook "$hook" "{\"tool_input\":{\"command\":\"bash -c 'cd /tmp/x && ls'\"}}"
+  [ "$status" -eq 0 ]
+}
+
+# The bodies below each put the pattern after a statement separator, which is
+# what the whole-command form matched on — a body line starting with the pattern
+# was never a false positive, since the regex only anchors to start-of-string.
+
+@test "funcdef hook: allows a function definition inside a heredoc body" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/lib.sh <<EOF\nsetup; run() { echo hi; }\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "var hook: allows an assignment inside a heredoc body" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; FOO=bar\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "cd hook: allows a compound cd inside a heredoc body" {
+  local hook
+  hook=$(_get_bash_hook "Compound cd")
+  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\nmkdir -p /tmp/y; cd /tmp/y && ls\nEOF"}}'
   [ "$status" -eq 0 ]
 }
 

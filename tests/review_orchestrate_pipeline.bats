@@ -44,7 +44,7 @@ print(f'{cost:.2f}')
   result=$(_py '
 r = {"type": "result", "subtype": "error_max_turns", "is_error": True,
      "num_turns": 10, "errors": ["Reached maximum number of turns (10)"]}
-print(mod._diagnose_result_type(r))
+print(mod._diagnose_result_type(r).message)
 ')
   [ "$result" = "agent hit max turns (10)" ]
 }
@@ -52,7 +52,7 @@ print(mod._diagnose_result_type(r))
 @test "_diagnose_result_type: handles plain max_turns subtype" {
   result=$(_py '
 r = {"type": "result", "subtype": "max_turns", "num_turns": 5}
-print(mod._diagnose_result_type(r))
+print(mod._diagnose_result_type(r).message)
 ')
   [ "$result" = "agent hit max turns (5)" ]
 }
@@ -61,7 +61,7 @@ print(mod._diagnose_result_type(r))
   result=$(_py '
 r = {"type": "result", "subtype": "error", "is_error": True,
      "errors": ["Connection refused"]}
-print(mod._diagnose_result_type(r))
+print(mod._diagnose_result_type(r).message)
 ')
   [ "$result" = "agent error: Connection refused" ]
 }
@@ -70,7 +70,7 @@ print(mod._diagnose_result_type(r))
   result=$(_py '
 r = {"type": "result", "subtype": "error", "is_error": True,
      "error": "timeout"}
-print(mod._diagnose_result_type(r))
+print(mod._diagnose_result_type(r).message)
 ')
   [ "$result" = "agent error: timeout" ]
 }
@@ -78,7 +78,7 @@ print(mod._diagnose_result_type(r))
 @test "_diagnose_result_type: unknown error when no error info" {
   result=$(_py '
 r = {"type": "result", "subtype": "error", "is_error": True}
-print(mod._diagnose_result_type(r))
+print(mod._diagnose_result_type(r).message)
 ')
   [ "$result" = "agent error: unknown" ]
 }
@@ -88,7 +88,7 @@ print(mod._diagnose_result_type(r))
 r = {"type": "result", "subtype": "success", "is_error": True,
      "api_error_status": 404, "errors": [],
      "result": "The model claude-sonnet-4-5 is not available on your vertex deployment."}
-print(mod._diagnose_result_type(r))
+print(mod._diagnose_result_type(r).message)
 ')
   [ "$result" = "agent error: The model claude-sonnet-4-5 is not available on your vertex deployment." ]
 }
@@ -679,10 +679,10 @@ with contextlib.redirect_stdout(io.StringIO()):
     )
     grp = mod.Group(name='services', files=['a.go'], lines=15)
     idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
-print(f'idx={idx},failed={failed}')
+print(f'idx={idx},group={failed.group},reason={failed.diagnosis.message}')
 ")
   echo "$result"
-  [[ "$result" == *"idx=1,failed=('services', 'output missing')"* ]]
+  [[ "$result" == *"idx=1,group=services,reason=output missing"* ]]
 }
 
 @test "_validate_resume_state: matching state returns valid" {
@@ -767,7 +767,9 @@ state = mod.PipelineState(
     group_names=["tier1-critical", "orc-card"],
     holistic_done=True,
     groups_done=[1],
-    groups_failed={2: "agent error: model not available"},
+    groups_failed={2: mod.Diagnosis(
+        mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
+    )},
     synthesis_done=False,
     synthesis_failed="agent exited with code 1 (no output)",
 )
@@ -785,7 +787,9 @@ job = mod.ReviewJob(
 
 mod._write_pipeline_state(job, state)
 loaded = mod._read_pipeline_state(job)
-assert loaded.groups_failed == {2: "agent error: model not available"}, f"got {loaded.groups_failed}"
+assert loaded.groups_failed == {2: mod.Diagnosis(
+    mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
+)}, f"got {loaded.groups_failed}"
 assert loaded.synthesis_done is False
 assert loaded.synthesis_failed == "agent exited with code 1 (no output)"
 PY
@@ -840,10 +844,11 @@ with contextlib.redirect_stdout(io.StringIO()):
         review_file='$TMPDIR/review.md',
         session_log='/tmp/s.jsonl',
     )
-    mod._update_group_failed(job, 2, 'agent hit max turns (10)', state)
-    mod._update_group_failed(job, 3, 'agent error: model not available', state)
+    mod._update_group_failed(job, 2, mod.Diagnosis(mod.DiagnosisKind.MAX_TURNS, num_turns=10), state)
+    mod._update_group_failed(job, 3, mod.Diagnosis(mod.DiagnosisKind.AGENT_ERROR, detail='model not available'), state)
     loaded = mod._read_pipeline_state(job)
-print(f'failed={loaded.groups_failed}')
+reasons = {i: d.message for i, d in loaded.groups_failed.items()}
+print(f'failed={reasons}')
 print(f'done={loaded.groups_done}')
 ")
   [[ "$result" == *"failed={2: 'agent hit max turns (10)', 3: 'agent error: model not available'}"* ]]

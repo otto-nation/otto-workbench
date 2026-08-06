@@ -108,11 +108,15 @@ class TestPhaseRunnerResolution:
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.SCOUT)
         assert runner.budget == 8.0
 
-    def test_thinking_prefers_effort_override(self, tmp_path):
+    def test_thinking_prefers_effort_override(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
         assert runner.thinking is Thinking.HIGH
 
-    def test_thinking_falls_back_to_phase_default(self, tmp_path):
+    def test_thinking_falls_back_to_phase_default(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.GROUP)
         assert runner.thinking is Thinking.LOW
 
@@ -147,7 +151,9 @@ class TestPhaseRunnerResolution:
 
 
 class TestPhaseRunnerInvocation:
-    def test_carries_resolved_values(self, tmp_path):
+    def test_carries_resolved_values(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
         inv = runner.invocation("PROMPT", "/tmp/g.jsonl", label="grp")
         assert inv.prompt == "PROMPT"

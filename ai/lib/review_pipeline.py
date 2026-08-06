@@ -237,19 +237,18 @@ def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:
 
 
 class PhaseRunner:
-    """The five per-phase values, resolved once.
+    """The six per-phase values, resolved once.
 
-    Every phase needs the same five — model, thinking level, provider, budget,
-    and agent — resolved from the phase spec, the effort preset, and the
-    environment. Resolving them here means one place to read rather than seven
-    blocks that must be kept in step.
+    Every phase needs the same six — model, thinking level, provider, budget,
+    agent, and max turns — resolved from the phase spec, the effort preset,
+    and the environment. Resolving them here means one place to read rather
+    than seven blocks that must be kept in step.
     """
 
     def __init__(self, job: ReviewJob, phase: Phase):
         spec = PHASES[phase]
         preset = EFFORT_PRESETS[job.effort]
         self.job = job
-        self.phase = phase
         self.model = phase_model(phase, job.model)
         self.thinking = _resolve_thinking_level(
             None, phase.thinking_env_key, _phase_thinking(job.effort, phase),

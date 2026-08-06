@@ -1980,7 +1980,7 @@ class TestFixPassThrashGuard:
     def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
         with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
             rt._invoke_fix_agent("PROMPT", tmp_path)
-        assert inv.call_args.kwargs["session_log"] == rt._fix_session_log(tmp_path)
+        assert inv.call_args.args[0].session_log == rt._fix_session_log(tmp_path)
 
     def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
         write_thrash_log(Path(rt._fix_session_log(tmp_path)))

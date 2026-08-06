@@ -855,10 +855,10 @@ print(f'done={loaded.groups_done}')
 
 @test "invoke_agent: returns subprocess exit code" {
   result=$(_py "
-import subprocess, ai_backend_claude as abc
+import subprocess, ai_backend_claude as abc, ai_backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
-rc = mod.invoke_agent('test', '$TMPDIR/test.jsonl', '/tmp', '/tmp')
+rc = mod.invoke_agent(ab.AgentInvocation(prompt='test', session_log='$TMPDIR/test.jsonl', add_dirs=['/tmp', '/tmp']))
 abc._build_agent_cmd = original
 print(rc)
 ")
@@ -867,10 +867,10 @@ print(rc)
 
 @test "invoke_agent: logs stderr on failure" {
   result=$(_py "
-import subprocess, os, ai_backend_claude as abc
+import subprocess, os, ai_backend_claude as abc, ai_backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
-mod.invoke_agent('test', '$TMPDIR/stderr_test.jsonl', '/tmp', '/tmp')
+mod.invoke_agent(ab.AgentInvocation(prompt='test', session_log='$TMPDIR/stderr_test.jsonl', add_dirs=['/tmp', '/tmp']))
 abc._build_agent_cmd = original
 content = open('$TMPDIR/stderr_test.jsonl').read()
 print('has_stderr=' + str('agent-error-msg' in content))
@@ -880,10 +880,10 @@ print('has_stderr=' + str('agent-error-msg' in content))
 
 @test "invoke_agent: tolerates subprocess that exits before reading stdin" {
   result=$(_py "
-import ai_backend_claude as abc
+import ai_backend_claude as abc, ai_backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'exit 7']
-rc = mod.invoke_agent('a]long prompt that the subprocess never reads', '$TMPDIR/pipe_test.jsonl', '/tmp', '/tmp')
+rc = mod.invoke_agent(ab.AgentInvocation(prompt='a]long prompt that the subprocess never reads', session_log='$TMPDIR/pipe_test.jsonl', add_dirs=['/tmp', '/tmp']))
 abc._build_agent_cmd = original
 print(rc)
 ")
@@ -892,10 +892,10 @@ print(rc)
 
 @test "invoke_fix: tolerates subprocess that exits before reading stdin" {
   result=$(_py "
-import ai_backend_claude as abc
+import ai_backend_claude as abc, ai_backend as ab
 original = abc._build_fix_cmd
 abc._build_fix_cmd = lambda *a, **kw: ['bash', '-c', 'exit 13']
-rc = abc.invoke_fix('a long prompt that the subprocess never reads', add_dirs=['/tmp'])
+rc = abc.invoke_fix(ab.AgentInvocation(prompt='a long prompt that the subprocess never reads', add_dirs=['/tmp']))
 abc._build_fix_cmd = original
 print(rc)
 ")

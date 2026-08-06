@@ -12,31 +12,35 @@ import ai_backend_pi
 
 class TestBuildFixCmd:
     def test_base_command_uses_rpc_mode(self):
-        cmd = ai_backend_pi._build_fix_cmd()
+        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert "--mode" in cmd
         assert "rpc" in cmd
         assert "-p" not in cmd
 
     def test_includes_tools(self):
-        cmd = ai_backend_pi._build_fix_cmd()
+        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert "--tools" in cmd
         idx = cmd.index("--tools")
         assert cmd[idx + 1] == ai_backend_pi.PI_TOOLS
 
     def test_model_flag(self):
-        cmd = ai_backend_pi._build_fix_cmd(model="sonnet")
+        cmd = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", model="sonnet"),
+        )
         assert "--model" in cmd
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "sonnet"
 
     def test_thinking_level_flag(self):
-        cmd = ai_backend_pi._build_fix_cmd(thinking_level="low")
+        cmd = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", thinking="low"),
+        )
         assert "--thinking" in cmd
         idx = cmd.index("--thinking")
         assert cmd[idx + 1] == "low"
 
     def test_no_optional_flags_when_none(self):
-        cmd = ai_backend_pi._build_fix_cmd()
+        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert "--model" not in cmd
         assert "--thinking" not in cmd
         assert "--provider" not in cmd
@@ -45,12 +49,14 @@ class TestBuildFixCmd:
 
 class TestBuildAgentCmd:
     def test_includes_rpc_mode(self):
-        cmd = ai_backend_pi._build_agent_cmd()
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert cmd[:2] == ["pi", "--mode"]
         assert cmd[2] == "rpc"
 
     def test_thinking_level(self):
-        cmd = ai_backend_pi._build_agent_cmd(thinking_level="high")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", thinking="high"),
+        )
         assert "--thinking" in cmd
         idx = cmd.index("--thinking")
         assert cmd[idx + 1] == "high"
@@ -64,7 +70,9 @@ class TestBuildAgentCmd:
         empty_skills_dir = tmp_path / "skills"
         empty_skills_dir.mkdir()
         monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", empty_skills_dir)
-        cmd = ai_backend_pi._build_agent_cmd(agent="test")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", agent="test"),
+        )
         assert "--append-system-prompt" in cmd
         idx = cmd.index("--append-system-prompt")
         assert cmd[idx + 1] == "# Test Agent\nDo things."
@@ -77,7 +85,9 @@ class TestBuildAgentCmd:
         empty_skills_dir.mkdir()
         monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", empty_skills_dir)
         with pytest.raises(FileNotFoundError):
-            ai_backend_pi._build_agent_cmd(agent="nonexistent")
+            ai_backend_pi._build_agent_cmd(
+                ai_backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
+            )
 
 
 class TestCheckLimits:
@@ -202,7 +212,9 @@ class TestBuildAgentCmdWithSkills:
         reviewer_dir.mkdir(parents=True)
         (reviewer_dir / "SKILL.md").write_text("---\nname: reviewer\n---\n# R")
         monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
-        cmd = ai_backend_pi._build_agent_cmd(agent="reviewer")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+        )
         assert "--skill" in cmd
         assert "--append-system-prompt" not in cmd
 
@@ -214,24 +226,30 @@ class TestBuildAgentCmdWithSkills:
         agents_dir.mkdir()
         (agents_dir / "reviewer.md").write_text("# Reviewer agent")
         monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
-        cmd = ai_backend_pi._build_agent_cmd(agent="reviewer")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+        )
         assert "--append-system-prompt" in cmd
         assert "--skill" not in cmd
 
 
 class TestProviderFlag:
     def test_agent_cmd_with_provider(self):
-        cmd = ai_backend_pi._build_agent_cmd(provider="bedrock")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", provider="bedrock"),
+        )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
 
     def test_agent_cmd_without_provider(self):
-        cmd = ai_backend_pi._build_agent_cmd()
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert "--provider" not in cmd
 
     def test_fix_cmd_with_provider(self):
-        cmd = ai_backend_pi._build_fix_cmd(provider="vertex")
+        cmd = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", provider="vertex"),
+        )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "vertex"
@@ -245,17 +263,21 @@ class TestProviderFlag:
 
 class TestExtensionFlag:
     def test_agent_cmd_with_extension(self):
-        cmd = ai_backend_pi._build_agent_cmd(extension="/path/to/review-guard.ts")
+        cmd = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
+        )
         assert "--extension" in cmd
         idx = cmd.index("--extension")
         assert cmd[idx + 1] == "/path/to/review-guard.ts"
 
     def test_agent_cmd_without_extension(self):
-        cmd = ai_backend_pi._build_agent_cmd()
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert "--extension" not in cmd
 
     def test_fix_cmd_with_extension(self):
-        cmd = ai_backend_pi._build_fix_cmd(extension="/path/to/review-guard.ts")
+        cmd = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
+        )
         assert "--extension" in cmd
         idx = cmd.index("--extension")
         assert cmd[idx + 1] == "/path/to/review-guard.ts"

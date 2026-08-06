@@ -2,8 +2,8 @@
 
 Verifies that the models a run would use have quota allocations on the
 configured Vertex AI project/region before any agent is spawned.  Catches
-misconfigured model ids (no quota entry) within ~1s instead of burning
-~6 minutes on retries.
+misconfigured model ids (nothing the project can serve, not even the model's
+family) within ~1s instead of burning ~6 minutes on retries.
 
 Reached through ``ai_backend.preflight()`` — nothing outside the Claude
 backend should import this module.
@@ -257,10 +257,32 @@ def check_quota(model: str, project: str, region: str) -> VertexQuotaResult:
     return _verdict(base_model, models, project, region)
 
 
+def _covering_bucket(base_model: str, provisioned: Mapping[str, str]) -> str | None:
+    """Find the quota bucket a model draws on, or None if the project has none.
+
+    Vertex publishes a bucket per model version ("anthropic-claude-sonnet-4-6")
+    alongside one per family ("anthropic-claude-sonnet"). A version released
+    after the project's buckets were last enumerated has no bucket of its own
+    and serves under its family's allocation, so an exact-key miss does not
+    mean the model is unusable — it usually means the model is new.
+
+    Walk from the most specific name to the least and take the first bucket
+    that exists. A name whose family is unknown to the project matches nothing,
+    which is the case worth blocking: a typo, or a model this project genuinely
+    cannot serve.
+    """
+    parts = base_model.split("-")
+    for cut in range(len(parts), 0, -1):
+        candidate = "-".join(parts[:cut])
+        if candidate in provisioned:
+            return candidate
+    return None
+
+
 def _verdict(
     base_model: str, provisioned: dict[str, str], project: str, region: str,
 ) -> VertexQuotaResult:
-    if base_model in provisioned:
+    if _covering_bucket(base_model, provisioned) is not None:
         return VertexQuotaResult(QuotaVerdict.PROVISIONED, base_model)
     return VertexQuotaResult(
         QuotaVerdict.NOT_PROVISIONED, base_model,

@@ -1796,6 +1796,7 @@ def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:
         )
     return replace(
         pr,
+        head=local.head,
         head_sha=local.head_sha,
         additions=local.additions,
         deletions=local.deletions,
@@ -1811,11 +1812,12 @@ def _fetch_metadata(
         log.info("Gathering branch metadata...")
         return fetch_branch_metadata(wt_path), PRContext(), None
     log.info("Fetching PR data...")
+    if mode == Mode.SELF:
+        # Sequential: the local read needs the PR's base branch to pick its range.
+        pr = fetch_pr_metadata(repo, pr_number)
+        return _with_local_diff(pr, fetch_branch_metadata(wt_path, pr.base)), PRContext(), None
     with ThreadPoolExecutor(max_workers=2) as pool:
         pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
-        if mode == Mode.SELF:
-            pr = pr_future.result()
-            return _with_local_diff(pr, fetch_branch_metadata(wt_path, pr.base)), PRContext(), None
         pd_future = pool.submit(fetch_pr_data, repo, pr_number)
         pr_data = pd_future.result()
         ctx = fetch_pr_context(repo, pr_number, pr_data)

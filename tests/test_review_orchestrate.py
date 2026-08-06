@@ -3494,6 +3494,12 @@ class TestWithLocalDiff:
         assert merged.deletions == 2
         assert merged.changed_files == 2
 
+    def test_branch_name_comes_from_the_worktree(self, ro):
+        pr = _pr_metadata(ro, head="feat")
+        local = _pr_metadata(ro, head="renamed-locally")
+
+        assert ro._with_local_diff(pr, local).head == "renamed-locally"
+
     def test_pr_narrative_is_preserved(self, ro):
         pr = _pr_metadata(ro, labels=["review"], author="isaac", is_draft=True)
         local = _pr_metadata(ro, title="add unpushed", body="", head_sha="b" * 40)

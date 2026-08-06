@@ -533,7 +533,7 @@ class TestRunFixPassRetry:
         review_pipeline.run_fix_pass(job)
         assert mock_invoke.call_count == 2
         retry_call = mock_invoke.call_args_list[1]
-        assert retry_call[0][0].startswith("IMPORTANT: A previous attempt")
+        assert retry_call[0][0].prompt.startswith("IMPORTANT: A previous attempt")
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
@@ -596,7 +596,7 @@ class TestRunFixPassRetry:
         job = self._make_job(tmp_path)
         review_pipeline.run_fix_pass(job)
         retry_call = mock_invoke.call_args_list[1]
-        assert retry_call[1]["max_turns"] == review_pipeline._fix_retry_budget(
+        assert retry_call[0][0].max_turns == review_pipeline._fix_retry_budget(
             review_pipeline._fix_turn_budget(2),
         )
 

@@ -628,14 +628,14 @@ def _invoke_fix_agent(
     dirs = [str(wt_path)]
     if main_wt_path:
         dirs.append(str(main_wt_path))
-    return ai_backend.invoke_fix(
-        prompt,
+    return ai_backend.invoke_fix(ai_backend.AgentInvocation(
+        prompt=prompt,
         session_log=_fix_session_log(wt_path),
         add_dirs=dirs,
         max_turns=max_turns if max_turns is not None else FIX_MIN_TURNS,
         max_budget=max_budget if max_budget is not None else FIX_MIN_BUDGET,
         model=FIX_MODEL,
-    )
+    ))
 
 
 def _guarded_fix_pass(

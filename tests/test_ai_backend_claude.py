@@ -41,13 +41,15 @@ class TestLoadAgentDef:
 
 class TestBuildAgentCmd:
     def test_base_flags(self):
-        cmd = ai_backend_claude._build_agent_cmd(add_dirs=[])
+        cmd = ai_backend_claude._build_agent_cmd(ai_backend_claude.AgentInvocation(prompt=""))
         assert "--bare" in cmd
         assert "--output-format" in cmd
         assert "stream-json" in cmd
 
     def test_builtin_agent_no_agents_json(self):
-        cmd = ai_backend_claude._build_agent_cmd(add_dirs=[], agent="Explore")
+        cmd = ai_backend_claude._build_agent_cmd(
+            ai_backend_claude.AgentInvocation(prompt="", agent="Explore"),
+        )
         assert "--agent" in cmd
         idx = cmd.index("--agent")
         assert cmd[idx + 1] == "Explore"
@@ -58,7 +60,9 @@ class TestBuildAgentCmd:
         (tmp_path / "reviewer-lite.md").write_text(
             "---\nname: reviewer-lite\ndescription: Lightweight reviewer\n---\n\nReview code."
         )
-        cmd = ai_backend_claude._build_agent_cmd(add_dirs=[], agent="reviewer-lite")
+        cmd = ai_backend_claude._build_agent_cmd(
+            ai_backend_claude.AgentInvocation(prompt="", agent="reviewer-lite"),
+        )
         assert "--agents" in cmd
         agents_idx = cmd.index("--agents")
         agents_json = json.loads(cmd[agents_idx + 1])
@@ -72,13 +76,15 @@ class TestBuildAgentCmd:
     def test_agents_json_before_agent_flag(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
         (tmp_path / "test.md").write_text("---\nname: test\ndescription: Test\n---\n\nPrompt.")
-        cmd = ai_backend_claude._build_agent_cmd(add_dirs=[], agent="test")
+        cmd = ai_backend_claude._build_agent_cmd(
+            ai_backend_claude.AgentInvocation(prompt="", agent="test"),
+        )
         assert cmd.index("--agents") < cmd.index("--agent")
 
     def test_model_and_max_turns(self):
-        cmd = ai_backend_claude._build_agent_cmd(
-            add_dirs=[], model="sonnet", max_turns=15, max_budget=5.0,
-        )
+        cmd = ai_backend_claude._build_agent_cmd(ai_backend_claude.AgentInvocation(
+            prompt="", model="sonnet", max_turns=15, max_budget=5.0,
+        ))
         assert "--model" in cmd
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "sonnet"
@@ -86,7 +92,9 @@ class TestBuildAgentCmd:
         assert "--max-budget-usd" in cmd
 
     def test_add_dirs(self):
-        cmd = ai_backend_claude._build_agent_cmd(add_dirs=["/a", "/b"])
+        cmd = ai_backend_claude._build_agent_cmd(
+            ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/a", "/b"]),
+        )
         pairs = [(cmd[i], cmd[i + 1]) for i in range(len(cmd) - 1) if cmd[i] == "--add-dir"]
         assert pairs == [("--add-dir", "/a"), ("--add-dir", "/b")]
 

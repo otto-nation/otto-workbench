@@ -67,9 +67,9 @@ from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
-    _is_model_error, _parse_session_cost, _resolve_model, _resolve_provider,
-    _resolve_thinking_level, diagnose_missing_output, invoke_agent,
-    try_recover_output,
+    AgentInvocation, _is_model_error, _parse_session_cost, _resolve_model,
+    _resolve_provider, _resolve_thinking_level, build_add_dirs,
+    diagnose_missing_output, invoke_agent, try_recover_output,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -385,7 +385,20 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = invoke_agent(text, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        rc = invoke_agent(
+            AgentInvocation(
+                prompt=text,
+                session_log=job.session_log,
+                add_dirs=build_add_dirs(job.wt_path, job.reviews_dir, job.review_file),
+                agent=agent,
+                max_turns=turns,
+                max_budget=budget,
+                model=model,
+                thinking=thinking,
+                provider=provider,
+            ),
+            throttle=job.throttle,
+        )
         return rc
 
     invoke(prompt, max_turns)
@@ -529,7 +542,21 @@ def _review_group(
     provider = _resolve_provider()
     budget = EFFORT_PRESETS[job.effort].agent_budget
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+    invoke_agent(
+        AgentInvocation(
+            prompt=group_prompt,
+            session_log=group_log,
+            add_dirs=build_add_dirs(job.wt_path, job.reviews_dir),
+            agent=AgentKind.REVIEWER_LITE,
+            max_turns=max_turns,
+            max_budget=budget,
+            model=model,
+            thinking=thinking,
+            provider=provider,
+            label=grp.name,
+        ),
+        throttle=job.throttle,
+    )
 
     failed = None
     if not _has_output(group_output):
@@ -569,7 +596,20 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        return invoke_agent(
+            AgentInvocation(
+                prompt=text,
+                session_log=holistic_log,
+                add_dirs=build_add_dirs(job.wt_path, job.reviews_dir),
+                agent=agent,
+                max_turns=turns,
+                max_budget=budget,
+                model=model,
+                thinking=thinking,
+                provider=provider,
+            ),
+            throttle=job.throttle,
+        )
 
     invoke(prompt, max_turns)
     log.blank()
@@ -607,7 +647,20 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+        return invoke_agent(
+            AgentInvocation(
+                prompt=text,
+                session_log=scout_log,
+                add_dirs=build_add_dirs(job.wt_path, job.reviews_dir),
+                agent=AgentKind.REVIEWER_LITE,
+                max_turns=turns,
+                max_budget=budget,
+                model=model,
+                thinking=thinking,
+                provider=provider,
+            ),
+            throttle=job.throttle,
+        )
 
     invoke(prompt, max_turns)
     log.blank()
@@ -654,7 +707,20 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+        return invoke_agent(
+            AgentInvocation(
+                prompt=text,
+                session_log=disprove_log,
+                add_dirs=build_add_dirs(job.wt_path, job.reviews_dir),
+                agent=AgentKind.REVIEWER_LITE,
+                max_turns=turns,
+                max_budget=budget,
+                model=model,
+                thinking=thinking,
+                provider=provider,
+            ),
+            throttle=job.throttle,
+        )
 
     invoke(prompt, max_turns)
     log.blank()
@@ -931,10 +997,20 @@ def run_fix_pass(job: ReviewJob):
     # No AgentKind: every reviewer persona is instructed never to modify source
     # files, which contradicts this phase's prompt. Passing None runs the
     # default agent, which can edit the branch.
-    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
-                 review_file=job.review_file, model=model, thinking_level=thinking,
-                 provider=provider, max_turns=max_turns, max_budget=budget,
-                 agent=None, throttle=job.throttle)
+    invoke_agent(
+        AgentInvocation(
+            prompt=prompt,
+            session_log=fix_log,
+            add_dirs=build_add_dirs(job.wt_path, job.reviews_dir, job.review_file),
+            agent=None,
+            max_turns=max_turns,
+            max_budget=budget,
+            model=model,
+            thinking=thinking,
+            provider=provider,
+        ),
+        throttle=job.throttle,
+    )
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -956,11 +1032,20 @@ def run_fix_pass(job: ReviewJob):
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
             prior_log = preserve_log(fix_log)
             log.blank()
-            invoke_agent(retry_prompt, fix_log, job.wt_path, job.reviews_dir,
-                         review_file=job.review_file, model=model,
-                         thinking_level=thinking, provider=provider,
-                         max_turns=retry_turns, max_budget=budget,
-                         agent=None, throttle=job.throttle)
+            invoke_agent(
+                AgentInvocation(
+                    prompt=retry_prompt,
+                    session_log=fix_log,
+                    add_dirs=build_add_dirs(job.wt_path, job.reviews_dir, job.review_file),
+                    agent=None,
+                    max_turns=retry_turns,
+                    max_budget=budget,
+                    model=model,
+                    thinking=thinking,
+                    provider=provider,
+                ),
+                throttle=job.throttle,
+            )
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -1299,7 +1384,20 @@ def _phase_synthesis(
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = invoke_agent(text, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        rc = invoke_agent(
+            AgentInvocation(
+                prompt=text,
+                session_log=synthesis_log,
+                add_dirs=build_add_dirs(job.wt_path, job.reviews_dir, job.review_file),
+                agent=agent,
+                max_turns=turns,
+                max_budget=budget,
+                model=model,
+                thinking=thinking,
+                provider=provider,
+            ),
+            throttle=job.throttle,
+        )
         return rc
 
     invoke(prompt, max_turns)

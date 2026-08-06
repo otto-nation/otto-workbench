@@ -39,6 +39,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import log
+from ai_backend import AgentInvocation
 from ai_backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_write_tool_used,
 )
@@ -88,52 +89,41 @@ def _build_prompt_cmd(model: str | None = None, provider: str | None = None) -> 
     return cmd
 
 
-def _build_agent_cmd(
-    agent: str | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-    extension: str | None = None,
-) -> list[str]:
+def _build_agent_cmd(inv: AgentInvocation, extension: str | None = None) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,
     ]
-    if agent:
-        skill_path = _resolve_skill_path(agent)
+    if inv.agent:
+        skill_path = _resolve_skill_path(inv.agent)
         if skill_path:
             cmd += ["--skill", str(skill_path)]
-        elif (agent_prompt := _read_agent_prompt(agent)) is not None:
+        elif (agent_prompt := _read_agent_prompt(inv.agent)) is not None:
             cmd += ["--append-system-prompt", agent_prompt]
         else:
-            raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{agent}.md'}")
-    if provider:
-        cmd += ["--provider", provider]
-    if model:
-        cmd += ["--model", model]
-    if thinking_level:
-        cmd += ["--thinking", thinking_level]
+            raise FileNotFoundError(f"Agent file not found: {AGENTS_DIR / f'{inv.agent}.md'}")
+    if inv.provider:
+        cmd += ["--provider", inv.provider]
+    if inv.model:
+        cmd += ["--model", inv.model]
+    if inv.thinking:
+        cmd += ["--thinking", inv.thinking]
     if extension:
         cmd += ["--extension", extension]
     return cmd
 
 
-def _build_fix_cmd(
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-    extension: str | None = None,
-) -> list[str]:
+def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,
     ]
-    if provider:
-        cmd += ["--provider", provider]
-    if model:
-        cmd += ["--model", model]
-    if thinking_level:
-        cmd += ["--thinking", thinking_level]
+    if inv.provider:
+        cmd += ["--provider", inv.provider]
+    if inv.model:
+        cmd += ["--model", inv.model]
+    if inv.thinking:
+        cmd += ["--thinking", inv.thinking]
     if extension:
         cmd += ["--extension", extension]
     return cmd
@@ -349,17 +339,7 @@ def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
     return result.stdout, result.returncode
 
 
-def invoke_agent(
-    prompt: str, session_log: str, *,
-    add_dirs: list[str],
-    agent: str | None = None,
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-    label: str = "",
-) -> int:
+def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with RPC streaming to session log. Returns exit code.
 
     Uses Pi's RPC mode for bidirectional control:
@@ -369,17 +349,14 @@ def invoke_agent(
     - A Claude-compatible result record is written at the end for cost tracking
     """
     dir_context = ""
-    if add_dirs:
-        dir_lines = "\n".join(f"  - {d}" for d in add_dirs)
+    if inv.add_dirs:
+        dir_lines = "\n".join(f"  - {d}" for d in inv.add_dirs)
         dir_context = f"\nAccessible directories:\n{dir_lines}\n\n"
 
-    full_prompt = dir_context + prompt if dir_context else prompt
+    full_prompt = dir_context + inv.prompt if dir_context else inv.prompt
 
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
-    cmd = _build_agent_cmd(
-        agent=agent, model=model, thinking_level=thinking_level, provider=provider,
-        extension=ext,
-    )
+    cmd = _build_agent_cmd(inv, extension=ext)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -388,17 +365,17 @@ def invoke_agent(
         text=True,
     )
 
-    prefix = f"  {ANSI_DIM}[{label}]{ANSI_RESET} " if label else ""
+    prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
     start_time = time.monotonic()
 
     # Send the prompt via RPC
     _send(proc, {"type": "prompt", "message": full_prompt})
 
     # Stream events with budget and turn enforcement
-    with open(session_log, "w") as log_fh:
+    with open(inv.session_log, "w") as log_fh:
         turn_count, accumulated_cost, stop_reason = _consume_stream(
             proc, log_fh, prefix,
-            max_turns=max_turns, max_budget=max_budget,
+            max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -408,7 +385,7 @@ def invoke_agent(
 
     # Write Claude-compatible result record
     _write_result_record(
-        session_log, stop_reason, turn_count,
+        inv.session_log, stop_reason, turn_count,
         accumulated_cost, duration_ms, stats,
     )
 
@@ -418,34 +395,25 @@ def invoke_agent(
     except BrokenPipeError:
         pass
     proc.wait()
-    _log_stderr_on_failure(proc, session_log)
+    _log_stderr_on_failure(proc, inv.session_log)
     return proc.returncode
 
 
-def invoke_fix(
-    prompt: str, *,
-    session_log: str = "",
-    add_dirs: list[str],
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-) -> int:
+def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access via RPC. Returns exit code.
 
     Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
     If session_log is empty, events are consumed but not persisted.
     """
     dir_context = ""
-    if add_dirs:
-        dir_lines = "\n".join(f"  - {d}" for d in add_dirs)
+    if inv.add_dirs:
+        dir_lines = "\n".join(f"  - {d}" for d in inv.add_dirs)
         dir_context = f"\nAccessible directories:\n{dir_lines}\n\n"
 
-    full_prompt = dir_context + prompt if dir_context else prompt
+    full_prompt = dir_context + inv.prompt if dir_context else inv.prompt
 
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
-    cmd = _build_fix_cmd(model=model, thinking_level=thinking_level, provider=provider, extension=ext)
+    cmd = _build_fix_cmd(inv, extension=ext)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -458,19 +426,19 @@ def invoke_fix(
 
     _send(proc, {"type": "prompt", "message": full_prompt})
 
-    log_path = session_log if session_log else os.devnull
+    log_path = inv.session_log if inv.session_log else os.devnull
     with open(log_path, "w") as log_file:
         turn_count, accumulated_cost, stop_reason = _consume_stream(
             proc, log_file, "",
-            max_turns=max_turns, max_budget=max_budget,
+            max_turns=inv.max_turns, max_budget=inv.max_budget,
         )
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
-    if session_log:
+    if inv.session_log:
         stats = _get_stats_after_agent_end(proc)
         _write_result_record(
-            session_log, stop_reason, turn_count,
+            inv.session_log, stop_reason, turn_count,
             accumulated_cost, duration_ms, stats,
         )
 
@@ -479,5 +447,5 @@ def invoke_fix(
     except BrokenPipeError:
         pass
     proc.wait()
-    _log_stderr_on_failure(proc, session_log)
+    _log_stderr_on_failure(proc, inv.session_log)
     return proc.returncode

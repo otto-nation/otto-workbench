@@ -14,6 +14,7 @@ from pathlib import Path
 
 import log
 import vertex_quota
+from ai_backend import AgentInvocation
 from ai_backend_events import _log_stderr_on_failure, parse_claude_event
 from log import ANSI_DIM, ANSI_RESET, _print_lock
 
@@ -85,53 +86,36 @@ def _base_cmd() -> list[str]:
     ]
 
 
-def _build_agent_cmd(
-    add_dirs: list[str],
-    agent: str | None = None,
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    # thinking_level is accepted for API compatibility but intentionally unused:
-    # Claude Code CLI has no --thinking flag.
-    thinking_level: str | None = None,
-) -> list[str]:
+def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
     add_dir_args = []
-    for d in add_dirs:
+    for d in inv.add_dirs:
         add_dir_args += ["--add-dir", d]
     cmd = [*_base_cmd(), "--output-format", "stream-json", *add_dir_args]
-    if agent:
-        agent_def = _load_agent_def(agent)
+    if inv.agent:
+        agent_def = _load_agent_def(inv.agent)
         if agent_def:
-            cmd += ["--agents", json.dumps({agent: agent_def})]
-        cmd += ["--agent", agent]
-    if max_turns is not None:
-        cmd += ["--max-turns", str(max_turns)]
-    if max_budget is not None:
-        cmd += ["--max-budget-usd", str(max_budget)]
-    if model:
-        cmd += ["--model", model]
+            cmd += ["--agents", json.dumps({inv.agent: agent_def})]
+        cmd += ["--agent", inv.agent]
+    if inv.max_turns is not None:
+        cmd += ["--max-turns", str(inv.max_turns)]
+    if inv.max_budget is not None:
+        cmd += ["--max-budget-usd", str(inv.max_budget)]
+    if inv.model:
+        cmd += ["--model", inv.model]
     return cmd
 
 
-def _build_fix_cmd(
-    add_dirs: list[str],
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    # thinking_level is accepted for API compatibility but intentionally unused:
-    # Claude Code CLI has no --thinking flag.
-    thinking_level: str | None = None,
-) -> list[str]:
+def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
     add_dir_args = []
-    for d in add_dirs:
+    for d in inv.add_dirs:
         add_dir_args += ["--add-dir", d]
     cmd = [*_base_cmd(), *add_dir_args]
-    if max_turns is not None:
-        cmd += ["--max-turns", str(max_turns)]
-    if max_budget is not None:
-        cmd += ["--max-budget-usd", str(max_budget)]
-    if model:
-        cmd += ["--model", model]
+    if inv.max_turns is not None:
+        cmd += ["--max-turns", str(inv.max_turns)]
+    if inv.max_budget is not None:
+        cmd += ["--max-budget-usd", str(inv.max_budget)]
+    if inv.model:
+        cmd += ["--model", inv.model]
     return cmd
 
 
@@ -178,25 +162,9 @@ def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
     return result.stdout, result.returncode
 
 
-def invoke_agent(
-    prompt: str, session_log: str, *,
-    add_dirs: list[str],
-    agent: str | None = None,
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    # provider is accepted for interface parity with the Pi backend but intentionally
-    # unused — Claude Code CLI has no --provider flag.
-    provider: str | None = None,
-    label: str = "",
-) -> int:
+def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with JSONL streaming to session log. Returns exit code."""
-    cmd = _build_agent_cmd(
-        add_dirs=add_dirs, agent=agent,
-        max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level,
-    )
+    cmd = _build_agent_cmd(inv)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -204,32 +172,16 @@ def invoke_agent(
         stderr=subprocess.PIPE,
         text=True,
     )
-    _send_stdin(proc, prompt)
-    stream_progress(proc, session_log, label=label)
+    _send_stdin(proc, inv.prompt)
+    stream_progress(proc, inv.session_log, label=inv.label)
     proc.wait()
-    _log_stderr_on_failure(proc, session_log)
+    _log_stderr_on_failure(proc, inv.session_log)
     return proc.returncode
 
 
-def invoke_fix(
-    prompt: str, *,
-    session_log: str = "",
-    add_dirs: list[str],
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    # provider is accepted for interface parity with the Pi backend but intentionally
-    # unused — Claude Code CLI has no --provider flag.
-    provider: str | None = None,
-) -> int:
+def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed to stderr. Returns exit code."""
-    # session_log and provider are accepted for interface parity with the Pi backend
-    # but are not used — Claude Code CLI has no --provider flag.
-    cmd = _build_fix_cmd(
-        add_dirs=add_dirs, max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level,
-    )
+    cmd = _build_fix_cmd(inv)
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -237,7 +189,7 @@ def invoke_fix(
         stderr=sys.stderr,
         text=True,
     )
-    _send_stdin(proc, prompt)
+    _send_stdin(proc, inv.prompt)
     for line in proc.stdout:
         print(line, end="", file=sys.stderr)
     proc.wait()

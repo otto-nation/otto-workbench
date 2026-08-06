@@ -52,7 +52,7 @@ from review_findings import (
 )
 from review_github import PRData, fetch_pr_data
 from review_preflight import (
-    DEFAULT_MAX_GROUPS, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
+    DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     GROUP_TIER3, HOLISTIC_MIN_GROUPS,
     Group, PRContext, PRMetadata, PipelineState, ReviewJob,
     _merge_smallest_groups,
@@ -67,48 +67,76 @@ from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
-    _is_model_error, _parse_session_cost, _resolve_model, _resolve_provider,
-    _resolve_thinking_level, diagnose_missing_output, invoke_agent,
-    try_recover_output,
+    AgentInvocation, _is_model_error, _parse_session_cost, _resolve_model,
+    _resolve_provider, _resolve_thinking_level, build_add_dirs,
+    diagnose_missing_output, invoke_agent, try_recover_output,
 )
 
 DEFAULT_MAX_COST = 20.0
-DEFAULT_MAX_TURNS_GROUP = 15
-DEFAULT_MAX_TURNS_HOLISTIC = 15
-DEFAULT_MAX_TURNS_SYNTHESIS = 15
-DEFAULT_MAX_TURNS_SINGLE = 15
 
 RETRY_MAX_TURNS_GROUP = agent_retry.RETRY_MAX_TURNS
 _MAX_TURNS_REASON = agent_retry.MAX_TURNS_REASON
 
-# Phase → default model. Entries stay explicit rather than comprehension-built
-# so that giving one phase a different default is a one-line change.
-PHASE_MODEL_DEFAULTS: dict[Phase, str] = {
-    Phase.SINGLE: "sonnet",
-    Phase.HOLISTIC: "sonnet",
-    Phase.SCOUT: "sonnet",
-    Phase.GROUP: "sonnet",
-    Phase.SYNTHESIS: "sonnet",
-    Phase.DISPROVE: "sonnet",
-    Phase.FIX: "sonnet",
-}
-
-DEFAULT_THINKING_GROUP = Thinking.LOW
-DEFAULT_THINKING_HOLISTIC = Thinking.MEDIUM
-DEFAULT_THINKING_SCOUT = Thinking.LOW
-DEFAULT_THINKING_SYNTHESIS = Thinking.MEDIUM
-DEFAULT_THINKING_DISPROVE = Thinking.MEDIUM
-DEFAULT_THINKING_SINGLE = Thinking.MEDIUM
-DEFAULT_THINKING_FIX = Thinking.LOW
-
-DEFAULT_MAX_TURNS_SCOUT = 10
-DEFAULT_MAX_TURNS_DISPROVE = 15
 DISPROVE_MIN_FINDINGS = 3
-DEFAULT_MAX_TURNS_FIX = 20
 MAX_TURNS_FIX_CAP = 60
 RETRY_MAX_TURNS_FIX = 40
 
 OMITTED_FILE_TURNS = 2
+
+
+# ── Phase registry ───────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class PhaseSpec:
+    """Built-in defaults for one pipeline phase.
+
+    ``agent=None`` means the phase takes whichever agent the effort preset
+    selects. A concrete ``AgentKind`` pins the phase regardless of effort:
+    those phases are handed everything they need up front and do no context
+    gathering, so a higher effort has nothing to buy them.
+
+    ``edits=True`` marks a phase that writes to the branch. Every ``AgentKind``
+    is a reviewer persona instructed never to modify source files, so such a
+    phase runs with no agent at all — the default agent, which can edit.
+    """
+
+    phase: Phase
+    model: str = "sonnet"
+    thinking: Thinking | None = None
+    max_turns: int = 15
+    agent: AgentKind | None = None
+    edits: bool = False
+
+
+PHASES: dict[Phase, PhaseSpec] = {
+    Phase.SINGLE: PhaseSpec(
+        Phase.SINGLE, thinking=Thinking.MEDIUM, max_turns=15,
+    ),
+    Phase.HOLISTIC: PhaseSpec(
+        Phase.HOLISTIC, thinking=Thinking.MEDIUM, max_turns=15,
+    ),
+    Phase.SCOUT: PhaseSpec(
+        Phase.SCOUT, thinking=Thinking.LOW, max_turns=10,
+        agent=AgentKind.REVIEWER_LITE,
+    ),
+    Phase.GROUP: PhaseSpec(
+        Phase.GROUP, thinking=Thinking.LOW, max_turns=15,
+        agent=AgentKind.REVIEWER_LITE,
+    ),
+    Phase.SYNTHESIS: PhaseSpec(
+        Phase.SYNTHESIS, thinking=Thinking.MEDIUM, max_turns=15,
+    ),
+    Phase.DISPROVE: PhaseSpec(
+        Phase.DISPROVE, thinking=Thinking.MEDIUM, max_turns=15,
+        agent=AgentKind.REVIEWER_LITE,
+    ),
+    Phase.FIX: PhaseSpec(
+        Phase.FIX, thinking=Thinking.LOW, max_turns=20,
+        edits=True,
+    ),
+}
+
 
 # ── Phase model resolution ───────────────────────────────────────────────────
 
@@ -119,7 +147,7 @@ def phase_model(phase: Phase, explicit: str | None) -> str:
     return _resolve_model(
         explicit,
         phase.model_env_key,
-        PHASE_MODEL_DEFAULTS[phase],
+        PHASES[phase].model,
     )
 
 
@@ -130,70 +158,138 @@ def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
     the env keys worth changing when one of them is unusable.
     """
     models: dict[str, list[Phase]] = {}
-    for phase in PHASE_MODEL_DEFAULTS:
+    for phase in PHASES:
         models.setdefault(phase_model(phase, explicit), []).append(phase)
     return models
 
 
 # ── Effort presets ───────────────────────────────────────────────────────────
 
-EFFORT_PRESETS: dict[Effort, dict] = {
-    Effort.LOW: {
-        "thinking": Thinking.LOW,
-        "agent_budget": 3.0,
-        "max_groups": 6,
-        "multi_phase_line_threshold": 1000,
-        "multi_phase_file_threshold": 15,
-        "skip_synthesis": True,
-        "skip_holistic": True,
-        "skip_scout": True,
-        "skip_disprove": True,
-        "skip_omitted_files": True,
-        "agent": AgentKind.REVIEWER_LITE,
-    },
-    Effort.MEDIUM: {
-        "thinking": None,
-        "agent_budget": DEFAULT_MAX_BUDGET_PER_AGENT,
-        "max_groups": 8,
-        "multi_phase_line_threshold": 500,
-        "multi_phase_file_threshold": 10,
-        "skip_synthesis": False,
-        "skip_holistic": False,
-        "skip_scout": False,
-        "skip_disprove": False,
-        "skip_omitted_files": False,
-        "agent": AgentKind.REVIEWER,
-    },
-    Effort.HIGH: {
-        "thinking": Thinking.HIGH,
-        "agent_budget": 8.0,
-        "max_groups": 16,
-        "multi_phase_line_threshold": 500,
-        "multi_phase_file_threshold": 10,
-        "skip_synthesis": False,
-        "skip_holistic": False,
-        "skip_scout": False,
-        "skip_disprove": False,
-        "skip_omitted_files": False,
-        "agent": AgentKind.REVIEWER,
-    },
+
+@dataclass(frozen=True)
+class EffortPreset:
+    """Budgets, thresholds, and phase skips selected by ``--effort``.
+
+    ``thinking=None`` means the phase's own default stands; a level here
+    flattens every phase to it, matching what CLAUDE_REVIEW_THINKING does.
+    """
+
+    thinking: Thinking | None
+    agent_budget: float
+    max_groups: int
+    multi_phase_line_threshold: int
+    multi_phase_file_threshold: int
+    skip_synthesis: bool
+    skip_holistic: bool
+    skip_scout: bool
+    skip_disprove: bool
+    skip_omitted_files: bool
+    agent: AgentKind
+
+
+EFFORT_PRESETS: dict[Effort, EffortPreset] = {
+    Effort.LOW: EffortPreset(
+        thinking=Thinking.LOW,
+        agent_budget=3.0,
+        max_groups=6,
+        multi_phase_line_threshold=1000,
+        multi_phase_file_threshold=15,
+        skip_synthesis=True,
+        skip_holistic=True,
+        skip_scout=True,
+        skip_disprove=True,
+        skip_omitted_files=True,
+        agent=AgentKind.REVIEWER_LITE,
+    ),
+    Effort.MEDIUM: EffortPreset(
+        thinking=None,
+        agent_budget=DEFAULT_MAX_BUDGET_PER_AGENT,
+        max_groups=8,
+        multi_phase_line_threshold=500,
+        multi_phase_file_threshold=10,
+        skip_synthesis=False,
+        skip_holistic=False,
+        skip_scout=False,
+        skip_disprove=False,
+        skip_omitted_files=False,
+        agent=AgentKind.REVIEWER,
+    ),
+    Effort.HIGH: EffortPreset(
+        thinking=Thinking.HIGH,
+        agent_budget=8.0,
+        max_groups=16,
+        multi_phase_line_threshold=500,
+        multi_phase_file_threshold=10,
+        skip_synthesis=False,
+        skip_holistic=False,
+        skip_scout=False,
+        skip_disprove=False,
+        skip_omitted_files=False,
+        agent=AgentKind.REVIEWER,
+    ),
 }
 
 
-def _effort_default(effort: Effort, key: str, fallback):
-    preset = EFFORT_PRESETS.get(effort)
-    if preset and key in preset:
-        return preset[key]
-    return fallback
+def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:
+    """The effort override if the preset sets one, else the phase's own default."""
+    override = EFFORT_PRESETS[effort].thinking
+    return override if override is not None else PHASES[phase].thinking
 
 
-def _effort_thinking(effort: Effort, phase_default: Thinking | None) -> Thinking | None:
-    preset = EFFORT_PRESETS.get(effort)
-    if preset:
-        override = preset.get("thinking")
-        if override is not None:
-            return override
-    return phase_default
+class PhaseRunner:
+    """The six per-phase values, resolved once.
+
+    Every phase needs the same six — model, thinking level, provider, budget,
+    agent, and max turns — resolved from the phase spec, the effort preset,
+    and the environment. Resolving them here means one place to read rather
+    than seven blocks that must be kept in step.
+    """
+
+    def __init__(self, job: ReviewJob, phase: Phase):
+        spec = PHASES[phase]
+        preset = EFFORT_PRESETS[job.effort]
+        self.job = job
+        self.model = phase_model(phase, job.model)
+        self.thinking = _resolve_thinking_level(
+            None, phase.thinking_env_key, _phase_thinking(job.effort, phase),
+        )
+        self.provider = _resolve_provider()
+        self.budget = preset.agent_budget
+        self.agent = None if spec.edits else (
+            spec.agent if spec.agent is not None else preset.agent
+        )
+        self.max_turns = spec.max_turns
+
+    def invocation(
+        self, prompt: str, session_log: str, *,
+        max_turns: int | None = None, label: str = "", review_file: str = "",
+    ) -> AgentInvocation:
+        return AgentInvocation(
+            prompt=prompt,
+            session_log=session_log,
+            add_dirs=build_add_dirs(
+                self.job.wt_path, self.job.reviews_dir, review_file,
+            ),
+            agent=self.agent,
+            max_turns=self.max_turns if max_turns is None else max_turns,
+            max_budget=self.budget,
+            model=self.model,
+            thinking=self.thinking,
+            provider=self.provider,
+            label=label,
+        )
+
+    def invoke(
+        self, prompt: str, session_log: str, *,
+        max_turns: int | None = None, label: str = "", review_file: str = "",
+    ) -> int:
+        return invoke_agent(
+            self.invocation(
+                prompt, session_log,
+                max_turns=max_turns, label=label, review_file=review_file,
+            ),
+            throttle=self.job.throttle,
+        )
 
 
 def _touch(path: str) -> None:
@@ -205,7 +301,7 @@ _has_output = agent_retry.has_output
 
 
 def _omitted_turns(job: "ReviewJob") -> int:
-    if _effort_default(job.effort, "skip_omitted_files", False):
+    if EFFORT_PRESETS[job.effort].skip_omitted_files:
         return 0
     if not job.preflight or not job.preflight.omitted_files:
         return 0
@@ -215,7 +311,7 @@ def _omitted_turns(job: "ReviewJob") -> int:
 def _synthesis_max_turns(merged_content: str) -> int:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
-    scaled = DEFAULT_MAX_TURNS_SYNTHESIS + max(0, total - 20) // 10
+    scaled = PHASES[Phase.SYNTHESIS].max_turns + max(0, total - 20) // 10
     return min(scaled, RETRY_MAX_TURNS_GROUP)
 
 
@@ -329,7 +425,7 @@ def _write_review_sidecar(job: ReviewJob):
 
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     template = TEMPLATE_SELF_REVIEW if job.mode == Mode.SELF else TEMPLATE_SINGLE
-    max_turns = DEFAULT_MAX_TURNS_SINGLE + _omitted_turns(job)
+    max_turns = PHASES[Phase.SINGLE].max_turns + _omitted_turns(job)
     prompt = build_prompt(
         template, job, max_turns=max_turns, branch_name=job.pr.head,
     )
@@ -337,12 +433,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     log.info(f"Running review agent on {label}...")
     log.blank()
     _touch(job.review_file)
-    model = phase_model(Phase.SINGLE, job.model)
-    thinking = _resolve_thinking_level(None, Phase.SINGLE.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_SINGLE))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
-    agent = _effort_default(job.effort, "agent", AgentKind.REVIEWER)
+    runner = PhaseRunner(job, Phase.SINGLE)
 
     # `rc` tracks the latest attempt so the failure message below reports the
     # retry's exit code, not the first attempt's.
@@ -350,7 +441,10 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = invoke_agent(text, job.session_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        rc = runner.invoke(
+            text, job.session_log,
+            max_turns=turns, review_file=job.review_file,
+        )
         return rc
 
     invoke(prompt, max_turns)
@@ -460,7 +554,7 @@ def _review_group(
     group_count: int, holistic_content: str,
     skip: bool = False,
     pipeline_state: "PipelineState | None" = None,
-    max_turns: int = DEFAULT_MAX_TURNS_GROUP,
+    max_turns: int = PHASES[Phase.GROUP].max_turns,
     retry_hint: str = "",
 ) -> tuple[int, str, "tuple[str, str] | None"]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
@@ -488,13 +582,9 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
-    model = phase_model(Phase.GROUP, job.model)
-    thinking = _resolve_thinking_level(None, Phase.GROUP.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_GROUP))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    runner = PhaseRunner(job, Phase.GROUP)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    invoke_agent(group_prompt, group_log, job.wt_path, job.reviews_dir, label=grp.name, model=model, thinking_level=thinking, provider=provider, max_turns=max_turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+    runner.invoke(group_prompt, group_log, max_turns=max_turns, label=grp.name)
 
     failed = None
     if not _has_output(group_output):
@@ -520,21 +610,16 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
     _touch(holistic_output)
 
-    max_turns = DEFAULT_MAX_TURNS_HOLISTIC + _omitted_turns(job)
+    max_turns = PHASES[Phase.HOLISTIC].max_turns + _omitted_turns(job)
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    model = phase_model(Phase.HOLISTIC, job.model)
-    thinking = _resolve_thinking_level(None, Phase.HOLISTIC.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_HOLISTIC))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
-    agent = _effort_default(job.effort, "agent", AgentKind.REVIEWER)
+    runner = PhaseRunner(job, Phase.HOLISTIC)
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, holistic_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        return runner.invoke(text, holistic_log, max_turns=turns)
 
     invoke(prompt, max_turns)
     log.blank()
@@ -559,20 +644,16 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
     _touch(scout_output)
 
-    max_turns = DEFAULT_MAX_TURNS_SCOUT + _omitted_turns(job)
+    max_turns = PHASES[Phase.SCOUT].max_turns + _omitted_turns(job)
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
-    model = phase_model(Phase.SCOUT, job.model)
-    thinking = _resolve_thinking_level(None, Phase.SCOUT.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_SCOUT))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    runner = PhaseRunner(job, Phase.SCOUT)
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, scout_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+        return runner.invoke(text, scout_log, max_turns=turns)
 
     invoke(prompt, max_turns)
     log.blank()
@@ -605,21 +686,17 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
 
     _touch(disprove_output)
 
-    max_turns = DEFAULT_MAX_TURNS_DISPROVE
+    max_turns = PHASES[Phase.DISPROVE].max_turns
     prompt = build_prompt(
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
-    model = phase_model(Phase.DISPROVE, job.model)
-    thinking = _resolve_thinking_level(None, Phase.DISPROVE.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_DISPROVE))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    runner = PhaseRunner(job, Phase.DISPROVE)
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
 
     def invoke(text: str, turns: int) -> int:
-        return invoke_agent(text, disprove_log, job.wt_path, job.reviews_dir, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=AgentKind.REVIEWER_LITE, throttle=job.throttle)
+        return runner.invoke(text, disprove_log, max_turns=turns)
 
     invoke(prompt, max_turns)
     log.blank()
@@ -659,7 +736,7 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
         return True
     if explicit_disprove is False:
         return False
-    return not _effort_default(job.effort, "skip_disprove", True)
+    return not EFFORT_PRESETS[job.effort].skip_disprove
 
 
 def _count_unchecked(review_file: str) -> int:
@@ -854,7 +931,7 @@ def _format_fix_summary(result: FixPassResult) -> str:
 
 
 def _fix_turn_budget(unchecked: int) -> int:
-    return min(max(DEFAULT_MAX_TURNS_FIX, unchecked * 2), MAX_TURNS_FIX_CAP)
+    return min(max(PHASES[Phase.FIX].max_turns, unchecked * 2), MAX_TURNS_FIX_CAP)
 
 
 def _fix_retry_budget(original_budget: int) -> int:
@@ -886,20 +963,12 @@ def run_fix_pass(job: ReviewJob):
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
     )
-    model = phase_model(Phase.FIX, job.model)
-    thinking = _resolve_thinking_level(None, Phase.FIX.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_FIX))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    runner = PhaseRunner(job, Phase.FIX)
     log.info("Fix pass — applying review findings...")
     log.blank()
-    # No AgentKind: every reviewer persona is instructed never to modify source
-    # files, which contradicts this phase's prompt. Passing None runs the
-    # default agent, which can edit the branch.
-    invoke_agent(prompt, fix_log, job.wt_path, job.reviews_dir,
-                 review_file=job.review_file, model=model, thinking_level=thinking,
-                 provider=provider, max_turns=max_turns, max_budget=budget,
-                 agent=None, throttle=job.throttle)
+    runner.invoke(
+        prompt, fix_log, max_turns=max_turns, review_file=job.review_file,
+    )
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -921,11 +990,10 @@ def run_fix_pass(job: ReviewJob):
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
             prior_log = preserve_log(fix_log)
             log.blank()
-            invoke_agent(retry_prompt, fix_log, job.wt_path, job.reviews_dir,
-                         review_file=job.review_file, model=model,
-                         thinking_level=thinking, provider=provider,
-                         max_turns=retry_turns, max_budget=budget,
-                         agent=None, throttle=job.throttle)
+            runner.invoke(
+                retry_prompt, fix_log,
+                max_turns=retry_turns, review_file=job.review_file,
+            )
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -965,7 +1033,7 @@ def _run_serial_reviews(
     failed_groups: list[tuple[str, str]] = []
     consecutive_same_reason = 0
     last_reason = ""
-    group_turns = DEFAULT_MAX_TURNS_GROUP + _omitted_turns(job)
+    group_turns = PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
     for i, grp in enumerate(groups, 1):
         skip = skip_groups is not None and i in skip_groups
         _, _, failed = _review_group(
@@ -1020,7 +1088,7 @@ def _retry_turns(reason: str, job: "ReviewJob") -> int:
     extra = _omitted_turns(job)
     if _MAX_TURNS_REASON in reason:
         return RETRY_MAX_TURNS_GROUP + extra
-    return DEFAULT_MAX_TURNS_GROUP + extra
+    return PHASES[Phase.GROUP].max_turns + extra
 
 
 def _retry_failed_groups(
@@ -1097,7 +1165,7 @@ def _run_skipped_groups(
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
-            max_turns=DEFAULT_MAX_TURNS_GROUP + _omitted_turns(job),
+            max_turns=PHASES[Phase.GROUP].max_turns + _omitted_turns(job),
         )
         if failure:
             failures.append(failure)
@@ -1249,14 +1317,9 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
-    model = phase_model(Phase.SYNTHESIS, job.model)
-    thinking = _resolve_thinking_level(None, Phase.SYNTHESIS.thinking_env_key,
-                                       _effort_thinking(job.effort, DEFAULT_THINKING_SYNTHESIS))
-    provider = _resolve_provider()
-    budget = _effort_default(job.effort, "agent_budget", DEFAULT_MAX_BUDGET_PER_AGENT)
+    runner = PhaseRunner(job, Phase.SYNTHESIS)
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
-    agent = _effort_default(job.effort, "agent", AgentKind.REVIEWER)
 
     # `rc` tracks the latest attempt so the fallback warning below reports the
     # retry's exit code, not the first attempt's.
@@ -1264,7 +1327,9 @@ def _phase_synthesis(
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = invoke_agent(text, synthesis_log, job.wt_path, job.reviews_dir, review_file=job.review_file, model=model, thinking_level=thinking, provider=provider, max_turns=turns, max_budget=budget, agent=agent, throttle=job.throttle)
+        rc = runner.invoke(
+            text, synthesis_log, max_turns=turns, review_file=job.review_file,
+        )
         return rc
 
     invoke(prompt, max_turns)
@@ -1458,7 +1523,7 @@ def _holistic_skip_reason(
         return "incremental review"
     if skip_holistic:
         return "--no-holistic"
-    if _effort_default(effort, "skip_holistic", False):
+    if EFFORT_PRESETS[effort].skip_holistic:
         return f"effort={effort}"
     if group_count < HOLISTIC_MIN_GROUPS:
         return f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
@@ -1468,7 +1533,7 @@ def _holistic_skip_reason(
 def _use_scout(job: ReviewJob, skip_scout: bool) -> bool:
     if skip_scout:
         return False
-    return not _effort_default(job.effort, "skip_scout", False)
+    return not EFFORT_PRESETS[job.effort].skip_scout
 
 
 def _run_holistic_phase(
@@ -1568,7 +1633,7 @@ def _run_synthesis_or_fallback(
         _write_pipeline_state(job, state)
         return ""
 
-    if _effort_default(job.effort, "skip_synthesis", False):
+    if EFFORT_PRESETS[job.effort].skip_synthesis:
         log.info("Synthesis skipped (effort=low) — using mechanical merge")
         Path(job.review_file).write_text(merged_content)
         _post_process_review(job)
@@ -1608,7 +1673,7 @@ def run_multi_phase(
     skip_scout: bool = False, disprove: bool | None = None,
 ):
     groups = group_files(job.pr)
-    effective_max_groups = max_groups or _effort_default(job.effort, "max_groups", DEFAULT_MAX_GROUPS)
+    effective_max_groups = max_groups or EFFORT_PRESETS[job.effort].max_groups
     groups = _merge_smallest_groups(groups, effective_max_groups)
 
     if not job.include_generated:

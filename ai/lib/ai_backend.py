@@ -10,7 +10,10 @@ import os
 import shutil
 import types
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
+
+from review_common import AgentKind
 
 ENV_AI_BACKEND = "AI_BACKEND"
 
@@ -52,44 +55,38 @@ def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
     return _get_module().prompt(text, model=model)
 
 
-def invoke_agent(
-    prompt: str, session_log: str, *,
-    add_dirs: list[str],
-    agent: str | None = None,
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-    label: str = "",
-) -> int:
+@dataclass(frozen=True)
+class AgentInvocation:
+    """Everything a backend needs to run one agent.
+
+    ``provider`` is honoured by the Pi backend and ignored by Claude Code,
+    which has no --provider flag; ``thinking`` is likewise ignored there.
+    Both stay on the object so callers do not branch on the backend.
+    """
+
+    prompt: str
+    session_log: str = ""
+    add_dirs: list[str] = field(default_factory=list)
+    agent: AgentKind | None = None
+    max_turns: int | None = None
+    max_budget: float | None = None
+    model: str = ""
+    # Not the closed `Thinking` enum: this is read from the environment via
+    # _resolve_thinking_level() and can carry values outside that set (e.g.
+    # "xhigh"), same as `model` can carry values outside `ModelAlias`.
+    thinking: str | None = None
+    provider: str | None = None
+    label: str = ""
+
+
+def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with tool use and JSONL streaming. Returns exit code."""
-    return _get_module().invoke_agent(
-        prompt, session_log,
-        add_dirs=add_dirs, agent=agent,
-        max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level,
-        provider=provider, label=label,
-    )
+    return _get_module().invoke_agent(inv)
 
 
-def invoke_fix(
-    prompt: str, *,
-    session_log: str = "",
-    add_dirs: list[str],
-    max_turns: int | None = None,
-    max_budget: float | None = None,
-    model: str | None = None,
-    thinking_level: str | None = None,
-    provider: str | None = None,
-) -> int:
+def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed. Returns exit code."""
-    return _get_module().invoke_fix(
-        prompt, session_log=session_log, add_dirs=add_dirs,
-        max_turns=max_turns, max_budget=max_budget,
-        model=model, thinking_level=thinking_level,
-        provider=provider,
-    )
+    return _get_module().invoke_fix(inv)
 
 
 def is_available() -> bool:

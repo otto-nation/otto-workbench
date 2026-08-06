@@ -57,6 +57,11 @@ def severity_by_key(key: str) -> SeverityConfig:
 SECTION_FILE_TRIAGE = "File Triage"
 
 
+def plural(n: int) -> str:
+    """Return the plural suffix for a count — `f"{n} file{plural(n)}"`."""
+    return "" if n == 1 else "s"
+
+
 # ── Modes ────────────────────────────────────────────────────────────────────
 
 
@@ -536,7 +541,7 @@ def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
     groups_failed = data.get("groups_failed", {})
     if groups_failed:
         n = len(groups_failed)
-        warnings.append(f"{n} group{'s' if n != 1 else ''} failed")
+        warnings.append(f"{n} group{plural(n)} failed")
     if data.get("synthesis_failed"):
         warnings.append("synthesis")
     return warnings

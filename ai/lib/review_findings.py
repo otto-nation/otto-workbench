@@ -13,7 +13,7 @@ from pathlib import Path
 import log
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
-    SECTION_FILE_TRIAGE,
+    SECTION_FILE_TRIAGE, plural,
 )
 
 _FINDING_SECTIONS = [(s.section, s.key) for s in SEVERITIES]
@@ -793,10 +793,10 @@ def build_mechanical_review(
 ) -> str:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
-    count_summary = f"{total} finding{'s' if total != 1 else ''}" if total else "No findings"
+    count_summary = f"{total} finding{plural(total)}" if total else "No findings"
 
     if file_count:
-        scope = f"across {file_count} file{'s' if file_count != 1 else ''} in {group_count} groups"
+        scope = f"across {file_count} file{plural(file_count)} in {group_count} groups"
     else:
         scope = f"across {group_count} groups"
 

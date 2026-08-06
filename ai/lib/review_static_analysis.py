@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from review_common import plural
+
 
 @dataclass
 class StaticViolation:
@@ -125,17 +127,13 @@ def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerR
     return results
 
 
-def _plural(n: int) -> str:
-    return "s" if n != 1 else ""
-
-
 def _format_checker_violations(r: CheckerResult) -> list[str]:
     file_count = len({v.file for v in r.violations})
     lines = [
         "",
         f"### {r.name}",
         "",
-        f"{len(r.violations)} violation{_plural(len(r.violations))} "
+        f"{len(r.violations)} violation{plural(len(r.violations))} "
         f"in {file_count} of {r.files_checked} files checked",
         "",
     ]
@@ -162,7 +160,7 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
         "## Static Analysis",
         "",
         "<details>",
-        f"<summary>Static Analysis ({total} violation{_plural(total)})</summary>",
+        f"<summary>Static Analysis ({total} violation{plural(total)})</summary>",
     ]
     for r in violating:
         parts.extend(_format_checker_violations(r))

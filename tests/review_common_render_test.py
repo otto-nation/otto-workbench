@@ -1,4 +1,4 @@
-"""Tests for review_common.render_status."""
+"""Tests for review_common.render_status and shared formatting helpers."""
 
 import sys
 from pathlib import Path
@@ -9,7 +9,11 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import pr_state
-from review_common import render_status
+from review_common import plural, render_status
+
+
+def test_plural_only_singular_at_one():
+    assert [f"{n} file{plural(n)}" for n in (0, 1, 2)] == ["0 files", "1 file", "2 files"]
 
 
 def test_render_status_not_run():

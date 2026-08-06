@@ -11,6 +11,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pr_context
 from pr_context import (
     _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
     find_worktree_for_branch, ResolvedContext, update_to_remote,
@@ -355,9 +356,16 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
 
 
 _WORKTREE_LIST_HIJACKED = (
-    "/repo             (bare)\n"
-    "/repo/main        f94475d [feat/x]\n"
-    "/repo/feat-other  abc1234 [feat/other]\n"
+    "worktree /repo\n"
+    "bare\n"
+    "\n"
+    "worktree /repo/main\n"
+    "HEAD f94475d\n"
+    "branch refs/heads/feat/x\n"
+    "\n"
+    "worktree /repo/feat-other\n"
+    "HEAD abc1234\n"
+    "branch refs/heads/feat/other\n"
 )
 
 
@@ -378,12 +386,45 @@ def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run
 
 
 @patch("pr_context.subprocess.run")
+def test_find_worktree_dir_named_matches_regardless_of_occupant(mock_run):
+    """The lenient lookup answers "which directory", not "which branch"."""
+    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    assert pr_context.find_worktree_dir_named("main") == Path("/repo/main")
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
+    """The bare entry is not a checkout and must never be handed back as one."""
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="worktree /repo/main\nbare\n",
+    )
+    assert pr_context.find_worktree_dir_named("main") is None
+
+
+@patch("pr_context.subprocess.run")
 def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
     mock_run.return_value = MagicMock(
         returncode=0,
-        stdout="/repo       (bare)\n/repo/main  f94475d (detached HEAD)\n",
+        stdout=(
+            "worktree /repo\nbare\n\n"
+            "worktree /repo/main\nHEAD f94475d\ndetached\n"
+        ),
     )
     assert find_worktree_for_branch("main") == Path("/repo/main")
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_run):
+    """The human listing packs path and [branch] onto one line; porcelain doesn't."""
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout=(
+            "worktree /repo/we ird [x]\n"
+            "HEAD abc1234\n"
+            "branch refs/heads/spacey\n"
+        ),
+    )
+    assert find_worktree_for_branch("spacey") == Path("/repo/we ird [x]")
 
 
 # ── Bare-repo worktree resolution ─────────────────────────────────────────
@@ -421,12 +462,26 @@ def testresolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_cre
         assert call.args[0] != "main"
 
 
+@patch("pr_context.find_worktree_dir_named", return_value=None)
 @patch("pr_context.find_worktree_for_branch", return_value=None)
 @patch("pr_context.subprocess.run")
-def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find):
+def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
     result = resolve_bare_repo_worktree(None, None)
     assert result is None
+
+
+@patch("pr_context.find_worktree_dir_named", return_value=Path("/repo/main"))
+@patch("pr_context.find_worktree_for_branch", return_value=None)
+@patch("pr_context.subprocess.run")
+def testresolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, mock_named):
+    """No branch requested: a main/ holding someone else's branch is still a cwd.
+
+    Regression: tightening find_worktree_for_branch made this return None, and
+    the callers that dereference worktree_root without a guard blew up.
+    """
+    mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
+    assert resolve_bare_repo_worktree(None, None) == Path("/repo/main")
 
 
 @patch("pr_context.find_worktree_for_branch")

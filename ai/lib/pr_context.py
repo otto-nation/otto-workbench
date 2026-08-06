@@ -468,38 +468,82 @@ def is_bare_repo(cwd: str | None = None) -> bool:
         return False
 
 
-def find_worktree_for_branch(
-    branch: str, cwd: str | None = None,
-) -> Path | None:
-    """Find the worktree directory checked out on *branch*.
+def _parse_worktree_block(block: str) -> tuple[Path, str | None] | None:
+    """One ``--porcelain`` record as ``(path, branch)``, or None if not a checkout.
 
-    Prefers an exact ``[branch]`` tag match from ``git worktree list``.
-    Falls back to matching by sanitized directory name (slashes to dashes)
-    so detached-HEAD worktrees are still found.
+    Branch is None for a detached HEAD. The bare repo is not a checkout and is
+    dropped — handing it back as one would point callers at the .git directory.
+    """
+    path: Path | None = None
+    branch: str | None = None
+    for line in block.splitlines():
+        if line == "bare":
+            return None
+        if line.startswith("worktree "):
+            path = Path(line.removeprefix("worktree "))
+        elif line.startswith("branch refs/heads/"):
+            branch = line.removeprefix("branch refs/heads/")
+    return (path, branch) if path else None
 
-    The name fallback only accepts a worktree git reports no branch for. A
-    worktree named ``main/`` with someone else's branch checked out is not the
-    main worktree, and callers that reset or check out what they get back
-    would clobber that branch.
+
+def _worktree_entries(cwd: str | None = None) -> list[tuple[Path, str | None]]:
+    """Every non-bare worktree as ``(path, branch)``; branch None when detached.
+
+    Parses ``--porcelain`` rather than the human listing, which packs path,
+    SHA and ``[branch]`` onto one whitespace-separated line: a path containing
+    a space gets truncated by a naive split, and one containing a bracket reads
+    as a branch tag. Porcelain gives the path verbatim on its own line.
     """
     try:
         r = subprocess.run(
-            ["git", "worktree", "list"],
+            ["git", "worktree", "list", "--porcelain"],
             capture_output=True, text=True, cwd=cwd,
         )
     except Exception:
-        return None
+        return []
+    parsed = map(_parse_worktree_block, r.stdout.split("\n\n"))
+    return [entry for entry in parsed if entry]
+
+
+def find_worktree_for_branch(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Find the worktree git reports as checked out on *branch*.
+
+    Falls back to a worktree whose directory name matches the sanitized branch
+    (slashes to dashes) so detached-HEAD worktrees are still found — but only
+    when git reports no branch for it. A worktree named ``main/`` with someone
+    else's branch checked out is not the main worktree, and callers that reset
+    or check out what they get back would clobber that branch.
+
+    Use find_worktree_dir_named when you only need a working directory.
+    """
+    entries = _worktree_entries(cwd)
+    for path, wt_branch in entries:
+        if wt_branch == branch:
+            return path
     sanitized = branch.replace("/", "-")
-    dir_fallback: Path | None = None
-    for line in r.stdout.splitlines():
-        if f"[{branch}]" in line:
-            return Path(line.split()[0])
-        if dir_fallback is not None or "[" in line:
-            continue
-        wt_path = line.split()[0]
-        if Path(wt_path).name == sanitized:
-            dir_fallback = Path(wt_path)
-    return dir_fallback
+    for path, wt_branch in entries:
+        if wt_branch is None and path.name == sanitized:
+            return path
+    return None
+
+
+def find_worktree_dir_named(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Any worktree whose directory is named after *branch*, whatever is in it.
+
+    Answers "which directory is this repo's <branch> checkout" rather than
+    "which worktree is on <branch>". Only for callers that need somewhere to
+    run read-only commands — never for ones that reset or check out the result,
+    which is how a feature branch parked in main/ got hard-reset away.
+    """
+    sanitized = branch.replace("/", "-")
+    for path, _ in _worktree_entries(cwd):
+        if path.name == sanitized:
+            return path
+    return None
 
 
 def create_worktree_for_branch(
@@ -591,4 +635,13 @@ def resolve_bare_repo_worktree(
             return wt
         return create_worktree_for_branch(branch, cwd)
 
-    return find_worktree_for_branch(default_branch(cwd), cwd)
+    # With no branch requested this is "give me a working directory for this
+    # repo", not "is this worktree on <default>" — so the directory named after
+    # the default branch will do even when something else is checked out there.
+    # Returning None instead would strand ~10 callers that dereference
+    # worktree_root without a guard.
+    default = default_branch(cwd)
+    return (
+        find_worktree_for_branch(default, cwd)
+        or find_worktree_dir_named(default, cwd)
+    )

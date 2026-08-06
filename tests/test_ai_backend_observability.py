@@ -225,6 +225,17 @@ def _invoke_fix_calls(tree: ast.Module):
             yield node
 
 
+def _scan_call_sites(source: Path) -> tuple[int, list[str]]:
+    """Return (call count, "name:line" for each call missing a session_log)."""
+    tree = ast.parse(source.read_text(), filename=str(source))
+    calls = list(_invoke_fix_calls(tree))
+    missing = [
+        f"  - {source.name}:{call.lineno}"
+        for call in calls if not _has_session_log(call)
+    ]
+    return len(calls), missing
+
+
 def _has_session_log(call: ast.Call) -> bool:
     for kw in call.keywords:
         if kw.arg != "session_log":
@@ -244,14 +255,11 @@ class TestFixCallSitesPassSessionLog:
     """
 
     def test_all_call_sites_supply_a_session_log(self):
-        offenders = []
+        offenders: list[str] = []
         found = 0
-        for source in _ai_sources():
-            tree = ast.parse(source.read_text(), filename=str(source))
-            for call in _invoke_fix_calls(tree):
-                found += 1
-                if not _has_session_log(call):
-                    offenders.append(f"  - {source.name}:{call.lineno}")
+        for count, missing in [_scan_call_sites(s) for s in _ai_sources()]:
+            found += count
+            offenders.extend(missing)
 
         assert not offenders, (
             "invoke_fix() call sites missing a non-empty session_log "

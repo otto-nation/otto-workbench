@@ -833,14 +833,36 @@ def _commit_and_push(
     return CommitPushResult(sha, "push_failed", err)
 
 
-def _thread_has_reply_prefix(thread: ReportThread | None, prefix: str) -> bool:
-    """Check if a thread already has a reply starting with the given prefix."""
-    if not thread:
+def _our_last_reply_id(thread: ReportThread | None) -> int | None:
+    """The ID of our own reply when it is still the last comment, else None.
+
+    Editing is only safe while nobody has answered us: rewriting a comment a
+    reviewer has already replied to changes the text their reply responds to.
+    ThreadState.ADDRESSED means exactly "we replied and no one replied back",
+    so the lifecycle state the report already carries is the whole test.
+
+    The length guard covers self-review, where the thread root is our own
+    comment — editing that would rewrite the review point instead of our
+    answer to it.
+    """
+    if not thread or len(thread.comments) < 2:
+        return None
+    if thread.state != ThreadState.ADDRESSED:
+        return None
+    return thread.comments[-1].get("databaseId")
+
+
+def _upsert_thread_reply(
+    thread: ReportThread, repo: str, pr_number: int, body: str,
+) -> bool:
+    """Replace our standing reply on a thread, or post the first one."""
+    existing_id = _our_last_reply_id(thread)
+    if existing_id:
+        return pc.patch_thread_reply(repo, existing_id, body)
+    root_id = thread.comments[0].get("databaseId")
+    if not root_id:
         return False
-    for comment in thread.comments:
-        if comment.get("body", "").startswith(prefix):
-            return True
-    return False
+    return pc.post_thread_reply(repo, pr_number, root_id, body)
 
 
 def _post_thread_replies(
@@ -849,29 +871,25 @@ def _post_thread_replies(
     repo: str,
     pr_number: int,
     body_fn: Callable[[CommentItem], str],
-    *,
-    reply_prefix: str | None = None,
 ) -> int:
-    """Post a reply to each thread entry using body_fn to build the message body.
+    """Reply to each thread entry using body_fn to build the message body.
 
-    When reply_prefix is set, skip threads that already have a reply with that prefix.
+    One reply per thread, edited in place across rounds rather than stacked.
+    Guarding per verdict instead — skip if this thread already has an "Applied:"
+    reply — left a thread dismissed in round one and fixed in round two holding
+    both, telling the reviewer their point did not apply and that we acted on it.
     """
     posted = 0
-    skipped = 0
     for entry in entries:
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
             continue
-        if reply_prefix and _thread_has_reply_prefix(thread, reply_prefix):
-            skipped += 1
-            continue
-        database_id = thread.comments[0].get("databaseId")
-        if not database_id:
-            continue
-        if pc.post_thread_reply(repo, pr_number, database_id, body_fn(entry)):
+        # ceiling: thread.comments is not refreshed after a post, so two replies
+        # to one thread within a single run would still stack. Unreachable while
+        # the reply categories stay a partition of the triage verdicts; refetch
+        # the thread here if that ever stops holding.
+        if _upsert_thread_reply(thread, repo, pr_number, body_fn(entry)):
             posted += 1
-    if skipped:
-        log.info(f"Skipped {skipped} thread(s) with existing replies")
     return posted
 
 
@@ -886,24 +904,32 @@ def _post_fix_replies(
     commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
 
     def body_fn(entry: CommentItem) -> str:
-        return f"Applied: {entry.summary}\n\nFixed in [`{commit_sha}`]({commit_url})."
+        parts = [
+            f"{_APPLIED_REPLY_PREFIX} {entry.summary}",
+            f"Fixed in [`{commit_sha}`]({commit_url}).",
+        ]
+        # The file, not the line: the fix has just moved the lines around it,
+        # and pointing a reviewer at the wrong line is worse than pointing them
+        # at the file the change landed in.
+        if entry.file:
+            url = _blob_permalink(repo, commit_sha, entry.file)
+            parts.append(f"Result is in [`{entry.file}`]({url}).")
+        return "\n\n".join(parts)
 
-    posted = _post_thread_replies(
-        fixed, threads_by_id, repo, pr_number, body_fn,
-        reply_prefix=_APPLIED_REPLY_PREFIX,
-    )
+    posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Posted {posted} thread replies")
     return posted
 
 
-def _blob_permalink(repo: str, sha: str, filepath: str, line: int) -> str:
+def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
     """A blob URL pinned to a SHA, so the link still points at the cited code.
 
     Branch-relative blob URLs drift as the branch moves; a claim posted to a
-    reviewer has to survive the next push.
+    reviewer has to survive the next push. Omit line for a whole-file link.
     """
-    return f"https://github.com/{repo}/blob/{sha}/{filepath}#L{line}"
+    url = f"https://github.com/{repo}/blob/{sha}/{filepath}"
+    return f"{url}#L{line}" if line else url
 
 
 def _evidence_link(entry: CommentItem, repo: str, sha: str) -> str:
@@ -912,6 +938,28 @@ def _evidence_link(entry: CommentItem, repo: str, sha: str) -> str:
         return ""
     url = _blob_permalink(repo, sha, entry.evidence_file, entry.evidence_line)
     return f"[`{entry.evidence_file}:{entry.evidence_line}`]({url})"
+
+
+def _code_link(
+    entry: CommentItem, repo: str, sha: str, repo_dir: Path | None = None,
+) -> str:
+    """Link the code an entry is about, or "" when there is nothing to point at.
+
+    Triage's citation is the better anchor where there is one, but entries
+    rebuilt from stored thread records carry no citation at all.  Those still
+    have the review comment's own file and line, which always resolve — GitHub
+    anchored the thread there — so a reply is never left asserting something
+    with no link behind it.
+    """
+    if entry.has_evidence() and (repo_dir is None or _evidence_is_real(repo_dir, entry)):
+        link = _evidence_link(entry, repo, sha)
+        if link:
+            return link
+    if not entry.file or not sha:
+        return ""
+    url = _blob_permalink(repo, sha, entry.file, entry.line)
+    label = f"{entry.file}:{entry.line}" if entry.line else entry.file
+    return f"[`{label}`]({url})"
 
 
 def _find_addressing_commit(wt_path: Path, filepath: str) -> str | None:
@@ -943,21 +991,24 @@ def _post_already_addressed_replies(
         sha = commit_cache[entry.file]
         # The line was read at HEAD, so that is the tree the link has to pin to;
         # the addressing commit answers "when", not "where".
-        parts = [f"Already addressed: {entry.summary}"]
-        link = _evidence_link(entry, repo, head_sha)
+        parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
+        # No repo_dir: _downgrade_unsupported_verdicts already refused to let an
+        # already_addressed verdict through without a citation that resolves.
+        # Checking again here would only overrule it with a weaker link.
+        link = _code_link(entry, repo, head_sha)
         if link:
             parts.append(f"Current behaviour is at {link}.")
         if sha:
             commit_url = f"https://github.com/{repo}/commit/{sha}"
             parts.append(f"Addressed in [`{sha[:7]}`]({commit_url}).")
         if len(parts) == 1:
-            return f"Already addressed in the current implementation: {entry.summary}"
+            return (
+                f"{_ADDRESSED_REPLY_PREFIX} in the current implementation: "
+                f"{entry.summary}"
+            )
         return "\n\n".join(parts)
 
-    posted = _post_thread_replies(
-        fixed, threads_by_id, repo, pr_number, body_fn,
-        reply_prefix=_ADDRESSED_REPLY_PREFIX,
-    )
+    posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Posted {posted} already-addressed replies")
     return posted
@@ -984,15 +1035,12 @@ def _post_dismissed_replies(
 
     def body_fn(entry: CommentItem) -> str:
         reasoning = entry.reasoning
-        body = "Suggestion reviewed and determined to be inapplicable"
+        body = _DISMISSED_REPLY_PREFIX
         body = f"{body}: {reasoning}" if reasoning else f"{body}."
         link = _evidence_link(entry, repo, head_sha)
         return f"{body}\n\nSee {link}." if link else body
 
-    posted = _post_thread_replies(
-        dismissed, threads_by_id, repo, pr_number, body_fn,
-        reply_prefix=_DISMISSED_REPLY_PREFIX,
-    )
+    posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Dismissed {posted} invalid suggestion(s)")
     return posted
@@ -1005,17 +1053,23 @@ def _post_deferred_replies(
     pr_number: int,
     issue_id: str,
     issue_url: str,
+    wt_path: Path | None = None,
 ) -> int:
     """Post replies to deferred threads linking the tracking issue."""
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
+    head_sha = _get_head_sha(wt_path) if wt_path else ""
 
     def body_fn(entry: CommentItem) -> str:
-        return f"{_DEFERRED_REPLY_PREFIX} {entry.summary}\n\nTracked in {issue_ref}."
+        parts = [f"{_DEFERRED_REPLY_PREFIX} {entry.summary}",
+                 f"Tracked in {issue_ref}."]
+        # A deferral says the code still stands as the reviewer found it, which
+        # is a claim about the tree like any other — pin it.
+        link = _code_link(entry, repo, head_sha, wt_path)
+        if link:
+            parts.append(f"Unchanged at {link}.")
+        return "\n\n".join(parts)
 
-    posted = _post_thread_replies(
-        deferred, threads_by_id, repo, pr_number, body_fn,
-        reply_prefix=_DEFERRED_REPLY_PREFIX,
-    )
+    posted = _post_thread_replies(deferred, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Posted {posted} deferred thread replies")
     return posted
@@ -1071,7 +1125,7 @@ def _finalize_deferred(
     if issue.id:
         _post_deferred_replies(
             deferred, threads_by_id, ctx.repo, pr_number,
-            issue.id, issue.url,
+            issue.id, issue.url, ctx.worktree_root,
         )
 
     state.fix.deferred_issue_id = issue.id
@@ -2295,6 +2349,84 @@ def _run_threads(trail, args, ctx) -> None:
     print()
 
 
+def _find_reply_target(
+    threads_raw: list[dict], target: str, my_login: str,
+) -> ReportThread | None:
+    """Resolve a thread by node ID or by any comment ID inside it.
+
+    Both, because the two are handed out by different things: the report prints
+    the node ID, while a reviewer sends a link ending `#discussion_r3717174529`
+    — which is a comment ID, and the only identifier a human ever has.
+    """
+    wanted = target.strip().rsplit("#", 1)[-1].removeprefix("discussion_r")
+    for data in threads_raw:
+        comments = data.get("comments", {}).get("nodes", [])
+        ids = {str(c.get("databaseId")) for c in comments}
+        if data.get("id") != target and wanted not in ids:
+            continue
+        is_resolved = data.get("isResolved", False)
+        return ReportThread(
+            id=data.get("id", ""),
+            state=pc.compute_thread_state(comments, is_resolved, my_login),
+            reviewer=(comments[0].get("author") or {}).get("login", "") if comments else "",
+            comments=comments,
+            is_resolved=is_resolved,
+            file=data.get("path", ""),
+            line=data.get("line"),
+        )
+    return None
+
+
+def _read_reply_body(body_file: str | None) -> str:
+    """Read a reply body from a file, or from stdin when given '-'."""
+    if not body_file:
+        return ""
+    if body_file == "-":
+        return sys.stdin.read().strip()
+    path = Path(body_file)
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | None) -> int:
+    """Post one hand-written reply through the same upsert the fix pass uses.
+
+    Manual replies used to go straight to the REST replies endpoint, with no
+    dedup on that path at all — which is how a thread ends up carrying three of
+    our comments that contradict each other. Routing them here holds a manual
+    reply to the same one-per-thread rule as a generated one.
+    """
+    body = _read_reply_body(body_file)
+    if not body:
+        log.error("--reply needs a non-empty --body-file")
+        return 1
+
+    repo = ctx.repo
+    pr_number = ctx.pr_number
+    owner, repo_name = repo.split("/", 1)
+    pr_data = fetch_pr_data(repo, str(pr_number))
+    threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+
+    thread = _find_reply_target(threads_raw, target, pr_data.viewer_login)
+    if thread is None:
+        log.error(f"no review thread on PR #{pr_number} matches {target!r}")
+        return 1
+
+    if "/blob/" not in body:
+        log.warn(
+            "reply cites no permalink — a claim about the code needs a link to "
+            "the line that settles it"
+        )
+
+    editing = _our_last_reply_id(thread) is not None
+    if not _upsert_thread_reply(thread, repo, pr_number, body):
+        log.error(f"failed to reply on {thread.id}")
+        return 1
+    log.info(f"{'Edited' if editing else 'Posted'} reply on {thread.id}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", help="PR number")
@@ -2313,6 +2445,12 @@ def _build_parser() -> argparse.ArgumentParser:
                              "(default: print drafts to stderr and post nothing)")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
+    parser.add_argument("--reply", metavar="THREAD_OR_COMMENT_ID",
+                        help="Reply to one thread, editing our standing reply if it "
+                             "is still the last comment. Accepts a thread node ID, a "
+                             "comment ID, or a #discussion_r... URL")
+    parser.add_argument("--body-file", metavar="PATH",
+                        help="File holding the --reply body ('-' for stdin)")
     add_trail_args(parser)
     return parser
 
@@ -2335,6 +2473,9 @@ def main():
     if pr_number is None:
         log.error("No PR found for current branch")
         sys.exit(1)
+
+    if args.reply:
+        sys.exit(_run_reply(ctx, args.reply, args.body_file))
     branch = ctx.branch
     toplevel = ctx.require_worktree()
     head_sha = ctx.head_sha

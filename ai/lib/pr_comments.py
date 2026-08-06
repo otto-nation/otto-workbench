@@ -229,11 +229,24 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
-def _gh_post(endpoint: str, body: str) -> tuple[int, str]:
-    """POST JSON to a gh api REST endpoint. Returns (exit_code, stdout)."""
+def _paginated_json(endpoint: str) -> tuple[int, str]:
+    """Call a gh api REST endpoint across all pages. Returns (exit_code, stdout).
+
+    --slurp wraps the pages in an outer array, so the result is a list of pages
+    rather than a flat list of items.
+    """
+    result = subprocess.run(
+        ["gh", "api", "--paginate", "--slurp", endpoint],
+        capture_output=True, text=True,
+    )
+    return result.returncode, result.stdout
+
+
+def _gh_post(endpoint: str, body: str, method: str = "POST") -> tuple[int, str]:
+    """Send a JSON body to a gh api REST endpoint. Returns (exit_code, stdout)."""
     payload = json.dumps({"body": body})
     result = subprocess.run(
-        ["gh", "api", endpoint, "--method", "POST", "--input", "-"],
+        ["gh", "api", endpoint, "--method", method, "--input", "-"],
         input=payload, capture_output=True, text=True,
     )
     if result.returncode != 0 and result.stderr.strip():
@@ -251,11 +264,64 @@ def post_thread_reply(
 
 
 def post_issue_comment(
-    repo: str, pr_number: int, body: str,
+    repo: str, pr_number: int, body: str, marker: str = "",
 ) -> str | None:
-    """Post an issue-level comment on a PR. Returns the comment URL or None."""
+    """Post an issue-level comment on a PR. Returns the comment URL or None.
+
+    When marker is given, an existing comment containing it is edited in place
+    instead of posting a new one.  Review cycles run several rounds; without
+    this each round leaves its own partial summary behind.
+    """
+    if marker:
+        found, existing_id = _find_comment_by_marker(repo, pr_number, marker)
+        if existing_id:
+            return _patch_issue_comment(repo, existing_id, body)
+        if not found:
+            # The lookup failed rather than came back empty, so an earlier
+            # comment may exist. Posting a duplicate beats dropping the update.
+            log.error("could not list PR comments — posting a new one instead of editing")
     endpoint = f"repos/{repo}/issues/{pr_number}/comments"
     code, out = _gh_post(endpoint, body)
+    if code != 0:
+        return None
+    try:
+        return json.loads(out).get("html_url")
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _find_comment_by_marker(
+    repo: str, pr_number: int, marker: str,
+) -> tuple[bool, int | None]:
+    """Find the newest issue comment containing marker.
+
+    Returns (lookup_succeeded, comment_id). The flag distinguishes "no such
+    comment" from "could not tell" — the caller treats those differently.
+
+    Paginated: the marker comment is posted on the first round of a review
+    cycle, so on a busy PR it is the one most likely to fall off page one.
+    """
+    code, out = _paginated_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
+    if code != 0:
+        return False, None
+    try:
+        pages = json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return False, None
+    if not isinstance(pages, list):
+        return False, None
+    comments = [c for page in pages for c in page] if pages and isinstance(pages[0], list) else pages
+    for c in reversed(comments):
+        if marker in (c.get("body") or ""):
+            return True, c.get("id")
+    return True, None
+
+
+def _patch_issue_comment(repo: str, comment_id: int, body: str) -> str | None:
+    """Edit an existing issue comment in place. Returns the comment URL or None."""
+    code, out = _gh_post(
+        f"repos/{repo}/issues/comments/{comment_id}", body, method="PATCH",
+    )
     if code != 0:
         return None
     try:

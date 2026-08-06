@@ -664,17 +664,7 @@ def _resolve_bare_repo_worktree(branch: str = "") -> str:
     wt = pr_context.resolve_bare_repo_worktree(None, branch or None)
     if wt:
         return str(wt)
-    display_branch = branch
-    if not display_branch:
-        try:
-            r = subprocess.run(
-                ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-                capture_output=True, text=True,
-            )
-            ref = r.stdout.strip()
-            display_branch = ref.replace("refs/remotes/origin/", "") if ref else "main"
-        except Exception:
-            display_branch = "main"
+    display_branch = branch or pr_context.default_branch()
     log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
     sys.exit(1)
 

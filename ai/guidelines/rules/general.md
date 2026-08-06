@@ -34,7 +34,7 @@ Reuse ladder — stop at the first rung that solves the problem:
 - When renaming a service, endpoint, or wire format, audit all references — not just call sites. Check: doc comments, inline examples, container network aliases, Helm/Pkl defaults, env var values, test fixtures, and generated config
 - When changing a wire format (message subjects, event schemas, API contracts), document deployment ordering in the PR description — which services deploy first, whether simultaneous deploy is required, and what breaks during the rollout window
 - Never swallow errors silently — propagate them or return an explicit error. Key/map lookups on external data (DB, API, user input) must use safe-access patterns (comma-ok in Go, `.get()` in Python, `in` checks in JS) and handle the missing-key case
-- Never defer review findings to issues — fix them in the current PR or create separate PRs
+- Fix review findings in the current PR. Defer one to a tracking issue or a follow-up PR only when I have explicitly agreed to that deferral — ask, don't assume
 - When automation fails partway through, make it idempotent and re-runnable rather than adding checkpoint/retry/resume logic
 
 ## Debugging

@@ -13,7 +13,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -175,11 +175,26 @@ class RebaseSummary:
     updated_at: str = ""
 
 
+@dataclass
+class DescribeSummary:
+    """Snapshot written by ``pr describe``.
+
+    ``head_sha`` is what makes the pass commit-aware: a description already
+    written for the current HEAD does not need rewriting, so a repeated run is
+    a no-op instead of another AI call against an unchanged branch.
+    """
+    head_sha: str = ""
+    template_path: str = ""
+    changed: bool = False
+    updated_at: str = ""
+
+
 class ThreadAction(StrEnum):
     FIXED = "fixed"
     DEFERRED = "deferred"
     NEEDS_HUMAN = "needs_human"
     DISMISSED = "dismissed"
+    ALREADY_ADDRESSED = "already_addressed"
 
 
 @dataclass
@@ -250,6 +265,7 @@ class PRState:
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
     rebase: RebaseSummary = field(default_factory=RebaseSummary)
+    describe: DescribeSummary = field(default_factory=DescribeSummary)
     fix: FixSummary = field(default_factory=FixSummary)
     pending_comments: list[PendingComment] = field(default_factory=list)
     created_at: str = ""
@@ -330,6 +346,10 @@ def _rebase_from_dict(d: dict) -> RebaseSummary:
     return _serde_from_dict(RebaseSummary, d)
 
 
+def _describe_from_dict(d: dict) -> DescribeSummary:
+    return _serde_from_dict(DescribeSummary, d)
+
+
 def _fix_from_dict(d: dict) -> FixSummary:
     for t in d.get("threads", []):
         if "thread_id" in t and "id" not in t:
@@ -367,6 +387,7 @@ def state_from_dict(d: dict) -> PRState:
         comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
         triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
         rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
+        describe=_serde_from_dict(DescribeSummary, d.get("describe", {})),
         fix=_fix_from_dict(d.get("fix", {})),
         pending_comments=pending,
         created_at=d.get("created_at", ""),
@@ -491,9 +512,34 @@ def update_rebase(state: PRState, summary: RebaseSummary) -> None:
     state.rebase = summary
 
 
+def update_describe(state: PRState, summary: DescribeSummary) -> None:
+    """Replace describe summary."""
+    state.describe = summary
+
+
 def update_fix(state: PRState, summary: FixSummary) -> None:
-    """Replace fix summary."""
-    state.fix = summary
+    """Merge a fix pass into the accumulated fix summary.
+
+    Thread outcomes accumulate across rounds, keyed by thread id — a later pass
+    supersedes an earlier outcome for the same thread, but never drops threads
+    it did not touch.  A review cycle spans several rounds and the summary
+    comment must account for all of them, not just the most recent pass.
+
+    The deferred tracking issue is likewise cycle-scoped: it is created once and
+    updated on later rounds.  A fix pass builds its FixSummary before knowing
+    about it, so an empty id/url means "not set this round", not "cleared" —
+    dropping it would make the next deferred round open a duplicate issue.
+    Every other field is per-round and taken from the incoming summary.
+    """
+    merged = {t.id: t for t in state.fix.threads}
+    for outcome in summary.threads:
+        merged[outcome.id] = outcome
+    state.fix = dataclass_replace(
+        summary,
+        threads=list(merged.values()),
+        deferred_issue_id=summary.deferred_issue_id or state.fix.deferred_issue_id,
+        deferred_issue_url=summary.deferred_issue_url or state.fix.deferred_issue_url,
+    )
 
 
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:
@@ -548,6 +594,7 @@ _DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
     "comments": (_comments_from_dict, update_comments),
     "triage": (_triage_from_dict, update_triage),
     "rebase": (_rebase_from_dict, update_rebase),
+    "describe": (_describe_from_dict, update_describe),
     "fix": (_fix_from_dict, update_fix),
 }
 

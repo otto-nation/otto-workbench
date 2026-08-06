@@ -13,12 +13,12 @@ import re
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 
+import agent_retry
 import log
 from review_common import (
     FILE_STAT_FMT, count_severity,
@@ -67,11 +67,9 @@ from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
-    DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG, DIAG_NO_WRITE_TOOL_CALL,
-    _diagnose_missing_output, _is_model_error, _parse_session_cost,
-    _resolve_model, _resolve_provider, _resolve_thinking_level,
-    _try_recover_output,
-    invoke_agent, is_transient_error,
+    _is_model_error, _parse_session_cost, _resolve_model, _resolve_provider,
+    _resolve_thinking_level, diagnose_missing_output, invoke_agent,
+    try_recover_output,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -80,8 +78,8 @@ DEFAULT_MAX_TURNS_HOLISTIC = 15
 DEFAULT_MAX_TURNS_SYNTHESIS = 15
 DEFAULT_MAX_TURNS_SINGLE = 15
 
-RETRY_MAX_TURNS_GROUP = 30
-_MAX_TURNS_REASON = "agent hit max turns"
+RETRY_MAX_TURNS_GROUP = agent_retry.RETRY_MAX_TURNS
+_MAX_TURNS_REASON = agent_retry.MAX_TURNS_REASON
 
 # Phase → default model. Entries stay explicit rather than comprehension-built
 # so that giving one phase a different default is a one-line change.
@@ -203,10 +201,7 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _has_output(path: str) -> bool:
-    """Check if a file exists and has content (not just pre-created empty)."""
-    p = Path(path)
-    return p.exists() and p.stat().st_size > 0
+_has_output = agent_retry.has_output
 
 
 def _omitted_turns(job: "ReviewJob") -> int:
@@ -380,93 +375,17 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     _write_review_sidecar(job)
 
 
-_RETRY_HINT = (
-    "IMPORTANT: A previous attempt ran out of turns before writing output. "
-    "Write your findings file IMMEDIATELY as your first action, then verify.\n\n"
-)
+# The hints, the retryability test and the retry driver are shared with the
+# other `pr` scripts — see agent_retry. Aliased here so this module's internals
+# keep reading the way they always have.
+_RETRY_HINT = agent_retry.RETRY_HINT
+_FIX_RETRY_HINT = agent_retry.FIX_RETRY_HINT
+_NO_WRITE_HINT = agent_retry.NO_WRITE_HINT
+_NON_RECOVERABLE_REASONS = agent_retry.NON_RECOVERABLE_REASONS
 
-_FIX_RETRY_HINT = (
-    "IMPORTANT: A previous attempt ran out of turns reading files without applying any fixes. "
-    "Start with the highest-severity fixable findings and apply edits IMMEDIATELY. "
-    "Skip findings that require design decisions — annotate them with *(skipped — reason)* "
-    "and move on.\n\n"
-)
-
-_NO_WRITE_HINT = (
-    "IMPORTANT: A previous attempt finished without ever calling a "
-    "file-writing tool. Write your output file FIRST, before any further "
-    "investigation: Read it — it already exists and is empty — then Edit it "
-    "with an empty `old_string` to insert the complete document. Refine it "
-    "with further edits only if turns remain.\n\n"
-)
-
-_NON_RECOVERABLE_REASONS = ("permission denied",)
-
-
-def _retry_hint_for(reason: str) -> str:
-    """The most specific hint the diagnosis supports.
-
-    Checked most-specific first: the no-write label attaches to turn exhaustion
-    and to clean completions alike, and naming the write mechanism beats
-    telling the agent to hurry.
-    """
-    if DIAG_NO_WRITE_TOOL_CALL in reason:
-        return _NO_WRITE_HINT
-    if _MAX_TURNS_REASON in reason:
-        return _RETRY_HINT
-    return ""
-
-
-def _retry_turns_for(reason: str, max_turns: int) -> int:
-    """Turn budget for a retry.
-
-    Only turn exhaustion earns a bigger budget — a transient API error or a
-    missing result record would fail identically with more turns. Doubling is
-    capped at the ceiling the group retry already uses, but never lowers a
-    budget that was scaled above it.
-    """
-    if _MAX_TURNS_REASON not in reason:
-        return max_turns
-    return min(max_turns * 2, max(RETRY_MAX_TURNS_GROUP, max_turns))
-
-
-def _retry_missing_output(
-    invoke: Callable[[str, int], int],
-    prompt: str, log_path: str, output_path: str,
-    *, label: str, max_turns: int,
-) -> str:
-    """Give an agent that produced no output a second attempt.
-
-    `invoke(prompt, max_turns)` runs the agent. Returns the diagnosed failure
-    reason, or "" once output exists.
-
-    Group reviews keep their own batch-level retry in `_retry_failed_groups`,
-    which adds a circuit breaker across groups. This covers the single-agent
-    phases, which used to give up after the first attempt.
-    """
-    if not _has_output(output_path):
-        _try_recover_output(log_path, output_path)
-    if _has_output(output_path):
-        return ""
-
-    reason = _diagnose_missing_output(log_path)
-    if not _is_retryable(reason):
-        return reason
-
-    turns = _retry_turns_for(reason, max_turns)
-    log.warn(f"{label} produced no output ({reason}) — retrying once ({turns} turns)")
-    log.blank()
-    prior = preserve_log(log_path)
-    invoke(_retry_hint_for(reason) + prompt, turns)
-    log.blank()
-
-    if not _has_output(output_path):
-        _try_recover_output(log_path, output_path)
-    # Diagnose before restoring: in a merged log the first attempt's tool calls
-    # would mask what the retry actually did.
-    retry_reason = "" if _has_output(output_path) else _diagnose_missing_output(log_path)
-    restore_preserved(log_path, prior)
-    return retry_reason
+_retry_hint_for = agent_retry.hint_for
+_retry_turns_for = agent_retry.turns_for
+_retry_missing_output = agent_retry.retry_missing_output
 
 
 def build_failures_section(
@@ -579,9 +498,9 @@ def _review_group(
 
     failed = None
     if not _has_output(group_output):
-        _try_recover_output(group_log, group_output)
+        try_recover_output(group_log, group_output)
     if not _has_output(group_output):
-        reason = _diagnose_missing_output(group_log)
+        reason = diagnose_missing_output(group_log)
         log.warn(f"Group {i} ({grp.name}) produced no output ({reason})")
         failed = (grp.name, reason)
         if pipeline_state is not None:
@@ -989,7 +908,7 @@ def run_fix_pass(job: ReviewJob):
     result = _diff_findings(before_findings, after_findings)
 
     if not _fix_pass_made_progress(result) and result.skipped_count > 0:
-        reason = _diagnose_missing_output(fix_log)
+        reason = diagnose_missing_output(fix_log)
         log.warn(f"Fix pass made no progress ({reason})")
         if _is_retryable(reason):
             retry_turns = _fix_retry_budget(max_turns)
@@ -1091,22 +1010,7 @@ def _run_parallel_reviews(
     return [failure for _, _, failure in results if failure]
 
 
-def _is_retryable(reason: str) -> bool:
-    if reason.startswith("skipped: "):
-        return False
-    if _MAX_TURNS_REASON in reason:
-        return True
-    # A run that ended on its own terms without ever calling a write tool
-    # produced nothing and gave no reason it could not have — the retry hint
-    # names the mechanism. `_diagnose_missing_output` withholds this label from
-    # crashes, so it never makes a permanent error retryable.
-    if DIAG_NO_WRITE_TOOL_CALL in reason:
-        return True
-    if reason in (DIAG_NO_RESULT_RECORD, DIAG_NO_SESSION_LOG):
-        return True
-    if is_transient_error(reason):
-        return True
-    return False
+_is_retryable = agent_retry.is_retryable
 
 
 def _retry_turns(reason: str, job: "ReviewJob") -> int:

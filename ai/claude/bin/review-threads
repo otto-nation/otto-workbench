@@ -8,11 +8,12 @@ Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
   review-threads --fix
-  review-threads --resolve
+  review-threads --finish
 """
 
 import argparse
 import dataclasses
+import functools
 import json
 import re
 import subprocess
@@ -25,6 +26,7 @@ from string import Template
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import log
+import agent_retry
 import ai_backend
 import pr_comments as pc
 import pr_context
@@ -60,11 +62,15 @@ FIX_RETRY_TURNS_BUMP = 15
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+_SUMMARY_MARKER = "<!-- pr-comments:summary -->"
 _APPLIED_REPLY_PREFIX = "Applied:"
 _ADDRESSED_REPLY_PREFIX = "Already addressed"
 _DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
-_FIX_RETRY_HINT = (
+# Not agent_retry.FIX_RETRY_HINT, which scolds an agent that produced nothing.
+# This one addresses an agent that produced something and is being handed the
+# remainder, so it points at the checklist rather than at the write mechanism.
+_FIX_RESUME_HINT = (
     "This is a RETRY of a prior fix pass. Some items were already fixed in the "
     "previous pass — focus only on unchecked items below. Work efficiently.\n\n"
 )
@@ -82,6 +88,15 @@ def _extract_json(text: str) -> str:
         if end > start:
             return stripped[start:end + 1]
     return stripped
+
+
+def _parses_as_json(text: str) -> bool:
+    """Whether triage output can be consumed. Drives the retry-once guard."""
+    try:
+        json.loads(_extract_json(text))
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return True
 
 
 def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
@@ -121,15 +136,43 @@ def _gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
     return "\n".join(snippets)
 
 
+def _branch_commit_log(wt_path: Path | None) -> str:
+    """Commit subjects on this branch, newest first.
+
+    Triage sees code context from current HEAD, which already contains fixes made
+    in earlier rounds of the same review cycle.  Without the log it cannot tell a
+    suggestion that was acted on from one that never applied, and defaults to
+    calling the reviewer wrong.
+    """
+    if not wt_path:
+        return ""
+    base = f"origin/{_resolve_default_branch(wt_path)}"
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "log", "--format=%h %s", f"{base}..HEAD"],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def _build_triage_prompt(
     non_resolved: list[ReportThread], code_context: str,
     unseen_comments: list[dict] | None = None,
+    commit_log: str = "",
 ) -> str:
     """Build the AI classification prompt for thread triage."""
     thread_json = json.dumps([dataclasses.asdict(t) for t in non_resolved], indent=2)
     context_block = ""
     if code_context:
         context_block = f"\nCode context for referenced files:\n{code_context}\n"
+
+    history_block = ""
+    if commit_log:
+        history_block = (
+            "\nCommits already made on this branch (newest first). A commit whose "
+            "subject matches what a thread asks for means that thread was already "
+            "acted on — classify it already_addressed, not invalid:\n"
+            f"{commit_log}\n"
+        )
 
     comments_block = ""
     comment_items_schema = ""
@@ -152,13 +195,15 @@ Top-level comments:
       "index": 0,
       "reviewer": "user from input comment",
       "classification": "actionable_suggestion|question|approval|conflicting",
-      "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "verification": "valid|already_addressed|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
       "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "summary": "one-line summary of this specific item",
       "file": "file path if referenced in the item (empty string if not)",
       "line": 0,
-      "body": "relevant excerpt from the comment for this item"
+      "body": "relevant excerpt from the comment for this item",
+      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
+      "evidence_line": 0
     }}
   ],"""
 
@@ -166,17 +211,36 @@ Top-level comments:
 
 For each thread, provide:
 1. classification: one of 'actionable_suggestion', 'question', 'approval', 'conflicting'
-2. verification (only for actionable_suggestion): one of 'valid', 'invalid', 'needs_discussion'
+2. verification (only for actionable_suggestion): one of 'valid', 'already_addressed',
+   'invalid', 'needs_discussion'
+   - valid: the suggestion is correct and the code does NOT yet do what it asks
+   - already_addressed: the code already does what the reviewer asks. The code context
+     below is current HEAD, which includes commits made earlier in this same review
+     cycle — so a suggestion that looks satisfied is usually one that was ALREADY ACTED
+     ON in response to this very thread. This is agreement with the reviewer, not
+     rejection of them.
+   - invalid: the reviewer's premise is factually wrong — they misread the code, or the
+     change they describe would break something. Use this ONLY when you can state the
+     specific mistake in `reasoning`. "The code already does this" is NEVER invalid; it
+     is already_addressed. When torn between invalid and any other value, do not pick
+     invalid.
+   - needs_discussion: a judgment call, tradeoff, or design decision the author must make
 3. complexity (only for actionable_suggestion with verification=valid): one of 'low', 'medium', 'high'
    - low: rename, remove, import fix, guard/nil check, use existing helper
    - medium: logic change within a single function or file
    - high: cross-file refactor, design decision, or architectural change
 4. reasoning: one sentence explaining your classification/verification
 5. summary: one-line summary of the thread
+6. evidence_file / evidence_line: the file and 1-based line that prove your verdict.
+   REQUIRED for already_addressed and invalid — those verdicts get posted back to the
+   reviewer as a claim about their code, and a claim with no line to point at is not one
+   you can make. Cite the line that already does what the reviewer asked
+   (already_addressed) or the line that contradicts their premise (invalid). If you
+   cannot name one, the verdict is needs_discussion. Leave both empty otherwise.
 
 Thread data:
 {thread_json}
-{context_block}{comments_block}
+{context_block}{history_block}{comments_block}
 Return JSON matching this exact schema:
 {{
   "threads": [
@@ -184,13 +248,15 @@ Return JSON matching this exact schema:
       "id": "id from input",
       "state": "state from input",
       "classification": "actionable_suggestion|question|approval|conflicting",
-      "verification": "valid|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
+      "verification": "valid|already_addressed|invalid|needs_discussion (only for actionable_suggestion, empty string otherwise)",
       "complexity": "low|medium|high (only for actionable_suggestion with verification=valid, empty string otherwise)",
       "reasoning": "brief explanation",
       "file": "file from input",
       "line": "line_from_input",
       "reviewer": "reviewer from input",
-      "summary": "one-line summary"
+      "summary": "one-line summary",
+      "evidence_file": "file proving the verdict (required for already_addressed/invalid)",
+      "evidence_line": 0
     }}
   ],{comment_items_schema}
   "stats": {{
@@ -201,6 +267,7 @@ Return JSON matching this exact schema:
     "conflicting": "count of conflicting threads",
     "valid": "count of valid threads",
     "invalid": "count of invalid threads",
+    "already_addressed": "count of already-addressed threads",
     "comment_items_total": "count of decomposed comment items (0 if none)",
     "comment_items_actionable": "count of actionable comment items (0 if none)"
   }}
@@ -238,6 +305,67 @@ def _assign_item_ids(comment_items: list[CommentItem]) -> None:
         item.id = f"{prefix}-{item.source_id}-{item.index}"
 
 
+_UNSUPPORTED_VERDICTS = ("already_addressed", "invalid")
+
+_DOWNGRADE_REASON = (
+    "downgraded from {verdict}: triage cited no line in this repo to back the claim"
+)
+
+
+def _evidence_is_real(repo_dir: Path, entry: CommentItem) -> bool:
+    """Whether the entry cites a line that actually exists inside `repo_dir`.
+
+    Both halves matter, and neither is checked by joining and stating the
+    result.  Containment needs the resolved paths compared, because joining a
+    directory with an absolute path discards the directory and a relative path
+    made of `..` walks straight out of the tree — either way a citation from
+    outside the repo would stat a real file and pass for verified.  The line
+    number needs the file's length, because a permalink past EOF highlights
+    nothing.
+    """
+    if not entry.has_evidence():
+        return False
+    root = repo_dir.resolve()
+    try:
+        cited = (root / entry.evidence_file).resolve()
+        if not cited.is_relative_to(root) or not cited.is_file():
+            return False
+        with cited.open(encoding="utf-8", errors="replace") as fh:
+            return entry.evidence_line <= sum(1 for _ in fh)
+    except OSError:
+        return False
+
+
+def _downgrade_unsupported_verdicts(
+    entries: list[CommentItem], repo_dir: Path, trail: Trail | None = None,
+) -> int:
+    """Demote verdicts that cannot cite code to needs_discussion. Returns count.
+
+    `already_addressed` and `invalid` are posted back to the reviewer as claims
+    about their code, so each one has to point at a line.  A verdict whose cited
+    location does not exist in the tree is no better than one with no location:
+    the reader gets a link to nothing.  Rather than post an unsupported claim,
+    hand the thread to the author.
+    """
+    downgraded = 0
+    for entry in entries:
+        if entry.verification not in _UNSUPPORTED_VERDICTS:
+            continue
+        if _evidence_is_real(repo_dir, entry):
+            continue
+        reason = _DOWNGRADE_REASON.format(verdict=entry.verification)
+        if trail:
+            trail.info("triage_downgrade", reason, data={"thread": entry.id})
+        log.warn(f"{entry.id}: {reason} — routing to needs_discussion")
+        entry.verification = "needs_discussion"
+        entry.complexity = ""
+        entry.evidence_file = ""
+        entry.evidence_line = 0
+        entry.reasoning = f"{entry.reasoning} ({reason})".strip()
+        downgraded += 1
+    return downgraded
+
+
 def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
                 trail: Trail | None = None) -> tuple[TriageResult | None, int]:
     """Classify non-resolved threads and decompose top-level comments via AI.
@@ -254,9 +382,12 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     prompt = _build_triage_prompt(
         non_resolved, code_context,
         unseen_comments=unseen_comments or None,
+        commit_log=_branch_commit_log(repo_dir),
     )
 
-    stdout, rc = ai_backend.prompt(prompt)
+    stdout, rc = agent_retry.retry_blank_response(
+        ai_backend.prompt, prompt, label="Triage", usable=_parses_as_json,
+    )
     if rc != 0:
         if trail:
             trail.error("triage", "AI prompt failed", data={"exit_code": rc})
@@ -276,6 +407,17 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
 
     triage_result = triage_result_from_dict(raw)
     _assign_item_ids(triage_result.comment_items)
+
+    downgraded = _downgrade_unsupported_verdicts(
+        triage_result.threads, repo_dir, trail,
+    ) + _downgrade_unsupported_verdicts(
+        triage_result.comment_items, repo_dir, trail,
+    )
+    if downgraded:
+        # The model's own count is stale once a verdict moves.
+        triage_result.stats.invalid = sum(
+            1 for t in triage_result.threads if t.verification == "invalid"
+        )
 
     # Update triage state
     try:
@@ -433,19 +575,15 @@ def _render_fix_template(
     return result
 
 
+@functools.cache
 def _resolve_default_branch(wt_path: Path) -> str:
-    """Resolve the repo's default branch name via origin/HEAD symbolic-ref."""
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(wt_path), "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True, text=True,
-        )
-        ref = r.stdout.strip()
-        if ref:
-            return ref.replace("refs/remotes/origin/", "")
-    except Exception:
-        pass
-    return "main"
+    """`pr_context.default_branch`, cached for the run.
+
+    The default branch cannot change mid-run and several call sites need it per
+    file processed, so the shared resolver is memoised here rather than in the
+    library every script imports.
+    """
+    return pr_context.default_branch(wt_path)
 
 
 def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
@@ -472,6 +610,11 @@ def _fix_retry_budget(original: int) -> int:
     return min(max(FIX_RETRY_TURNS_MIN, original + FIX_RETRY_TURNS_BUMP), FIX_MAX_TURNS_CAP)
 
 
+def _fix_session_log(wt_path: Path) -> str:
+    """Where the fix agent streams its session, so a thrash can be diagnosed."""
+    return str(wt_path / "ignore" / "pr-comments" / "fix-session.jsonl")
+
+
 def _invoke_fix_agent(
     prompt: str, wt_path: Path, main_wt_path: Path | None = None,
     max_turns: int | None = None, max_budget: float | None = None,
@@ -482,10 +625,46 @@ def _invoke_fix_agent(
         dirs.append(str(main_wt_path))
     return ai_backend.invoke_fix(
         prompt,
+        session_log=_fix_session_log(wt_path),
         add_dirs=dirs,
         max_turns=max_turns if max_turns is not None else FIX_MIN_TURNS,
         max_budget=max_budget if max_budget is not None else FIX_MIN_BUDGET,
         model=FIX_MODEL,
+    )
+
+
+def _guarded_fix_pass(
+    prompt: str, wt_path: Path, main_wt: Path | None, tracking_file: Path,
+    *, max_turns: int, max_budget: float, label: str,
+) -> str:
+    """Run the fix agent, retrying once if it checked nothing off.
+
+    An agent that finishes having touched no box and called no write tool was
+    thrashing, and the shared guard's retry names the write mechanism.  Partial
+    progress is not this function's business — `_retry_fix_pass` handles that,
+    and the guard stays out of its way by treating a single checked box as
+    output.  Returns the diagnosed reason, or "" when the pass produced work.
+    """
+    def invoke(text: str, turns: int) -> int:
+        return _invoke_fix_agent(
+            text, wt_path, main_wt, max_turns=turns, max_budget=max_budget,
+        )
+
+    return agent_retry.run_guarded(
+        invoke, prompt, _fix_session_log(wt_path),
+        label=label, max_turns=max_turns,
+        produced=lambda: _count_checked(tracking_file) > 0,
+        hint_select=lambda reason: agent_retry.FIX_RETRY_HINT,
+    )
+
+
+def _count_checked(path: Path) -> int:
+    """Count checked checkboxes in a tracking file."""
+    if not path.exists():
+        return 0
+    return sum(
+        1 for line in path.read_text().splitlines()
+        if re.match(r"^- \[[xX]\] ", line)
     )
 
 
@@ -709,11 +888,29 @@ def _post_fix_replies(
     return posted
 
 
+def _blob_permalink(repo: str, sha: str, filepath: str, line: int) -> str:
+    """A blob URL pinned to a SHA, so the link still points at the cited code.
+
+    Branch-relative blob URLs drift as the branch moves; a claim posted to a
+    reviewer has to survive the next push.
+    """
+    return f"https://github.com/{repo}/blob/{sha}/{filepath}#L{line}"
+
+
+def _evidence_link(entry: CommentItem, repo: str, sha: str) -> str:
+    """Render an entry's cited location as a markdown link, or "" if uncited."""
+    if not entry.has_evidence() or not sha:
+        return ""
+    url = _blob_permalink(repo, sha, entry.evidence_file, entry.evidence_line)
+    return f"[`{entry.evidence_file}:{entry.evidence_line}`]({url})"
+
+
 def _find_addressing_commit(wt_path: Path, filepath: str) -> str | None:
     """Find the most recent branch commit that modified a file."""
+    base = f"origin/{_resolve_default_branch(wt_path)}"
     result = subprocess.run(
         ["git", "-C", str(wt_path), "log", "-1", "--format=%H",
-         "origin/main..HEAD", "--", filepath],
+         f"{base}..HEAD", "--", filepath],
         capture_output=True, text=True,
     )
     sha = result.stdout.strip()
@@ -729,18 +926,24 @@ def _post_already_addressed_replies(
 ) -> int:
     """Post replies to threads already addressed in the current code. Returns count posted."""
     commit_cache: dict[str, str | None] = {}
+    head_sha = _get_head_sha(wt_path)
 
     def body_fn(entry: CommentItem) -> str:
         if entry.file not in commit_cache:
             commit_cache[entry.file] = _find_addressing_commit(wt_path, entry.file)
         sha = commit_cache[entry.file]
+        # The line was read at HEAD, so that is the tree the link has to pin to;
+        # the addressing commit answers "when", not "where".
+        parts = [f"Already addressed: {entry.summary}"]
+        link = _evidence_link(entry, repo, head_sha)
+        if link:
+            parts.append(f"Current behaviour is at {link}.")
         if sha:
             commit_url = f"https://github.com/{repo}/commit/{sha}"
-            return (
-                f"Already addressed: {entry.summary}\n\n"
-                f"Addressed in [`{sha[:7]}`]({commit_url})."
-            )
-        return f"Already addressed in the current implementation: {entry.summary}"
+            parts.append(f"Addressed in [`{sha[:7]}`]({commit_url}).")
+        if len(parts) == 1:
+            return f"Already addressed in the current implementation: {entry.summary}"
+        return "\n\n".join(parts)
 
     posted = _post_thread_replies(
         fixed, threads_by_id, repo, pr_number, body_fn,
@@ -756,13 +959,26 @@ def _post_dismissed_replies(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
+    wt_path: Path,
 ) -> int:
-    """Post replies to invalid suggestion threads. Returns count posted."""
+    """Post replies to invalid suggestion threads. Returns count posted.
+
+    Reserved for suggestions whose premise does not hold.  A suggestion the code
+    already satisfies is not dismissed — it goes through
+    _post_already_addressed_replies, which credits the reviewer instead of
+    telling them their point did not apply.
+
+    Telling a reviewer they misread the code is the one reply that most needs a
+    line to point at, so the dismissal carries the permalink triage cited.
+    """
+    head_sha = _get_head_sha(wt_path)
+
     def body_fn(entry: CommentItem) -> str:
         reasoning = entry.reasoning
-        if reasoning:
-            return f"Suggestion reviewed and determined to be inapplicable: {reasoning}"
-        return "Suggestion reviewed and determined to be inapplicable."
+        body = "Suggestion reviewed and determined to be inapplicable"
+        body = f"{body}: {reasoning}" if reasoning else f"{body}."
+        link = _evidence_link(entry, repo, head_sha)
+        return f"{body}\n\nSee {link}." if link else body
 
     posted = _post_thread_replies(
         dismissed, threads_by_id, repo, pr_number, body_fn,
@@ -800,23 +1016,29 @@ _NO_ISSUE = CreatedIssue()
 
 
 def _finalize_deferred(
+    state: pr_state.PRState,
     ctx: pr_context.ResolvedContext,
     threads_by_id: dict,
     trail: Trail | None = None,
 ) -> CreatedIssue:
-    """Create tracking issue and post deferred replies for items held from fix pass."""
-    wt_path = ctx.worktree_root
-    if not wt_path:
-        return _NO_ISSUE
-    state = pr_state.load_state(wt_path)
-    if not state or not state.fix.threads:
+    """Create tracking issue and post deferred replies for items held from fix pass.
+
+    Mutates `state` and leaves the save to the caller, which mutates the same
+    object either side of this call. Reading the file again here and saving
+    that copy would drop whatever the caller had already written.
+    """
+    if not ctx.worktree_root or not state.fix.threads:
         return _NO_ISSUE
 
     FA = pr_state.ThreadAction
+    # `reason` carries why the thread was held back, and it is the only column
+    # in the tracking issue that distinguishes an agent that gave up from a
+    # decision anyone made. Rebuilding the item without it renders every row
+    # blank.
     deferred = [
         CommentItem(
             id=t.id, file=t.file, line=t.line,
-            reviewer=t.reviewer, summary=t.summary,
+            reviewer=t.reviewer, summary=t.summary, reason=t.reason,
         )
         for t in state.fix.threads if t.action == FA.DEFERRED
     ]
@@ -841,8 +1063,37 @@ def _finalize_deferred(
 
     state.fix.deferred_issue_id = issue.id
     state.fix.deferred_issue_url = issue.url
-    pr_state.save_state(wt_path, state)
     return issue
+
+
+def _finish_deferred_work(
+    ctx: pr_context.ResolvedContext,
+    report: PRReport,
+    trail: Trail | None = None,
+) -> None:
+    """Close out what the fix pass held back: replies, tracking issue, summary.
+
+    A phase of its own rather than a tail of `--fix`, because the summary is
+    withheld until the needs_human threads have been discussed — which by
+    definition has not happened while the fix pass is still running.
+
+    Reads state from disk rather than taking the caller's copy: the fix pass
+    writes its outcomes there, so a copy read before it ran would be missing
+    exactly the threads this phase exists to close out.
+    """
+    wt_path = ctx.worktree_root
+    if not wt_path or not ctx.pr_number:
+        return
+    state = pr_state.load_state(wt_path)
+    if state is None:
+        return
+    threads_by_id = {t.id: t for t in report.threads}
+    _post_push_deferred_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
+    _finalize_deferred(state, ctx, threads_by_id, trail=trail)
+    _render_deferred_summary(
+        state, report, ctx.repo, ctx.pr_number, threads_by_id,
+    )
+    pr_state.save_state(wt_path, state)
 
 
 def _resolve_fixed_threads(
@@ -881,7 +1132,7 @@ def _build_deferred_issue_body(
         permalink = _thread_permalink(entry, threads_by_id, repo, pr_number)
         thread_cell = f"[{summary}]({permalink})" if permalink else summary
         file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
-        reason = entry.reason
+        reason = entry.reason or "—"
         parts.append(f"| {thread_cell} | {file_cell} | {reason} |")
     parts.append("")
     return "\n".join(parts)
@@ -1027,12 +1278,20 @@ def _summary_cell(
 def _build_row(
     entry: CommentItem | pr_state.ThreadOutcome, status: str,
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
+    head_sha: str = "",
 ) -> str:
-    """Build a single summary table row for a thread entry."""
+    """Build a single summary table row for a thread entry.
+
+    The file cell is a permalink whenever a SHA is known — every claim the table
+    makes should be one line away from the code that backs it.
+    """
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"
+        if head_sha:
+            url = _blob_permalink(repo, head_sha, entry.file, entry.line)
+            file_loc = f"[{file_loc}]({url})"
     elif entry.file:
         file_loc = f"`{entry.file}`"
     else:
@@ -1072,25 +1331,31 @@ def _build_summary_body(
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
     dismissed: list[_SummaryEntry] | None = None,
+    already_addressed: list[_SummaryEntry] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
     deferred_issue_url: str = "",
     has_comment_items: bool = False,
+    head_sha: str = "",
 ) -> str:
     """Build the markdown body for the fix summary comment."""
     dismissed = dismissed or []
+    already_addressed = already_addressed or []
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
     fixed_count = len(fixed)
     deferred_count = len(deferred)
     human_count = len(needs_human)
     dismissed_count = len(dismissed)
+    addressed_count = len(already_addressed)
 
-    parts = ["## Review Comments Addressed", ""]
+    parts = [_SUMMARY_MARKER, "## Review Comments Addressed", ""]
     counts = []
     if fixed_count:
         counts.append(f"**{fixed_count} fixed**")
+    if addressed_count:
+        counts.append(f"{addressed_count} already addressed")
     if dismissed_count:
         counts.append(f"{dismissed_count} dismissed")
     if deferred_count:
@@ -1101,14 +1366,19 @@ def _build_summary_body(
     parts.append("")
 
     rows = []
+    # The fix commit is the tree the table describes; fall back to the reviewed
+    # head when nothing was committed.
+    link_sha = cp.sha or head_sha
     fixed_status = _fixed_status_text(cp, repo)
     for entry in fixed:
-        rows.append(_build_row(entry, fixed_status, threads_by_id, repo, pr_number))
+        rows.append(_build_row(entry, fixed_status, threads_by_id, repo, pr_number, link_sha))
+    for entry in already_addressed:
+        rows.append(_build_row(entry, "Already addressed", threads_by_id, repo, pr_number, link_sha))
     for entry in dismissed:
-        rows.append(_build_row(entry, "Dismissed (invalid)", threads_by_id, repo, pr_number))
+        rows.append(_build_row(entry, "Dismissed (invalid)", threads_by_id, repo, pr_number, link_sha))
     for entry in needs_human:
         reason = entry.reason or "needs discussion"
-        rows.append(_build_row(entry, reason, threads_by_id, repo, pr_number))
+        rows.append(_build_row(entry, reason, threads_by_id, repo, pr_number, link_sha))
     if deferred_issue_id and deferred_issue_url:
         deferred_status = f"Deferred → [{deferred_issue_id}]({deferred_issue_url})"
     elif deferred_issue_id:
@@ -1116,7 +1386,7 @@ def _build_summary_body(
     else:
         deferred_status = "Deferred"
     for entry in deferred:
-        rows.append(_build_row(entry, deferred_status, threads_by_id, repo, pr_number))
+        rows.append(_build_row(entry, deferred_status, threads_by_id, repo, pr_number, link_sha))
 
     if rows:
         parts.append("| Thread | Reviewer | File | Action |")
@@ -1180,28 +1450,34 @@ def _post_fix_summary(
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
     dismissed: list[CommentItem] | None = None,
+    already_addressed: list[CommentItem] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     has_comment_items: bool = False,
+    head_sha: str = "",
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     dismissed = dismissed or []
+    already_addressed = already_addressed or []
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
     has_unseen = (
         any(not c.get("seen") for c in issue_comments)
         or any(not c.get("seen") for c in review_body_comments)
     )
-    if not fixed and not needs_human and not deferred and not dismissed and not has_unseen:
+    if (not fixed and not needs_human and not deferred and not dismissed
+            and not already_addressed and not has_unseen):
         return None
     body = _build_summary_body(
         fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
         dismissed=dismissed,
+        already_addressed=already_addressed,
         issue_comments=issue_comments,
         review_body_comments=review_body_comments,
         has_comment_items=has_comment_items,
+        head_sha=head_sha,
     )
-    url = pc.post_issue_comment(repo, pr_number, body)
+    url = pc.post_issue_comment(repo, pr_number, body, marker=_SUMMARY_MARKER)
     if url:
         log.info(f"Posted fix summary: {url}")
     else:
@@ -1217,7 +1493,7 @@ def _post_push_deferred_replies(
 ) -> None:
     """Post fix replies and resolve threads that were deferred due to push failure.
 
-    Called during --resolve. Checks if the commit has since been pushed;
+    Called during --finish. Checks if the commit has since been pushed;
     if so, posts replies and resolves threads. Updates state.fix.commit_status.
     """
     fix = state.fix
@@ -1252,7 +1528,7 @@ def _render_deferred_summary(
 ) -> None:
     """Re-render fix summary from state and post it.
 
-    Called during --resolve after the deferred tracking issue has been created
+    Called during --finish after the deferred tracking issue has been created
     and stored in state.fix.  Rebuilds the summary body from FixSummary's
     structured data so the issue link renders inline — no string patching.
     Updates state.fix.summary_url and summary_deferred on success.
@@ -1287,6 +1563,7 @@ def _render_deferred_summary(
     fixed = fixed + manually_fixed
     deferred = still_deferred
     dismissed = [t for t in fix.threads if t.action == FA.DISMISSED]
+    already_addressed = [t for t in fix.threads if t.action == FA.ALREADY_ADDRESSED]
 
     cp = CommitPushResult(
         sha=fix.commit_sha or None,
@@ -1296,13 +1573,15 @@ def _render_deferred_summary(
     body = _build_summary_body(
         fixed, [], deferred, cp, repo, pr_number, threads_by_id,
         dismissed=dismissed,
+        already_addressed=already_addressed,
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
         deferred_issue_id=fix.deferred_issue_id,
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
+        head_sha=fix.commit_sha or state.identity.head_sha,
     )
-    url = pc.post_issue_comment(repo, pr_number, body)
+    url = pc.post_issue_comment(repo, pr_number, body, marker=_SUMMARY_MARKER)
     if url:
         log.info(f"Posted deferred fix summary: {url}")
         fix.summary_url = url
@@ -1320,14 +1599,16 @@ def _post_or_defer_summary(
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
     dismissed: list[CommentItem] | None = None,
+    already_addressed: list[CommentItem] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     has_comment_items: bool = False,
+    head_sha: str = "",
 ) -> str | None:
     """Post summary immediately or defer to state when discussion is pending.
 
     Returns the comment URL if posted, None if deferred or nothing to post.
-    When deferred, the summary is re-rendered from FixSummary during --resolve.
+    When deferred, the summary is re-rendered from FixSummary during --finish.
     """
     if cp.status == "push_failed":
         log.info("Deferred fix summary — push failed, will post after push lands")
@@ -1337,12 +1618,14 @@ def _post_or_defer_summary(
         return _post_fix_summary(
             fixed, needs_human, deferred, cp, repo, pr_number,
             threads_by_id, dismissed=dismissed,
+            already_addressed=already_addressed,
             issue_comments=issue_comments,
             review_body_comments=review_body_comments,
             has_comment_items=has_comment_items,
+            head_sha=head_sha,
         )
 
-    log.info("Deferred fix summary — will render from state on resolve")
+    log.info("Deferred fix summary — will render from state on --finish")
     return None
 
 
@@ -1394,6 +1677,7 @@ def _build_thread_outcomes(
     deferred: list[CommentItem],
     needs_human: list[CommentItem],
     dismissed: list[CommentItem],
+    already_addressed: list[CommentItem] | None = None,
 ) -> list[pr_state.ThreadOutcome]:
     """Build ThreadOutcome list from categorized entries."""
     FA = pr_state.ThreadAction
@@ -1406,6 +1690,8 @@ def _build_thread_outcomes(
         outcomes.append(entry.to_outcome(FA.NEEDS_HUMAN))
     for entry in dismissed:
         outcomes.append(entry.to_outcome(FA.DISMISSED))
+    for entry in already_addressed or []:
+        outcomes.append(entry.to_outcome(FA.ALREADY_ADDRESSED))
     return outcomes
 
 
@@ -1462,6 +1748,8 @@ def _classify_triage_entries(
             result.fixable.append(tt)
         elif tt.verification == "needs_discussion":
             result.needs_human.append(dataclasses.replace(tt, reason="needs_discussion"))
+        elif tt.verification == "already_addressed":
+            result.already_addressed.append(tt)
         elif tt.verification == "invalid":
             result.dismissed.append(dataclasses.replace(tt, reasoning=tt.reasoning))
 
@@ -1472,11 +1760,12 @@ def _accounted_thread_ids(
     fixable: list[CommentItem],
     needs_human: list[CommentItem],
     dismissed: list[CommentItem],
+    already_addressed: list[CommentItem] | None = None,
 ) -> set[str]:
     """Return IDs of all threads that have a disposition in the fix pipeline."""
     return {
         entry.id
-        for entries in (fixable, needs_human, dismissed)
+        for entries in (fixable, needs_human, dismissed, already_addressed or [])
         for entry in entries
     }
 
@@ -1521,7 +1810,7 @@ def _retry_fix_pass(
     retry_count = len(retry_fixable) + len(retry_items)
     retry_turns = _fix_retry_budget(original_turns)
 
-    prompt = _FIX_RETRY_HINT + _render_fix_template(
+    prompt = _FIX_RESUME_HINT + _render_fix_template(
         branch=ctx.branch,
         repo=ctx.repo,
         threads_content=tracking_file.read_text(),
@@ -1532,8 +1821,11 @@ def _retry_fix_pass(
     )
 
     log.info(f"Retry pass — {retry_count} deferred items (max_turns={retry_turns})...")
-    _invoke_fix_agent(prompt, wt_path, main_wt,
-                      max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count))
+    _guarded_fix_pass(
+        prompt, wt_path, main_wt, tracking_file,
+        max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count),
+        label="Fix retry pass",
+    )
     log.blank()
 
     result = _parse_tracking_results(
@@ -1569,32 +1861,44 @@ def _run_comment_fix(
     fixable_items = item_cls.fixable
     items_needs_human = item_cls.needs_human
     items_dismissed = item_cls.dismissed
+    items_already_addressed = item_cls.already_addressed
 
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
+    all_addressed = thread_cls.already_addressed + items_already_addressed
 
     non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}
     accounted_ids = _accounted_thread_ids(
         fixable + (fixable_items or []),
         all_needs_human,
         all_dismissed,
+        all_addressed,
     )
     has_unaccounted = bool(non_resolved_ids - accounted_ids)
 
     no_commit = CommitPushResult(None, "no_changes", "")
 
-    dismissed_replies = 0
+    triage_replies = 0
     if dismissed:
-        dismissed_replies = _post_dismissed_replies(
-            dismissed, threads_by_id, ctx.repo, report.pr_number,
+        triage_replies += _post_dismissed_replies(
+            dismissed, threads_by_id, ctx.repo, report.pr_number, wt_path,
         )
+    if all_addressed:
+        triage_replies += _post_already_addressed_replies(
+            all_addressed, threads_by_id, ctx.repo, report.pr_number, wt_path,
+        )
+        _resolve_fixed_threads(all_addressed, threads_by_id)
 
     all_fixable = bool(fixable) or bool(fixable_items)
-    has_items = bool(fixable_items) or bool(items_needs_human) or bool(items_dismissed)
+    has_items = (
+        bool(fixable_items) or bool(items_needs_human)
+        or bool(items_dismissed) or bool(items_already_addressed)
+    )
 
     empty_result = CommentFixResult(
         needs_human=all_needs_human, dismissed=all_dismissed,
-        commit_status="no_changes", replies_posted=dismissed_replies,
+        already_addressed=all_addressed,
+        commit_status="no_changes", replies_posted=triage_replies,
     )
 
     if not all_fixable:
@@ -1602,22 +1906,26 @@ def _run_comment_fix(
         if has_unaccounted:
             log.info("Deferred fix summary — unresolved threads not yet addressed")
             summary_url = None
-        elif all_dismissed or all_needs_human:
+        elif all_dismissed or all_needs_human or all_addressed:
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, dismissed=all_dismissed,
+                already_addressed=all_addressed,
                 issue_comments=report.issue_comments,
                 review_body_comments=report.review_body_comments,
                 has_comment_items=has_items,
+                head_sha=ctx.head_sha,
             )
         else:
             summary_url = None
         empty_result.summary_url = summary_url
         empty_result.summary_deferred = summary_url is None and early_deferred
         _persist_fix_state(pr_state.FixSummary(
-            threads=_build_thread_outcomes([], [], all_needs_human, all_dismissed),
+            threads=_build_thread_outcomes(
+                [], [], all_needs_human, all_dismissed, all_addressed,
+            ),
             commit_status=no_commit.status,
-            replies_posted=dismissed_replies,
+            replies_posted=triage_replies,
             summary_url=summary_url or "",
             summary_deferred=summary_url is None and early_deferred,
             updated_at=pr_state.now_iso(),
@@ -1655,16 +1963,20 @@ def _run_comment_fix(
     )
 
     log.info("Fix pass — applying review comment suggestions...")
-    _invoke_fix_agent(prompt, wt_path, main_wt,
-                      max_turns=max_turns, max_budget=max_budget)
+    unproductive = _guarded_fix_pass(
+        prompt, wt_path, main_wt, tracking_file,
+        max_turns=max_turns, max_budget=max_budget, label="Fix pass",
+    )
     log.blank()
 
     tracking = _parse_tracking_results(
         tracking_file, fixable, fixable_items=fixable_items,
     )
 
+    # A pass the guard already retried to no effect has had its second attempt;
+    # `_retry_fix_pass` would be a third identical run against the same prompt.
     all_deferred_pre_retry = tracking.deferred + tracking.deferred_items
-    if all_deferred_pre_retry:
+    if all_deferred_pre_retry and not unproductive:
         retry_result = _retry_fix_pass(
             tracking.deferred, tracking.deferred_items,
             fixable, fixable_items or [],
@@ -1685,7 +1997,7 @@ def _run_comment_fix(
     if cp.status in ("no_changes", "commit_failed"):
         cp = _recover_agent_commit(wt_path, head_before, trail)
 
-    replies_posted = dismissed_replies
+    replies_posted = triage_replies
     if tracking.fixed and cp.status == "pushed":
         if cp.sha:
             replies_posted += _post_fix_replies(
@@ -1711,14 +2023,17 @@ def _run_comment_fix(
         all_fixed, all_needs_human, all_deferred, cp,
         ctx.repo, report.pr_number,
         threads_by_id, dismissed=all_dismissed,
+        already_addressed=all_addressed,
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
         has_comment_items=has_items,
+        head_sha=cp.sha or ctx.head_sha,
     )
 
     _persist_fix_state(pr_state.FixSummary(
         threads=_build_thread_outcomes(
             all_fixed, all_deferred, all_needs_human, all_dismissed,
+            all_addressed,
         ),
         commit_sha=cp.sha or "",
         commit_status=cp.status,
@@ -1733,6 +2048,7 @@ def _run_comment_fix(
         fixed=all_fixed,
         needs_human=all_needs_human,
         dismissed=all_dismissed,
+        already_addressed=all_addressed,
         deferred=all_deferred,
         commit_sha=cp.sha,
         commit_status=cp.status,
@@ -1780,7 +2096,7 @@ def _run_threads(trail, args, ctx) -> None:
                data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
 
     # Resolve verified threads if requested (or as part of triage)
-    if args.resolve or args.triage:
+    if args.finish or args.triage:
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
             log.info(f"Resolved {resolved_count} verified threads")
@@ -1858,13 +2174,6 @@ def _run_threads(trail, args, ctx) -> None:
             seen_review_body_comment_ids=current_review_ids,
             updated_at=pr_state.now_iso(),
         ))
-        if args.resolve:
-            threads_by_id = {t.id: t for t in report.threads}
-            _post_push_deferred_replies(st, repo, pr_number, threads_by_id)
-            issue = _finalize_deferred(ctx, threads_by_id, trail=trail)
-            st.fix.deferred_issue_id = issue.id
-            st.fix.deferred_issue_url = issue.url
-            _render_deferred_summary(st, report, repo, pr_number, threads_by_id)
         pr_state.save_state(toplevel, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")
@@ -1904,6 +2213,7 @@ def _run_threads(trail, args, ctx) -> None:
                        data={"fixable": fixable_count,
                              "deferred": len(fix_pass.deferred),
                              "dismissed": len(fix_pass.dismissed),
+                             "already_addressed": len(fix_pass.already_addressed),
                              "max_turns": fix_pass.max_turns,
                              "max_budget": fix_pass.max_budget,
                              "commit_sha": fix_pass.commit_sha,
@@ -1916,16 +2226,21 @@ def _run_threads(trail, args, ctx) -> None:
             output = dataclasses.asdict(triage_result) if triage_result else {}
             output["issue_comments"] = report.issue_comments
             output["review_body_comments"] = report.review_body_comments
+    else:
+        output = dataclasses.asdict(report)
 
-        json.dump(output, sys.stdout, indent=2)
-        print()
-        sys.exit(0)
+    # After the fix pass, not before: a combined --fix --finish run would
+    # otherwise close out the previous run's deferred set and leave this one's
+    # untouched. Outside the state-update try/except, because a caller running
+    # this to close the loop needs a failure to be an error, not a log line.
+    if args.finish:
+        _finish_deferred_work(ctx, report, trail=trail)
 
-    json.dump(dataclasses.asdict(report), sys.stdout, indent=2)
+    json.dump(output, sys.stdout, indent=2)
     print()
 
 
-def main():
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="PR review thread status")
     parser.add_argument("--pr", help="PR number")
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
@@ -1933,13 +2248,19 @@ def main():
                         help="Classify threads via AI and auto-resolve verified")
     parser.add_argument("--fix", action="store_true",
                         help="Triage threads and apply mechanical fixes via Claude agent")
-    parser.add_argument("--resolve", "--resolve-verified", action="store_true",
-                        dest="resolve",
-                        help="Resolve all verified threads on GitHub")
+    # --resolve is kept as an alias: resolution is not what this gates (--triage
+    # already resolves verified threads), but the flag shipped under that name.
+    parser.add_argument("--finish", "--resolve", "--resolve-verified",
+                        action="store_true", dest="finish",
+                        help="Close out deferred work: replies, tracking issue, summary")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")
     add_trail_args(parser)
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = _build_parser().parse_args()
 
     if args.fix:
         args.triage = True

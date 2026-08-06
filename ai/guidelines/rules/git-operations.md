@@ -42,6 +42,12 @@
 - To supply a custom title and/or body: `task --global pr:create -- --no-issue --draft --title "feat: title" --body "description"` — when both are provided, AI generation is skipped entirely; when only one is provided, the other is still AI-generated. Use `--body-file /path/to/file` instead of `--body` for multi-line or complex content
 - When the current working directory is not the target repo (e.g., running from a different worktree), pass `REPO_DIR`: `task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue --draft` — without this, git commands run against the CWD repo instead of the intended one
 
+## Replying to Review Comments
+
+- Back every factual claim in a reply with a link to the code. Use a blob permalink pinned to a SHA (`https://github.com/<owner>/<repo>/blob/<sha>/<path>#L<line>`) or a commit link — never a branch-relative URL, which drifts as the branch moves
+- This applies hardest to disagreement. Telling a reviewer their premise is wrong, or that the code already does what they asked, is a claim about their reading of the code; if you cannot point at the line that settles it, you do not have the claim — say what you checked and ask
+- The same holds for summary comments: every row that reports an outcome should link to the code it reports on
+
 ## Scope Discipline
 
 - Never bundle unrelated fixes into commits on a feature branch — if you spot an issue outside the branch's scope, create a separate branch for it

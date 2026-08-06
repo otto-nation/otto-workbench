@@ -158,7 +158,7 @@ def test_commands_registry_exists():
 def test_commands_registry_has_all_subcommands():
     # Keep this set in sync with _COMMANDS in ai/claude/bin/pr
     expected = {"create", "status", "ci", "review", "comments",
-                "fix", "rebase", "gc"}
+                "fix", "rebase", "describe", "gc"}
     assert set(pr_cli._COMMANDS.keys()) == expected
 
 
@@ -170,7 +170,7 @@ def test_commands_registry_entries_have_help():
 
 def test_commands_with_script_key():
     """Commands backed by an external script carry a 'script' key."""
-    has_script = {"ci", "review", "comments", "rebase"}
+    has_script = {"ci", "review", "comments", "rebase", "describe"}
     for name in has_script:
         assert "script" in pr_cli._COMMANDS[name], f"{name} missing 'script'"
 
@@ -749,8 +749,7 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
     ctx = _make_ctx()
     rc = pr_cli.cmd_fix([], ctx)
     assert rc == 0
-    assert mock_run.called
-    cmd = mock_run.call_args[0][0]
+    cmd = _first_call_containing(mock_run, "claude-review")
     assert "--self" in cmd
     assert "--fix" in cmd
 
@@ -764,11 +763,69 @@ def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
         finding_counts={}, verdict=pr_state.ReviewVerdict.APPROVE.value, updated_at="t",
     ))
     mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
     ctx = _make_ctx()
     rc = pr_cli.cmd_fix([], ctx)
     assert rc == 0
-    assert not mock_run.called
+    assert not _calls_containing(mock_run, "claude-review")
 
+
+def _calls_containing(mock_run, script: str) -> list[list[str]]:
+    """Calls that invoked this script.
+
+    Matched on the basename of argv[0], not a suffix scan across every
+    argument: a --repo-dir whose path happened to end in a script name would
+    otherwise pass for an invocation of that script.
+    """
+    return [
+        call[0][0] for call in mock_run.call_args_list
+        if Path(call[0][0][0]).name == script
+    ]
+
+
+def _first_call_containing(mock_run, script: str) -> list[str]:
+    calls = _calls_containing(mock_run, script)
+    assert calls, f"{script} was never invoked"
+    return calls[0]
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_describes_last(mock_load, mock_run):
+    """The description must reflect the branch state after all fix passes complete."""
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.update_review(state, pr_state.ReviewSummary(
+        finding_counts={"M": 1}, verdict=pr_state.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
+    ))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    pr_cli.cmd_fix([], ctx=_make_ctx())
+    scripts = [Path(call[0][0][0]).name for call in mock_run.call_args_list]
+    assert scripts[-1] == "pr-describe"
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_does_not_forward_argv_to_describe(mock_load, mock_run):
+    """--fix and friends mean nothing to pr-describe."""
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=0)
+    pr_cli.cmd_fix(["--verbose"], ctx=_make_ctx())
+    cmd = _first_call_containing(mock_run, "pr-describe")
+    assert "--verbose" not in cmd
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=1)
+    assert pr_cli.cmd_fix([], ctx=_make_ctx()) == 1
 
 
 # ── positional target forwarding ────────────────────────────────────────────

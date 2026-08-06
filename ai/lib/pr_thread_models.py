@@ -40,10 +40,19 @@ class CommentItem:
     verification: str = ""
     complexity: str = ""
     body: str = ""
+    # Where in the tree the verdict can be checked. A verdict posted back to a
+    # reviewer has to point at code, so triage cites the location it read.
+    evidence_file: str = ""
+    evidence_line: int = 0
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
         self.index = int(self.index or 0)
+        self.evidence_line = int(self.evidence_line or 0)
+
+    def has_evidence(self) -> bool:
+        """Whether this item cites a location a permalink can point at."""
+        return bool(self.evidence_file) and self.evidence_line > 0
 
     def to_outcome(
         self, action: ThreadAction, reason: str = "",
@@ -95,6 +104,7 @@ class ClassificationResult:
     fixable: list = field(default_factory=list)
     needs_human: list[CommentItem] = field(default_factory=list)
     dismissed: list[CommentItem] = field(default_factory=list)
+    already_addressed: list[CommentItem] = field(default_factory=list)
 
 
 # ── Fix tracking types ────────────────────────────────────────────────────
@@ -150,6 +160,7 @@ class CommentFixResult:
     fixed: list[CommentItem] = field(default_factory=list)
     needs_human: list[CommentItem] = field(default_factory=list)
     dismissed: list[CommentItem] = field(default_factory=list)
+    already_addressed: list[CommentItem] = field(default_factory=list)
     deferred: list[CommentItem] = field(default_factory=list)
     commit_sha: str | None = None
     commit_status: str = ""

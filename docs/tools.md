@@ -33,6 +33,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `otto-log` | Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
+| `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `ceiling-scan` | Scan for ceiling: markers and produce a structured debt ledger |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
@@ -284,13 +285,13 @@ Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → 
 Show thread lifecycle status for a PR — dashboard and JSON report.
 
 ```
-claude-review threads [<pr_url_or_number>] [--resolve-verified] [--repo-dir <PATH>]
+claude-review threads [<pr_url_or_number>] [--finish] [--repo-dir <PATH>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `<pr_url_or_number>` | PR number or URL (auto-detects from current branch if omitted) |
-| `--resolve-verified` | Resolve all verified threads on GitHub |
+| `--finish` | Close out deferred work (aliases: `--resolve`, `--resolve-verified`) |
 | `--repo-dir <PATH>` | Git worktree directory (aliases: `--repo`, `--worktree`) |
 
 ### `pr`
@@ -314,10 +315,38 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--resolve]` | Fetch and manage PR review threads |
-| `fix` | Run fix passes for CI, review, and comments in one step |
+| `comments [--triage] [--fix] [--finish]` | Fetch and manage PR review threads |
+| `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
+| `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
 | `gc` | Clean up stale PR review artifacts and cached state |
+
+**`pr comments` runs in two phases:**
+
+`--fix` triages threads, applies mechanical fixes, and resolves the verified
+ones. It withholds the summary comment whenever threads need human input,
+because the summary is meant to describe a finished conversation.
+
+`--finish` closes out what `--fix` held back: replies on threads whose commit
+had not yet been pushed, a tracking issue for the deferred ones, and the
+summary comment. It is a second invocation on purpose — the discussion has to
+happen in between. Combining them (`--fix --finish`) works and closes out that
+run's deferred set, but posts a summary nobody has replied to yet.
+
+`--resolve` and `--resolve-verified` are aliases for `--finish`. The old name
+was misleading: resolving verified threads happens under `--triage`, which
+`--fix` implies, so the flag never gated resolution.
+
+**`pr describe` is commit-aware:**
+
+The pass records the HEAD it described. A repeated run against an unchanged
+branch is a no-op rather than another AI call, which is what lets `pr fix` call
+it unconditionally at the end of every run. `--force` ignores the recorded SHA;
+`--dry-run` prints the revision instead of applying it.
+
+The template is read from the first of `.github/pull_request_template.md`,
+`.github/PULL_REQUEST_TEMPLATE.md`, `pull_request_template.md`, or
+`PULL_REQUEST_TEMPLATE.md`, falling back to Summary / Changes / Testing.
 
 **Push status in `pr status`:**
 

@@ -5,11 +5,16 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import write_thrash_log
+import pr_context
+import pr_state
 from pr_comments import ThreadState
 from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
 from pr_thread_models import CommentItem, PRReport, ReportThread
@@ -1193,6 +1198,163 @@ class TestBuildDeferredIssueBody:
         assert "do thing" in body
         assert "a.go:1" in body
 
+    def test_a_missing_reason_renders_a_placeholder(self, rt):
+        """An empty cell would read as a table bug; a dash reads as "unstated"."""
+        deferred = [CommentItem(id="t1", file="a.go", line=1, summary="do thing")]
+        body = rt._build_deferred_issue_body(deferred, "owner/repo", 1, {})
+        assert "—" in body
+
+
+# ── _finalize_deferred ────────────────────────────────────────────────────
+
+
+class TestFinalizeDeferredCarriesTheReason:
+    """The reason is the only column separating "agent gave up" from a decision."""
+
+    def _state_with_deferred(self, tmp_path):
+        state = PRState(
+            identity=PRIdentity(
+                repo="owner/repo", branch="b", pr_number=42,
+                head_sha="abc1234", worktree_root=str(tmp_path),
+            ),
+            fix=FixSummary(threads=[
+                ThreadOutcome(
+                    id="t1", file="a.go", line=7, reviewer="kgn",
+                    summary="rename the guard",
+                    action=ThreadAction.DEFERRED,
+                    reason="agent could not auto-fix",
+                ),
+            ]),
+        )
+        pr_state.save_state(tmp_path, state)
+        ctx = pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="abc1234",
+        )
+        return state, ctx
+
+    def _run(self, rt, state, ctx):
+        captured = []
+        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies"):
+            create.side_effect = lambda deferred, *a, **kw: (
+                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+            )
+            rt._finalize_deferred(state, ctx, {})
+        return captured
+
+    def test_reason_survives_into_the_tracking_issue(self, rt, tmp_path):
+        state, ctx = self._state_with_deferred(tmp_path)
+        captured = self._run(rt, state, ctx)
+        assert [e.reason for e in captured] == ["agent could not auto-fix"]
+
+    def test_the_rest_of_the_outcome_survives_too(self, rt, tmp_path):
+        state, ctx = self._state_with_deferred(tmp_path)
+        entry = self._run(rt, state, ctx)[0]
+        assert (entry.id, entry.file, entry.line) == ("t1", "a.go", 7)
+        assert (entry.reviewer, entry.summary) == ("kgn", "rename the guard")
+
+    def test_the_caller_owns_the_save(self, rt, tmp_path):
+        """Saving its own read would drop whatever the caller already wrote."""
+        state, ctx = self._state_with_deferred(tmp_path)
+        state.fix.commit_status = "pushed"
+        self._run(rt, state, ctx)
+        assert state.fix.deferred_issue_id == "I_1"
+        on_disk = pr_state.load_state(tmp_path)
+        assert on_disk.fix.commit_status == ""
+        assert on_disk.fix.deferred_issue_id == ""
+
+
+# ── _finish_deferred_work ─────────────────────────────────────────────────
+
+
+class TestFinishDeferredWork:
+    """The close-out phase: push-deferred replies, tracking issue, summary."""
+
+    def _ctx(self, tmp_path):
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="abc1234",
+        )
+
+    def _save(self, tmp_path, **fix_kw):
+        pr_state.save_state(tmp_path, PRState(
+            identity=PRIdentity(
+                repo="owner/repo", branch="b", pr_number=42,
+                head_sha="abc1234", worktree_root=str(tmp_path),
+            ),
+            fix=FixSummary(**fix_kw),
+        ))
+
+    def test_all_three_steps_run_in_order(self, rt, tmp_path):
+        self._save(tmp_path)
+        order = []
+        with patch.object(rt, "_post_push_deferred_replies",
+                          side_effect=lambda *a, **k: order.append("replies")), \
+                patch.object(rt, "_finalize_deferred",
+                             side_effect=lambda *a, **k: order.append("issue")), \
+                patch.object(rt, "_render_deferred_summary",
+                             side_effect=lambda *a, **k: order.append("summary")):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        assert order == ["replies", "issue", "summary"]
+
+    def test_state_written_by_the_steps_is_persisted(self, rt, tmp_path):
+        """The steps mutate in place; this phase is the one that saves."""
+        self._save(tmp_path)
+
+        def mark(state, *a, **k):
+            state.fix.commit_status = "pushed"
+
+        with patch.object(rt, "_post_push_deferred_replies", side_effect=mark), \
+                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        assert pr_state.load_state(tmp_path).fix.commit_status == "pushed"
+
+    def test_it_reads_state_from_disk_not_from_the_caller(self, rt, tmp_path):
+        """The fix pass writes its outcomes there; a stale copy would miss them."""
+        self._save(tmp_path, threads=[
+            ThreadOutcome(id="t9", action=ThreadAction.DEFERRED, reason="r"),
+        ])
+        seen = []
+        with patch.object(rt, "_post_push_deferred_replies",
+                          side_effect=lambda st, *a, **k: seen.extend(st.fix.threads)), \
+                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        assert [t.id for t in seen] == ["t9"]
+
+    def test_no_state_on_disk_is_a_no_op(self, rt, tmp_path):
+        with patch.object(rt, "_post_push_deferred_replies") as replies:
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        replies.assert_not_called()
+
+    def test_a_failing_step_propagates(self, rt, tmp_path):
+        """A caller closing the loop needs a failure to be an error, not a log line."""
+        self._save(tmp_path)
+        with patch.object(rt, "_post_push_deferred_replies"), \
+                patch.object(rt, "_finalize_deferred",
+                             side_effect=RuntimeError("gh down")), \
+                patch.object(rt, "_render_deferred_summary"):
+            with pytest.raises(RuntimeError):
+                rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+
+
+class TestFinishFlag:
+    """`--resolve` shipped under the wrong name; it still has to work."""
+
+    def test_finish_sets_finish(self, rt):
+        assert rt._build_parser().parse_args(["--finish"]).finish
+
+    def test_resolve_is_an_alias(self, rt):
+        assert rt._build_parser().parse_args(["--resolve"]).finish
+
+    def test_resolve_verified_is_an_alias(self, rt):
+        assert rt._build_parser().parse_args(["--resolve-verified"]).finish
+
+    def test_it_is_off_by_default(self, rt):
+        assert not rt._build_parser().parse_args([]).finish
+
 
 # ── _post_deferred_replies ────────────────────────────────────────────────
 
@@ -1279,7 +1441,7 @@ class TestPostAlreadyAddressedReplies:
 
 class TestReplyDedup:
 
-    def test_dismissed_skips_when_reply_exists(self, rt):
+    def test_dismissed_skips_when_reply_exists(self, rt, tmp_path):
         dismissed = [CommentItem(id="t1", summary="not applicable")]
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[
@@ -1289,19 +1451,19 @@ class TestReplyDedup:
         }
         with patch("pr_comments.post_thread_reply") as mock_reply:
             count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42,
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 0
         mock_reply.assert_not_called()
 
-    def test_dismissed_posts_when_no_prior_reply(self, rt):
+    def test_dismissed_posts_when_no_prior_reply(self, rt, tmp_path):
         dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
         threads_by_id = {
             "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
             count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42,
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 1
         mock_reply.assert_called_once()
@@ -1352,7 +1514,7 @@ class TestReplyDedup:
         assert count == 0
         mock_reply.assert_not_called()
 
-    def test_mixed_dedup_and_new(self, rt):
+    def test_mixed_dedup_and_new(self, rt, tmp_path):
         dismissed = [
             CommentItem(id="t1", summary="already replied"),
             CommentItem(id="t2", summary="new one", reasoning="reason"),
@@ -1366,7 +1528,7 @@ class TestReplyDedup:
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
             count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42,
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 1
         mock_reply.assert_called_once()
@@ -1566,3 +1728,395 @@ class TestClassifyTriageComplexity:
         result = rt._classify_triage_entries(entries)
         assert len(result.fixable) == 1
         assert len(result.needs_human) == 0
+
+
+# ── already_addressed verification ─────────────────────────────────────────
+
+
+class TestClassifyAlreadyAddressed:
+    """A suggestion the code already satisfies must not be routed to dismissed.
+
+    Triage sees current HEAD, which already contains fixes made earlier in the
+    same review cycle. Treating "the code already does this" as `invalid` posts
+    a reply telling the reviewer their suggestion was inapplicable — when it was
+    in fact the reason for the change.
+    """
+
+    def _entry(self, verification):
+        return CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn",
+            summary="drop the nil-logger guard",
+            classification="actionable_suggestion",
+            verification=verification, complexity="low", state=ThreadState.NEW,
+        )
+
+    def test_already_addressed_gets_own_bucket(self, rt):
+        result = rt._classify_triage_entries([self._entry("already_addressed")])
+        assert len(result.already_addressed) == 1
+        assert result.dismissed == []
+        assert result.fixable == []
+        assert result.needs_human == []
+
+    def test_invalid_still_dismissed(self, rt):
+        result = rt._classify_triage_entries([self._entry("invalid")])
+        assert len(result.dismissed) == 1
+        assert result.already_addressed == []
+
+    def test_accounted_ids_include_already_addressed(self, rt):
+        result = rt._classify_triage_entries([self._entry("already_addressed")])
+        accounted = rt._accounted_thread_ids(
+            result.fixable, result.needs_human, result.dismissed,
+            result.already_addressed,
+        )
+        assert accounted == {"t1"}
+
+    def test_thread_outcomes_carry_already_addressed_action(self, rt):
+        entry = self._entry("already_addressed")
+        outcomes = rt._build_thread_outcomes([], [], [], [], [entry])
+        assert len(outcomes) == 1
+        assert outcomes[0].action == ThreadAction.ALREADY_ADDRESSED
+
+
+class TestTriagePromptVerificationValues:
+    """The prompt must define every verification value it asks for."""
+
+    def test_defines_all_four_values(self, rt):
+        prompt = rt._build_triage_prompt([], "diff")
+        for value in ("valid", "already_addressed", "invalid", "needs_discussion"):
+            assert f"- {value}:" in prompt
+
+    def test_steers_away_from_invalid_for_satisfied_code(self, rt):
+        prompt = rt._build_triage_prompt([], "diff")
+        assert "is NEVER invalid" in prompt
+
+    def test_commit_log_included_when_present(self, rt):
+        prompt = rt._build_triage_prompt(
+            [], "diff", commit_log="abc1234 fix(logging): inject logger",
+        )
+        assert "abc1234 fix(logging): inject logger" in prompt
+        assert "already_addressed, not invalid" in prompt
+
+    def test_commit_log_omitted_when_empty(self, rt):
+        prompt = rt._build_triage_prompt([], "diff", commit_log="")
+        assert "Commits already made on this branch" not in prompt
+
+
+class TestAlreadyAddressedInSummary:
+    def test_rendered_as_addressed_not_dismissed(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        entry = CommentItem(
+            id="t1", summary="drop the guard", file="f.go", line=10, reviewer="kgn",
+        )
+        body = rt._build_summary_body(
+            [], [], [], cp, "owner/repo", 1, {}, already_addressed=[entry],
+        )
+        assert "1 already addressed" in body
+        assert "Already addressed" in body
+        assert "inapplicable" not in body
+
+    def test_deferred_summary_renders_already_addressed(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="drop the guard", file="f.go", line=10,
+                              action=ThreadAction.ALREADY_ADDRESSED),
+                ThreadOutcome(id="t2", summary="complex", file="c.go", line=3,
+                              action=ThreadAction.DEFERRED),
+            ],
+            commit_status="no_changes",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        body = mock_post.call_args[0][2]
+        assert "drop the guard" in body
+        assert "Already addressed" in body
+
+
+# ── summary upsert ─────────────────────────────────────────────────────────
+
+
+class TestSummaryMarker:
+    """Each review round must edit one summary comment, not append a new one."""
+
+    def test_body_carries_marker(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=1)],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert body.startswith(rt._SUMMARY_MARKER)
+
+    def test_post_fix_summary_passes_marker(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._post_fix_summary(
+                [CommentItem(id="t1", summary="fix", file="a.py", line=1)],
+                [], [], cp, "owner/repo", 1, {},
+            )
+        assert mock_post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+
+    def test_deferred_summary_passes_marker(self, rt):
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="fix", file="a.py", line=1,
+                                   action=ThreadAction.FIXED)],
+            commit_status="no_changes", summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        assert mock_post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+
+
+# ── default-branch resolution in commit lookups ────────────────────────────
+
+
+class TestCommitLookupsUseDefaultBranch:
+    """`origin/main` is not universal — a hardcoded base silently returns nothing."""
+
+    def test_branch_commit_log_uses_resolved_branch(self, rt, tmp_path):
+        with (
+            patch.object(rt, "_resolve_default_branch", return_value="trunk"),
+            patch.object(rt.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = "abc1234 fix: thing\n"
+            assert rt._branch_commit_log(tmp_path) == "abc1234 fix: thing"
+        assert "origin/trunk..HEAD" in run.call_args[0][0]
+
+    def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
+        with (
+            patch.object(rt, "_resolve_default_branch", return_value="trunk"),
+            patch.object(rt.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = "deadbeef\n"
+            assert rt._find_addressing_commit(tmp_path, "a.py") == "deadbeef"
+        assert "origin/trunk..HEAD" in run.call_args[0][0]
+
+    def test_branch_commit_log_without_worktree(self, rt):
+        assert rt._branch_commit_log(None) == ""
+
+
+# ── shared thrash guard wiring ──────────────────────────────────────────────
+
+
+class TestFixPassThrashGuard:
+    """A fix agent that checked nothing off was thrashing, not working."""
+
+    def test_session_log_lives_under_the_worktree(self, rt, tmp_path):
+        assert rt._fix_session_log(tmp_path) == str(
+            tmp_path / "ignore" / "pr-comments" / "fix-session.jsonl")
+
+    def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
+        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
+            rt._invoke_fix_agent("PROMPT", tmp_path)
+        assert inv.call_args.kwargs["session_log"] == rt._fix_session_log(tmp_path)
+
+    def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
+        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [ ] fix the thing\n")
+        prompts = []
+
+        with patch.object(rt, "_invoke_fix_agent",
+                          side_effect=lambda p, *a, **k: prompts.append(p) or 0):
+            reason = rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
+
+        assert prompts == ["PROMPT", rt.agent_retry.FIX_RETRY_HINT + "PROMPT"]
+        assert rt.agent_retry.DIAG_NO_WRITE_TOOL_CALL in reason
+
+    def test_a_single_checked_box_counts_as_work(self, rt, tmp_path):
+        """Partial progress belongs to `_retry_fix_pass`, not to the guard."""
+        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
+
+        with patch.object(rt, "_invoke_fix_agent", return_value=0) as inv:
+            reason = rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
+
+        assert reason == ""
+        assert inv.call_count == 1
+
+    def test_missing_tracking_file_counts_as_no_work(self, rt, tmp_path):
+        assert rt._count_checked(tmp_path / "absent.md") == 0
+        assert rt._count_unchecked(tmp_path / "absent.md") == 0
+
+
+class TestTriageThrashGuard:
+    """Triage has no session log — an unparseable answer is the only signal."""
+
+    def test_parses_as_json_accepts_a_fenced_object(self, rt):
+        assert rt._parses_as_json("```json\n{\"threads\": []}\n```")
+
+    def test_parses_as_json_rejects_prose(self, rt):
+        assert not rt._parses_as_json("I was unable to complete the triage.")
+
+    def test_unparseable_triage_output_earns_one_retry(self, rt, tmp_path):
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        prompts = []
+
+        def prompt(text):
+            prompts.append(text)
+            return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
+
+        with (
+            patch.object(rt.ai_backend, "prompt", side_effect=prompt),
+            patch.object(rt, "_branch_commit_log", return_value=""),
+        ):
+            result, rc = rt._run_triage(report, tmp_path, {})
+
+        assert rc == 0
+        assert result is not None
+        assert len(prompts) == 2
+        assert prompts[1].startswith(rt.agent_retry.BLANK_RESPONSE_HINT)
+
+
+# ── permalink-backed claims ─────────────────────────────────────────────────
+
+
+class TestUnsupportedVerdictDowngrade:
+    """A verdict posted to a reviewer is a claim; a claim needs a line."""
+
+    def _item(self, **kw):
+        kw.setdefault("verification", "invalid")
+        return CommentItem(id="t1", summary="s", **kw)
+
+    def test_uncited_invalid_becomes_needs_discussion(self, rt, tmp_path):
+        item = self._item(complexity="low")
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+        assert item.complexity == ""
+
+    def test_uncited_already_addressed_becomes_needs_discussion(self, rt, tmp_path):
+        item = self._item(verification="already_addressed")
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_reason_is_recorded_so_the_author_knows_why(self, rt, tmp_path):
+        item = self._item(reasoning="reviewer misread the guard")
+        rt._downgrade_unsupported_verdicts([item], tmp_path)
+        assert "reviewer misread the guard" in item.reasoning
+        assert "cited no line" in item.reasoning
+
+    def test_cited_verdict_that_exists_in_the_tree_survives(self, rt, tmp_path):
+        (tmp_path / "app.py").write_text("x = 1\n")
+        item = self._item(evidence_file="app.py", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert item.verification == "invalid"
+
+    def test_citation_to_a_file_that_does_not_exist_is_downgraded(self, rt, tmp_path):
+        """A link to nothing is no better than no link."""
+        item = self._item(evidence_file="ghost.py", evidence_line=3)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_valid_verdicts_are_left_alone(self, rt, tmp_path):
+        item = self._item(verification="valid", complexity="low")
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+        assert item.complexity == "low"
+
+    def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
+        """Joining a repo dir with an absolute path discards the repo dir."""
+        outside = tmp_path.parent / "outside.py"
+        outside.write_text("secret = 1\n")
+        item = self._item(evidence_file=str(outside), evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
+        """`..` reaching a file that really exists still is not this repo's code."""
+        (tmp_path.parent / "outside.py").write_text("secret = 1\n")
+        item = self._item(evidence_file="../outside.py", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_a_citation_past_the_end_of_the_file_is_downgraded(self, rt, tmp_path):
+        """A permalink to a line the file does not have highlights nothing."""
+        (tmp_path / "app.py").write_text("x = 1\n")
+        item = self._item(evidence_file="app.py", evidence_line=99)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+        assert item.verification == "needs_discussion"
+
+    def test_the_last_line_of_a_file_is_still_inside_it(self, rt, tmp_path):
+        (tmp_path / "app.py").write_text("a\nb\nc\n")
+        item = self._item(evidence_file="app.py", evidence_line=3)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+
+    def test_a_nested_citation_inside_the_repo_survives(self, rt, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
+        item = self._item(evidence_file="pkg/mod.py", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 0
+
+    def test_a_citation_to_a_directory_is_downgraded(self, rt, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        item = self._item(evidence_file="pkg", evidence_line=1)
+        assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
+
+
+class TestEvidencePermalinks:
+    """Every claim links to the code at a pinned SHA."""
+
+    def test_permalink_pins_the_sha(self, rt):
+        assert rt._blob_permalink("owner/repo", "abc123", "a/b.py", 7) == (
+            "https://github.com/owner/repo/blob/abc123/a/b.py#L7")
+
+    def test_uncited_entry_renders_no_link(self, rt):
+        entry = CommentItem(id="t1", summary="s")
+        assert rt._evidence_link(entry, "owner/repo", "abc123") == ""
+
+    def test_dismissal_carries_the_cited_line(self, rt, tmp_path):
+        dismissed = [CommentItem(
+            id="t1", summary="s", reasoning="the guard already returns early",
+            evidence_file="app.py", evidence_line=12,
+        )]
+        threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch.object(rt, "_get_head_sha", return_value="cafe123"),
+            patch("pr_comments.post_thread_reply", return_value=True) as reply,
+        ):
+            rt._post_dismissed_replies(dismissed, threads, "owner/repo", 42, tmp_path)
+        body = reply.call_args[0][3]
+        assert "blob/cafe123/app.py#L12" in body
+        assert "the guard already returns early" in body
+
+    def test_already_addressed_links_the_line_at_head(self, rt, tmp_path):
+        addressed = [CommentItem(
+            id="t1", summary="use the helper", file="app.py",
+            evidence_file="app.py", evidence_line=4,
+        )]
+        threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with (
+            patch.object(rt, "_get_head_sha", return_value="cafe123"),
+            patch.object(rt, "_find_addressing_commit", return_value="dead" * 10),
+            patch("pr_comments.post_thread_reply", return_value=True) as reply,
+        ):
+            rt._post_already_addressed_replies(
+                addressed, threads, "owner/repo", 42, tmp_path)
+        body = reply.call_args[0][3]
+        assert "blob/cafe123/app.py#L4" in body
+        assert "/commit/deaddeaddead" in body
+
+    def test_summary_file_cell_links_at_the_fix_commit(self, rt):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=9)],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert "https://github.com/owner/repo/blob/abc1234/a.py#L9" in body
+
+    def test_summary_file_cell_stays_plain_without_a_sha(self, rt):
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=9)],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert "| `a.py:9` |" in body
+        assert "/blob/" not in body

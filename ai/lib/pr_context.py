@@ -443,11 +443,9 @@ def default_branch(cwd: str | Path | None = None) -> str:
     Call sites that need it per-file wrap it in their own cache.
     """
     try:
-        args = ["git"] + (["-C", str(cwd)] if cwd else []) + [
-            "symbolic-ref", "refs/remotes/origin/HEAD",
-        ]
         ref = subprocess.run(
-            args, capture_output=True, text=True,
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, cwd=cwd,
         ).stdout.strip()
     except Exception:
         return "main"

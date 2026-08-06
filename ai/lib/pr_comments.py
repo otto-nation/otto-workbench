@@ -618,6 +618,8 @@ def render_fix_status(f: FixSummary) -> list[str]:
         parts.append(f"{by_action[ThreadAction.NEEDS_HUMAN]} need discussion")
     if by_action.get(ThreadAction.DISMISSED, 0):
         parts.append(f"{by_action[ThreadAction.DISMISSED]} dismissed")
+    if by_action.get(ThreadAction.ALREADY_ADDRESSED, 0):
+        parts.append(f"{by_action[ThreadAction.ALREADY_ADDRESSED]} already addressed")
     summary = " · ".join(parts) if parts else "no threads"
     lines = [f"**Fix**: {summary}"]
     if f.commit_sha:

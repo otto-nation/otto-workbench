@@ -34,7 +34,12 @@ def _ctx(tmp_path, head_sha="aaaa111", pr_number=7):
     )
 
 
-def _run(ctx, *, body="", ai=("NEW BODY", 0), **kw):
+def _wrapped(body: str) -> str:
+    """A model answer in the form run_describe accepts — markers around the body."""
+    return f"{pr_describe_cli._DESCRIBE_BEGIN}\n{body}\n{pr_describe_cli._DESCRIBE_END}"
+
+
+def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
     """Run run_describe with git, gh, and the AI backend stubbed out."""
     edits = []
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body",
@@ -141,7 +146,7 @@ def test_conforming_body_is_left_alone_but_still_recorded(tmp_path):
 def test_revision_is_applied_and_recorded(tmp_path):
     (tmp_path / ".github").mkdir()
     (tmp_path / ".github" / "pull_request_template.md").write_text("## Why\n")
-    rc, edits, _ = _run(_ctx(tmp_path), ai=("## Why\n\nBecause.", 0))
+    rc, edits, _ = _run(_ctx(tmp_path), ai=(_wrapped("## Why\n\nBecause."), 0))
     assert rc == 0
     assert edits == ["## Why\n\nBecause."]
     state = pr_state.load_state(tmp_path)
@@ -164,6 +169,33 @@ def test_blank_ai_answer_would_wipe_the_body_so_it_fails(tmp_path):
     assert pr_state.load_state(tmp_path) is None
 
 
+def test_an_unmarked_answer_is_never_posted(tmp_path):
+    """A preamble-and-fences reply must not reach `gh pr edit` verbatim.
+
+    The prompt asks for markers, but nothing stops a model from replying
+    conversationally; without extraction that text became the PR body.
+    """
+    chatty = "Sure, here's the revised description:\n```markdown\n## Summary\n```"
+    rc, edits, prompt = _run(_ctx(tmp_path), ai=(chatty, 0))
+    assert rc == 1
+    assert edits == []
+    # Unusable, so it burns the one retry the thrash guard allows.
+    assert prompt.call_count == 2
+    assert pr_state.load_state(tmp_path) is None
+
+
+def test_only_the_marked_span_is_posted(tmp_path):
+    """Text outside the markers is commentary, not description."""
+    answer = (
+        "Here you go!\n"
+        f"{pr_describe_cli._DESCRIBE_BEGIN}\n## Why\n\nBecause.\n"
+        f"{pr_describe_cli._DESCRIBE_END}\nHope that helps."
+    )
+    rc, edits, _ = _run(_ctx(tmp_path), ai=(answer, 0))
+    assert rc == 0
+    assert edits == ["## Why\n\nBecause."]
+
+
 def test_failed_ai_call_is_not_recorded(tmp_path):
     rc, edits, _ = _run(_ctx(tmp_path), ai=("", 1))
     assert rc == 1
@@ -182,7 +214,8 @@ def test_unreachable_pr_stops_before_the_ai_call(tmp_path):
 def test_a_rejected_edit_is_not_recorded(tmp_path):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt", return_value=("B", 0)), \
+         mock.patch.object(pr_describe_cli.ai_backend, "prompt",
+                           return_value=(_wrapped("B"), 0)), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=False):
         rc = pr_describe_cli.run_describe(_ctx(tmp_path))
     assert rc == 1
@@ -193,7 +226,7 @@ def test_a_rejected_edit_is_not_recorded(tmp_path):
 
 
 def test_a_blank_first_answer_earns_one_retry(tmp_path):
-    answers = [("", 0), ("SECOND", 0)]
+    answers = [("", 0), (_wrapped("SECOND"), 0)]
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
@@ -215,7 +248,7 @@ def test_prompt_carries_the_template_and_the_branch_contents(tmp_path):
          mock.patch.object(pr_describe_cli, "_git", return_value="deadbee fix: y"), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
-                           return_value=("B", 0)) as prompt:
+                           return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(tmp_path))
     text = prompt.call_args[0][0]
     assert "## Why" in text
@@ -230,6 +263,6 @@ def test_prompt_says_so_when_the_repo_ships_no_template(tmp_path):
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
-                           return_value=("B", 0)) as prompt:
+                           return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(tmp_path))
     assert "this repo ships none" in prompt.call_args[0][0]

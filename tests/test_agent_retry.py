@@ -218,6 +218,9 @@ class TestSharedRetryability:
     def test_skipped_is_not_retryable(self):
         assert not agent_retry.is_retryable("skipped: 3 consecutive failures")
 
+    # hint_for priority order: no-write > max-turns > nothing.
+    # These three tests pin that ordering — changing precedence must update all three.
+
     def test_no_write_hint_beats_the_max_turns_hint(self):
         both = f"{_MAX_TURNS} — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
         assert agent_retry.hint_for(both) == agent_retry.NO_WRITE_HINT
@@ -228,3 +231,26 @@ class TestSharedRetryability:
 
     def test_a_reason_with_no_matching_hint_adds_nothing(self):
         assert agent_retry.hint_for("agent error: overloaded") == ""
+
+
+class TestCIFixRetryHint:
+    """ci-check's fallback hint, for when the diagnosis suggests nothing better."""
+
+    def _select(self, reason: str) -> str:
+        """The selector ci-check installs — kept in sync with its call site."""
+        return agent_retry.hint_for(reason) or agent_retry.CI_FIX_RETRY_HINT
+
+    def test_a_diagnosed_reason_still_wins(self):
+        """The fallback must not mask a hint that names the actual mechanism."""
+        assert self._select(_MAX_TURNS) == agent_retry.RETRY_HINT
+        assert self._select(_NO_WRITE) == agent_retry.NO_WRITE_HINT
+
+    def test_an_undiagnosed_reason_falls_back_to_the_ci_wording(self):
+        assert self._select("") == agent_retry.CI_FIX_RETRY_HINT
+
+    def test_the_fallback_is_not_the_review_fix_hint(self):
+        """ci-check used to fall back to FIX_RETRY_HINT, phrased for review findings.
+
+        Pointing it back at that constant is the regression this guards.
+        """
+        assert self._select("") != agent_retry.FIX_RETRY_HINT

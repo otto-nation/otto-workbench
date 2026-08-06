@@ -1056,7 +1056,9 @@ def _run_fix_with_tracking(tmp_path, tracking_body, invoke_fix):
 def test_ci_fix_pass_that_checks_nothing_off_is_retried_with_the_hint(tmp_path):
     inv = _run_fix_with_tracking(tmp_path, "- [ ] build\n", lambda *a, **k: 0)
     prompts = [c.args[0] for c in inv.call_args_list]
-    assert prompts == ["PROMPT", ci_check.agent_retry.FIX_RETRY_HINT + "PROMPT"]
+    # The agent wrote nothing, so the diagnosis names that mechanism and its
+    # hint wins. Previously every retry got FIX_RETRY_HINT regardless of reason.
+    assert prompts == ["PROMPT", ci_check.agent_retry.NO_WRITE_HINT + "PROMPT"]
 
 
 def test_ci_fix_pass_with_a_checked_box_is_not_retried(tmp_path):

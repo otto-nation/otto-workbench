@@ -1559,12 +1559,18 @@ class TestResolveFixedThreads:
         assert count == 0
         mock_resolve.assert_not_called()
 
-    def test_resolves_thread_absent_from_threads_by_id(self, rt):
-        fixed = [CommentItem(id="t1")]
-        with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+    def test_skips_an_entry_absent_from_threads_by_id(self, rt):
+        """A synthetic comment id (ic-…/rb-…) is not a resolvable review thread.
+
+        Regression: these used to fall through to an unconditional
+        `resolve_thread`, spending a GraphQL mutation per comment item on an id
+        the API cannot resolve. It failed silently, so nothing surfaced it.
+        """
+        fixed = [CommentItem(id="ic-123")]
+        with patch("pr_comments.resolve_thread") as mock_resolve:
             count = rt._resolve_fixed_threads(fixed, {})
-        assert count == 1
-        mock_resolve.assert_called_once_with("t1")
+        assert count == 0
+        mock_resolve.assert_not_called()
 
     def test_counts_only_successful_resolves(self, rt):
         fixed = [CommentItem(id="t1"), CommentItem(id="t2")]
@@ -2024,7 +2030,9 @@ class TestUnsupportedVerdictDowngrade:
 
     def test_an_absolute_citation_outside_the_repo_is_downgraded(self, rt, tmp_path):
         """Joining a repo dir with an absolute path discards the repo dir."""
-        outside = tmp_path.parent / "outside.py"
+        # Use a name unique to this test's tmp_path to avoid colliding with the
+        # traversal test when both run in the same session directory.
+        outside = tmp_path.parent / f"outside_abs_{tmp_path.name}.py"
         outside.write_text("secret = 1\n")
         item = self._item(evidence_file=str(outside), evidence_line=1)
         assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
@@ -2032,8 +2040,11 @@ class TestUnsupportedVerdictDowngrade:
 
     def test_a_traversal_out_of_the_repo_is_downgraded(self, rt, tmp_path):
         """`..` reaching a file that really exists still is not this repo's code."""
-        (tmp_path.parent / "outside.py").write_text("secret = 1\n")
-        item = self._item(evidence_file="../outside.py", evidence_line=1)
+        # Use a name unique to this test's tmp_path to avoid colliding with the
+        # absolute-citation test when both run in the same session directory.
+        outside_name = f"outside_trav_{tmp_path.name}.py"
+        (tmp_path.parent / outside_name).write_text("secret = 1\n")
+        item = self._item(evidence_file=f"../{outside_name}", evidence_line=1)
         assert rt._downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
 

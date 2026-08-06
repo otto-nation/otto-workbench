@@ -796,7 +796,9 @@ def _run_fix(trail, report: dict, ctx) -> int:
         invoke, prompt, session_log,
         label="CI fix pass", max_turns=FIX_MAX_TURNS,
         produced=lambda: _count_checked(tracking_file) > 0,
-        hint_select=lambda reason: agent_retry.FIX_RETRY_HINT,
+        hint_select=lambda reason: (
+            agent_retry.hint_for(reason) or agent_retry.CI_FIX_RETRY_HINT
+        ),
     )
 
     fixed = _count_checked(tracking_file)

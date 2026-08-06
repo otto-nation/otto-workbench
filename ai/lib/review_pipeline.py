@@ -14,12 +14,13 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
 import agent_retry
 import log
+import serde
 from review_common import (
     FILE_STAT_FMT, count_severity,
     FILENAME_DISPROVE, FILENAME_DISPROVE_LOG,
@@ -323,8 +324,20 @@ def _pipeline_state_path(job: ReviewJob) -> str:
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):
     dest = _pipeline_state_path(job)
     tmp = dest + ".tmp"
-    Path(tmp).write_text(json.dumps(asdict(state)))
+    Path(tmp).write_text(json.dumps(serde.to_dict(state)))
     os.replace(tmp, dest)
+
+
+def _hydrate_failure(raw) -> Diagnosis:
+    """One `groups_failed` entry, from either state format.
+
+    A state file written before diagnoses were typed holds the rendered
+    string; keep it verbatim under `UNKNOWN` so a `--recover` run against an
+    in-flight review still renders its failures table.
+    """
+    if isinstance(raw, dict):
+        return serde.from_dict(Diagnosis, raw)
+    return Diagnosis(DiagnosisKind.UNKNOWN, detail=str(raw))
 
 
 def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
@@ -333,9 +346,12 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
         return None
     try:
         data = json.loads(path.read_text())
-        # JSON serializes dict keys as strings — convert back to int
+        # JSON serializes dict keys as strings — convert back to int.
+        # serde.from_dict coerces dict values but not keys, so this stays here.
         groups_failed_raw = data.get("groups_failed", {})
-        groups_failed = {int(k): v for k, v in groups_failed_raw.items()}
+        groups_failed = {
+            int(k): _hydrate_failure(v) for k, v in groups_failed_raw.items()
+        }
         return PipelineState(
             head_sha=data["head_sha"],
             group_names=data["group_names"],
@@ -385,9 +401,11 @@ def _update_group_done(job: ReviewJob, group_idx: int, state: PipelineState):
         _write_pipeline_state(job, state)
 
 
-def _update_group_failed(job: ReviewJob, group_idx: int, reason: str, state: PipelineState):
+def _update_group_failed(
+    job: ReviewJob, group_idx: int, diagnosis: Diagnosis, state: PipelineState,
+):
     with _state_lock:
-        state.groups_failed[group_idx] = reason
+        state.groups_failed[group_idx] = diagnosis
         _write_pipeline_state(job, state)
 
 
@@ -504,10 +522,10 @@ def build_failures_section(
     """Build a markdown Agent Failures section from pipeline state."""
     rows: list[tuple[str, str, str]] = []
 
-    for idx, reason in sorted(state.groups_failed.items(), key=lambda x: int(x[0])):
+    for idx, diagnosis in sorted(state.groups_failed.items(), key=lambda x: int(x[0])):
         idx = int(idx) if isinstance(idx, str) else idx
         name = state.group_names[idx - 1] if idx <= len(state.group_names) else f"group-{idx}"
-        rows.append((f"group-{idx}: {name}", reason, "failed"))
+        rows.append((f"group-{idx}: {name}", diagnosis.message, "failed"))
 
     if state.synthesis_failed:
         status = "fallback" if state.synthesis_failed == "mechanical fallback" else "failed"
@@ -612,7 +630,7 @@ def _review_group(
         log.warn(f"Group {i} ({grp.name}) produced no output ({diagnosis.message})")
         failed = GroupFailure(grp.name, diagnosis)
         if pipeline_state is not None:
-            _update_group_failed(job, i, diagnosis.message, pipeline_state)
+            _update_group_failed(job, i, diagnosis, pipeline_state)
     else:
         _validate_group_output(group_output, grp.name)
         log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")

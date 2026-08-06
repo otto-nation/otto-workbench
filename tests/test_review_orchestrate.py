@@ -2,6 +2,8 @@ import contextlib
 import io
 import json
 import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -3764,6 +3766,47 @@ class TestStaticAnalysisIntegration:
         assert "All checks passed" in result
 
 
+class TestPipelineStateFailureRoundTrip:
+    """`groups_failed` survives state.json in both the old and new format."""
+
+    def _job(self, ro, tmp_path):
+        job = MagicMock()
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    def _state(self, ro, groups_failed):
+        from review_preflight import PipelineState
+        return PipelineState(
+            head_sha="abc", group_names=["ui"], groups_failed=groups_failed,
+        )
+
+    def test_a_diagnosis_survives_write_then_read(self, ro, tmp_path):
+        diagnosis = ro.Diagnosis(
+            ro.DiagnosisKind.MAX_TURNS, num_turns=12, no_write_tool=True,
+        )
+        job = self._job(ro, tmp_path)
+        ro._write_pipeline_state(job, self._state(ro, {1: diagnosis}))
+        assert ro._read_pipeline_state(job).groups_failed == {1: diagnosis}
+
+    def test_a_legacy_string_hydrates_as_unknown(self, ro, tmp_path):
+        """State written before diagnoses were typed holds a rendered reason."""
+        path = ro._pipeline_state_path(self._job(ro, tmp_path))
+        Path(path).write_text(json.dumps({
+            "head_sha": "abc", "group_names": ["ui"],
+            "groups_failed": {"1": "quota exhausted (429)"},
+        }))
+        state = ro._read_pipeline_state(self._job(ro, tmp_path))
+        assert state.groups_failed == {
+            1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="quota exhausted (429)"),
+        }
+
+    def test_a_legacy_reason_still_renders_verbatim(self, ro, tmp_path):
+        state = self._state(ro, {
+            1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="quota exhausted (429)"),
+        })
+        assert "quota exhausted (429)" in ro.build_failures_section(state, [])
+
+
 class TestBuildFailuresSection:
     def test_no_failures_returns_empty(self):
         from review_preflight import PipelineState
@@ -3776,11 +3819,15 @@ class TestBuildFailuresSection:
         assert build_failures_section(state, []) == ""
 
     def test_group_failures_produce_table(self):
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_pipeline import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
-            groups_done=[1], groups_failed={2: "quota exhausted (429)", 3: "agent hit max turns (5)"},
+            groups_done=[1], groups_failed={
+                2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED),
+                3: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5),
+            },
             synthesis_done=True, synthesis_failed="",
         )
         result = build_failures_section(state, [])
@@ -3805,11 +3852,13 @@ class TestBuildFailuresSection:
         assert "fallback" in result
 
     def test_no_recover_hint_for_permission_errors(self):
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_pipeline import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
-            groups_done=[], groups_failed={1: "permission denied"},
+            groups_done=[],
+            groups_failed={1: Diagnosis(DiagnosisKind.UNKNOWN, detail="permission denied")},
             synthesis_done=True, synthesis_failed="",
         )
         result = build_failures_section(state, [])
@@ -3827,11 +3876,12 @@ def test_meta_status_constant_format():
 class TestFailuresSectionInReview:
     def test_mechanical_fallback_includes_failures(self, tmp_path):
         """When synthesis falls back, the review includes ## Agent Failures."""
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_pipeline import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
-            groups_done=[1], groups_failed={2: "quota exhausted (429)"},
+            groups_done=[1], groups_failed={2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)},
             synthesis_done=True, synthesis_failed="mechanical fallback",
         )
         result = build_failures_section(state, [])

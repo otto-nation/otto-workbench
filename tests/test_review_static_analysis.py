@@ -43,6 +43,44 @@ class TestFormatStaticAnalysis:
         assert "in process_items()" in output
         assert "**`lib/helper.py:15`**" in output
 
+    def test_violations_wrapped_in_collapsed_details(self):
+        violations = [
+            StaticViolation(file="a.sh", line=1, message="depth 3 exceeds limit 2"),
+            StaticViolation(file="b.sh", line=2, message="depth 3 exceeds limit 2"),
+        ]
+        results = [CheckerResult(name="Nesting depth", violations=violations, files_checked=2)]
+        output = format_static_analysis(results)
+        assert "<details>" in output
+        assert "<details open>" not in output
+        assert "<summary>Static Analysis (2 violations)</summary>" in output
+        assert output.rstrip().endswith("</details>")
+        # Checker name is a sub-header nested inside the collapsed block
+        assert output.index("<summary>") < output.index("### Nesting depth")
+        assert output.index("### Nesting depth") < output.index("</details>")
+
+    def test_single_violation_summary_is_singular(self):
+        results = [CheckerResult(
+            name="Nesting depth",
+            violations=[StaticViolation(file="a.sh", line=1, message="too deep")],
+            files_checked=1,
+        )]
+        assert "<summary>Static Analysis (1 violation)</summary>" in format_static_analysis(results)
+
+    def test_all_checks_passed_is_not_collapsed(self):
+        results = [CheckerResult(name="Nesting depth", violations=[], files_checked=3)]
+        assert "<details>" not in format_static_analysis(results)
+
+    def test_details_block_has_blank_line_after_summary(self):
+        results = [CheckerResult(
+            name="Nesting depth",
+            violations=[StaticViolation(file="a.sh", line=1, message="too deep")],
+            files_checked=1,
+        )]
+        output = format_static_analysis(results)
+        lines = output.split("\n")
+        summary_idx = next(i for i, line in enumerate(lines) if line.startswith("<summary>"))
+        assert lines[summary_idx + 1] == ""
+
     def test_violation_without_context(self):
         violations = [
             StaticViolation(file="script.sh", line=10, message="depth 3 exceeds limit 2"),

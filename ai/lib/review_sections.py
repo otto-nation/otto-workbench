@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from review_common import SEVERITIES
+from review_common import SECTION_FILE_TRIAGE, SEVERITIES
 from review_findings import _extract_section
 
 POSITION_BEFORE = "before_findings"
@@ -21,6 +21,10 @@ for _s in SEVERITIES:
     _SEVERITY_HEADERS.add(_s.section.lower())
     for _a in _s.aliases:
         _SEVERITY_HEADERS.add(_a.lower())
+
+# Sections written to the local review file for coverage tracking only — they
+# document which files the reviewer looked at, which is noise on the PR.
+_INTERNAL_HEADERS: set[str] = {SECTION_FILE_TRIAGE.lower()}
 
 
 @dataclass(frozen=True)
@@ -76,7 +80,7 @@ class ReviewSections:
             seen.setdefault(raw.lower(), raw)
 
         for header_lower, original in seen.items():
-            if header_lower in _SEVERITY_HEADERS:
+            if header_lower in _SEVERITY_HEADERS or header_lower in _INTERNAL_HEADERS:
                 continue
 
             cfg = _KNOWN_BY_HEADER.get(header_lower)

@@ -125,11 +125,17 @@ def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerR
     return results
 
 
+def _plural(n: int) -> str:
+    return "s" if n != 1 else ""
+
+
 def _format_checker_violations(r: CheckerResult) -> list[str]:
     file_count = len({v.file for v in r.violations})
     lines = [
-        f"\n### {r.name}",
-        f"{len(r.violations)} violation{'s' if len(r.violations) != 1 else ''} "
+        "",
+        f"### {r.name}",
+        "",
+        f"{len(r.violations)} violation{_plural(len(r.violations))} "
         f"in {file_count} of {r.files_checked} files checked",
         "",
     ]
@@ -145,14 +151,22 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
     if not results:
         return ""
 
-    has_violations = any(r.violations for r in results)
-    if not has_violations:
+    violating = [r for r in results if r.violations]
+    if not violating:
         return "## Static Analysis\n\nAll checks passed."
 
-    parts = ["## Static Analysis"]
-    for r in results:
-        if r.violations:
-            parts.extend(_format_checker_violations(r))
+    total = sum(len(r.violations) for r in violating)
+    # Collapsed by default: the violation list runs to hundreds of lines on
+    # large diffs and would otherwise bury the findings above it.
+    parts = [
+        "## Static Analysis",
+        "",
+        "<details>",
+        f"<summary>Static Analysis ({total} violation{_plural(total)})</summary>",
+    ]
+    for r in violating:
+        parts.extend(_format_checker_violations(r))
+    parts.extend(["", "</details>"])
     return "\n".join(parts)
 
 

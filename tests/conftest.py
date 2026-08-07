@@ -42,15 +42,20 @@ def _repo_config_path():
 
 _REPO_CONFIG = _repo_config_path()
 
-# `(section, subsection prefix)` pairs holding runtime state that worktrunk
-# rewrites from outside this process — `state.<branch>` carries the marker and
-# vars it restamps whenever an agent's status changes, `hints` the counters for
-# one-time hints it has shown. A write landing mid-test says nothing about the
-# test that happened to be running.
+# `(section, subsection prefix)` pairs written from outside this process, so a
+# change landing mid-test says nothing about the test that was running:
 #
-# Deliberately not the whole `worktrunk` namespace: `worktrunk.default-branch`
-# is user config (bin/wt-cleanup reads it), so a test clobbering it must fail.
-_EXTERNAL_STATE = ((b"worktrunk", b"state."), (b"worktrunk", b"hints"))
+#   worktrunk `state.<branch>` — the marker and vars worktrunk restamps whenever
+#     an agent's status changes; `hints` — counters for the one-time hints it has
+#     shown. Deliberately not the whole namespace: `worktrunk.default-branch` is
+#     user config (bin/wt-cleanup reads it), so a test clobbering it must fail.
+#   `branch` — tracking entries, which every concurrent fetch, branch create, and
+#     `wt switch` across the shared worktrees adds and prunes. A test that leaks
+#     into the real repo writes its identity before it ever reaches a branch, and
+#     that write is still caught, so exempting these costs the guard nothing.
+_EXTERNAL_STATE = (
+    (b"worktrunk", b"state."), (b"worktrunk", b"hints"), (b"branch", b""),
+)
 
 
 def _section_of(line: bytes) -> tuple[bytes, bytes] | None:
@@ -119,9 +124,9 @@ def _guard_repo_config():
     share one config file, the damage is repo-wide and permanent: every later
     commit inherits the test identity.
 
-    Sections in `_EXTERNAL_SECTIONS` are exempt: they are written concurrently
-    by tooling this process does not control, and blaming the running test for
-    those turns every long test run into a coin flip.
+    The state in `_EXTERNAL_STATE` is exempt: it is written concurrently by
+    tooling this process does not control, and blaming the running test for
+    those writes turns every long test run into a coin flip.
     """
     if _REPO_CONFIG is None:
         yield

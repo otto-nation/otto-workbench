@@ -2,9 +2,11 @@
 
 The guard compares the repo's git config around every test, so anything that
 writes to that file from outside the test process fails whichever test happened
-to be running. worktrunk does exactly that — it restamps per-branch markers and
-hint counters — which is what these cover, along with the line the exemption
-draws: its user config in the same namespace stays guarded.
+to be running. worktrunk does exactly that — restamping per-branch markers and
+hint counters — and so does any concurrent git operation, through the branch
+tracking entries it adds and prunes. These cover both, along with the lines the
+exemption draws: worktrunk's user config in the same namespace stays guarded,
+and a leaked test is still caught by the identity it writes.
 """
 
 from pathlib import Path
@@ -27,6 +29,8 @@ _CONFIG = b"""[core]
 \tmarker = {\\"marker\\":\\"\xf0\x9f\xa4\x96\\",\\"set_at\\":1786075417}
 [branch "main"]
 \tremote = origin
+[commit]
+\tgpgsign = false
 """
 
 
@@ -55,6 +59,15 @@ class TestExternalWritesAreIgnored:
         after = _rewritten(b"shell-integration = 4", b"shell-integration = 5")
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
 
+    def test_a_new_branch_section_reads_as_no_change(self):
+        """Another worktree branching is the commonest write of all."""
+        after = _CONFIG + b'[branch "feat"]\n\tremote = origin\n\tmerge = refs/heads/feat\n'
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
+    def test_a_retargeted_tracking_entry_reads_as_no_change(self):
+        after = _rewritten(b"\tremote = origin", b"\tremote = upstream")
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
     def test_a_removed_worktrunk_section_reads_as_no_change(self):
         after = _rewritten(
             b'[worktrunk "state.main"]\n\tmarker = '
@@ -79,7 +92,20 @@ class TestRealWritesAreStillCaught:
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
     def test_a_key_inside_the_section_after_an_external_one_is_a_change(self):
-        after = _rewritten(b"\tremote = origin", b"\tremote = evil")
+        """The exemption ends at the next header, it does not run to EOF."""
+        after = _rewritten(b"gpgsign = false", b"gpgsign = true")
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
+
+    def test_a_leaked_test_repo_is_caught_by_its_identity(self):
+        """What bounds the cost of exempting `branch`.
+
+        A test that escapes into the real repo sets up a repo: identity first,
+        branches as a side effect of committing. The identity write is what the
+        guard was built for, and it is still here.
+        """
+        after = _rewritten(b"dev@example.com", b"test@test.com") + (
+            b'[branch "tmp"]\n\tremote = origin\n'
+        )
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
     def test_a_config_that_appears_is_a_change(self):

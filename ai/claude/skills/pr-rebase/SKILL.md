@@ -57,12 +57,16 @@ JSON output is on stdout; status messages are on stderr.
 {
   "status": "clean",
   "commits_replayed": 22,
-  "conflicts_resolved": 3,
+  "conflicts_resolved": 2,
   "files_resolved": ["orc-lending/go.mod", "orc-lending/go.sum"],
   "files_stale": ["orc-lending/go.sum"],
   "force_pushed": true
 }
 ```
+
+`commits_replayed` counts only commits replayed from the branch — commits the
+push recovery adds (regeneration, check fixes) are excluded. `conflicts_resolved`
+counts conflicted-file resolutions, matching `files_resolved`.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
 non-empty, those files were staged from the incoming side but their

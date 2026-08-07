@@ -9,6 +9,11 @@ meta:
   source: bin/local
 
 tools:
+  - name: validate-all
+    permission: false
+    visibility: brief
+    description: "Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI"
+
   - name: validate-registries
     permission: false
     visibility: brief

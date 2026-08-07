@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Run every convention validator in the repo.
+#
+# Validators are discovered by glob, not listed here — the pre-push hook and CI
+# both call this script, so a newly added validate-* is enforced the moment it
+# lands instead of waiting for someone to remember two hardcoded lists.
+#
+# Usage: bin/local/validate-all [--quiet]
+# Exit code: 0 if every validator passes, 1 if any fail.
+
+set -e
+
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Run every convention validator (bin/validate-* and bin/local/validate-*).
+
+Options:
+  --quiet     Suppress per-validator output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+VALIDATORS=()
+for _v in "$_SCRIPT_ROOT"/bin/validate-* "$_SCRIPT_ROOT"/bin/local/validate-*; do
+  # Skip this script and anything unexecutable (e.g. a stray backup file).
+  if [[ -x "$_v" && "$(basename "$_v")" != "validate-all" ]]; then
+    VALIDATORS+=("$_v")
+  fi
+done
+
+FAILED=()
+for _v in "${VALIDATORS[@]}"; do
+  name="$(basename "$_v")"
+  if output=$("$_v" --quiet 2>&1); then
+    $QUIET || echo -e "  ${GREEN}✓${NC} $name"
+  else
+    FAILED+=("$name")
+    echo -e "  ${RED}✗${NC} $name" >&2
+    echo "$output" >&2
+  fi
+done
+
+echo
+if (( ${#VALIDATORS[@]} == 0 )); then
+  echo -e "  ${DIM}no validators found${NC}"
+  exit 0
+elif (( ${#FAILED[@]} == 0 )); then
+  success "${#VALIDATORS[@]} validators passed"
+  exit 0
+else
+  err "${#FAILED[@]} of ${#VALIDATORS[@]} validators failed: ${FAILED[*]}"
+  exit 1
+fi

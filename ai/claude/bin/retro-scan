@@ -26,6 +26,7 @@ from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
 from review_github import (  # noqa: E402
     GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
+    fetch_review_threads,
 )
 
 
@@ -242,17 +243,27 @@ def _flatten_issue_comments(comment_nodes: list[dict]) -> list[dict]:
     return [c for c in raw if not is_noise(c["body"])]
 
 
-def _parse_pr_node(pr_node: dict, since_date: str) -> dict | None:
+def _threads_for(repo: str, pr_node: dict) -> list[dict]:
+    """Thread nodes for one PR, refetched in full if the batch query truncated.
+
+    The batch query asks for 50 PRs at once, so it cannot paginate each PR's
+    threads inline. Oversized PRs are rare, so they earn a second round trip
+    rather than costing every PR one.
+    """
+    threads_data = pr_node.get("reviewThreads", {})
+    thread_nodes = threads_data.get("nodes", [])
+    if threads_data.get("totalCount", 0) <= len(thread_nodes):
+        return thread_nodes
+    return fetch_review_threads(repo, pr_node["number"])
+
+
+def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
     """Parse a single GraphQL PR node into the retro-scan format."""
     merged_at = pr_node.get("mergedAt", "")
     if not merged_at or merged_at < since_date:
         return None
 
-    threads_data = pr_node.get("reviewThreads", {})
-    total_threads = threads_data.get("totalCount", 0)
-    thread_nodes = threads_data.get("nodes", [])
-    if total_threads > len(thread_nodes):
-        log.warn(f"PR #{pr_node['number']}: {total_threads} threads but only {len(thread_nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
+    thread_nodes = _threads_for(repo, pr_node)
 
     comments_data = pr_node.get("comments", {})
     total_comments = comments_data.get("totalCount", 0)
@@ -310,7 +321,7 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
 
     results = []
     for pr_node in pr_nodes:
-        parsed = _parse_pr_node(pr_node, since_date)
+        parsed = _parse_pr_node(repo, pr_node, since_date)
         if parsed:
             results.append(parsed)
     return results

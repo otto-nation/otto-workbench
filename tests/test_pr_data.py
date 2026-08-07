@@ -453,7 +453,7 @@ class TestFetchPrData:
         thread = _make_thread(thread_id="PRT_1", path="big.py")
         thread["comments"]["totalCount"] = GQL_THREAD_COMMENTS_LIMIT + 1
         mock_gql.return_value = (0, self._graphql_response(
-            reviewThreads=_threads_page([thread]),
+            reviewThreads=_review_threads_node([thread]),
         ))
         pd = fetch_pr_data("owner/repo", "1")
         assert len(pd.review_threads) == 1
@@ -467,9 +467,9 @@ class TestFetchPrData:
         page2 = _make_thread(thread_id="PRT_2", path="b.py")
         mock_gql.side_effect = [
             (0, self._graphql_response(
-                reviewThreads=_threads_page([page1], has_next=True, cursor="cur1"),
+                reviewThreads=_review_threads_node([page1], has_next=True, cursor="cur1"),
             )),
-            (0, self._graphql_response(reviewThreads=_threads_page([page2]))),
+            (0, self._graphql_response(reviewThreads=_review_threads_node([page2]))),
         ]
         pd = fetch_pr_data("owner/repo", "1")
         assert [t["id"] for t in pd.review_threads] == ["PRT_1", "PRT_2"]
@@ -478,7 +478,7 @@ class TestFetchPrData:
 
 # ── Review thread pagination ─────────────────────────────────────────────────
 
-def _threads_page(nodes, has_next=False, cursor=None, total=None):
+def _review_threads_node(nodes, has_next=False, cursor=None, total=None):
     return {
         "totalCount": len(nodes) if total is None else total,
         "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
@@ -491,7 +491,7 @@ def _threads_response(nodes, has_next=False, cursor=None):
         "data": {
             "repository": {
                 "pullRequest": {
-                    "reviewThreads": _threads_page(nodes, has_next, cursor),
+                    "reviewThreads": _review_threads_node(nodes, has_next, cursor),
                 },
             },
         },
@@ -529,6 +529,16 @@ class TestFetchReviewThreads:
         assert mock_gql.call_count == 2
         assert len(threads) == 2
         assert "repeated cursor" in capsys.readouterr().err
+
+    @patch("review_github._gh_graphql")
+    def test_another_page_without_a_cursor_warns(self, mock_gql, capsys):
+        mock_gql.return_value = (
+            0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor=None),
+        )
+        threads = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in threads] == ["PRT_1"]
+        mock_gql.assert_called_once()
+        assert "no cursor" in capsys.readouterr().err
 
     @patch("review_github._gh_graphql")
     def test_page_ceiling_stops_and_warns(self, mock_gql, capsys):

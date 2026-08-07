@@ -301,8 +301,11 @@ def _drain_thread_pages(owner: str, name: str, pr: int, first_page: dict) -> lis
     seen: set[str] = set()
 
     for _ in range(GQL_MAX_THREAD_PAGES - 1):
+        if not page_info.get("hasNextPage"):
+            return threads
         cursor = page_info.get("endCursor")
-        if not page_info.get("hasNextPage") or not cursor:
+        if not cursor:
+            log.warn(f"Review threads report another page but no cursor — stopping at {len(threads)} threads")
             return threads
         if cursor in seen:
             log.warn(f"Review thread pagination repeated cursor {cursor} — stopping at {len(threads)} threads")

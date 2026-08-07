@@ -153,6 +153,13 @@ class TestPromptRecordsToLedger:
 
 
 class TestFixWritesSessionLog:
+    """Exercises the claude backend directly, beneath ai_backend's cwd guard.
+
+    The invocations here deliberately carry no cwd: these are backend-module tests
+    with Popen faked, so the value never reaches a syscall, and routing them through
+    ai_backend.invoke_fix would test the guard instead of the session-log writing.
+    """
+
     def _fake_proc(self, monkeypatch, lines, returncode=0):
         class FakeProc:
             def __init__(self):
@@ -219,15 +226,48 @@ def _ai_sources() -> list[Path]:
     return sorted(p for p in candidates if _is_python_source(p))
 
 
-def _backend_calls(tree: ast.Module, names: frozenset[str]):
-    """Yield every ``ai_backend.<name>(...)`` Call node in a parsed module."""
+def _backend_bindings(tree: ast.Module) -> tuple[set[str], dict[str, str]]:
+    """Local names that reach ai_backend: module aliases, and `from`-imported members.
+
+    `ai_backend` seeds the set because `import ai_backend` binds it and the scanner's
+    own unit tests parse bare snippets with no import line.
+    """
+    modules = {"ai_backend"}
+    direct: dict[str, str] = {}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        if not isinstance(fn, ast.Attribute) or fn.attr not in names:
-            continue
-        if isinstance(fn.value, ast.Name) and fn.value.id == "ai_backend":
+        if isinstance(node, ast.Import):
+            modules.update(
+                a.asname or a.name for a in node.names if a.name == "ai_backend"
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == "ai_backend":
+            direct.update((a.asname or a.name, a.name) for a in node.names)
+    return modules, direct
+
+
+def _reaches_backend(
+    fn: ast.expr, names: frozenset[str], modules: set[str], direct: dict[str, str],
+) -> bool:
+    """Whether a callee resolves to one of ai_backend's `names`, alias or not."""
+    if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+        return fn.attr in names and fn.value.id in modules
+    if isinstance(fn, ast.Name):
+        return direct.get(fn.id) in names
+    return False
+
+
+def _backend_calls(tree: ast.Module, names: frozenset[str]):
+    """Yield every call reaching ``ai_backend.<name>(...)`` in a parsed module.
+
+    Import aliases are resolved rather than assumed. Matching the literal name
+    would let `import ai_backend as ab` hide `ab.prompt(...)` from the scan, and
+    the guard would keep passing while an unscoped call site shipped — the exact
+    failure it exists to catch.
+    """
+    modules, direct = _backend_bindings(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _reaches_backend(
+            node.func, names, modules, direct,
+        ):
             yield node
 
 
@@ -396,3 +436,13 @@ class TestAgentCallSitesPassCwd:
         """review_agent's retry wrappers take an `inv` whose cwd was set elsewhere."""
         tree = ast.parse("rc = ai_backend.invoke_agent(inv)")
         assert list(_cwd_bearing_nodes(tree)) == []
+
+    @pytest.mark.parametrize("src", [
+        "import ai_backend as ab\nab.prompt(text, task='t')",
+        "from ai_backend import prompt\nprompt(text, task='t')",
+        "from ai_backend import prompt as ask\nask(text, task='t')",
+    ])
+    def test_scanner_resolves_import_aliases(self, src):
+        """An alias must not hide a call site — that would silence the guard."""
+        node = next(_cwd_bearing_nodes(ast.parse(src)))
+        assert _has_kwarg(node, "cwd") is False

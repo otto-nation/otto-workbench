@@ -299,10 +299,21 @@ class TestCwdIsRequired:
         assert param.kind is inspect.Parameter.KEYWORD_ONLY
         assert param.default is inspect.Parameter.empty
 
-    def test_a_nonexistent_cwd_is_named_rather_than_inherited(self, fake_backend, tmp_path):
-        missing = tmp_path / "gone"
+    @pytest.mark.parametrize("call", [
+        lambda cwd: ai_backend.prompt("hi", cwd=cwd),
+        lambda cwd: ai_backend.invoke_agent(
+            ai_backend.AgentInvocation(prompt="p", cwd=cwd),
+        ),
+        lambda cwd: ai_backend.invoke_fix(
+            ai_backend.AgentInvocation(prompt="p", cwd=cwd),
+        ),
+    ], ids=["prompt", "invoke_agent", "invoke_fix"])
+    def test_a_nonexistent_cwd_is_named_rather_than_inherited(
+        self, fake_backend, tmp_path, call,
+    ):
+        """A typo'd path must not fall through to Popen's inherited directory."""
         with pytest.raises(ValueError, match="not a directory"):
-            ai_backend.prompt("hi", cwd=str(missing))
+            call(str(tmp_path / "gone"))
         assert fake_backend.calls == []
 
     def test_prompt_forwards_cwd_to_the_backend(self, fake_backend, tmp_path):

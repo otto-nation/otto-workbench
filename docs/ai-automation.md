@@ -413,11 +413,13 @@ task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue
 task --global REPO_DIR=/path/to/worktree commit
 ```
 
-The same hazard exists one level down, for the AI subprocess itself. A backend CLI
-inherits the launching process's working directory unless it is told otherwise, so
-an agent given write access would edit whichever worktree the session happened to
-start in rather than the one being operated on. Every `ai_backend` entry point
-therefore takes a required `cwd`:
+### Pinning the AI subprocess's cwd
+
+A related hazard exists one level down, for the AI subprocess rather than the shell
+task. A backend CLI inherits the launching process's working directory unless it is
+told otherwise, so an agent given write access would edit whichever worktree the
+session happened to start in rather than the one being operated on. Every
+`ai_backend` entry point therefore takes a required `cwd`:
 
 ```python
 ai_backend.prompt(text, cwd=str(wt_path), task="conflict-resolve")

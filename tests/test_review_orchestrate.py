@@ -2971,6 +2971,17 @@ class TestCollectPreflightData:
             check=True, capture_output=True,
         )
 
+    @staticmethod
+    def _commit_all(path, message):
+        """Stage every change in the repo and commit it."""
+        subprocess.run(
+            ["git", "add", "."], cwd=str(path), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--no-verify", "-m", message],
+            cwd=str(path), check=True, capture_output=True,
+        )
+
     def test_oversized_file_in_diff_but_omitted_from_contents(self, ro, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -3199,6 +3210,62 @@ class TestCollectPreflightData:
         assert "func hello" in data.diff
         assert "main.go" in data.file_contents
 
+    def _repo_with_worktree_changes(self, repo):
+        """Branch with one commit, one uncommitted edit and one untracked file."""
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        (repo / "helper.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "main.go").write_text("package main\nfunc committed() {}\n")
+        self._commit_all(repo, "add committed")
+        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
+        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
+
+    def test_self_mode_diff_spans_the_whole_worktree(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._repo_with_worktree_changes(repo)
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        job = ro.ReviewJob(
+            repo="r", pr_number="", pr=pr, ctx=ro.PRContext(),
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+            mode="self",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "func committed" in data.diff
+        assert "func uncommitted" in data.diff
+        assert "func untracked" in data.diff
+        assert set(data.file_contents) == {"main.go", "helper.go", "extra.go"}
+
+    def test_pr_mode_diff_stops_at_head(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._repo_with_worktree_changes(repo)
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=1, deletions=0, changed_files=1,
+            files=[{"path": "main.go", "additions": 1, "deletions": 0}],
+        )
+        job = ro.ReviewJob(
+            repo="r", pr_number="1", pr=pr, ctx=ro.PRContext(),
+            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
+            session_log=str(tmp_path / "session.jsonl"),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = ro.collect_preflight_data(job)
+        assert "func committed" in data.diff
+        assert "func uncommitted" not in data.diff
+        assert "func untracked" not in data.diff
+
     def test_low_density_large_file_omitted_from_contents(self, ro, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -3305,6 +3372,7 @@ class TestFetchBranchMetadata:
     # Shared with TestCollectPreflightData — single source of truth for repo helpers.
     _init_repo = staticmethod(TestCollectPreflightData._init_repo)
     _add_origin = staticmethod(TestCollectPreflightData._add_origin)
+    _commit_all = staticmethod(TestCollectPreflightData._commit_all)
 
     def test_includes_uncommitted_changes_when_no_commits_on_branch(
         self, ro, tmp_path,
@@ -3353,41 +3421,224 @@ class TestFetchBranchMetadata:
         pr = ro.fetch_branch_metadata(str(repo))
         assert pr.changed_files == 1
 
-    def test_prefers_committed_diff_over_uncommitted_when_commits_exist(
+    def test_committed_uncommitted_and_untracked_changes_all_appear(
         self, ro, tmp_path,
     ):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
         (repo / "main.go").write_text("package main\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        (repo / "helper.go").write_text("package main\n")
+        (repo / ".gitignore").write_text("secret.txt\n")
+        self._commit_all(repo, "init")
         self._add_origin(repo)
         subprocess.run(
             ["git", "checkout", "-b", "feat", "-q"],
             cwd=str(repo), check=True, capture_output=True,
         )
         (repo / "main.go").write_text("package main\nfunc committed() {}\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "add committed"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
-        # Also add an uncommitted file that should NOT appear
-        (repo / "extra.go").write_text("uncommitted\n")
+        self._commit_all(repo, "add committed")
+        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
+        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
+        (repo / "secret.txt").write_text("ignored\n")
 
         pr = ro.fetch_branch_metadata(str(repo))
-        assert pr.changed_files == 1
+        paths = sorted(f["path"] for f in pr.files)
+        assert paths == ["extra.go", "helper.go", "main.go"]
+        assert pr.changed_files == 3
+        assert "secret.txt" not in paths
+
+    def test_untracked_files_are_counted_as_whole_file_additions(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        self._add_origin(repo)
+        (repo / "new.go").write_text("one\ntwo\nthree\n")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert pr.files == [{"path": "new.go", "additions": 3, "deletions": 0}]
+        assert pr.additions == 3
+        assert pr.deletions == 0
+
+    def test_commits_on_base_are_not_reported_as_branch_changes(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        self._commit_all(repo, "add feat")
+        # Move main forward behind the branch's back, so the branch is stale
+        subprocess.run(
+            ["git", "checkout", "main", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "other.go").write_text("package main\nfunc other() {}\n")
+        self._commit_all(repo, "add other")
+        subprocess.run(
+            ["git", "fetch", "-q", "origin", "main"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+
+        pr = ro.fetch_branch_metadata(str(repo))
         paths = [f["path"] for f in pr.files]
-        assert "main.go" in paths
-        assert "extra.go" not in paths
+        assert paths == ["feat.go"]
+
+    def test_the_base_ref_is_fetched_before_the_range_is_built(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        # Origin is added but never fetched, so origin/main does not resolve and
+        # the fork point would collapse to HEAD — hiding every commit.
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(repo)], cwd=str(repo),
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        self._commit_all(repo, "add feat")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+
+    def test_base_argument_selects_the_diff_range(self, ro, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        subprocess.run(
+            ["git", "checkout", "-b", "develop", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "dev.go").write_text("package main\nfunc dev() {}\n")
+        self._commit_all(repo, "add dev")
+        self._add_origin(repo)
+        subprocess.run(
+            ["git", "fetch", "-q", "origin", "develop"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        self._commit_all(repo, "add feat")
+
+        pr = ro.fetch_branch_metadata(str(repo), "develop")
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+        assert pr.base == "develop"
+
+
+# ── self-review metadata ──────────────────────────────────────────────
+
+
+def _pr_metadata(ro, **overrides):
+    defaults = dict(
+        title="feat: thing", body="why", head="feat", base="main",
+        head_sha="a" * 40, additions=1, deletions=0, changed_files=1,
+        files=[{"path": "pushed.go", "additions": 1, "deletions": 0}],
+    )
+    return ro.PRMetadata(**{**defaults, **overrides})
+
+
+class TestWithLocalDiff:
+    def test_diff_surface_comes_from_the_worktree(self, ro):
+        pr = _pr_metadata(ro)
+        local = _pr_metadata(
+            ro, head_sha="b" * 40, additions=9, deletions=2, changed_files=2,
+            files=[
+                {"path": "pushed.go", "additions": 1, "deletions": 0},
+                {"path": "unpushed.go", "additions": 8, "deletions": 2},
+            ],
+        )
+
+        merged = ro._with_local_diff(pr, local)
+
+        assert merged.head_sha == "b" * 40
+        assert [f["path"] for f in merged.files] == ["pushed.go", "unpushed.go"]
+        assert merged.additions == 9
+        assert merged.deletions == 2
+        assert merged.changed_files == 2
+
+    def test_branch_name_comes_from_the_worktree(self, ro):
+        pr = _pr_metadata(ro, head="feat")
+        local = _pr_metadata(ro, head="renamed-locally")
+
+        assert ro._with_local_diff(pr, local).head == "renamed-locally"
+
+    def test_pr_narrative_is_preserved(self, ro):
+        pr = _pr_metadata(ro, labels=["review"], author="isaac", is_draft=True)
+        local = _pr_metadata(ro, title="add unpushed", body="", head_sha="b" * 40)
+
+        merged = ro._with_local_diff(pr, local)
+
+        assert merged.title == "feat: thing"
+        assert merged.body == "why"
+        assert merged.labels == ["review"]
+        assert merged.author == "isaac"
+        assert merged.is_draft is True
+
+    def test_drift_is_reported(self, ro, capsys):
+        pr = _pr_metadata(ro)
+        local = _pr_metadata(ro, head_sha="b" * 40)
+
+        ro._with_local_diff(pr, local)
+
+        err = capsys.readouterr().err
+        assert "b" * 7 in err
+        assert "a" * 7 in err
+
+    def test_matching_heads_are_silent(self, ro, capsys):
+        pr = _pr_metadata(ro)
+
+        ro._with_local_diff(pr, _pr_metadata(ro))
+
+        assert capsys.readouterr().err == ""
+
+
+class TestFetchMetadataSelfMode:
+    def test_self_review_of_a_pr_sees_unpushed_commits(self, ro, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        TestFetchBranchMetadata._init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        TestFetchBranchMetadata._commit_all(repo, "init")
+        TestFetchBranchMetadata._add_origin(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feat", "-q"],
+            cwd=str(repo), check=True, capture_output=True,
+        )
+        (repo / "unpushed.go").write_text("package main\nfunc unpushed() {}\n")
+        TestFetchBranchMetadata._commit_all(repo, "add unpushed")
+
+        monkeypatch.setattr(
+            ro._rpl, "fetch_pr_metadata",
+            lambda repo_name, pr_number: _pr_metadata(ro),
+        )
+
+        pr, ctx, pr_data = ro._fetch_metadata("o/r", "1", ro.Mode.SELF, str(repo))
+
+        assert [f["path"] for f in pr.files] == ["unpushed.go"]
+        assert pr.head_sha != "a" * 40
+        assert pr.title == "feat: thing"
+        assert pr_data is None
 
 
 class TestStaticAnalysisIntegration:

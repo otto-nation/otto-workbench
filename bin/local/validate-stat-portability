@@ -48,15 +48,44 @@ def strip_comments(line: str) -> str:
     return COMMENT.sub(r'\1', line)
 
 
+def join_continuations(lines: list[str]) -> list[tuple[int, str]]:
+    """Join backslash-continued lines, returning (original_lineno, joined_line) pairs.
+
+    `stat \\` / `  -c %Y "$f"` is the same violation wearing a line break.
+    """
+    result = []
+    buf = ''
+    start_lineno = 1
+
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.rstrip('\n')
+        if buf:
+            buf += ' ' + stripped.lstrip()
+        else:
+            buf = stripped
+            start_lineno = lineno
+
+        if not stripped.endswith('\\'):
+            result.append((start_lineno, buf))
+            buf = ''
+        else:
+            buf = buf[:-1].rstrip()
+
+    if buf:
+        result.append((start_lineno, buf))
+
+    return result
+
+
 def check_file(filepath: str) -> list[tuple[int, str]]:
     """Return list of (line_number, line_content) violations."""
     with open(filepath, errors='replace') as f:
         lines = f.readlines()
 
     violations = []
-    for lineno, raw_line in enumerate(lines, 1):
-        if STAT_FORMAT_FLAG.search(strip_comments(raw_line)):
-            violations.append((lineno, raw_line.strip()))
+    for lineno, joined in join_continuations(lines):
+        if STAT_FORMAT_FLAG.search(strip_comments(joined)):
+            violations.append((lineno, joined.strip()))
 
     return violations
 
@@ -151,7 +180,7 @@ def main():
     parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    repo_root = _WORKBENCH_DIR
 
     files = args.files if args.files else discover_scripts(repo_root)
 

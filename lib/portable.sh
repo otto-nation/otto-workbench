@@ -20,10 +20,12 @@
 # inside it: GNU stat reads -f as --file-system, so `stat -f %m FILE` treats
 # %m as a filename, exits non-zero, and still prints a filesystem report for
 # FILE — which would be concatenated with the fallback's output.
+#
+# `--` guards paths that begin with a dash; both stat implementations honour it.
 _stat_field() {
   local gnu_format="$1" bsd_format="$2" path="$3" value
-  value=$(stat -c "$gnu_format" "$path" 2>/dev/null) \
-    || value=$(stat -f "$bsd_format" "$path" 2>/dev/null) \
+  value=$(stat -c "$gnu_format" -- "$path" 2>/dev/null) \
+    || value=$(stat -f "$bsd_format" -- "$path" 2>/dev/null) \
     || return 1
   printf '%s' "$value"
 }

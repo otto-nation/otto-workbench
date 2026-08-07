@@ -77,6 +77,17 @@ def test_an_absolute_path_invocation_is_flagged(tmp_path):
     assert [line for line, _ in _check(tmp_path, 'x=$(/usr/bin/stat -c %Y "$f")\n')] == [1]
 
 
+def test_a_call_split_across_a_continuation_is_flagged(tmp_path):
+    """The same violation wearing a line break must not slip through."""
+    violations = _check(tmp_path, 'x=$(stat \\\n  -c %Y \\\n  "$f")\n')
+    assert [line for line, _ in violations] == [1]
+
+
+def test_a_continued_line_reports_where_the_statement_starts(tmp_path):
+    violations = _check(tmp_path, 'sleep 1\nsleep 2\nx=$(stat \\\n  -c %Y "$f")\n')
+    assert [line for line, _ in violations] == [3]
+
+
 def test_every_call_on_a_line_run_is_reported(tmp_path):
     source = 'x=$(stat -c %Y "$f")\nsleep 1\ny=$(stat -f %m "$f")\n'
     violations = _check(tmp_path, source)

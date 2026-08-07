@@ -853,10 +853,9 @@ def _our_last_reply_id(thread: ReportThread | None) -> int | None:
 
 
 def _upsert_thread_reply(
-    thread: ReportThread, repo: str, pr_number: int, body: str,
+    thread: ReportThread, repo: str, pr_number: int, body: str, existing_id: int | None,
 ) -> bool:
     """Replace our standing reply on a thread, or post the first one."""
-    existing_id = _our_last_reply_id(thread)
     if existing_id:
         return pc.patch_thread_reply(repo, existing_id, body)
     root_id = thread.comments[0].get("databaseId")
@@ -883,15 +882,15 @@ def _post_thread_replies(
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
             continue
-        was_standing = _our_last_reply_id(thread) is not None
+        existing_id = _our_last_reply_id(thread)
         # ceiling: thread.comments is not refreshed after a post, so two replies
         # to one thread within a single run would still stack. Unreachable while
         # the reply categories stay a partition of the triage verdicts; refetch
         # the thread here if that ever stops holding.
-        if not _upsert_thread_reply(thread, repo, pr_number, body_fn(entry)):
+        if not _upsert_thread_reply(thread, repo, pr_number, body_fn(entry), existing_id):
             continue
         replied += 1
-        edited += was_standing
+        edited += existing_id is not None
     if edited:
         log.info(f"Edited {edited} standing repl{'y' if edited == 1 else 'ies'} in place")
     return replied
@@ -2427,11 +2426,11 @@ def _run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | No
             "the line that settles it"
         )
 
-    editing = _our_last_reply_id(thread) is not None
-    if not _upsert_thread_reply(thread, repo, pr_number, body):
+    existing_id = _our_last_reply_id(thread)
+    if not _upsert_thread_reply(thread, repo, pr_number, body, existing_id) and publishing.enabled():
         log.error(f"failed to reply on {thread.id}")
         return 1
-    log.info(f"{'Edited' if editing else 'Posted'} reply on {thread.id}")
+    log.info(f"{'Edited' if existing_id else 'Posted'} reply on {thread.id}")
     return 0
 
 

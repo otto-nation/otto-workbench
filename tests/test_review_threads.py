@@ -1605,7 +1605,7 @@ class TestRunReply:
             assert rt._run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
         post.assert_not_called()
 
-    def test_errors_when_the_reply_call_fails(self, rt, tmp_path):
+    def test_errors_when_the_reply_call_fails(self, rt, tmp_path, publishing_on):
         body = tmp_path / "reply.md"
         body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
@@ -1614,6 +1614,17 @@ class TestRunReply:
              patch.object(rt.log, "error") as err:
             assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 1
         err.assert_called_once()
+
+    def test_a_drafted_reply_is_not_a_failure(self, rt, tmp_path):
+        """_gh_post reports failure whenever the publishing gate is closed."""
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply", return_value=False), \
+             patch.object(rt.log, "error") as err:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+        err.assert_not_called()
 
     def test_distinguishes_a_missing_body_file_from_an_empty_one(self, rt, tmp_path):
         empty = tmp_path / "empty.md"
@@ -1720,10 +1731,17 @@ def _standing_reply_thread(tid="t1", body="Applied: old take"):
     ])
 
 
+def _dismissed(**overrides):
+    """A dismissed-verdict CommentItem for the reply-upsert tests below."""
+    fields = {"id": "t1", "summary": "not applicable", "reasoning": "reason"}
+    fields.update(overrides)
+    return CommentItem(**fields)
+
+
 class TestReplyUpsert:
 
     def test_edits_our_standing_reply(self, rt, tmp_path):
-        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        dismissed = [_dismissed()]
         threads_by_id = {"t1": _standing_reply_thread(
             body="Suggestion reviewed and determined to be inapplicable: old reason",
         )}
@@ -1739,7 +1757,7 @@ class TestReplyUpsert:
 
     def test_posts_when_reviewer_replied_after_us(self, rt, tmp_path):
         """Editing under a reviewer's reply would rewrite what they answered."""
-        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        dismissed = [_dismissed()]
         threads_by_id = {
             "t1": ReportThread(id="t1", state=ThreadState.CONTESTED, comments=[
                 {"databaseId": 111, "body": "reviewer's point"},
@@ -1757,7 +1775,7 @@ class TestReplyUpsert:
         assert post.call_args[0][2] == 111
 
     def test_posts_when_we_never_replied(self, rt, tmp_path):
-        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        dismissed = [_dismissed()]
         threads_by_id = {
             "t1": ReportThread(id="t1", state=ThreadState.NEW,
                                comments=[{"databaseId": 111}]),
@@ -1773,7 +1791,7 @@ class TestReplyUpsert:
 
     def test_never_edits_a_lone_root_comment(self, rt, tmp_path):
         """On a self-review the root is ours; editing it rewrites the review point."""
-        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        dismissed = [_dismissed()]
         threads_by_id = {
             "t1": ReportThread(id="t1", state=ThreadState.ADDRESSED,
                                comments=[{"databaseId": 111, "body": "my own note"}]),
@@ -1793,7 +1811,7 @@ class TestReplyUpsert:
     ])
     def test_a_failed_call_is_not_counted(self, rt, tmp_path, state, failing):
         """replies_posted feeds the run summary, so a silent failure would inflate it."""
-        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        dismissed = [_dismissed()]
         thread = _standing_reply_thread()
         thread.state = state
         with patch("pr_comments.post_thread_reply", return_value=True), \

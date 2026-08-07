@@ -231,7 +231,7 @@ claude-review post <pr_url_or_number>
 | `--no-post` | Skip all interactive prompts; run review and exit | — |
 | `--post` | Run review then post automatically (fully headless) | — |
 | `--submit` | Submit the review (use with `--post` for fully headless) | — |
-| `--self` | Self-review mode: output to `ignore/reviews/self-review.md` | — |
+| `--self` | Self-review mode: output to `~/.config/workbench/reviews/<repo>-self-<branch>/review.md` | — |
 | `--skip-user-verification` | Skip ownership check in self-review mode | — |
 | `--force` | Skip pending review and stale review warnings | — |
 | `--no-holistic` | Skip holistic phase in multi-phase reviews | — |
@@ -245,6 +245,12 @@ claude-review post <pr_url_or_number>
 | `-h`, `--help` | Show help | — |
 
 `--no-post` and `--post` are mutually exclusive.
+
+#### What self-review reads
+
+`--self` reviews the worktree, not the remote branch. Everything that differs from the base branch is in scope: unpushed commits, staged and unstaged edits, and untracked files (`.gitignore` still applies). The head SHA and the changed-file list come from `git`, never from GitHub. When the branch already has a PR, its title, body and labels supply context but do not define the diff — the review logs the local head whenever it differs from the PR's.
+
+Re-reviews narrow to what changed since the prior review, and that delta follows the same rule — uncommitted work done since the last `--self` run is picked up. PR mode is unaffected: it reviews the pushed commits only.
 
 #### Model selection
 

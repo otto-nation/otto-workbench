@@ -819,6 +819,55 @@ def _is_diverged(stderr: str) -> bool:
     return any(marker in lowered for marker in _DIVERGED_MARKERS)
 
 
+_TRANSPORT_MARKERS = (
+    "could not read from remote repository",
+    "could not resolve host",
+    "connection refused",
+    "connection timed out",
+    "authentication failed",
+    "permission denied",
+    "repository not found",
+)
+
+_PUSH_REFUSED = "failed to push some refs"
+
+
+def _is_local_hook_rejection(stderr: str) -> bool:
+    """Whether the pre-push hook killed the push before git reached the remote.
+
+    A failing hook aborts the push locally, so git prints the generic
+    "failed to push some refs" with no per-ref "! [rejected]" line and none of
+    the transport or auth diagnostics a real network failure carries.
+    """
+    lowered = stderr.lower()
+    if _PUSH_REFUSED not in lowered or "! [rejected]" in lowered:
+        return False
+    return not any(marker in lowered for marker in _TRANSPORT_MARKERS)
+
+
+_HOOK_OUTPUT_LINES = 20
+
+
+def _hook_output(result: subprocess.CompletedProcess) -> str:
+    """The tail of what the hook printed, indented under the error.
+
+    The hook splits itself across both streams — check names on stdout, the
+    failure summary on stderr — so reporting one alone loses which gate failed.
+    """
+    merged = f"{result.stdout or ''}\n{result.stderr or ''}"
+    lines = [line.rstrip() for line in merged.splitlines() if line.strip()]
+    return "\n".join(f"  {line}" for line in lines[-_HOOK_OUTPUT_LINES:])
+
+
+def _head_sha(wt_path: str) -> str:
+    """Short SHA of the commit left stranded locally, for the repair message."""
+    result = subprocess.run(
+        ["git", "-C", wt_path, "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "HEAD"
+
+
 def _push_fixes(job: ReviewJob):
     """Push committed fixes to the remote."""
     result = subprocess.run(
@@ -835,6 +884,15 @@ def _push_fixes(job: ReviewJob):
             f"push failed — branch diverged. Run:\n"
             f"  git -C '{job.wt_path}' push --force-with-lease\n"
             f"stderr: {stderr}"
+        )
+        return
+
+    if _is_local_hook_rejection(stderr):
+        log.error(
+            f"fixes failed this repo's pre-push checks — commit "
+            f"{_head_sha(job.wt_path)} is local only and needs repair.\n\n"
+            f"{_hook_output(result)}\n\n"
+            f"  Repair, then: git -C '{job.wt_path}' push"
         )
         return
 

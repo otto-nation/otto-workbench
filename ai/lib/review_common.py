@@ -79,6 +79,9 @@ class Mode(StrEnum):
 # ── Phases ───────────────────────────────────────────────────────────────────
 
 
+REVIEW_ENV_PREFIX = "CLAUDE_REVIEW_"
+
+
 class Phase(StrEnum):
     """A stage of the review pipeline.
 
@@ -97,11 +100,11 @@ class Phase(StrEnum):
 
     @property
     def model_env_key(self) -> str:
-        return f"CLAUDE_REVIEW_{self.upper()}_MODEL"
+        return f"{REVIEW_ENV_PREFIX}{self.upper()}_MODEL"
 
     @property
     def thinking_env_key(self) -> str:
-        return f"CLAUDE_REVIEW_{self.upper()}_THINKING"
+        return f"{REVIEW_ENV_PREFIX}{self.upper()}_THINKING"
 
 
 # ── Agent tuning ─────────────────────────────────────────────────────────────

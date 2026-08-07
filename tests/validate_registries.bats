@@ -6,15 +6,9 @@ setup_file() {
   SHARED_DIR="$BATS_FILE_TMPDIR/validate"
   mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/brew/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
 
-  cp "$REPO_ROOT/lib/ui.sh" "$SHARED_DIR/lib/ui.sh"
-  cp "$REPO_ROOT/lib/output.sh" "$SHARED_DIR/lib/output.sh"
-  cp "$REPO_ROOT/lib/prompts.sh" "$SHARED_DIR/lib/prompts.sh"
-  cp "$REPO_ROOT/lib/files.sh" "$SHARED_DIR/lib/files.sh"
-  cp "$REPO_ROOT/lib/setup.sh" "$SHARED_DIR/lib/setup.sh"
-  cp "$REPO_ROOT/lib/constants.sh" "$SHARED_DIR/lib/constants.sh"
-  cp "$REPO_ROOT/lib/registries.sh" "$SHARED_DIR/lib/registries.sh"
-  cp "$REPO_ROOT/lib/state.sh" "$SHARED_DIR/lib/state.sh"
-  cp "$REPO_ROOT/lib/commands.sh" "$SHARED_DIR/lib/commands.sh"
+  # Copy every lib module rather than an enumerated subset — a new sub-module
+  # sourced by lib/ui.sh would otherwise break this fixture on arrival.
+  cp "$REPO_ROOT/lib/"*.sh "$SHARED_DIR/lib/"
 
   touch "$SHARED_DIR/bin/mytool" && chmod +x "$SHARED_DIR/bin/mytool"
   touch "$SHARED_DIR/bin/othertool" && chmod +x "$SHARED_DIR/bin/othertool"

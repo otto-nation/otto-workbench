@@ -37,3 +37,4 @@ paths:
 - `find . -perm +111` (BSD) not `find . -perm /111` (GNU) — or use `test -x` per-file
 - `grep -P` (PCRE) is unavailable on BSD — use `grep -E` (extended regex) instead
 - `date` flags differ — avoid GNU-only formats; use `date -u` for UTC
+- Never call `stat` with a format flag (`-c`, `-f`, `--format`, `--printf`) — use `file_mtime`, `file_birth`, or `file_mode` from `lib/portable.sh`. GNU reads `-f` as `--file-system`, so it prints a filesystem report to stdout *before* failing; a hand-rolled `$(gnu_form || bsd_form)` chain concatenates both outputs. Enforced by `bin/local/validate-stat-portability`

@@ -28,6 +28,8 @@ sys.modules.setdefault("pr_cli", pr_cli)
 
 import pr_state  # noqa: E402
 
+from conftest import assert_no_worktree_exit  # noqa: E402
+
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
 
@@ -935,3 +937,29 @@ class TestCmdCreate:
         cmd = mock_run.call_args[0][0]
         assert "pr:create" in cmd
         assert "--" not in cmd, "empty argv should not produce a -- separator"
+
+
+# ── worktree_root guards ───────────────────────────────────────────────────
+
+
+def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
+    assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_status,
+                            [], _make_ctx(worktree_root=None))
+
+
+def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
+    assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_fix,
+                            [], _make_ctx(worktree_root=None))
+
+
+def test_load_or_init_without_a_worktree_exits_with_guidance(capsys):
+    assert_no_worktree_exit(capsys, "feat/test", pr_cli._load_or_init,
+                            _make_ctx(worktree_root=None))
+
+
+def test_review_state_cache_is_skipped_without_a_worktree():
+    """A review that worked must not fail over a snapshot nobody asked for."""
+    ctx = _make_ctx(worktree_root=None)
+    with patch("pr_cli.pr_state.save_state") as save:
+        pr_cli._update_review_state({"findings": {"M": 1}}, ctx)
+    save.assert_not_called()

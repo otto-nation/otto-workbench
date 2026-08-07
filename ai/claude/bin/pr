@@ -92,7 +92,7 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     """Load existing state or create a fresh one from resolved context."""
     return pr_state.load_or_init(
-        worktree_root=ctx.worktree_root,
+        worktree_root=ctx.require_worktree(),
         repo=ctx.repo,
         branch=ctx.branch,
         pr_number=ctx.pr_number,
@@ -114,7 +114,15 @@ def _parse_review_summary(output: str) -> dict | None:
 
 def _update_review_state(summary_data: dict,
                          ctx: pr_context.ResolvedContext) -> None:
-    """Update pr_state from a parsed review summary dict."""
+    """Update pr_state from a parsed review summary dict.
+
+    Best-effort: the caller has already done the real work (a review, a repair),
+    and the review file it produced is user-scoped and survives. A bare repo with
+    no worktree has nowhere to cache the `pr status` snapshot, which is not worth
+    failing a review that worked — so this opts out rather than requiring one.
+    """
+    if ctx.worktree_root is None:
+        return
     findings = summary_data.get("findings", {})
     finding_counts = {
         k: v for k, v in findings.items()
@@ -132,7 +140,7 @@ def _update_review_state(summary_data: dict,
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))
-    pr_state.save_state(ctx.worktree_root, state)
+    pr_state.save_state(ctx.require_worktree(), state)
 
 
 def _update_review_state_from_output(output: str,
@@ -158,7 +166,8 @@ def _is_pr_target(target: str | None) -> bool:
 
 def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Render unified status dashboard from cached state."""
-    state = pr_state.load_state(ctx.worktree_root)
+    wt = ctx.require_worktree()
+    state = pr_state.load_state(wt)
 
     pr_label = f"#{state.identity.pr_number}" if state and state.identity.pr_number else "(no PR)"
     branch = state.identity.branch if state else ctx.branch
@@ -169,7 +178,7 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     if not state:
         lines.append("No status data yet. Run: pr ci, pr review, or pr comments")
         lines.append("")
-        lines += push_status.render_status(ctx.worktree_root, branch)
+        lines += push_status.render_status(wt, branch)
         print("\n".join(lines), file=sys.stderr)
         return 0
 
@@ -185,8 +194,8 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     lines.append("")
     lines += rebase_status.render_status(state.rebase)
     lines.append("")
-    unpushed = push_status.detect_unpushed(ctx.worktree_root, branch)
-    lines += push_status.render_status(ctx.worktree_root, branch, ahead=unpushed)
+    unpushed = push_status.detect_unpushed(wt, branch)
+    lines += push_status.render_status(wt, branch, ahead=unpushed)
     lines.append("")
     lines.append(_merge_readiness(state, unpushed=unpushed))
 
@@ -344,7 +353,8 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments."""
-    state = pr_state.load_state(ctx.worktree_root)
+    wt = ctx.require_worktree()
+    state = pr_state.load_state(wt)
     if not state:
         log.error("No state yet. Run pr ci, pr review, or pr comments first.")
         return 1
@@ -354,7 +364,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     if state.review.updated_at and sum(state.review.finding_counts.values()) > 0:
         log.info("Fixing review findings...")
         review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
-        review_args += ["--repo-dir", str(ctx.worktree_root)]
+        review_args += ["--repo-dir", str(wt)]
         review_args += list(argv)
         r = subprocess.run(review_args)
         if r.returncode != 0:
@@ -403,10 +413,8 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-def _gc_stale_pr_state(worktree_root: Path | None) -> int:
+def _gc_stale_pr_state(worktree_root: Path) -> int:
     """Remove pr state directory if the PR is merged or closed. Returns 1 if cleaned."""
-    if not worktree_root:
-        return 0
     state_dir = worktree_root / pr_state.STATE_DIR
     state_file = state_dir / pr_state.STATE_FILE
     if not state_file.is_file():
@@ -444,8 +452,11 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
+    # Review artifacts are user-scoped and prune fine from a bare repo; only
+    # the per-worktree state directory needs somewhere to look.
     total = review_gc.gc_reviews() + review_gc.prune_merged_reviews()
-    total += _gc_stale_pr_state(ctx.worktree_root)
+    if ctx.worktree_root:
+        total += _gc_stale_pr_state(ctx.worktree_root)
 
     if total > 0:
         log.info(f"GC: cleaned {total} item(s) total")

@@ -47,7 +47,6 @@ def test_parse_pr_input_simple_branch_raises():
 
 
 def test_resolved_context_is_frozen():
-    import pytest
     ctx = ResolvedContext(
         repo="owner/repo", branch="main", pr_number=1,
         worktree_root=Path("/tmp"), head_sha="abc",
@@ -65,6 +64,31 @@ def test_resolved_context_fields():
     assert ctx.branch == "feat/auth"
     assert ctx.pr_number is None
     assert ctx.head_sha == "def"
+
+
+# ── require_worktree ───────────────────────────────────────────────────────
+
+
+def test_require_worktree_returns_path():
+    ctx = ResolvedContext(
+        repo="owner/repo", branch="feat/auth",
+        pr_number=None, worktree_root=Path("/wt"), head_sha="def",
+    )
+    assert ctx.require_worktree() == Path("/wt")
+
+
+def test_require_worktree_exits_with_actionable_message(capsys):
+    ctx = ResolvedContext(
+        repo="owner/repo", branch="feat/auth",
+        pr_number=None, worktree_root=None, head_sha="",
+    )
+    with pytest.raises(SystemExit) as exc:
+        ctx.require_worktree()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "No worktree for 'feat/auth'" in err
+    assert "wt switch feat/auth" in err
+    assert "--repo-dir" in err
 
 
 # ── fetch_and_reset ────────────────────────────────────────────────────────

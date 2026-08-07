@@ -47,6 +47,27 @@ class ResolvedContext:
     head_sha: str
     current_branch: str | None = None
 
+    def require_worktree(self) -> Path:
+        """The worktree root, or exit 1 naming what to do about its absence.
+
+        ``worktree_root`` is legitimately None — a bare repo with no worktree
+        checked out on the branch has nowhere to read state from or run git in.
+        Every consumer that cannot work without one calls this instead of
+        dereferencing the field, so the failure is one message here rather than
+        a TypeError, a ``FileNotFoundError: 'None'``, or the string "None"
+        reaching ``git -C`` several frames later.
+
+        Consumers that can degrade (ci-check without --fix, pr create, pr gc)
+        read the field directly and are visibly opted out.
+        """
+        if self.worktree_root is None:
+            log.error(
+                f"No worktree for {self.branch!r} — "
+                f"run: wt switch {self.branch} (or pass --repo-dir)"
+            )
+            sys.exit(1)
+        return self.worktree_root
+
 
 def resolve(
     *,

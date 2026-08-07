@@ -12,7 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import write_thrash_log
+from conftest import assert_no_worktree_exit, write_thrash_log
 import pr_context
 import pr_state
 from pr_comments import ThreadState
@@ -2220,3 +2220,24 @@ class TestEvidencePermalinks:
         )
         assert "| `a.py:9` |" in body
         assert "/blob/" not in body
+
+
+# ── worktree_root guards ────────────────────────────────────────────────────
+
+
+class TestWorktreeGuard:
+    """Both entry points fail the same actionable way with no worktree."""
+
+    def _ctx(self):
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="isaac/feat/x", pr_number=42,
+            worktree_root=None, head_sha="abc1234",
+        )
+
+    def test_run_threads_exits_before_touching_github(self, rt, capsys):
+        assert_no_worktree_exit(capsys, "isaac/feat/x",
+                                rt._run_threads, None, None, self._ctx())
+
+    def test_finish_deferred_work_exits_with_guidance(self, rt, capsys):
+        assert_no_worktree_exit(capsys, "isaac/feat/x",
+                                rt._finish_deferred_work, self._ctx(), PRReport())

@@ -25,6 +25,10 @@ pr_rebase_cli = importlib.util.module_from_spec(_spec)
 pr_rebase_cli.__file__ = _pr_rebase_path
 _spec.loader.exec_module(pr_rebase_cli)
 
+import pr_context  # noqa: E402
+
+from conftest import assert_no_worktree_exit  # noqa: E402
+
 
 # ── _detect_rebase_in_progress ──────────────────────────────────────────────
 
@@ -2383,6 +2387,7 @@ def _run_main_with_push(cmd_start_rc: int) -> tuple[int, mock.MagicMock]:
     """Run main() with --push and return (exit_code, mock_cmd_push)."""
     fake_ctx = mock.MagicMock()
     fake_ctx.worktree_root = Path("/fake")
+    fake_ctx.require_worktree.return_value = Path("/fake")
     fake_trail = mock.MagicMock()
     fake_trail.__enter__ = mock.Mock(return_value=fake_trail)
     fake_trail.__exit__ = mock.Mock(return_value=False)
@@ -2414,3 +2419,19 @@ def test_push_flag_skips_cmd_push_on_conflicts():
 
     mock_push.assert_not_called()
     assert exit_code == 3
+
+
+# ── worktree_root guard ─────────────────────────────────────────────────────
+
+
+def test_main_without_a_worktree_exits_with_guidance(capsys):
+    """The old code coerced None to "None" and handed it to git -C."""
+    ctx = pr_context.ResolvedContext(
+        repo="owner/repo", branch="isaac/feat/x", pr_number=42,
+        worktree_root=None, head_sha="abc1234",
+    )
+    with mock.patch("sys.argv", ["pr-rebase"]), \
+         mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=ctx), \
+         mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls:
+        assert_no_worktree_exit(capsys, "isaac/feat/x", pr_rebase_cli.main)
+    mock_trail_cls.start.assert_not_called()

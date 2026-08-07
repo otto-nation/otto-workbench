@@ -1467,7 +1467,7 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     """Load existing state or create a fresh one from resolved context."""
     return pr_state.load_or_init(
-        worktree_root=ctx.worktree_root,
+        worktree_root=ctx.require_worktree(),
         repo=ctx.repo,
         branch=ctx.branch,
         pr_number=ctx.pr_number,
@@ -1497,7 +1497,7 @@ class RebaseOutcome:
             force_pushed=self.force_pushed is True,
             updated_at=pr_state.now_iso(),
         ))
-        pr_state.save_state(ctx.worktree_root, state)
+        pr_state.save_state(ctx.require_worktree(), state)
 
     def emit(self) -> None:
         report: dict = {
@@ -1766,7 +1766,7 @@ def main():
     ctx = pr_context.resolve(
         repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
     )
-    cwd = str(ctx.worktree_root)
+    cwd = str(ctx.require_worktree())
 
     global _trail
     _trail = Trail.start(

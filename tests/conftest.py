@@ -42,29 +42,39 @@ def _repo_config_path():
 
 _REPO_CONFIG = _repo_config_path()
 
-# Sections no test writes, and something outside the test process does.
-# worktrunk stamps a per-branch `marker` (with a timestamp) into the shared
-# config whenever an agent's status changes, so a write landing mid-test says
-# nothing about the test that happened to be running.
-_EXTERNAL_SECTIONS = (b"worktrunk",)
+# `(section, subsection prefix)` pairs holding runtime state that worktrunk
+# rewrites from outside this process — `state.<branch>` carries the marker and
+# vars it restamps whenever an agent's status changes, `hints` the counters for
+# one-time hints it has shown. A write landing mid-test says nothing about the
+# test that happened to be running.
+#
+# Deliberately not the whole `worktrunk` namespace: `worktrunk.default-branch`
+# is user config (bin/wt-cleanup reads it), so a test clobbering it must fail.
+_EXTERNAL_STATE = ((b"worktrunk", b"state."), (b"worktrunk", b"hints"))
 
 
-def _section_name(line: bytes) -> bytes | None:
-    """The section a `[header]` line opens — `[branch "x"]` is `branch`."""
+def _section_of(line: bytes) -> tuple[bytes, bytes] | None:
+    """The `(section, subsection)` a `[header]` line opens, else None."""
     if not line.startswith(b"["):
         return None
-    return line[1:].split(b'"', 1)[0].strip(b"]").strip()
+    head, _, quoted = line[1:].partition(b'"')
+    return head.strip(b"]").strip(), quoted.rsplit(b'"', 1)[0] if quoted else b""
+
+
+def _is_external(section: bytes, subsection: bytes) -> bool:
+    return any(section == name and subsection.startswith(prefix)
+               for name, prefix in _EXTERNAL_STATE)
 
 
 def _guarded_lines(raw: bytes | None) -> list[bytes] | None:
-    """The config's lines with the externally-owned sections dropped."""
+    """The config's lines with the externally-owned state dropped."""
     if raw is None:
         return None
     kept, external = [], False
     for line in raw.splitlines():
-        section = _section_name(line.strip())
-        if section is not None:
-            external = section in _EXTERNAL_SECTIONS
+        opened = _section_of(line.strip())
+        if opened is not None:
+            external = _is_external(*opened)
         if not external:
             kept.append(line)
     return kept

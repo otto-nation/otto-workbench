@@ -2,8 +2,9 @@
 
 The guard compares the repo's git config around every test, so anything that
 writes to that file from outside the test process fails whichever test happened
-to be running. worktrunk does exactly that — it stamps a per-branch marker with
-a timestamp — which is what these cover.
+to be running. worktrunk does exactly that — it restamps per-branch markers and
+hint counters — which is what these cover, along with the line the exemption
+draws: its user config in the same namespace stays guarded.
 """
 
 from pathlib import Path
@@ -11,13 +12,17 @@ from pathlib import Path
 import pytest
 
 from conftest import (
-    _assert_config_unchanged, _describe_config_change, _guarded_lines, _section_name,
+    _assert_config_unchanged, _describe_config_change, _guarded_lines, _section_of,
 )
 
 _CONFIG = b"""[core]
 \trepositoryformatversion = 0
 [user]
 \temail = dev@example.com
+[worktrunk]
+\tdefault-branch = main
+[worktrunk "hints"]
+\tshell-integration = 4
 [worktrunk "state.main"]
 \tmarker = {\\"marker\\":\\"\xf0\x9f\xa4\x96\\",\\"set_at\\":1786075417}
 [branch "main"]
@@ -46,6 +51,10 @@ class TestExternalWritesAreIgnored:
         )
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
 
+    def test_a_bumped_hint_counter_reads_as_no_change(self):
+        after = _rewritten(b"shell-integration = 4", b"shell-integration = 5")
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
     def test_a_removed_worktrunk_section_reads_as_no_change(self):
         after = _rewritten(
             b'[worktrunk "state.main"]\n\tmarker = '
@@ -62,6 +71,11 @@ class TestRealWritesAreStillCaught:
 
     def test_a_section_appended_at_the_end_is_a_change(self):
         after = _CONFIG + b"[user]\n\tname = Test\n"
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
+
+    def test_worktrunk_user_config_is_a_change(self):
+        """`default-branch` is user config in the same namespace as the state."""
+        after = _rewritten(b"default-branch = main", b"default-branch = trunk")
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
     def test_a_key_inside_the_section_after_an_external_one_is_a_change(self):
@@ -121,13 +135,16 @@ class TestTheGuardItself:
 
 class TestSectionNames:
     def test_a_plain_section(self):
-        assert _section_name(b"[core]") == b"core"
+        assert _section_of(b"[core]") == (b"core", b"")
 
     def test_a_subsection(self):
-        assert _section_name(b'[worktrunk "state.main"]') == b"worktrunk"
+        assert _section_of(b'[worktrunk "state.main"]') == (b"worktrunk", b"state.main")
 
     def test_a_subsection_holding_a_bracket(self):
-        assert _section_name(b'[branch "feat[1]"]') == b"branch"
+        assert _section_of(b'[branch "feat[1]"]') == (b"branch", b"feat[1]")
+
+    def test_a_branch_named_like_the_state_namespace(self):
+        assert _section_of(b'[branch "state.main"]') == (b"branch", b"state.main")
 
     def test_a_value_line_is_not_a_section(self):
-        assert _section_name(b"marker = {}") is None
+        assert _section_of(b"marker = {}") is None

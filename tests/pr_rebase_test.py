@@ -2485,6 +2485,25 @@ def test_force_push_ai_fix_fails_returns_error():
     assert rc == 1
 
 
+def test_force_push_logs_the_final_retry_error():
+    """The post-fix retry captures its output — a failure must still be shown."""
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=1, stdout="", stderr="still broken",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True), \
+         mock.patch.object(pr_rebase_cli.log, "dim") as mock_dim:
+        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
+
+    assert rc == 1
+    assert mock_dim.call_count == 2
+    assert mock_dim.call_args[0][0] == "still broken"
+
+
 def test_force_push_no_resolved_files_skips_ai_fix():
     """Push fails without resolved_files — doesn't attempt AI fix."""
     def fake_run(cmd, **kwargs):

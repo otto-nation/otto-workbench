@@ -30,6 +30,7 @@ from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+from functools import cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
@@ -835,13 +836,16 @@ def _git_add(filepath: str, cwd: str) -> bool:
     return r.returncode == 0
 
 
+# One budget for every chunk of context pasted into a fix prompt — check output
+# or staged diff. Both are truncated on a plain slice, so a hunk can be cut
+# mid-line; these prompts are best-effort and a partial tail still reads fine.
 _FIX_ERROR_MAX_CHARS = 4000
-_FIX_DIFF_MAX_CHARS = 4000
 _COMMIT_HEADER_MAX = 72
 _FALLBACK_FIX_SUBJECT = "fix: resolve pre-push check failures after rebase"
 _CONVENTIONS_SH = Path(__file__).resolve().parents[3] / "lib" / "conventions.sh"
 
 
+@cache
 def _commit_types() -> list[str]:
     """Read the allowed conventional-commit types from lib/conventions.sh.
 
@@ -879,7 +883,7 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
     """
     diff = subprocess.run(
         ["git", "diff", "--cached"], capture_output=True, text=True, cwd=cwd,
-    ).stdout[:_FIX_DIFF_MAX_CHARS]
+    ).stdout[:_FIX_ERROR_MAX_CHARS]
     if not diff.strip():
         return _FALLBACK_FIX_SUBJECT
 
@@ -1589,6 +1593,18 @@ def _push(cwd: str) -> subprocess.CompletedProcess:
     )
 
 
+def _report_push_failure(r: subprocess.CompletedProcess) -> tuple[int, str]:
+    """Surface a rejected push and hand back its (exit code, combined output).
+
+    _push captures output so the hook's check errors can be fed to the AI fix,
+    which means nothing reaches the terminal unless it is logged here.
+    """
+    output = (r.stdout + r.stderr).strip()
+    if output:
+        log.dim(output)
+    return r.returncode, output
+
+
 def _hook_modified(cwd: str) -> list[str]:
     """Tracked files the pre-push hook left modified in the worktree."""
     status = subprocess.run(
@@ -1640,10 +1656,7 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     if r.returncode == 0:
         return 0
 
-    rc = r.returncode
-    push_output = (r.stdout + r.stderr).strip()
-    if push_output:
-        log.dim(push_output)
+    rc, push_output = _report_push_failure(r)
 
     # Recovery 1: commit regenerated files (hook modified tracked files)
     if _commit_regenerated(cwd):
@@ -1651,18 +1664,19 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
         retry = _push(cwd)
         if retry.returncode == 0:
             return 0
-        rc = retry.returncode
         # Re-read the error: the second run's checks are what step 2 must fix.
-        push_output = (retry.stdout + retry.stderr).strip() or push_output
-        if push_output:
-            log.dim(push_output)
+        rc, retry_output = _report_push_failure(retry)
+        push_output = retry_output or push_output
 
     # Recovery 2: AI-fix resolved files based on check errors
     if resolved_files and push_output:
         log.info("Attempting to fix pre-push check failures...")
         if _fix_push_failures(cwd, push_output, resolved_files):
             log.info("Retrying force-push...")
-            return _push(cwd).returncode
+            final = _push(cwd)
+            if final.returncode == 0:
+                return 0
+            return _report_push_failure(final)[0]
 
     return rc
 

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Run every convention validator in the repo.
+#
+# Validators are discovered by glob, not listed here — the pre-push hook and CI
+# both call this script, so a newly added validate-* is enforced the moment it
+# lands instead of waiting for someone to remember two hardcoded lists.
+#
+# Usage: bin/local/validate-all [--quiet]
+# Exit code: 0 if every validator passes, 1 if any fail.
+
+set -e
+
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+# Which tree to scan. Overridable so tests can point at a fixture directory
+# instead of creating throwaway scripts inside the live checkout. Deliberately
+# not WORKBENCH_DIR: setup code assigns that to the main worktree, and picking
+# it up here would silently validate the wrong tree from a feature worktree.
+VALIDATOR_ROOT="${VALIDATOR_ROOT:-$_SCRIPT_ROOT}"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet|--list]
+
+Run every convention validator (bin/validate-* and bin/local/validate-*).
+
+Options:
+  --quiet     Suppress per-validator output; show only the final summary
+  --list      Print the discovered validator paths without running them
+  -h, --help  Show this help
+
+Environment:
+  VALIDATOR_ROOT  Tree to scan for validators (default: the repo root)
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+LIST=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+[[ "${1:-}" == "--list" ]] && LIST=true
+
+VALIDATORS=()
+for _v in "$VALIDATOR_ROOT"/bin/validate-* "$VALIDATOR_ROOT"/bin/local/validate-*; do
+  # The -x test is doing double duty: it skips non-executables (a stray backup
+  # file) and it discards the literal glob pattern bash leaves behind when a
+  # directory holds no validators at all. Do not drop it.
+  if [[ -x "$_v" && "$(basename "$_v")" != "validate-all" ]]; then
+    VALIDATORS+=("$_v")
+  fi
+done
+
+if $LIST; then
+  # Guarded: printf with an empty array would still emit one blank line.
+  if (( ${#VALIDATORS[@]} > 0 )); then
+    printf '%s\n' "${VALIDATORS[@]}"
+  fi
+  exit 0
+fi
+
+FAILED=()
+for _v in "${VALIDATORS[@]}"; do
+  name="$(basename "$_v")"
+  if output=$("$_v" --quiet 2>&1); then
+    $QUIET || echo -e "  ${GREEN}✓${NC} $name"
+  else
+    FAILED+=("$name")
+    echo -e "  ${RED}✗${NC} $name" >&2
+    echo "$output" >&2
+  fi
+done
+
+echo
+if (( ${#VALIDATORS[@]} == 0 )); then
+  echo -e "  ${DIM}no validators found${NC}"
+  exit 0
+elif (( ${#FAILED[@]} == 0 )); then
+  success "${#VALIDATORS[@]} validators passed"
+  exit 0
+else
+  err "${#FAILED[@]} of ${#VALIDATORS[@]} validators failed: ${FAILED[*]}"
+  exit 1
+fi

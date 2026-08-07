@@ -19,7 +19,7 @@ from pathlib import Path
 import log
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_common import (
-    FILE_STAT_FMT, Effort, Mode, PRIOR_SHA_RE,
+    FILE_STAT_FMT, Diagnosis, Effort, Mode, PRIOR_SHA_RE,
     _run,
 )
 from review_dedup import _get_bot_login
@@ -147,8 +147,10 @@ class PipelineState:
     group_names: list[str]
     holistic_done: bool = False
     groups_done: list[int] = field(default_factory=list)
-    groups_failed: dict[int, str] = field(default_factory=dict)
+    groups_failed: dict[int, Diagnosis] = field(default_factory=dict)
     synthesis_done: bool = False
+    # Not an agent diagnosis — synthesis records its own pipeline outcomes
+    # ("all groups failed", "mechanical fallback"), which have no session log.
     synthesis_failed: str = ""
     review_type: str = "full"
     prior_sha: str = ""

@@ -35,6 +35,7 @@ import publishing
 from pr_comments import ThreadState
 import review_common
 import review_issue
+from review_common import Diagnosis
 from pr_thread_models import (
     ClassificationResult,
     CommentFixResult,
@@ -648,14 +649,14 @@ def _guarded_fix_pass(
     prompt: str, wt_path: Path, main_wt: Path | None, tracking_file: Path,
     *, max_turns: int, max_budget: float, label: str,
     repo: str | None = None, pr_number: int | None = None,
-) -> str:
+) -> Diagnosis | None:
     """Run the fix agent, retrying once if it checked nothing off.
 
     An agent that finishes having touched no box and called no write tool was
     thrashing, and the shared guard's retry names the write mechanism.  Partial
     progress is not this function's business — `_retry_fix_pass` handles that,
     and the guard stays out of its way by treating a single checked box as
-    output.  Returns the diagnosed reason, or "" when the pass produced work.
+    output.  Returns the diagnosis, or None when the pass produced work.
     """
     def invoke(text: str, turns: int) -> int:
         return _invoke_fix_agent(
@@ -667,7 +668,7 @@ def _guarded_fix_pass(
         invoke, prompt, _fix_session_log(wt_path),
         label=label, max_turns=max_turns,
         produced=lambda: _count_checked(tracking_file) > 0,
-        hint_select=lambda reason: agent_retry.FIX_RETRY_HINT,
+        hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
     )
 
 

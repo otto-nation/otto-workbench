@@ -4,16 +4,20 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_agent
 import review_pipeline
+from review_common import Diagnosis, DiagnosisKind
 
 
 # Arbitrary — the diagnosis echoes whatever num_turns the result record carries,
 # so the value only has to be distinguishable from the pipeline's turn defaults.
 _TURNS = 16
 _MAX_TURNS_REASON = f"agent hit max turns ({_TURNS})"
+_NO_WRITE_SUFFIX = " — never called a file-writing tool"
 
 
 def _tool_use(name: str, **inp) -> str:
@@ -50,9 +54,9 @@ class TestDiagnoseMissingOutput:
             _tool_use("Bash", command="ls"),
             _result(),
         )
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert _MAX_TURNS_REASON in reason
-        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.MAX_TURNS
+        assert diagnosis.no_write_tool
 
     def test_max_turns_with_edit_call_stays_plain(self, tmp_path):
         log_path = _write_log(
@@ -61,14 +65,14 @@ class TestDiagnoseMissingOutput:
             _tool_use("Edit", file_path="/tmp/out.md", old_string=""),
             _result(),
         )
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert reason == _MAX_TURNS_REASON
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis == Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
 
     def test_no_assistant_records_stays_plain(self, tmp_path):
         """Non-Claude backends log no tool_use — absence is not evidence."""
         log_path = _write_log(tmp_path, _result())
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert reason == _MAX_TURNS_REASON
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis == Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
 
     def test_crash_is_not_labelled_a_no_write_failure(self, tmp_path):
         """The error explains the missing output; a retry would reproduce it."""
@@ -80,9 +84,22 @@ class TestDiagnoseMissingOutput:
                 "result": "spawn ENOENT",
             }),
         )
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert review_agent.DIAG_NO_WRITE_TOOL_CALL not in reason
-        assert not review_pipeline._is_retryable(reason)
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
+        assert not diagnosis.no_write_tool
+        assert not review_pipeline._is_retryable(diagnosis)
+
+    def test_transient_crash_is_classified_apart_from_a_plain_one(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            json.dumps({
+                "type": "result", "subtype": "error", "is_error": True,
+                "result": "API Error: Connection to the API was lost.",
+            }),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.TRANSIENT
+        assert review_pipeline._is_retryable(diagnosis)
 
     def test_clean_completion_without_a_write_is_labelled(self, tmp_path):
         log_path = _write_log(
@@ -90,9 +107,10 @@ class TestDiagnoseMissingOutput:
             _tool_use("Read", file_path="/tmp/a"),
             json.dumps({"type": "result", "subtype": "success"}),
         )
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
-        assert review_pipeline._is_retryable(reason)
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.kind is DiagnosisKind.COMPLETED
+        assert diagnosis.no_write_tool
+        assert review_pipeline._is_retryable(diagnosis)
 
     def test_refusal_without_any_tool_call_is_labelled(self, tmp_path):
         """A one-turn refusal calls no tool at all — the clearest no-write case.
@@ -106,18 +124,96 @@ class TestDiagnoseMissingOutput:
             _text("I'm configured as a review-only assistant; I won't apply fixes."),
             json.dumps({"type": "result", "subtype": "success"}),
         )
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
-        assert review_pipeline._is_retryable(reason)
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.no_write_tool
+        assert review_pipeline._is_retryable(diagnosis)
 
     def test_missing_log_unchanged(self, tmp_path):
-        reason = review_agent.diagnose_missing_output(str(tmp_path / "nope.jsonl"))
-        assert reason == review_agent.DIAG_NO_SESSION_LOG
+        diagnosis = review_agent.diagnose_missing_output(str(tmp_path / "nope.jsonl"))
+        assert diagnosis == Diagnosis(DiagnosisKind.NO_SESSION_LOG)
 
     def test_no_result_record_unchanged(self, tmp_path):
         log_path = _write_log(tmp_path, _tool_use("Read", file_path="/tmp/a"))
-        reason = review_agent.diagnose_missing_output(log_path)
-        assert reason == review_agent.DIAG_NO_RESULT_RECORD
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis == Diagnosis(DiagnosisKind.NO_RESULT_RECORD)
+
+    def test_quota_retry_without_a_result_is_quota_exhausted(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis == Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)
+
+
+class TestDiagnosisMessage:
+    """Every kind renders the exact string the pipeline emitted before typing.
+
+    These messages reach the review file's Agent Failures table and a user's
+    terminal, so the refactor has to be invisible in the output.
+    """
+
+    @pytest.mark.parametrize("diagnosis,expected", [
+        (
+            Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS),
+            _MAX_TURNS_REASON,
+        ),
+        (
+            Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True),
+            _MAX_TURNS_REASON + _NO_WRITE_SUFFIX,
+        ),
+        # The backend reported no turn count — rendered as "?", as it always was.
+        (Diagnosis(DiagnosisKind.MAX_TURNS), "agent hit max turns (?)"),
+        (
+            Diagnosis(DiagnosisKind.COMPLETED, detail="success"),
+            "agent completed (subtype=success) but did not write output",
+        ),
+        (
+            Diagnosis(DiagnosisKind.COMPLETED, detail="success", no_write_tool=True),
+            "agent completed (subtype=success) but did not write output" + _NO_WRITE_SUFFIX,
+        ),
+        (
+            Diagnosis(DiagnosisKind.AGENT_ERROR, detail="spawn ENOENT"),
+            "agent error: spawn ENOENT",
+        ),
+        (
+            Diagnosis(DiagnosisKind.TRANSIENT, detail="ECONNRESET"),
+            "agent error: ECONNRESET",
+        ),
+        (Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED), "quota exhausted (429)"),
+        (Diagnosis(DiagnosisKind.NO_SESSION_LOG), "no session log found"),
+        (Diagnosis(DiagnosisKind.NO_RESULT_RECORD), "no result record in session log"),
+        (Diagnosis(DiagnosisKind.BUDGET_EXCEEDED), "budget exceeded"),
+        (Diagnosis(DiagnosisKind.OUTPUT_MISSING), "output missing"),
+        (
+            Diagnosis(DiagnosisKind.SKIPPED, detail="3 consecutive failures"),
+            "skipped: 3 consecutive failures",
+        ),
+        # A reason read back from a state file written before failures were
+        # structured — carried through verbatim.
+        (
+            Diagnosis(DiagnosisKind.UNKNOWN, detail="something the old code said"),
+            "something the old code said",
+        ),
+    ])
+    def test_renders_legacy_string(self, diagnosis, expected):
+        assert diagnosis.message == expected
+
+    def test_every_kind_renders(self):
+        """No kind can be added without deciding how it reads."""
+        for kind in DiagnosisKind:
+            assert Diagnosis(kind).message
+
+
+class TestDiagnosisRecoverable:
+    def test_permission_denial_is_not_recoverable(self):
+        diagnosis = Diagnosis(
+            DiagnosisKind.AGENT_ERROR, detail="Permission denied writing /tmp/out.md",
+        )
+        assert not diagnosis.recoverable
+
+    def test_turn_exhaustion_is_recoverable(self):
+        assert Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS).recoverable
 
 
 class TestSinglePassRead:
@@ -133,25 +229,6 @@ class TestSinglePassRead:
         )
         review_agent.diagnose_missing_output(log_path)
         assert reads == [log_path]
-
-
-class TestMaxTurnsReasonMatching:
-    """The reason string carries a turn count and may carry a suffix."""
-
-    def _reason(self, tmp_path, *extra_lines):
-        log_path = _write_log(tmp_path, *extra_lines, _result())
-        return review_agent.diagnose_missing_output(log_path)
-
-    def test_plain_max_turns_is_retryable(self, tmp_path):
-        reason = self._reason(tmp_path)
-        assert review_pipeline._MAX_TURNS_REASON in reason
-        assert review_pipeline._is_retryable(reason)
-
-    def test_suffixed_max_turns_is_retryable(self, tmp_path):
-        reason = self._reason(tmp_path, _tool_use("Read", file_path="/tmp/a"))
-        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
-        assert review_pipeline._is_retryable(reason)
-        assert review_pipeline._MAX_TURNS_REASON in reason
 
 
 class TestWritableDirs:

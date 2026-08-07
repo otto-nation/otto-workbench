@@ -9,16 +9,18 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
 import agent_retry
-import review_agent
 import review_pipeline
+from review_common import Diagnosis, DiagnosisKind
 
 _TURNS = 15
-_MAX_TURNS = f"agent hit max turns ({_TURNS})"
-_NO_WRITE = f"agent completed (subtype=success) — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
+_MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
+_NO_WRITE = Diagnosis(DiagnosisKind.COMPLETED, detail="success", no_write_tool=True)
 
 
 def _write_log(tmp_path: Path, payload: dict) -> str:
@@ -50,12 +52,12 @@ class TestRetryUnproductive:
 
     def test_no_retry_when_the_predicate_is_already_satisfied(self, tmp_path):
         calls = []
-        reason = agent_retry.retry_unproductive(
+        diagnosis = agent_retry.retry_unproductive(
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: True,
         )
-        assert reason == ""
+        assert diagnosis is None
         assert calls == []
 
     def test_retries_once_when_nothing_was_produced(self, tmp_path):
@@ -69,24 +71,24 @@ class TestRetryUnproductive:
             output.append(True)
             return 0
 
-        reason = agent_retry.retry_unproductive(
+        diagnosis = agent_retry.retry_unproductive(
             invoke, "PROMPT", log_path,
             label="fix", max_turns=_TURNS,
             produced=lambda: bool(output),
         )
-        assert reason == ""
+        assert diagnosis is None
         assert len(calls) == 1
 
     def test_a_retry_that_also_produces_nothing_is_not_retried_again(self, tmp_path):
         """One retry is the cap — and the second diagnosis is reported, not swallowed."""
         calls = []
-        reason = agent_retry.retry_unproductive(
+        diagnosis = agent_retry.retry_unproductive(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: False,
         )
         assert len(calls) == 1
-        assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
+        assert diagnosis.no_write_tool
 
     def test_retry_prompt_carries_the_selected_hint(self, tmp_path):
         log_path = write_thrash_log(tmp_path / "session.jsonl")
@@ -95,7 +97,7 @@ class TestRetryUnproductive:
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", log_path,
             label="fix", max_turns=_TURNS, produced=lambda: False,
-            hint_select=lambda reason: agent_retry.FIX_RETRY_HINT,
+            hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
         )
         assert len(calls) == 1
         assert calls[0][0] == agent_retry.FIX_RETRY_HINT + "PROMPT"
@@ -103,14 +105,14 @@ class TestRetryUnproductive:
     def test_recover_runs_before_the_run_is_written_off(self, tmp_path):
         salvaged = []
         calls = []
-        reason = agent_retry.retry_unproductive(
+        diagnosis = agent_retry.retry_unproductive(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS,
             produced=lambda: bool(salvaged),
             recover=lambda: salvaged.append(True),
         )
-        assert reason == ""
+        assert diagnosis is None
         assert calls == []
 
     def test_non_retryable_reason_is_returned_without_a_second_attempt(self, tmp_path):
@@ -119,13 +121,15 @@ class TestRetryUnproductive:
             "result": "permission denied",
         })
         calls = []
-        reason = agent_retry.retry_unproductive(
+        diagnosis = agent_retry.retry_unproductive(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", log_path,
             label="fix", max_turns=_TURNS, produced=lambda: False,
         )
         assert calls == []
-        assert "permission denied" in reason
+        assert diagnosis == Diagnosis(
+            DiagnosisKind.AGENT_ERROR, detail="permission denied",
+        )
 
 
 class TestRunGuarded:
@@ -134,12 +138,12 @@ class TestRunGuarded:
     def test_first_attempt_runs_even_when_the_predicate_is_satisfied(self, tmp_path):
         """A leftover artifact from an earlier pass must not skip the run."""
         calls = []
-        reason = agent_retry.run_guarded(
+        diagnosis = agent_retry.run_guarded(
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: True,
         )
-        assert reason == ""
+        assert diagnosis is None
         assert calls == [("PROMPT", _TURNS)]
 
     def test_unproductive_first_attempt_is_followed_by_a_hinted_retry(self, tmp_path):
@@ -148,7 +152,7 @@ class TestRunGuarded:
             lambda p, t: calls.append(p) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: False,
-            hint_select=lambda reason: agent_retry.FIX_RETRY_HINT,
+            hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
         )
         assert calls == ["PROMPT", agent_retry.FIX_RETRY_HINT + "PROMPT"]
 
@@ -208,37 +212,78 @@ class TestRetryBlankResponse:
         assert len(calls) == 1
 
 
+# Every kind, and what the three retry decisions make of it. Adding a kind
+# without a row here fails `test_every_kind_is_covered` — the guard exists
+# because a kind that nobody classified silently defaults to "give up".
+_RETRY_POLICY = {
+    DiagnosisKind.MAX_TURNS: (True, agent_retry.RETRY_HINT, agent_retry.RETRY_MAX_TURNS),
+    DiagnosisKind.COMPLETED: (False, "", _TURNS),
+    DiagnosisKind.AGENT_ERROR: (False, "", _TURNS),
+    DiagnosisKind.TRANSIENT: (True, "", _TURNS),
+    DiagnosisKind.QUOTA_EXHAUSTED: (False, "", _TURNS),
+    DiagnosisKind.NO_SESSION_LOG: (True, "", _TURNS),
+    DiagnosisKind.NO_RESULT_RECORD: (True, "", _TURNS),
+    DiagnosisKind.SKIPPED: (False, "", _TURNS),
+    DiagnosisKind.BUDGET_EXCEEDED: (False, "", _TURNS),
+    DiagnosisKind.OUTPUT_MISSING: (False, "", _TURNS),
+    DiagnosisKind.UNKNOWN: (False, "", _TURNS),
+}
+
+
 class TestSharedRetryability:
+    def test_every_kind_is_covered(self):
+        assert set(_RETRY_POLICY) == set(DiagnosisKind)
+
+    @pytest.mark.parametrize("kind,policy", sorted(_RETRY_POLICY.items()))
+    def test_policy_matches_the_table(self, kind, policy):
+        retryable, hint, turns = policy
+        diagnosis = Diagnosis(kind)
+        assert agent_retry.is_retryable(diagnosis) is retryable
+        assert agent_retry.hint_for(diagnosis) == hint
+        assert agent_retry.turns_for(diagnosis, _TURNS) == turns
+
     def test_clean_completion_without_a_write_is_retryable(self):
+        """The flag overrides the kind — COMPLETED alone is not retryable."""
+        assert not agent_retry.is_retryable(Diagnosis(DiagnosisKind.COMPLETED))
         assert agent_retry.is_retryable(_NO_WRITE)
 
-    def test_max_turns_is_retryable(self):
-        assert agent_retry.is_retryable(_MAX_TURNS)
-
-    def test_skipped_is_not_retryable(self):
-        assert not agent_retry.is_retryable("skipped: 3 consecutive failures")
+    def test_turn_budget_is_never_lowered_below_what_the_caller_asked_for(self):
+        """A phase already scaled above the shared ceiling keeps its budget."""
+        generous = agent_retry.RETRY_MAX_TURNS + 10
+        assert agent_retry.turns_for(_MAX_TURNS, generous) == generous
 
     # hint_for priority order: no-write > max-turns > nothing.
     # These three tests pin that ordering — changing precedence must update all three.
 
     def test_no_write_hint_beats_the_max_turns_hint(self):
-        both = f"{_MAX_TURNS} — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
+        both = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
         assert agent_retry.hint_for(both) == agent_retry.NO_WRITE_HINT
+
+    def test_the_no_write_hint_does_not_cost_the_doubled_budget(self):
+        """Regression: a flat NO_WRITE_TOOL kind would have lost the turn bump.
+
+        The flag rides alongside the kind precisely so turn exhaustion still
+        earns a bigger retry when the run also never wrote anything.
+        """
+        both = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
+        assert agent_retry.turns_for(both, _TURNS) == agent_retry.RETRY_MAX_TURNS
 
     def test_max_turns_alone_still_gets_the_max_turns_hint(self):
         """The priority above must not have swallowed the less specific case."""
         assert agent_retry.hint_for(_MAX_TURNS) == agent_retry.RETRY_HINT
 
-    def test_a_reason_with_no_matching_hint_adds_nothing(self):
-        assert agent_retry.hint_for("agent error: overloaded") == ""
+    def test_a_diagnosis_with_no_matching_hint_adds_nothing(self):
+        assert agent_retry.hint_for(
+            Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded"),
+        ) == ""
 
 
 class TestCIFixRetryHint:
     """ci-check's fallback hint, for when the diagnosis suggests nothing better."""
 
-    def _select(self, reason: str) -> str:
+    def _select(self, diagnosis: Diagnosis) -> str:
         """The selector ci-check installs — kept in sync with its call site."""
-        return agent_retry.hint_for(reason) or agent_retry.CI_FIX_RETRY_HINT
+        return agent_retry.hint_for(diagnosis) or agent_retry.CI_FIX_RETRY_HINT
 
     def test_a_diagnosed_reason_still_wins(self):
         """The fallback must not mask a hint that names the actual mechanism."""
@@ -246,11 +291,11 @@ class TestCIFixRetryHint:
         assert self._select(_NO_WRITE) == agent_retry.NO_WRITE_HINT
 
     def test_an_undiagnosed_reason_falls_back_to_the_ci_wording(self):
-        assert self._select("") == agent_retry.CI_FIX_RETRY_HINT
+        assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) == agent_retry.CI_FIX_RETRY_HINT
 
     def test_the_fallback_is_not_the_review_fix_hint(self):
         """ci-check used to fall back to FIX_RETRY_HINT, phrased for review findings.
 
         Pointing it back at that constant is the regression this guards.
         """
-        assert self._select("") != agent_retry.FIX_RETRY_HINT
+        assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) != agent_retry.FIX_RETRY_HINT

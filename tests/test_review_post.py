@@ -2368,6 +2368,14 @@ class TestDryRunIntegration:
         payload = self._extract_json(result.stdout)
         assert "body" in payload or "comments" in payload
 
+    def test_dry_run_omits_file_triage_from_body(self, tmp_path):
+        review_file = self._setup_review(tmp_path)
+        result = self._run_dry_run(review_file)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        payload = self._extract_json(result.stdout)
+        assert "File Triage" not in payload["body"]
+        assert "Tier 2" not in payload["body"]
+
     def test_dry_run_with_severity_filter(self, tmp_path):
         review_file = self._setup_review(tmp_path)
         result = self._run_dry_run(review_file, extra_args=["--severity", "M"])
@@ -2604,6 +2612,19 @@ class TestReviewSections:
         after = sections.after_findings()
         keys = [cfg.key for cfg, _ in after]
         assert "performance_notes" in keys
+
+    def test_file_triage_is_not_extracted(self, rp):
+        text = (
+            "## File Triage\n"
+            "- `a.go` — **Tier 1** (core logic)\n"
+            "\n"
+            "## Must fix\n"
+            "\n"
+            "- **[M1]** **`a.go:1`** — bug\n"
+        )
+        sections = rp.ReviewSections.from_text(text)
+        assert sections.get("file_triage") == ""
+        assert sections.after_findings() == []
 
     def test_before_findings_omits_empty(self, rp):
         text = "## Must fix\n\n- **[M1]** **`a.go:1`** — bug\n"

@@ -26,7 +26,7 @@ from review_preflight import (
 )
 from review_prompt import (
     _annotate_with_thread_state, _build_prior_section,
-    _build_reply_threads_section,
+    _build_reply_threads_section, _strip_internal_sections,
     _format_general_comments, _format_review_comments, _format_reviews,
 )
 
@@ -410,6 +410,69 @@ class TestBuildPriorSectionWithThreads:
 
     def test_empty_prior_returns_empty(self):
         assert _build_prior_section("", reply_threads={"threads": []}) == ""
+
+
+# ── _strip_internal_sections ─────────────────────────────────────────────────
+
+PRIOR_WITH_INTERNAL = (
+    "## File Triage\n"
+    "- `a.py` — **Tier 2** (application logic)\n"
+    "- `b.py` — **Tier 3** (generated)\n"
+    "\n"
+    "## Must fix\n"
+    "- **[M1]** **`a.py:10`** — missing error check\n"
+    "\n"
+    "## Static Analysis\n"
+    "\n"
+    "<details>\n"
+    "<summary>Static Analysis (1 violation)</summary>\n"
+    "\n"
+    "### Nesting depth\n"
+    "\n"
+    "- **`a.py:42`** — depth 3 exceeds limit 2 (in main())\n"
+    "\n"
+    "</details>\n"
+    "\n"
+    "## Verdict\n"
+    "Request changes.\n"
+)
+
+
+class TestStripInternalSections:
+    def test_drops_triage_and_static_analysis(self):
+        result = _strip_internal_sections(PRIOR_WITH_INTERNAL)
+        assert "File Triage" not in result
+        assert "Tier 2" not in result
+        assert "Static Analysis" not in result
+        assert "Nesting depth" not in result
+        assert "<details>" not in result
+
+    def test_keeps_findings_and_verdict(self):
+        result = _strip_internal_sections(PRIOR_WITH_INTERNAL)
+        assert "**[M1]**" in result
+        assert "## Must fix" in result
+        assert "Request changes." in result
+
+    def test_section_after_excluded_one_resumes(self):
+        # Verdict follows Static Analysis — exclusion must reset at its header
+        assert _strip_internal_sections(PRIOR_WITH_INTERNAL).endswith("Request changes.")
+
+    def test_unaffected_text_passes_through(self):
+        text = "## Must fix\n- **[M1]** **`a.py:1`** — bug"
+        assert _strip_internal_sections(text) == text
+
+    def test_only_internal_sections_yields_empty(self):
+        assert _strip_internal_sections("## File Triage\n- `a.py` — **Tier 1**\n") == ""
+
+    def test_build_prior_section_omits_internal_sections(self):
+        result = _build_prior_section(PRIOR_WITH_INTERNAL)
+        assert "Prior review" in result
+        assert "**[M1]**" in result
+        assert "File Triage" not in result
+        assert "Nesting depth" not in result
+
+    def test_build_prior_section_empty_when_only_internal(self):
+        assert _build_prior_section("## File Triage\n- `a.py` — **Tier 1**\n") == ""
 
 
 # ── _format_reviews ──────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ import json
 import log
 from review_common import (
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
+    SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS,
     TEMPLATE_DIR_REL,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
@@ -510,6 +511,27 @@ def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
     return "\n".join(parts).strip()
 
 
+# Coverage bookkeeping and machine-generated output, not prior reviewer claims.
+# The scoped path drops both already (their lines carry no finding ID), so
+# stripping here keeps the unscoped prompts consistent with it.
+_PRIOR_EXCLUDED_SECTIONS = {
+    SECTION_FILE_TRIAGE.lower(),
+    SECTION_STATIC_ANALYSIS.lower(),
+}
+
+
+def _strip_internal_sections(prior_text: str) -> str:
+    parts: list[str] = []
+    excluded = False
+    for line in prior_text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            excluded = stripped[3:].strip().lower() in _PRIOR_EXCLUDED_SECTIONS
+        if not excluded:
+            parts.append(line)
+    return "\n".join(parts).strip()
+
+
 _STATE_LABELS = {
     THREAD_CONTESTED: "[CONTESTED]",
     THREAD_ACKNOWLEDGED: "[ACKNOWLEDGED]",
@@ -547,11 +569,11 @@ def _build_prior_section(
 ) -> str:
     if not prior_review:
         return ""
-    review_text = annotate_prior_with_stable_ids(prior_review)
+    review_text = _strip_internal_sections(annotate_prior_with_stable_ids(prior_review))
     if file_filter:
         review_text = _scope_prior_review(review_text, file_filter)
-        if not review_text:
-            return ""
+    if not review_text:
+        return ""
     if reply_threads:
         review_text = _annotate_with_thread_state(review_text, reply_threads)
     default = (

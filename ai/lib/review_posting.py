@@ -22,6 +22,7 @@ from review_sections import ReviewSections
 
 import log
 from pr_state import PostedAs, PostEvent, PostTracking
+from review_common import plural
 from review_findings import Finding
 from review_github import LineResolutionError, PRData
 from serde import to_dict as serde_to_dict
@@ -201,7 +202,7 @@ def _format_comment_body(
     header = (
         f"> **Note:** This review was written against commit `{review_sha[:7]}`. "
         f"PR HEAD has since moved to `{head_sha[:7]}` "
-        f"({new_commit_count} new commit{'s' if new_commit_count != 1 else ''}). "
+        f"({new_commit_count} new commit{plural(new_commit_count)}). "
         f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
     )
     return f"{header}\n{body}"

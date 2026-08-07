@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from review_common import SECTION_STATIC_ANALYSIS, plural
+
 
 @dataclass
 class StaticViolation:
@@ -128,8 +130,10 @@ def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerR
 def _format_checker_violations(r: CheckerResult) -> list[str]:
     file_count = len({v.file for v in r.violations})
     lines = [
-        f"\n### {r.name}",
-        f"{len(r.violations)} violation{'s' if len(r.violations) != 1 else ''} "
+        "",
+        f"### {r.name}",
+        "",
+        f"{len(r.violations)} violation{plural(len(r.violations))} "
         f"in {file_count} of {r.files_checked} files checked",
         "",
     ]
@@ -145,14 +149,24 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
     if not results:
         return ""
 
-    has_violations = any(r.violations for r in results)
-    if not has_violations:
-        return "## Static Analysis\n\nAll checks passed."
+    violating = [r for r in results if r.violations]
+    if not violating:
+        return f"## {SECTION_STATIC_ANALYSIS}\n\nAll checks passed."
 
-    parts = ["## Static Analysis"]
-    for r in results:
-        if r.violations:
-            parts.extend(_format_checker_violations(r))
+    total = sum(len(r.violations) for r in violating)
+    # Collapsed by default: the violation list runs to hundreds of lines on
+    # large diffs and would otherwise bury the findings above it. The summary
+    # repeats the section name because the posted comment renders no heading
+    # for this section — the summary line is the only label a reader sees.
+    parts = [
+        f"## {SECTION_STATIC_ANALYSIS}",
+        "",
+        "<details>",
+        f"<summary>{SECTION_STATIC_ANALYSIS} ({total} violation{plural(total)})</summary>",
+    ]
+    for r in violating:
+        parts.extend(_format_checker_violations(r))
+    parts.extend(["", "</details>"])
     return "\n".join(parts)
 
 

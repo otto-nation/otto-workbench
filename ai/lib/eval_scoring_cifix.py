@@ -98,6 +98,7 @@ class CiFixTask:
                 exit_code=pre_code,
                 output=pre_output,
             ),
+            cwd=repo_dir,
             session_log=session_log,
             add_dirs=[repo_dir],
             max_turns=FIX_MAX_TURNS,

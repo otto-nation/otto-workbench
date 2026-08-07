@@ -860,7 +860,7 @@ print(f'done={loaded.groups_done}')
 import subprocess, ai_backend_claude as abc, ai_backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo fail >&2; exit 42']
-rc = mod.invoke_agent(ab.AgentInvocation(prompt='test', session_log='$TMPDIR/test.jsonl', add_dirs=['/tmp', '/tmp']))
+rc = mod.invoke_agent(ab.AgentInvocation(prompt='test', cwd='$TMPDIR', session_log='$TMPDIR/test.jsonl', add_dirs=['/tmp', '/tmp']))
 abc._build_agent_cmd = original
 print(rc)
 ")
@@ -872,7 +872,7 @@ print(rc)
 import subprocess, os, ai_backend_claude as abc, ai_backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'echo agent-error-msg >&2; exit 1']
-mod.invoke_agent(ab.AgentInvocation(prompt='test', session_log='$TMPDIR/stderr_test.jsonl', add_dirs=['/tmp', '/tmp']))
+mod.invoke_agent(ab.AgentInvocation(prompt='test', cwd='$TMPDIR', session_log='$TMPDIR/stderr_test.jsonl', add_dirs=['/tmp', '/tmp']))
 abc._build_agent_cmd = original
 content = open('$TMPDIR/stderr_test.jsonl').read()
 print('has_stderr=' + str('agent-error-msg' in content))
@@ -885,7 +885,7 @@ print('has_stderr=' + str('agent-error-msg' in content))
 import ai_backend_claude as abc, ai_backend as ab
 original = abc._build_agent_cmd
 abc._build_agent_cmd = lambda *a, **kw: ['bash', '-c', 'exit 7']
-rc = mod.invoke_agent(ab.AgentInvocation(prompt='a]long prompt that the subprocess never reads', session_log='$TMPDIR/pipe_test.jsonl', add_dirs=['/tmp', '/tmp']))
+rc = mod.invoke_agent(ab.AgentInvocation(prompt='a]long prompt that the subprocess never reads', cwd='$TMPDIR', session_log='$TMPDIR/pipe_test.jsonl', add_dirs=['/tmp', '/tmp']))
 abc._build_agent_cmd = original
 print(rc)
 ")
@@ -897,7 +897,7 @@ print(rc)
 import ai_backend_claude as abc, ai_backend as ab
 original = abc._build_fix_cmd
 abc._build_fix_cmd = lambda *a, **kw: ['bash', '-c', 'exit 13']
-rc = abc.invoke_fix(ab.AgentInvocation(prompt='a long prompt that the subprocess never reads', add_dirs=['/tmp']))
+rc = abc.invoke_fix(ab.AgentInvocation(prompt='a long prompt that the subprocess never reads', cwd='$TMPDIR', add_dirs=['/tmp']))
 abc._build_fix_cmd = original
 print(rc)
 ")

@@ -334,7 +334,7 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
 
 
 def prompt(
-    text: str, *, model: str | None = None,
+    text: str, *, cwd: str, model: str | None = None,
 ) -> tuple[str, int, ai_usage.SessionUsage | None]:
     """Stateless text-in/text-out via pi -p. Returns (text, exit_code, usage).
 
@@ -342,7 +342,7 @@ def prompt(
     ledger records nothing rather than a zeroed row that reads as a free call.
     """
     cmd = _build_prompt_cmd(model=model)
-    result = subprocess.run(cmd, input=text, capture_output=True, text=True)
+    result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd)
     return result.stdout, result.returncode, None
 
 
@@ -370,6 +370,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=inv.cwd,
     )
 
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
@@ -427,6 +428,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=inv.cwd,
     )
 
     start_time = time.monotonic()

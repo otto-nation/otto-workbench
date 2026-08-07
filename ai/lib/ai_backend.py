@@ -88,12 +88,33 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     return _get_module().preflight(models, trail)
 
 
+def _require_cwd(cwd: str, entry_point: str) -> None:
+    """Reject a call that would let the backend CLI pick its own directory.
+
+    Every AI subprocess inherits the interpreter's working directory unless it is
+    told otherwise, and this repo is a bare repo with ~23 sibling worktrees — the
+    inherited directory is reliably another live branch with uncommitted work that
+    the agent can write to. `add_dirs` is not a substitute: it widens the allowed
+    set and has no way to narrow it.
+    """
+    if not cwd:
+        raise ValueError(f"ai_backend.{entry_point}() requires a non-empty cwd")
+    if not Path(cwd).is_dir():
+        raise ValueError(
+            f"ai_backend.{entry_point}() cwd is not a directory: {cwd}"
+        )
+
+
 def prompt(
-    text: str, *, model: str | None = None,
+    text: str, *, cwd: str, model: str | None = None,
     task: str | None = None, repo: str | None = None, pr: str | None = None,
 ) -> tuple[str, int]:
-    """Stateless text-in/text-out. Returns (response_text, exit_code)."""
-    result = _get_module().prompt(text, model=model)
+    """Stateless text-in/text-out. Returns (response_text, exit_code).
+
+    `cwd` is required — see _require_cwd for why it has no safe default.
+    """
+    _require_cwd(cwd, "prompt")
+    result = _get_module().prompt(text, cwd=cwd, model=model)
     # Backends report (text, code, usage); tolerate the older pair so a backend that
     # has not adopted the triple degrades to unmeasured rather than crashing dispatch.
     if len(result) == 3:
@@ -117,9 +138,15 @@ class AgentInvocation:
 
     ``task``, ``repo``, and ``pr`` are not passed to the backend at all: they
     only label the usage ledger record for this call.
+
+    ``cwd`` is the directory the backend CLI runs in. It carries a default only
+    so the ~37 tests that exercise the command builders — where it has no effect
+    — need not supply one; ``invoke_agent`` and ``invoke_fix`` reject an empty
+    value, and TestAgentCallSitesPassCwd rejects a call site that omits it.
     """
 
     prompt: str
+    cwd: str = ""
     session_log: str = ""
     add_dirs: list[str] = field(default_factory=list)
     agent: AgentKind | None = None
@@ -147,6 +174,7 @@ def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int
 
 def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with tool use and JSONL streaming. Returns exit code."""
+    _require_cwd(inv.cwd, "invoke_agent")
     code = _get_module().invoke_agent(inv)
     _record_invocation(inv, entry_point="agent", exit_code=code)
     return code
@@ -154,6 +182,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
 
 def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, raw output echoed. Returns exit code."""
+    _require_cwd(inv.cwd, "invoke_fix")
     code = _get_module().invoke_fix(inv)
     _record_invocation(inv, entry_point="fix", exit_code=code)
     return code

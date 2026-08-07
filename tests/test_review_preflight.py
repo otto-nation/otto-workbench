@@ -18,7 +18,11 @@ import review_preflight as rp
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=str(repo), check=True, capture_output=True, text=True,
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 

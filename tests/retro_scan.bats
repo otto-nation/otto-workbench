@@ -198,6 +198,29 @@ PY
   [[ "$result" -le 500 ]]
 }
 
+# ── _threads_for ─────────────────────────────────────────────────────────────
+
+@test "_threads_for: uses the batch nodes when nothing was truncated" {
+  result=$(_py_here <<'PY'
+mod.fetch_review_threads = lambda *a: (_ for _ in ()).throw(AssertionError("refetched"))
+pr_node = {"number": 7, "reviewThreads": {"totalCount": 2, "nodes": [{"path": "a.py"}, {"path": "b.py"}]}}
+print(len(mod._threads_for("o/r", pr_node)))
+PY
+)
+  [[ "$result" == "2" ]]
+}
+
+@test "_threads_for: refetches every thread when the batch query truncated" {
+  result=$(_py_here <<'PY'
+calls = []
+mod.fetch_review_threads = lambda repo, pr: calls.append((repo, pr)) or [{"path": f"f{i}.py"} for i in range(114)]
+pr_node = {"number": 7, "reviewThreads": {"totalCount": 114, "nodes": [{"path": "a.py"}] * 100}}
+print(len(mod._threads_for("o/r", pr_node)), calls)
+PY
+)
+  [[ "$result" == "114 [('o/r', 7)]" ]]
+}
+
 # Helper: create a rules directory with test rule files
 _make_rules_dir() {
   local workbench="$1"

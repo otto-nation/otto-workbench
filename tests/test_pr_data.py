@@ -13,8 +13,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_github import (
-    PRData, fetch_pr_data,
-    GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
+    PRData, fetch_pr_data, fetch_review_threads,
+    GQL_MAX_THREAD_PAGES, GQL_THREAD_COMMENTS_LIMIT,
 )
 
 
@@ -449,17 +449,119 @@ class TestFetchPrData:
             fetch_pr_data("owner/repo", "1")
 
     @patch("review_github._gh_graphql")
-    def test_truncation_warnings(self, mock_gql, capsys):
+    def test_comment_truncation_warning(self, mock_gql, capsys):
         thread = _make_thread(thread_id="PRT_1", path="big.py")
         thread["comments"]["totalCount"] = GQL_THREAD_COMMENTS_LIMIT + 1
-        total_threads = GQL_THREADS_LIMIT + 1
         mock_gql.return_value = (0, self._graphql_response(
-            reviewThreads={"totalCount": total_threads, "nodes": [thread]},
+            reviewThreads=_review_threads_node([thread]),
         ))
         pd = fetch_pr_data("owner/repo", "1")
         assert len(pd.review_threads) == 1
         stderr = capsys.readouterr().err
-        assert f"{total_threads} review threads" in stderr
-        assert "GQL_THREADS_LIMIT" in stderr
         assert "big.py" in stderr
         assert "GQL_THREAD_COMMENTS_LIMIT" in stderr
+
+    @patch("review_github._gh_graphql")
+    def test_threads_beyond_the_first_page_are_fetched(self, mock_gql):
+        page1 = _make_thread(thread_id="PRT_1", path="a.py")
+        page2 = _make_thread(thread_id="PRT_2", path="b.py")
+        mock_gql.side_effect = [
+            (0, self._graphql_response(
+                reviewThreads=_review_threads_node([page1], has_next=True, cursor="cur1"),
+            )),
+            (0, self._graphql_response(reviewThreads=_review_threads_node([page2]))),
+        ]
+        pd = fetch_pr_data("owner/repo", "1")
+        assert [t["id"] for t in pd.review_threads] == ["PRT_1", "PRT_2"]
+        assert mock_gql.call_args_list[1][0][1]["endCursor"] == "cur1"
+
+
+# ── Review thread pagination ─────────────────────────────────────────────────
+
+def _review_threads_node(nodes, has_next=False, cursor=None, total=None):
+    return {
+        "totalCount": len(nodes) if total is None else total,
+        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+        "nodes": nodes,
+    }
+
+
+def _threads_response(nodes, has_next=False, cursor=None):
+    return json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": _review_threads_node(nodes, has_next, cursor),
+                },
+            },
+        },
+    })
+
+
+class TestFetchReviewThreads:
+    @patch("review_github._gh_graphql")
+    def test_single_page_makes_one_call(self, mock_gql):
+        mock_gql.return_value = (0, _threads_response([_make_thread("PRT_1")]))
+        threads = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in threads] == ["PRT_1"]
+        mock_gql.assert_called_once()
+        assert "endCursor" not in mock_gql.call_args[0][1]
+
+    @patch("review_github._gh_graphql")
+    def test_follows_pages_until_exhausted(self, mock_gql):
+        mock_gql.side_effect = [
+            (0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor="c1")),
+            (0, _threads_response([_make_thread("PRT_2")], has_next=True, cursor="c2")),
+            (0, _threads_response([_make_thread("PRT_3")])),
+        ]
+        threads = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in threads] == ["PRT_1", "PRT_2", "PRT_3"]
+        cursors = [c[0][1].get("endCursor") for c in mock_gql.call_args_list]
+        assert cursors == [None, "c1", "c2"]
+
+    @patch("review_github._gh_graphql")
+    def test_repeated_cursor_stops_instead_of_looping(self, mock_gql, capsys):
+        # A cursor variable gh does not recognise re-serves page 1 forever.
+        mock_gql.return_value = (
+            0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor="stuck"),
+        )
+        threads = fetch_review_threads("owner/repo", 7)
+        assert mock_gql.call_count == 2
+        assert len(threads) == 2
+        assert "repeated cursor" in capsys.readouterr().err
+
+    @patch("review_github._gh_graphql")
+    def test_another_page_without_a_cursor_warns(self, mock_gql, capsys):
+        mock_gql.return_value = (
+            0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor=None),
+        )
+        threads = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in threads] == ["PRT_1"]
+        mock_gql.assert_called_once()
+        assert "no cursor" in capsys.readouterr().err
+
+    @patch("review_github._gh_graphql")
+    def test_page_ceiling_stops_and_warns(self, mock_gql, capsys):
+        mock_gql.side_effect = [
+            (0, _threads_response([_make_thread(f"PRT_{i}")], has_next=True, cursor=f"c{i}"))
+            for i in range(GQL_MAX_THREAD_PAGES)
+        ]
+        threads = fetch_review_threads("owner/repo", 7)
+        assert mock_gql.call_count == GQL_MAX_THREAD_PAGES
+        assert len(threads) == GQL_MAX_THREAD_PAGES
+        assert f"{GQL_MAX_THREAD_PAGES}-page ceiling" in capsys.readouterr().err
+
+    @patch("review_github._gh_graphql")
+    def test_failed_page_warns_and_keeps_earlier_threads(self, mock_gql, capsys):
+        mock_gql.side_effect = [
+            (0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor="c1")),
+            (1, ""),
+        ]
+        threads = fetch_review_threads("owner/repo", 7)
+        assert [t["id"] for t in threads] == ["PRT_1"]
+        assert "incomplete" in capsys.readouterr().err
+
+    @patch("review_github._gh_graphql")
+    def test_first_page_failure_returns_empty(self, mock_gql):
+        mock_gql.return_value = (1, "")
+        assert fetch_review_threads("owner/repo", 7) == []

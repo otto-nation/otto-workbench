@@ -17,6 +17,15 @@ teardown() {
   common_teardown
 }
 
+# Octal file mode, GNU first then BSD. Each form is assigned separately: GNU
+# stat treats -f as --file-system and writes a report to stdout before failing,
+# so chaining both inside one substitution concatenates the two outputs.
+_file_mode() {
+  local mode
+  mode=$(stat -c '%a' "$1" 2>/dev/null) || mode=$(stat -f '%Lp' "$1" 2>/dev/null)
+  printf '%s' "$mode"
+}
+
 # Runs the migration against FAKE_HOME with the ui.sh helpers stubbed out.
 _run_migration() {
   HOME="$FAKE_HOME" bash -c '
@@ -85,7 +94,7 @@ JSON
 
   run _run_migration
   [ "$status" -eq 0 ]
-  run stat -f '%Lp' "$SETTINGS"
+  run _file_mode "$SETTINGS"
   [ "$output" = "600" ]
 }
 

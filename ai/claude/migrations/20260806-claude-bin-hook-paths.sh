@@ -25,7 +25,12 @@ migration_20260806_claude_bin_hook_paths() {
         return 0
     fi
 
+    # Seed the temp file with cp -p so it inherits the original mode rather
+    # than the umask default — the migration must not silently loosen a
+    # restricted settings file. The redirect below truncates without changing
+    # the mode, and cp -p is portable where the stat mode flags are not.
     local tmp="$settings.migrate.$$"
+    cp -p "$settings" "$tmp"
     sed 's|\$HOME/\.claude/bin/|$HOME/.local/bin/|g' "$settings" > "$tmp"
 
     if ! jq empty "$tmp" 2>/dev/null; then
@@ -33,12 +38,6 @@ migration_20260806_claude_bin_hook_paths() {
         err "Rewriting Claude script paths produced invalid JSON — left $settings untouched"
         return 1
     fi
-
-    # The temp file is born with the umask default; carry over the original
-    # mode so the migration cannot silently loosen a restricted settings file.
-    local mode
-    mode=$(stat -f '%Lp' "$settings" 2>/dev/null || stat -c '%a' "$settings" 2>/dev/null) || mode=""
-    [[ -n "$mode" ]] && chmod "$mode" "$tmp"
 
     mv "$tmp" "$settings"
     success "Repointed Claude script paths from ~/.claude/bin to ~/.local/bin"

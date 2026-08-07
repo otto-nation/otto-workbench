@@ -506,6 +506,18 @@ def test_patch_issue_comment_uses_patch_method():
     assert post.call_args[0][0] == "repos/owner/repo/issues/comments/11"
 
 
+def test_patch_thread_reply_uses_patch_method():
+    with patch.object(pr_comments, "_gh_post", return_value=(0, "")) as post:
+        assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is True
+    assert post.call_args.kwargs["method"] == "PATCH"
+    assert post.call_args[0][0] == "repos/owner/repo/pulls/comments/99"
+
+
+def test_patch_thread_reply_reports_failure():
+    with patch.object(pr_comments, "_gh_post", return_value=(1, "")):
+        assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is False
+
+
 # ── Publishing gate ──────────────────────────────────────────────────────────
 
 

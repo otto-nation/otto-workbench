@@ -179,15 +179,19 @@ re-run `--fix`.
 If the user wants changes to a reply first, edit and post it manually (below),
 then run `--finish --post` for the rest.
 
-For manual replies to `needs_human` threads, use the `databaseId` from the thread's first comment:
+For manual replies to `needs_human` threads, write the body to a file and post it
+with `--reply`:
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-  --method POST -F body=@- <<'REPLY_BODY'
-<reply text>
-REPLY_BODY
+pr comments --reply <thread_or_comment_id> --body-file <PATH> [--repo-dir <PATH>]
 ```
 
+`--reply` takes the thread's node ID, any comment `databaseId` in it, or a
+`...#discussion_r<id>` URL. It edits our standing reply when that reply is still
+the last comment on the thread, and posts a new one only once a reviewer has
+answered — so a revised position replaces the old one instead of stacking under
+it. Do **not** call `gh api .../replies` directly: that path has no dedup, and it
+is what leaves a thread holding several of our comments that disagree.
 
 Print summary: fixes applied, replies posted, threads resolved, threads still open.
 
@@ -197,6 +201,14 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 
 - Never pass `--post` before the user has seen the drafts and approved them
 - Never apply fixes without user confirmation for `needs_human` items
+- One reply per thread. If our position changed, revise the existing reply via
+  `--reply` — a second comment leaves the reviewer holding two answers and no
+  way to tell which one stands
+- Back every factual claim in a reply with a blob permalink pinned to a SHA
+  (`https://github.com/<owner>/<repo>/blob/<sha>/<path>#L<line>`), never a
+  branch-relative URL, which drifts as the branch moves. This applies hardest to
+  disagreement: if you cannot point at the line that settles it, say what you
+  checked and ask
 - Never file a `deferred` thread on the tracking issue without the user
   choosing to — deferral is a decision, not a fallback for a failed fix pass
 - Never auto-resolve contested or ambiguous threads — only verified ones

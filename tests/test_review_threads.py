@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -1508,6 +1509,126 @@ class TestFinishFlag:
         assert not rt._build_parser().parse_args([]).finish
 
 
+# ── --reply ──────────────────────────────────────────────────────────────
+
+
+def _raw_thread(tid, comment_ids, login="reviewer"):
+    return {
+        "id": tid,
+        "isResolved": False,
+        "path": "src/app.py",
+        "line": 4,
+        "comments": {"nodes": [
+            {"databaseId": cid, "body": "point", "author": {"login": login}}
+            for cid in comment_ids
+        ]},
+    }
+
+
+class TestFindReplyTarget:
+
+    @pytest.mark.parametrize("target", [
+        "PRRT_abc",
+        "222",
+        "#discussion_r222",
+        "https://github.com/owner/repo/pull/42#discussion_r222",
+    ])
+    def test_resolves_every_identifier_a_human_might_paste(self, rt, target):
+        raw = [_raw_thread("PRRT_zzz", [999]), _raw_thread("PRRT_abc", [111, 222])]
+        thread = rt._find_reply_target(raw, target, "me")
+        assert thread is not None
+        assert thread.id == "PRRT_abc"
+
+    def test_returns_none_when_nothing_matches(self, rt):
+        raw = [_raw_thread("PRRT_abc", [111])]
+        assert rt._find_reply_target(raw, "discussion_r404", "me") is None
+
+    def test_carries_the_lifecycle_state_the_upsert_needs(self, rt):
+        raw = [_raw_thread("PRRT_abc", [111, 222], login="me")]
+        assert rt._find_reply_target(raw, "PRRT_abc", "me").state == ThreadState.ADDRESSED
+
+
+class TestRunReply:
+
+    def _ctx(self, tmp_path):
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="abc1234",
+        )
+
+    def _patches(self, rt, raw, login="reviewer"):
+        return (
+            patch.object(rt, "fetch_pr_data",
+                         return_value=SimpleNamespace(viewer_login=login)),
+            patch.object(rt.pc, "fetch_threads", return_value=raw),
+        )
+
+    def test_posts_the_body_from_the_file(self, rt, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            code = rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body))
+        assert code == 0
+        assert post.call_args[0][2] == 111
+
+    def test_edits_rather_than_stacking(self, rt, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4")
+        raw = [_raw_thread("PRRT_abc", [111, 222], login="me")]
+        fetch_pr, fetch_threads = self._patches(rt, raw, login="me")
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply") as post, \
+             patch("pr_comments.patch_thread_reply", return_value=True) as edit:
+            code = rt._run_reply(self._ctx(tmp_path), "discussion_r222", str(body))
+        assert code == 0
+        post.assert_not_called()
+        assert edit.call_args[0][1] == 222
+
+    def test_warns_when_the_body_cites_no_permalink(self, rt, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("Trust me, the code already does this.")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch.object(rt.log, "warn") as warn:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+        warn.assert_called_once()
+
+    def test_errors_on_an_unknown_thread(self, rt, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("something")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply") as post:
+            assert rt._run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
+        post.assert_not_called()
+
+    def test_errors_when_the_reply_call_fails(self, rt, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply", return_value=False), \
+             patch.object(rt.log, "error") as err:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 1
+        err.assert_called_once()
+
+    def test_distinguishes_a_missing_body_file_from_an_empty_one(self, rt, tmp_path):
+        empty = tmp_path / "empty.md"
+        empty.write_text("   ")
+        with patch.object(rt, "fetch_pr_data") as fetch_pr, \
+             patch.object(rt.log, "error") as err:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", None) == 1
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", "/nope.md") == 1
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(empty)) == 1
+        fetch_pr.assert_not_called()
+        messages = [c[0][0] for c in err.call_args_list]
+        assert "not found" in messages[1]
+        assert "empty" in messages[2]
+
+
 # ── _post_deferred_replies ────────────────────────────────────────────────
 
 
@@ -1588,103 +1709,188 @@ class TestPostAlreadyAddressedReplies:
         mock_reply.assert_not_called()
 
 
-# ── reply dedup ──────────────────────────────────────────────────────────
+# ── reply upsert ─────────────────────────────────────────────────────────
 
 
-class TestReplyDedup:
+def _standing_reply_thread(tid="t1", body="Applied: old take"):
+    """A thread whose last comment is ours and unanswered — the editable case."""
+    return ReportThread(id=tid, state=ThreadState.ADDRESSED, comments=[
+        {"databaseId": 111, "body": "reviewer's point"},
+        {"databaseId": 222, "body": body},
+    ])
 
-    def test_dismissed_skips_when_reply_exists(self, rt, tmp_path):
-        dismissed = [CommentItem(id="t1", summary="not applicable")]
-        threads_by_id = {
-            "t1": ReportThread(id="t1", comments=[
-                {"databaseId": 111},
-                {"body": "Suggestion reviewed and determined to be inapplicable: reason"},
-            ]),
-        }
-        with patch("pr_comments.post_thread_reply") as mock_reply:
-            count = rt._post_dismissed_replies(
-                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
-            )
-        assert count == 0
-        mock_reply.assert_not_called()
 
-    def test_dismissed_posts_when_no_prior_reply(self, rt, tmp_path):
+class TestReplyUpsert:
+
+    def test_edits_our_standing_reply(self, rt, tmp_path):
         dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
-        threads_by_id = {
-            "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
-        }
-        with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+        threads_by_id = {"t1": _standing_reply_thread(
+            body="Suggestion reviewed and determined to be inapplicable: old reason",
+        )}
+        with patch("pr_comments.post_thread_reply") as post, \
+             patch("pr_comments.patch_thread_reply", return_value=True) as edit:
             count = rt._post_dismissed_replies(
                 dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 1
-        mock_reply.assert_called_once()
+        post.assert_not_called()
+        assert edit.call_args[0][1] == 222
+        assert "reason" in edit.call_args[0][2]
 
-    def test_deferred_skips_when_reply_exists(self, rt):
-        deferred = [CommentItem(id="t1", summary="fix it")]
+    def test_posts_when_reviewer_replied_after_us(self, rt, tmp_path):
+        """Editing under a reviewer's reply would rewrite what they answered."""
+        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
         threads_by_id = {
-            "t1": ReportThread(id="t1", comments=[
-                {"databaseId": 111},
-                {"body": "Deferred: fix it\n\nTracked in ENG-123."},
+            "t1": ReportThread(id="t1", state=ThreadState.CONTESTED, comments=[
+                {"databaseId": 111, "body": "reviewer's point"},
+                {"databaseId": 222, "body": "Applied: old take"},
+                {"databaseId": 333, "body": "that is not what I meant"},
             ]),
         }
-        with patch("pr_comments.post_thread_reply") as mock_reply:
-            count = rt._post_deferred_replies(
-                deferred, threads_by_id, "owner/repo", 42,
-                "ENG-456", "https://linear.app/team/issue/ENG-456",
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch("pr_comments.patch_thread_reply") as edit:
+            count = rt._post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        assert count == 1
+        edit.assert_not_called()
+        assert post.call_args[0][2] == 111
+
+    def test_posts_when_we_never_replied(self, rt, tmp_path):
+        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", state=ThreadState.NEW,
+                               comments=[{"databaseId": 111}]),
+        }
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch("pr_comments.patch_thread_reply") as edit:
+            count = rt._post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        assert count == 1
+        edit.assert_not_called()
+        assert post.call_args[0][2] == 111
+
+    def test_never_edits_a_lone_root_comment(self, rt, tmp_path):
+        """On a self-review the root is ours; editing it rewrites the review point."""
+        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", state=ThreadState.ADDRESSED,
+                               comments=[{"databaseId": 111, "body": "my own note"}]),
+        }
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch("pr_comments.patch_thread_reply") as edit:
+            count = rt._post_dismissed_replies(
+                dismissed, threads_by_id, "owner/repo", 42, tmp_path,
+            )
+        assert count == 1
+        edit.assert_not_called()
+        assert post.call_args[0][2] == 111
+
+    @pytest.mark.parametrize("state,failing", [
+        (ThreadState.ADDRESSED, "patch_thread_reply"),
+        (ThreadState.NEW, "post_thread_reply"),
+    ])
+    def test_a_failed_call_is_not_counted(self, rt, tmp_path, state, failing):
+        """replies_posted feeds the run summary, so a silent failure would inflate it."""
+        dismissed = [CommentItem(id="t1", summary="not applicable", reasoning="reason")]
+        thread = _standing_reply_thread()
+        thread.state = state
+        with patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.patch_thread_reply", return_value=True), \
+             patch(f"pr_comments.{failing}", return_value=False):
+            count = rt._post_dismissed_replies(
+                dismissed, {"t1": thread}, "owner/repo", 42, tmp_path,
             )
         assert count == 0
-        mock_reply.assert_not_called()
 
-    def test_applied_skips_when_reply_exists(self, rt):
-        fixed = [CommentItem(id="t1", summary="fix it")]
-        threads_by_id = {
-            "t1": ReportThread(id="t1", comments=[
-                {"databaseId": 111},
-                {"body": "Applied: fix it\n\nFixed in [`abc1234`](url)."},
-            ]),
-        }
-        with patch("pr_comments.post_thread_reply") as mock_reply:
+    def test_a_fix_replaces_an_earlier_dismissal(self, rt):
+        """The #2633 regression: round one dismissed the thread, round two fixed it.
+
+        Guarding per verdict left both replies standing, telling the reviewer
+        their point did not apply and that we had acted on it.
+        """
+        fixed = [CommentItem(id="t1", summary="fix it", file="src/app.py")]
+        threads_by_id = {"t1": _standing_reply_thread(
+            body="Suggestion reviewed and determined to be inapplicable: old reason",
+        )}
+        with patch("pr_comments.post_thread_reply") as post, \
+             patch("pr_comments.patch_thread_reply", return_value=True) as edit:
             count = rt._post_fix_replies(
                 fixed, threads_by_id, "owner/repo", 42, "def5678",
             )
-        assert count == 0
-        mock_reply.assert_not_called()
+        assert count == 1
+        post.assert_not_called()
+        assert edit.call_args[0][1] == 222
+        assert edit.call_args[0][2].startswith("Applied: fix it")
 
-    def test_addressed_skips_when_reply_exists(self, rt, tmp_path):
-        fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]
-        threads_by_id = {
-            "t1": ReportThread(id="t1", comments=[
-                {"databaseId": 111},
-                {"body": "Already addressed: use helper\n\nAddressed in [`abc1234`](url)."},
-            ]),
-        }
-        with patch("pr_comments.post_thread_reply") as mock_reply:
-            count = rt._post_already_addressed_replies(
-                fixed, threads_by_id, "owner/repo", 42, tmp_path,
-            )
-        assert count == 0
-        mock_reply.assert_not_called()
-
-    def test_mixed_dedup_and_new(self, rt, tmp_path):
+    def test_mixed_edit_and_post(self, rt, tmp_path):
         dismissed = [
-            CommentItem(id="t1", summary="already replied"),
+            CommentItem(id="t1", summary="revised take", reasoning="new reason"),
             CommentItem(id="t2", summary="new one", reasoning="reason"),
         ]
         threads_by_id = {
-            "t1": ReportThread(id="t1", comments=[
-                {"databaseId": 111},
-                {"body": "Suggestion reviewed and determined to be inapplicable: old reason"},
-            ]),
-            "t2": ReportThread(id="t2", comments=[{"databaseId": 222}]),
+            "t1": _standing_reply_thread(),
+            "t2": ReportThread(id="t2", state=ThreadState.NEW,
+                               comments=[{"databaseId": 333}]),
         }
-        with patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch("pr_comments.patch_thread_reply", return_value=True) as edit:
             count = rt._post_dismissed_replies(
                 dismissed, threads_by_id, "owner/repo", 42, tmp_path,
             )
-        assert count == 1
-        mock_reply.assert_called_once()
-        assert mock_reply.call_args[0][2] == 222
+        assert count == 2
+        assert edit.call_args[0][1] == 222
+        assert post.call_args[0][2] == 333
+
+
+# ── reply evidence ───────────────────────────────────────────────────────
+
+
+class TestReplyEvidence:
+
+    def test_fix_reply_links_the_file_at_the_fix_commit(self, rt):
+        fixed = [CommentItem(id="t1", summary="fix it", file="src/app.py")]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._post_fix_replies(fixed, threads_by_id, "owner/repo", 42, "def5678")
+        body = post.call_args[0][3]
+        assert "owner/repo/blob/def5678/src/app.py" in body
+        # No line anchor: the fix just moved the lines around it.
+        assert "#L" not in body
+
+    def test_deferred_reply_links_the_unchanged_code(self, rt, tmp_path):
+        deferred = [CommentItem(id="t1", summary="fix it", file="src/app.py", line=12)]
+        threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch.object(rt, "_get_head_sha", return_value="cafe123"):
+            rt._post_deferred_replies(
+                deferred, threads_by_id, "owner/repo", 42,
+                "ENG-456", "https://linear.app/team/issue/ENG-456", tmp_path,
+            )
+        body = post.call_args[0][3]
+        assert "ENG-456" in body
+        assert "owner/repo/blob/cafe123/src/app.py#L12" in body
+
+    def test_code_link_prefers_a_citation_that_resolves(self, rt, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("a\nb\nc\n")
+        entry = CommentItem(id="t1", file="other.py", line=1,
+                            evidence_file="src/app.py", evidence_line=2)
+        link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
+        assert "blob/cafe123/src/app.py#L2" in link
+
+    def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, rt, tmp_path):
+        entry = CommentItem(id="t1", file="other.py", line=7,
+                            evidence_file="src/gone.py", evidence_line=2)
+        link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
+        assert "blob/cafe123/other.py#L7" in link
+
+    def test_code_link_is_empty_with_nothing_to_point_at(self, rt, tmp_path):
+        assert rt._code_link(CommentItem(id="t1"), "owner/repo", "cafe123", tmp_path) == ""
+        assert rt._code_link(
+            CommentItem(id="t1", file="a.py", line=1), "owner/repo", "", tmp_path,
+        ) == ""
 
 
 # ── _resolve_fixed_threads ────────────────────────────────────────────────

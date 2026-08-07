@@ -413,6 +413,23 @@ task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue
 task --global REPO_DIR=/path/to/worktree commit
 ```
 
+The same hazard exists one level down, for the AI subprocess itself. A backend CLI
+inherits the launching process's working directory unless it is told otherwise, so
+an agent given write access would edit whichever worktree the session happened to
+start in rather than the one being operated on. Every `ai_backend` entry point
+therefore takes a required `cwd`:
+
+```python
+ai_backend.prompt(text, cwd=str(wt_path), task="conflict-resolve")
+ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, cwd=str(wt_path)))
+```
+
+`add_dirs` is not a substitute — it maps to `--add-dir`, which widens the set of
+directories the agent may touch and has no way to narrow it. `prompt()` rejects the
+call at the signature, `invoke_agent`/`invoke_fix` raise on an empty or non-existent
+`cwd`, and `TestAgentCallSitesPassCwd` fails the build on a new call site that omits
+it.
+
 ## Guidelines & Rules
 
 The workbench installs a layered rule system into Claude Code:

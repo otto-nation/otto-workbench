@@ -62,39 +62,39 @@ class TestBuildFixCmd:
 
 
 class TestPromptParsesEnvelope:
-    def _run(self, monkeypatch, stdout, returncode=0):
+    def _run(self, monkeypatch, tmp_path, stdout, returncode=0):
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(cmd, returncode, stdout, "")
         monkeypatch.setattr(subprocess, "run", fake_run)
-        return ai_backend_claude.prompt("hi")
+        return ai_backend_claude.prompt("hi", cwd=str(tmp_path))
 
-    def test_returns_result_text_not_raw_json(self, monkeypatch):
-        text, code, usage = self._run(monkeypatch, json.dumps(RESULT_ENVELOPE))
+    def test_returns_result_text_not_raw_json(self, monkeypatch, tmp_path):
+        text, code, usage = self._run(monkeypatch, tmp_path, json.dumps(RESULT_ENVELOPE))
         assert text == "the answer"
         assert code == 0
 
-    def test_extracts_usage(self, monkeypatch):
-        _, _, usage = self._run(monkeypatch, json.dumps(RESULT_ENVELOPE))
+    def test_extracts_usage(self, monkeypatch, tmp_path):
+        _, _, usage = self._run(monkeypatch, tmp_path, json.dumps(RESULT_ENVELOPE))
         assert usage.cost == pytest.approx(0.42)
         assert usage.input_tokens == 12
         assert usage.cache_read_tokens == 9000
         assert usage.cost_by_model == pytest.approx({"claude-sonnet-4-6": 0.42})
 
-    def test_non_json_stdout_falls_back_to_raw(self, monkeypatch):
+    def test_non_json_stdout_falls_back_to_raw(self, monkeypatch, tmp_path):
         """A CLI output change must degrade to today's behavior, not break callers."""
-        text, code, usage = self._run(monkeypatch, "plain text reply")
+        text, code, usage = self._run(monkeypatch, tmp_path, "plain text reply")
         assert text == "plain text reply"
         assert code == 0
         assert usage is None
 
-    def test_envelope_without_result_key_falls_back_to_raw(self, monkeypatch):
+    def test_envelope_without_result_key_falls_back_to_raw(self, monkeypatch, tmp_path):
         payload = json.dumps({"type": "result", "total_cost_usd": 0.1})
-        text, _, usage = self._run(monkeypatch, payload)
+        text, _, usage = self._run(monkeypatch, tmp_path, payload)
         assert text == payload
         assert usage.cost == pytest.approx(0.1)
 
-    def test_failure_exit_code_preserved(self, monkeypatch):
-        _, code, _ = self._run(monkeypatch, "", returncode=2)
+    def test_failure_exit_code_preserved(self, monkeypatch, tmp_path):
+        _, code, _ = self._run(monkeypatch, tmp_path, "", returncode=2)
         assert code == 2
 
 
@@ -106,7 +106,7 @@ class TestPromptRecordsToLedger:
         monkeypatch.setattr(ai_usage, "_warned", False)
         return d
 
-    def test_prompt_records_usage(self, ledger, monkeypatch):
+    def test_prompt_records_usage(self, ledger, monkeypatch, tmp_path):
         mod = types.SimpleNamespace(
             prompt=lambda text, **kw: (
                 "answer", 0,
@@ -114,7 +114,9 @@ class TestPromptRecordsToLedger:
             ),
         )
         monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        text, code = ai_backend.prompt("hi", task="conflict-resolve")
+        text, code = ai_backend.prompt(
+            "hi", cwd=str(tmp_path), task="conflict-resolve",
+        )
         assert (text, code) == ("answer", 0)
         rec = json.loads(next(ledger.glob("*.jsonl")).read_text().strip())
         assert rec["entry_point"] == "prompt"
@@ -122,11 +124,11 @@ class TestPromptRecordsToLedger:
         assert rec["cost"] == pytest.approx(0.42)
         assert rec["cache_read_tokens"] == 9000
 
-    def test_unmeasured_prompt_records_nothing(self, ledger, monkeypatch):
+    def test_unmeasured_prompt_records_nothing(self, ledger, monkeypatch, tmp_path):
         """A zero row reads as a free call; an absent row reads as unmeasured."""
         mod = types.SimpleNamespace(prompt=lambda text, **kw: ("answer", 0, None))
         monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        assert ai_backend.prompt("hi") == ("answer", 0)
+        assert ai_backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
 
     def test_agent_session_log_without_result_records_nothing(
@@ -138,15 +140,15 @@ class TestPromptRecordsToLedger:
         mod = types.SimpleNamespace(invoke_agent=lambda inv: 1)
         monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
         ai_backend.invoke_agent(ai_backend.AgentInvocation(
-            prompt="p", session_log=str(session_log),
+            prompt="p", cwd=str(tmp_path), session_log=str(session_log),
         ))
         assert list(ledger.glob("*.jsonl")) == []
 
-    def test_backend_returning_pair_still_works(self, ledger, monkeypatch):
+    def test_backend_returning_pair_still_works(self, ledger, monkeypatch, tmp_path):
         """A backend that has not adopted the usage triple must not crash dispatch."""
         mod = types.SimpleNamespace(prompt=lambda text, **kw: ("answer", 0))
         monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        assert ai_backend.prompt("hi") == ("answer", 0)
+        assert ai_backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
 
 
@@ -217,15 +219,40 @@ def _ai_sources() -> list[Path]:
     return sorted(p for p in candidates if _is_python_source(p))
 
 
-def _invoke_fix_calls(tree: ast.Module):
-    """Yield every ``ai_backend.invoke_fix(...)`` Call node in a parsed module."""
+def _backend_calls(tree: ast.Module, names: frozenset[str]):
+    """Yield every ``ai_backend.<name>(...)`` Call node in a parsed module."""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         fn = node.func
-        if not isinstance(fn, ast.Attribute) or fn.attr != "invoke_fix":
+        if not isinstance(fn, ast.Attribute) or fn.attr not in names:
             continue
         if isinstance(fn.value, ast.Name) and fn.value.id == "ai_backend":
+            yield node
+
+
+_FIX_ONLY = frozenset({"invoke_fix"})
+_PROMPT_ONLY = frozenset({"prompt"})
+
+
+def _invoke_fix_calls(tree: ast.Module):
+    return _backend_calls(tree, _FIX_ONLY)
+
+
+def _cwd_bearing_nodes(tree: ast.Module):
+    """Yield every node that must name a directory for the backend to run in.
+
+    Two shapes, checked where the directory is chosen rather than where it is
+    used: a stateless ``ai_backend.prompt(...)`` call, and any
+    ``AgentInvocation(...)`` construction. Checking constructions rather than
+    ``invoke_*`` call sites is what makes the forwarding wrappers in
+    review_agent.py — which take an already-built ``inv`` — correctly pass,
+    while still covering the invocation built in review_pipeline.invocation()
+    and handed to them.
+    """
+    yield from _backend_calls(tree, _PROMPT_ONLY)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _is_agent_invocation(node):
             yield node
 
 
@@ -238,6 +265,17 @@ def _scan_call_sites(source: Path) -> tuple[int, list[str]]:
         for call in calls if not _has_session_log(call)
     ]
     return len(calls), missing
+
+
+def _scan_cwd_call_sites(source: Path) -> tuple[int, list[str]]:
+    """Return (node count, "name:line" for each node missing a cwd)."""
+    tree = ast.parse(source.read_text(), filename=str(source))
+    nodes = list(_cwd_bearing_nodes(tree))
+    missing = [
+        f"  - {source.name}:{node.lineno}"
+        for node in nodes if not _has_kwarg(node, "cwd")
+    ]
+    return len(nodes), missing
 
 
 def _is_agent_invocation(node: ast.expr) -> bool:
@@ -257,13 +295,22 @@ def _invocation_node(call: ast.Call) -> ast.Call:
     return next((a for a in call.args if _is_agent_invocation(a)), call)
 
 
-def _has_session_log(call: ast.Call) -> bool:
+def _has_kwarg(call: ast.Call, name: str) -> bool:
+    """Whether the call supplies `name` as a non-empty-literal keyword.
+
+    Reads through to the inline AgentInvocation when there is one, so the same
+    check covers `prompt(cwd=...)` and `invoke_fix(AgentInvocation(cwd=...))`.
+    """
     for kw in _invocation_node(call).keywords:
-        if kw.arg != "session_log":
+        if kw.arg != name:
             continue
         empty = isinstance(kw.value, ast.Constant) and not kw.value.value
         return not empty
     return False
+
+
+def _has_session_log(call: ast.Call) -> bool:
+    return _has_kwarg(call, "session_log")
 
 
 class TestFixCallSitesPassSessionLog:
@@ -302,3 +349,50 @@ class TestFixCallSitesPassSessionLog:
     def test_scanner_detects_missing_session_log(self, src, expected):
         call = next(_invoke_fix_calls(ast.parse(src)))
         assert _has_session_log(call) is expected
+
+
+class TestAgentCallSitesPassCwd:
+    """Every spawning ai_backend entry point must be told which directory to run in.
+
+    A backend CLI with no cwd inherits the interpreter's. On a bare repo with
+    sibling worktrees that is another live branch, and the agent has write access
+    to it: a `pr rebase --fix` launched from worktree B against worktree A ran its
+    tests in B and truncated B's copy of pr-rebase from ~1800 lines to 431.
+
+    add_dirs does not substitute for this. It appends --add-dir, which widens the
+    allowed set; there is no flag that narrows it back.
+    """
+
+    def test_all_call_sites_supply_a_cwd(self):
+        offenders: list[str] = []
+        found = 0
+        for count, missing in [_scan_cwd_call_sites(s) for s in _ai_sources()]:
+            found += count
+            offenders.extend(missing)
+
+        assert not offenders, (
+            "ai_backend call sites missing a cwd (these run in whichever "
+            "directory the process was launched from):\n" + "\n".join(offenders)
+        )
+        # Guard the scanner itself: a matcher that silently matches nothing
+        # would make this test pass forever.
+        assert found >= 8, f"expected to find spawning call sites, found {found}"
+
+    @pytest.mark.parametrize("src,expected", [
+        ('ai_backend.prompt(text, cwd=cwd, task="conflict-resolve")', True),
+        ('ai_backend.prompt(text, task="conflict-resolve")', False),
+        ('ai_backend.prompt(text, cwd="", task="t")', False),
+        ('ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, cwd=str(wt)))',
+         True),
+        ('ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, add_dirs=[d]))',
+         False),
+        ('ai_backend.invoke_agent(AgentInvocation(prompt=p, cwd=d))', True),
+    ])
+    def test_scanner_detects_missing_cwd(self, src, expected):
+        node = next(_cwd_bearing_nodes(ast.parse(src)))
+        assert _has_kwarg(node, "cwd") is expected
+
+    def test_scanner_skips_wrappers_that_forward_a_built_invocation(self):
+        """review_agent's retry wrappers take an `inv` whose cwd was set elsewhere."""
+        tree = ast.parse("rc = ai_backend.invoke_agent(inv)")
+        assert list(_cwd_bearing_nodes(tree)) == []

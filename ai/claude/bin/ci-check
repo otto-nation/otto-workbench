@@ -775,6 +775,7 @@ def _run_fix(trail, report: dict, ctx) -> int:
         nonlocal rc
         rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
             prompt=text,
+            cwd=str(toplevel),
             session_log=session_log,
             add_dirs=[str(toplevel)],
             max_turns=turns,

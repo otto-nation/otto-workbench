@@ -388,7 +388,7 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     )
 
     stdout, rc = agent_retry.retry_blank_response(
-        lambda text: ai_backend.prompt(text, task="comment-triage"),
+        lambda text: ai_backend.prompt(text, cwd=str(repo_dir), task="comment-triage"),
         prompt, label="Triage", usable=_parses_as_json,
     )
     if rc != 0:
@@ -634,6 +634,7 @@ def _invoke_fix_agent(
         dirs.append(str(main_wt_path))
     return ai_backend.invoke_fix(ai_backend.AgentInvocation(
         prompt=prompt,
+        cwd=str(wt_path),
         session_log=_fix_session_log(wt_path),
         add_dirs=dirs,
         max_turns=max_turns if max_turns is not None else FIX_MIN_TURNS,

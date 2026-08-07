@@ -100,24 +100,24 @@ class TestBuildAgentCmd:
 
 
 class TestPromptStderr:
-    def test_stderr_logged_on_failure(self, monkeypatch, capsys):
+    def test_stderr_logged_on_failure(self, monkeypatch, capsys, tmp_path):
         fake_result = types.SimpleNamespace(stdout="", returncode=1, stderr="API rate limit exceeded")
         monkeypatch.setattr(
             ai_backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        stdout, rc, _ = ai_backend_claude.prompt("test prompt")
+        stdout, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert rc == 1
         captured = capsys.readouterr()
         assert "API rate limit exceeded" in captured.err
 
-    def test_stderr_not_logged_on_success(self, monkeypatch, capsys):
+    def test_stderr_not_logged_on_success(self, monkeypatch, capsys, tmp_path):
         fake_result = type("R", (), {"stdout": "response", "returncode": 0, "stderr": ""})()
         monkeypatch.setattr(
             ai_backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        stdout, rc, _ = ai_backend_claude.prompt("test prompt")
+        stdout, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert rc == 0
         assert stdout == "response"
         captured = capsys.readouterr()

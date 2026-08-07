@@ -13,7 +13,7 @@ bats tests/                    # run all tests
 bats tests/<file>.bats         # run one test suite
 shellcheck <file>.sh           # lint a script
 bin/local/validate-all               # run every validator (what pre-push and CI run)
-bin/local/validate-<name>            # run one validator; see bin/local/validate-* for the set
+bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
 git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conventions.sh
 otto-workbench changelog       # show recent changes from conventional commits

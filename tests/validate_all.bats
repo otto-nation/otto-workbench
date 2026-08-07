@@ -4,14 +4,25 @@
 setup() {
   load 'test_helper'
   common_setup
+  TMPDIR="$(mktemp -d)"
+  VALIDATE_ALL="$REPO_ROOT/bin/local/validate-all"
 }
 
 teardown() {
+  rm -rf "$TMPDIR"
   common_teardown
 }
 
+# _fixture_validator NAME EXIT_CODE — write an executable stub into the fixture
+# tree that validate-all will discover via VALIDATOR_ROOT.
+_fixture_validator() {
+  mkdir -p "$TMPDIR/bin/local"
+  printf '#!/usr/bin/env bash\nexit %s\n' "$2" > "$TMPDIR/bin/local/$1"
+  chmod +x "$TMPDIR/bin/local/$1"
+}
+
 @test "validate-all discovers every validator in bin and bin/local" {
-  run "$REPO_ROOT/bin/local/validate-all"
+  run "$VALIDATE_ALL"
   [ "$status" -eq 0 ]
 
   local expected=0
@@ -25,23 +36,42 @@ teardown() {
   echo "$output" | grep -q "$expected validators passed"
 }
 
-@test "validate-all does not recurse into itself" {
-  run "$REPO_ROOT/bin/local/validate-all" --quiet
+@test "validate-all excludes itself from discovery" {
+  _fixture_validator "validate-only-one" 0
+  cp "$VALIDATE_ALL" "$TMPDIR/bin/local/validate-all"
+
+  VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
   [ "$status" -eq 0 ]
-  run grep -c "validate-all" <<< "$output"
-  [ "$output" -eq 0 ]
+  echo "$output" | grep -q "validate-only-one"
+  echo "$output" | grep -q "1 validators passed"
 }
 
-@test "validate-all fails when a validator fails" {
-  local fake="$REPO_ROOT/bin/local/validate-zz-bats-fixture"
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$fake"
-  chmod +x "$fake"
+@test "validate-all fails and names the failing validator" {
+  _fixture_validator "validate-good" 0
+  _fixture_validator "validate-bad" 1
 
-  run "$REPO_ROOT/bin/local/validate-all" --quiet
-  rm -f "$fake"
-
+  VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL" --quiet
   [ "$status" -eq 1 ]
-  echo "$output" | grep -q "validate-zz-bats-fixture"
+  echo "$output" | grep -q "validate-bad"
+  echo "$output" | grep -q "1 of 2 validators failed"
+}
+
+@test "validate-all succeeds when a tree holds no validators" {
+  mkdir -p "$TMPDIR/bin/local"
+
+  VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "no validators found"
+}
+
+@test "validate-all skips non-executable files" {
+  mkdir -p "$TMPDIR/bin/local"
+  printf 'not a script\n' > "$TMPDIR/bin/local/validate-backup.orig"
+  _fixture_validator "validate-real" 0
+
+  VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "1 validators passed"
 }
 
 # ── Gate wiring ──────────────────────────────────────────────────────────────

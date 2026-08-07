@@ -11,6 +11,11 @@
 set -e
 
 _SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+# Which tree to scan. Overridable so tests can point at a fixture directory
+# instead of creating throwaway scripts inside the live checkout. Deliberately
+# not WORKBENCH_DIR: setup code assigns that to the main worktree, and picking
+# it up here would silently validate the wrong tree from a feature worktree.
+VALIDATOR_ROOT="${VALIDATOR_ROOT:-$_SCRIPT_ROOT}"
 # shellcheck source=/dev/null
 . "$_SCRIPT_ROOT/lib/ui.sh"
 
@@ -23,6 +28,9 @@ Run every convention validator (bin/validate-* and bin/local/validate-*).
 Options:
   --quiet     Suppress per-validator output; show only the final summary
   -h, --help  Show this help
+
+Environment:
+  VALIDATOR_ROOT  Tree to scan for validators (default: the repo root)
 EOF
 }
 
@@ -31,8 +39,10 @@ QUIET=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true
 
 VALIDATORS=()
-for _v in "$_SCRIPT_ROOT"/bin/validate-* "$_SCRIPT_ROOT"/bin/local/validate-*; do
-  # Skip this script and anything unexecutable (e.g. a stray backup file).
+for _v in "$VALIDATOR_ROOT"/bin/validate-* "$VALIDATOR_ROOT"/bin/local/validate-*; do
+  # The -x test is doing double duty: it skips non-executables (a stray backup
+  # file) and it discards the literal glob pattern bash leaves behind when a
+  # directory holds no validators at all. Do not drop it.
   if [[ -x "$_v" && "$(basename "$_v")" != "validate-all" ]]; then
     VALIDATORS+=("$_v")
   fi

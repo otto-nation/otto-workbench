@@ -1055,6 +1055,15 @@ class TestCheckSerialAbort:
 # ── 19. _resolve_model ──────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def no_model_env(monkeypatch):
+    """A clean slate — the developer's own shell usually has these set."""
+    for key in ("CLAUDE_REVIEW_MODEL", "UNUSED_KEY", "MY_MODEL_KEY",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
+        monkeypatch.delenv(key, raising=False)
+
+
 class TestResolveModel:
     def _clear_alias_envs(self, ro, monkeypatch):
         for alias in ro.ModelAlias:
@@ -1069,27 +1078,25 @@ class TestResolveModel:
         assert ro.ModelAlias.parse("claude-sonnet-5") is None
         assert ro.ModelAlias.parse("sonnet") is ro.ModelAlias.SONNET
 
-    def test_explicit(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
+    def test_explicit(self, ro, no_model_env):
         assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
 
-    def test_env_key(self, ro, monkeypatch):
+    def test_env_key(self, ro, no_model_env, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
+
         assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
 
-    def test_global_env(self, ro, monkeypatch):
-        monkeypatch.delenv("UNUSED_KEY", raising=False)
+    def test_global_env(self, ro, no_model_env, monkeypatch):
         monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
         self._clear_alias_envs(ro, monkeypatch)
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
 
-    def test_default_fallback(self, ro, monkeypatch):
-        monkeypatch.delenv("UNUSED_KEY", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
-        self._clear_alias_envs(ro, monkeypatch)
+    def test_global_env_alias_resolved(self, ro, no_model_env, monkeypatch):
+        monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
+        monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
+        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "claude-opus-4-6"
+
+    def test_default_fallback(self, ro, no_model_env):
         assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
 
     def test_alias_resolved_via_env(self, ro, monkeypatch):
@@ -1582,7 +1589,6 @@ class TestBuildMetaHeader:
             ctx=ro.PRContext(),
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             generator_version="1.0.0",
         )
         result = ro._build_meta_header(job)
@@ -1604,7 +1610,6 @@ class TestBuildMechanicalFallback:
             ctx=ro.PRContext(),
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode.PR,
         )
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
@@ -1622,7 +1627,6 @@ class TestBuildMechanicalFallback:
             ctx=ro.PRContext(),
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode.SELF,
         )
         merged = "## Nit\n- **[N1]** **`file.go:1`** — style\n"
@@ -1639,7 +1643,6 @@ class TestBuildMechanicalFallback:
             ctx=ro.PRContext(),
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode.PR,
         )
         merged = (
@@ -1664,7 +1667,6 @@ class TestWriteCleanReview:
             ctx=ro.PRContext(),
             wt_path="/tmp/wt", review_file=str(review_file),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode.PR,
         )
         ro._write_clean_review(job, 2)
@@ -1683,7 +1685,6 @@ class TestWriteCleanReview:
             ctx=ro.PRContext(),
             wt_path="/tmp/wt", review_file=str(review_file),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode.SELF,
         )
         ro._write_clean_review(job, 2)
@@ -1794,7 +1795,6 @@ class TestPhaseSynthesis:
             wt_path=str(tmp_path / "wt"),
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode(mode),
         )
 
@@ -1971,7 +1971,6 @@ class TestSynthesisFailedTracking:
             wt_path=str(tmp_path / "wt"),
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode(mode),
         )
 
@@ -2065,7 +2064,7 @@ class TestRetryTurns:
             ctx=ro.PRContext(),
             wt_path=str(tmp_path), review_file=str(tmp_path / "r.md"),
             session_log=str(tmp_path / "s.jsonl"),
-            reviews_dir=str(tmp_path), mode=ro.Mode.PR,
+            mode=ro.Mode.PR,
         )
 
     def test_max_turns_gets_doubled(self, ro, tmp_path):
@@ -2091,7 +2090,6 @@ class TestRetryFailedGroups:
             wt_path=str(tmp_path / "wt"),
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode=ro.Mode.PR,
         )
 
@@ -2151,9 +2149,9 @@ class TestRetryFailedGroups:
             name = inv.label
             calls.append(name)
             if name == "grp-a":
-                Path(job.reviews_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
+                Path(job.artifact_dir, "group-1.md").write_text("## Must fix\n- **[M1]** **`a.go:1`** — issue\n")
             elif name == "grp-b":
-                Path(job.reviews_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
+                Path(job.artifact_dir, "group-2.md").write_text("## Must fix\n- **[M1]** **`b.go:1`** — issue\n")
             Path(inv.session_log).write_text("")
             return 0
 
@@ -2216,7 +2214,6 @@ class TestDensitySkipping:
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(tmp_path), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
 
     def test_large_file_small_diff_omitted(self, ro, tmp_path, monkeypatch):
@@ -2225,7 +2222,6 @@ class TestDensitySkipping:
         files = [{"path": "big.py", "additions": 2, "deletions": 1}]
         job = self._make_job(ro, tmp_path, files)
 
-        import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
 
@@ -2238,7 +2234,6 @@ class TestDensitySkipping:
         files = [{"path": "small.py", "additions": 1, "deletions": 0}]
         job = self._make_job(ro, tmp_path, files)
 
-        import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
 
@@ -2250,7 +2245,6 @@ class TestDensitySkipping:
         files = [{"path": "refactored.py", "additions": 80, "deletions": 70}]
         job = self._make_job(ro, tmp_path, files)
 
-        import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
 
@@ -2273,7 +2267,6 @@ class TestPromptStats:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(tmp_path), review_file=review_file,
             session_log=str(tmp_path / "s.jsonl"),
-            reviews_dir=str(tmp_path),
         )
 
         ro._log_prompt_size("test", "hello world", {"sec": "data"}, job)
@@ -2299,7 +2292,6 @@ class TestPromptStats:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(tmp_path), review_file=review_file,
             session_log=str(tmp_path / "s.jsonl"),
-            reviews_dir=str(tmp_path),
         )
 
         ro._log_prompt_size("first", "aaa", {}, job)
@@ -2322,7 +2314,6 @@ class TestPromptStats:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(tmp_path), review_file=review_file,
             session_log=str(tmp_path / "s.jsonl"),
-            reviews_dir=str(tmp_path),
         )
 
         stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
@@ -2334,6 +2325,8 @@ class TestPromptStats:
         assert isinstance(stats, list)
         assert len(stats) == 1
         assert stats[0]["template"] == "test"
+
+
 # ── post_process_findings ───────────────────────────────────────────────────
 
 
@@ -2482,7 +2475,6 @@ class TestWriteReviewSidecar:
             repo="org/repo", pr_number="42", pr=pr, ctx=ctx,
             wt_path=str(tmp_path), review_file=review_file,
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             generator_version="test-v1",
         )
 
@@ -2547,7 +2539,6 @@ class TestIsQuotaError:
         log = tmp_path / "session.jsonl"
         log.write_text("")
         assert ro._is_quota_error(str(log)) is False
-
 
 
 # ── format_preflight_data ──────────────────────────────────────────────
@@ -2719,7 +2710,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
         result = ro.build_prompt("single-agent.md", job, max_turns=15)
@@ -2740,7 +2731,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="99", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
         )
         result = ro.build_prompt("single-agent.md", job, max_turns=15)
         assert "Pre-collected data" not in result
@@ -2760,7 +2751,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
         )
         result = ro.build_prompt(
             "synthesis.md", job, max_turns=15,
@@ -2792,7 +2783,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
         result = ro.build_prompt(
@@ -2827,7 +2818,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
         result = ro.build_prompt(
@@ -2855,7 +2846,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
         result = ro.build_prompt(
@@ -2884,7 +2875,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
         result = ro.build_prompt("single-agent.md", job, max_turns=15)
@@ -2915,7 +2906,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
         result = ro.build_prompt("single-agent.md", job, max_turns=15)
@@ -2936,7 +2927,7 @@ class TestBuildPromptPreflight:
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
-            session_log="/tmp/session.jsonl", reviews_dir="/tmp/reviews",
+            session_log="/tmp/session.jsonl",
         )
         result = ro.build_prompt("single-agent.md", job, max_turns=15)
         assert "NOT in the PR" not in result
@@ -3016,7 +3007,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
@@ -3072,7 +3062,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
@@ -3120,7 +3109,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
@@ -3176,7 +3164,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
@@ -3205,7 +3192,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode="self",
         )
         with contextlib.redirect_stdout(io.StringIO()):
@@ -3251,7 +3237,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)
@@ -3301,7 +3286,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ctx,
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         # Set budget so diff fits but only ~1000 bytes remain for file contents
         diff_size = len(ro._run(

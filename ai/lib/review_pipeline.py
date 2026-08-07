@@ -37,6 +37,7 @@ from review_common import (
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
+    has_uncommitted_changes,
     preserve_log, restore_preserved,
     read_pipeline_status,
 )
@@ -262,14 +263,12 @@ class PhaseRunner:
 
     def invocation(
         self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "", review_file: str = "",
+        max_turns: int | None = None, label: str = "",
     ) -> AgentInvocation:
         return AgentInvocation(
             prompt=prompt,
             session_log=session_log,
-            add_dirs=build_add_dirs(
-                self.job.wt_path, self.job.reviews_dir, review_file,
-            ),
+            add_dirs=build_add_dirs(self.job.wt_path, self.job.artifact_dir),
             agent=self.agent,
             max_turns=self.max_turns if max_turns is None else max_turns,
             max_budget=self.budget,
@@ -281,13 +280,10 @@ class PhaseRunner:
 
     def invoke(
         self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "", review_file: str = "",
+        max_turns: int | None = None, label: str = "",
     ) -> int:
         return invoke_agent(
-            self.invocation(
-                prompt, session_log,
-                max_turns=max_turns, label=label, review_file=review_file,
-            ),
+            self.invocation(prompt, session_log, max_turns=max_turns, label=label),
             throttle=self.job.throttle,
         )
 
@@ -441,10 +437,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = runner.invoke(
-            text, job.session_log,
-            max_turns=turns, review_file=job.review_file,
-        )
+        rc = runner.invoke(text, job.session_log, max_turns=turns)
         return rc
 
     invoke(prompt, max_turns)
@@ -749,28 +742,15 @@ def _count_unchecked(review_file: str) -> int:
     )
 
 
-def _has_uncommitted_changes(wt_path: str) -> bool:
-    """Check for both unstaged and staged changes."""
-    unstaged = subprocess.run(
-        ["git", "-C", wt_path, "diff", "--quiet"],
-        capture_output=True,
-    )
-    if unstaged.returncode != 0:
-        return True
-    staged = subprocess.run(
-        ["git", "-C", wt_path, "diff", "--cached", "--quiet"],
-        capture_output=True,
-    )
-    return staged.returncode != 0
-
-
 def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     """Commit source-file fixes applied by the fix-pass agent."""
-    if not _has_uncommitted_changes(job.wt_path):
+    if not has_uncommitted_changes(job.wt_path):
         return
 
+    # -A, not -u: the fix agent creates new files (tests, fixtures) that -u
+    # drops from the commit while the summary still reports them as fixed.
     subprocess.run(
-        ["git", "-C", job.wt_path, "add", "-u"],
+        ["git", "-C", job.wt_path, "add", "-A"],
         capture_output=True, check=True,
     )
 
@@ -792,6 +772,20 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     _push_fixes(job)
 
 
+_DIVERGED_MARKERS = (
+    "non-fast-forward",
+    "fetch first",
+    "updates were rejected",
+    "behind its remote",
+)
+
+
+def _is_diverged(stderr: str) -> bool:
+    """Whether a push rejection came from divergence rather than a hook."""
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _DIVERGED_MARKERS)
+
+
 def _push_fixes(job: ReviewJob):
     """Push committed fixes to the remote."""
     result = subprocess.run(
@@ -803,9 +797,16 @@ def _push_fixes(job: ReviewJob):
         return
 
     stderr = result.stderr.strip()
+    if _is_diverged(stderr):
+        log.error(
+            f"push failed — branch diverged. Run:\n"
+            f"  git -C '{job.wt_path}' push --force-with-lease\n"
+            f"stderr: {stderr}"
+        )
+        return
+
     log.error(
-        f"push failed — branch may have diverged. Run:\n"
-        f"  git -C '{job.wt_path}' push --force-with-lease\n"
+        f"push failed — fixes are committed locally but not pushed:\n"
         f"stderr: {stderr}"
     )
 
@@ -820,14 +821,20 @@ def _count_checked(review_file: str) -> int:
 
 
 def _changed_source_files(wt_path: str) -> set[str]:
-    """Return set of changed files (staged + unstaged) relative to HEAD."""
-    result = subprocess.run(
-        ["git", "-C", wt_path, "diff", "HEAD", "--name-only"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return set()
-    return {f for f in result.stdout.strip().splitlines() if f}
+    """Return set of changed files (staged, unstaged, and untracked)."""
+    changed: set[str] = set()
+    # Untracked files count: a fix that only adds a test file still fixed the
+    # finding, and diff-only detection would report it as skipped.
+    for args in (["diff", "HEAD", "--name-only"],
+                 ["ls-files", "--others", "--exclude-standard"]):
+        result = subprocess.run(
+            ["git", "-C", wt_path, *args],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            continue
+        changed.update(f for f in result.stdout.strip().splitlines() if f)
+    return changed
 
 
 def _count_changed_source_files(wt_path: str) -> int:
@@ -966,9 +973,7 @@ def run_fix_pass(job: ReviewJob):
     runner = PhaseRunner(job, Phase.FIX)
     log.info("Fix pass — applying review findings...")
     log.blank()
-    runner.invoke(
-        prompt, fix_log, max_turns=max_turns, review_file=job.review_file,
-    )
+    runner.invoke(prompt, fix_log, max_turns=max_turns)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -990,10 +995,7 @@ def run_fix_pass(job: ReviewJob):
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
             prior_log = preserve_log(fix_log)
             log.blank()
-            runner.invoke(
-                retry_prompt, fix_log,
-                max_turns=retry_turns, review_file=job.review_file,
-            )
+            runner.invoke(retry_prompt, fix_log, max_turns=retry_turns)
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -1327,9 +1329,7 @@ def _phase_synthesis(
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = runner.invoke(
-            text, synthesis_log, max_turns=turns, review_file=job.review_file,
-        )
+        rc = runner.invoke(text, synthesis_log, max_turns=turns)
         return rc
 
     invoke(prompt, max_turns)

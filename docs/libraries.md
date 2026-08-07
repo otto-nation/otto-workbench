@@ -63,6 +63,7 @@ File operations with idempotency: symlinks, copies, directory operations, layer 
 | `install_file` | Copy if content differs; remove stale symlinks |
 | `copy_dir` | Copy files matching glob, with optional pruning |
 | `symlink_dir` | Symlink files matching glob, with pruning and copy replacement |
+| `list_shell_scripts` | List files whose first line is a shell shebang (used by `task lint` and pre-push) |
 | `resolve_layers` | Merge base + user directories by basename (see [User Overrides](user-overrides.md)) |
 | `is_disabled` | Check for `.disabled` sentinel file |
 | `install_hook_dispatcher` | Write a runtime-resolving git hook dispatcher |

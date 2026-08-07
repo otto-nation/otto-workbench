@@ -7,7 +7,7 @@ setup_file() {
   local tmp_local="$BATS_FILE_TMPDIR/seed"
   make_git_remote "$SHARED_REMOTE" "$tmp_local" "isaac/fix/devhub_error_handling"
 
-  cd "$tmp_local"
+  cd "$tmp_local" || return 1
   git checkout main --quiet
   git checkout -b "isaac/feat/add_metrics" --quiet
   echo "metrics" > metrics.txt

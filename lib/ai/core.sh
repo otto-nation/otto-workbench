@@ -184,14 +184,49 @@ load_gh_token() {
   return 1
 }
 
-# run_ai PROMPT [AGENT_OVERRIDE]
+# ceiling: AI_COMMAND is deliberately pluggable to non-Claude binaries, so this path
+# cannot route through ai_backend; usage is recovered from the raw response afterwards
+# instead. Route through the backend once every supported binary reports usage.
+# Only a response carrying a usage envelope produces a ledger record — configure
+# AI_COMMAND with `--output-format json` to get telemetry from Claude.
+
+# True when the ai-usage-log helper binary is on PATH. Cached so run_ai's two
+# call sites (_ai_unwrap, _ai_record) don't each repeat the PATH lookup.
+_ai_usage_log_available() {
+  command -v ai-usage-log > /dev/null 2>&1
+}
+
+# _ai_unwrap RAW_FILE
+# Tees stdin to RAW_FILE and emits the reply text, unwrapping a JSON envelope when
+# there is one. Passes stdin through untouched when the helper is unavailable.
+_ai_unwrap() {
+  local raw_file="$1"
+  if _ai_usage_log_available; then
+    ai-usage-log unwrap --tee "$raw_file"
+    return 0
+  fi
+  cat
+}
+
+# _ai_record RAW_FILE TASK_LABEL EXIT_CODE
+# Appends a ledger record when the raw response carried measurable usage.
+_ai_record() {
+  local raw_file="$1" task_label="$2" exit_code="${3:-0}"
+  _ai_usage_log_available || return 0
+  ai-usage-log record --from-log "$raw_file" --script task \
+    --entry-point prompt --task "$task_label" --exit-code "$exit_code" || true
+}
+
+# run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]
 # Requires AI_COMMAND.
 # When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND
 # so different tasks can route to the appropriate agent.
+# TASK_LABEL names the call in the usage ledger.
 # Sets AI_RESPONSE.
 run_ai() {
   local prompt="$1"
   local agent_override="${2:-}"
+  local task_label="${3:-ai-task}"
 
   local cmd="$AI_COMMAND"
   if [[ -n "$agent_override" ]]; then
@@ -201,15 +236,29 @@ run_ai() {
     cmd=$(echo "$cmd" | sed "s/--agent [^ ]*/--agent $agent_override/")
   fi
 
+  local raw_file
+  raw_file=$(mktemp) || { echo "run_ai: mktemp failed" >&2; return 1; }
+  local response_file
+  response_file=$(mktemp) || { echo "run_ai: mktemp failed" >&2; rm -f "$raw_file"; return 1; }
+
   # shellcheck disable=SC2086  # $cmd holds "binary [flags]"; word-splitting is intentional
   # Redirect stderr to /dev/null — MCP server errors and CLI noise must not pollute
   # the captured response. load_ai_command already validated the binary exists.
   # Strip complete ANSI sequences (ESC + '[' + params + letter) before removing bare control chars.
   # Anchoring to \033 prevents the pattern from eating markdown checkboxes like [x] or [ ].
-  # shellcheck disable=SC2034  # AI_RESPONSE is read by callers after run_ai returns
-  AI_RESPONSE=$(echo "$prompt" | $cmd 2>/dev/null | \
+  # Written directly (not via command substitution) so PIPESTATUS below reflects
+  # $cmd's real exit status instead of the subshell's.
+  echo "$prompt" | $cmd 2>/dev/null | \
+    _ai_unwrap "$raw_file" | \
     sed 's/\033\[[0-9;]*[a-zA-Z]//g' | \
     tr -d '\033\007\015' | \
     sed 's/^[> ]*//g' | \
-    sed '/^```/d')
+    sed '/^```/d' > "$response_file"
+  local cmd_exit="${PIPESTATUS[1]}"
+
+  # shellcheck disable=SC2034  # AI_RESPONSE is read by callers after run_ai returns
+  AI_RESPONSE=$(cat "$response_file")
+
+  _ai_record "$raw_file" "$task_label" "$cmd_exit"
+  rm -f "$raw_file" "$response_file"
 }

@@ -99,7 +99,6 @@ class ReviewJob:
     wt_path: str
     review_file: str
     session_log: str
-    reviews_dir: str
     issue_link: str = ""
     issue_context: str = ""
     prior_review: str = ""
@@ -114,6 +113,15 @@ class ReviewJob:
     pr_state_data: "PRState | None" = None
     viewer_role: str = ""
     throttle: "QuotaThrottle | None" = None
+
+    @property
+    def artifact_dir(self) -> str:
+        """This review's own directory — every artifact is a sibling of the review file.
+
+        Agents are granted write access to exactly this, never to the shared reviews
+        root: a root grant is how scratch files ended up beside unrelated reviews.
+        """
+        return str(Path(self.review_file).parent)
 
 
 @dataclass

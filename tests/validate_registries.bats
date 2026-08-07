@@ -46,7 +46,7 @@ setup() {
 }
 
 teardown() {
-  cd "$ORIG_DIR"
+  cd "$ORIG_DIR" || return 1
   common_teardown
 }
 

@@ -1,4 +1,8 @@
+"""Tests for ai_backend — dispatch, invocation shape, and usage ledger emission."""
+
+import json
 import sys
+import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -7,6 +11,65 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import ai_backend
+import ai_usage
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    d = tmp_path / "usage"
+    monkeypatch.setattr(ai_usage, "LEDGER_DIR", d)
+    monkeypatch.setattr(ai_usage, "_warned", False)
+    return d
+
+
+def _records(ledger_dir):
+    return [
+        json.loads(line)
+        for f in sorted(ledger_dir.glob("*.jsonl"))
+        for line in f.read_text().splitlines()
+    ]
+
+
+def _session_log(path, *, cost=1.0, input_tokens=100, output_tokens=200,
+                 cache_read=5000, cache_write=300, model="claude-sonnet-4-6"):
+    Path(path).write_text(json.dumps({
+        "type": "result",
+        "total_cost_usd": cost,
+        "duration_ms": 12000,
+        "modelUsage": {
+            model: {
+                "inputTokens": input_tokens, "outputTokens": output_tokens,
+                "cacheReadInputTokens": cache_read, "cacheCreationInputTokens": cache_write,
+                "costUSD": cost,
+            },
+        },
+    }) + "\n")
+
+
+@pytest.fixture
+def fake_backend(monkeypatch):
+    """Stub backend module recording calls and returning a scripted exit code."""
+    calls = []
+    mod = types.SimpleNamespace(exit_code=0)
+
+    def invoke_agent(inv):
+        calls.append(("invoke_agent", inv))
+        return mod.exit_code
+
+    def invoke_fix(inv):
+        calls.append(("invoke_fix", inv))
+        return mod.exit_code
+
+    def prompt_fn(text, **kwargs):
+        calls.append(("prompt", text, kwargs))
+        return "response", mod.exit_code
+
+    mod.invoke_agent = invoke_agent
+    mod.invoke_fix = invoke_fix
+    mod.prompt = prompt_fn
+    mod.calls = calls
+    monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
+    return mod
 
 
 class TestBackendSelection:
@@ -73,6 +136,9 @@ class TestAgentInvocation:
         assert inv.thinking is None
         assert inv.provider is None
         assert inv.label == ""
+        assert inv.task is None
+        assert inv.repo is None
+        assert inv.pr is None
 
     def test_is_frozen(self):
         import dataclasses
@@ -93,22 +159,101 @@ class TestAgentInvocation:
         assert b.add_dirs == []
 
 
+class TestInvokeAgentRecords:
+    def test_records_usage_from_session_log(self, ledger, fake_backend, tmp_path):
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", session_log=str(log), model="claude-sonnet-4-6",
+        ))
+        rec = _records(ledger)[0]
+        assert rec["entry_point"] == "agent"
+        assert rec["backend"] == "claude"
+        assert rec["input_tokens"] == 100
+        assert rec["cache_read_tokens"] == 5000
+        assert rec["cost"] == pytest.approx(1.0)
+        assert rec["exit_code"] == 0
+
+    def test_records_on_nonzero_exit(self, ledger, fake_backend, tmp_path):
+        """Failed calls cost money too — an unmeasured failure mode stays invisible."""
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        fake_backend.exit_code = 1
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(prompt="p", session_log=str(log)))
+        rec = _records(ledger)[0]
+        assert rec["exit_code"] == 1
+        assert rec["cost"] == pytest.approx(1.0)
+
+    def test_records_task_label(self, ledger, fake_backend, tmp_path):
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", session_log=str(log), task="review-group",
+        ))
+        assert _records(ledger)[0]["task"] == "review-group"
+
+    def test_backend_receives_the_invocation_unchanged(self, ledger, fake_backend, tmp_path):
+        """Ledger labels ride along on the invocation; the backend still sees one object."""
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        inv = ai_backend.AgentInvocation(prompt="p", session_log=str(log), task="review-group")
+        ai_backend.invoke_agent(inv)
+        assert fake_backend.calls == [("invoke_agent", inv)]
+
+    def test_returns_backend_exit_code(self, ledger, fake_backend, tmp_path):
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        fake_backend.exit_code = 42
+        inv = ai_backend.AgentInvocation(prompt="p", session_log=str(log))
+        assert ai_backend.invoke_agent(inv) == 42
+
+    def test_missing_session_log_records_nothing(self, ledger, fake_backend, tmp_path):
+        """No usable usage source is better recorded as absent than as zero."""
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", session_log=str(tmp_path / "never-written.jsonl"),
+        ))
+        assert _records(ledger) == []
+
+
+class TestInvokeFixRecords:
+    def test_records_when_session_log_written(self, ledger, fake_backend, tmp_path):
+        log = tmp_path / "fix.jsonl"
+        _session_log(log, cost=0.25, input_tokens=10)
+        ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p", session_log=str(log)))
+        rec = _records(ledger)[0]
+        assert rec["entry_point"] == "fix"
+        assert rec["cost"] == pytest.approx(0.25)
+
+    def test_no_session_log_records_nothing(self, ledger, fake_backend):
+        ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
+        assert _records(ledger) == []
+
+
+class TestLedgerFailureIsolation:
+    def test_ledger_error_does_not_break_the_call(self, fake_backend, tmp_path, monkeypatch):
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+
+        def boom(**kwargs):
+            raise RuntimeError("ledger exploded")
+
+        monkeypatch.setattr(ai_usage, "record", boom)
+        inv = ai_backend.AgentInvocation(prompt="p", session_log=str(log))
+        assert ai_backend.invoke_agent(inv) == 0
+
+
+class TestScriptName:
+    def test_defaults_to_argv0_basename(self, ledger, fake_backend, tmp_path, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["/usr/local/bin/pr-rebase", "--fix"])
+        log = tmp_path / "session.jsonl"
+        _session_log(log)
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(prompt="p", session_log=str(log)))
+        assert _records(ledger)[0]["script"] == "pr-rebase"
+
+
 class TestBuildAddDirs:
-    def test_review_dir_appended_when_distinct(self):
+    def test_artifact_dir_and_worktree_only(self):
         import review_agent
 
-        dirs = review_agent.build_add_dirs(
-            "/wt", "/reviews", "/elsewhere/review.md",
-        )
-        assert dirs == ["/reviews", "/wt", "/elsewhere"]
-
-    def test_review_dir_omitted_when_already_covered(self):
-        import review_agent
-
-        dirs = review_agent.build_add_dirs("/wt", "/reviews", "/reviews/review.md")
-        assert dirs == ["/reviews", "/wt"]
-
-    def test_no_review_file(self):
-        import review_agent
-
-        assert review_agent.build_add_dirs("/wt", "/reviews") == ["/reviews", "/wt"]
+        dirs = review_agent.build_add_dirs("/wt", "/reviews/pr-42")
+        assert dirs == ["/reviews/pr-42", "/wt"]

@@ -627,16 +627,20 @@ def _has_conflict_markers(text: str) -> str | None:
 
 
 def _prompt_until_parsable(
-    prompt: str, *, label: str, usable: Callable[[str], bool],
+    prompt: str, *, label: str, usable: Callable[[str], bool], task: str,
 ) -> tuple[str, int]:
     """Send a prompt, retrying once if the answer cannot be parsed.
 
     These calls have no session log, so an unparseable answer is the only
     evidence that the agent burned a turn without doing the job — the same
     thrash the review pipeline catches from its logs.
+
+    `task` is required so every prompt lands in the usage ledger under a name;
+    a retry bills twice, which is only visible if both attempts are attributed.
     """
     return agent_retry.retry_blank_response(
-        ai_backend.prompt, prompt, label=label, usable=usable,
+        lambda text: ai_backend.prompt(text, task=task),
+        prompt, label=label, usable=usable,
     )
 
 
@@ -855,6 +859,7 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
 
     stdout, rc = _prompt_until_parsable(
         prompt, label=f"pre-push fix for {filepath}", usable=_resolution_parses,
+        task="push-check-fix",
     )
     if rc != 0:
         log.error(f"AI fix failed for {filepath} (exit {rc})")
@@ -954,7 +959,7 @@ def _resolve_full_file(
     )
     stdout, rc = _prompt_until_parsable(
         prompt, label=f"conflict resolution for {filepath}",
-        usable=_resolution_parses,
+        usable=_resolution_parses, task="conflict-resolve",
     )
     if rc != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
@@ -997,6 +1002,7 @@ def _resolve_chunked(
     stdout, rc = _prompt_until_parsable(
         prompt, label=f"chunked resolution for {filepath}",
         usable=lambda s: _parse_chunked_resolutions(s, len(blocks))[0] is not None,
+        task="conflict-resolve-chunked",
     )
     if rc != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
@@ -1050,7 +1056,7 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> tuple[str, ...] | None:
 
     stdout, rc = _prompt_until_parsable(
         prompt_text, label=f"lockfile regeneration command for {filepath}",
-        usable=lambda s: bool(s.strip()),
+        usable=lambda s: bool(s.strip()), task="lockfile-regen",
     )
     if rc != 0 or not stdout.strip():
         return None
@@ -1419,7 +1425,7 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
         )
         stdout, rc = _prompt_until_parsable(
             prompt, label=f"stash conflict resolution for {filepath}",
-            usable=_resolution_parses,
+            usable=_resolution_parses, task="stash-conflict-resolve",
         )
         if rc != 0:
             log.error(f"AI resolution failed for stash conflict: {filepath}")

@@ -1,5 +1,6 @@
 {
   "name": "nil-check-go",
+  "task": "review",
   "description": "Method called on pointer that may be nil when map lookup fails",
   "source": "synthetic",
   "language": "go",

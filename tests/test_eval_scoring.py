@@ -1,292 +1,26 @@
-"""Tests for eval_scoring: matching and scoring logic for model evaluation."""
+"""Tests for eval_scoring: aggregation, baseline schema, and baseline comparison."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import eval_scoring
 from eval_scoring import (
-    ExpectedFinding,
     ScoringResult,
     aggregate_runs,
     compare_baselines,
     format_comparison_table,
     format_summary_table,
-    match_findings,
-    parse_manifest,
-    score_entry,
     validate_baseline_schema,
 )
-from review_findings import Finding
-
-
-def _finding(
-    id: str = "M1",
-    severity: str = "M",
-    seq: int = 1,
-    path: str = "handler.go",
-    line: int | None = 14,
-    body: str = "unchecked error return",
-) -> Finding:
-    return Finding(
-        id=id, severity=severity, seq=seq,
-        path=path, line=line, end_line=None, body=body,
-    )
-
-
-# ── TestParseManifest ───────────────────────────────────────────────────────
-
-
-class TestParseManifest:
-    def test_parses_expected_findings(self):
-        manifest = {
-            "expected": [
-                {
-                    "severity": ["M", "S"],
-                    "path": "handler.go",
-                    "line_range": [14, 16],
-                    "category": "correctness",
-                    "description_contains": "error",
-                }
-            ],
-            "false_positives_max": 2,
-            "tags": ["go"],
-        }
-        expected, fp_max, tags = parse_manifest(manifest)
-        assert len(expected) == 1
-        assert expected[0].severity == ("M", "S")
-        assert expected[0].path == "handler.go"
-        assert expected[0].line_range == (14, 16)
-        assert expected[0].category == "correctness"
-        assert expected[0].description_contains == "error"
-
-    def test_parses_tags(self):
-        _, _, tags = parse_manifest({"tags": ["security", "go"]})
-        assert tags == ["security", "go"]
-
-    def test_false_positives_max(self):
-        _, fp_max, _ = parse_manifest({"false_positives_max": 5})
-        assert fp_max == 5
-
-    def test_optional_description_contains(self):
-        manifest = {
-            "expected": [
-                {"severity": ["M"], "path": "f.go", "line_range": [1, 1], "category": "c"}
-            ],
-        }
-        expected, _, _ = parse_manifest(manifest)
-        assert expected[0].description_contains == ""
-
-    def test_empty_manifest(self):
-        expected, fp_max, tags = parse_manifest({})
-        assert expected == []
-        assert fp_max == 0
-        assert tags == []
-
-
-# ── TestMatchFindings ───────────────────────────────────────────────────────
-
-
-class TestMatchFindings:
-    def test_exact_match(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "correctness")]
-        act = [_finding()]
-        matches, fp = match_findings(exp, act)
-        assert matches[0].matched
-        assert matches[0].matched_finding_id == "M1"
-        assert fp == []
-
-    def test_no_match_wrong_path(self):
-        exp = [ExpectedFinding(("M",),"other.go", (14, 14), "correctness")]
-        act = [_finding()]
-        matches, fp = match_findings(exp, act)
-        assert not matches[0].matched
-        assert fp == ["M1"]
-
-    def test_no_match_wrong_line(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (20, 25), "correctness")]
-        act = [_finding()]
-        matches, fp = match_findings(exp, act)
-        assert not matches[0].matched
-
-    def test_no_match_wrong_severity(self):
-        exp = [ExpectedFinding(("N",),"handler.go", (14, 14), "correctness")]
-        act = [_finding()]
-        matches, fp = match_findings(exp, act)
-        assert not matches[0].matched
-
-    def test_line_range_inclusive(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (10, 20), "correctness")]
-        act = [_finding(line=10)]
-        matches, _ = match_findings(exp, act)
-        assert matches[0].matched
-
-        act2 = [_finding(line=20)]
-        matches2, _ = match_findings(exp, act2)
-        assert matches2[0].matched
-
-    def test_description_contains_match(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "c", "error")]
-        act = [_finding(body="Unchecked ERROR return value")]
-        matches, _ = match_findings(exp, act)
-        assert matches[0].matched
-
-    def test_description_contains_no_match(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "c", "sql")]
-        act = [_finding(body="unchecked error return")]
-        matches, _ = match_findings(exp, act)
-        assert not matches[0].matched
-
-    def test_multiple_expected(self):
-        exp = [
-            ExpectedFinding(("M",),"a.go", (10, 10), "c"),
-            ExpectedFinding(("S",),"b.go", (20, 20), "c"),
-        ]
-        act = [
-            _finding(id="M1", severity="M", path="a.go", line=10),
-            _finding(id="S1", severity="S", path="b.go", line=20),
-        ]
-        matches, fp = match_findings(exp, act)
-        assert all(m.matched for m in matches)
-        assert fp == []
-
-    def test_false_positives(self):
-        exp = [ExpectedFinding(("M",),"a.go", (10, 10), "c")]
-        act = [
-            _finding(id="M1", path="a.go", line=10),
-            _finding(id="N1", severity="N", path="c.go", line=5),
-        ]
-        matches, fp = match_findings(exp, act)
-        assert matches[0].matched
-        assert fp == ["N1"]
-
-    def test_path_suffix_matching(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "c")]
-        act = [_finding(path="src/handler.go")]
-        matches, _ = match_findings(exp, act)
-        assert matches[0].matched
-
-    def test_path_suffix_no_partial_filename_match(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "c")]
-        act = [_finding(path="src/myhandler.go")]
-        matches, _ = match_findings(exp, act)
-        assert not matches[0].matched
-
-    def test_greedy_no_double_match(self):
-        exp = [
-            ExpectedFinding(("M",),"a.go", (10, 15), "c"),
-            ExpectedFinding(("M",),"a.go", (10, 15), "c"),
-        ]
-        act = [_finding(id="M1", path="a.go", line=12)]
-        matches, _ = match_findings(exp, act)
-        assert matches[0].matched
-        assert not matches[1].matched
-
-    def test_empty_expected(self):
-        act = [_finding()]
-        matches, fp = match_findings([], act)
-        assert matches == []
-        assert fp == ["M1"]
-
-    def test_empty_actuals(self):
-        exp = [ExpectedFinding(("M",),"a.go", (10, 10), "c")]
-        matches, fp = match_findings(exp, [])
-        assert not matches[0].matched
-        assert fp == []
-
-    def test_line_none_no_match(self):
-        exp = [ExpectedFinding(("M",),"handler.go", (14, 14), "c")]
-        act = [_finding(line=None)]
-        matches, _ = match_findings(exp, act)
-        assert not matches[0].matched
-
-    def test_severity_exact_first_preference(self):
-        exp = [ExpectedFinding(("M", "S"),"handler.go", (14, 14), "c")]
-        act = [_finding(severity="M")]
-        matches, _ = match_findings(exp, act)
-        assert matches[0].severity_exact
-
-    def test_severity_not_exact_second_preference(self):
-        exp = [ExpectedFinding(("M", "S"),"handler.go", (14, 14), "c")]
-        act = [_finding(id="S1", severity="S")]
-        matches, _ = match_findings(exp, act)
-        assert matches[0].matched
-        assert not matches[0].severity_exact
-        assert matches[0].matched_severity == "S"
-
-
-# ── TestScoreEntry ──────────────────────────────────────────────────────────
-
-
-class TestScoreEntry:
-    def test_perfect_score(self):
-        exp = [ExpectedFinding(("M",),"a.go", (10, 10), "c")]
-        act = [_finding(path="a.go", line=10)]
-        result = score_entry("test", "opus", 0, exp, act, false_positives_max=2)
-        assert result.recall == 1.0
-        assert result.precision == 1.0
-        assert result.false_positive_count == 0
-        assert result.false_positive_ok
-
-    def test_partial_recall(self):
-        exp = [
-            ExpectedFinding(("M",),"a.go", (10, 10), "c"),
-            ExpectedFinding(("S",),"b.go", (20, 20), "c"),
-        ]
-        act = [_finding(path="a.go", line=10)]
-        result = score_entry("test", "opus", 0, exp, act, false_positives_max=0)
-        assert result.recall == 0.5
-        assert result.precision == 1.0
-
-    def test_zero_recall(self):
-        exp = [ExpectedFinding(("M",),"a.go", (10, 10), "c")]
-        result = score_entry("test", "opus", 0, exp, [], false_positives_max=0)
-        assert result.recall == 0.0
-        assert result.precision == 0.0
-
-    def test_severity_accuracy(self):
-        exp = [
-            ExpectedFinding(("M", "S"),"a.go", (10, 10), "c"),
-            ExpectedFinding(("M", "S"),"b.go", (20, 20), "c"),
-        ]
-        act = [
-            _finding(id="M1", severity="M", path="a.go", line=10),
-            _finding(id="S1", severity="S", path="b.go", line=20),
-        ]
-        result = score_entry("test", "opus", 0, exp, act, false_positives_max=2)
-        assert result.severity_accuracy == 0.5
-
-    def test_false_positive_threshold(self):
-        exp = [ExpectedFinding(("M",),"a.go", (10, 10), "c")]
-        act = [
-            _finding(id="M1", path="a.go", line=10),
-            _finding(id="N1", severity="N", path="x.go", line=1),
-            _finding(id="N2", severity="N", path="y.go", line=1),
-        ]
-        result = score_entry("test", "opus", 0, exp, act, false_positives_max=1)
-        assert not result.false_positive_ok
-        assert result.false_positive_count == 2
-
-    def test_cost_passthrough(self):
-        result = score_entry(
-            "test", "opus", 0, [], [], 0,
-            cost_usd=1.23, duration_ms=5000,
-            input_tokens=1000, output_tokens=500,
-        )
-        assert result.cost_usd == 1.23
-        assert result.duration_ms == 5000
-        assert result.input_tokens == 1000
-        assert result.output_tokens == 500
-
-    def test_no_expected_no_actuals(self):
-        result = score_entry("test", "opus", 0, [], [], 0)
-        assert result.recall == 0.0
-        assert result.precision == 1.0
 
 
 # ── TestAggregateRuns ───────────────────────────────────────────────────────
@@ -526,3 +260,183 @@ class TestFormatComparisonTable:
         table = format_comparison_table({"comparisons": {}, "new_entries": [], "missing_entries": []})
         lines = table.strip().split("\n")
         assert len(lines) == 2
+
+    def test_reports_whether_a_metric_was_gated(self):
+        """A gate that hides what it ignored trains people to ignore the gate."""
+        comparison = {
+            "comparisons": {
+                ("e", "m"): {
+                    "cost_mean": {
+                        "baseline": 0.03, "current": 0.30,
+                        "delta": 0.27, "regression": False, "gated": False,
+                    },
+                    "recall_mean": {
+                        "baseline": 0.8, "current": 0.8,
+                        "delta": 0.0, "regression": False, "gated": True,
+                    },
+                },
+            },
+            "new_entries": [],
+            "missing_entries": [],
+        }
+        table = format_comparison_table(comparison)
+        assert "Gate" in table
+        assert "ungated" in table
+        assert "pass" in table
+
+
+# ── TestTokenRatchet ───────────────────────────────────────────────────────
+
+
+def _token_baseline(**overrides) -> dict:
+    entry = {
+        "recall_mean": 0.8,
+        "precision_mean": 0.9,
+        "severity_accuracy_mean": 0.5,
+        "false_positive_mean": 1.0,
+        "cost_mean": 0.03,
+        "billed_input_mean": 1000.0,
+        "output_tokens_mean": 1000.0,
+        "cache_read_ratio_mean": 0.85,
+    }
+    entry.update(overrides)
+    return {"schema_version": 2, "model": "sonnet", "entries": {"test-entry": entry}}
+
+
+def _token_current(**overrides) -> dict:
+    entry = {
+        "recall_mean": 0.8,
+        "precision_mean": 0.9,
+        "severity_accuracy_mean": 0.5,
+        "false_positive_mean": 1.0,
+        "cost_mean": 0.03,
+        "billed_input_mean": 1000.0,
+        "output_tokens_mean": 1000.0,
+        "cache_read_ratio_mean": 0.85,
+    }
+    entry.update(overrides)
+    return {"entries": {"test-entry": {"sonnet": entry}}}
+
+
+def _regressed(result: dict) -> set[str]:
+    return {r[2] for r in result["regressions"]}
+
+
+class TestTokenRatchet:
+    def test_flat_token_usage_is_not_a_regression(self):
+        result = compare_baselines({"sonnet": _token_baseline()}, _token_current())
+        assert result["regressions"] == []
+
+    def test_billed_input_exactly_at_the_threshold_is_allowed(self):
+        """15% is the budget, not the trigger — the gate fires past it."""
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(billed_input_mean=1150.0))
+        assert "billed_input_mean" not in _regressed(result)
+
+    def test_billed_input_just_past_the_threshold_regresses(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(billed_input_mean=1151.0))
+        assert "billed_input_mean" in _regressed(result)
+
+    def test_output_tokens_exactly_at_the_threshold_is_allowed(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(output_tokens_mean=1150.0))
+        assert "output_tokens_mean" not in _regressed(result)
+
+    def test_output_tokens_just_past_the_threshold_regresses(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(output_tokens_mean=1151.0))
+        assert "output_tokens_mean" in _regressed(result)
+
+    def test_fewer_tokens_is_never_a_regression(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()},
+            _token_current(billed_input_mean=10.0, output_tokens_mean=10.0))
+        assert result["regressions"] == []
+
+    def test_cache_read_ratio_below_the_floor_regresses(self):
+        """The #584 failure mode: caching silently stops and the bill triples."""
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.59))
+        assert "cache_read_ratio_mean" in _regressed(result)
+
+    def test_cache_read_ratio_at_the_floor_is_allowed(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.60))
+        assert "cache_read_ratio_mean" not in _regressed(result)
+
+    def test_cache_ratio_drop_above_the_floor_is_allowed(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.70))
+        assert "cache_read_ratio_mean" not in _regressed(result)
+
+    def test_cost_is_reported_but_never_gates(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(cost_mean=3.0))
+        assert "cost_mean" not in _regressed(result)
+        metrics = result["comparisons"][("test-entry", "sonnet")]
+        assert metrics["cost_mean"]["current"] == 3.0
+        assert metrics["cost_mean"]["gated"] is False
+
+    def test_a_baseline_without_token_metrics_is_ungated(self):
+        """Old baselines keep working — a missing metric is unknown, not passing."""
+        baseline = _token_baseline()
+        for key in ("billed_input_mean", "output_tokens_mean", "cache_read_ratio_mean"):
+            del baseline["entries"]["test-entry"][key]
+        result = compare_baselines(
+            {"sonnet": baseline},
+            _token_current(billed_input_mean=99999.0, cache_read_ratio_mean=0.0))
+        assert result["regressions"] == []
+
+    def test_a_zero_baseline_is_ungated(self):
+        """A zero means the run was never measured, so there is nothing to ratchet."""
+        result = compare_baselines(
+            {"sonnet": _token_baseline(billed_input_mean=0.0)},
+            _token_current(billed_input_mean=50000.0))
+        assert "billed_input_mean" in result["comparisons"][("test-entry", "sonnet")] \
+            or "billed_input_mean" not in _regressed(result)
+        assert "billed_input_mean" not in _regressed(result)
+
+    def test_a_finding_score_drop_still_gates(self):
+        result = compare_baselines(
+            {"sonnet": _token_baseline()}, _token_current(recall_mean=0.5))
+        assert "recall_mean" in _regressed(result)
+
+
+class TestTokenAggregation:
+    def test_aggregate_exposes_the_gated_token_metrics(self):
+        runs = [
+            ScoringResult("e", "m", 0, billed_input=1000, output_tokens=100,
+                          cache_read_ratio=0.8),
+            ScoringResult("e", "m", 1, billed_input=2000, output_tokens=200,
+                          cache_read_ratio=0.9),
+        ]
+        agg = aggregate_runs(runs)
+        assert agg["billed_input_mean"] == 1500.0
+        assert agg["output_tokens_mean"] == 150.0
+        assert agg["cache_read_ratio_mean"] == pytest.approx(0.85)
+
+    def test_no_runs_still_reports_the_token_keys(self):
+        agg = aggregate_runs([])
+        assert agg["billed_input_mean"] == 0.0
+        assert agg["output_tokens_mean"] == 0.0
+        assert agg["cache_read_ratio_mean"] == 0.0
+
+
+class TestSchemaVersion:
+    def test_current_version_is_accepted(self):
+        data = _valid_baseline()
+        data["schema_version"] = eval_scoring.SCHEMA_VERSION
+        assert validate_baseline_schema(data) == []
+
+    def test_the_previous_version_still_loads(self):
+        """Baselines predating the token metrics must not be rejected outright."""
+        data = _valid_baseline()
+        data["schema_version"] = 1
+        assert validate_baseline_schema(data) == []
+
+    def test_token_metrics_must_be_numbers_when_present(self):
+        data = _valid_baseline()
+        data["entries"]["unchecked-error-go"]["billed_input_mean"] = "lots"
+        errors = validate_baseline_schema(data)
+        assert any("billed_input_mean" in e and "number" in e for e in errors)

@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-missing-binary",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "run.sh calls uv without checking it exists, so a machine without it gets a bare exit 127 and no indication of what is missing.",
+  "tags": ["ci-fix", "toolchain", "bash"]
+}

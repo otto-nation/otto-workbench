@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-sed-portability",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "build.sh uses `sed -i ''`, a BSD-only spelling. Under GNU sed the empty string is read as the script and the build fails.",
+  "tags": ["ci-fix", "portability", "bash"]
+}

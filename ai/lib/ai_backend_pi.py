@@ -38,6 +38,7 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import ai_usage
 import log
 from ai_backend import AgentInvocation
 from ai_backend_events import (
@@ -332,11 +333,17 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     return True
 
 
-def prompt(text: str, *, model: str | None = None) -> tuple[str, int]:
-    """Stateless text-in/text-out via pi -p."""
+def prompt(
+    text: str, *, model: str | None = None,
+) -> tuple[str, int, ai_usage.SessionUsage | None]:
+    """Stateless text-in/text-out via pi -p. Returns (text, exit_code, usage).
+
+    Pi's -p mode reports no usage, so the third element is always None — the
+    ledger records nothing rather than a zeroed row that reads as a free call.
+    """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True)
-    return result.stdout, result.returncode
+    return result.stdout, result.returncode, None
 
 
 def invoke_agent(inv: AgentInvocation) -> int:

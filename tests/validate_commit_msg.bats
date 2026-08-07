@@ -5,6 +5,7 @@ setup() {
   common_setup
   source_lib
   # Use fallback path (no commitlint config, no npx) for all tests
+  # shellcheck disable=SC2034  # read by the commit-msg helpers in lib/ai/commit.sh
   COMMITLINT_CONFIG=""
   # Hide npx so the fallback branch is always exercised
   PATH_ORIG="$PATH"

@@ -38,12 +38,11 @@ tasks:
     desc: "Run ShellCheck on all shell scripts"
     silent: true
     cmds:
+      # bash -c: go-task's shell is not bash, and lib/ui.sh only loads the
+      # file helpers under bash. list_shell_scripts is the same selection the
+      # pre-push hook uses — line-1 shebangs only.
       - |
-        grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' . \
-          | grep -v '^\./\.git/' \
-          | grep -v '^\./ignore/' \
-          | sort \
-          | xargs shellcheck --severity=warning
+        bash -c '. lib/ui.sh && list_shell_scripts . | xargs shellcheck --severity=warning'
         echo "✓ ShellCheck passed"
 
   wt:cleanup:

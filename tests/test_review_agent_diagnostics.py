@@ -152,3 +152,35 @@ class TestMaxTurnsReasonMatching:
         assert review_agent.DIAG_NO_WRITE_TOOL_CALL in reason
         assert review_pipeline._is_retryable(reason)
         assert review_pipeline._MAX_TURNS_REASON in reason
+
+
+class TestWritableDirs:
+    """The agent may write to its own artifact dir and the worktree — nothing else.
+
+    Granting the shared reviews root is what let scratch files land beside other
+    reviews instead of inside the run that made them.
+    """
+
+    def _add_dirs(self, monkeypatch, artifact_dir: str) -> list[str]:
+        captured = {}
+        monkeypatch.setattr(
+            review_agent.ai_backend, "invoke_agent",
+            lambda inv: captured.update(add_dirs=inv.add_dirs) or 0,
+        )
+        review_agent.invoke_agent(
+            review_agent.AgentInvocation(
+                prompt="prompt",
+                session_log="/tmp/session.jsonl",
+                add_dirs=review_agent.build_add_dirs("/tmp/wt", artifact_dir),
+            ),
+        )
+        return captured["add_dirs"]
+
+    def test_grants_the_artifact_dir_and_the_worktree(self, monkeypatch):
+        assert self._add_dirs(monkeypatch, "/tmp/reviews/repo-1") == [
+            "/tmp/reviews/repo-1", "/tmp/wt",
+        ]
+
+    def test_does_not_grant_the_reviews_root(self, monkeypatch):
+        add_dirs = self._add_dirs(monkeypatch, "/tmp/reviews/repo-1")
+        assert "/tmp/reviews" not in add_dirs

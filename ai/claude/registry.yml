@@ -79,12 +79,14 @@ tools:
     visibility: full
     description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary] [--recover]  |  pr comments [--triage] [--fix] [--finish]  |  pr fix  |  pr rebase [--fix] [--no-push] [--abort]  |  pr gc"
+    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--post] [--repair] [--summary] [--recover]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr fix  |  pr rebase [--fix] [--no-push] [--abort]  |  pr gc"
 
   - name: otto-log
     permission: true
-    visibility: brief
-    description: "Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors"
+    visibility: full
+    description: "Query trail files and AI usage across otto-workbench scripts — audit trail plus cost and token stats"
+    when_to_use: "Tracing what an AI script did (recent, query, show, list) or seeing what AI calls cost across scripts, tasks, models, and days (stats)"
+    usage: "otto-log recent  |  otto-log list --script pr  |  otto-log show <invocation>  |  otto-log stats [--since 7d] [--by script|task|model|day] [--json]"
 
   - name: pr-rebase
     permission: false
@@ -136,10 +138,15 @@ tools:
     visibility: hidden
     description: "Run a Claude Code skill as a headless background session with output logging"
 
+  - name: ai-usage-log
+    permission: false
+    visibility: hidden
+    description: "Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record"
+
   - name: eval-models
     permission: false
     visibility: hidden
-    description: "Model evaluation runner — benchmarks review pipeline against a corpus of known-bad code"
+    description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"
 
   - name: otto-mcp-server
     permission: false

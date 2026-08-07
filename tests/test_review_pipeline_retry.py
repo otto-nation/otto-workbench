@@ -171,7 +171,6 @@ class TestRetryMissingOutput:
                 additions=1, deletions=1, changed_files=1, files=[]),
             ctx=review_pipeline.PRContext(), wt_path=str(tmp_path),
             review_file=str(review_file), session_log=log_path,
-            reviews_dir=str(tmp_path),
         )
         codes = iter([0, 3])
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")

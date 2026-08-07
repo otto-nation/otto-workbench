@@ -1,5 +1,6 @@
 {
   "name": "command-injection-bash",
+  "task": "review",
   "description": "User-supplied branch name is interpolated into shell command without quoting",
   "source": "synthetic",
   "language": "bash",

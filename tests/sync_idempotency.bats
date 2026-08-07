@@ -4,7 +4,6 @@
 # filesystem state is identical — meeting the sync_<name>() contract.
 
 FAKE_HOME=""
-ORIG_HOME="$HOME"
 
 setup() {
   load 'test_helper'

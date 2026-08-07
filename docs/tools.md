@@ -31,7 +31,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
-| `otto-log` | Query trail files across otto-workbench AI scripts — structured audit trail of actions, decisions, and errors |
+| `otto-log` | Query trail files and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
 | `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
@@ -42,7 +42,8 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
 | `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
-| `eval-models` | Model evaluation runner — benchmarks review pipeline against a corpus of known-bad code |
+| `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
+| `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
 | `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |
@@ -316,7 +317,7 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--finish]` | Fetch and manage PR review threads (see phases below) |
+| `comments [--triage] [--fix] [--finish] [--post]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |

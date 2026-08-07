@@ -142,10 +142,8 @@ def diagnose_missing_output(log_path: str) -> str:
     # reproduce it.
     tools_used = _tool_names_used(records)
     crashed = reason.startswith(AGENT_ERROR_PREFIX)
-    # empty tools_used also satisfies this when observability is confirmed
-    if not crashed and _tool_use_is_observable(records) and not any(
-        is_write_tool(name) for name in tools_used
-    ):
+    wrote = any(is_write_tool(name) for name in tools_used)
+    if not crashed and _tool_use_is_observable(records) and not wrote:
         reason += f" — {DIAG_NO_WRITE_TOOL_CALL}"
     return reason
 
@@ -263,6 +261,10 @@ def _is_quota_error(log_path: str) -> bool:
 
 # ── Model selection ───────────────────────────────────────────────────────────
 
+# A tier alias names a tier, not a deployment. On Vertex and Bedrock the account
+# provisions a specific model ID, and ANTHROPIC_DEFAULT_* is where that ID lives.
+# The Claude CLI resolves these itself; Pi does not, so resolving here gives both
+# backends the same answer and keeps the precedence chain in one place.
 class ModelAlias(StrEnum):
     """Short model names that resolve to a concrete model id via env override.
 
@@ -287,22 +289,34 @@ class ModelAlias(StrEnum):
 
 
 def _resolve_alias(model: str) -> str:
+    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through."""
     alias = ModelAlias.parse(model)
     if alias is None:
         return model
     return os.environ.get(alias.env_key) or model
 
 
-def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
+def _select_model(explicit: str | None, env_key: str, default: str) -> str:
+    """The winning model name by precedence, before any alias resolution."""
     if explicit:
-        return _resolve_alias(explicit)
+        return explicit
     from_env = os.environ.get(env_key)
     if from_env:
-        return _resolve_alias(from_env)
+        return from_env
     global_env = os.environ.get("CLAUDE_REVIEW_MODEL")
     if global_env:
-        return _resolve_alias(global_env)
-    return _resolve_alias(default)
+        return global_env
+    return default
+
+
+def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
+    """Pick the model for a phase, then map any tier alias to its provisioned ID.
+
+    Precedence: explicit argument, the phase's own key, CLAUDE_REVIEW_MODEL, the
+    built-in default. Whichever wins is resolved through ANTHROPIC_DEFAULT_* — so
+    naming a tier anywhere in the chain honors the deployment configured for it.
+    """
+    return _resolve_alias(_select_model(explicit, env_key, default))
 
 
 def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:
@@ -324,14 +338,9 @@ def _resolve_provider() -> str | None:
 # ── Agent invocation ──────────────────────────────────────────────────────────
 
 
-def build_add_dirs(wt_path: str, reviews_dir: str, review_file: str = "") -> list[str]:
+def build_add_dirs(wt_path: str, artifact_dir: str) -> list[str]:
     """Directories the agent may read outside its cwd."""
-    add_dirs = [reviews_dir, wt_path]
-    if review_file:
-        review_dir = str(Path(review_file).parent)
-        if review_dir not in (reviews_dir, wt_path):
-            add_dirs.append(review_dir)
-    return add_dirs
+    return [artifact_dir, wt_path]
 
 
 def _invoke_once(inv: AgentInvocation) -> int:
@@ -357,5 +366,3 @@ def invoke_agent(
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc
-
-

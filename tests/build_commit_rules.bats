@@ -6,11 +6,11 @@ setup() {
   source_lib
   ORIG_DIR="$PWD"
   TMPDIR="$(mktemp -d)"
-  cd "$TMPDIR"
+  cd "$TMPDIR" || return 1
 }
 
 teardown() {
-  cd "$ORIG_DIR"
+  cd "$ORIG_DIR" || return 1
   rm -rf "$TMPDIR"
   common_teardown
 }
@@ -53,6 +53,7 @@ teardown() {
 
 @test "uses config file content when COMMITLINT_CONFIG is set" {
   echo '{"rules":{"type-enum":[2,"always",["feat","fix"]]}}' > commitlint.config.json
+  # shellcheck disable=SC2034  # read by build_commit_rules in lib/ai/commit.sh
   COMMITLINT_CONFIG="commitlint.config.json"
   build_commit_rules
   [[ "$COMMIT_RULES" == *"type-enum"* ]]

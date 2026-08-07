@@ -1,6 +1,6 @@
 ---
 name: pr-comments
-description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, reply, and resolve across multi-round review cycles. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead)."
+description: "Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then draft replies for approval before publishing with --post. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead)."
 source: otto-workbench/ai/claude/skills/pr-comments/SKILL.md
 invocation: "/pr-comments [<pr_number_or_branch>]"
 trigger: "Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments."
@@ -12,6 +12,10 @@ skip: "Do not use for initial code review requests (use code-review or pr review
 Triages and fixes PR review comments. Wraps `pr comments --fix`, which classifies
 threads via AI, applies mechanical fixes, and outputs structured JSON for any
 threads that need human input.
+
+Nothing reaches GitHub until the user approves it. Replies, the summary comment,
+thread resolutions, and deferral issues are drafted to stderr; `--post` is what
+publishes them, and it is only ever passed after the user has read the drafts.
 
 Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
@@ -149,12 +153,31 @@ the reviewer's premise was factually wrong.
 `issue_comments` or `review_body_comments` exist (e.g., when running without
 `--fix`/`--triage`), present unseen ones with the author and a summary as before.
 
-### Step 4: Handle remaining threads and close out
+### Step 4: Present drafts and get approval
 
-The script automatically posts per-thread replies (with summary and commit link)
-after fixing and pushing. When `summary_deferred` is true, the summary issue
-comment is posted by `--finish` after all discussion is complete — not during
-the fix pass. No manual reply posting needed.
+The fix pass drafts its per-thread replies and summary to stderr, prefixed
+`DRAFT (not published)`. Show them to the user — grouped by thread, with the
+reviewer and the claim each reply makes — and ask whether to publish.
+
+Every factual claim in a reply must hold against the current code. Check the
+ones that assert absence ("nothing calls X", "this is unused") before showing
+them; an incorrect claim posted to a reviewer has to be retracted publicly.
+
+Only after the user approves, and only once Step 3 is complete:
+
+```bash
+pr comments --finish --post [--repo-dir <PATH>]
+```
+
+That sends the drafted replies (including those whose commit had not yet been
+pushed), posts the summary, files the tracking issue for the threads the user
+chose to track, and resolves verified threads. The summary is meant to describe
+a finished conversation, so don't publish before the discussion is done. A
+drafted run recorded nothing as posted, so the queue is intact — no need to
+re-run `--fix`.
+
+If the user wants changes to a reply first, edit and post it manually (below),
+then run `--finish --post` for the rest.
 
 For manual replies to `needs_human` threads, use the `databaseId` from the thread's first comment:
 
@@ -165,16 +188,6 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
 REPLY_BODY
 ```
 
-After all manual work is done, close out the deferred work — replies whose
-commit had not yet been pushed, the tracking issue for threads the user chose
-to track, and the summary comment:
-
-```bash
-pr comments --finish [--repo-dir <PATH>]
-```
-
-Run this only after Step 3 is complete. It posts the summary, which is meant to
-describe a finished conversation.
 
 Print summary: fixes applied, replies posted, threads resolved, threads still open.
 
@@ -182,6 +195,7 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 
 ## Constraints
 
+- Never pass `--post` before the user has seen the drafts and approved them
 - Never apply fixes without user confirmation for `needs_human` items
 - Never file a `deferred` thread on the tracking issue without the user
   choosing to — deferral is a decision, not a fallback for a failed fix pass

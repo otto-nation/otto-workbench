@@ -94,7 +94,6 @@ def _job(tmp_path, effort=Effort.MEDIUM):
         ctx=PRContext(), wt_path=str(tmp_path),
         review_file=str(tmp_path / "review.md"),
         session_log=str(tmp_path / "session.jsonl"),
-        reviews_dir=str(tmp_path),
         effort=effort,
     )
 
@@ -181,13 +180,13 @@ class TestPhaseRunnerInvocation:
         inv = runner.invocation("P", "/tmp/g.jsonl", max_turns=42)
         assert inv.max_turns == 42
 
-    def test_review_file_widens_add_dirs(self, tmp_path):
+    def test_add_dirs_grant_only_the_review_artifact_dir(self, tmp_path):
+        # Never the shared reviews root: a root grant is how scratch files
+        # ended up beside unrelated reviews.
         job = _job(tmp_path)
         runner = review_pipeline.PhaseRunner(job, Phase.SINGLE)
-        inv = runner.invocation(
-            "P", job.session_log, review_file="/elsewhere/review.md",
-        )
-        assert "/elsewhere" in inv.add_dirs
+        inv = runner.invocation("P", job.session_log)
+        assert inv.add_dirs == [job.artifact_dir, job.wt_path]
 
 
 class TestPhaseRunnerReachesBackend:

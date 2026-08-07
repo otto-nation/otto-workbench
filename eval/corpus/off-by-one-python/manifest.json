@@ -1,5 +1,6 @@
 {
   "name": "off-by-one-python",
+  "task": "review",
   "description": "Pagination slice uses end + 1, returning one extra item per page",
   "source": "synthetic",
   "language": "python",

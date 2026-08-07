@@ -10,14 +10,20 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 ## Avoid Compound `cd` Commands
 
-- Never use `cd <path> && <command>` — compound commands starting with `cd` trigger an unsuppressible security prompt in Claude Code. Use these alternatives instead:
+- Never use `cd <path> && <command>` — compound commands containing `cd` trigger an unsuppressible security prompt in Claude Code. This applies wherever a statement begins, not just at the start of the command: `mkdir -p x; cd x && ls` counts. Use these alternatives instead:
   - `git -C <path> ...` for git commands
   - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
   - Run the command directly with absolute paths when possible
 
+## Avoid Shell Function Definitions
+
+- Never define a shell function in a Bash tool command — both `name() { ...; }` and `function name { ...; }` make the parser classify the whole command as too complex to analyze ("Contains function_definition"). That path skips the allow list entirely, so no permission rule can match it and it prompts every time. Write the command directly instead:
+  - `grep -rn "pattern" /abs/path/tests/ | head -40` instead of `cd() { :; }; W=/abs/path; grep -rn "pattern" "$W/tests/" | head -40`
+- A no-op stub such as `cd() { :; }` is not a way around the compound-`cd` rule — it trades a rule you can satisfy for a prompt you cannot suppress. Use an absolute path, `git -C <path>`, or `gh --repo` instead
+
 ## Avoid Env-Var Prefix Syntax
 
-- Never prefix a command with `VAR=value command` — Claude Code's permission matcher sees `VAR=value` as the command name, triggering a prompt every time. Use tool-native alternatives:
+- Never prefix a command with `VAR=value command` — Claude Code's permission matcher sees `VAR=value` as the command name, triggering a prompt every time. This applies wherever a statement begins, not just at the start of the command: `true; W=/tmp x` counts. Use tool-native alternatives:
   - `task --global REPO_DIR=/path ...` (go-task variable syntax, not `REPO_DIR=/path task ...`)
   - `mise -C /path run ...` (not `REPO_DIR=/path mise run ...`)
   - `otto-workbench --workbench-dir /path ...` (not `WORKBENCH_DIR=/path otto-workbench ...`)

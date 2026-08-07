@@ -29,10 +29,8 @@ _make_workbench() {
   printf '#!/usr/bin/env bash\n# description: Configure git\nsync_git() { echo "sync_git"; }\n' > "$dir/git/steps.sh"
 
   # Preflight components
-  for pf in brew; do
-    mkdir -p "$dir/$pf"
-    printf '#!/usr/bin/env bash\nstep_%s_install() { true; }\n' "$pf" > "$dir/$pf/steps.sh"
-  done
+  mkdir -p "$dir/brew"
+  printf '#!/usr/bin/env bash\nstep_brew_install() { true; }\n' > "$dir/brew/steps.sh"
 
   # Core components that were formerly preflight
   mkdir -p "$dir/task"
@@ -148,8 +146,8 @@ _is_targeted() {
 
 @test "_is_targeted rejects components not in INSTALL_TARGETS" {
   INSTALL_TARGETS=(brew)
-  ! _is_targeted docker
-  ! _is_targeted git
+  run ! _is_targeted docker
+  run ! _is_targeted git
 }
 
 # ─── Targeted install: core filtering ────────────────────────────────────────

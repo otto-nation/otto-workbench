@@ -501,34 +501,41 @@ def _make_completed(returncode, stdout="", stderr=""):
 class TestCommitAndPush:
     """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
 
+    def _commit(self, rt, mock_run, dirty=True):
+        """Run _commit_and_push with a stubbed git and a known worktree state."""
+        with patch.object(rt.subprocess, "run", side_effect=mock_run), \
+                patch.object(rt.review_common, "has_uncommitted_changes",
+                             return_value=dirty):
+            return rt._commit_and_push(Path("/fake"), 1, 0)
+
     def test_no_changes(self, rt):
-        """git diff --quiet returns 0 → no_changes."""
+        """A clean worktree → no_changes."""
+        result = self._commit(rt, lambda cmd, **kw: _make_completed(0), dirty=False)
+        assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_untracked_only_changes_still_commit(self, rt):
+        """A fix that only adds files leaves the tracked diff empty — still commit."""
         calls = []
 
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
-            if "diff" in cmd:
-                return _make_completed(0)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 0, 0)
-        assert result.status == "no_changes"
-        assert result.sha is None
+        result = self._commit(rt, mock_run)
+        assert result.status == "pushed"
+        assert ["add", "-A"] == calls[0][-2:]
 
     def test_commit_failed(self, rt):
         """git commit returns non-zero → commit_failed with error text."""
         def mock_run(cmd, **kwargs):
-            if "diff" in cmd:
-                return _make_completed(1)
-            if "add" in cmd:
-                return _make_completed(0)
             if "commit" in cmd:
                 return _make_completed(1, stderr="hook failed\n")
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        result = self._commit(rt, mock_run)
         assert result.status == "commit_failed"
         assert result.sha is None
         assert "hook failed" in result.error
@@ -536,20 +543,13 @@ class TestCommitAndPush:
     def test_push_failed(self, rt):
         """git push returns non-zero → push_failed with SHA preserved."""
         def mock_run(cmd, **kwargs):
-            if "diff" in cmd:
-                return _make_completed(1)
-            if "add" in cmd:
-                return _make_completed(0)
-            if "commit" in cmd:
-                return _make_completed(0)
             if "rev-parse" in cmd:
                 return _make_completed(0, stdout="abc1234\n")
             if "push" in cmd:
                 return _make_completed(1, stderr="rejected\n")
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        result = self._commit(rt, mock_run)
         assert result.status == "push_failed"
         assert result.sha == "abc1234"
         assert "rejected" in result.error
@@ -557,20 +557,11 @@ class TestCommitAndPush:
     def test_success(self, rt):
         """git push returns 0 → pushed with SHA."""
         def mock_run(cmd, **kwargs):
-            if "diff" in cmd:
-                return _make_completed(1)
-            if "add" in cmd:
-                return _make_completed(0)
-            if "commit" in cmd:
-                return _make_completed(0)
             if "rev-parse" in cmd:
                 return _make_completed(0, stdout="abc1234\n")
-            if "push" in cmd:
-                return _make_completed(0)
             return _make_completed(0)
 
-        with patch.object(rt.subprocess, "run", side_effect=mock_run):
-            result = rt._commit_and_push(Path("/fake"), 1, 0)
+        result = self._commit(rt, mock_run)
         assert result.status == "pushed"
         assert result.sha == "abc1234"
         assert result.error == ""
@@ -1065,7 +1056,7 @@ class TestRenderDeferredSummary:
         mock_post.assert_not_called()
         assert fix.summary_deferred is True
 
-    def test_posts_when_push_failed_but_now_pushed(self, rt):
+    def test_posts_when_push_failed_but_now_pushed(self, rt, publishing_on):
         fix = FixSummary(
             threads=[
                 ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
@@ -1086,11 +1077,57 @@ class TestRenderDeferredSummary:
         assert "def5678" in body
         assert "push failed" not in body
 
+    def test_draft_run_leaves_the_deferred_queue_intact(self, rt):
+        """Retiring push_failed without publishing would strand the replies."""
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+            ],
+            commit_sha="def5678",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_is_pushed", return_value=True):
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        assert fix.commit_status == "push_failed"
+        assert fix.summary_deferred is True
 
-class TestResolvePushDeferredReplies:
-    """Test that --resolve posts deferred replies when push has since landed."""
 
-    def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt):
+class TestSummaryStillOwed:
+    """Whether --resolve has to re-render the fix summary."""
+
+    def _owed(self, rt, **kw):
+        args = {
+            "fixed": [], "needs_human": [], "deferred": [], "dismissed": [],
+            "commit_status": "pushed", "has_unaccounted": False,
+        }
+        args.update(kw)
+        return rt._summary_still_owed(**args)
+
+    def test_nothing_to_say(self, rt, publishing_on):
+        assert self._owed(rt) is False
+
+    def test_posted_summary_is_settled(self, rt, publishing_on):
+        assert self._owed(rt, fixed=["t1"]) is False
+
+    def test_open_discussion_defers(self, rt, publishing_on):
+        assert self._owed(rt, needs_human=["t1"]) is True
+
+    def test_unpushed_commit_defers(self, rt, publishing_on):
+        assert self._owed(rt, fixed=["t1"], commit_status="push_failed") is True
+
+    def test_draft_leaves_the_summary_owed(self, rt):
+        assert self._owed(rt, fixed=["t1"]) is True
+
+    def test_draft_with_nothing_to_say_owes_nothing(self, rt):
+        assert self._owed(rt) is False
+
+
+class TestPendingFixReplies:
+    """--resolve is the second chance for fix replies the fix pass didn't send."""
+
+    def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt, publishing_on):
         fix = FixSummary(
             threads=[
                 ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
@@ -1108,7 +1145,7 @@ class TestResolvePushDeferredReplies:
         with patch.object(rt, "_is_pushed", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
-            rt._post_push_deferred_replies(state, "owner/repo", 1, threads_by_id)
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert mock_reply.call_count == 2
         assert mock_resolve.call_count == 2
         assert fix.commit_status == "pushed"
@@ -1125,7 +1162,7 @@ class TestResolvePushDeferredReplies:
         state = _make_state(fix)
         with patch.object(rt, "_is_pushed", return_value=False), \
              patch("pr_comments.post_thread_reply") as mock_reply:
-            rt._post_push_deferred_replies(state, "owner/repo", 1, {})
+            rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
         assert fix.commit_status == "push_failed"
 
@@ -1133,7 +1170,59 @@ class TestResolvePushDeferredReplies:
         fix = FixSummary(commit_status="pushed", summary_deferred=True)
         state = _make_state(fix)
         with patch("pr_comments.post_thread_reply") as mock_reply:
-            rt._post_push_deferred_replies(state, "owner/repo", 1, {})
+            rt._post_pending_fix_replies(state, "owner/repo", 1, {})
+        mock_reply.assert_not_called()
+
+    def test_draft_run_keeps_the_queue_for_a_later_post(self, rt):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+            ],
+            commit_sha="abc1234",
+            commit_status="push_failed",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        threads_by_id = {
+            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
+        }
+        with patch.object(rt, "_is_pushed", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.commit_status == "push_failed"
+
+    def test_drains_the_queue_a_drafted_fix_pass_left_behind(self, rt, publishing_on):
+        """A drafted --fix pushes its commit but sends nothing; --post must catch up."""
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+            ],
+            commit_sha="abc1234",
+            commit_status="pushed",
+            replies_pending=True,
+        )
+        state = _make_state(fix)
+        threads_by_id = {
+            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
+        }
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert mock_reply.call_count == 1
+        assert fix.replies_pending is False
+
+    def test_noop_once_the_replies_have_gone_out(self, rt, publishing_on):
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+            ],
+            commit_sha="abc1234",
+            commit_status="pushed",
+            replies_pending=False,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
 
 
@@ -1289,7 +1378,7 @@ class TestFinishDeferredWork:
     def test_all_three_steps_run_in_order(self, rt, tmp_path):
         self._save(tmp_path)
         order = []
-        with patch.object(rt, "_post_push_deferred_replies",
+        with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda *a, **k: order.append("replies")), \
                 patch.object(rt, "_finalize_deferred",
                              side_effect=lambda *a, **k: order.append("issue")), \
@@ -1305,7 +1394,7 @@ class TestFinishDeferredWork:
         def mark(state, *a, **k):
             state.fix.commit_status = "pushed"
 
-        with patch.object(rt, "_post_push_deferred_replies", side_effect=mark), \
+        with patch.object(rt, "_post_pending_fix_replies", side_effect=mark), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
@@ -1317,7 +1406,7 @@ class TestFinishDeferredWork:
             ThreadOutcome(id="t9", action=ThreadAction.DEFERRED, reason="r"),
         ])
         seen = []
-        with patch.object(rt, "_post_push_deferred_replies",
+        with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.threads)), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
@@ -1325,14 +1414,14 @@ class TestFinishDeferredWork:
         assert [t.id for t in seen] == ["t9"]
 
     def test_no_state_on_disk_is_a_no_op(self, rt, tmp_path):
-        with patch.object(rt, "_post_push_deferred_replies") as replies:
+        with patch.object(rt, "_post_pending_fix_replies") as replies:
             rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
         replies.assert_not_called()
 
     def test_a_failing_step_propagates(self, rt, tmp_path):
         """A caller closing the loop needs a failure to be an error, not a log line."""
         self._save(tmp_path)
-        with patch.object(rt, "_post_push_deferred_replies"), \
+        with patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_finalize_deferred",
                              side_effect=RuntimeError("gh down")), \
                 patch.object(rt, "_render_deferred_summary"):
@@ -1968,7 +2057,7 @@ class TestTriageThrashGuard:
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []
 
-        def prompt(text):
+        def prompt(text, **kw):
             prompts.append(text)
             return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
 

@@ -5,6 +5,7 @@ setup() {
   common_setup
   source_lib
   # Small budget keeps chunk sizes manageable in tests
+  # shellcheck disable=SC2034  # read by compact_diff in lib/ai/compact_diff.sh
   DIFF_MAX_CHARS=500
 }
 

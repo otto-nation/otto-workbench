@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stands in for GNU sed, which takes no separate suffix argument after -i: an
+# empty string there is read as the script and rejected. Pinning the behaviour
+# in a stub keeps the case deterministic on BSD and GNU machines alike.
+if [ "${1:-}" = "-i" ]; then
+  echo "sed: -e expression #1, char 0: no previous regular expression" >&2
+  exit 1
+fi
+exec /usr/bin/sed "$@"

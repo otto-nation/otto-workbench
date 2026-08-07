@@ -55,13 +55,46 @@ def _clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> i
     return count
 
 
+def _is_migration_input(f: Path, reviews_dir: Path) -> bool:
+    """Whether the flat-layout migration would still fold this loose file into a dir.
+
+    The migration keys off a flat `<name>.md` and moves its suffixed siblings along
+    with it. A `.md` is always its own input; anything else is only claimable while
+    that `.md` is still there. Once it is gone the sibling is stranded, not pending.
+    """
+    if f.suffix == REVIEW_EXT:
+        return True
+    stem = f.name.split(".", 1)[0]
+    return (reviews_dir / f"{stem}{REVIEW_EXT}").is_file()
+
+
+def _collect_strays(reviews_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
+    """Remove stale loose files at the reviews root. Returns the count removed.
+
+    Reviews live in per-review directories, so a loose file is either an unclaimable
+    leftover of the flat layout or an agent's scratch file. Staleness is the guard:
+    a run still in flight must not have its working files pulled out from under it.
+    """
+    now = datetime.now().timestamp()
+    cleaned = 0
+    for f in reviews_dir.iterdir():
+        if not f.is_file() or _is_migration_input(f, reviews_dir):
+            continue
+        if (now - f.stat().st_mtime) / 86400 <= stale_days:
+            continue
+        f.unlink(missing_ok=True)
+        log.info(f"GC: removed stray {f.name}")
+        cleaned += 1
+    return cleaned
+
+
 def gc_reviews(reviews_dir: Path | None = None) -> int:
     """Remove orphaned review dirs and stale intermediates. Returns items cleaned."""
     reviews_dir = reviews_dir or REVIEWS_DIR
     if not reviews_dir.is_dir():
         return 0
 
-    cleaned = 0
+    cleaned = _collect_strays(reviews_dir)
     for review_dir in reviews_dir.iterdir():
         if not review_dir.is_dir():
             continue

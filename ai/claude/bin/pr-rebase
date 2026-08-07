@@ -15,6 +15,7 @@ Usage:
   pr-rebase                           # rebase and force-push
   pr-rebase --no-push                 # rebase only, skip force-push
   pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
+  pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
@@ -1838,12 +1839,13 @@ def _rebase_success(
     # from here. RunMode.FIX_ONLY resolves conflicts and stops short of the remote.
     pushes_here = mode is RunMode.FIX
 
+    label = "Rebase complete" if not tally.commits else (
+        f"Rebase complete — resolved {len(tally.files)} file(s) "
+        f"across {tally.commits} commit(s)"
+    )
+
     push_rc = 0
     if pushes_here:
-        label = "Rebase complete" if not tally.commits else (
-            f"Rebase complete — resolved {len(tally.files)} file(s) "
-            f"across {tally.commits} commit(s)"
-        )
         log.info(f"{label} — force-pushing...")
         push_rc = _force_push(cwd, resolved_files=tally.files or None)
         if push_rc == 0:
@@ -1868,6 +1870,10 @@ def _rebase_success(
             log.error("Force-push failed.")
         return push_rc
 
+    # Under FIX_ONLY the AI's work is the whole point of the run and the user is
+    # about to push it by hand, so name it rather than reporting a bare "clean".
+    if tally.commits:
+        log.ok(label)
     log.ok("Rebase clean — run `git push --force-with-lease` to push, or re-run without --no-push.")
     return 0
 
@@ -1904,11 +1910,12 @@ def main():
     parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
     parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
     parser.add_argument("--fix", action="store_true",
-                        help="Autonomous mode — resolve conflicts with AI, rebase, and force-push")
+                        help="Autonomous mode — resolve conflicts with AI and rebase "
+                             "(force-pushes unless --no-push)")
     parser.add_argument("--push", action="store_true", default=True,
                         help=argparse.SUPPRESS)
     parser.add_argument("--no-push", action="store_false", dest="push",
-                        help="Rebase only — skip force-push")
+                        help="Skip the force-push — print the command instead")
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)

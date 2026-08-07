@@ -1135,6 +1135,18 @@ def test_build_chunked_prompt_structure():
     assert "BASE VERSION" not in prompt
 
 
+def test_build_chunked_prompt_instructs_base_side_names():
+    """Chunked prompts carry the rename guard the full-file prompt has.
+
+    Any file over _CHUNKED_MIN_LINES with a small conflict takes this path, so
+    dropping the instruction here disarmed it for the common case.
+    """
+    prompt = pr_rebase_cli._build_chunked_prompt(
+        "main.go", [_block(index=1, start=0, end=4)], "abc123", "feat: change",
+    )
+    assert "base-side names" in prompt
+
+
 def test_parse_chunked_resolutions_single():
     stdout = "<<<RESOLVED>>>_1\nresolved line\n<<<END_RESOLVED>>>_1\n"
     result, reason = pr_rebase_cli._parse_chunked_resolutions(stdout, 1)
@@ -1778,6 +1790,38 @@ def test_rebase_success_emits_stale_files():
     assert mock_emit.call_args[0][0]["files_stale"] == ["pnpm-lock.yaml"]
 
 
+def test_rebase_success_counts_commits_before_push():
+    """commits_replayed excludes commits the push recovery creates.
+
+    _force_push can add regeneration and check-fix commits; counting after it
+    reported them as replayed from the branch.
+    """
+    ctx = mock.MagicMock()
+    tally = pr_rebase_cli.ResolutionTally(files=["a.py"], commits=1)
+    ahead = iter([2, 3])
+
+    with mock.patch.object(pr_rebase_cli, "_commits_ahead", lambda _: next(ahead)), \
+         mock.patch.object(pr_rebase_cli, "_force_push", return_value=0), \
+         mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+        pr_rebase_cli._rebase_success("/fake", ctx, True, tally)
+
+    assert mock_emit.call_args[0][0]["commits_replayed"] == 2
+
+
+def test_rebase_success_conflicts_resolved_counts_files():
+    """conflicts_resolved is a file count — rebase_status renders it as 'file(s)'."""
+    ctx = mock.MagicMock()
+    tally = pr_rebase_cli.ResolutionTally(files=["a.py", "b.py", "c.py"], commits=2)
+
+    with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=5), \
+         mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+        pr_rebase_cli._rebase_success("/fake", ctx, False, tally)
+
+    assert mock_emit.call_args[0][0]["conflicts_resolved"] == 3
+
+
 def test_step_conflicts_fix_resolution_fails_aborts():
     """AI resolution failure aborts rebase and returns 1."""
     ctx = mock.MagicMock()
@@ -2159,6 +2203,126 @@ def test_force_push_retry_also_fails():
         rc = pr_rebase_cli._force_push("/fake")
 
     assert rc == 128
+
+
+def test_force_push_regenerated_files_fall_through_to_ai_fix():
+    """A hook that regenerates AND fails a check must still reach the AI fix.
+
+    Recovery 1 used to return unconditionally, so on any repo whose hooks
+    regenerate a tracked file the AI fix was unreachable.
+    """
+    push_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            push_count[0] += 1
+            if push_count[0] < 3:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=1, stdout="", stderr="test failed",
+                )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if "--porcelain" in cmd:
+            # Only the first check sees the regenerated file; it gets committed.
+            out = " M docs/ai-automation.md\n" if push_count[0] == 1 else ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
+        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
+
+    assert rc == 0
+    assert push_count[0] == 3
+    assert mock_fix.call_args[0][1] == "test failed"
+
+
+def test_force_push_ai_fix_sees_the_retry_error():
+    """Step 2 fixes the error the retry reported, not the stale first one."""
+    push_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            push_count[0] += 1
+            errs = {1: "stale first error", 2: "fresh retry error"}
+            if push_count[0] < 3:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=1, stdout="", stderr=errs[push_count[0]],
+                )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        if "--porcelain" in cmd:
+            out = " M generated.md\n" if push_count[0] == 1 else ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
+        pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
+
+    assert mock_fix.call_args[0][1] == "fresh retry error"
+
+
+# ── _fix_commit_message ───────────────────────────────────────────────────
+
+
+def _diff_only(diff: str):
+    """subprocess.run stub where `git diff --cached` yields `diff`."""
+    def fake_run(cmd, **kwargs):
+        out = diff if cmd[:3] == ["git", "diff", "--cached"] else ""
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
+    return fake_run
+
+
+def test_commit_types_read_from_conventions():
+    """The type list comes from lib/conventions.sh, not a copy in the script."""
+    types = pr_rebase_cli._commit_types()
+    assert "fix" in types and "test" in types and "refactor" in types
+
+
+@pytest.mark.parametrize("subject,valid", [
+    ("test(review): drop the reviews_dir kwarg removed from ReviewJob", True),
+    ("fix: correct the import path", True),
+    ("nonsense(scope): not a real type", False),
+    ("no colon here at all", False),
+    ("fix: ", False),
+    ("fix: ends with a period.", False),
+    ("fix: " + "x" * 80, False),
+    ("", False),
+])
+def test_valid_commit_header(subject, valid):
+    assert pr_rebase_cli._valid_commit_header(subject) is valid
+
+
+def test_fix_commit_message_uses_ai_subject():
+    """A well-formed subject describes the change instead of the generic line."""
+    subject = "test(review): drop the reviews_dir kwarg removed from ReviewJob"
+
+    with mock.patch("subprocess.run", side_effect=_diff_only("-  reviews_dir=x\n")), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "prompt", return_value=(f"`{subject}`\n", 0)):
+        assert pr_rebase_cli._fix_commit_message("/fake", ["a.py"]) == subject
+
+
+@pytest.mark.parametrize("reply,rc", [
+    ("wip(review): not an allowed type", 0),
+    ("Subject: fix the import path", 0),
+    ("I could not determine a good subject for this change.", 0),
+    ("", 0),
+    ("fix: fine subject but the call failed", 1),
+])
+def test_fix_commit_message_falls_back_on_unusable_reply(reply, rc):
+    with mock.patch("subprocess.run", side_effect=_diff_only("-  reviews_dir=x\n")), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "prompt", return_value=(reply, rc)):
+        result = pr_rebase_cli._fix_commit_message("/fake", ["a.py"])
+
+    assert result == pr_rebase_cli._FALLBACK_FIX_SUBJECT
+
+
+def test_fix_commit_message_empty_diff_skips_the_prompt():
+    with mock.patch("subprocess.run", side_effect=_diff_only("")), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "prompt") as mock_prompt:
+        result = pr_rebase_cli._fix_commit_message("/fake", ["a.py"])
+
+    assert result == pr_rebase_cli._FALLBACK_FIX_SUBJECT
+    mock_prompt.assert_not_called()
 
 
 # ── _fix_push_failures ────────────────────────────────────────────────────

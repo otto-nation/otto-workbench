@@ -753,6 +753,9 @@ def _build_chunked_prompt(
     parts.append(
         "\nMerge both sides, preserving the intent of the commit being applied "
         "onto the current base-side structure. "
+        "The HEAD side of each conflict shows the current state of identifiers, "
+        "types, and structure — if anything was renamed or restructured on the "
+        "base side, use the base-side names. "
         "If both sides add non-overlapping content, keep both. "
         "If they modify the same lines, combine them sensibly.\n"
     )
@@ -833,6 +836,69 @@ def _git_add(filepath: str, cwd: str) -> bool:
 
 
 _FIX_ERROR_MAX_CHARS = 4000
+_FIX_DIFF_MAX_CHARS = 4000
+_COMMIT_HEADER_MAX = 72
+_FALLBACK_FIX_SUBJECT = "fix: resolve pre-push check failures after rebase"
+_CONVENTIONS_SH = Path(__file__).resolve().parents[3] / "lib" / "conventions.sh"
+
+
+def _commit_types() -> list[str]:
+    """Read the allowed conventional-commit types from lib/conventions.sh.
+
+    conventions.sh is the single source of truth for the type list; an
+    unreadable file degrades to an empty list, which skips type validation
+    rather than duplicating the types here and letting the copies drift.
+    """
+    try:
+        text = _CONVENTIONS_SH.read_text()
+    except OSError:
+        return []
+    line = next(
+        (ln for ln in text.splitlines() if ln.startswith("COMMIT_TYPES=")), "",
+    )
+    return line.split("=", 1)[1].strip().strip('"').split() if line else []
+
+
+def _valid_commit_header(subject: str) -> bool:
+    """Check a generated subject against the repo's commit conventions."""
+    if not subject or len(subject) > _COMMIT_HEADER_MAX or subject.endswith("."):
+        return False
+    head, sep, rest = subject.partition(":")
+    if not sep or not rest.strip():
+        return False
+    types = _commit_types()
+    return not types or head.split("(", 1)[0] in types
+
+
+def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
+    """Describe what the pre-push fix actually changed.
+
+    The branch is squash-merged with COMMIT_MESSAGES, so this subject lands
+    verbatim in the commit body on main, where a generic line says nothing.
+    Any unusable generation falls back to that generic subject.
+    """
+    diff = subprocess.run(
+        ["git", "diff", "--cached"], capture_output=True, text=True, cwd=cwd,
+    ).stdout[:_FIX_DIFF_MAX_CHARS]
+    if not diff.strip():
+        return _FALLBACK_FIX_SUBJECT
+
+    reply, rc = ai_backend.prompt(
+        "Write one conventional-commit subject line for the diff below. It "
+        "repairs a check failure left behind by an automated rebase conflict "
+        "resolution.\n\n"
+        f"Files: {', '.join(fixed)}\n"
+        f"Format: type(scope): subject — at most {_COMMIT_HEADER_MAX} "
+        "characters, no trailing period. Say what changed in the code, not "
+        "that a check failed. Output only the subject line.\n\n"
+        f"--- DIFF ---\n{diff}",
+        task="push-check-fix-message",
+    )
+    if rc != 0 or not reply.strip():
+        return _FALLBACK_FIX_SUBJECT
+
+    subject = reply.strip().splitlines()[0].strip().strip("`").strip()
+    return subject if _valid_commit_header(subject) else _FALLBACK_FIX_SUBJECT
 
 
 def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
@@ -903,7 +969,7 @@ def _fix_push_failures(
         return False
 
     cr = subprocess.run(
-        ["git", "commit", "-m", "fix: resolve pre-push check failures after rebase"],
+        ["git", "commit", "-m", _fix_commit_message(cwd, fixed)],
         capture_output=True, text=True, cwd=cwd,
     )
     if cr.returncode != 0:
@@ -1515,62 +1581,90 @@ class RebaseOutcome:
 # ── Push helper ─────────────────────────────────────────────────────────────
 
 
+def _push(cwd: str) -> subprocess.CompletedProcess:
+    """Run the force-push, capturing output so hook failures can be parsed."""
+    return subprocess.run(
+        ["git", "push", "--force-with-lease"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+
+
+def _hook_modified(cwd: str) -> list[str]:
+    """Tracked files the pre-push hook left modified in the worktree."""
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if not status.stdout.strip():
+        return []
+    return [line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")]
+
+
+def _commit_regenerated(cwd: str) -> bool:
+    """Commit files the pre-push hook regenerated. Returns True if committed."""
+    modified = _hook_modified(cwd)
+    if not modified:
+        return False
+
+    if _trail:
+        _trail.info(
+            "force_push", "committing regenerated files before retry",
+            data={"files": modified},
+        )
+    log.info("Committing regenerated files...")
+    if subprocess.run(["git", "add", "-u"], cwd=cwd).returncode != 0:
+        log.error("Failed to stage regenerated files.")
+        return False
+    cr = subprocess.run(
+        ["git", "commit", "-m", "chore(docs): regenerate after rebase"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if cr.returncode != 0:
+        log.error("Failed to commit regenerated files.")
+        return False
+    return True
+
+
 def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     """Force-push, auto-recovering from pre-push hook failures.
 
     Recovery steps on failure:
     1. Commit files regenerated by the hook (e.g. generate-tool-context) and retry.
     2. If resolved_files provided, use AI to fix check errors and retry.
+
+    A hook can both regenerate a file and report a check failure, so step 1
+    falls through to step 2 when its retry is still rejected — otherwise the
+    AI fix is unreachable on any repo whose hooks regenerate anything.
     """
-    r = subprocess.run(
-        ["git", "push", "--force-with-lease"],
-        capture_output=True, text=True, cwd=cwd,
-    )
+    r = _push(cwd)
     if r.returncode == 0:
         return 0
 
+    rc = r.returncode
     push_output = (r.stdout + r.stderr).strip()
     if push_output:
         log.dim(push_output)
 
     # Recovery 1: commit regenerated files (hook modified tracked files)
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    modified = [
-        line[3:] for line in status.stdout.splitlines()
-        if line.startswith(" M ")
-    ] if status.stdout.strip() else []
-
-    if modified:
-        if _trail:
-            _trail.info("force_push", "committing regenerated files before retry", data={"files": modified})
-        log.info("Committing regenerated files...")
-        ar = subprocess.run(["git", "add", "-u"], cwd=cwd)
-        if ar.returncode != 0:
-            log.error("Failed to stage regenerated files.")
-            return r.returncode
-        cr = subprocess.run(
-            ["git", "commit", "-m", "chore(docs): regenerate after rebase"],
-            capture_output=True, text=True, cwd=cwd,
-        )
-        if cr.returncode != 0:
-            log.error("Failed to commit regenerated files.")
-            return r.returncode
+    if _commit_regenerated(cwd):
         log.info("Retrying force-push...")
-        retry = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
-        return retry.returncode
+        retry = _push(cwd)
+        if retry.returncode == 0:
+            return 0
+        rc = retry.returncode
+        # Re-read the error: the second run's checks are what step 2 must fix.
+        push_output = (retry.stdout + retry.stderr).strip() or push_output
+        if push_output:
+            log.dim(push_output)
 
     # Recovery 2: AI-fix resolved files based on check errors
     if resolved_files and push_output:
         log.info("Attempting to fix pre-push check failures...")
         if _fix_push_failures(cwd, push_output, resolved_files):
             log.info("Retrying force-push...")
-            retry = subprocess.run(["git", "push", "--force-with-lease"], cwd=cwd)
-            return retry.returncode
+            return _push(cwd).returncode
 
-    return r.returncode
+    return rc
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
@@ -1702,6 +1796,10 @@ def _rebase_success(
     """Handle rebase completion — update state and optionally force-push."""
     tally = tally or ResolutionTally()
 
+    # Counted before the push: its recovery paths add regeneration and
+    # check-fix commits, which were never replayed from the old branch.
+    replayed = _commits_ahead(cwd)
+
     push_rc = 0
     if fix:
         label = "Rebase complete" if not tally.commits else (
@@ -1716,8 +1814,8 @@ def _rebase_success(
             _terr("force_push", "force-push failed", data={"exit_code": push_rc})
 
     outcome = RebaseOutcome(
-        commits_replayed=_commits_ahead(cwd),
-        conflicts_resolved=tally.commits,
+        commits_replayed=replayed,
+        conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
         force_pushed=push_rc == 0 if fix else None,

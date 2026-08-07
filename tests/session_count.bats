@@ -7,7 +7,6 @@ setup() {
   common_setup
   source_lib
   SESSIONS="$(mktemp -d)/"
-  mkdir -p "$SESSIONS"
 }
 
 teardown() {

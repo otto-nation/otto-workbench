@@ -249,19 +249,10 @@ _select_subdirs() {
   install_file "$TMPDIR/src" "$TMPDIR/dst"
   # Backdate dst so a re-copy would visibly change the mtime (no sleep needed)
   touch -t 200001010000 "$TMPDIR/dst"
-  local mtime1
-  if [[ "$(uname)" == "Darwin" ]]; then
-    mtime1=$(stat -f "%m" "$TMPDIR/dst")
-  else
-    mtime1=$(stat -c "%Y" "$TMPDIR/dst")
-  fi
+  local mtime1 mtime2
+  mtime1=$(file_mtime "$TMPDIR/dst")
   install_file "$TMPDIR/src" "$TMPDIR/dst"
-  local mtime2
-  if [[ "$(uname)" == "Darwin" ]]; then
-    mtime2=$(stat -f "%m" "$TMPDIR/dst")
-  else
-    mtime2=$(stat -c "%Y" "$TMPDIR/dst")
-  fi
+  mtime2=$(file_mtime "$TMPDIR/dst")
   [ "$mtime1" = "$mtime2" ]
 }
 

@@ -17,9 +17,7 @@ import log
 import publishing
 from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
 from review_common import plural
-from review_github import (
-    PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
-)
+from review_github import PRData, fetch_review_threads
 
 
 # ── State file I/O ─────────────────────────────────────────────────────────
@@ -144,34 +142,6 @@ def compute_thread_state(
 
 # ── GitHub data fetching ───────────────────────────────────────────────────
 
-GRAPHQL_THREADS = f"""
-query($owner: String!, $repo: String!, $number: Int!) {{
-  repository(owner: $owner, name: $repo) {{
-    pullRequest(number: $number) {{
-      reviewThreads(first: {GQL_THREADS_LIMIT}) {{
-        totalCount
-        nodes {{
-          id
-          isResolved
-          path
-          line
-          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
-            totalCount
-            nodes {{
-              id
-              databaseId
-              author {{ login }}
-              body
-              createdAt
-            }}
-          }}
-        }}
-      }}
-    }}
-  }}
-}}
-"""
-
 GRAPHQL_RESOLVE = """
 mutation($threadId: ID!) {
   resolveReviewThread(input: {threadId: $threadId}) {
@@ -181,15 +151,6 @@ mutation($threadId: ID!) {
 """
 
 
-def _warn_truncated_thread(node: dict) -> None:
-    comments_data = node.get("comments", {})
-    comment_total = comments_data.get("totalCount", 0)
-    comment_nodes = comments_data.get("nodes", [])
-    if comment_total > len(comment_nodes):
-        path = node.get("path", "?")
-        log.warn(f"thread at {path} has {comment_total} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
-
-
 def fetch_threads(
     owner: str, repo_name: str, pr_number: int,
     pr_data: PRData | None = None,
@@ -197,29 +158,7 @@ def fetch_threads(
     """Fetch all review threads via GraphQL. Returns list of thread nodes."""
     if pr_data is not None:
         return pr_data.review_threads
-
-    query = json.dumps({
-        "query": GRAPHQL_THREADS,
-        "variables": {"owner": owner, "repo": repo_name, "number": pr_number},
-    })
-    result = subprocess.run(
-        ["gh", "api", "graphql", "--input", "-"],
-        input=query, capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return []
-    try:
-        data = json.loads(result.stdout)
-        threads_data = data["data"]["repository"]["pullRequest"]["reviewThreads"]
-        nodes = threads_data["nodes"]
-        total = threads_data.get("totalCount", len(nodes))
-        if total > len(nodes):
-            log.warn(f"PR has {total} threads but only {len(nodes)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
-        for node in nodes:
-            _warn_truncated_thread(node)
-        return nodes
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return []
+    return fetch_review_threads(f"{owner}/{repo_name}", pr_number)
 
 
 def _gh_rest(endpoint: str) -> tuple[int, str]:

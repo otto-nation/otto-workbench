@@ -213,6 +213,14 @@ _GROUPS = [
 
 
 def _write_state(tmp_path: Path, **overrides) -> Path:
+    """Write a pipeline state file.
+
+    Defaults represent an incomplete run: holistic done, no groups done,
+    group "0" failed with "quota", synthesis not yet attempted. Pass
+    overrides to model other recovery shapes (e.g. synthesis_done=True
+    with a different groups_failed to model synthesis crashing after
+    groups completed).
+    """
     path = tmp_path / "pipeline.json"
     state = {
         "head_sha": _PINNED_SHA, "group_names": ["g1", "g2"], "holistic_done": True,

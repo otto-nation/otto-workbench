@@ -157,7 +157,9 @@ def _stub_run(monkeypatch, calls: list):
         calls.append((cmd, cwd))
         if cmd[0] == "gh":
             return json.dumps(PR_PAYLOAD)
-        return PINNED_NUMSTAT
+        if cmd == ["git", "diff", "--numstat", "origin/main...HEAD"]:
+            return PINNED_NUMSTAT
+        raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(rp, "_run", fake_run)
 

@@ -41,6 +41,62 @@ def _repo_config_path():
 
 _REPO_CONFIG = _repo_config_path()
 
+# Sections no test writes, and something outside the test process does.
+# worktrunk stamps a per-branch `marker` (with a timestamp) into the shared
+# config whenever an agent's status changes, so a write landing mid-test says
+# nothing about the test that happened to be running.
+_EXTERNAL_SECTIONS = (b"worktrunk",)
+
+
+def _section_name(line: bytes) -> bytes | None:
+    """The section a `[header]` line opens — `[branch "x"]` is `branch`."""
+    if not line.startswith(b"["):
+        return None
+    return line[1:].split(b'"', 1)[0].strip(b"]").strip()
+
+
+def _guarded_lines(raw: bytes | None) -> list[bytes] | None:
+    """The config's lines with the externally-owned sections dropped."""
+    if raw is None:
+        return None
+    kept, external = [], False
+    for line in raw.splitlines():
+        section = _section_name(line.strip())
+        if section is not None:
+            external = section in _EXTERNAL_SECTIONS
+        if not external:
+            kept.append(line)
+    return kept
+
+
+def _describe_config_change(before: list[bytes], after: list[bytes]) -> str:
+    """The lines that came and went, so the failure names the key it caught.
+
+    A whole-file byte diff of a 30 KB config reports an offset and nothing a
+    reader can act on; the guard fires rarely enough that the lines are worth
+    printing in full.
+    """
+    gone = [ln for ln in before if ln not in after]
+    added = [ln for ln in after if ln not in before]
+    parts = [f"{sign} {ln.decode(errors='replace').strip()}"
+             for sign, lines in (("-", gone), ("+", added)) for ln in lines]
+    return "\n".join(parts) or "(same lines, reordered or duplicated)"
+
+
+def _config_bytes(path: Path) -> bytes | None:
+    return path.read_bytes() if path.exists() else None
+
+
+def _assert_config_unchanged(path: Path, before: bytes | None, after: bytes | None):
+    """Raise unless every change to `path` belongs to an external section."""
+    if after == before:
+        return
+    guarded_before, guarded_after = _guarded_lines(before), _guarded_lines(after)
+    assert guarded_after == guarded_before, (
+        f"test wrote git config into the real repo: {path}\n"
+        f"{_describe_config_change(guarded_before or [], guarded_after or [])}"
+    )
+
 
 @pytest.fixture(autouse=True)
 def _guard_repo_config():
@@ -50,16 +106,17 @@ def _guard_repo_config():
     relative cwd sends `git config` to the real repo instead. Because worktrees
     share one config file, the damage is repo-wide and permanent: every later
     commit inherits the test identity.
+
+    Sections in `_EXTERNAL_SECTIONS` are exempt: they are written concurrently
+    by tooling this process does not control, and blaming the running test for
+    those turns every long test run into a coin flip.
     """
     if _REPO_CONFIG is None:
         yield
         return
-    before = _REPO_CONFIG.read_bytes() if _REPO_CONFIG.exists() else None
+    before = _config_bytes(_REPO_CONFIG)
     yield
-    after = _REPO_CONFIG.read_bytes() if _REPO_CONFIG.exists() else None
-    assert after == before, (
-        f"test wrote git config into the real repo: {_REPO_CONFIG}"
-    )
+    _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")

@@ -1421,6 +1421,25 @@ def _create_or_update_deferred_issue(
     return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
 
 
+def _fixed_status_for(
+    entry: CommentItem | pr_state.ThreadOutcome, cp: CommitPushResult, repo: str,
+) -> str:
+    """Status cell for one fixed row, preferring the thread's own commit.
+
+    `cp` describes the pass that is running now; a ThreadOutcome replayed from
+    state may have been fixed several rounds ago by a different commit. Its own
+    SHA is the accurate attribution, and the pass-level text — including
+    "no commit needed" — is only right for a row that has none.
+
+    Reachable only from `_render_deferred_summary`, which refuses to post while
+    a recorded commit is still unpushed, so the commit link cannot 404.
+    """
+    sha = getattr(entry, "commit_sha", "")
+    if sha:
+        return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
+    return _fixed_status_text(cp, repo)
+
+
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha and cp.status == "pushed":
@@ -1580,9 +1599,11 @@ def _build_summary_body(
     # The fix commit is the tree the table describes; fall back to the reviewed
     # head when nothing was committed.
     link_sha = cp.sha or head_sha
-    fixed_status = _fixed_status_text(cp, repo)
     for entry in fixed:
-        rows.append(_build_row(entry, fixed_status, threads_by_id, repo, pr_number, link_sha))
+        rows.append(_build_row(
+            entry, _fixed_status_for(entry, cp, repo), threads_by_id, repo,
+            pr_number, getattr(entry, "commit_sha", "") or link_sha,
+        ))
     for entry in already_addressed:
         rows.append(_build_row(entry, "Already addressed", threads_by_id, repo, pr_number, link_sha))
     for entry in dismissed:
@@ -1909,12 +1930,19 @@ def _build_thread_outcomes(
     needs_human: list[CommentItem],
     dismissed: list[CommentItem],
     already_addressed: list[CommentItem] | None = None,
+    commit_sha: str = "",
 ) -> list[pr_state.ThreadOutcome]:
-    """Build ThreadOutcome list from categorized entries."""
+    """Build ThreadOutcome list from categorized entries.
+
+    `commit_sha` is stamped on the fixed outcomes only. The others were not
+    landed by this commit, and a SHA on them would read as if they had been.
+    """
     FA = pr_state.ThreadAction
     outcomes: list[pr_state.ThreadOutcome] = []
     for entry in fixed:
-        outcomes.append(entry.to_outcome(FA.FIXED))
+        outcome = entry.to_outcome(FA.FIXED)
+        outcome.commit_sha = commit_sha
+        outcomes.append(outcome)
     for entry in deferred:
         outcomes.append(entry.to_outcome(FA.DEFERRED))
     for entry in needs_human:
@@ -2267,7 +2295,7 @@ def _run_comment_fix(
     _persist_fix_state(pr_state.FixSummary(
         threads=_build_thread_outcomes(
             all_fixed, all_deferred, all_needs_human, all_dismissed,
-            all_addressed,
+            all_addressed, commit_sha=cp.sha or "",
         ),
         commit_sha=cp.sha or "",
         commit_status=cp.status,

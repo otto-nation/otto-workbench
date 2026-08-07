@@ -1158,6 +1158,55 @@ class TestRenderDeferredSummary:
         assert fix.summary_deferred is True
 
 
+class TestSummaryUsesPerThreadCommit:
+    """A thread's row names the commit that fixed it, not the last pass's."""
+
+    def _post(self, rt, *threads, commit_sha="", commit_status="no_changes"):
+        fix = FixSummary(
+            commit_sha=commit_sha, commit_status=commit_status,
+            summary_deferred=True, threads=list(threads),
+        )
+        with patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        return post.call_args[0][2]
+
+    def test_row_links_the_thread_own_commit(self, rt):
+        body = self._post(rt, ThreadOutcome(
+            id="t1", summary="fix regex", file="p.py", line=10,
+            action=ThreadAction.FIXED, commit_sha="deadbee",
+        ))
+        assert "deadbee" in body
+        assert "no commit needed" not in body
+
+    def test_row_without_a_sha_still_says_no_commit_needed(self, rt):
+        body = self._post(rt, ThreadOutcome(
+            id="t1", summary="fix regex", file="p.py", line=10,
+            action=ThreadAction.FIXED,
+        ))
+        assert "no commit needed" in body
+
+    def test_each_round_keeps_its_own_attribution(self, rt):
+        """The #2670 failure: one pass's envelope SHA relabelled every round."""
+        body = self._post(
+            rt,
+            ThreadOutcome(id="t1", summary="round one", file="a.py", line=1,
+                          action=ThreadAction.FIXED, commit_sha="1111111"),
+            ThreadOutcome(id="t2", summary="round two", file="b.py", line=2,
+                          action=ThreadAction.FIXED, commit_sha="2222222"),
+        )
+        assert "1111111" in body
+        assert "2222222" in body
+
+    def test_pass_sha_still_covers_a_thread_with_none(self, rt):
+        body = self._post(
+            rt,
+            ThreadOutcome(id="t1", summary="fix it", file="a.py", line=1,
+                          action=ThreadAction.FIXED),
+            commit_sha="def5678", commit_status="pushed",
+        )
+        assert "def5678" in body
+
+
 class TestSummaryStillOwed:
     """Whether --resolve has to re-render the fix summary."""
 
@@ -2430,6 +2479,23 @@ class TestClassifyAlreadyAddressed:
         outcomes = rt._build_thread_outcomes([], [], [], [], [entry])
         assert len(outcomes) == 1
         assert outcomes[0].action == ThreadAction.ALREADY_ADDRESSED
+
+    def test_only_fixed_outcomes_carry_the_pass_commit(self, rt):
+        """A deferred thread was not fixed by this commit — or any."""
+        fixed = self._entry("valid")
+        deferred = CommentItem(id="t2", file="b.py", line=2, reviewer="kgn",
+                               summary="too complex")
+        outcomes = rt._build_thread_outcomes(
+            [fixed], [deferred], [], [], commit_sha="deadbee",
+        )
+        by_id = {o.id: o.commit_sha for o in outcomes}
+        assert by_id == {"t1": "deadbee", "t2": ""}
+
+    def test_no_commit_leaves_the_sha_empty(self, rt):
+        outcomes = rt._build_thread_outcomes(
+            [self._entry("valid")], [], [], [], commit_sha="",
+        )
+        assert outcomes[0].commit_sha == ""
 
 
 class TestTriagePromptVerificationValues:

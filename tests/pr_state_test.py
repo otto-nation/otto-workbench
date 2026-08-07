@@ -771,6 +771,62 @@ def test_fix_summary_head_sha_defaults_empty_on_legacy_state(tmp_path):
     assert load_state(tmp_path).fix.head_sha == ""
 
 
+def test_thread_outcome_round_trips_commit_sha(tmp_path):
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
+    )
+    save_state(tmp_path, state)
+    assert load_state(tmp_path).fix.threads[0].commit_sha == "deadbee"
+
+
+def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(tmp_path):
+    """State written before this field must still load."""
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
+    )
+    save_state(tmp_path, state)
+    state_path = tmp_path / STATE_DIR / STATE_FILE
+    raw = json.loads(state_path.read_text())
+    del raw["fix"]["threads"][0]["commit_sha"]
+    state_path.write_text(json.dumps(raw))
+    assert load_state(tmp_path).fix.threads[0].commit_sha == ""
+
+
+def test_accumulated_outcomes_keep_their_own_shas():
+    """The whole point: round two must not relabel round one's commit."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        commit_sha="1111111",
+        threads=[ThreadOutcome(id="t1", commit_sha="1111111",
+                               action=ThreadAction.FIXED)],
+    ))
+    update_fix(state, FixSummary(
+        commit_sha="2222222",
+        threads=[ThreadOutcome(id="t2", commit_sha="2222222",
+                               action=ThreadAction.FIXED)],
+    ))
+    by_id = {t.id: t.commit_sha for t in state.fix.threads}
+    assert by_id == {"t1": "1111111", "t2": "2222222"}
+
+
+def test_thread_outcome_from_entry_carries_commit_sha():
+    """Both branches of from_entry — attribute objects and raw dicts."""
+    class _Entry:
+        id, file, line = "t1", "a.go", 7
+        reviewer, summary, reason = "kgn", "rename it", ""
+        commit_sha = "deadbee"
+
+    assert ThreadOutcome.from_entry(
+        _Entry(), ThreadAction.FIXED).commit_sha == "deadbee"
+    assert ThreadOutcome.from_entry(
+        {"id": "t1", "commit_sha": "deadbee"}, ThreadAction.FIXED,
+    ).commit_sha == "deadbee"
+
+
 def test_pr_state_has_fix_field():
     ident = PRIdentity(
         repo="r", branch="b", pr_number=None,

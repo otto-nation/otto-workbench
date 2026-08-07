@@ -325,7 +325,7 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--finish] [--post] [--reply <id> --body-file <path>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
+| `comments [--triage] [--fix] [--finish] [--track <id>] [--track-all] [--post] [--reply <id> --body-file <path>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
@@ -338,10 +338,18 @@ ones. It withholds the summary comment whenever threads need human input,
 because the summary is meant to describe a finished conversation.
 
 `--finish` closes out what `--fix` held back: replies on threads whose commit
-had not yet been pushed, a tracking issue for the deferred ones, and the
-summary comment. It is a second invocation on purpose — the discussion has to
-happen in between. ⚠️ Combining them (`--fix --finish`) works and closes out that
-run's deferred set, but posts a summary nobody has replied to yet.
+had not yet been pushed, a tracking issue for the threads named by `--track`,
+and the summary comment. It is a second invocation on purpose — the discussion
+has to happen in between. ⚠️ Combining them (`--fix --finish`) works and closes
+out that run's deferred set, but posts a summary nobody has replied to yet.
+
+`--track <thread_id>` is repeatable and selects which deferred threads get filed
+on the tracking issue; `--track-all` selects every one. Neither is implied by
+`--finish`. A thread is deferred because the fix pass ran out of budget, not
+because anyone decided to postpone it, and filing it posts a reply under the PR
+author's name saying a reviewer's finding was triaged and postponed — so the
+selection is the user's, per thread. A `--finish` with no selection files
+nothing and logs the ids it left unfiled.
 
 `--resolve` is an alias for `--finish`. `--resolve-verified` is the historical
 name from `claude-review threads` (see above) — both flags are now accepted by

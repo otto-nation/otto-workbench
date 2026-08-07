@@ -1,5 +1,6 @@
 """Tests for pr_state library."""
 
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -19,7 +20,7 @@ from pr_state import (
     update_review, update_comments, update_triage, update_rebase, update_fix,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
-    STATE_VERSION,
+    STATE_DIR, STATE_FILE, STATE_VERSION,
 )
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
 
@@ -743,6 +744,31 @@ def test_fix_summary_defaults():
     assert f.deferred_issue_id == ""
     assert f.deferred_issue_url == ""
     assert f.updated_at == ""
+
+
+def test_fix_summary_round_trips_head_sha(tmp_path):
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(head_sha="abc1234"),
+    )
+    save_state(tmp_path, state)
+    assert load_state(tmp_path).fix.head_sha == "abc1234"
+
+
+def test_fix_summary_head_sha_defaults_empty_on_legacy_state(tmp_path):
+    """State written before this field must still load."""
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(head_sha="abc1234"),
+    )
+    save_state(tmp_path, state)
+    state_path = tmp_path / STATE_DIR / STATE_FILE
+    raw = json.loads(state_path.read_text())
+    del raw["fix"]["head_sha"]
+    state_path.write_text(json.dumps(raw))
+    assert load_state(tmp_path).fix.head_sha == ""
 
 
 def test_pr_state_has_fix_field():

@@ -239,6 +239,11 @@ class FixSummary:
     threads: list[ThreadOutcome] = field(default_factory=list)
     commit_sha: str = ""
     commit_status: str = ""
+    # The HEAD this snapshot describes. --finish compares it against current
+    # HEAD: outcomes recorded against a commit that is no longer checked out
+    # describe work that may since have been done, undone, or superseded by
+    # hand, and must be reconciled before anything is published.
+    head_sha: str = ""
     replies_posted: int = 0
     # The fix pass produced per-thread replies but did not deliver them — the
     # push failed, or the run was a draft. --resolve drains the queue.

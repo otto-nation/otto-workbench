@@ -41,7 +41,6 @@ def _make_job(
         ctx=review_pipeline.PRContext(), wt_path=str(tmp_path),
         review_file=str(tmp_path / "review.md"),
         session_log=session_log or str(tmp_path / "session.jsonl"),
-        reviews_dir=str(tmp_path),
     )
 
 

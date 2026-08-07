@@ -20,7 +20,7 @@ import log
 from ai_backend import AgentInvocation
 from ai_backend_events import is_write_tool
 from review_common import (
-    AGENT_ERROR_PREFIX, Diagnosis, DiagnosisKind,
+    Diagnosis, DiagnosisKind,
     preserve_log, restore_preserved,
 )
 

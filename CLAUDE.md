@@ -12,12 +12,8 @@ bash, zsh, bats-core (tests), brew (packages), jq/yq (YAML/JSON), shellcheck (li
 bats tests/                    # run all tests
 bats tests/<file>.bats         # run one test suite
 shellcheck <file>.sh           # lint a script
-bin/local/validate-registries        # check registry YAML schema + cross-validation
-bin/local/validate-components        # check component tier contracts
-bin/local/validate-migrations        # check migration file conventions
-bin/local/validate-skills            # check SKILL.md frontmatter conventions
-bin/local/validate-cli-flags         # check CLI flag conventions (--repo, --pr/--branch exclusivity)
-bin/local/validate-worktree-guards   # check ctx.worktree_root is guarded or via require_worktree()
+bin/local/validate-all               # run every validator (what pre-push and CI run)
+bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
 git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conventions.sh
 otto-workbench changelog       # show recent changes from conventional commits

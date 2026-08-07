@@ -47,10 +47,6 @@ BIN_DIR="$_SCRIPT_ROOT/ai/claude/bin"
 # --repo-dir to point at
 REPO_SLUG_ALLOWLIST="review-orchestrate ai-usage-log otto-log"
 
-# Scripts with known --repo alias violations pending replacement
-# claude-review: being rewritten in Python on isaac-refactor-claude_review_to_python
-REPO_ALIAS_ALLOWLIST="claude-review"
-
 _is_allowlisted() { echo "$1" | grep -qw "$2"; }
 
 # ── Per-script checks ──────────────────────────────────────────────────────
@@ -80,7 +76,6 @@ _check_exclusivity_python() {
 _check_repo_alias_bash() {
   local name="$1" script="$2"
   grep -qE '\-\-repo-dir.*\-\-repo([^-]|$)|\-\-repo([^-]|$).*\-\-repo-dir' "$script" 2>/dev/null || { _pass "$name: no --repo alias on --repo-dir"; return; }
-  _is_allowlisted "$REPO_ALIAS_ALLOWLIST" "$name" && { _pass "$name: --repo alias on --repo-dir (allowlisted, pending replacement)"; return; }
   _fail "$name: --repo used as alias for --repo-dir in case pattern"
 }
 

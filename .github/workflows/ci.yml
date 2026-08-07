@@ -56,26 +56,8 @@ jobs:
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Validate registries
-        run: bash bin/local/validate-registries
-
-      - name: Validate component framework
-        run: bash bin/local/validate-components
-
-      - name: Validate migrations
-        run: bash bin/local/validate-migrations
-
-      - name: Validate nesting depth
-        run: python3 bin/validate-nesting --quiet
-
-      - name: Validate errexit safety
-        run: python3 bin/local/validate-errexit --quiet
-
-      - name: Validate worktree_root guards
-        run: python3 bin/local/validate-worktree-guards --quiet
-
-      - name: Validate eval baselines
-        run: bash bin/local/validate-eval-baselines
+      - name: Validate conventions
+        run: bash bin/local/validate-all
 
       - name: Verify generated files are up to date
         run: |

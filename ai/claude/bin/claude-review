@@ -1238,7 +1238,7 @@ def main() -> None:
     parser.add_argument("--effort", choices=["low", "medium", "high"], default="medium")
     parser.add_argument("--max-groups", type=int, default=None)
     parser.add_argument("--generated", action="store_true")
-    parser.add_argument("--repo-dir", "--repo", "--worktree", dest="repo_dir")
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir")
     parser.add_argument("--branch")
     parser.add_argument("--pr")
     parser.add_argument("-V", "--version", action="store_true")

@@ -86,6 +86,10 @@ class TestRealWritesAreStillCaught:
         after = _CONFIG + b"[user]\n\tname = Test\n"
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
+    def test_an_edit_to_an_existing_owned_section_is_a_change(self):
+        after = _rewritten(b"repositoryformatversion = 0", b"repositoryformatversion = 1")
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
+
     def test_worktrunk_user_config_is_a_change(self):
         """`default-branch` is user config in the same namespace as the state."""
         after = _rewritten(b"default-branch = main", b"default-branch = trunk")
@@ -132,6 +136,11 @@ class TestTheFailureNamesTheKey:
             _guarded_lines(_CONFIG), _guarded_lines(after),
         )
         assert "repositoryformatversion" not in described
+
+    def test_it_stays_quiet_when_nothing_moved(self):
+        assert not _describe_config_change(
+            _guarded_lines(_CONFIG), _guarded_lines(_CONFIG),
+        ).strip()
 
     def test_it_reports_a_reorder_rather_than_going_quiet(self):
         described = _describe_config_change([b"[user]", b"\tx = 1"], [b"\tx = 1", b"[user]"])

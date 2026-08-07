@@ -401,12 +401,17 @@ class TestPushFixes:
         job.wt_path = str(tmp_path / "worktree")
         return job
 
+    def _push_result(self, stderr, stdout=""):
+        return MagicMock(returncode=1, stdout=stdout, stderr=stderr)
+
+    def _rev_parse_result(self, sha):
+        return MagicMock(returncode=0, stdout=f"{sha}\n", stderr="")
+
     @patch("review_pipeline.log")
     @patch("review_pipeline.subprocess.run")
     def test_diverged_push_suggests_force_with_lease(self, mock_run, mock_log, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stderr="! [rejected] main -> main (non-fast-forward)",
+        mock_run.return_value = self._push_result(
+            "! [rejected] main -> main (non-fast-forward)"
         )
         review_pipeline._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
@@ -417,21 +422,120 @@ class TestPushFixes:
     @patch("review_pipeline.subprocess.run")
     def test_hook_failure_does_not_suggest_force_push(self, mock_run, mock_log, tmp_path):
         """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stderr="SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs",
-        )
+        mock_run.side_effect = [
+            self._push_result(
+                "SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs"
+            ),
+            self._rev_parse_result("9bc3f64"),
+        ]
         review_pipeline._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "--force-with-lease" not in msg
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_hook_rejection_names_the_gate_the_commit_and_the_repair(
+        self, mock_run, mock_log, tmp_path,
+    ):
+        """The fixes are committed but failed the repo's own checks — say so."""
+        mock_run.side_effect = [
+            self._push_result(
+                "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'",
+                stdout="FAILED tests/test_review_threads.py::TestRunReply::test_errors",
+            ),
+            self._rev_parse_result("9bc3f64"),
+        ]
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        msg = mock_log.error.call_args[0][0]
+        assert "pre-push checks" in msg
+        assert "9bc3f64" in msg
+        assert "Pytest failed" in msg
+        assert "FAILED tests/test_review_threads.py" in msg
+        assert "Repair, then: git -C" in msg
+
+    @patch("review_pipeline.log")
+    @patch("review_pipeline.subprocess.run")
+    def test_transport_failure_is_not_reported_as_a_failed_gate(
+        self, mock_run, mock_log, tmp_path,
+    ):
+        """Nothing is wrong with the commit when the network is what broke."""
+        mock_run.return_value = self._push_result(
+            "ssh: Could not resolve hostname github.com\n"
+            "fatal: Could not read from remote repository.\n"
+            "error: failed to push some refs to 'github.com:o/r.git'"
+        )
+        review_pipeline._push_fixes(self._make_job(tmp_path))
+        msg = mock_log.error.call_args[0][0]
+        assert "pre-push checks" not in msg
         assert "committed locally but not pushed" in msg
 
     @patch("review_pipeline.log")
     @patch("review_pipeline.subprocess.run")
     def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         review_pipeline._push_fixes(self._make_job(tmp_path))
         mock_log.error.assert_not_called()
+
+
+class TestIsLocalHookRejection:
+    """Which push failures came from the local gate rather than the remote."""
+
+    def test_claims_a_bare_refusal_with_no_rejected_ref(self):
+        assert review_pipeline._is_local_hook_rejection(
+            "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'"
+        )
+
+    def test_disclaims_a_rejected_ref(self):
+        """A per-ref rejection means git reached the remote and it said no."""
+        assert not review_pipeline._is_local_hook_rejection(
+            "! [rejected] main -> main (fetch first)\nerror: failed to push some refs"
+        )
+
+    def test_disclaims_an_auth_failure(self):
+        assert not review_pipeline._is_local_hook_rejection(
+            "fatal: Authentication failed for 'https://github.com/o/r.git/'\n"
+            "error: failed to push some refs"
+        )
+
+    def test_disclaims_output_that_never_refused_the_push(self):
+        assert not review_pipeline._is_local_hook_rejection("Everything up-to-date")
+
+
+class TestHookOutput:
+
+    def test_merges_both_streams_so_the_failing_gate_survives(self):
+        result = MagicMock(stdout="running pytest", stderr="✗ Pytest failed")
+        out = review_pipeline._hook_output(result)
+        assert "running pytest" in out
+        assert "✗ Pytest failed" in out
+
+    def test_indents_every_line_under_the_error(self):
+        result = MagicMock(stdout="a\nb", stderr="")
+        assert review_pipeline._hook_output(result) == "  a\n  b"
+
+    def test_keeps_only_the_tail_of_a_long_gate_dump(self):
+        result = MagicMock(stdout="\n".join(str(n) for n in range(50)), stderr="")
+        lines = review_pipeline._hook_output(result).splitlines()
+        assert len(lines) == review_pipeline._HOOK_OUTPUT_LINES
+        assert lines[-1] == "  49"
+
+    def test_survives_a_stream_git_left_empty(self):
+        result = MagicMock(stdout=None, stderr="✗ Pytest failed")
+        assert review_pipeline._hook_output(result) == "  ✗ Pytest failed"
+
+
+class TestHeadSha:
+
+    @patch("review_pipeline.subprocess.run")
+    def test_returns_the_short_sha(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="9bc3f64\n", stderr="")
+        assert review_pipeline._head_sha("/wt") == "9bc3f64"
+
+    @patch("review_pipeline.subprocess.run")
+    def test_falls_back_to_head_when_rev_parse_fails(self, mock_run):
+        """The repair instruction still reads correctly without a SHA."""
+        mock_run.return_value = MagicMock(returncode=128, stdout="", stderr="fatal")
+        assert review_pipeline._head_sha("/wt") == "HEAD"
 
 
 class TestReconcileCheckboxes:

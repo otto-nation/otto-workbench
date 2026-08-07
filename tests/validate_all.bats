@@ -13,31 +13,45 @@ teardown() {
   common_teardown
 }
 
-# _fixture_validator NAME EXIT_CODE — write an executable stub into the fixture
-# tree that validate-all will discover via VALIDATOR_ROOT.
+# _fixture_validator DIR NAME EXIT_CODE — write an executable stub into the
+# fixture tree that validate-all will discover via VALIDATOR_ROOT. Fixtures
+# rather than the real validators: running those here would double every
+# pre-push validation, and the hook already runs them for real.
 _fixture_validator() {
-  mkdir -p "$TMPDIR/bin/local"
-  printf '#!/usr/bin/env bash\nexit %s\n' "$2" > "$TMPDIR/bin/local/$1"
-  chmod +x "$TMPDIR/bin/local/$1"
+  mkdir -p "$TMPDIR/$1"
+  printf '#!/usr/bin/env bash\nexit %s\n' "$3" > "$TMPDIR/$1/$2"
+  chmod +x "$TMPDIR/$1/$2"
 }
 
-@test "validate-all discovers every validator in bin and bin/local" {
-  run "$VALIDATE_ALL"
-  [ "$status" -eq 0 ]
+@test "validate-all discovers validators in both bin and bin/local" {
+  _fixture_validator "bin" "validate-top" 0
+  _fixture_validator "bin/local" "validate-nested" 0
 
+  VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "validate-top"
+  echo "$output" | grep -q "validate-nested"
+  echo "$output" | grep -q "2 validators passed"
+}
+
+@test "every real validator is discovered by validate-all" {
   local expected=0
   for v in "$REPO_ROOT"/bin/validate-* "$REPO_ROOT"/bin/local/validate-*; do
     if [[ -x "$v" && "$(basename "$v")" != "validate-all" ]]; then
       expected=$(( expected + 1 ))
-      echo "$output" | grep -q "$(basename "$v")"
     fi
   done
   [ "$expected" -gt 0 ]
-  echo "$output" | grep -q "$expected validators passed"
+
+  # --list resolves discovery without executing anything, so the real tree is
+  # covered without re-running validators the hook is about to run anyway.
+  run "$VALIDATE_ALL" --list
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | wc -l | tr -d ' ')" -eq "$expected" ]
 }
 
 @test "validate-all excludes itself from discovery" {
-  _fixture_validator "validate-only-one" 0
+  _fixture_validator "bin/local" "validate-only-one" 0
   cp "$VALIDATE_ALL" "$TMPDIR/bin/local/validate-all"
 
   VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
@@ -47,8 +61,8 @@ _fixture_validator() {
 }
 
 @test "validate-all fails and names the failing validator" {
-  _fixture_validator "validate-good" 0
-  _fixture_validator "validate-bad" 1
+  _fixture_validator "bin/local" "validate-good" 0
+  _fixture_validator "bin/local" "validate-bad" 1
 
   VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL" --quiet
   [ "$status" -eq 1 ]
@@ -62,12 +76,16 @@ _fixture_validator() {
   VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "no validators found"
+
+  VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL" --list
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "validate-all skips non-executable files" {
   mkdir -p "$TMPDIR/bin/local"
   printf 'not a script\n' > "$TMPDIR/bin/local/validate-backup.orig"
-  _fixture_validator "validate-real" 0
+  _fixture_validator "bin/local" "validate-real" 0
 
   VALIDATOR_ROOT="$TMPDIR" run "$VALIDATE_ALL"
   [ "$status" -eq 0 ]

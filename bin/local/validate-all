@@ -21,12 +21,13 @@ VALIDATOR_ROOT="${VALIDATOR_ROOT:-$_SCRIPT_ROOT}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--quiet]
+Usage: $(basename "$0") [--quiet|--list]
 
 Run every convention validator (bin/validate-* and bin/local/validate-*).
 
 Options:
   --quiet     Suppress per-validator output; show only the final summary
+  --list      Print the discovered validator paths without running them
   -h, --help  Show this help
 
 Environment:
@@ -36,7 +37,9 @@ EOF
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 QUIET=false
+LIST=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true
+[[ "${1:-}" == "--list" ]] && LIST=true
 
 VALIDATORS=()
 for _v in "$VALIDATOR_ROOT"/bin/validate-* "$VALIDATOR_ROOT"/bin/local/validate-*; do
@@ -47,6 +50,14 @@ for _v in "$VALIDATOR_ROOT"/bin/validate-* "$VALIDATOR_ROOT"/bin/local/validate-
     VALIDATORS+=("$_v")
   fi
 done
+
+if $LIST; then
+  # Guarded: printf with an empty array would still emit one blank line.
+  if (( ${#VALIDATORS[@]} > 0 )); then
+    printf '%s\n' "${VALIDATORS[@]}"
+  fi
+  exit 0
+fi
 
 FAILED=()
 for _v in "${VALIDATORS[@]}"; do

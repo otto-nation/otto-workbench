@@ -1357,7 +1357,7 @@ def test_constants_match_expected(cr):
     assert len(cr.SEVERITY_JSON_KEYS) == 4
 
 
-# ── _validate_recover ─────────────────────────────────────────────────────────
+# ── _resolve_recover_sha ──────────────────────────────────────────────────────
 
 
 def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:
@@ -1368,28 +1368,105 @@ def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None
     }))
 
 
-def test_validate_recover_accepts_matching_head(cr, tmp_path):
+def test_resolve_recover_sha_returns_recorded_sha(cr, tmp_path):
     _write_partial_pipeline(tmp_path)
-    cr._validate_recover(tmp_path, "abc1234")
+    assert cr._resolve_recover_sha(tmp_path, "abc1234") == "abc1234"
 
 
-def test_validate_recover_rejects_moved_head(cr, tmp_path):
+def test_resolve_recover_sha_pins_when_head_moved(cr, tmp_path):
+    """New commits must not abort recovery — the run completes at its own commit."""
     _write_partial_pipeline(tmp_path)
+    assert cr._resolve_recover_sha(tmp_path, "def5678") == "abc1234"
+
+
+def test_resolve_recover_sha_without_head(cr, tmp_path):
+    """Empty head_sha means HEAD couldn't be determined — still pin to the record."""
+    _write_partial_pipeline(tmp_path)
+    assert cr._resolve_recover_sha(tmp_path, "") == "abc1234"
+
+
+def test_resolve_recover_sha_untracked_state(cr, tmp_path):
+    """State written before SHA tracking has nothing to pin to."""
+    (tmp_path / "pipeline.json").write_text(json.dumps({
+        "group_names": ["g1"], "synthesis_done": False,
+        "synthesis_failed": "crashed", "groups_done": [],
+    }))
+    assert cr._resolve_recover_sha(tmp_path, "abc1234") == ""
+
+
+def test_resolve_recover_sha_without_pipeline_state(cr, tmp_path):
     with pytest.raises(SystemExit) as exc:
-        cr._validate_recover(tmp_path, "def5678")
+        cr._resolve_recover_sha(tmp_path, "abc1234")
     assert exc.value.code == 1
 
 
-def test_validate_recover_skips_drift_check_without_head(cr, tmp_path):
-    """Empty head_sha means HEAD couldn't be determined — recover rather than block."""
-    _write_partial_pipeline(tmp_path)
-    cr._validate_recover(tmp_path, "")
-
-
-def test_validate_recover_without_pipeline_state(cr, tmp_path):
+def test_resolve_recover_sha_completed_review(cr, tmp_path):
+    (tmp_path / "pipeline.json").write_text(json.dumps({
+        "head_sha": "abc1234", "group_names": ["g1"], "synthesis_done": True,
+        "synthesis_failed": "", "groups_done": [1], "groups_failed": {},
+    }))
     with pytest.raises(SystemExit) as exc:
-        cr._validate_recover(tmp_path, "abc1234")
+        cr._resolve_recover_sha(tmp_path, "abc1234")
+    assert exc.value.code == 0
+
+
+# ── _pin_recover_worktree ─────────────────────────────────────────────────────
+
+
+def test_pin_recover_worktree_noop_when_head_matches(cr, monkeypatch):
+    head_sha = MagicMock(return_value="abc1234")
+    monkeypatch.setattr(cr.pr_context, "head_sha", head_sha)
+    detach = MagicMock()
+    monkeypatch.setattr(cr.review_worktree, "detached_worktree_at", detach)
+
+    assert cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l") == ("/wt", None)
+    assert detach.call_count == 0
+    assert head_sha.call_args.args == ("/wt",)
+
+
+def test_pin_recover_worktree_checks_out_pinned_commit(cr, monkeypatch):
+    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "def5678")
+    pinned = cr.review_worktree.WorktreeResult(
+        path="/repo/.worktrees/l", cleanup_ref="/repo/.worktrees/l", is_fallback=True)
+    monkeypatch.setattr(
+        cr.review_worktree, "detached_worktree_at",
+        lambda sha, repo_dir, label: pinned,
+    )
+
+    path, result = cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l")
+
+    assert path == "/repo/.worktrees/l"
+    assert result is pinned
+
+
+def test_pin_recover_worktree_exits_when_commit_gone(cr, monkeypatch):
+    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "def5678")
+    monkeypatch.setattr(
+        cr.review_worktree, "detached_worktree_at", lambda *a, **kw: None)
+
+    with pytest.raises(SystemExit) as exc:
+        cr._pin_recover_worktree("abc1234", "/wt", "/repo", "l")
     assert exc.value.code == 1
+
+
+def test_build_orchestrate_args_passes_recover_sha(cr, tmp_path):
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, recover_sha="abc1234",
+    )
+    assert args[args.index("--recover-sha") + 1] == "abc1234"
+
+
+def test_build_orchestrate_args_omits_empty_recover_sha(cr, tmp_path):
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None,
+    )
+    assert "--recover-sha" not in args
 
 
 # ── --recover with --self ─────────────────────────────────────────────────────
@@ -1441,7 +1518,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(cr, reviews_dir, m
 
 
 def test_self_review_body_validates_recover(cr, tmp_path):
-    """recover=True reaches _validate_recover — no pipeline state aborts the run."""
+    """recover=True reaches _resolve_recover_sha — no pipeline state aborts the run."""
     with pytest.raises(SystemExit) as exc:
         cr._run_self_review_body(
             "owner/repo", "", str(tmp_path), "", 1,
@@ -1450,6 +1527,88 @@ def test_self_review_body_validates_recover(cr, tmp_path):
             recover=True, head_sha="abc1234",
         )
     assert exc.value.code == 1
+
+
+def test_self_review_body_runs_recover_in_pinned_worktree(cr, tmp_path, monkeypatch):
+    """New commits since the failed run: orchestrate runs against the pinned checkout."""
+    _write_partial_pipeline(tmp_path)
+    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "def5678")
+    pinned = cr.review_worktree.WorktreeResult(
+        path="/pinned/wt", cleanup_ref="/pinned/wt", is_fallback=True)
+    monkeypatch.setattr(
+        cr.review_worktree, "detached_worktree_at",
+        lambda sha, repo_dir, label: pinned,
+    )
+    cleanup = MagicMock()
+    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", cleanup)
+    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+                        lambda wt: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(cr.review_issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(cr.review_issue, "fetch_issue_context",
+                        lambda *a: SimpleNamespace(link="", context=""))
+    run = MagicMock(return_value=SimpleNamespace(returncode=1))
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    monkeypatch.setattr(cr, "_fail_orchestration",
+                        MagicMock(side_effect=SystemExit(1)))
+
+    with pytest.raises(SystemExit):
+        cr._run_self_review_body(
+            "owner/repo", "", str(tmp_path), "", 1,
+            False, None, None, False, MagicMock(),
+            self_review_dir=tmp_path, branch_name="feat/x",
+            recover=True, head_sha="def5678",
+        )
+
+    orchestrate_args = run.call_args[0][0]
+    assert orchestrate_args[orchestrate_args.index("--repo-dir") + 1] == "/pinned/wt"
+    assert orchestrate_args[orchestrate_args.index("--recover-sha") + 1] == "abc1234"
+    assert cleanup.call_args[0][0] is pinned
+
+
+def test_self_review_body_rejects_fix_on_drifted_recover(cr, tmp_path, monkeypatch):
+    """Fixes written to a throwaway checkout would be discarded — refuse up front."""
+    _write_partial_pipeline(tmp_path)
+    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "def5678")
+
+    with pytest.raises(SystemExit) as exc:
+        cr._run_self_review_body(
+            "owner/repo", "", str(tmp_path), "", 1,
+            False, None, None, True, MagicMock(),
+            self_review_dir=tmp_path, branch_name="feat/x",
+            recover=True, head_sha="def5678",
+        )
+    assert exc.value.code == 1
+
+
+def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, monkeypatch):
+    """No drift means no throwaway checkout, so --fix edits the real worktree."""
+    _write_partial_pipeline(tmp_path)
+    monkeypatch.setattr(cr.pr_context, "head_sha", lambda cwd=None: "abc1234")
+    detach = MagicMock()
+    monkeypatch.setattr(cr.review_worktree, "detached_worktree_at", detach)
+    monkeypatch.setattr(cr.review_worktree, "cleanup_worktree", MagicMock())
+    monkeypatch.setattr(cr.review_issue, "load_issue_provider",
+                        lambda wt: SimpleNamespace(name="none", options={}))
+    monkeypatch.setattr(cr.review_issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(cr.review_issue, "fetch_issue_context",
+                        lambda *a: SimpleNamespace(link="", context=""))
+    run = MagicMock(return_value=SimpleNamespace(returncode=1))
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    monkeypatch.setattr(cr, "_fail_orchestration",
+                        MagicMock(side_effect=SystemExit(1)))
+
+    with pytest.raises(SystemExit):
+        cr._run_self_review_body(
+            "owner/repo", "", str(tmp_path), "", 1,
+            False, None, None, True, MagicMock(),
+            self_review_dir=tmp_path, branch_name="feat/x",
+            recover=True, head_sha="abc1234",
+        )
+
+    orchestrate_args = run.call_args[0][0]
+    assert orchestrate_args[orchestrate_args.index("--repo-dir") + 1] == str(tmp_path)
+    assert "--fix" in orchestrate_args
+    assert detach.call_count == 0
 
 
 # ── _check_stale_review ───────────────────────────────────────────────────────

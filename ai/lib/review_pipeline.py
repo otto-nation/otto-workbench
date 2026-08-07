@@ -1806,7 +1806,7 @@ def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:
 
 
 def _fetch_metadata(
-    repo: str, pr_number: str, mode: Mode, wt_path: str,
+    repo: str, pr_number: str, mode: Mode, wt_path: str, pin_sha: str = "",
 ) -> tuple[PRMetadata, PRContext, PRData | None]:
     if mode == Mode.SELF and not pr_number:
         log.info("Gathering branch metadata...")
@@ -1817,7 +1817,7 @@ def _fetch_metadata(
         pr = fetch_pr_metadata(repo, pr_number)
         return _with_local_diff(pr, fetch_branch_metadata(wt_path, pr.base)), PRContext(), None
     with ThreadPoolExecutor(max_workers=2) as pool:
-        pr_future = pool.submit(fetch_pr_metadata, repo, pr_number)
+        pr_future = pool.submit(fetch_pr_metadata, repo, pr_number, pin_sha, wt_path)
         pd_future = pool.submit(fetch_pr_data, repo, pr_number)
         pr_data = pd_future.result()
         ctx = fetch_pr_context(repo, pr_number, pr_data)

@@ -121,7 +121,9 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     _log_ai_backend(trail)
     if not ai_backend.preflight(collect_phase_models(args.model), trail):
         sys.exit(1)
-    pr, ctx, pr_data = _fetch_metadata(repo, args.pr, args.mode, args.repo_dir)
+    pr, ctx, pr_data = _fetch_metadata(
+        repo, args.pr, args.mode, args.repo_dir, args.recover_sha,
+    )
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
@@ -252,6 +254,9 @@ def main():
                         help="Run fix pass after review to apply findings")
     parser.add_argument("--generated", action="store_true",
                         help="Include tier3-generated files (skipped by default)")
+    parser.add_argument("--recover-sha", default="",
+                        help="Commit a --recover run must complete against "
+                             "(pins metadata to the failed run's HEAD)")
     add_trail_args(parser)
     args = parser.parse_args()
 

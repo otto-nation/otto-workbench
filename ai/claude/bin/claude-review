@@ -480,12 +480,14 @@ def _get_pr_head_sha(repo: str, pr_number: str) -> str:
         return ""
 
 
-def _validate_recover(review_dir: Path, head_sha: str) -> None:
-    """Validate pipeline state for --recover mode. Exits on failure.
+def _resolve_recover_sha(review_dir: Path, head_sha: str) -> str:
+    """Return the commit a --recover run must complete against. Exits on failure.
 
-    ``head_sha`` is the current HEAD to compare the failed run against — the PR
-    head for PR reviews, the local worktree HEAD for self-reviews. An empty
-    value skips the drift check (HEAD could not be determined).
+    ``head_sha`` is the current HEAD — the PR head for PR reviews, the local
+    worktree HEAD for self-reviews. The returned SHA is the one the failed run
+    recorded in its pipeline state, so recovery finishes the analysis it started
+    even when the branch has moved on. An empty return means no pinning: either
+    HEAD could not be determined or the state predates SHA tracking.
     """
     pipeline_path = review_dir / FILENAME_PIPELINE_STATE
     if not pipeline_path.is_file():
@@ -494,20 +496,48 @@ def _validate_recover(review_dir: Path, head_sha: str) -> None:
     if read_pipeline_status(review_dir) == "completed":
         log.info("Nothing to recover — review is complete")
         sys.exit(0)
-    if not head_sha:
-        return
     try:
         pipeline_data = json.loads(pipeline_path.read_text())
     except (json.JSONDecodeError, OSError):
         log.error(f"Corrupt pipeline state: {review_dir}")
         sys.exit(1)
-    if pipeline_data.get("head_sha") != head_sha:
-        log.error(
+    recorded_sha = pipeline_data.get("head_sha", "")
+    if not recorded_sha:
+        return ""
+    if head_sha and recorded_sha != head_sha:
+        log.warn(
             f"HEAD has moved since the failed review "
-            f"({pipeline_data.get('head_sha', '?')[:7]} → {head_sha[:7]}); "
-            f"run `pr review` for a fresh review"
+            f"({recorded_sha[:7]} → {head_sha[:7]}); completing the run at "
+            f"{recorded_sha[:7]} — run `pr review` to review the new commits"
+        )
+    return recorded_sha
+
+
+def _recover_drifted(recover_sha: str, wt_path: str) -> bool:
+    """True when the commit being recovered is behind the worktree's HEAD."""
+    return bool(recover_sha) and recover_sha != pr_context.head_sha(wt_path)
+
+
+def _pin_recover_worktree(
+    recover_sha: str, wt_path: str, repo_dir: str, label: str,
+) -> tuple[str, review_worktree.WorktreeResult | None]:
+    """Check the recovered commit out into a throwaway worktree when HEAD moved.
+
+    Returns the path the review should run against and the worktree to clean up
+    afterwards (None when no pinning was needed).
+    """
+    if not _recover_drifted(recover_sha, wt_path):
+        return wt_path, None
+
+    pinned = review_worktree.detached_worktree_at(recover_sha, repo_dir, label)
+    if pinned is None:
+        log.error(
+            f"Commit {recover_sha[:7]} from the failed review is no longer "
+            f"available — run `pr review` for a fresh review"
         )
         sys.exit(1)
+
+    return pinned.path, pinned
 
 
 def _should_auto_recover(repo: str, pr_number: str, review_file: Path) -> None:
@@ -693,7 +723,7 @@ def _build_orchestrate_args(
     fix_pass: bool = False, effort: str = "medium",
     max_groups: int | None = None,
     no_scout: bool = False, disprove: bool | None = None,
-    generated: bool = False,
+    generated: bool = False, recover_sha: str = "",
 ) -> list[str]:
     args = [
         str(BIN_DIR / "review-orchestrate"),
@@ -734,6 +764,8 @@ def _build_orchestrate_args(
         args.append("--no-disprove")
     if generated:
         args.append("--generated")
+    if recover_sha:
+        args += ["--recover-sha", recover_sha]
     return args
 
 
@@ -742,7 +774,7 @@ def _run_review_body(
     session_log, prior_review_path, issue_link, issue_context,
     max_parallel, no_holistic, max_cost, model, no_post, auto_post,
     auto_submit, pr_url, effort="medium", max_groups=None,
-    no_scout=False, disprove=None, generated=False,
+    no_scout=False, disprove=None, generated=False, recover_sha="",
 ) -> None:
     orchestrate_args = _build_orchestrate_args(
         pr_number=pr_number, repo=repo, review_file=review_file,
@@ -752,6 +784,7 @@ def _run_review_body(
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
+        recover_sha=recover_sha,
     )
     wall_start = time.monotonic()
     rc = subprocess.run(orchestrate_args).returncode
@@ -847,10 +880,11 @@ def _run_review_pr(
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}"
 
     if recover:
-        _validate_recover(review_dir, _get_pr_head_sha(repo, pr_number))
+        recover_sha = _resolve_recover_sha(review_dir, _get_pr_head_sha(repo, pr_number))
         has_pipeline_state = True
         force = True
     else:
+        recover_sha = ""
         has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
 
     if has_pipeline_state and review_file.exists():
@@ -878,24 +912,32 @@ def _run_review_pr(
                data={"repo_root": repo_root, "pr_head": pr_head})
 
     wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
-    wt_path = wt_result.path
 
-    session_log = str(review_dir / FILENAME_SESSION)
-    prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
-
-    trail.info("delegate_orchestrate", "delegating to review-orchestrate",
-               data={"wt_path": wt_path, "max_parallel": max_parallel,
-                     "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
-
+    # _pin_recover_worktree can exit, so it runs under the same finally as the
+    # review itself — otherwise a fallback PR worktree would be left on disk.
+    pinned_wt = None
     try:
+        wt_path, pinned_wt = _pin_recover_worktree(
+            recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
+        )
+
+        session_log = str(review_dir / FILENAME_SESSION)
+        prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
+
+        trail.info("delegate_orchestrate", "delegating to review-orchestrate",
+                   data={"wt_path": wt_path, "max_parallel": max_parallel,
+                         "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
+
         _run_review_body(
             pr_number, repo, review_file, review_dir, wt_path,
             session_log, prior_review_path, issue_link, issue_context,
             max_parallel, no_holistic, max_cost, model, no_post, auto_post,
             auto_submit, pr_url, effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
+            recover_sha=recover_sha,
         )
     finally:
+        review_worktree.cleanup_worktree(pinned_wt, repo_root)
         review_worktree.cleanup_worktree(wt_result, repo_root)
 
 
@@ -979,9 +1021,10 @@ def _run_self_review_body(
     session_log = str(self_review_dir / FILENAME_SESSION)
 
     if recover:
-        _validate_recover(self_review_dir, head_sha)
+        recover_sha = _resolve_recover_sha(self_review_dir, head_sha)
         has_pipeline_state = True
     else:
+        recover_sha = ""
         has_pipeline_state = (self_review_dir / FILENAME_PIPELINE_STATE).is_file()
     prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
 
@@ -997,18 +1040,33 @@ def _run_self_review_body(
         if detected_link:
             issue_link = detected_link
 
+    if fix_pass and _recover_drifted(recover_sha, wt_path):
+        log.error(
+            f"--fix cannot run on a review recovered at {recover_sha[:7]} — HEAD has "
+            f"moved, so the edits would land in a throwaway checkout. Recover without "
+            f"--fix, then run `pr review --self --fix`."
+        )
+        sys.exit(1)
+
+    review_wt_path, pinned_wt = _pin_recover_worktree(
+        recover_sha, wt_path, wt_path, f"recover-{branch_name}",
+    )
     orchestrate_args = _build_orchestrate_args(
         pr_number=pr_number, repo=repo, review_file=review_file,
-        wt_path=wt_path, session_log=session_log,
+        wt_path=review_wt_path, session_log=session_log,
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=max_parallel,
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         mode="self", fix_pass=fix_pass, effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
+        recover_sha=recover_sha,
     )
 
     wall_start = time.monotonic()
-    rc = subprocess.run(orchestrate_args).returncode
+    try:
+        rc = subprocess.run(orchestrate_args).returncode
+    finally:
+        review_worktree.cleanup_worktree(pinned_wt, wt_path)
     wall_ms = int((time.monotonic() - wall_start) * 1000)
     if rc != 0:
         _fail_orchestration("Review orchestration failed", session_log)

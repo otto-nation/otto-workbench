@@ -8,14 +8,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import review_agent
 import review_pipeline
 import review_preflight
+from review_common import Diagnosis, DiagnosisKind
 
 _TURNS = 15
-_MAX_TURNS = f"agent hit max turns ({_TURNS})"
-_NO_WRITE = f"{_MAX_TURNS} — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
-_TRANSIENT = "agent error: ECONNRESET"
+_MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
+_NO_WRITE = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
+_TRANSIENT = Diagnosis(DiagnosisKind.TRANSIENT, detail="ECONNRESET")
 
 
 def _result(subtype: str = "error_max_turns", **extra) -> str:
@@ -73,28 +73,31 @@ class TestRetryHintFor:
         assert review_pipeline._retry_hint_for(_TRANSIENT) == ""
 
     def test_missing_result_record_gets_no_hint(self):
-        assert review_pipeline._retry_hint_for(review_agent.DIAG_NO_RESULT_RECORD) == ""
+        assert review_pipeline._retry_hint_for(
+            Diagnosis(DiagnosisKind.NO_RESULT_RECORD),
+        ) == ""
 
 
 class TestIsRetryable:
     def test_clean_completion_without_a_write_is_retryable(self):
         """The motivating failure: finished cleanly, produced nothing."""
-        reason = (
-            "agent completed (subtype=success) but did not write output"
-            f" — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
+        diagnosis = Diagnosis(
+            DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
         )
-        assert review_pipeline._is_retryable(reason)
-        assert review_pipeline._retry_hint_for(reason) == review_pipeline._NO_WRITE_HINT
+        assert review_pipeline._is_retryable(diagnosis)
+        assert review_pipeline._retry_hint_for(diagnosis) == review_pipeline._NO_WRITE_HINT
 
     def test_clean_completion_that_wrote_nothing_observable_is_not_retryable(self):
-        """Without the no-write suffix there is no reason to expect a difference."""
+        """Without the no-write flag there is no reason to expect a difference."""
         assert not review_pipeline._is_retryable(
-            "agent completed (subtype=success) but did not write output"
+            Diagnosis(DiagnosisKind.COMPLETED, detail="success"),
         )
 
     def test_no_write_completion_keeps_its_turn_budget(self):
-        reason = f"agent completed (subtype=success) — {review_agent.DIAG_NO_WRITE_TOOL_CALL}"
-        assert review_pipeline._retry_turns_for(reason, 15) == 15
+        diagnosis = Diagnosis(
+            DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
+        )
+        assert review_pipeline._retry_turns_for(diagnosis, 15) == 15
 
 
 class TestRetryTurnsFor:
@@ -123,22 +126,24 @@ class TestRetryMissingOutput:
         output = tmp_path / "out.md"
         output.write_text("## Summary\n")
         invoke = _Invoke()
-        assert self._run(invoke, log_path, str(output)) == ""
+        assert self._run(invoke, log_path, str(output)) is None
         assert invoke.calls == []
 
     def test_non_retryable_reason_returns_without_retrying(self, tmp_path):
         log_path = _write_log(tmp_path, _result("error", is_error=True, result="permission denied"))
         output = tmp_path / "out.md"
         invoke = _Invoke()
-        reason = self._run(invoke, log_path, str(output))
-        assert "permission denied" in reason
+        diagnosis = self._run(invoke, log_path, str(output))
+        assert diagnosis == Diagnosis(
+            DiagnosisKind.AGENT_ERROR, detail="permission denied",
+        )
         assert invoke.calls == []
 
     def test_retry_prefixes_the_hint_and_raises_the_budget(self, tmp_path):
         log_path = _write_log(tmp_path, _result())
         output = tmp_path / "out.md"
         invoke = _Invoke(str(output), write_on=1, log_path=log_path)
-        assert self._run(invoke, log_path, str(output)) == ""
+        assert self._run(invoke, log_path, str(output)) is None
         prompt, turns = invoke.calls[0]
         assert prompt == review_pipeline._RETRY_HINT + "PROMPT"
         assert turns == 30
@@ -163,9 +168,9 @@ class TestRetryMissingOutput:
         log_path = _write_log(tmp_path, _result())
         output = tmp_path / "out.md"
         invoke = _Invoke(str(output), write_on=0, log_path=log_path)
-        reason = self._run(invoke, log_path, str(output))
+        diagnosis = self._run(invoke, log_path, str(output))
         assert len(invoke.calls) == 1
-        assert reason == "agent completed (subtype=success) but did not write output"
+        assert diagnosis == Diagnosis(DiagnosisKind.COMPLETED, detail="success")
 
     def test_both_attempts_survive_in_the_log(self, tmp_path):
         log_path = _write_log(tmp_path, _result())
@@ -200,7 +205,7 @@ class TestRetryMissingOutput:
         }))
         output = tmp_path / "out.md"
         invoke = _Invoke()
-        assert self._run(invoke, log_path, str(output)) == ""
+        assert self._run(invoke, log_path, str(output)) is None
         assert invoke.calls == []
         assert "## Summary" in output.read_text()
 

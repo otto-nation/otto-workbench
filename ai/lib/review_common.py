@@ -20,6 +20,7 @@ from typing import TypeVar
 
 import ai_usage
 import log
+import serde
 from ai_usage import SessionUsage, parse_session_log
 from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
 
@@ -157,6 +158,122 @@ def enum_arg(enum_cls: type[EnumT]) -> Callable[[str], EnumT]:
             ) from None
 
     return parse
+
+
+# ── Failure diagnosis ────────────────────────────────────────────────────────
+
+
+class DiagnosisKind(StrEnum):
+    """Why an agent run left no output.
+
+    Retry policy switches on this, so a member is added when a *decision* needs
+    to tell one outcome from another — not when a message needs new wording.
+    """
+
+    MAX_TURNS = "max_turns"
+    COMPLETED = "completed"
+    AGENT_ERROR = "agent_error"
+    TRANSIENT = "transient"
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    NO_SESSION_LOG = "no_session_log"
+    NO_RESULT_RECORD = "no_result_record"
+    # The three below are the pipeline's own verdicts, reached without ever
+    # reading a session log: a group the pipeline declined to run, one abandoned
+    # when the budget ran out, and one whose output vanished between passes.
+    SKIPPED = "skipped"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    OUTPUT_MISSING = "output_missing"
+    # Only reachable by reading a pipeline state file written before failures
+    # were structured. `detail` holds that file's rendered message verbatim.
+    UNKNOWN = "unknown"
+
+
+# Prefixes every backend crash. Load-bearing beyond rendering: the no-write
+# check and the transient-error check both use it to tell a crash apart from a
+# run that ended on its own terms.
+AGENT_ERROR_PREFIX = "agent error:"
+
+# A backend error whose text matches one of these will fail again the same way,
+# so no amount of retrying or recovery helps. Matched against `Diagnosis.detail`
+# the way `_TRANSIENT_ERROR_MARKERS` is — the error text is free-form, and these
+# are the fragments of it that carry a verdict.
+NON_RECOVERABLE_ERROR_MARKERS = ("permission denied",)
+
+_DIAGNOSIS_MESSAGES = {
+    DiagnosisKind.QUOTA_EXHAUSTED: "quota exhausted (429)",
+    DiagnosisKind.NO_SESSION_LOG: "no session log found",
+    DiagnosisKind.NO_RESULT_RECORD: "no result record in session log",
+    DiagnosisKind.BUDGET_EXCEEDED: "budget exceeded",
+    DiagnosisKind.OUTPUT_MISSING: "output missing",
+}
+
+NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    """A single agent run's failure, classified once and rendered on demand.
+
+    Frozen because two of the pipeline's decisions compare diagnoses for
+    equality — the consecutive-failure abort and the all-groups-failed circuit
+    breaker — and one of them puts them in a set.
+    """
+
+    kind: DiagnosisKind
+    no_write_tool: bool = False
+    detail: str = ""
+    # None when the backend reported no turn count; rendered as "?".
+    num_turns: int | None = None
+
+    @property
+    def message(self) -> str:
+        """The human-readable reason, as it appears in logs and review files."""
+        return self._base_message() + (
+            f" — {NO_WRITE_TOOL_SUFFIX}" if self.no_write_tool else ""
+        )
+
+    def _base_message(self) -> str:
+        if self.kind is DiagnosisKind.MAX_TURNS:
+            turns = self.num_turns if self.num_turns is not None else "?"
+            return f"agent hit max turns ({turns})"
+        if self.kind is DiagnosisKind.COMPLETED:
+            return f"agent completed (subtype={self.detail}) but did not write output"
+        if self.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT):
+            return f"{AGENT_ERROR_PREFIX} {self.detail}"
+        if self.kind is DiagnosisKind.SKIPPED:
+            return f"skipped: {self.detail}"
+        if self.kind is DiagnosisKind.UNKNOWN:
+            # A legacy state file could hold an empty reason; the failures table
+            # gets a word rather than a blank cell.
+            return self.detail or DiagnosisKind.UNKNOWN.value
+        return _DIAGNOSIS_MESSAGES[self.kind]
+
+    @property
+    def recoverable(self) -> bool:
+        """Whether `pr review --recover` could plausibly do better than this run."""
+        lowered = self.detail.lower()
+        return not any(m in lowered for m in NON_RECOVERABLE_ERROR_MARKERS)
+
+
+def hydrate_failures(raw: dict) -> dict[int, Diagnosis]:
+    """A state file's `groups_failed`, in either of the two formats it can hold.
+
+    The single hydration path for pipeline state — every reader goes through
+    here, so a schema change cannot break one of them silently.
+
+    JSON serializes dict keys as strings and `serde.from_dict` coerces values
+    but not keys, so the int conversion lives here. A file written before
+    diagnoses were typed holds the rendered reason; keep it verbatim under
+    `UNKNOWN` so a `--recover` run against an in-flight review still renders
+    its failures.
+    """
+    return {
+        int(k): (
+            serde.from_dict(Diagnosis, v) if isinstance(v, dict)
+            else Diagnosis(DiagnosisKind.UNKNOWN, detail=str(v))
+        )
+        for k, v in raw.items()
+    }
 
 
 # ── Templates ────────────────────────────────────────────────────────────────
@@ -495,7 +612,7 @@ def build_failure_detail(review_dir: Path | None) -> str:
     data = _read_pipeline_data(review_dir)
     if data is None:
         return ""
-    groups_failed = data.get("groups_failed", {})
+    groups_failed = hydrate_failures(data.get("groups_failed", {}))
     synthesis_failed = data.get("synthesis_failed", "")
     group_names = data.get("group_names", [])
 
@@ -506,7 +623,7 @@ def build_failure_detail(review_dir: Path | None) -> str:
     if groups_failed:
         n_failed = len(groups_failed)
         n_total = len(group_names)
-        reasons = sorted(set(groups_failed.values()))
+        reasons = sorted({d.message for d in groups_failed.values()})
         if n_failed >= n_total and n_total > 0:
             parts.append(f"all groups failed: {', '.join(reasons)}")
         else:

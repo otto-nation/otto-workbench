@@ -4,7 +4,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "$HOME/.claude/bin/workbench-statusline",
+    "command": "$HOME/.local/bin/workbench-statusline",
     "refreshInterval": 10
   },
   "hooks": {
@@ -72,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/bin/reuse-session-start 2>/dev/null || true"
+            "command": "python3 $HOME/.local/bin/reuse-session-start 2>/dev/null || true"
           }
         ]
       }
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/bin/reuse-mode-tracker 2>/dev/null || true"
+            "command": "python3 $HOME/.local/bin/reuse-mode-tracker 2>/dev/null || true"
           }
         ]
       }
@@ -94,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.claude/bin/reuse-subagent-start 2>/dev/null || true"
+            "command": "python3 $HOME/.local/bin/reuse-subagent-start 2>/dev/null || true"
           }
         ]
       }
@@ -125,7 +125,7 @@
           },
           {
             "type": "command",
-            "command": "repo=$(git rev-parse --show-toplevel 2>/dev/null) && bash $HOME/.claude/skills/ceiling-debt/should-ceiling-scan.sh \"$repo\" && python3 $HOME/.claude/bin/ceiling-scan --output \"$repo/.claude/ceiling-debt.md\" \"$repo\" || true"
+            "command": "repo=$(git rev-parse --show-toplevel 2>/dev/null) && bash $HOME/.claude/skills/ceiling-debt/should-ceiling-scan.sh \"$repo\" && python3 $HOME/.local/bin/ceiling-scan --output \"$repo/.claude/ceiling-debt.md\" \"$repo\" || true"
           },
           {
             "type": "command",

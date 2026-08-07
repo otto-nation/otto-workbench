@@ -480,3 +480,68 @@ _run_sync() {
   wb_dirs=$(jq -c '._workbench.permissions.additionalDirectories' <<< "$result")
   [ "$wb_dirs" = '["/managed"]' ]
 }
+
+# ── script paths referenced from settings ────────────────────────────────────
+# Hook and statusline commands name installed scripts by absolute path, and
+# nothing resolves those paths at install time. A wrong directory therefore
+# fails silently — most of these commands end in `|| true`, and the statusline
+# just renders nothing — so the hook looks configured but never runs.
+
+# Every "$HOME/..." path named by the statusline or a hook command. Includes
+# data paths (log dirs) as well as scripts — callers filter by prefix.
+_referenced_home_paths() {
+  jq -r '[.statusLine.command] + [.hooks[][].hooks[].command] | .[]' "$SETTINGS" |
+    grep -oE '[$]HOME/[^" ]*' | sort -u
+}
+
+@test "settings reference no bin dir other than LOCAL_BIN_DIR" {
+  local expected path
+  expected=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  [ -n "$expected" ]
+
+  while read -r path; do
+    case "$path" in
+      "$expected"/*) continue ;;
+      */bin/*)
+        echo "settings.json references '$path'"
+        echo "installed scripts go to $expected (LOCAL_BIN_DIR in lib/constants.sh)"
+        return 1
+        ;;
+    esac
+  done < <(_referenced_home_paths)
+}
+
+@test "every bin script referenced by settings exists in ai/claude/bin" {
+  local expected path missing=()
+  expected=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+
+  while read -r path; do
+    case "$path" in
+      "$expected"/*) ;;
+      *) continue ;;
+    esac
+    [ -f "$REPO_ROOT/ai/claude/bin/${path##*/}" ] || missing+=("${path##*/}")
+  done < <(_referenced_home_paths)
+
+  [ ${#missing[@]} -eq 0 ] || {
+    echo "referenced by settings.json but absent from ai/claude/bin: ${missing[*]}"
+    return 1
+  }
+}
+
+@test "every skill script referenced by settings exists in ai/claude/skills" {
+  local path rel missing=()
+  while read -r path; do
+    case "$path" in
+      '$HOME/.claude/skills/'*) ;;
+      *) continue ;;
+    esac
+    rel=${path#'$HOME/.claude/skills/'}
+    [ -f "$REPO_ROOT/ai/claude/skills/$rel" ] || missing+=("$rel")
+  done < <(_referenced_home_paths)
+
+  [ ${#missing[@]} -eq 0 ] || {
+    echo "referenced by settings.json but absent from ai/claude/skills: ${missing[*]}"
+    return 1
+  }
+}

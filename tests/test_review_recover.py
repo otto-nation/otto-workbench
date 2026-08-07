@@ -109,7 +109,6 @@ def job(tmp_path):
         wt_path=str(tmp_path),
         review_file=str(tmp_path / "reviews" / "review.md"),
         session_log=str(tmp_path / "reviews" / "session.jsonl"),
-        reviews_dir=str(tmp_path / "reviews"),
     )
 
 

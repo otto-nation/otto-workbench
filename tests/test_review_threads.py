@@ -19,6 +19,7 @@ import pr_state
 from pr_comments import ThreadState
 from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
 from pr_thread_models import CommentItem, PRReport, ReportThread
+from review_common import Diagnosis, DiagnosisKind
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -2673,3 +2674,37 @@ class TestMergeTracking:
         assert total.fixed == ["a", "b"]
         assert total.deferred == ["c"]
         assert total.deferred_items == ["z"]
+
+
+class TestPartitionBatches:
+    """One stalled batch must not spend every other batch's retry."""
+
+    def _batch(self, rt, deferred, *, unproductive):
+        return rt.FixBatchResult(
+            tracking=rt.TrackingResult(deferred=deferred),
+            unproductive=Diagnosis(DiagnosisKind.MAX_TURNS) if unproductive else None,
+            max_turns=50, max_budget=5.0,
+        )
+
+    def test_a_stalled_batch_does_not_block_the_others(self, rt):
+        retryable, stalled = rt._partition_batches([
+            self._batch(rt, ["a"], unproductive=False),
+            self._batch(rt, ["b"], unproductive=True),
+        ])
+        assert retryable.deferred == ["a"]
+        assert stalled.deferred == ["b"]
+
+    def test_all_productive_leaves_nothing_stalled(self, rt):
+        retryable, stalled = rt._partition_batches([
+            self._batch(rt, ["a"], unproductive=False),
+            self._batch(rt, ["b"], unproductive=False),
+        ])
+        assert retryable.deferred == ["a", "b"]
+        assert stalled.deferred == []
+
+    def test_all_stalled_leaves_nothing_retryable(self, rt):
+        retryable, stalled = rt._partition_batches([
+            self._batch(rt, ["a"], unproductive=True),
+        ])
+        assert retryable.deferred == []
+        assert stalled.deferred == ["a"]

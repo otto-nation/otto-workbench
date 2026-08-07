@@ -274,6 +274,22 @@ def post_thread_reply(
     return code == 0
 
 
+def patch_thread_reply(repo: str, comment_database_id: int, body: str) -> bool:
+    """Edit a review thread comment in place. Returns True on success.
+
+    The counterpart to post_thread_reply, for the same reason
+    _patch_issue_comment is the counterpart to post_issue_comment: a review
+    cycle revisits the same thread, and a second reply saying something the
+    first one contradicts is worse than no reply.  Unlike the issue-comment
+    endpoint, this one is not PR-scoped — review comments are addressed by
+    database ID alone.
+    """
+    code, _ = _gh_post(
+        f"repos/{repo}/pulls/comments/{comment_database_id}", body, method="PATCH",
+    )
+    return code == 0
+
+
 def post_issue_comment(
     repo: str, pr_number: int, body: str, marker: str = "",
 ) -> str | None:

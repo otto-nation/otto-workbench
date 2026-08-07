@@ -1593,8 +1593,8 @@ def _push(cwd: str) -> subprocess.CompletedProcess:
     )
 
 
-def _report_push_failure(r: subprocess.CompletedProcess) -> tuple[int, str]:
-    """Surface a rejected push and hand back its (exit code, combined output).
+def _report_push(r: subprocess.CompletedProcess) -> tuple[int, str]:
+    """Echo a push result and hand back its (exit code, combined output).
 
     _push captures output so the hook's check errors can be fed to the AI fix,
     which means nothing reaches the terminal unless it is logged here.
@@ -1656,7 +1656,7 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     if r.returncode == 0:
         return 0
 
-    rc, push_output = _report_push_failure(r)
+    rc, push_output = _report_push(r)
 
     # Recovery 1: commit regenerated files (hook modified tracked files)
     if _commit_regenerated(cwd):
@@ -1665,7 +1665,7 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
         if retry.returncode == 0:
             return 0
         # Re-read the error: the second run's checks are what step 2 must fix.
-        rc, retry_output = _report_push_failure(retry)
+        rc, retry_output = _report_push(retry)
         push_output = retry_output or push_output
 
     # Recovery 2: AI-fix resolved files based on check errors
@@ -1673,10 +1673,7 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
         log.info("Attempting to fix pre-push check failures...")
         if _fix_push_failures(cwd, push_output, resolved_files):
             log.info("Retrying force-push...")
-            final = _push(cwd)
-            if final.returncode == 0:
-                return 0
-            return _report_push_failure(final)[0]
+            return _report_push(_push(cwd))[0]
 
     return rc
 

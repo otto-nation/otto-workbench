@@ -91,6 +91,11 @@ class TestRealWritesAreStillCaught:
         after = _rewritten(b"default-branch = main", b"default-branch = trunk")
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
+    def test_a_section_merely_starting_with_worktrunk_is_a_change(self):
+        """A prefix match on the section name would exempt an unrelated section."""
+        after = _CONFIG + b"[worktrunkish]\n\tvalue = 1\n"
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
+
     def test_a_key_inside_the_section_after_an_external_one_is_a_change(self):
         """The exemption ends at the next header, it does not run to EOF."""
         after = _rewritten(b"gpgsign = false", b"gpgsign = true")
@@ -171,6 +176,9 @@ class TestSectionNames:
 
     def test_a_branch_named_like_the_state_namespace(self):
         assert _section_of(b'[branch "state.main"]') == (b"branch", b"state.main")
+
+    def test_a_section_merely_starting_with_worktrunk(self):
+        assert _section_of(b"[worktrunkish]") == (b"worktrunkish", b"")
 
     def test_a_value_line_is_not_a_section(self):
         assert _section_of(b"marker = {}") is None

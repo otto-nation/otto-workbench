@@ -6,6 +6,8 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
+  # shellcheck source=../lib/portable.sh
+  source "$REPO_ROOT/lib/portable.sh"
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260806-claude-bin-hook-paths.sh"
   FAKE_HOME="$(mktemp -d)"
   mkdir -p "$FAKE_HOME/.claude"
@@ -15,15 +17,6 @@ setup() {
 teardown() {
   rm -rf "$FAKE_HOME"
   common_teardown
-}
-
-# Octal file mode, GNU first then BSD. Each form is assigned separately: GNU
-# stat treats -f as --file-system and writes a report to stdout before failing,
-# so chaining both inside one substitution concatenates the two outputs.
-_file_mode() {
-  local mode
-  mode=$(stat -c '%a' "$1" 2>/dev/null) || mode=$(stat -f '%Lp' "$1" 2>/dev/null)
-  printf '%s' "$mode"
 }
 
 # Runs the migration against FAKE_HOME with the ui.sh helpers stubbed out.
@@ -94,7 +87,7 @@ JSON
 
   run _run_migration
   [ "$status" -eq 0 ]
-  run _file_mode "$SETTINGS"
+  run file_mode "$SETTINGS"
   [ "$output" = "600" ]
 }
 

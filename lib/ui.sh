@@ -7,6 +7,7 @@
 #   prompts.sh — confirm, confirm_n, confirm_step, prompt_overwrite, select_menu, select_subdirs, conf_get
 #   files.sh   — install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch
 #   setup.sh   — require_command, install_cask, register_step, run_steps, run_migrations
+#   portable.sh — file_mtime, file_birth, file_mode
 #
 # Sourcing patterns (all use WORKBENCH_DIR via git rev-parse):
 #   install.sh        . "$DOTFILES_DIR/lib/ui.sh"
@@ -29,6 +30,8 @@ _ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Prompt, file, and setup helpers are bash-only
 if [[ -n "${BASH_VERSION:-}" ]]; then
+  # shellcheck source=portable.sh
+  . "$_ui_lib_dir/portable.sh"
   # shellcheck source=prompts.sh
   . "$_ui_lib_dir/prompts.sh"
   # shellcheck source=files.sh

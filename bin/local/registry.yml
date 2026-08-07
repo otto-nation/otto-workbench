@@ -49,6 +49,11 @@ tools:
     visibility: brief
     description: "Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree()"
 
+  - name: validate-stat-portability
+    permission: false
+    visibility: brief
+    description: "Validates that stat format flags are confined to the lib/portable.sh helpers"
+
   - name: validate-eval-baselines
     permission: false
     visibility: brief

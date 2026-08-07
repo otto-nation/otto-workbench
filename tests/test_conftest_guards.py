@@ -44,6 +44,14 @@ class TestExternalWritesAreIgnored:
         after = _rewritten(b"1786075417", b"1786075999")
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
 
+    def test_a_rewritten_history_entry_reads_as_no_change(self):
+        """The flake: wt rewrites its history mid-run and an innocent test fails."""
+        after = _rewritten(
+            b"[worktrunk]\n\tdefault-branch = main\n",
+            b"[worktrunk]\n\tdefault-branch = main\n\thistory = isaac/fix/some_branch\n",
+        )
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
     def test_a_new_worktrunk_section_reads_as_no_change(self):
         after = _CONFIG + b'[worktrunk "state.feat"]\n\tmarker = {}\n'
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
@@ -84,6 +92,10 @@ class TestRealWritesAreStillCaught:
 
     def test_a_section_appended_at_the_end_is_a_change(self):
         after = _CONFIG + b"[user]\n\tname = Test\n"
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
+
+    def test_an_edit_to_an_existing_owned_section_is_a_change(self):
+        after = _rewritten(b"repositoryformatversion = 0", b"repositoryformatversion = 1")
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
     def test_worktrunk_user_config_is_a_change(self):
@@ -132,6 +144,11 @@ class TestTheFailureNamesTheKey:
             _guarded_lines(_CONFIG), _guarded_lines(after),
         )
         assert "repositoryformatversion" not in described
+
+    def test_it_stays_quiet_when_nothing_moved(self):
+        assert not _describe_config_change(
+            _guarded_lines(_CONFIG), _guarded_lines(_CONFIG),
+        ).strip()
 
     def test_it_reports_a_reorder_rather_than_going_quiet(self):
         described = _describe_config_change([b"[user]", b"\tx = 1"], [b"\tx = 1", b"[user]"])

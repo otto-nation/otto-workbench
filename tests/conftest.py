@@ -115,6 +115,46 @@ def _assert_config_unchanged(path: Path, before: bytes | None, after: bytes | No
     )
 
 
+def _is_external_section(header: str) -> bool:
+    """Whether *header* names a section a tool outside the suite owns.
+
+    Worktrunk stores switch history and per-worktree status markers in the
+    shared config, and its Claude Code plugin rewrites them on session hooks —
+    at arbitrary moments, including mid-test-run. Comparing those sections
+    makes the guard blame whichever test happened to straddle the write.
+    """
+    # ceiling: worktrunk is the only external writer seen so far, so the
+    # exemption is a fixed name rather than a registry. A concurrent
+    # `git push -u` from another worktree can still add a [branch] section
+    # mid-run and be blamed on a test; widen this if that shows up.
+    return header == "[worktrunk]" or header.startswith('[worktrunk "')
+
+
+def _owned_sections(raw: bytes | None) -> dict[str, str] | None:
+    """Config sections keyed by header, minus the externally-owned ones."""
+    if raw is None:
+        return None
+    sections: dict[str, list[str]] = {}
+    header = ""
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if line.lstrip().startswith("["):
+            header = line.strip()
+            sections.setdefault(header, [])
+            continue
+        sections.setdefault(header, []).append(line)
+    return {
+        head: "\n".join(body)
+        for head, body in sections.items()
+        if not _is_external_section(head)
+    }
+
+
+def _changed_sections(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """Headers that were added, removed, or edited between the two snapshots."""
+    edited = {k for k in before.keys() & after.keys() if before[k] != after[k]}
+    return sorted(set(before) ^ set(after) | edited)
+
+
 @pytest.fixture(autouse=True)
 def _guard_repo_config():
     """Fail the test that writes git config into the repo under test.
@@ -130,6 +170,22 @@ def _guard_repo_config():
     the running test for those writes turns every long test run into a coin
     flip. Parsing is deferred until the bytes actually differ, so the common
     case stays two reads.
+    """
+    if _REPO_CONFIG is None:
+        yield
+        return
+    before = _config_bytes(_REPO_CONFIG)
+    yield
+    _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
+    """
+    if _REPO_CONFIG is None:
+        yield
+        return
+    before = _config_bytes(_REPO_CONFIG)
+    yield
+    The state in `_EXTERNAL_STATE` is exempt: it is written concurrently by
+    tooling this process does not control, and blaming the running test for
+    those writes turns every long test run into a coin flip.
     """
     if _REPO_CONFIG is None:
         yield

@@ -23,6 +23,8 @@ _spec.loader.exec_module(pr_describe_cli)
 import pr_context  # noqa: E402
 import pr_state  # noqa: E402
 
+from conftest import assert_no_worktree_exit  # noqa: E402
+
 
 def _ctx(tmp_path, head_sha="aaaa111", pr_number=7):
     return pr_context.ResolvedContext(
@@ -266,3 +268,28 @@ def test_prompt_says_so_when_the_repo_ships_no_template(tmp_path):
                            return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(tmp_path))
     assert "this repo ships none" in prompt.call_args[0][0]
+
+
+# ── worktree_root guards ──────────────────────────────────────────────────
+
+
+def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
+    ctx = pr_context.ResolvedContext(
+        repo="owner/repo",
+        branch="isaac/feat/x",
+        pr_number=7,
+        worktree_root=None,
+        head_sha="aaaa111",
+    )
+    assert_no_worktree_exit(capsys, "isaac/feat/x",
+                            pr_describe_cli.run_describe, ctx)
+
+
+def test_no_pr_reports_before_demanding_a_worktree(capsys):
+    """The trail directory degrades, so the no-PR path is not blocked by it."""
+    ctx = pr_context.ResolvedContext(
+        repo="owner/repo", branch="isaac/feat/x", pr_number=None,
+        worktree_root=None, head_sha="aaaa111",
+    )
+    assert pr_describe_cli.run_describe(ctx) == 0
+    assert "nothing to describe" in capsys.readouterr().err

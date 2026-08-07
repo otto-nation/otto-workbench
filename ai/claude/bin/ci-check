@@ -713,7 +713,7 @@ def _rebase_if_behind(trail, report: dict, ctx) -> bool:
 
     bin_dir = Path(__file__).resolve().parent
     cmd = [str(bin_dir / "pr-rebase"), "--fix",
-           "--repo-dir", str(ctx.worktree_root)]
+           "--repo-dir", str(ctx.require_worktree())]
     if ctx.branch:
         cmd += ["--branch", ctx.branch]
     r = subprocess.run(cmd, capture_output=True, text=True)

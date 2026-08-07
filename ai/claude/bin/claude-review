@@ -321,6 +321,13 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
     except SystemExit:
         return
 
+    # Caching the summary for `pr status` needs somewhere to write it, but the
+    # review itself already succeeded and its file is user-scoped. Opting out
+    # rather than calling require_worktree(): exiting here would fail a review
+    # that worked over a snapshot nobody asked for.
+    if ctx.worktree_root is None:
+        return
+
     try:
         pr_state.apply_state_update(
             worktree_root=ctx.worktree_root,

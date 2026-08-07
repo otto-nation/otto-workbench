@@ -16,8 +16,12 @@ teardown() {
 }
 
 # Creates a .jsonl session file whose mtime is AGE_SECONDS in the past.
+# touch -t takes whole minutes, so the mtime lands up to 59s later than asked
+# for. Every cutoff below keeps a margin wider than that; a tighter one would
+# flake near a minute boundary.
 _session() {
-  local name="$1" age_seconds="$2" file="$SESSIONS$1.jsonl"
+  local name="$1" age_seconds="$2"
+  local file="$SESSIONS$name.jsonl"
   touch "$file"
   touch -t "$(_stamp "$age_seconds")" "$file"
 }

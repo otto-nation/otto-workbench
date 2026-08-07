@@ -16,6 +16,7 @@ from pathlib import Path
 import log
 import publishing
 from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
+from review_common import plural
 from review_github import (
     PRData, GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT,
 )
@@ -516,7 +517,7 @@ def _relative_time(iso_str: str) -> str:
         if hours < 24:
             return f"{hours} hours ago"
         days = hours // 24
-        return f"{days} day{'s' if days != 1 else ''} ago"
+        return f"{days} day{plural(days)} ago"
     except (ValueError, TypeError):
         return ""
 

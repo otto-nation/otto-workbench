@@ -86,7 +86,7 @@ Rules:
 
 ## Output format
 
-Use the Write tool to save findings to the output path specified in the prompt. Format:
+Use the Write tool to save findings to the output path specified in the prompt. `## File Triage` stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR. Format:
 
 ```markdown
 ## File Triage

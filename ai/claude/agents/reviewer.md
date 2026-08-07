@@ -36,7 +36,7 @@ Categorize all changed files into review tiers:
 - **Tier 2 (deep-review):** Application logic, business rules, shared libraries, test files
 - **Tier 3 (scan):** Generated files (verify generator input instead), vendored code, pure formatting/rename changes
 
-Write the triage as a `## File Triage` section in the review output, listing every file with its tier. Then review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped
+Write the triage as a `## File Triage` section in the review output, listing every file with its tier. Then review files in tier order — all Tier 1 files first, then Tier 2, then Tier 3. No file may be silently skipped. The section stays in the local review file for coverage tracking; it is stripped before the summary is posted to the PR
 - If pre-collected data includes review checklists and architecture.md, use those directly. Otherwise: check for `.claude/review/` in the project root and read `.claude/architecture.md` Known Constraints section if it exists
 - For each checklist file, match its `paths:` frontmatter against the files in the diff. Load matching checklists as supplementary review criteria for Phases 3–8
 - Use architecture.md Known Constraints to avoid findings that contradict known project constraints

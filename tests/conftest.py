@@ -125,8 +125,11 @@ def _guard_repo_config():
     commit inherits the test identity.
 
     The state in `_EXTERNAL_STATE` is exempt: it is written concurrently by
-    tooling this process does not control, and blaming the running test for
-    those writes turns every long test run into a coin flip.
+    tooling this process does not control — worktrunk restamps its per-branch
+    state whenever a session hook fires, including mid-test-run — and blaming
+    the running test for those writes turns every long test run into a coin
+    flip. Parsing is deferred until the bytes actually differ, so the common
+    case stays two reads.
     """
     if _REPO_CONFIG is None:
         yield

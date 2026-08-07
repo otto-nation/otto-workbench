@@ -157,14 +157,14 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
 
 
 def prompt(
-    text: str, *, model: str | None = None,
+    text: str, *, cwd: str, model: str | None = None,
 ) -> tuple[str, int, ai_usage.SessionUsage | None]:
     """Stateless text-in/text-out via claude -p. Returns (text, exit_code, usage).
 
     usage is None when the reply carried no envelope to measure.
     """
     cmd = _build_prompt_cmd(model=model)
-    result = subprocess.run(cmd, input=text, capture_output=True, text=True)
+    result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0 and result.stderr:
         log.dim(result.stderr.strip())
     reply, usage = _unwrap_prompt_output(result.stdout)
@@ -199,6 +199,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=inv.cwd,
     )
     _send_stdin(proc, inv.prompt)
     stream_progress(proc, inv.session_log, label=inv.label)
@@ -216,6 +217,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stdout=subprocess.PIPE,
         stderr=sys.stderr,
         text=True,
+        cwd=inv.cwd,
     )
     _send_stdin(proc, inv.prompt)
     _stream_fix_output(proc, inv.session_log)

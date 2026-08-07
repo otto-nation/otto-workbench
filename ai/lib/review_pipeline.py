@@ -268,6 +268,7 @@ class PhaseRunner:
     ) -> AgentInvocation:
         return AgentInvocation(
             prompt=prompt,
+            cwd=str(self.job.wt_path),
             session_log=session_log,
             add_dirs=build_add_dirs(self.job.wt_path, self.job.artifact_dir),
             agent=self.agent,

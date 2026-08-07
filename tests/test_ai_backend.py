@@ -1,6 +1,8 @@
 """Tests for ai_backend — dispatch, invocation shape, and usage ledger emission."""
 
+import io
 import json
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -127,6 +129,7 @@ class TestAgentInvocation:
         import ai_backend
 
         inv = ai_backend.AgentInvocation(prompt="hi")
+        assert inv.cwd == ""
         assert inv.session_log == ""
         assert inv.add_dirs == []
         assert inv.agent is None
@@ -164,7 +167,8 @@ class TestInvokeAgentRecords:
         log = tmp_path / "session.jsonl"
         _session_log(log)
         ai_backend.invoke_agent(ai_backend.AgentInvocation(
-            prompt="p", session_log=str(log), model="claude-sonnet-4-6",
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+            model="claude-sonnet-4-6",
         ))
         rec = _records(ledger)[0]
         assert rec["entry_point"] == "agent"
@@ -179,7 +183,9 @@ class TestInvokeAgentRecords:
         log = tmp_path / "session.jsonl"
         _session_log(log)
         fake_backend.exit_code = 1
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(prompt="p", session_log=str(log)))
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
         rec = _records(ledger)[0]
         assert rec["exit_code"] == 1
         assert rec["cost"] == pytest.approx(1.0)
@@ -188,7 +194,7 @@ class TestInvokeAgentRecords:
         log = tmp_path / "session.jsonl"
         _session_log(log)
         ai_backend.invoke_agent(ai_backend.AgentInvocation(
-            prompt="p", session_log=str(log), task="review-group",
+            prompt="p", cwd=str(tmp_path), session_log=str(log), task="review-group",
         ))
         assert _records(ledger)[0]["task"] == "review-group"
 
@@ -196,7 +202,9 @@ class TestInvokeAgentRecords:
         """Ledger labels ride along on the invocation; the backend still sees one object."""
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        inv = ai_backend.AgentInvocation(prompt="p", session_log=str(log), task="review-group")
+        inv = ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log), task="review-group",
+        )
         ai_backend.invoke_agent(inv)
         assert fake_backend.calls == [("invoke_agent", inv)]
 
@@ -204,13 +212,16 @@ class TestInvokeAgentRecords:
         log = tmp_path / "session.jsonl"
         _session_log(log)
         fake_backend.exit_code = 42
-        inv = ai_backend.AgentInvocation(prompt="p", session_log=str(log))
+        inv = ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        )
         assert ai_backend.invoke_agent(inv) == 42
 
     def test_missing_session_log_records_nothing(self, ledger, fake_backend, tmp_path):
         """No usable usage source is better recorded as absent than as zero."""
         ai_backend.invoke_agent(ai_backend.AgentInvocation(
-            prompt="p", session_log=str(tmp_path / "never-written.jsonl"),
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "never-written.jsonl"),
         ))
         assert _records(ledger) == []
 
@@ -219,13 +230,15 @@ class TestInvokeFixRecords:
     def test_records_when_session_log_written(self, ledger, fake_backend, tmp_path):
         log = tmp_path / "fix.jsonl"
         _session_log(log, cost=0.25, input_tokens=10)
-        ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p", session_log=str(log)))
+        ai_backend.invoke_fix(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
         rec = _records(ledger)[0]
         assert rec["entry_point"] == "fix"
         assert rec["cost"] == pytest.approx(0.25)
 
-    def test_no_session_log_records_nothing(self, ledger, fake_backend):
-        ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
+    def test_no_session_log_records_nothing(self, ledger, fake_backend, tmp_path):
+        ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p", cwd=str(tmp_path)))
         assert _records(ledger) == []
 
 
@@ -238,7 +251,9 @@ class TestLedgerFailureIsolation:
             raise RuntimeError("ledger exploded")
 
         monkeypatch.setattr(ai_usage, "record", boom)
-        inv = ai_backend.AgentInvocation(prompt="p", session_log=str(log))
+        inv = ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        )
         assert ai_backend.invoke_agent(inv) == 0
 
 
@@ -247,8 +262,121 @@ class TestScriptName:
         monkeypatch.setattr(sys, "argv", ["/usr/local/bin/pr-rebase", "--fix"])
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(prompt="p", session_log=str(log)))
+        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
         assert _records(ledger)[0]["script"] == "pr-rebase"
+
+
+class TestCwdIsRequired:
+    """#613: an AI call with no cwd runs in whichever worktree launched the process.
+
+    On a bare repo with sibling worktrees that is another live branch. A
+    `pr rebase --fix` targeting one worktree ran bats in another and truncated
+    its copy of pr-rebase to 431 lines.
+    """
+
+    def test_invoke_agent_refuses_an_empty_cwd(self, fake_backend):
+        with pytest.raises(ValueError, match="requires a non-empty cwd"):
+            ai_backend.invoke_agent(ai_backend.AgentInvocation(prompt="p"))
+        assert fake_backend.calls == [], "backend was reached despite the guard"
+
+    def test_invoke_fix_refuses_an_empty_cwd(self, fake_backend):
+        with pytest.raises(ValueError, match="requires a non-empty cwd"):
+            ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
+        assert fake_backend.calls == []
+
+    def test_prompt_refuses_an_empty_cwd(self, fake_backend):
+        with pytest.raises(ValueError, match="requires a non-empty cwd"):
+            ai_backend.prompt("hi", cwd="")
+        assert fake_backend.calls == []
+
+    def test_prompt_requires_cwd_as_a_keyword(self):
+        """No positional slot to fill by accident, and no default to inherit."""
+        import inspect
+
+        param = inspect.signature(ai_backend.prompt).parameters["cwd"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        assert param.default is inspect.Parameter.empty
+
+    @pytest.mark.parametrize("call", [
+        lambda cwd: ai_backend.prompt("hi", cwd=cwd),
+        lambda cwd: ai_backend.invoke_agent(
+            ai_backend.AgentInvocation(prompt="p", cwd=cwd),
+        ),
+        lambda cwd: ai_backend.invoke_fix(
+            ai_backend.AgentInvocation(prompt="p", cwd=cwd),
+        ),
+    ], ids=["prompt", "invoke_agent", "invoke_fix"])
+    def test_a_nonexistent_cwd_is_named_rather_than_inherited(
+        self, fake_backend, tmp_path, call,
+    ):
+        """A typo'd path must not fall through to Popen's inherited directory."""
+        with pytest.raises(ValueError, match="not a directory"):
+            call(str(tmp_path / "gone"))
+        assert fake_backend.calls == []
+
+    def test_prompt_forwards_cwd_to_the_backend(self, fake_backend, tmp_path):
+        ai_backend.prompt("hi", cwd=str(tmp_path))
+        assert fake_backend.calls[0][2]["cwd"] == str(tmp_path)
+
+
+class TestBackendsRunInTheGivenDirectory:
+    """The cwd must reach subprocess, not just the invocation object."""
+
+    def test_claude_prompt_passes_cwd_to_subprocess(self, monkeypatch, tmp_path):
+        import ai_backend_claude
+
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, '{"result": "ok"}', "")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        ai_backend_claude.prompt("hi", cwd=str(tmp_path))
+        assert seen["cwd"] == str(tmp_path)
+
+    def test_pi_prompt_passes_cwd_to_subprocess(self, monkeypatch, tmp_path):
+        import ai_backend_pi
+
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, "ok", "")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        ai_backend_pi.prompt("hi", cwd=str(tmp_path))
+        assert seen["cwd"] == str(tmp_path)
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_claude_agents_run_in_the_invocation_cwd(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        import ai_backend_claude
+
+        seen = {}
+
+        class FakeProc:
+            returncode = 0
+            stdin = io.StringIO()
+            stdout = io.StringIO("")
+            stderr = io.StringIO("")
+
+            def wait(self):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            seen.update(kwargs)
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        log = tmp_path / "s.jsonl"
+        getattr(ai_backend_claude, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        assert seen["cwd"] == str(tmp_path)
 
 
 class TestBuildAddDirs:

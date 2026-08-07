@@ -2038,6 +2038,46 @@ def test_fresh_checks_out_branch_on_wrong_branch():
     assert checkout_calls[0] == ["git", "checkout", "-B", "feat/my-branch", "origin/feat/my-branch"]
 
 
+def test_fresh_refuses_to_check_out_into_default_branch_worktree():
+    """Regression: checking out into main/ let the next main sync eat the branch."""
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+    ctx.current_branch = "main"
+    checkout_calls = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "checkout"]:
+            checkout_calls.append(cmd)
+        stdout = "refs/remotes/origin/main\n" if "symbolic-ref" in cmd else ""
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 1
+    assert len(checkout_calls) == 0
+
+
+def test_fresh_refuses_to_rebase_the_default_branch():
+    """The protected-branch check follows origin/HEAD, not a hardcoded 'main'."""
+    ctx = mock.MagicMock()
+    ctx.branch = "trunk"
+    ctx.current_branch = "trunk"
+
+    def fake_run(cmd, **kwargs):
+        stdout = "refs/remotes/origin/trunk\n" if "symbolic-ref" in cmd else ""
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        result = pr_rebase_cli._fresh("/fake", ctx, False)
+
+    assert result == 1
+
+
 def test_fresh_checkout_failure_returns_error():
     """Checkout failure aborts with return code 1."""
     ctx = mock.MagicMock()

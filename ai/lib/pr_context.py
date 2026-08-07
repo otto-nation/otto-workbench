@@ -7,6 +7,7 @@ review-threads, and review_common.detect_repo().
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -118,14 +119,65 @@ def resolve(
     )
 
 
+def _worktree_is_dirty(cwd: str) -> bool:
+    """Whether *cwd* has uncommitted changes."""
+    r = subprocess.run(
+        ["git", "-C", cwd, "status", "--porcelain"],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def _unpushed_count(cwd: str, branch: str) -> int:
+    """Commits in *cwd* that origin/*branch* does not have.
+
+    Only meaningful once origin/<branch> has been fetched — against a stale
+    remote ref this over-reports, which is the safe direction for callers
+    using it to decide whether a hard reset would destroy work.
+    """
+    r = subprocess.run(
+        ["git", "-C", cwd, "rev-list", f"origin/{branch}..HEAD", "--count"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return 0
+    return int(r.stdout.strip())
+
+
+def _reset_blocker(wt_path: str, branch: str) -> str | None:
+    """Why hard-resetting *wt_path* to origin/*branch* would destroy work.
+
+    Returns None when the reset is safe. Call only after fetching the branch.
+    """
+    current = _current_branch_quiet(wt_path)
+    if current != branch:
+        return f"it is on {current or 'detached HEAD'}, not {branch}"
+    if _worktree_is_dirty(wt_path):
+        return "it has uncommitted changes"
+    unpushed = _unpushed_count(wt_path, branch)
+    if unpushed:
+        return f"it has {unpushed} unpushed commit(s)"
+    return None
+
+
 def fetch_and_reset(wt_path: str, branch: str) -> None:
-    """Fetch branch from origin and hard-reset worktree to match."""
+    """Fetch branch from origin and hard-reset worktree to match.
+
+    Skips the reset unless *wt_path* is actually on *branch*, clean, and fully
+    pushed. Callers locate this worktree by branch, but find_worktree_for_branch
+    can return one that merely has the right directory name — resetting it
+    unconditionally destroys whatever is actually checked out there.
+    """
     try:
         subprocess.run(
             ["git", "-C", wt_path, "fetch", "origin", branch],
             capture_output=True, text=True, check=True,
         )
     except Exception:
+        return
+    blocker = _reset_blocker(wt_path, branch)
+    if blocker:
+        log.warn(f"Not resetting {wt_path} to origin/{branch} — {blocker}")
         return
     try:
         subprocess.run(
@@ -161,11 +213,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         log.info(f"Worktree is on {current}, not {ctx.branch} — skipping update to remote")
         return ctx
 
-    r = subprocess.run(
-        ["git", "-C", cwd, "status", "--porcelain"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0 and r.stdout.strip():
+    if _worktree_is_dirty(cwd):
         log.warn("Worktree has uncommitted changes — skipping update to remote")
         return ctx
 
@@ -188,11 +236,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
     if local_sha == remote_sha:
         return ctx
 
-    r = subprocess.run(
-        ["git", "-C", cwd, "rev-list", f"origin/{ctx.branch}..HEAD", "--count"],
-        capture_output=True, text=True,
-    )
-    unpushed = int(r.stdout.strip()) if r.returncode == 0 else 0
+    unpushed = _unpushed_count(cwd, ctx.branch)
     if unpushed > 0:
         log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
         return ctx
@@ -424,33 +468,132 @@ def is_bare_repo(cwd: str | None = None) -> bool:
         return False
 
 
-def find_worktree_for_branch(
-    branch: str, cwd: str | None = None,
-) -> Path | None:
-    """Find the worktree directory checked out on *branch*.
+def _parse_worktree_block(block: str) -> tuple[Path, str | None] | None:
+    """One ``--porcelain`` record as ``(path, branch)``, or None if not a checkout.
 
-    Prefers an exact ``[branch]`` tag match from ``git worktree list``.
-    Falls back to matching by sanitized directory name (slashes to dashes)
-    so detached-HEAD worktrees are still found.
+    Branch is None for a detached HEAD. The bare repo is not a checkout and is
+    dropped — handing it back as one would point callers at the .git directory.
+    """
+    path: Path | None = None
+    branch: str | None = None
+    for line in block.splitlines():
+        if line == "bare":
+            return None
+        if line.startswith("worktree "):
+            path = Path(line.removeprefix("worktree "))
+        elif line.startswith("branch refs/heads/"):
+            branch = line.removeprefix("branch refs/heads/")
+    return (path, branch) if path else None
+
+
+def _worktree_entries(cwd: str | None = None) -> list[tuple[Path, str | None]]:
+    """Every non-bare worktree as ``(path, branch)``; branch None when detached.
+
+    Parses ``--porcelain`` rather than the human listing, which packs path,
+    SHA and ``[branch]`` onto one whitespace-separated line: a path containing
+    a space gets truncated by a naive split, and one containing a bracket reads
+    as a branch tag. Porcelain gives the path verbatim on its own line.
     """
     try:
         r = subprocess.run(
-            ["git", "worktree", "list"],
+            ["git", "worktree", "list", "--porcelain"],
             capture_output=True, text=True, cwd=cwd,
         )
     except Exception:
-        return None
+        return []
+    parsed = map(_parse_worktree_block, r.stdout.split("\n\n"))
+    return [entry for entry in parsed if entry]
+
+
+def find_worktree_for_branch(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Find the worktree git reports as checked out on *branch*.
+
+    Falls back to a worktree whose directory name matches the sanitized branch
+    (slashes to dashes) so detached-HEAD worktrees are still found — but only
+    when git reports no branch for it. A worktree named ``main/`` with someone
+    else's branch checked out is not the main worktree, and callers that reset
+    or check out what they get back would clobber that branch.
+
+    Use find_worktree_dir_named when you only need a working directory.
+    """
+    entries = _worktree_entries(cwd)
+    for path, wt_branch in entries:
+        if wt_branch == branch:
+            return path
     sanitized = branch.replace("/", "-")
-    dir_fallback: Path | None = None
-    for line in r.stdout.splitlines():
-        if f"[{branch}]" in line:
-            return Path(line.split()[0])
-        if dir_fallback is not None:
+    for path, wt_branch in entries:
+        if wt_branch is None and path.name == sanitized:
+            return path
+    return None
+
+
+def find_worktree_dir_named(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Any worktree whose directory is named after *branch*, whatever is in it.
+
+    Answers "which directory is this repo's <branch> checkout" rather than
+    "which worktree is on <branch>". Only for callers that need somewhere to
+    run read-only commands — never for ones that reset or check out the result,
+    which is how a feature branch parked in main/ got hard-reset away.
+    """
+    sanitized = branch.replace("/", "-")
+    for path, _ in _worktree_entries(cwd):
+        if path.name == sanitized:
+            return path
+    return None
+
+
+def create_worktree_for_branch(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """Create a worktree for *branch*, or None if it can't be created.
+
+    Delegates to ``wt switch`` so the worktree lands wherever worktrunk's
+    path template puts it, keeping tooling-created worktrees in the same
+    layout as hand-created ones.
+    """
+    path = wt_switch(branch, cwd)
+    if not path:
+        log.warn(f"Could not create a worktree for {branch}")
+        return None
+    log.info(f"Created worktree for {branch} at {path}")
+    return Path(path)
+
+
+def wt_switch(ref: str, cwd: str | None = None) -> str | None:
+    """Path of the worktree ``wt switch`` lands on for *ref*, or None.
+
+    *ref* is anything worktrunk accepts — a branch name or a ``pr:<n>`` ref.
+    Non-interactive and hook-free so it is safe to call from tooling.
+    """
+    try:
+        r = subprocess.run(
+            ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y"]
+            + (["-C", cwd] if cwd else []),
+            capture_output=True, text=True,
+        )
+    except Exception:
+        log.warn("worktrunk (wt) is not available — cannot switch worktrees")
+        return None
+    return parse_wt_switch_path(r.stdout)
+
+
+def parse_wt_switch_path(stdout: str) -> str | None:
+    """Pull the ``path`` field out of ``wt switch --format json`` output."""
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
             continue
-        wt_path = line.split()[0]
-        if Path(wt_path).name == sanitized:
-            dir_fallback = Path(wt_path)
-    return dir_fallback
+        try:
+            path = json.loads(line).get("path", "")
+        except json.JSONDecodeError:
+            continue
+        if path:
+            return path
+    return None
 
 
 def default_branch(cwd: str | Path | None = None) -> str:
@@ -478,12 +621,27 @@ def resolve_bare_repo_worktree(
 ) -> Path | None:
     """Best-effort worktree discovery for bare repos.
 
-    Tries the requested branch first (with fuzzy resolution),
-    then the default branch.
+    Tries the requested branch first (with fuzzy resolution), then creates a
+    worktree for it. Only falls back to the default branch's worktree when no
+    branch was requested at all.
+
+    Never substitutes another branch's worktree for an explicitly requested
+    branch: callers check the branch out, so handing back the default branch's
+    worktree makes them displace it. See create_worktree_for_branch.
     """
     if branch:
         wt = _find_worktree_by_branch(branch, cwd)
         if wt:
             return wt
+        return create_worktree_for_branch(branch, cwd)
 
-    return find_worktree_for_branch(default_branch(cwd), cwd)
+    # With no branch requested this is "give me a working directory for this
+    # repo", not "is this worktree on <default>" — so the directory named after
+    # the default branch will do even when something else is checked out there.
+    # Returning None instead would strand ~10 callers that dereference
+    # worktree_root without a guard.
+    default = default_branch(cwd)
+    return (
+        find_worktree_for_branch(default, cwd)
+        or find_worktree_dir_named(default, cwd)
+    )

@@ -1029,14 +1029,14 @@ def _run_self_review_body(
         os.write(json_stdout, (summary + "\n").encode())
 
 
-def _resolve_wt_path(repo_dir: str, pr_input: str) -> str:
+def _resolve_wt_path(repo_dir: str, branch: str) -> str:
     cwd = repo_dir or None
     toplevel = pr_context._git_toplevel(cwd)
     if toplevel is not None:
         return str(toplevel)
 
     if not repo_dir and pr_context.is_bare_repo(cwd):
-        return _resolve_bare_repo_worktree(pr_input)
+        return _resolve_bare_repo_worktree(branch)
 
     if repo_dir:
         log.error(f"Not a git repository: {repo_dir}")
@@ -1088,7 +1088,9 @@ def _run_self_review(args) -> None:
     if is_branch:
         pr_input = _resolve_branch_input(pr_input, repo_dir)
 
-    wt_path = _resolve_wt_path(repo_dir, pr_input)
+    # Only a branch name is a worktree target — passing a PR ref here would have
+    # the resolver create a worktree on a branch named after the PR number.
+    wt_path = _resolve_wt_path(repo_dir, pr_input if is_branch else "")
 
     ctx = pr_context.resolve(
         pr=pr_input if is_pr else None,

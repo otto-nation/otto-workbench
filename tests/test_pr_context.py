@@ -132,54 +132,67 @@ def test_is_bare_repo_false(mock_sub):
     assert pr_context.is_bare_repo("/some/path") is False
 
 
+def _porcelain(*entries: tuple[str, str | None]) -> str:
+    """``git worktree list --porcelain`` output for (path, branch) pairs.
+
+    A None branch renders as a detached-HEAD entry.
+    """
+    blocks = [
+        f"worktree {path}\nHEAD abc1234\n"
+        + (f"branch refs/heads/{branch}\n" if branch else "detached\n")
+        for path, branch in entries
+    ]
+    return "\n".join(blocks)
+
+
 @patch.object(pr_context, "subprocess")
 def test_find_worktree_for_branch_found(mock_sub):
-    mock_sub.run.return_value = MagicMock(
-        stdout="/home/user/repo/feat-branch  abc1234 [feat/branch]\n"
-               "/home/user/repo/main         def5678 [main]\n",
-    )
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/feat-branch", "feat/branch"),
+        ("/home/user/repo/main", "main"),
+    ))
     result = pr_context.find_worktree_for_branch("feat/branch")
     assert result == Path("/home/user/repo/feat-branch")
 
 
 @patch.object(pr_context, "subprocess")
 def test_find_worktree_for_branch_not_found(mock_sub):
-    mock_sub.run.return_value = MagicMock(
-        stdout="/home/user/repo/main  def5678 [main]\n",
-    )
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/main", "main"),
+    ))
     result = pr_context.find_worktree_for_branch("nonexistent")
     assert result is None
 
 
 @patch.object(pr_context, "subprocess")
 def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
-    """Detached-HEAD worktree has no [branch] — falls back to sanitized dir name."""
-    mock_sub.run.return_value = MagicMock(
-        stdout="/home/user/repo/isaac-feat-auth  abc1234 (detached HEAD)\n"
-               "/home/user/repo/main             def5678 [main]\n",
-    )
+    """Detached-HEAD worktree has no branch — falls back to sanitized dir name."""
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/isaac-feat-auth", None),
+        ("/home/user/repo/main", "main"),
+    ))
     result = pr_context.find_worktree_for_branch("isaac/feat/auth")
     assert result == Path("/home/user/repo/isaac-feat-auth")
 
 
 @patch.object(pr_context, "subprocess")
-def test_find_worktree_for_branch_prefers_branch_tag_over_dir_name(mock_sub):
-    """When [branch] matches, prefer it over directory name fallback."""
-    mock_sub.run.return_value = MagicMock(
-        stdout="/home/user/repo/wrong-dir  abc1234 [feat/branch]\n"
-               "/home/user/repo/feat-branch  def5678 [main]\n",
-    )
+def test_find_worktree_for_branch_prefers_branch_over_dir_name(mock_sub):
+    """When git reports the branch, prefer it over the directory-name fallback."""
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/wrong-dir", "feat/branch"),
+        ("/home/user/repo/feat-branch", None),
+    ))
     result = pr_context.find_worktree_for_branch("feat/branch")
     assert result == Path("/home/user/repo/wrong-dir")
 
 
 @patch.object(pr_context, "subprocess")
 def test_find_worktree_for_branch_sanitized_no_match(mock_sub):
-    """Neither [branch] nor sanitized dir name matches — returns None."""
-    mock_sub.run.return_value = MagicMock(
-        stdout="/home/user/repo/other-branch  abc1234 (detached HEAD)\n"
-               "/home/user/repo/main          def5678 [main]\n",
-    )
+    """Neither the branch nor a sanitized dir name matches — returns None."""
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/other-branch", None),
+        ("/home/user/repo/main", "main"),
+    ))
     result = pr_context.find_worktree_for_branch("feat/nonexistent")
     assert result is None
 

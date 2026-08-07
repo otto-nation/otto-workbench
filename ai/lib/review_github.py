@@ -281,12 +281,12 @@ def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict:
         variables["endCursor"] = cursor
     rc, stdout = _gh_graphql(_THREADS_PAGE_QUERY, variables)
     if rc != 0:
-        log.warn("Failed to fetch a page of review threads — the thread set is incomplete")
+        log.warn("Failed to fetch a page of review threads (fetch) — the thread set is incomplete")
         return {}
     try:
         data = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
-        log.warn("Failed to parse a page of review threads — the thread set is incomplete")
+        log.warn("Failed to fetch a page of review threads (parse) — the thread set is incomplete")
         return {}
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
     return pr_node.get("reviewThreads") or {}

@@ -3236,7 +3236,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="", pr=pr, ctx=ro.PRContext(),
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
             mode="self",
         )
         with contextlib.redirect_stdout(io.StringIO()):
@@ -3260,7 +3259,6 @@ class TestCollectPreflightData:
             repo="r", pr_number="1", pr=pr, ctx=ro.PRContext(),
             wt_path=str(repo), review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            reviews_dir=str(tmp_path),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = ro.collect_preflight_data(job)

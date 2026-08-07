@@ -26,6 +26,13 @@ _session() {
   touch -t "$(_stamp "$age_seconds")" "$file"
 }
 
+# Epoch seconds for SECONDS_AGO in the past.
+_epoch_ago() {
+  local now
+  now=$(date +%s)
+  printf '%s' "$((now - $1))"
+}
+
 # touch -t timestamp ([[CC]YY]MMDDhhmm) for AGE_SECONDS ago, GNU then BSD.
 _stamp() {
   local out
@@ -82,9 +89,4 @@ _stamp() {
   _session now 0
   run _has_enough_sessions "$SESSIONS" "$(_epoch_ago 120)" 1
   [ "$status" -eq 0 ]
-}
-
-# Epoch seconds for SECONDS_AGO in the past.
-_epoch_ago() {
-  printf '%s' "$(($(date +%s) - $1))"
 }

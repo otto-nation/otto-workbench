@@ -135,9 +135,16 @@ _run_hook() {
   echo "$tool_input" | bash -c "$hook_cmd" 2>&1
 }
 
+# The VAR=, compound-cd, brace-expansion, and function-definition checks share a
+# single hook — it strips quoted spans off the first line once, then runs each
+# regex. Selecting by a phrase from any one message returns that same command.
+_get_bash_hook() {
+  jq -r --arg needle "$1" '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
+    select(.command | contains($needle)) | .command' "$SETTINGS"
+}
+
 _get_brace_hook() {
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
-    select(.command | test("Brace expansion")) | .command' "$SETTINGS"
+  _get_bash_hook "Brace expansion"
 }
 
 _get_branch_hook() {
@@ -264,6 +271,114 @@ _get_pr_create_hook() {
   local hook
   hook=$(_get_pr_create_hook)
   run _run_hook "$hook" '{"tool_input":{"command":"gh api repos/owner/repo/pulls"}}'
+  [ "$status" -eq 0 ]
+}
+
+# ── statement-anchored Bash guardrails ──────────────────────────────────────
+# These checks match at the start of any statement, not just the start of the
+# command — a leading no-op token must not be a way around them. They scope to
+# the first line so a heredoc body being written to a file is not scanned as if
+# it were the command itself.
+#
+# ceiling: the hook strips quoted spans with two sed passes, which mis-handles
+# escaped quotes and embedded apostrophes, in both directions. An unpaired
+# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
+# the real cd away and is not blocked; an escaped quote ends a span early, so
+# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
+# expansion. Both outcomes cost at most one permission prompt — these guardrails
+# steer command style, they are not a security boundary. Upgrade to a real
+# tokenizer if either misfire shows up on a command worth running.
+
+@test "the four first-line checks live in exactly one hook" {
+  local needle count
+  for needle in "function_definition" "VAR=value" "Compound cd" "Brace expansion"; do
+    count=$(_get_bash_hook "$needle" | wc -l | tr -d ' ')
+    [ "$count" -eq 1 ] || {
+      echo "'$needle' matched $count hooks — the quote-stripping preamble was duplicated"
+      return 1
+    }
+  done
+}
+
+@test "funcdef hook: blocks a cd() no-op stub wrapping a grep" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" '{"tool_input":{"command":"cd() { :; }; W=/tmp/x; grep -rn foo \"$W/tests/\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"function_definition"* ]]
+}
+
+@test "funcdef hook: blocks the function keyword form" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" '{"tool_input":{"command":"function run { echo hi; }; run"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "funcdef hook: allows a plain grep with parens inside quotes" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"grep -rnE '(worktree list|worktree_list)' /tmp/x/tests/ | head -40\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "var hook: blocks a VAR=value prefix at the start" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"W=/tmp/x grep -rn foo /tmp/x"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "var hook: blocks a VAR=value assignment after a leading token" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"true; W=/tmp/x; grep -rn foo /tmp/x"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "var hook: allows uppercase flag values mid-command" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"docker run -e FOO=bar alpine"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "cd hook: blocks a compound cd after a leading token" {
+  local hook
+  hook=$(_get_bash_hook "Compound cd")
+  run _run_hook "$hook" '{"tool_input":{"command":"mkdir -p /tmp/x; cd /tmp/x && ls"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "cd hook: allows a cd nested inside a quoted argument" {
+  local hook
+  hook=$(_get_bash_hook "Compound cd")
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"bash -c 'cd /tmp/x && ls'\"}}"
+  [ "$status" -eq 0 ]
+}
+
+# The bodies below each put the pattern after a statement separator, which is
+# what the whole-command form matched on — a body line starting with the pattern
+# was never a false positive, since the regex only anchors to start-of-string.
+
+@test "funcdef hook: allows a function definition inside a heredoc body" {
+  local hook
+  hook=$(_get_bash_hook "function_definition")
+  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/lib.sh <<EOF\nsetup; run() { echo hi; }\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "var hook: allows an assignment inside a heredoc body" {
+  local hook
+  hook=$(_get_bash_hook "VAR=value")
+  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; FOO=bar\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "cd hook: allows a compound cd inside a heredoc body" {
+  local hook
+  hook=$(_get_bash_hook "Compound cd")
+  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\nmkdir -p /tmp/y; cd /tmp/y && ls\nEOF"}}'
   [ "$status" -eq 0 ]
 }
 

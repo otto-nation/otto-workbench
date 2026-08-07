@@ -104,17 +104,23 @@ def hint_for(diagnosis: Diagnosis) -> str:
     return ""
 
 
-def turns_for(diagnosis: Diagnosis, max_turns: int) -> int:
+def turns_for(
+    diagnosis: Diagnosis, max_turns: int, *, ceiling: int = RETRY_MAX_TURNS,
+) -> int:
     """Turn budget for a retry.
 
     Only turn exhaustion earns a bigger budget — a transient API error or a
-    missing result record would fail identically with more turns. Doubling is
-    capped at the shared ceiling, but never lowers a budget that was already
-    scaled above it.
+    missing result record would fail identically with more turns.
+
+    `ceiling` belongs to the caller, not to the module: RETRY_MAX_TURNS is
+    sized for the review pipeline's group phases, where 15 turns double to 30.
+    A caller already operating above that — the fix pass runs at 60 — would see
+    the doubling silently cancelled, so the result is floored at the original
+    budget and such a caller passes a ceiling scaled to its own work.
     """
     if diagnosis.kind is not DiagnosisKind.MAX_TURNS:
         return max_turns
-    return min(max_turns * 2, max(RETRY_MAX_TURNS, max_turns))
+    return max(max_turns, min(max_turns * 2, ceiling))
 
 
 def retry_unproductive(
@@ -127,13 +133,15 @@ def retry_unproductive(
     produced: Callable[[], bool],
     recover: Callable[[], None] | None = None,
     hint_select: Callable[[Diagnosis], str] = hint_for,
+    ceiling: int = RETRY_MAX_TURNS,
 ) -> Diagnosis | None:
     """Give an agent that produced nothing a second attempt.
 
     `invoke(prompt, max_turns)` runs the agent and `produced()` reports whether
     it left anything behind — an output file for a review phase, a checked box
     for a fix pass.  `recover()`, when given, salvages output from the session
-    log before the run is written off.
+    log before the run is written off.  `ceiling` bounds the retry's turn
+    budget — see `turns_for`.
 
     Returns the diagnosis, or None once something was produced.
     """
@@ -146,7 +154,7 @@ def retry_unproductive(
     if not is_retryable(diagnosis):
         return diagnosis
 
-    turns = turns_for(diagnosis, max_turns)
+    turns = turns_for(diagnosis, max_turns, ceiling=ceiling)
     log.warn(
         f"{label} produced no output ({diagnosis.message}) "
         f"— retrying once ({turns} turns)"
@@ -175,6 +183,7 @@ def run_guarded(
     produced: Callable[[], bool],
     recover: Callable[[], None] | None = None,
     hint_select: Callable[[Diagnosis], str] = hint_for,
+    ceiling: int = RETRY_MAX_TURNS,
 ) -> Diagnosis | None:
     """Run an agent and guard the result with `retry_unproductive`.
 
@@ -188,6 +197,7 @@ def run_guarded(
         invoke, prompt, log_path,
         label=label, max_turns=max_turns,
         produced=produced, recover=recover, hint_select=hint_select,
+        ceiling=ceiling,
     )
 
 

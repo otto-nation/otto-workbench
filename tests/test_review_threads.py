@@ -2528,3 +2528,148 @@ class TestWorktreeGuard:
     def test_finish_deferred_work_exits_with_guidance(self, rt, capsys):
         assert_no_worktree_exit(capsys, "isaac/feat/x",
                                 rt._finish_deferred_work, self._ctx(), PRReport())
+
+
+class TestFixRetryBudget:
+    """A retry must outgrow the attempt it replaces, or it fails identically."""
+
+    def test_retry_above_the_first_pass_cap_gets_more_turns(self, rt):
+        assert rt._fix_retry_budget(rt.FIX_MAX_TURNS_CAP) > rt.FIX_MAX_TURNS_CAP
+
+    def test_retry_bump_is_applied(self, rt):
+        assert rt._fix_retry_budget(60) == 60 + rt.FIX_RETRY_TURNS_BUMP
+
+    def test_retry_is_capped_at_the_retry_ceiling(self, rt):
+        assert rt._fix_retry_budget(500) == rt.FIX_RETRY_MAX_TURNS_CAP
+
+    def test_small_budget_floors_at_the_minimum(self, rt):
+        assert rt._fix_retry_budget(5) == rt.FIX_RETRY_TURNS_MIN
+
+
+class TestFixChunks:
+    def test_splits_into_chunks_of_at_most_size(self, rt):
+        chunks = rt._fix_chunks(list(range(41)), 10)
+        assert [len(c) for c in chunks] == [10, 10, 10, 10, 1]
+
+    def test_exact_multiple_has_no_empty_trailing_chunk(self, rt):
+        chunks = rt._fix_chunks(list(range(20)), 10)
+        assert [len(c) for c in chunks] == [10, 10]
+
+    def test_short_list_is_one_chunk(self, rt):
+        assert rt._fix_chunks([1, 2, 3], 10) == [[1, 2, 3]]
+
+    def test_empty_list_is_no_chunks(self, rt):
+        assert rt._fix_chunks([], 10) == []
+
+    def test_chunks_preserve_order_and_lose_nothing(self, rt):
+        items = list(range(41))
+        assert [x for c in rt._fix_chunks(items, 10) for x in c] == items
+
+
+class TestFixChunkSize:
+    """A chunk must fit both caps, or the pass starves on whichever binds first."""
+
+    def test_chunk_fits_the_turn_cap(self, rt):
+        assert rt.FIX_CHUNK_SIZE * rt.FIX_TURNS_PER_ITEM <= rt.FIX_MAX_TURNS_CAP
+
+    def test_chunk_fits_the_budget_cap(self, rt):
+        assert rt.FIX_CHUNK_SIZE * rt.FIX_BUDGET_PER_ITEM <= rt.FIX_MAX_BUDGET_CAP
+
+    def test_a_full_chunk_is_not_capped_down(self, rt):
+        assert rt._fix_turn_budget(rt.FIX_CHUNK_SIZE) == (
+            rt.FIX_CHUNK_SIZE * rt.FIX_TURNS_PER_ITEM
+        )
+
+
+class TestFixBatches:
+    """Threads and items share one budget, so they share one chunk."""
+
+    def test_a_batch_never_exceeds_the_chunk_size(self, rt):
+        batches = rt._fix_batches(list(range(30)), list(range(30, 55)))
+        assert all(
+            len(threads) + len(items) <= rt.FIX_CHUNK_SIZE
+            for threads, items in batches
+        )
+
+    def test_mixed_work_is_not_chunked_kind_by_kind(self, rt):
+        """Chunking each kind separately would put 2x the cap in one pass."""
+        batches = rt._fix_batches(list(range(rt.FIX_CHUNK_SIZE)),
+                                  list(range(100, 100 + rt.FIX_CHUNK_SIZE)))
+        assert len(batches) == 2
+
+    def test_nothing_is_lost_or_reordered(self, rt):
+        threads, items = list(range(7)), list(range(100, 106))
+        batches = rt._fix_batches(threads, items)
+        assert [t for ts, _ in batches for t in ts] == threads
+        assert [i for _, its in batches for i in its] == items
+
+    def test_no_work_is_no_batches(self, rt):
+        assert rt._fix_batches([], []) == []
+
+
+class TestFixPassRetryHeadroom:
+    """The bug: a turn-exhausted retry was handed the budget that just ran out."""
+
+    def _max_turns_log(self, path, turns):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "type": "result", "subtype": "error_max_turns", "num_turns": turns,
+        }) + "\n")
+
+    def test_retry_of_a_capped_pass_gets_more_turns(self, rt, tmp_path):
+        self._max_turns_log(rt._fix_session_log(tmp_path), rt.FIX_MAX_TURNS_CAP)
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [ ] fix the thing\n")
+        budgets = []
+
+        with patch.object(rt, "_invoke_fix_agent",
+                          side_effect=lambda p, *a, **k: budgets.append(k["max_turns"]) or 0):
+            rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=rt.FIX_MAX_TURNS_CAP, max_budget=1.0, label="Fix pass",
+            )
+
+        assert budgets == [rt.FIX_MAX_TURNS_CAP, rt.FIX_MAX_TURNS_CAP * 2]
+
+
+class TestRunFixBatch:
+    """A batch is budgeted for its own items, not for the whole pass."""
+
+    def _ctx(self):
+        return SimpleNamespace(branch="isaac/feat/x", repo="owner/repo")
+
+    def _run(self, rt, tmp_path, threads, items):
+        with patch.object(rt, "_build_tracking_file") as build, \
+             patch.object(rt, "_render_fix_template", return_value="PROMPT"), \
+             patch.object(rt, "_guarded_fix_pass", return_value=None) as guarded, \
+             patch.object(rt, "_parse_tracking_results",
+                          return_value=rt.TrackingResult()):
+            (tmp_path / "tracking.md").write_text("")
+            result = rt._run_fix_batch(
+                threads, items, {}, tmp_path / "tracking.md", tmp_path, None,
+                self._ctx(), 42, label="Fix pass (batch 1/5)",
+                default_branch="main",
+            )
+        return result, build, guarded
+
+    def test_budget_is_sized_to_the_chunk(self, rt, tmp_path):
+        result, _, guarded = self._run(rt, tmp_path, list(range(3)), [])
+        assert result.max_turns == rt._fix_turn_budget(3)
+        assert result.max_budget == rt._fix_budget_usd(3)
+        assert guarded.call_args.kwargs["max_turns"] == rt._fix_turn_budget(3)
+
+    def test_tracking_file_is_rebuilt_with_only_this_chunk(self, rt, tmp_path):
+        threads = list(range(3))
+        _, build, _ = self._run(rt, tmp_path, threads, [9])
+        assert build.call_args.args[1] == threads
+        assert build.call_args.kwargs["fixable_items"] == [9]
+
+
+class TestMergeTracking:
+    def test_batch_results_accumulate(self, rt):
+        total = rt.TrackingResult(fixed=["a"], deferred_items=["z"])
+        rt._merge_tracking(total, rt.TrackingResult(fixed=["b"], deferred=["c"]))
+        assert total.fixed == ["a", "b"]
+        assert total.deferred == ["c"]
+        assert total.deferred_items == ["z"]

@@ -71,6 +71,12 @@ pr comments --fix --pr <NUMBER>
 
 Run synchronously — do **not** background this command.
 
+A PR with more fixable items than one agent pass can afford is split into
+batches, each run as its own invocation with its own turn and dollar budget.
+Progress lines read `Fix pass (batch N/M)`, and the JSON report's `batches`
+field says how many ran — `max_turns` and `max_budget` describe one batch, not
+the whole pass.
+
 **Invocation rules:** Capture both stderr and stdout together with `2>&1`.
 The dashboard and agent progress appear first (stderr), followed by the JSON
 report starting with `{` on its own line — parse from there.

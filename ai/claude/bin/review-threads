@@ -61,6 +61,15 @@ FIX_MODEL = "sonnet"
 DIFF_CONTEXT_MAX_LINES = 100
 FIX_RETRY_TURNS_MIN = 30
 FIX_RETRY_TURNS_BUMP = 15
+# A retry has already proven the first pass's cap insufficient, so it needs
+# headroom above FIX_MAX_TURNS_CAP rather than the same budget again.
+FIX_RETRY_MAX_TURNS_CAP = 120
+# Largest item count that fits both caps at the per-item rates above. Derived,
+# not chosen: raising either cap or lowering either rate widens the chunk.
+FIX_CHUNK_SIZE = min(
+    FIX_MAX_TURNS_CAP // FIX_TURNS_PER_ITEM,
+    int(FIX_MAX_BUDGET_CAP // FIX_BUDGET_PER_ITEM),
+)
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "lib" / "review-templates"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
@@ -615,7 +624,34 @@ def _fix_budget_usd(item_count: int) -> float:
 
 
 def _fix_retry_budget(original: int) -> int:
-    return min(max(FIX_RETRY_TURNS_MIN, original + FIX_RETRY_TURNS_BUMP), FIX_MAX_TURNS_CAP)
+    """Turns for a retry pass.
+
+    Capped by FIX_RETRY_MAX_TURNS_CAP rather than the first pass's cap: clamping
+    a retry to the budget that just ran out guarantees the same failure, which
+    is what made the bump dead precisely when a retry was warranted.
+    """
+    return min(max(FIX_RETRY_TURNS_MIN, original + FIX_RETRY_TURNS_BUMP),
+               FIX_RETRY_MAX_TURNS_CAP)
+
+
+def _fix_chunks(items: list, size: int) -> list[list]:
+    """Split work into runs a single agent pass can actually finish."""
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _fix_batches(threads: list, items: list) -> list[tuple[list, list]]:
+    """Split threads and comment items into batches of at most FIX_CHUNK_SIZE.
+
+    Chunked as one combined list rather than two, because the budget the chunk
+    size protects is spent on the batch as a whole — chunking each kind on its
+    own and pairing them up would put twice the cap in front of one agent.
+    """
+    tagged = [(True, t) for t in threads] + [(False, i) for i in items]
+    return [
+        ([w for is_thread, w in chunk if is_thread],
+         [w for is_thread, w in chunk if not is_thread])
+        for chunk in _fix_chunks(tagged, FIX_CHUNK_SIZE)
+    ]
 
 
 def _fix_session_log(wt_path: Path) -> str:
@@ -670,7 +706,72 @@ def _guarded_fix_pass(
         label=label, max_turns=max_turns,
         produced=lambda: _count_checked(tracking_file) > 0,
         hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
+        ceiling=FIX_RETRY_MAX_TURNS_CAP,
     )
+
+
+@dataclass
+class FixBatchResult:
+    """What one batch of the fix pass produced."""
+
+    tracking: TrackingResult
+    unproductive: Diagnosis | None
+    max_turns: int
+    max_budget: float
+
+
+def _run_fix_batch(
+    chunk_threads: list, chunk_items: list, threads_by_id: dict,
+    tracking_file: Path, wt_path: Path, main_wt: Path | None,
+    ctx, pr_number: int, *, label: str, default_branch: str,
+) -> FixBatchResult:
+    """Run the fix agent over one batch and parse what it checked off.
+
+    The tracking file is rebuilt per batch so the agent is handed only the items
+    its budget covers — inlining the whole list is what let a 169 KB checklist
+    reach a single 60-turn pass.
+    """
+    _build_tracking_file(
+        tracking_file, chunk_threads, threads_by_id,
+        wt_path, pr_number,
+        fixable_items=chunk_items,
+        default_branch=default_branch,
+    )
+    chunk_count = len(chunk_threads) + len(chunk_items)
+    chunk_turns = _fix_turn_budget(chunk_count)
+    chunk_budget = _fix_budget_usd(chunk_count)
+    prompt = _render_fix_template(
+        branch=ctx.branch,
+        repo=ctx.repo,
+        threads_content=tracking_file.read_text(),
+        tracking_file=str(tracking_file),
+        wt_path=str(wt_path),
+        max_turns=chunk_turns,
+        main_wt_path=str(main_wt) if main_wt else "",
+    )
+    log.info(f"{label} — applying review comment suggestions...")
+    unproductive = _guarded_fix_pass(
+        prompt, wt_path, main_wt, tracking_file,
+        max_turns=chunk_turns, max_budget=chunk_budget,
+        label=label, repo=ctx.repo, pr_number=pr_number,
+    )
+    log.blank()
+    return FixBatchResult(
+        tracking=_parse_tracking_results(
+            tracking_file, chunk_threads, fixable_items=chunk_items,
+        ),
+        unproductive=unproductive,
+        max_turns=chunk_turns,
+        max_budget=chunk_budget,
+    )
+
+
+def _merge_tracking(into: TrackingResult, batch: TrackingResult) -> None:
+    """Accumulate one batch's parsed results into the pass-wide totals."""
+    into.fixed += batch.fixed
+    into.deferred += batch.deferred
+    into.fixed_items += batch.fixed_items
+    into.deferred_items += batch.deferred_items
 
 
 def _count_checked(path: Path) -> int:
@@ -2044,42 +2145,37 @@ def _run_comment_fix(
 
     default_branch = _resolve_default_branch(wt_path)
 
-    _build_tracking_file(
-        tracking_file, fixable, threads_by_id,
-        wt_path, report.pr_number,
-        fixable_items=fixable_items,
-        default_branch=default_branch,
-    )
-
     total_items = len(fixable) + len(fixable_items or [])
-    max_turns = _fix_turn_budget(total_items)
-    max_budget = _fix_budget_usd(total_items)
 
     head_before = _get_head_sha(wt_path)
 
     main_wt = _find_and_update_main_worktree(wt_path)
 
-    prompt = _render_fix_template(
-        branch=ctx.branch,
-        repo=ctx.repo,
-        threads_content=tracking_file.read_text(),
-        tracking_file=str(tracking_file),
-        wt_path=str(wt_path),
-        max_turns=max_turns,
-        main_wt_path=str(main_wt) if main_wt else "",
-    )
+    batches = _fix_batches(list(fixable), list(fixable_items or []))
+    if len(batches) > 1:
+        log.info(
+            f"Fix pass — {total_items} items in {len(batches)} batches "
+            f"of up to {FIX_CHUNK_SIZE}..."
+        )
 
-    log.info("Fix pass — applying review comment suggestions...")
-    unproductive = _guarded_fix_pass(
-        prompt, wt_path, main_wt, tracking_file,
-        max_turns=max_turns, max_budget=max_budget, label="Fix pass",
-        repo=ctx.repo, pr_number=report.pr_number,
-    )
-    log.blank()
-
-    tracking = _parse_tracking_results(
-        tracking_file, fixable, fixable_items=fixable_items,
-    )
+    tracking = TrackingResult()
+    unproductive = None
+    max_turns = _fix_turn_budget(FIX_CHUNK_SIZE)
+    max_budget = _fix_budget_usd(FIX_CHUNK_SIZE)
+    for n, (chunk_threads, chunk_items) in enumerate(batches, start=1):
+        label = ("Fix pass" if len(batches) == 1
+                 else f"Fix pass (batch {n}/{len(batches)})")
+        batch = _run_fix_batch(
+            chunk_threads, chunk_items, threads_by_id, tracking_file,
+            wt_path, main_wt, ctx, report.pr_number,
+            label=label, default_branch=default_branch,
+        )
+        _merge_tracking(tracking, batch.tracking)
+        # A batch that produced nothing marks the whole pass unproductive, so the
+        # retry below does not run a third attempt over the same items.
+        unproductive = batch.unproductive or unproductive
+        max_turns = batch.max_turns
+        max_budget = batch.max_budget
 
     # A pass the guard already retried to no effect has had its second attempt;
     # `_retry_fix_pass` would be a third identical run against the same prompt.
@@ -2166,6 +2262,7 @@ def _run_comment_fix(
         summary_deferred=summary_url is None and pending_deferred,
         max_turns=max_turns,
         max_budget=max_budget,
+        batches=len(batches),
     )
 
 
@@ -2324,6 +2421,7 @@ def _run_threads(trail, args, ctx) -> None:
                              "deferred": len(fix_pass.deferred),
                              "dismissed": len(fix_pass.dismissed),
                              "already_addressed": len(fix_pass.already_addressed),
+                             "batches": fix_pass.batches,
                              "max_turns": fix_pass.max_turns,
                              "max_budget": fix_pass.max_budget,
                              "commit_sha": fix_pass.commit_sha,

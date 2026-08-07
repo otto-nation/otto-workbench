@@ -167,8 +167,11 @@ class CommentFixResult:
     replies_posted: int = 0
     summary_url: str | None = None
     summary_deferred: bool = False
+    # Per-batch, not pass-wide: the fix pass runs one agent invocation per batch
+    # of items, each with its own budget. `batches` is what makes these readable.
     max_turns: int = 0
     max_budget: float = 0.0
+    batches: int = 0
 
 
 # ── Deserialization helpers ───────────────────────────────────────────────

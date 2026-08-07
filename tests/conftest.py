@@ -22,10 +22,16 @@ def _clear_git_hook_env():
     os.environ.update(saved)
 
 
-REVIEW_ENV_PREFIX = "CLAUDE_REVIEW_"
-
-
 def _review_env_keys() -> list[str]:
+    """The review-config vars exported right now, by the prefix their owner defines.
+
+    Imported lazily, like the other fixtures that reach into ai/lib: a
+    module-scope import here would make every test's collection depend on
+    review_common importing cleanly.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from review_common import REVIEW_ENV_PREFIX
     return [k for k in os.environ if k.startswith(REVIEW_ENV_PREFIX)]
 
 

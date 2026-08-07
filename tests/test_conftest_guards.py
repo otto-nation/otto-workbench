@@ -1,20 +1,25 @@
-"""Tests for the shared-config guard in conftest.
+"""Tests for conftest's cross-test guards.
 
-The guard compares the repo's git config around every test, so anything that
-writes to that file from outside the test process fails whichever test happened
-to be running. worktrunk does exactly that — restamping per-branch markers and
-hint counters — and so does any concurrent git operation, through the branch
-tracking entries it adds and prunes. These cover both, along with the lines the
-exemption draws: worktrunk's user config in the same namespace stays guarded,
-and a leaked test is still caught by the identity it writes.
+The config guard compares the repo's git config around every test, so anything
+that writes to that file from outside the test process fails whichever test
+happened to be running. worktrunk does exactly that — restamping per-branch
+markers and hint counters — and so does any concurrent git operation, through
+the branch tracking entries it adds and prunes. These cover both, along with
+the lines the exemption draws: worktrunk's user config in the same namespace
+stays guarded, and a leaked test is still caught by the identity it writes.
+
+The review-env guard covers the other direction — config arriving from the
+developer's shell rather than from another process.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
 from conftest import (
-    _assert_config_unchanged, _describe_config_change, _guarded_lines, _section_of,
+    _assert_config_unchanged, _clear_review_env, _describe_config_change,
+    _guarded_lines, _review_env_keys, _section_of,
 )
 
 _CONFIG = b"""[core]
@@ -191,3 +196,27 @@ class TestSectionNames:
 
     def test_a_value_line_is_not_a_section(self):
         assert _section_of(b"marker = {}") is None
+
+
+class TestReviewEnvGuard:
+    def test_the_running_test_sees_no_review_config(self):
+        """The contract itself: this assertion is what an exported var breaks."""
+        assert _review_env_keys() == []
+
+    def test_the_shell_value_is_hidden_then_restored(self, monkeypatch):
+        monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
+        guard = _clear_review_env.__wrapped__()
+
+        next(guard)
+        assert "CLAUDE_REVIEW_THINKING" not in os.environ
+
+        next(guard, None)
+        assert os.environ["CLAUDE_REVIEW_THINKING"] == "xhigh"
+
+    def test_a_var_the_test_set_does_not_survive_it(self, monkeypatch):
+        guard = _clear_review_env.__wrapped__()
+        next(guard)
+
+        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        next(guard, None)
+        assert "CLAUDE_REVIEW_SCOUT_MODEL" not in os.environ

@@ -22,6 +22,36 @@ def _clear_git_hook_env():
     os.environ.update(saved)
 
 
+REVIEW_ENV_PREFIX = "CLAUDE_REVIEW_"
+
+
+def _review_env_keys() -> list[str]:
+    return [k for k in os.environ if k.startswith(REVIEW_ENV_PREFIX)]
+
+
+@pytest.fixture(autouse=True)
+def _clear_review_env():
+    """Run every test with the review config env unset.
+
+    Review model, thinking, and provider settings are read straight from the
+    environment with no injection point, so a developer who exports
+    CLAUDE_REVIEW_THINKING for their own runs answers those tests' assertions
+    from their shell. Modules that resolve config guard themselves today; this
+    is the floor, so the next one does not have to remember.
+
+    Matching on the prefix rather than a list is what makes it a floor: the
+    per-phase keys are generated from the Phase enum, so a new phase brings new
+    keys that no list here would know about. Teardown drops whatever the test
+    left behind before restoring, so a test that writes os.environ directly
+    cannot leak into the next one either.
+    """
+    saved = {k: os.environ.pop(k) for k in _review_env_keys()}
+    yield
+    for key in _review_env_keys():
+        del os.environ[key]
+    os.environ.update(saved)
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 

@@ -765,16 +765,6 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
     return not EFFORT_PRESETS[job.effort].skip_disprove
 
 
-def _count_unchecked(review_file: str) -> int:
-    """Count unchecked finding checkboxes in a review file."""
-    if not Path(review_file).exists():
-        return 0
-    return sum(
-        1 for line in Path(review_file).read_text().splitlines()
-        if re.match(r"^- \[ \] ", line)
-    )
-
-
 def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     """Commit source-file fixes applied by the fix-pass agent."""
     if not has_uncommitted_changes(job.wt_path):
@@ -902,15 +892,6 @@ def _push_fixes(job: ReviewJob):
     )
 
 
-def _count_checked(review_file: str) -> int:
-    if not Path(review_file).exists():
-        return 0
-    return sum(
-        1 for line in Path(review_file).read_text().splitlines()
-        if re.match(r"^- \[x\] ", line, re.IGNORECASE)
-    )
-
-
 def _changed_source_files(wt_path: str) -> set[str]:
     """Return set of changed files (staged, unstaged, and untracked)."""
     changed: set[str] = set()
@@ -926,25 +907,6 @@ def _changed_source_files(wt_path: str) -> set[str]:
             continue
         changed.update(f for f in result.stdout.strip().splitlines() if f)
     return changed
-
-
-def _count_changed_source_files(wt_path: str) -> int:
-    return sum(
-        1 for f in _changed_source_files(wt_path)
-        if not f.endswith("review.md")
-    )
-
-
-def _count_fixed(before_unchecked: int, after_unchecked: int,
-                 review_file: str, wt_path: str) -> int:
-    """Count fixed findings: unchecked-delta, then checked marks, then changed files."""
-    delta = before_unchecked - after_unchecked
-    if delta > 0:
-        return delta
-    checked = _count_checked(review_file)
-    if checked > 0:
-        return checked
-    return _count_changed_source_files(wt_path)
 
 
 @dataclass

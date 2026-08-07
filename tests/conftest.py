@@ -1,3 +1,4 @@
+import difflib
 import importlib.machinery
 import importlib.util
 import json
@@ -41,6 +42,78 @@ def _repo_config_path():
 
 _REPO_CONFIG = _repo_config_path()
 
+# `(section, subsection prefix)` pairs written from outside this process, so a
+# change landing mid-test says nothing about the test that was running:
+#
+#   worktrunk `state.<branch>` — the marker and vars worktrunk restamps whenever
+#     an agent's status changes; `hints` — counters for the one-time hints it has
+#     shown. Deliberately not the whole namespace: `worktrunk.default-branch` is
+#     user config (bin/wt-cleanup reads it), so a test clobbering it must fail.
+#   `branch` — tracking entries, which every concurrent fetch, branch create, and
+#     `wt switch` across the shared worktrees adds and prunes. A test that leaks
+#     into the real repo writes its identity before it ever reaches a branch, and
+#     that write is still caught, so exempting these costs the guard nothing.
+_EXTERNAL_STATE = (
+    (b"worktrunk", b"state."), (b"worktrunk", b"hints"), (b"branch", b""),
+)
+
+
+def _section_of(line: bytes) -> tuple[bytes, bytes] | None:
+    """The `(section, subsection)` a `[header]` line opens, else None."""
+    if not line.startswith(b"["):
+        return None
+    head, _, quoted = line[1:].partition(b'"')
+    return head.strip(b"]").strip(), quoted.rsplit(b'"', 1)[0] if quoted else b""
+
+
+def _is_external(section: bytes, subsection: bytes) -> bool:
+    return any(section == name and subsection.startswith(prefix)
+               for name, prefix in _EXTERNAL_STATE)
+
+
+def _guarded_lines(raw: bytes | None) -> list[bytes] | None:
+    """The config's lines with the externally-owned state dropped."""
+    if raw is None:
+        return None
+    kept, external = [], False
+    for line in raw.splitlines():
+        opened = _section_of(line.strip())
+        if opened is not None:
+            external = _is_external(*opened)
+        if not external:
+            kept.append(line)
+    return kept
+
+
+def _describe_config_change(before: list[bytes], after: list[bytes]) -> str:
+    """The lines that came and went, so the failure names the key it caught.
+
+    A whole-file byte diff of a 30 KB config reports an offset and nothing a
+    reader can act on. `n=0` keeps the surrounding 600-odd untouched lines out
+    of the message.
+    """
+    diff = difflib.unified_diff(
+        [line.decode(errors="replace").strip() for line in before],
+        [line.decode(errors="replace").strip() for line in after],
+        n=0, lineterm="",
+    )
+    return "\n".join(line for line in diff if not line.startswith(("---", "+++")))
+
+
+def _config_bytes(path: Path) -> bytes | None:
+    return path.read_bytes() if path.exists() else None
+
+
+def _assert_config_unchanged(path: Path, before: bytes | None, after: bytes | None):
+    """Raise unless every change to `path` belongs to an external section."""
+    if after == before:
+        return
+    guarded_before, guarded_after = _guarded_lines(before), _guarded_lines(after)
+    assert guarded_after == guarded_before, (
+        f"test wrote git config into the real repo: {path}\n"
+        f"{_describe_config_change(guarded_before or [], guarded_after or [])}"
+    )
+
 
 @pytest.fixture(autouse=True)
 def _guard_repo_config():
@@ -50,16 +123,17 @@ def _guard_repo_config():
     relative cwd sends `git config` to the real repo instead. Because worktrees
     share one config file, the damage is repo-wide and permanent: every later
     commit inherits the test identity.
+
+    The state in `_EXTERNAL_STATE` is exempt: it is written concurrently by
+    tooling this process does not control, and blaming the running test for
+    those writes turns every long test run into a coin flip.
     """
     if _REPO_CONFIG is None:
         yield
         return
-    before = _REPO_CONFIG.read_bytes() if _REPO_CONFIG.exists() else None
+    before = _config_bytes(_REPO_CONFIG)
     yield
-    after = _REPO_CONFIG.read_bytes() if _REPO_CONFIG.exists() else None
-    assert after == before, (
-        f"test wrote git config into the real repo: {_REPO_CONFIG}"
-    )
+    _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")

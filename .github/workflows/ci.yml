@@ -10,7 +10,7 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run ShellCheck
         # Auto-discover scripts by shebang so new files are checked automatically
         run: |
@@ -24,7 +24,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install yamllint
         run: pip install yamllint
@@ -47,7 +47,7 @@ jobs:
     name: Validate
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install yq
         run: |
@@ -107,7 +107,7 @@ jobs:
     name: Tests (bats)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install bats and parallel
         run: sudo apt-get install -y bats parallel
@@ -120,7 +120,7 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
 
       - name: Install task
-        uses: arduino/setup-task@v2
+        uses: arduino/setup-task@v3
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -148,7 +148,7 @@ jobs:
     name: Tests (pytest)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pytest
         run: pipx install pytest==8.3.5

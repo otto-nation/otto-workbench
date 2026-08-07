@@ -20,9 +20,26 @@ import publishing
 import review_issue
 from pr_comments import (
     load_state, save_state, empty_state, compute_thread_state, sync_threads,
-    render_dashboard, render_status, render_triage_status, render_fix_status,
+    fetch_threads, render_dashboard, render_status, render_triage_status,
+    render_fix_status,
     STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED,
 )
+
+
+# ── fetch_threads ───────────────────────────────────────────────────────────
+
+def test_fetch_threads_uses_the_paginated_fetcher():
+    with patch.object(pr_comments, "fetch_review_threads",
+                      return_value=[{"id": "PRRT_1"}]) as fetcher:
+        assert fetch_threads("owner", "repo", 42) == [{"id": "PRRT_1"}]
+    fetcher.assert_called_once_with("owner/repo", 42)
+
+
+def test_fetch_threads_prefers_prefetched_pr_data():
+    pr_data = SimpleNamespace(review_threads=[{"id": "PRRT_cached"}])
+    with patch.object(pr_comments, "fetch_review_threads") as fetcher:
+        assert fetch_threads("owner", "repo", 42, pr_data) == [{"id": "PRRT_cached"}]
+    fetcher.assert_not_called()
 
 
 def test_empty_state_has_required_fields():

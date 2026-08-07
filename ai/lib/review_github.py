@@ -26,14 +26,18 @@ GH_API_TIMEOUT = 30
 
 REVIEW_STATE_PENDING = "PENDING"
 
-# GraphQL pagination limits — shared across queries.
-# Upgrade to a query builder class when: a third query shape is added,
-# fields become runtime-conditional, or cursor-based pagination is needed.
+# GraphQL page sizes — shared across queries. GitHub rejects `first:` above 100.
+# Upgrade to a query builder class when: a third query shape is added, or
+# fields become runtime-conditional.
 GQL_REVIEWS_LIMIT = 100
 GQL_THREADS_LIMIT = 100
 GQL_THREAD_COMMENTS_LIMIT = 50
 GQL_ISSUE_COMMENTS_LIMIT = 100
 GQL_COMMITS_LIMIT = 100
+
+# Ceiling on review-thread pages, so a server that keeps reporting hasNextPage
+# cannot spin forever. 20 pages is 2000 threads — far beyond any real PR.
+GQL_MAX_THREAD_PAGES = 20
 
 
 # ── Exceptions ──────────────────────────────────────────────────────────────
@@ -217,6 +221,111 @@ def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
     return None
 
 
+# ── Review threads ─────────────────────────────────────────────────────────
+
+# One definition of a review-thread node, shared by the consolidated PR query
+# and the follow-up page query so the two cannot drift apart.
+_THREAD_NODE_FIELDS = f"""
+          id
+          isResolved
+          path
+          line
+          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
+            totalCount
+            nodes {{
+              id
+              databaseId
+              author {{ login }}
+              body
+              createdAt
+            }}
+          }}
+"""
+
+# The cursor variable is named endCursor so this query stays compatible with
+# `gh api graphql --paginate`, which only advances on that exact name. We drive
+# the loop ourselves — a wrong name there re-requests page 1 forever rather
+# than erroring.
+_THREADS_PAGE_QUERY = f"""
+query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $pr) {{
+      reviewThreads(first: {GQL_THREADS_LIMIT}, after: $endCursor) {{
+        totalCount
+        pageInfo {{ hasNextPage endCursor }}
+        nodes {{
+{_THREAD_NODE_FIELDS}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+
+def _warn_truncated_comments(threads: list[dict]) -> None:
+    """Warn for any thread whose comments were cut off by the page size."""
+    for thread in threads:
+        comments_data = thread.get("comments", {})
+        total = comments_data.get("totalCount", 0)
+        nodes = comments_data.get("nodes", [])
+        if total > len(nodes):
+            path = thread.get("path", "?")
+            log.warn(f"Thread at {path} has {total} comments but only {len(nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
+
+
+def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict:
+    """Fetch one page of review threads. Returns the reviewThreads node, or {}."""
+    variables: dict = {"owner": owner, "name": name, "pr": pr}
+    if cursor:
+        variables["endCursor"] = cursor
+    rc, stdout = _gh_graphql(_THREADS_PAGE_QUERY, variables)
+    if rc != 0:
+        log.warn("Failed to fetch a page of review threads — the thread set is incomplete")
+        return {}
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        log.warn("Failed to parse a page of review threads — the thread set is incomplete")
+        return {}
+    pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
+    return pr_node.get("reviewThreads") or {}
+
+
+def _drain_thread_pages(owner: str, name: str, pr: int, first_page: dict) -> list[dict]:
+    """Follow reviewThreads pagination from an already-fetched first page."""
+    threads = list(first_page.get("nodes", []))
+    page_info = first_page.get("pageInfo", {})
+    # GitHub cursors are strictly increasing; a repeat means the server or the
+    # query is not advancing, which would otherwise loop until timeout.
+    seen: set[str] = set()
+
+    for _ in range(GQL_MAX_THREAD_PAGES - 1):
+        cursor = page_info.get("endCursor")
+        if not page_info.get("hasNextPage") or not cursor:
+            return threads
+        if cursor in seen:
+            log.warn(f"Review thread pagination repeated cursor {cursor} — stopping at {len(threads)} threads")
+            return threads
+        seen.add(cursor)
+        page = _threads_page(owner, name, pr, cursor)
+        threads.extend(page.get("nodes", []))
+        page_info = page.get("pageInfo", {})
+
+    if page_info.get("hasNextPage"):
+        log.warn(f"Review thread pagination hit the {GQL_MAX_THREAD_PAGES}-page ceiling — stopping at {len(threads)} threads")
+    return threads
+
+
+def fetch_review_threads(repo: str, pr: str | int) -> list[dict]:
+    """Fetch every review thread on a PR, following pagination past page one."""
+    owner, name = repo.split("/", 1)
+    first_page = _threads_page(owner, name, int(pr), None)
+    threads = _drain_thread_pages(owner, name, int(pr), first_page)
+    _warn_truncated_comments(threads)
+    return threads
+
+
 # ── Consolidated GraphQL PR data ───────────────────────────────────────────
 
 _PR_DATA_QUERY = f"""
@@ -244,21 +353,9 @@ query($owner: String!, $name: String!, $pr: Int!) {{
       }}
       reviewThreads(first: {GQL_THREADS_LIMIT}) {{
         totalCount
+        pageInfo {{ hasNextPage endCursor }}
         nodes {{
-          id
-          isResolved
-          path
-          line
-          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
-            totalCount
-            nodes {{
-              id
-              databaseId
-              author {{ login }}
-              body
-              createdAt
-            }}
-          }}
+{_THREAD_NODE_FIELDS}
         }}
       }}
       comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
@@ -434,19 +531,8 @@ def fetch_pr_data(repo: str, pr: str) -> PRData:
     viewer = data.get("data", {}).get("viewer", {})
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
 
-    threads_data = pr_node.get("reviewThreads", {})
-    threads = threads_data.get("nodes", [])
-    total_threads = threads_data.get("totalCount", len(threads))
-    if total_threads > len(threads):
-        log.warn(f"PR has {total_threads} review threads but only {len(threads)} fetched (limit: GQL_THREADS_LIMIT={GQL_THREADS_LIMIT})")
-
-    for thread in threads:
-        comments_data = thread.get("comments", {})
-        total_comments = comments_data.get("totalCount", 0)
-        comment_nodes = comments_data.get("nodes", [])
-        if total_comments > len(comment_nodes):
-            path = thread.get("path", "?")
-            log.warn(f"Thread at {path} has {total_comments} comments but only {len(comment_nodes)} fetched (limit: GQL_THREAD_COMMENTS_LIMIT={GQL_THREAD_COMMENTS_LIMIT})")
+    threads = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
+    _warn_truncated_comments(threads)
 
     return PRData(
         viewer_login=viewer.get("login", ""),

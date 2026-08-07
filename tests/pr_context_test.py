@@ -11,10 +11,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pr_context
 from pr_context import (
     _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
     find_worktree_for_branch, ResolvedContext, update_to_remote,
-    fetch_and_reset,
+    fetch_and_reset, create_worktree_for_branch,
 )
 
 
@@ -94,19 +95,75 @@ def test_require_worktree_exits_with_actionable_message(capsys):
 # ── fetch_and_reset ────────────────────────────────────────────────────────
 
 
+def _safe_reset_runs():
+    """subprocess.run results for a worktree that is safe to hard-reset."""
+    return [
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="feat/x\n"),     # rev-parse --abbrev-ref
+        MagicMock(returncode=0, stdout=""),             # status --porcelain (clean)
+        MagicMock(returncode=0, stdout="0\n"),          # rev-list (0 unpushed)
+        MagicMock(returncode=0),                        # reset --hard
+    ]
+
+
 @patch("pr_context.subprocess.run")
 def test_fetch_and_reset_runs_fetch_then_reset(mock_run):
-    mock_run.return_value = MagicMock(returncode=0)
+    mock_run.side_effect = _safe_reset_runs()
     fetch_and_reset("/wt", "feat/x")
-    assert mock_run.call_count == 2
+    assert mock_run.call_count == 5
     fetch_call = mock_run.call_args_list[0].args[0]
     assert "fetch" in fetch_call
     assert "origin" in fetch_call
     assert "feat/x" in fetch_call
-    reset_call = mock_run.call_args_list[1].args[0]
+    reset_call = mock_run.call_args_list[4].args[0]
     assert "reset" in reset_call
     assert "--hard" in reset_call
     assert "origin/feat/x" in reset_call
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_when_on_another_branch(mock_run, mock_log):
+    """Regression: resetting main/ while a feature branch sits in it ate two commits."""
+    runs = _safe_reset_runs()
+    runs[1] = MagicMock(returncode=0, stdout="feat/other\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "main")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "not main" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_on_uncommitted_changes(mock_run, mock_log):
+    runs = _safe_reset_runs()
+    runs[2] = MagicMock(returncode=0, stdout=" M file.py\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "uncommitted" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_on_unpushed_commits(mock_run, mock_log):
+    runs = _safe_reset_runs()
+    runs[3] = MagicMock(returncode=0, stdout="2\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "2 unpushed" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_skips_on_detached_head(mock_run, mock_log):
+    runs = _safe_reset_runs()
+    runs[1] = MagicMock(returncode=0, stdout="HEAD\n")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "detached HEAD" in mock_log.warn.call_args.args[0]
 
 
 @patch("pr_context.subprocess.run", side_effect=Exception("network error"))
@@ -295,6 +352,81 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
     assert mock_run.call_args[0][0][0] == "git"
 
 
+# ── find_worktree_for_branch ──────────────────────────────────────────────
+
+
+_WORKTREE_LIST_HIJACKED = (
+    "worktree /repo\n"
+    "bare\n"
+    "\n"
+    "worktree /repo/main\n"
+    "HEAD f94475d\n"
+    "branch refs/heads/feat/x\n"
+    "\n"
+    "worktree /repo/feat-other\n"
+    "HEAD abc1234\n"
+    "branch refs/heads/feat/other\n"
+)
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_prefers_exact_tag(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    assert find_worktree_for_branch("feat/other") == Path("/repo/feat-other")
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run):
+    """Regression: /repo/main holding feat/x was returned as main's worktree.
+
+    review-threads then hard-reset it to origin/main, destroying feat/x.
+    """
+    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    assert find_worktree_for_branch("main") is None
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_dir_named_matches_regardless_of_occupant(mock_run):
+    """The lenient lookup answers "which directory", not "which branch"."""
+    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    assert pr_context.find_worktree_dir_named("main") == Path("/repo/main")
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
+    """The bare entry is not a checkout and must never be handed back as one."""
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout="worktree /repo/main\nbare\n",
+    )
+    assert pr_context.find_worktree_dir_named("main") is None
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout=(
+            "worktree /repo\nbare\n\n"
+            "worktree /repo/main\nHEAD f94475d\ndetached\n"
+        ),
+    )
+    assert find_worktree_for_branch("main") == Path("/repo/main")
+
+
+@patch("pr_context.subprocess.run")
+def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_run):
+    """The human listing packs path and [branch] onto one line; porcelain doesn't."""
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout=(
+            "worktree /repo/we ird [x]\n"
+            "HEAD abc1234\n"
+            "branch refs/heads/spacey\n"
+        ),
+    )
+    assert find_worktree_for_branch("spacey") == Path("/repo/we ird [x]")
+
+
 # ── Bare-repo worktree resolution ─────────────────────────────────────────
 
 
@@ -306,24 +438,50 @@ def testresolve_bare_repo_worktree_prefers_branch(mock_find):
     mock_find.assert_called_once_with("feat/branch", None)
 
 
+@patch("pr_context.create_worktree_for_branch")
 @patch("pr_context.find_worktree_for_branch")
-@patch("pr_context.subprocess.run")
-def testresolve_bare_repo_worktree_falls_back_to_default(mock_run, mock_find):
-    mock_find.side_effect = [None, Path("/wt/main")]
-    mock_run.return_value = MagicMock(
-        returncode=0, stdout="refs/remotes/origin/main\n",
-    )
+def testresolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, mock_create):
+    """A requested branch with no worktree gets one created, not main's."""
+    mock_find.return_value = None
+    mock_create.return_value = Path("/wt/nonexistent")
     result = resolve_bare_repo_worktree(None, "nonexistent")
-    assert result == Path("/wt/main")
-    assert mock_find.call_count == 2
+    assert result == Path("/wt/nonexistent")
+    mock_create.assert_called_once_with("nonexistent", None)
 
 
+@patch("pr_context.create_worktree_for_branch", return_value=None)
+@patch("pr_context.find_worktree_for_branch")
+def testresolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_create):
+    """Regression: returning main's worktree here let callers hijack main/."""
+    mock_find.return_value = None
+    result = resolve_bare_repo_worktree(None, "nonexistent")
+    assert result is None
+    # find_worktree_for_branch must never be consulted for the default branch
+    # when an explicit branch was requested.
+    for call in mock_find.call_args_list:
+        assert call.args[0] != "main"
+
+
+@patch("pr_context.find_worktree_dir_named", return_value=None)
 @patch("pr_context.find_worktree_for_branch", return_value=None)
 @patch("pr_context.subprocess.run")
-def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find):
+def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
     result = resolve_bare_repo_worktree(None, None)
     assert result is None
+
+
+@patch("pr_context.find_worktree_dir_named", return_value=Path("/repo/main"))
+@patch("pr_context.find_worktree_for_branch", return_value=None)
+@patch("pr_context.subprocess.run")
+def testresolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, mock_named):
+    """No branch requested: a main/ holding someone else's branch is still a cwd.
+
+    Regression: tightening find_worktree_for_branch made this return None, and
+    the callers that dereference worktree_root without a guard blew up.
+    """
+    mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
+    assert resolve_bare_repo_worktree(None, None) == Path("/repo/main")
 
 
 @patch("pr_context.find_worktree_for_branch")
@@ -336,3 +494,37 @@ def test_resolve_bare_repo_worktree_fuzzy_resolves_branch(mock_resolve, mock_fin
     assert mock_find.call_count == 2
     mock_find.assert_any_call("isaac-improve-ci-failures-skill", None)
     mock_find.assert_any_call("isaac/improve-ci-failures-skill", None)
+
+
+# ── create_worktree_for_branch ─────────────────────────────────────────────
+
+
+@patch("pr_context.subprocess.run")
+def test_create_worktree_for_branch_returns_path(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout='✓ created\n{"action":"created","path":"/wt/feat-x"}\n',
+    )
+    assert create_worktree_for_branch("feat/x") == Path("/wt/feat-x")
+    assert mock_run.call_args.args[0][:3] == ["wt", "switch", "feat/x"]
+
+
+@patch("pr_context.subprocess.run")
+def test_create_worktree_for_branch_passes_cwd(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0, stdout='{"path":"/wt/feat-x"}\n',
+    )
+    create_worktree_for_branch("feat/x", "/repo")
+    assert mock_run.call_args.args[0][-2:] == ["-C", "/repo"]
+
+
+@patch("pr_context.subprocess.run")
+def test_create_worktree_for_branch_returns_none_when_wt_fails(mock_run):
+    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+    assert create_worktree_for_branch("feat/x") is None
+
+
+@patch("pr_context.subprocess.run")
+def test_create_worktree_for_branch_survives_malformed_json(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n")
+    assert create_worktree_for_branch("feat/x") is None

@@ -1093,10 +1093,6 @@ def _finalize_deferred(
     Mutates `state` and leaves the save to the caller, which mutates the same
     object either side of this call. Reading the file again here and saving
     that copy would drop whatever the caller had already written.
-
-    Callers must have resolved the worktree already — `ctx.worktree_root` is
-    dereferenced downstream without a check, on the strength of
-    `_finish_deferred_work` calling `ctx.require_worktree()` first.
     """
     if not state.fix.threads:
         return _NO_ISSUE
@@ -1129,7 +1125,7 @@ def _finalize_deferred(
     if issue.id:
         _post_deferred_replies(
             deferred, threads_by_id, ctx.repo, pr_number,
-            issue.id, issue.url, ctx.worktree_root,
+            issue.id, issue.url, ctx.require_worktree(),
         )
 
     state.fix.deferred_issue_id = issue.id

@@ -39,6 +39,13 @@ class TestExternalWritesAreIgnored:
         after = _CONFIG + b'[worktrunk "state.feat"]\n\tmarker = {}\n'
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
 
+    def test_a_key_added_to_the_external_section_reads_as_no_change(self):
+        after = _rewritten(
+            b'[worktrunk "state.main"]\n',
+            b'[worktrunk "state.main"]\n\tsticky = true\n',
+        )
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
     def test_a_removed_worktrunk_section_reads_as_no_change(self):
         after = _rewritten(
             b'[worktrunk "state.main"]\n\tmarker = '
@@ -53,7 +60,7 @@ class TestRealWritesAreStillCaught:
         after = _rewritten(b"dev@example.com", b"test@example.com")
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
-    def test_a_key_appended_after_an_external_section_is_a_change(self):
+    def test_a_section_appended_at_the_end_is_a_change(self):
         after = _CONFIG + b"[user]\n\tname = Test\n"
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
@@ -71,14 +78,19 @@ class TestTheFailureNamesTheKey:
         described = _describe_config_change(
             _guarded_lines(_CONFIG), _guarded_lines(after),
         )
-        assert "- email = dev@example.com" in described
-        assert "+ email = test@example.com" in described
+        assert "-email = dev@example.com" in described
+        assert "+email = test@example.com" in described
 
-    def test_it_says_so_when_nothing_was_added_or_removed(self):
+    def test_it_leaves_the_untouched_lines_out(self):
+        after = _rewritten(b"dev@example.com", b"test@example.com")
         described = _describe_config_change(
-            [b"[user]", b"\tx = 1"], [b"\tx = 1", b"[user]"],
+            _guarded_lines(_CONFIG), _guarded_lines(after),
         )
-        assert described == "(same lines, reordered or duplicated)"
+        assert "repositoryformatversion" not in described
+
+    def test_it_reports_a_reorder_rather_than_going_quiet(self):
+        described = _describe_config_change([b"[user]", b"\tx = 1"], [b"\tx = 1", b"[user]"])
+        assert described
 
 
 class TestTheGuardItself:
@@ -99,11 +111,11 @@ class TestTheGuardItself:
             self._check(_rewritten(b"dev@example.com", b"test@example.com"))
 
     def test_the_failure_names_the_key(self):
-        with pytest.raises(AssertionError, match=r"\+ email = test@example.com"):
+        with pytest.raises(AssertionError, match=r"\+email = test@example.com"):
             self._check(_rewritten(b"dev@example.com", b"test@example.com"))
 
     def test_a_config_created_mid_test_fails(self):
-        with pytest.raises(AssertionError, match=r"\+ \[core\]"):
+        with pytest.raises(AssertionError, match=r"\+\[core\]"):
             self._check(_CONFIG, before=None)
 
 

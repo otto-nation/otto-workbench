@@ -1,3 +1,4 @@
+import difflib
 import importlib.machinery
 import importlib.util
 import json
@@ -73,14 +74,15 @@ def _describe_config_change(before: list[bytes], after: list[bytes]) -> str:
     """The lines that came and went, so the failure names the key it caught.
 
     A whole-file byte diff of a 30 KB config reports an offset and nothing a
-    reader can act on; the guard fires rarely enough that the lines are worth
-    printing in full.
+    reader can act on. `n=0` keeps the surrounding 600-odd untouched lines out
+    of the message.
     """
-    gone = [ln for ln in before if ln not in after]
-    added = [ln for ln in after if ln not in before]
-    parts = [f"{sign} {ln.decode(errors='replace').strip()}"
-             for sign, lines in (("-", gone), ("+", added)) for ln in lines]
-    return "\n".join(parts) or "(same lines, reordered or duplicated)"
+    diff = difflib.unified_diff(
+        [line.decode(errors="replace").strip() for line in before],
+        [line.decode(errors="replace").strip() for line in after],
+        n=0, lineterm="",
+    )
+    return "\n".join(line for line in diff if not line.startswith(("---", "+++")))
 
 
 def _config_bytes(path: Path) -> bytes | None:

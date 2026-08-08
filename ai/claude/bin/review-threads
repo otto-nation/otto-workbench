@@ -1200,20 +1200,66 @@ def _post_deferred_replies(
 _NO_ISSUE = CreatedIssue()
 
 
+class _TrackAll(frozenset):
+    """Sentinel for --track-all: every id is selected.
+
+    A frozenset subclass rather than a truthy string so `t.id in track` reads
+    the same for the ordinary per-thread case and this one.
+    """
+
+    def __contains__(self, item) -> bool:
+        return True
+
+    def __bool__(self) -> bool:
+        # Inherited from frozenset, this would be False: the instance holds no
+        # elements. It selects every id, so reporting itself as empty is the
+        # opposite of the truth for anyone who asks.
+        return True
+
+
+TRACK_ALL = _TrackAll()
+
+
+def _validate_track(state: pr_state.PRState, track) -> None:
+    """Exit if --track named anything that is not a deferred thread.
+
+    A typo'd id would otherwise be indistinguishable from a thread the tool
+    chose not to file, and the user would read "filed nothing" as agreement.
+    """
+    if track is TRACK_ALL:
+        return
+    FA = pr_state.ThreadAction
+    deferred_ids = {t.id for t in state.fix.threads if t.action == FA.DEFERRED}
+    unknown = set(track) - deferred_ids
+    if unknown:
+        log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
+        sys.exit(1)
+
+
 def _finalize_deferred(
     state: pr_state.PRState,
     ctx: pr_context.ResolvedContext,
     threads_by_id: dict,
     trail: Trail | None = None,
+    *,
+    track=frozenset(),
 ) -> CreatedIssue:
-    """Create tracking issue and post deferred replies for items held from fix pass.
+    """Create tracking issue and post deferred replies for threads named by --track.
 
     Mutates `state` and leaves the save to the caller, which mutates the same
     object either side of this call. Reading the file again here and saving
     that copy would drop whatever the caller had already written.
+
+    `track` defaults to selecting nothing. Filing a thread on the tracking
+    issue posts a reply, under the PR author's name, saying a reviewer's
+    finding was triaged and postponed — a deferral is a decision someone makes
+    per thread, never the fallback disposition for whatever a fix pass failed
+    to fix.
     """
     if not state.fix.threads:
         return _NO_ISSUE
+
+    _validate_track(state, track)
 
     FA = pr_state.ThreadAction
     # `reason` carries why the thread was held back, and it is the only column
@@ -1225,7 +1271,8 @@ def _finalize_deferred(
             id=t.id, file=t.file, line=t.line,
             reviewer=t.reviewer, summary=t.summary, reason=t.reason,
         )
-        for t in state.fix.threads if t.action == FA.DEFERRED
+        for t in state.fix.threads
+        if t.action == FA.DEFERRED and t.id in track
     ]
     if not deferred:
         return _NO_ISSUE
@@ -1251,10 +1298,111 @@ def _finalize_deferred(
     return issue
 
 
+def _report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
+    """Name the deferrals nobody asked to file, so the omission is visible.
+
+    Filing nothing is the correct default, but a silent nothing reads as "there
+    was nothing to file". List the ids so the user can pass the ones they meant.
+
+    Membership, not truthiness: a partial selection leaves the unnamed threads
+    just as unfiled as no selection does, and they are the easiest ones to lose
+    — the run reports success for the few that were named.
+    """
+    FA = pr_state.ThreadAction
+    still = [
+        t for t in state.fix.threads
+        if t.action == FA.DEFERRED and t.id not in track
+    ]
+    if not still:
+        return
+    log.info(
+        f"{len(still)} deferred thread(s) not filed — pass --track <id> for "
+        f"each one to track, or --track-all: {', '.join(t.id for t in still)}"
+    )
+
+
+def _warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
+    """Say so when the snapshot describes a tree that is no longer checked out.
+
+    A warning rather than a refusal: reconciliation below re-derives every
+    deferral from GitHub, and refusing outright would break the ordinary case
+    of committing and then closing out. A snapshot with no recorded HEAD
+    predates the field and cannot be vouched for either way, so it counts.
+    """
+    if not state.fix.threads:
+        return
+    current = _get_head_sha(wt_path)
+    if state.fix.head_sha and state.fix.head_sha == current:
+        return
+    log.warn(
+        f"Fix snapshot was taken at {state.fix.head_sha or '(unrecorded)'} "
+        f"but HEAD is {current or '(unknown)'} — reconciling against GitHub"
+    )
+
+
+# Replies that say the thread was handled. _DEFERRED_REPLY_PREFIX is
+# deliberately absent: it says the opposite, and counting it would make every
+# thread reconcile itself on the second --finish.
+_HANDLED_REPLY_PREFIXES = (
+    _APPLIED_REPLY_PREFIX,
+    _ADDRESSED_REPLY_PREFIX,
+    _DISMISSED_REPLY_PREFIX,
+)
+
+# Reason stamped on an outcome the fix pass never landed. Read back by
+# _fixed_status_for, which must not credit the pass's commit for it.
+_RECONCILED_REASON = "reconciled: handled outside the fix pass"
+
+
+def _thread_looks_handled(thread: ReportThread | None) -> bool:
+    """True when GitHub shows this thread as dealt with, by anyone.
+
+    Resolution is the strong signal, but a thread can be answered and left open
+    for the reviewer to close. Both count: what disqualifies a thread from being
+    reported as deferred is evidence that someone acted on it.
+    """
+    if not thread:
+        return False
+    if thread.is_resolved or thread.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED):
+        return True
+    return any(
+        str(c.get("body", "")).startswith(_HANDLED_REPLY_PREFIXES)
+        for c in thread.comments
+    )
+
+
+def _reconcile_fix_snapshot(
+    state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
+) -> int:
+    """Flip snapshot deferrals that GitHub contradicts. Returns the flip count.
+
+    The snapshot records what one fix pass concluded, and `pr_state.update_fix`
+    accumulates it across rounds without ever expiring an outcome. Work done by
+    hand in between never passes through it, so a thread fixed outside the tool
+    stays DEFERRED forever. Publishing that is a false claim about someone's
+    code, so GitHub is consulted before anything is written.
+    """
+    FA = pr_state.ThreadAction
+    flipped = 0
+    for outcome in state.fix.threads:
+        if outcome.action != FA.DEFERRED:
+            continue
+        if not _thread_looks_handled(threads_by_id.get(outcome.id)):
+            continue
+        outcome.action = FA.FIXED
+        outcome.reason = _RECONCILED_REASON
+        flipped += 1
+    if flipped:
+        log.info(f"Reconciled {flipped} stale deferral(s) against GitHub")
+    return flipped
+
+
 def _finish_deferred_work(
     ctx: pr_context.ResolvedContext,
     report: PRReport,
     trail: Trail | None = None,
+    *,
+    track=frozenset(),
 ) -> None:
     """Close out what the fix pass held back: replies, tracking issue, summary.
 
@@ -1274,7 +1422,10 @@ def _finish_deferred_work(
         return
     threads_by_id = {t.id: t for t in report.threads}
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
-    _finalize_deferred(state, ctx, threads_by_id, trail=trail)
+    _warn_if_snapshot_stale(state, wt_path)
+    _reconcile_fix_snapshot(state, threads_by_id)
+    _finalize_deferred(state, ctx, threads_by_id, trail=trail, track=track)
+    _report_unfiled_deferrals(state, track)
     _render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,
     )
@@ -1400,6 +1551,30 @@ def _create_or_update_deferred_issue(
         return CreatedIssue(id=issue.id, url=issue.url or existing_issue_url)
 
     return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
+
+
+def _fixed_status_for(
+    entry: CommentItem | pr_state.ThreadOutcome, cp: CommitPushResult, repo: str,
+) -> str:
+    """Status cell for one fixed row, preferring the thread's own commit.
+
+    `cp` describes the pass that is running now; a ThreadOutcome replayed from
+    state may have been fixed several rounds ago by a different commit. Its own
+    SHA is the accurate attribution, and the pass-level text — including
+    "no commit needed" — is only right for a row that has none.
+
+    Reachable only from `_render_deferred_summary`, which refuses to post while
+    a recorded commit is still unpushed, so the commit link cannot 404.
+    """
+    sha = getattr(entry, "commit_sha", "")
+    if sha:
+        return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
+    # Reconciled outcomes were handled by hand or by the reviewer, and the
+    # commit that did it is not recorded anywhere. Falling through would credit
+    # the pass's commit for work it never did.
+    if getattr(entry, "reason", "") == _RECONCILED_REASON:
+        return "Addressed outside the fix pass"
+    return _fixed_status_text(cp, repo)
 
 
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
@@ -1561,9 +1736,11 @@ def _build_summary_body(
     # The fix commit is the tree the table describes; fall back to the reviewed
     # head when nothing was committed.
     link_sha = cp.sha or head_sha
-    fixed_status = _fixed_status_text(cp, repo)
     for entry in fixed:
-        rows.append(_build_row(entry, fixed_status, threads_by_id, repo, pr_number, link_sha))
+        rows.append(_build_row(
+            entry, _fixed_status_for(entry, cp, repo), threads_by_id, repo,
+            pr_number, getattr(entry, "commit_sha", "") or link_sha,
+        ))
     for entry in already_addressed:
         rows.append(_build_row(entry, "Already addressed", threads_by_id, repo, pr_number, link_sha))
     for entry in dismissed:
@@ -1747,23 +1924,12 @@ def _render_deferred_summary(
         if publishing.enabled():
             fix.commit_status = status
 
+    # A plain partition: _finish_deferred_work reconciles the snapshot against
+    # GitHub before calling this, so a thread handled outside the fix pass has
+    # already been flipped to FIXED and cannot still be sitting in DEFERRED.
     FA = pr_state.ThreadAction
-    resolved_or_addressed = {
-        t.id for t in threads_by_id.values()
-        if t.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED) or t.is_resolved
-    }
     fixed = [t for t in fix.threads if t.action == FA.FIXED]
-    still_deferred = []
-    manually_fixed = []
-    for t in fix.threads:
-        if t.action != FA.DEFERRED:
-            continue
-        if t.id in resolved_or_addressed:
-            manually_fixed.append(t)
-        else:
-            still_deferred.append(t)
-    fixed = fixed + manually_fixed
-    deferred = still_deferred
+    deferred = [t for t in fix.threads if t.action == FA.DEFERRED]
     dismissed = [t for t in fix.threads if t.action == FA.DISMISSED]
     already_addressed = [t for t in fix.threads if t.action == FA.ALREADY_ADDRESSED]
 
@@ -1901,12 +2067,19 @@ def _build_thread_outcomes(
     needs_human: list[CommentItem],
     dismissed: list[CommentItem],
     already_addressed: list[CommentItem] | None = None,
+    commit_sha: str = "",
 ) -> list[pr_state.ThreadOutcome]:
-    """Build ThreadOutcome list from categorized entries."""
+    """Build ThreadOutcome list from categorized entries.
+
+    `commit_sha` is stamped on the fixed outcomes only. The others were not
+    landed by this commit, and a SHA on them would read as if they had been.
+    """
     FA = pr_state.ThreadAction
     outcomes: list[pr_state.ThreadOutcome] = []
     for entry in fixed:
-        outcomes.append(entry.to_outcome(FA.FIXED))
+        outcome = entry.to_outcome(FA.FIXED)
+        outcome.commit_sha = commit_sha
+        outcomes.append(outcome)
     for entry in deferred:
         outcomes.append(entry.to_outcome(FA.DEFERRED))
     for entry in needs_human:
@@ -2149,6 +2322,7 @@ def _run_comment_fix(
                 [], [], all_needs_human, all_dismissed, all_addressed,
             ),
             commit_status=no_commit.status,
+            head_sha=_get_head_sha(wt_path),
             replies_posted=triage_replies,
             summary_url=summary_url or "",
             summary_deferred=summary_url is None and early_deferred,
@@ -2251,10 +2425,13 @@ def _run_comment_fix(
     _persist_fix_state(pr_state.FixSummary(
         threads=_build_thread_outcomes(
             all_fixed, all_deferred, all_needs_human, all_dismissed,
-            all_addressed,
+            all_addressed, commit_sha=cp.sha or "",
         ),
         commit_sha=cp.sha or "",
         commit_status=cp.status,
+        # HEAD after the pass, not ctx.head_sha: the fix pass commits, so the
+        # snapshot must name the commit its outcomes were measured against.
+        head_sha=_get_head_sha(wt_path),
         replies_posted=replies_posted,
         replies_pending=bool(tracking.fixed) and not publishing.enabled(),
         summary_url=summary_url or "",
@@ -2456,7 +2633,8 @@ def _run_threads(trail, args, ctx) -> None:
     # untouched. Outside the state-update try/except, because a caller running
     # this to close the loop needs a failure to be an error, not a log line.
     if args.finish:
-        _finish_deferred_work(ctx, report, trail=trail)
+        track = TRACK_ALL if args.track_all else frozenset(args.track)
+        _finish_deferred_work(ctx, report, trail=trail, track=track)
 
     json.dump(output, sys.stdout, indent=2)
     print()
@@ -2561,6 +2739,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--finish", "--resolve", "--resolve-verified",
                         action="store_true", dest="finish",
                         help="Close out deferred work: replies, tracking issue, summary")
+    parser.add_argument("--track", action="append", default=[], metavar="THREAD_ID",
+                        help="File this deferred thread on the tracking issue "
+                             "(repeatable). Deferral is a per-thread decision, so "
+                             "--finish files nothing unless told which threads")
+    parser.add_argument("--track-all", action="store_true",
+                        help="File every deferred thread. Only for a set the user "
+                             "has actually reviewed")
     parser.add_argument("--post", action="store_true",
                         help="Publish replies, summaries, and resolutions "
                              "(default: print drafts to stderr and post nothing)")

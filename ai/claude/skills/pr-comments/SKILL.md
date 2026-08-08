@@ -141,10 +141,11 @@ Ask the user what to do for each:
 - **Reply** — compose a reply to the reviewer
 
 **If `deferred` is non-empty:** present each the same way, with the same
-options plus **Track it** — file the thread on the deferred tracking issue via
-`--finish`. A deferred thread is one the agent attempted twice and could not
-land, not one anyone decided to postpone; filing it away is a decision the user
-makes per thread, never a default.
+options plus **Track it** — file the thread on the deferred tracking issue by
+passing its id to `--track` in Step 4. A deferred thread is one the agent
+attempted twice and could not land, not one anyone decided to postpone; filing
+it away is a decision the user makes per thread, never a default. Record which
+ids the user chooses here — `--finish` files nothing without them.
 
 When investigating `needs_human` or `deferred` threads, use the main worktree
 as a read-only reference for code outside the PR diff — imports, callers,
@@ -172,15 +173,22 @@ them; an incorrect claim posted to a reviewer has to be retracted publicly.
 Only after the user approves, and only once Step 3 is complete:
 
 ```bash
-pr comments --finish --post [--repo-dir <PATH>]
+pr comments --finish --post [--track <thread_id> ...] [--repo-dir <PATH>]
 ```
 
 That sends the drafted replies (including those whose commit had not yet been
-pushed), posts the summary, files the tracking issue for the threads the user
-chose to track, and resolves verified threads. The summary is meant to describe
+pushed), posts the summary, files the tracking issue for the threads named by
+`--track`, and resolves verified threads. The summary is meant to describe
 a finished conversation, so don't publish before the discussion is done. A
 drafted run recorded nothing as posted, so the queue is intact — no need to
 re-run `--fix`.
+
+Pass one `--track <thread_id>` per thread the user chose to track in Step 3.
+Omit the flag entirely when they chose none — a bare `--finish` files nothing
+and lists the unfiled ids. Use `--track-all` only when the user has reviewed the
+whole deferred set and asked for all of it. Never infer `--track` from the fact
+that a thread was deferred: the reply it posts says a reviewer's finding was
+triaged and postponed, under the PR author's name.
 
 If the user wants changes to a reply first, edit and post it manually (below),
 then run `--finish --post` for the rest.
@@ -216,7 +224,9 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
   disagreement: if you cannot point at the line that settles it, say what you
   checked and ask
 - Never file a `deferred` thread on the tracking issue without the user
-  choosing to — deferral is a decision, not a fallback for a failed fix pass
+  choosing to — deferral is a decision, not a fallback for a failed fix pass.
+  Pass their chosen ids to `--track`; `--track-all` is the one blanket form,
+  and only after they have reviewed the whole set
 - Never auto-resolve contested or ambiguous threads — only verified ones
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans
 - If conflicting suggestions exist, flag both and apply neither until resolved

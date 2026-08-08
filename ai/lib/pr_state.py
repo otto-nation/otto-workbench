@@ -207,6 +207,11 @@ class ThreadOutcome:
     summary: str = ""
     action: ThreadAction = ThreadAction.FIXED
     reason: str = ""
+    # The commit that landed this thread's fix. Per-outcome rather than
+    # per-pass: update_fix accumulates outcomes across rounds, so one envelope
+    # SHA would relabel every earlier round's work with the latest round's
+    # commit — or, when the latest round commits nothing, with none at all.
+    commit_sha: str = ""
 
     @classmethod
     def from_entry(
@@ -221,6 +226,7 @@ class ThreadOutcome:
                 summary=entry.summary,
                 action=action,
                 reason=getattr(entry, reason_key, ""),
+                commit_sha=getattr(entry, "commit_sha", ""),
             )
         return cls(
             id=entry.get("id", entry.get("thread_id", "")),
@@ -230,6 +236,7 @@ class ThreadOutcome:
             summary=entry.get("summary", ""),
             action=action,
             reason=entry.get(reason_key, ""),
+            commit_sha=entry.get("commit_sha", ""),
         )
 
 
@@ -239,6 +246,11 @@ class FixSummary:
     threads: list[ThreadOutcome] = field(default_factory=list)
     commit_sha: str = ""
     commit_status: str = ""
+    # The HEAD this snapshot describes. --finish compares it against current
+    # HEAD: outcomes recorded against a commit that is no longer checked out
+    # describe work that may since have been done, undone, or superseded by
+    # hand, and must be reconciled before anything is published.
+    head_sha: str = ""
     replies_posted: int = 0
     # The fix pass produced per-thread replies but did not deliver them — the
     # push failed, or the run was a draft. --resolve drains the queue.

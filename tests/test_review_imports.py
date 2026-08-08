@@ -15,9 +15,12 @@ These tests verify correctness of import patterns:
 4. **No circular imports** — each library module is independently
    importable.
 
-5. **Entry point callable** — ``main()`` is resolvable in each script.
+5. **Proxy coherence** — a name shared by several submodules is the same
+   object in each, and patching it through the proxy reaches every binding.
 
-6. **Cross-module bare references** — every bare name referencing a
+6. **Entry point callable** — ``main()`` is resolvable in each script.
+
+7. **Cross-module bare references** — every bare name referencing a
    peer module's definition has an explicit import.
 
 All expectations are derived dynamically from module ASTs and runtime
@@ -29,6 +32,7 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -380,6 +384,54 @@ def test_proxy_submodules_match_imports(script):
             f"{script.name}: _SUBMODULES references '{alias}' but no "
             f"'import ... as {alias}' found"
         )
+
+
+def test_proxy_setattr_reaches_every_binding(ro):
+    """Patching a shared name through the proxy must reach all of its bindings.
+
+    A name imported between submodules has one definition and several bindings.
+    Patching only one of them leaves every other module's callers running the
+    real implementation, which a test has no way to notice.
+    """
+    owners = [mod for mod in ro._SUBMODULES if hasattr(mod, "invoke_agent")]
+    assert len(owners) > 1, "invoke_agent no longer spans modules — pick another seam"
+
+    originals = [mod.invoke_agent for mod in owners]
+    sentinel = object()
+
+    with mock.patch.object(ro, "invoke_agent", sentinel):
+        assert [mod.invoke_agent for mod in owners] == [sentinel] * len(owners)
+
+    assert [mod.invoke_agent for mod in owners] == originals
+
+
+def test_shared_submodule_names_never_diverge(ro):
+    """A name bound in several submodules must be the same object in each.
+
+    This is what makes the proxy's write-to-every-binding correct. A module
+    that bound a peer's name to a definition of its own would have that
+    definition silently replaced by any patch of the shared name.
+    """
+    bound = (
+        (name, mod.__name__, value)
+        for mod in ro._SUBMODULES
+        for name, value in vars(mod).items()
+        if not name.startswith("__")
+    )
+    bindings: dict[str, list[tuple[str, object]]] = {}
+    for name, owner, value in bound:
+        bindings.setdefault(name, []).append((owner, value))
+
+    diverged = {
+        name: sorted(owner for owner, _ in entries)
+        for name, entries in bindings.items()
+        if len({id(value) for _, value in entries}) > 1
+    }
+
+    assert not diverged, (
+        "names bound to different objects across submodules — the proxy "
+        f"cannot patch these coherently:\n{diverged}"
+    )
 
 
 @pytest.mark.parametrize(

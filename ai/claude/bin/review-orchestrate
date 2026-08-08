@@ -59,15 +59,24 @@ from review_static_analysis import (  # noqa: E402
 )
 import ai_backend  # noqa: E402
 
-# Dependency order, importers first: `__setattr__` patches the first submodule
-# that has the attribute, so a module must precede everything it imports from.
-# review_pipeline therefore stays ahead of the modules split out of it — a name
-# it still imports must be patched on the binding its own callers read.
 _SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rph, _rrt, _rst)
+
+# Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
+# submodule back the way it was. mock.patch deletes rather than restores when the
+# attribute was not in the proxy's own __dict__ to begin with, which is every
+# first patch of a given name.
+_ORIGINALS: dict[tuple[str, str], object] = {}
+_MISSING = object()
 
 
 class _ProxyModule(type(sys.modules[__name__])):
-    """Allows tests to access submodule attributes via the script module."""
+    """Allows tests to access submodule attributes via the script module.
+
+    A name imported between submodules has one definition and several bindings.
+    Reading it can stop at the first — they are the same object. Writing it
+    cannot: a test replacing a seam means every caller of it, so `__setattr__`
+    writes through to all of them and `__delattr__` puts them all back.
+    """
 
     def __getattr__(self, name):
         for mod in _SUBMODULES:
@@ -80,10 +89,16 @@ class _ProxyModule(type(sys.modules[__name__])):
     def __setattr__(self, name, value):
         for mod in _SUBMODULES:
             if hasattr(mod, name):
+                _ORIGINALS.setdefault((mod.__name__, name), getattr(mod, name))
                 setattr(mod, name, value)
-                super().__setattr__(name, value)
-                return
         super().__setattr__(name, value)
+
+    def __delattr__(self, name):
+        for mod in _SUBMODULES:
+            original = _ORIGINALS.pop((mod.__name__, name), _MISSING)
+            if original is not _MISSING:
+                setattr(mod, name, original)
+        super().__delattr__(name)
 
 
 sys.modules[__name__].__class__ = _ProxyModule

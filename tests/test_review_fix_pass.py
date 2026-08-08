@@ -10,7 +10,7 @@ if LIB_DIR not in sys.path:
 
 import review_common
 import review_findings
-import review_pipeline
+import review_fix
 from review_common import Diagnosis, DiagnosisKind, Effort, Phase
 from review_findings import Finding
 
@@ -25,29 +25,29 @@ class TestCommitFixes:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_pipeline.has_uncommitted_changes", return_value=False)
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.has_uncommitted_changes", return_value=False)
+    @patch("review_fix.subprocess.run")
     def test_no_diff_returns_early(self, mock_run, mock_dirty, tmp_path):
-        review_pipeline._commit_fixes(self._make_job(tmp_path), fixed=3, skipped=1)
+        review_fix._commit_fixes(self._make_job(tmp_path), fixed=3, skipped=1)
         mock_run.assert_not_called()
 
-    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
-    @patch("review_pipeline._push_fixes")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.has_uncommitted_changes", return_value=True)
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.subprocess.run")
     def test_commits_with_counts(self, mock_run, mock_push, mock_dirty, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_pipeline._commit_fixes(job, fixed=3, skipped=1)
+        review_fix._commit_fixes(job, fixed=3, skipped=1)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "3 fixed, 1 skipped" in msg
 
-    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
-    @patch("review_pipeline._push_fixes")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.has_uncommitted_changes", return_value=True)
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.subprocess.run")
     def test_zero_fixed_omits_count_from_message(
         self, mock_run, mock_push, mock_dirty, tmp_path,
     ):
@@ -56,14 +56,14 @@ class TestCommitFixes:
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_pipeline._commit_fixes(job, fixed=0, skipped=2)
+        review_fix._commit_fixes(job, fixed=0, skipped=2)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
 
-    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
-    @patch("review_pipeline._push_fixes")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.has_uncommitted_changes", return_value=True)
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.subprocess.run")
     def test_untracked_only_changes_are_staged(
         self, mock_run, mock_push, mock_dirty, tmp_path,
     ):
@@ -73,7 +73,7 @@ class TestCommitFixes:
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_pipeline._commit_fixes(job, fixed=1, skipped=0)
+        review_fix._commit_fixes(job, fixed=1, skipped=0)
         add_call = mock_run.call_args_list[0][0][0]
         assert add_call[-2:] == ["add", "-A"]
         assert mock_run.call_count == 2
@@ -161,14 +161,14 @@ class TestDiffFindings:
     def test_finding_fixed(self):
         before = [self._finding("M1", checked=False)]
         after = [self._finding("M1", checked=True)]
-        result = review_pipeline._diff_findings(before, after)
+        result = review_fix._diff_findings(before, after)
         assert result.fixed_count == 1
         assert result.skipped_count == 0
 
     def test_finding_skipped_with_reason(self):
         before = [self._finding("S1", checked=False)]
         after = [self._finding("S1", checked=False, skip_reason="needs design")]
-        result = review_pipeline._diff_findings(before, after)
+        result = review_fix._diff_findings(before, after)
         assert result.fixed_count == 0
         assert result.skipped_count == 1
         assert result.skipped[0].skip_reason == "needs design"
@@ -176,14 +176,14 @@ class TestDiffFindings:
     def test_finding_skipped_without_reason(self):
         before = [self._finding("N1", checked=False)]
         after = [self._finding("N1", checked=False)]
-        result = review_pipeline._diff_findings(before, after)
+        result = review_fix._diff_findings(before, after)
         assert result.fixed_count == 0
         assert result.skipped_count == 1
 
     def test_already_checked_is_unchanged(self):
         before = [self._finding("M1", checked=True)]
         after = [self._finding("M1", checked=True)]
-        result = review_pipeline._diff_findings(before, after)
+        result = review_fix._diff_findings(before, after)
         assert result.fixed_count == 0
         assert result.skipped_count == 0
         assert len(result.unchanged) == 1
@@ -199,7 +199,7 @@ class TestDiffFindings:
             self._finding("S1", checked=False, skip_reason="design choice"),
             self._finding("N1", checked=True),
         ]
-        result = review_pipeline._diff_findings(before, after)
+        result = review_fix._diff_findings(before, after)
         assert result.fixed_count == 1
         assert result.skipped_count == 1
         assert len(result.unchanged) == 1
@@ -216,12 +216,12 @@ class TestFormatFixSummary:
         )
 
     def test_fixed_and_skipped(self):
-        result = review_pipeline.FixPassResult(
+        result = review_fix.FixPassResult(
             fixed=[self._finding("M1", body="corrected condition")],
             skipped=[self._finding("S1", body="body", skip_reason="needs design")],
             unchanged=[],
         )
-        summary = review_pipeline._format_fix_summary(result)
+        summary = review_fix._format_fix_summary(result)
         assert "Fixed:" in summary
         assert "[M1]" in summary
         assert "corrected condition" in summary
@@ -230,16 +230,16 @@ class TestFormatFixSummary:
         assert "needs design" in summary
 
     def test_empty_result(self):
-        result = review_pipeline.FixPassResult(fixed=[], skipped=[], unchanged=[])
-        assert review_pipeline._format_fix_summary(result) == ""
+        result = review_fix.FixPassResult(fixed=[], skipped=[], unchanged=[])
+        assert review_fix._format_fix_summary(result) == ""
 
     def test_skipped_without_reason_uses_default(self):
-        result = review_pipeline.FixPassResult(
+        result = review_fix.FixPassResult(
             fixed=[],
             skipped=[self._finding("N1", body="body", skip_reason="")],
             unchanged=[],
         )
-        summary = review_pipeline._format_fix_summary(result)
+        summary = review_fix._format_fix_summary(result)
         assert "no auto-fix" in summary
 
 
@@ -250,9 +250,9 @@ class TestCommitFixesWithSummary:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
-    @patch("review_pipeline._push_fixes")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.has_uncommitted_changes", return_value=True)
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.subprocess.run")
     def test_commit_includes_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
@@ -260,23 +260,23 @@ class TestCommitFixesWithSummary:
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
-        review_pipeline._commit_fixes(job, fixed=1, skipped=1, summary=summary)
+        review_fix._commit_fixes(job, fixed=1, skipped=1, summary=summary)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "1 fixed, 1 skipped" in msg
         assert "corrected condition" in msg
         assert "needs design" in msg
 
-    @patch("review_pipeline.has_uncommitted_changes", return_value=True)
-    @patch("review_pipeline._push_fixes")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.has_uncommitted_changes", return_value=True)
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.subprocess.run")
     def test_commit_without_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_pipeline._commit_fixes(job, fixed=2, skipped=0, summary="")
+        review_fix._commit_fixes(job, fixed=2, skipped=0, summary="")
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "2 fixed, 0 skipped" in msg
@@ -326,19 +326,19 @@ class TestPushFixes:
     def _rev_parse_result(self, sha):
         return MagicMock(returncode=0, stdout=f"{sha}\n", stderr="")
 
-    @patch("review_pipeline.log")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.log")
+    @patch("review_fix.subprocess.run")
     def test_diverged_push_suggests_force_with_lease(self, mock_run, mock_log, tmp_path):
         mock_run.return_value = self._push_result(
             "! [rejected] main -> main (non-fast-forward)"
         )
-        review_pipeline._push_fixes(self._make_job(tmp_path))
+        review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "diverged" in msg
         assert "--force-with-lease" in msg
 
-    @patch("review_pipeline.log")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.log")
+    @patch("review_fix.subprocess.run")
     def test_hook_failure_does_not_suggest_force_push(self, mock_run, mock_log, tmp_path):
         """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
         mock_run.side_effect = [
@@ -347,12 +347,12 @@ class TestPushFixes:
             ),
             self._rev_parse_result("9bc3f64"),
         ]
-        review_pipeline._push_fixes(self._make_job(tmp_path))
+        review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "--force-with-lease" not in msg
 
-    @patch("review_pipeline.log")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.log")
+    @patch("review_fix.subprocess.run")
     def test_hook_rejection_names_the_gate_the_commit_and_the_repair(
         self, mock_run, mock_log, tmp_path,
     ):
@@ -364,7 +364,7 @@ class TestPushFixes:
             ),
             self._rev_parse_result("9bc3f64"),
         ]
-        review_pipeline._push_fixes(self._make_job(tmp_path))
+        review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "pre-push checks" in msg
         assert "9bc3f64" in msg
@@ -372,8 +372,8 @@ class TestPushFixes:
         assert "FAILED tests/test_review_threads.py" in msg
         assert "Repair, then: git -C" in msg
 
-    @patch("review_pipeline.log")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.log")
+    @patch("review_fix.subprocess.run")
     def test_transport_failure_is_not_reported_as_a_failed_gate(
         self, mock_run, mock_log, tmp_path,
     ):
@@ -383,16 +383,16 @@ class TestPushFixes:
             "fatal: Could not read from remote repository.\n"
             "error: failed to push some refs to 'github.com:o/r.git'"
         )
-        review_pipeline._push_fixes(self._make_job(tmp_path))
+        review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "pre-push checks" not in msg
         assert "committed locally but not pushed" in msg
 
-    @patch("review_pipeline.log")
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.log")
+    @patch("review_fix.subprocess.run")
     def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-        review_pipeline._push_fixes(self._make_job(tmp_path))
+        review_fix._push_fixes(self._make_job(tmp_path))
         mock_log.error.assert_not_called()
 
 
@@ -400,65 +400,65 @@ class TestIsLocalHookRejection:
     """Which push failures came from the local gate rather than the remote."""
 
     def test_claims_a_bare_refusal_with_no_rejected_ref(self):
-        assert review_pipeline._is_local_hook_rejection(
+        assert review_fix._is_local_hook_rejection(
             "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'"
         )
 
     def test_disclaims_a_rejected_ref(self):
         """A per-ref rejection means git reached the remote and it said no."""
-        assert not review_pipeline._is_local_hook_rejection(
+        assert not review_fix._is_local_hook_rejection(
             "! [rejected] main -> main (fetch first)\nerror: failed to push some refs"
         )
 
     def test_disclaims_an_auth_failure(self):
-        assert not review_pipeline._is_local_hook_rejection(
+        assert not review_fix._is_local_hook_rejection(
             "fatal: Authentication failed for 'https://github.com/o/r.git/'\n"
             "error: failed to push some refs"
         )
 
     def test_disclaims_output_that_never_refused_the_push(self):
-        assert not review_pipeline._is_local_hook_rejection("Everything up-to-date")
+        assert not review_fix._is_local_hook_rejection("Everything up-to-date")
 
 
 class TestHookOutput:
 
     def test_merges_both_streams_so_the_failing_gate_survives(self):
         result = MagicMock(stdout="running pytest", stderr="✗ Pytest failed")
-        out = review_pipeline._hook_output(result)
+        out = review_fix._hook_output(result)
         assert "running pytest" in out
         assert "✗ Pytest failed" in out
 
     def test_indents_every_line_under_the_error(self):
         result = MagicMock(stdout="a\nb", stderr="")
-        assert review_pipeline._hook_output(result) == "  a\n  b"
+        assert review_fix._hook_output(result) == "  a\n  b"
 
     def test_keeps_only_the_tail_of_a_long_gate_dump(self):
         result = MagicMock(stdout="\n".join(str(n) for n in range(50)), stderr="")
-        lines = review_pipeline._hook_output(result).splitlines()
-        assert len(lines) == review_pipeline._HOOK_OUTPUT_LINES
+        lines = review_fix._hook_output(result).splitlines()
+        assert len(lines) == review_fix._HOOK_OUTPUT_LINES
         assert lines[-1] == "  49"
 
     def test_survives_a_stream_git_left_empty(self):
         result = MagicMock(stdout=None, stderr="✗ Pytest failed")
-        assert review_pipeline._hook_output(result) == "  ✗ Pytest failed"
+        assert review_fix._hook_output(result) == "  ✗ Pytest failed"
 
 
 class TestHeadSha:
 
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.subprocess.run")
     def test_returns_the_short_sha(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="9bc3f64\n", stderr="")
-        assert review_pipeline._head_sha("/wt") == "9bc3f64"
+        assert review_fix._head_sha("/wt") == "9bc3f64"
 
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.subprocess.run")
     def test_falls_back_to_head_when_rev_parse_fails(self, mock_run):
         """The repair instruction still reads correctly without a SHA."""
         mock_run.return_value = MagicMock(returncode=128, stdout="", stderr="fatal")
-        assert review_pipeline._head_sha("/wt") == "HEAD"
+        assert review_fix._head_sha("/wt") == "HEAD"
 
 
 class TestReconcileCheckboxes:
-    @patch("review_pipeline._changed_source_files")
+    @patch("review_fix._changed_source_files")
     def test_checks_matching_findings(self, mock_changed, tmp_path):
         mock_changed.return_value = {"src/auth.go", "src/config.go"}
         review = tmp_path / "review.md"
@@ -468,30 +468,30 @@ class TestReconcileCheckboxes:
             "## Nit\n"
             "- [ ] **[N1]** **`src/unrelated.go:5`** — Style issue\n"
         )
-        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
         text = review.read_text()
         assert "- [x] **[M1]**" in text
         assert "- [ ] **[N1]**" in text
 
-    @patch("review_pipeline._changed_source_files")
+    @patch("review_fix._changed_source_files")
     def test_no_changes_is_noop(self, mock_changed, tmp_path):
         mock_changed.return_value = set()
         review = tmp_path / "review.md"
         original = "- [ ] **[M1]** **`src/auth.go:10`** — Bug\n"
         review.write_text(original)
-        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
         assert review.read_text() == original
 
-    @patch("review_pipeline._changed_source_files")
+    @patch("review_fix._changed_source_files")
     def test_already_checked_not_modified(self, mock_changed, tmp_path):
         mock_changed.return_value = {"src/auth.go"}
         review = tmp_path / "review.md"
         original = "- [x] **[M1]** **`src/auth.go:10`** — Already fixed\n"
         review.write_text(original)
-        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
         assert review.read_text() == original
 
-    @patch("review_pipeline._changed_source_files")
+    @patch("review_fix._changed_source_files")
     def test_checks_findings_on_extensionless_scripts(self, mock_changed, tmp_path):
         """A finding on a bin script must reconcile, or it reports as skipped."""
         mock_changed.return_value = {"ai/claude/bin/ci-check"}
@@ -500,66 +500,66 @@ class TestReconcileCheckboxes:
             "## Must fix\n"
             "- [ ] **[M1]** `ai/claude/bin/ci-check:777` — No session_log\n"
         )
-        review_pipeline._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
         assert "- [x] **[M1]**" in review.read_text()
 
 
 class TestChangedSourceFiles:
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.subprocess.run")
     def test_includes_untracked_files(self, mock_run):
         """A fix that only adds a new test file still fixed the finding."""
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="src/auth.go\n"),
             MagicMock(returncode=0, stdout="tests/run_ai.bats\n"),
         ]
-        assert review_pipeline._changed_source_files("/wt") == {
+        assert review_fix._changed_source_files("/wt") == {
             "src/auth.go", "tests/run_ai.bats",
         }
 
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.subprocess.run")
     def test_untracked_query_excludes_ignored_files(self, mock_run):
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=""),
             MagicMock(returncode=0, stdout=""),
         ]
-        review_pipeline._changed_source_files("/wt")
+        review_fix._changed_source_files("/wt")
         assert "--exclude-standard" in mock_run.call_args_list[1][0][0]
 
-    @patch("review_pipeline.subprocess.run")
+    @patch("review_fix.subprocess.run")
     def test_diff_failure_still_reports_untracked(self, mock_run):
         mock_run.side_effect = [
             MagicMock(returncode=128, stdout=""),
             MagicMock(returncode=0, stdout="tests/new.bats\n"),
         ]
-        assert review_pipeline._changed_source_files("/wt") == {"tests/new.bats"}
+        assert review_fix._changed_source_files("/wt") == {"tests/new.bats"}
 
 
 class TestTurnBudgetScaling:
     def test_small_review_uses_default(self):
-        turns = review_pipeline._fix_turn_budget(5)
-        assert turns == review_pipeline.PHASES[Phase.FIX].max_turns
+        turns = review_fix._fix_turn_budget(5)
+        assert turns == review_fix.PHASES[Phase.FIX].max_turns
 
     def test_large_review_scales_up(self):
-        turns = review_pipeline._fix_turn_budget(25)
+        turns = review_fix._fix_turn_budget(25)
         assert turns == 50
 
     def test_very_large_review_caps(self):
-        turns = review_pipeline._fix_turn_budget(100)
-        assert turns == review_pipeline.MAX_TURNS_FIX_CAP
+        turns = review_fix._fix_turn_budget(100)
+        assert turns == review_fix.MAX_TURNS_FIX_CAP
 
 
 class TestFixRetryBudget:
     def test_small_budget_gets_minimum_retry(self):
-        assert review_pipeline._fix_retry_budget(20) == 40
+        assert review_fix._fix_retry_budget(20) == 40
 
     def test_medium_budget_adds_headroom(self):
-        assert review_pipeline._fix_retry_budget(30) == 50
+        assert review_fix._fix_retry_budget(30) == 50
 
     def test_large_budget_caps_at_max(self):
-        assert review_pipeline._fix_retry_budget(50) == 60
+        assert review_fix._fix_retry_budget(50) == 60
 
     def test_already_at_cap_stays_at_cap(self):
-        assert review_pipeline._fix_retry_budget(60) == 60
+        assert review_fix._fix_retry_budget(60) == 60
 
 
 class TestFixPassMadeProgress:
@@ -573,34 +573,34 @@ class TestFixPassMadeProgress:
         )
 
     def test_fixed_finding_is_progress(self):
-        result = review_pipeline.FixPassResult(
+        result = review_fix.FixPassResult(
             fixed=[self._finding("M1", checked=True)],
             skipped=[], unchanged=[],
         )
-        assert review_pipeline._fix_pass_made_progress(result) is True
+        assert review_fix._fix_pass_made_progress(result) is True
 
     def test_annotated_skip_is_progress(self):
-        result = review_pipeline.FixPassResult(
+        result = review_fix.FixPassResult(
             fixed=[],
             skipped=[self._finding("S1", skip_reason="needs design")],
             unchanged=[],
         )
-        assert review_pipeline._fix_pass_made_progress(result) is True
+        assert review_fix._fix_pass_made_progress(result) is True
 
     def test_unannotated_skip_is_no_progress(self):
-        result = review_pipeline.FixPassResult(
+        result = review_fix.FixPassResult(
             fixed=[],
             skipped=[self._finding("N1")],
             unchanged=[],
         )
-        assert review_pipeline._fix_pass_made_progress(result) is False
+        assert review_fix._fix_pass_made_progress(result) is False
 
     def test_empty_result_is_no_skips(self):
-        result = review_pipeline.FixPassResult(fixed=[], skipped=[], unchanged=[])
-        assert review_pipeline._fix_pass_made_progress(result) is False
+        result = review_fix.FixPassResult(fixed=[], skipped=[], unchanged=[])
+        assert review_fix._fix_pass_made_progress(result) is False
 
     def test_mixed_annotated_and_unannotated_is_progress(self):
-        result = review_pipeline.FixPassResult(
+        result = review_fix.FixPassResult(
             fixed=[],
             skipped=[
                 self._finding("S1", skip_reason="design choice"),
@@ -608,7 +608,7 @@ class TestFixPassMadeProgress:
             ],
             unchanged=[],
         )
-        assert review_pipeline._fix_pass_made_progress(result) is True
+        assert review_fix._fix_pass_made_progress(result) is True
 
 
 class TestRunFixPassRetry:
@@ -629,25 +629,25 @@ class TestRunFixPassRetry:
         job.effort = Effort.MEDIUM
         return job
 
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
+    @patch("review_fix._commit_fixes")
+    @patch("review_fix._reconcile_checkboxes")
+    @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
     def test_retries_on_zero_progress_max_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
     ):
         job = self._make_job(tmp_path)
         assert mock_invoke.call_count == 0
-        review_pipeline.run_fix_pass(job)
+        review_fix.run_fix_pass(job)
         assert mock_invoke.call_count == 2
         retry_call = mock_invoke.call_args_list[1]
         assert retry_call[0][0].prompt.startswith("IMPORTANT: A previous attempt")
 
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
+    @patch("review_fix._commit_fixes")
+    @patch("review_fix._reconcile_checkboxes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
     def test_no_retry_when_fixes_applied(
         self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
     ):
@@ -658,13 +658,13 @@ class TestRunFixPassRetry:
             Path(job.review_file).write_text(text.replace("- [ ] **[S1]**", "- [x] **[S1]**"))
 
         mock_invoke.side_effect = apply_fix
-        review_pipeline.run_fix_pass(job)
+        review_fix.run_fix_pass(job)
         assert mock_invoke.call_count == 1
 
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
+    @patch("review_fix._commit_fixes")
+    @patch("review_fix._reconcile_checkboxes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
     def test_no_retry_when_skip_reasons_annotated(
         self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
     ):
@@ -679,41 +679,41 @@ class TestRunFixPassRetry:
             Path(job.review_file).write_text(text)
 
         mock_invoke.side_effect = annotate_skips
-        review_pipeline.run_fix_pass(job)
+        review_fix.run_fix_pass(job)
         assert mock_invoke.call_count == 1
 
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value=_AGENT_ERROR)
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
+    @patch("review_fix._commit_fixes")
+    @patch("review_fix._reconcile_checkboxes")
+    @patch("review_fix.diagnose_missing_output", return_value=_AGENT_ERROR)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
     def test_no_retry_on_non_retryable_reason(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
     ):
         job = self._make_job(tmp_path)
-        review_pipeline.run_fix_pass(job)
+        review_fix.run_fix_pass(job)
         assert mock_invoke.call_count == 1
 
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
+    @patch("review_fix._commit_fixes")
+    @patch("review_fix._reconcile_checkboxes")
+    @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
     def test_retry_uses_increased_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
     ):
         job = self._make_job(tmp_path)
-        review_pipeline.run_fix_pass(job)
+        review_fix.run_fix_pass(job)
         retry_call = mock_invoke.call_args_list[1]
-        assert retry_call[0][0].max_turns == review_pipeline._fix_retry_budget(
-            review_pipeline._fix_turn_budget(2),
+        assert retry_call[0][0].max_turns == review_fix._fix_retry_budget(
+            review_fix._fix_turn_budget(2),
         )
 
-    @patch("review_pipeline._commit_fixes")
-    @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_pipeline.invoke_agent")
-    @patch("review_pipeline.build_prompt", return_value="prompt")
+    @patch("review_fix._commit_fixes")
+    @patch("review_fix._reconcile_checkboxes")
+    @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
     def test_never_runs_under_a_read_only_reviewer_agent(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
     ):
@@ -725,7 +725,7 @@ class TestRunFixPassRetry:
         the system prompt or the task.
         """
         job = self._make_job(tmp_path)
-        review_pipeline.run_fix_pass(job)
+        review_fix.run_fix_pass(job)
         assert mock_invoke.call_count == 2
         agents = [c.args[0].agent for c in mock_invoke.call_args_list]
         assert agents == [None, None]

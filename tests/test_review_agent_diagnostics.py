@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_agent
-import review_pipeline
+import review_retry
 from review_common import Diagnosis, DiagnosisKind
 
 
@@ -87,7 +87,7 @@ class TestDiagnoseMissingOutput:
         diagnosis = review_agent.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
         assert not diagnosis.no_write_tool
-        assert not review_pipeline._is_retryable(diagnosis)
+        assert not review_retry._is_retryable(diagnosis)
 
     def test_transient_crash_is_classified_apart_from_a_plain_one(self, tmp_path):
         log_path = _write_log(
@@ -99,7 +99,7 @@ class TestDiagnoseMissingOutput:
         )
         diagnosis = review_agent.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.TRANSIENT
-        assert review_pipeline._is_retryable(diagnosis)
+        assert review_retry._is_retryable(diagnosis)
 
     def test_clean_completion_without_a_write_is_labelled(self, tmp_path):
         log_path = _write_log(
@@ -110,7 +110,7 @@ class TestDiagnoseMissingOutput:
         diagnosis = review_agent.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.COMPLETED
         assert diagnosis.no_write_tool
-        assert review_pipeline._is_retryable(diagnosis)
+        assert review_retry._is_retryable(diagnosis)
 
     def test_refusal_without_any_tool_call_is_labelled(self, tmp_path):
         """A one-turn refusal calls no tool at all — the clearest no-write case.
@@ -126,7 +126,7 @@ class TestDiagnoseMissingOutput:
         )
         diagnosis = review_agent.diagnose_missing_output(log_path)
         assert diagnosis.no_write_tool
-        assert review_pipeline._is_retryable(diagnosis)
+        assert review_retry._is_retryable(diagnosis)
 
     def test_missing_log_unchanged(self, tmp_path):
         diagnosis = review_agent.diagnose_missing_output(str(tmp_path / "nope.jsonl"))

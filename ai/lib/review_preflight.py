@@ -50,9 +50,14 @@ class PRMetadata:
     def total_lines(self):
         return self.additions + self.deletions
 
-    @property
-    def file_stats(self):
-        if self.total_lines <= MULTI_PHASE_LINE_THRESHOLD:
+    def file_stats(self, line_threshold: int):
+        """The per-file churn breakdown, or "" for a PR small enough not to need it.
+
+        The threshold is an argument rather than a module constant because
+        ``EFFORT_PRESETS`` varies it by effort; re-deriving it here is what let
+        the two owners disagree.
+        """
+        if self.total_lines <= line_threshold:
             return ""
         sorted_files = sorted(
             self.files, key=lambda f: f["additions"] + f["deletions"], reverse=True
@@ -164,7 +169,6 @@ class PipelineState:
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-MULTI_PHASE_LINE_THRESHOLD = 500
 MAX_GROUP_LINES = 800
 MAX_GROUP_FILES = 15
 DEFAULT_MAX_PARALLEL = 1

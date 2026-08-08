@@ -207,3 +207,37 @@ class TestFetchPRMetadataPinned:
         assert pr.head_sha == "newsha0"
         assert pr.changed_files == 3
         assert len(calls) == 1
+
+
+def _make_meta(total_lines: int) -> rp.PRMetadata:
+    return rp.PRMetadata(
+        title="test",
+        body="",
+        head="feature",
+        base="main",
+        head_sha="abc1234",
+        additions=total_lines,
+        deletions=0,
+        changed_files=1,
+        files=[{"path": "a.py", "additions": total_lines, "deletions": 0}],
+    )
+
+
+class TestFileStatsThreshold:
+    """The effort preset owns the threshold; file_stats must not re-derive it."""
+
+    def test_low_effort_uses_wider_threshold(self):
+        from review_common import EFFORT_PRESETS, Effort
+
+        low = EFFORT_PRESETS[Effort.LOW].multi_phase_line_threshold
+        assert _make_meta(750).file_stats(low) == ""
+
+    def test_medium_effort_uses_narrower_threshold(self):
+        from review_common import EFFORT_PRESETS, Effort
+
+        medium = EFFORT_PRESETS[Effort.MEDIUM].multi_phase_line_threshold
+        assert "a.py" in _make_meta(750).file_stats(medium)
+
+    def test_the_module_constant_is_gone(self):
+        """A second owner is what this change removes; it must not come back."""
+        assert not hasattr(rp, "MULTI_PHASE_LINE_THRESHOLD")

@@ -13,6 +13,7 @@ from review_preflight import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
 )
 from review_common import (
+    EFFORT_PRESETS, Effort,
     TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
 )
 from review_prompt import (
@@ -106,35 +107,58 @@ def _make_ctx(**overrides):
     return PRContext(**defaults)
 
 
+# These cases are about file_filter scoping, not the threshold, so they pin the
+# medium preset — the value they were written against before it became an argument.
+MEDIUM_THRESHOLD = EFFORT_PRESETS[Effort.MEDIUM].multi_phase_line_threshold
+
+
 class TestBuildPrHeaderScoped:
     def test_no_filter_shows_full_size(self):
-        header = _build_pr_header(_make_pr(), _make_ctx())
+        header = _build_pr_header(_make_pr(), _make_ctx(), MEDIUM_THRESHOLD)
         assert "+100 -50 across 3 files" in header
 
     def test_filter_scopes_size_line(self):
-        header = _build_pr_header(_make_pr(), _make_ctx(), file_filter=["a.py"])
+        header = _build_pr_header(
+            _make_pr(), _make_ctx(), MEDIUM_THRESHOLD, file_filter=["a.py"],
+        )
         assert "+40 -20 across 1 files" in header
         assert "of 3 total" in header
 
     def test_filter_scopes_file_breakdown(self):
         pr = _make_pr(additions=600, deletions=100)
-        header = _build_pr_header(pr, _make_ctx(), file_filter=["a.py", "b.py"])
+        header = _build_pr_header(
+            pr, _make_ctx(), MEDIUM_THRESHOLD, file_filter=["a.py", "b.py"],
+        )
         assert "a.py" in header
         assert "b.py" in header
         assert "c.py" not in header
 
     def test_filter_always_includes_file_breakdown(self):
         pr = _make_pr(additions=10, deletions=5)
-        header_unfiltered = _build_pr_header(pr, _make_ctx())
+        header_unfiltered = _build_pr_header(pr, _make_ctx(), MEDIUM_THRESHOLD)
         assert "File breakdown" not in header_unfiltered
 
-        header_filtered = _build_pr_header(pr, _make_ctx(), file_filter=["a.py"])
+        header_filtered = _build_pr_header(
+            pr, _make_ctx(), MEDIUM_THRESHOLD, file_filter=["a.py"],
+        )
         assert "File breakdown" in header_filtered
 
     def test_filter_preserves_description_and_commits(self):
-        header = _build_pr_header(_make_pr(), _make_ctx(), file_filter=["a.py"])
+        header = _build_pr_header(
+            _make_pr(), _make_ctx(), MEDIUM_THRESHOLD, file_filter=["a.py"],
+        )
         assert "Description" in header
         assert "feat: stuff" in header
+
+    def test_low_effort_suppresses_a_breakdown_medium_would_show(self):
+        """The regression #622 fixes: the same PR, classified by the preset."""
+        pr = _make_pr(additions=600, deletions=150)
+        low = EFFORT_PRESETS[Effort.LOW].multi_phase_line_threshold
+
+        assert "File breakdown" in _build_pr_header(
+            pr, _make_ctx(), MEDIUM_THRESHOLD,
+        )
+        assert "File breakdown" not in _build_pr_header(pr, _make_ctx(), low)
 
 
 # ── _compute_diff_budget ────────────────────────────────────────────────────

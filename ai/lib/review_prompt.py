@@ -17,6 +17,7 @@ from string import Template
 import json
 import log
 from review_common import (
+    EFFORT_PRESETS,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS,
     TEMPLATE_DIR_REL,
@@ -46,6 +47,7 @@ def _template_dir() -> Path:
 
 def _build_pr_header(
     pr: PRMetadata, ctx: PRContext,
+    line_threshold: int,
     file_filter: list[str] | None = None,
     viewer_role: str = "",
 ) -> str:
@@ -83,8 +85,10 @@ def _build_pr_header(
         file_stats = "\n".join(FILE_STAT_FMT.format(**f) for f in sorted_files)
         if file_stats:
             lines += ["", "### File breakdown (sorted by churn)", file_stats]
-    elif pr.file_stats:
-        lines += ["", "### File breakdown (sorted by churn)", pr.file_stats]
+    else:
+        file_stats = pr.file_stats(line_threshold)
+        if file_stats:
+            lines += ["", "### File breakdown (sorted by churn)", file_stats]
 
     return "\n".join(lines)
 
@@ -935,7 +939,11 @@ def _prompt_group(job, common, extra):
     b.shared("issue_section", "env_section", "omitted_guidance", "max_turns")
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
-    b.set("pr_header", _build_pr_header(job.pr, job.ctx, file_filter=file_filter))
+    b.set("pr_header", _build_pr_header(
+        job.pr, job.ctx,
+        EFFORT_PRESETS[job.effort].multi_phase_line_threshold,
+        file_filter=file_filter,
+    ))
     b.set("delta_section", _build_delta_section(job.preflight, file_filter=file_filter))
     b.set("reply_threads", _build_reply_threads_section(job.reply_threads, file_filter=file_filter))
     b.set("project_context", build_project_context(job.preflight, file_filter=file_filter) if job.preflight else "")
@@ -1020,7 +1028,11 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
     return CommonSections(
         today=date.today().isoformat(),
         generator_version=job.generator_version,
-        pr_header=_build_pr_header(job.pr, job.ctx, viewer_role=job.viewer_role),
+        pr_header=_build_pr_header(
+            job.pr, job.ctx,
+            EFFORT_PRESETS[job.effort].multi_phase_line_threshold,
+            viewer_role=job.viewer_role,
+        ),
         state_context=_build_state_context_section(job),
         reviews_section=_build_reviews_section(job.ctx),
         reply_threads=_build_reply_threads_section(job.reply_threads),

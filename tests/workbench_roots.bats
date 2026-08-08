@@ -105,6 +105,27 @@ resolve_zsh_state() {
   [ "$(resolve_python cache_dir)"  = "$TMPDIR/explicit-cache" ]
 }
 
+@test "an override that is exported but empty falls through to the default" {
+  # `export WORKBENCH_STATE_DIR=` in a shell profile leaves the variable present
+  # and empty. Reading that as a real override would resolve the root to `/` and
+  # write the workbench's data to the filesystem root.
+  export WORKBENCH_CONFIG_DIR="" WORKBENCH_STATE_DIR="" WORKBENCH_CACHE_DIR=""
+  [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$HOME/.cache/workbench" ]
+  [ "$(resolve_python config_dir)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_python state_dir)"  = "$HOME/.config/workbench" ]
+  [ "$(resolve_python cache_dir)"  = "$HOME/.cache/workbench" ]
+  [ "$(resolve_zsh_state)" = "$HOME/.config/workbench" ]
+}
+
+@test "sourcing roots.sh does not leave its helper defined" {
+  # roots.sh reaches every script that loads lib/ui.sh, so a helper left behind
+  # is a name every one of them has to avoid.
+  run bash -c '. "$1/lib/roots.sh"; declare -F _wb_root' _ "$REPO_ROOT"
+  [ "$status" -ne 0 ]
+}
+
 @test "re-sourcing roots.sh keeps an already-resolved root stable" {
   export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
   run bash -c '. "$1/lib/roots.sh"; . "$1/lib/roots.sh"; printf "%s" "$WORKBENCH_CONFIG_DIR"' _ "$REPO_ROOT"

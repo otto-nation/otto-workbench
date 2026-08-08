@@ -1,5 +1,6 @@
 # Colima-specific docker shell configuration.
-# Sourced at shell startup via <state root>/docker-aliases.zsh (symlink).
+# Sourced at shell startup via $WORKBENCH_STATE_DIR/docker-aliases.zsh (symlink);
+# the state root is defined in lib/roots.sh — see docs/libraries.md.
 # Written by docker/setup.sh when Colima is selected as the docker runtime.
 #
 # Override any of these in ~/.env.local before this file is sourced.

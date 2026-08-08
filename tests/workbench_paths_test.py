@@ -37,6 +37,7 @@ def _load_module(name: str, path: Path):
         del sys.modules[name]
     return module
 
+
 ROOT_VARS = (
     "WORKBENCH_CONFIG_DIR",
     "WORKBENCH_STATE_DIR",
@@ -106,6 +107,18 @@ class TestOverrideRung:
         monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "explicit"))
         assert workbench_paths.config_dir() == tmp_path / "explicit"
 
+    @pytest.mark.parametrize("var,func,default", [
+        ("WORKBENCH_CONFIG_DIR", "config_dir", ".config/workbench"),
+        ("WORKBENCH_STATE_DIR", "state_dir", ".config/workbench"),
+        ("WORKBENCH_CACHE_DIR", "cache_dir", ".cache/workbench"),
+    ])
+    def test_an_empty_override_falls_through(self, monkeypatch, clean_env, var, func, default):
+        # `export WORKBENCH_STATE_DIR=` in a shell profile leaves the variable
+        # present but empty. Reading that as a real override would resolve the
+        # root to `/` and write the workbench's data to the filesystem root.
+        monkeypatch.setenv(var, "")
+        assert getattr(workbench_paths, func)() == clean_env / default
+
 
 class TestResolvedPerCall:
     def test_a_root_set_after_import_is_still_honoured(self, monkeypatch, tmp_path):
@@ -125,6 +138,13 @@ class TestLogsDir:
     def test_logs_follow_the_state_root(self, monkeypatch, tmp_path):
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
         assert workbench_paths.logs_dir("retro-scan") == tmp_path / "state/logs/retro-scan"
+
+    @pytest.mark.parametrize("tool", ["/etc", "../escaped", "nested/tool", ".."])
+    def test_a_path_like_tool_name_is_rejected(self, tool):
+        # Anything but a bare name lands outside the tree otto-log globs over,
+        # so the run's trail would simply never be found again.
+        with pytest.raises(ValueError):
+            workbench_paths.logs_dir(tool)
 
 
 class TestConsumers:

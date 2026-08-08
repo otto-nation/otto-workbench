@@ -11,9 +11,10 @@ set -e
 
 WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
-# Sourced rather than re-derived so the state root stays in one place —
-# lib/roots.sh owns it. Not lib/ui.sh: this runs under launchd/systemd with no
-# terminal, and ui.sh pulls in the whole interactive framework.
+# Sourced rather than re-derived: constants.sh owns MAINTENANCE_LAST_FILE, and
+# the state root it hangs off comes from lib/roots.sh underneath. Not lib/ui.sh:
+# this runs under launchd/systemd with no terminal, and ui.sh pulls in the whole
+# interactive framework.
 # shellcheck source=../../lib/constants.sh
 . "$WORKBENCH_DIR/lib/constants.sh"
 

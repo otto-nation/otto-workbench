@@ -55,7 +55,15 @@ def cache_dir() -> Path:
 def logs_dir(tool: str | None = None) -> Path:
     """Trail and log artifacts for a standalone tool run.
 
-    Without ``tool`` this is the parent that ``otto-log`` globs over.
+    ``tool`` is a bare directory name, not a path — an absolute value or one
+    holding ``..`` would resolve outside the logs tree, where ``otto-log`` would
+    never find it. Without ``tool`` this is the parent that ``otto-log`` globs
+    over.
     """
     base = state_dir() / "logs"
-    return base / tool if tool else base
+    if not tool:
+        return base
+    # `Path("..").name` is ".." — a bare name by that test, but still an escape.
+    if tool == os.pardir or tool != Path(tool).name:
+        raise ValueError(f"log dir name must be a bare name, got {tool!r}")
+    return base / tool

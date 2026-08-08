@@ -589,7 +589,6 @@ def test_load_state_without_seen_ids_defaults_empty():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         save_state(root, state)
         path = root / ".workbench" / "state.json"
-        import json
         data = json.loads(path.read_text())
         del data["comments"]["seen_issue_comment_ids"]
         path.write_text(json.dumps(data))
@@ -605,7 +604,6 @@ def test_load_state_without_seen_review_body_comment_ids_defaults_empty():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         save_state(root, state)
         path = root / ".workbench" / "state.json"
-        import json
         data = json.loads(path.read_text())
         del data["comments"]["seen_review_body_comment_ids"]
         path.write_text(json.dumps(data))
@@ -992,7 +990,6 @@ def test_load_state_without_fix_defaults_empty():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         save_state(root, state)
         path = root / ".workbench" / "state.json"
-        import json
         data = json.loads(path.read_text())
         del data["fix"]
         path.write_text(json.dumps(data))

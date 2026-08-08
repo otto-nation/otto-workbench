@@ -1197,6 +1197,22 @@ class TestSummaryUsesPerThreadCommit:
         assert "1111111" in body
         assert "2222222" in body
 
+    def test_a_reconciled_thread_claims_no_commit(self, rt):
+        """It was fixed by hand — crediting the pass's commit would be a lie.
+
+        The file cell still permalinks at the pass's SHA; that is a location
+        anchor, not a claim about who fixed it. The status cell is the claim.
+        """
+        body = self._post(
+            rt,
+            ThreadOutcome(id="t1", summary="fixed by hand", file="a.py", line=1,
+                          action=ThreadAction.FIXED,
+                          reason=rt._RECONCILED_REASON),
+            commit_sha="def5678", commit_status="pushed",
+        )
+        assert "Fixed in" not in body
+        assert "Addressed outside the fix pass" in body
+
     def test_pass_sha_still_covers_a_thread_with_none(self, rt):
         body = self._post(
             rt,
@@ -1543,6 +1559,42 @@ class TestDeferralRequiresAChoice:
         state.fix.threads.append(ThreadOutcome(id="t2", action=ThreadAction.FIXED))
         with pytest.raises(SystemExit):
             self._run(rt, state, self._ctx(tmp_path), track={"t2"})
+
+
+class TestUnfiledDeferralsAreNamed:
+    """The report has to name exactly the threads nobody asked to file."""
+
+    def _report(self, rt, ids, track):
+        state = PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="abc1234", worktree_root="/tmp/wt"),
+            fix=FixSummary(threads=[
+                ThreadOutcome(id=i, action=ThreadAction.DEFERRED) for i in ids
+            ]),
+        )
+        with patch.object(rt.log, "info") as info:
+            rt._report_unfiled_deferrals(state, track)
+        return " ".join(str(c) for c in info.call_args_list)
+
+    def test_no_selection_names_every_deferral(self, rt):
+        msg = self._report(rt, ["t1", "t2"], frozenset())
+        assert "t1" in msg and "t2" in msg
+
+    def test_partial_selection_names_only_the_rest(self, rt):
+        """A non-empty selection is not a reason to stop reporting the others."""
+        msg = self._report(rt, ["t1", "t2", "t3"], frozenset({"t2"}))
+        assert "t1" in msg and "t3" in msg
+        assert "t2" not in msg
+
+    def test_track_all_leaves_nothing_unfiled(self, rt):
+        assert self._report(rt, ["t1", "t2"], rt.TRACK_ALL) == ""
+
+    def test_nothing_deferred_says_nothing(self, rt):
+        assert self._report(rt, [], frozenset()) == ""
+
+    def test_the_sentinel_is_not_an_empty_set(self, rt):
+        """It selects everything; code that asks `if track:` must hear yes."""
+        assert bool(rt.TRACK_ALL) is True
 
 
 class TestTrackFlagParsing:

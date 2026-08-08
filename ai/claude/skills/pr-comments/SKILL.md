@@ -218,7 +218,9 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
   disagreement: if you cannot point at the line that settles it, say what you
   checked and ask
 - Never file a `deferred` thread on the tracking issue without the user
-  choosing to — deferral is a decision, not a fallback for a failed fix pass
+  choosing to — deferral is a decision, not a fallback for a failed fix pass.
+  Pass their chosen ids to `--track`; `--track-all` is the one blanket form,
+  and only after they have reviewed the whole set
 - Never auto-resolve contested or ambiguous threads — only verified ones
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans
 - If conflicting suggestions exist, flag both and apply neither until resolved

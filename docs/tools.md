@@ -343,13 +343,15 @@ and the summary comment. It is a second invocation on purpose — the discussion
 has to happen in between. ⚠️ Combining them (`--fix --finish`) works and closes
 out that run's deferred set, but posts a summary nobody has replied to yet.
 
-`--track <thread_id>` is repeatable and selects which deferred threads get filed
-on the tracking issue; `--track-all` selects every one. Neither is implied by
-`--finish`. A thread is deferred because the fix pass ran out of budget, not
-because anyone decided to postpone it, and filing it posts a reply under the PR
-author's name saying a reviewer's finding was triaged and postponed — so the
-selection is the user's, per thread. A `--finish` with no selection files
-nothing and logs the ids it left unfiled.
+`--track THREAD_ID` is repeatable and selects which deferred threads get filed
+on the tracking issue; `--track-all` selects every one and overrides any
+`--track` ids passed alongside it. Neither is implied by `--finish`. A thread is
+deferred because the fix pass ran out of budget, not because anyone decided to
+postpone it, and filing it posts a reply under the PR author's name saying a
+reviewer's finding was triaged and postponed — so the selection is the user's,
+per thread. A `--finish` logs the deferral ids it left unfiled, whether the
+selection was empty or partial. Naming an id that is not a deferred thread is an
+error rather than a silent skip, so a typo cannot pass for agreement.
 
 `--resolve` is an alias for `--finish`. `--resolve-verified` is the historical
 name from `claude-review threads` (see above) — both flags are now accepted by

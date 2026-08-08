@@ -1093,6 +1093,12 @@ class _TrackAll(frozenset):
     def __contains__(self, item) -> bool:
         return True
 
+    def __bool__(self) -> bool:
+        # Inherited from frozenset, this would be False: the instance holds no
+        # elements. It selects every id, so reporting itself as empty is the
+        # opposite of the truth for anyone who asks.
+        return True
+
 
 TRACK_ALL = _TrackAll()
 
@@ -1180,11 +1186,16 @@ def _report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
 
     Filing nothing is the correct default, but a silent nothing reads as "there
     was nothing to file". List the ids so the user can pass the ones they meant.
+
+    Membership, not truthiness: a partial selection leaves the unnamed threads
+    just as unfiled as no selection does, and they are the easiest ones to lose
+    — the run reports success for the few that were named.
     """
-    if track:
-        return
     FA = pr_state.ThreadAction
-    still = [t for t in state.fix.threads if t.action == FA.DEFERRED]
+    still = [
+        t for t in state.fix.threads
+        if t.action == FA.DEFERRED and t.id not in track
+    ]
     if not still:
         return
     log.info(
@@ -1220,6 +1231,10 @@ _HANDLED_REPLY_PREFIXES = (
     _ADDRESSED_REPLY_PREFIX,
     _DISMISSED_REPLY_PREFIX,
 )
+
+# Reason stamped on an outcome the fix pass never landed. Read back by
+# _fixed_status_for, which must not credit the pass's commit for it.
+_RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
 
 def _thread_looks_handled(thread: ReportThread | None) -> bool:
@@ -1258,7 +1273,7 @@ def _reconcile_fix_snapshot(
         if not _thread_looks_handled(threads_by_id.get(outcome.id)):
             continue
         outcome.action = FA.FIXED
-        outcome.reason = "reconciled: handled outside the fix pass"
+        outcome.reason = _RECONCILED_REASON
         flipped += 1
     if flipped:
         log.info(f"Reconciled {flipped} stale deferral(s) against GitHub")
@@ -1437,6 +1452,11 @@ def _fixed_status_for(
     sha = getattr(entry, "commit_sha", "")
     if sha:
         return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
+    # Reconciled outcomes were handled by hand or by the reviewer, and the
+    # commit that did it is not recorded anywhere. Falling through would credit
+    # the pass's commit for work it never did.
+    if getattr(entry, "reason", "") == _RECONCILED_REASON:
+        return "Addressed outside the fix pass"
     return _fixed_status_text(cp, repo)
 
 

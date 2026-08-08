@@ -15,6 +15,7 @@ Usage:
   pr-rebase                           # rebase and force-push
   pr-rebase --no-push                 # rebase only, skip force-push
   pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
+  pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
@@ -99,10 +100,22 @@ class ParseFailure(StrEnum):
 
 
 class RunMode(StrEnum):
-    """Mode selected by the CLI flags."""
+    """Mode selected by the CLI flags.
+
+    Threaded through the rebase drivers in place of a bare `fix` boolean, so that
+    resolving conflicts and pushing the result stay separable: `--fix --no-push`
+    is a real combination, and inferring the push from the fix flag is what made
+    it force-push anyway.
+    """
     FIX = "fix"
+    FIX_ONLY = "fix-no-push"
     PUSH = "push"
     REBASE_ONLY = "rebase-only"
+
+    @property
+    def resolves_conflicts(self) -> bool:
+        """Whether the AI is allowed to resolve conflicts during the rebase."""
+        return self in (RunMode.FIX, RunMode.FIX_ONLY)
 
 
 @dataclass(frozen=True)
@@ -1267,7 +1280,7 @@ _MAX_REBASE_STEPS = 500
 
 
 def _drive_to_completion(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
@@ -1275,19 +1288,19 @@ def _drive_to_completion(
     empty commits (via --skip), and stuck states (abort on unexpected failure).
     """
     with _trail.span("drive_to_completion") if _trail else nullcontext():
-        return _drive_loop(cwd, ctx, fix)
+        return _drive_loop(cwd, ctx, mode)
 
 
 def _drive_loop(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
 ) -> int:
     tally = ResolutionTally()
 
     for _ in range(_MAX_REBASE_STEPS):
         if not _detect_rebase_in_progress(cwd):
-            return _rebase_success(cwd, ctx, fix, tally)
+            return _rebase_success(cwd, ctx, mode, tally)
 
-        rc, conflict_found = _drive_one_step(cwd, ctx, fix, tally)
+        rc, conflict_found = _drive_one_step(cwd, ctx, mode, tally)
         if rc is not None:
             return rc
         if conflict_found:
@@ -1300,14 +1313,14 @@ def _drive_loop(
 
 
 def _drive_one_step(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally,
 ) -> tuple[int | None, bool]:
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
         return _step_advance(cwd), False
 
-    rc = _step_conflicts(cwd, ctx, fix, conflicts, tally)
+    rc = _step_conflicts(cwd, ctx, mode, conflicts, tally)
     if rc is not None:
         return rc, False
     return None, True
@@ -1321,11 +1334,11 @@ def _report_conflicts_and_stop(cwd: str, ctx: pr_context.ResolvedContext) -> int
 
 
 def _step_conflicts(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     conflicts: list[str], tally: ResolutionTally,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
-    if not fix:
+    if not mode.resolves_conflicts:
         return _report_conflicts_and_stop(cwd, ctx)
 
     if not ai_backend.is_available():
@@ -1455,7 +1468,7 @@ def _auto_stash(cwd: str) -> bool | None:
     return True
 
 
-def _auto_unstash(cwd: str, fix: bool) -> None:
+def _auto_unstash(cwd: str, mode: RunMode) -> None:
     """Pop stashed changes, resolving conflicts if needed."""
     r = subprocess.run(
         ["git", "stash", "pop"],
@@ -1470,7 +1483,7 @@ def _auto_unstash(cwd: str, fix: bool) -> None:
         log.error(f"git stash pop failed: {r.stderr.strip()}")
         return
 
-    if not fix or not ai_backend.is_available():
+    if not mode.resolves_conflicts or not ai_backend.is_available():
         log.warn(f"Stash pop has {len(conflicts)} conflict(s) — resolve manually, then `git stash drop`.")
         return
 
@@ -1721,7 +1734,7 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     return 0
 
 
-def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
+def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
     """Start or resume a rebase onto origin/main."""
     if _detect_rebase_in_progress(cwd):
         if _trail:
@@ -1731,7 +1744,7 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
                 reason="rebase-merge or rebase-apply directory exists",
             )
         log.info("Detected in-progress rebase — resuming...")
-        return _drive_to_completion(cwd, ctx, fix)
+        return _drive_to_completion(cwd, ctx, mode)
 
     stashed = _auto_stash(cwd)
     if stashed is None:
@@ -1743,15 +1756,15 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
             "starting fresh rebase",
             reason="no in-progress rebase detected",
         )
-    rc = _fresh(cwd, ctx, fix)
+    rc = _fresh(cwd, ctx, mode)
 
     if stashed:
-        _auto_unstash(cwd, fix)
+        _auto_unstash(cwd, mode)
 
     return rc
 
 
-def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
+def _fresh(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
     """Start a fresh rebase onto the target ref."""
     default = pr_context.default_branch(cwd)
     if ctx.branch == default:
@@ -1804,7 +1817,7 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
     )
 
     if r.returncode == 0 and not _detect_rebase_in_progress(cwd):
-        return _rebase_success(cwd, ctx, fix)
+        return _rebase_success(cwd, ctx, mode)
 
     if not _detect_rebase_in_progress(cwd):
         _terr("rebase", f"git rebase failed (exit {r.returncode})", data={"stderr": r.stderr.strip()})
@@ -1813,11 +1826,11 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, fix: bool) -> int:
             log.dim(r.stderr.strip())
         return 1
 
-    return _drive_to_completion(cwd, ctx, fix)
+    return _drive_to_completion(cwd, ctx, mode)
 
 
 def _rebase_success(
-    cwd: str, ctx: pr_context.ResolvedContext, fix: bool,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None,
 ) -> int:
     """Handle rebase completion — update state and optionally force-push."""
@@ -1827,12 +1840,17 @@ def _rebase_success(
     # check-fix commits, which were never replayed from the old branch.
     replayed = _commits_ahead(cwd)
 
+    # RunMode.PUSH pushes from main() via cmd_push, so only the fix path pushes
+    # from here. RunMode.FIX_ONLY resolves conflicts and stops short of the remote.
+    pushes_here = mode is RunMode.FIX
+
+    label = "Rebase complete" if not tally.commits else (
+        f"Rebase complete — resolved {len(tally.files)} file(s) "
+        f"across {tally.commits} commit(s)"
+    )
+
     push_rc = 0
-    if fix:
-        label = "Rebase complete" if not tally.commits else (
-            f"Rebase complete — resolved {len(tally.files)} file(s) "
-            f"across {tally.commits} commit(s)"
-        )
+    if pushes_here:
         log.info(f"{label} — force-pushing...")
         push_rc = _force_push(cwd, resolved_files=tally.files or None)
         if push_rc == 0:
@@ -1845,23 +1863,43 @@ def _rebase_success(
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
-        force_pushed=push_rc == 0 if fix else None,
+        force_pushed=push_rc == 0 if pushes_here else None,
     )
     outcome.save(ctx)
     outcome.emit()
 
-    if fix:
+    if pushes_here:
         if push_rc == 0:
             log.ok("Force-pushed.")
         else:
             log.error("Force-push failed.")
         return push_rc
 
+    # Under FIX_ONLY the AI's work is the whole point of the run and the user is
+    # about to push it by hand, so name it rather than reporting a bare "clean".
+    if tally.commits:
+        log.ok(label)
     log.ok("Rebase clean — run `git push --force-with-lease` to push, or re-run without --no-push.")
     return 0
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def _select_mode(args) -> tuple[RunMode, str]:
+    """Resolve --fix and --no-push into the single mode the run is driven by.
+
+    --fix and --no-push are independent: the first says the AI may resolve
+    conflicts, the second says nothing reaches the remote. Collapsing them into
+    one flag is what made `--fix --no-push` force-push.
+    """
+    if args.fix and args.push:
+        return RunMode.FIX, "--fix flag set"
+    if args.fix:
+        return RunMode.FIX_ONLY, "--fix with --no-push"
+    if args.push:
+        return RunMode.PUSH, "default mode"
+    return RunMode.REBASE_ONLY, "--no-push flag set"
 
 
 def main():
@@ -1877,11 +1915,12 @@ def main():
     parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
     parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
     parser.add_argument("--fix", action="store_true",
-                        help="Autonomous mode — resolve conflicts with AI, rebase, and force-push")
+                        help="Autonomous mode — resolve conflicts with AI and rebase "
+                             "(force-pushes unless --no-push)")
     parser.add_argument("--push", action="store_true", default=True,
                         help=argparse.SUPPRESS)
     parser.add_argument("--no-push", action="store_false", dest="push",
-                        help="Rebase only — skip force-push")
+                        help="Skip the force-push — print the command instead")
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)
@@ -1905,16 +1944,11 @@ def main():
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             sys.exit(cmd_abort(cwd, ctx))
 
-        if args.fix:
-            mode, reason = RunMode.FIX, "--fix flag set"
-        elif args.push:
-            mode, reason = RunMode.PUSH, "default mode"
-        else:
-            mode, reason = RunMode.REBASE_ONLY, "--no-push flag set"
+        mode, reason = _select_mode(args)
         _trail.decision("mode", f"selected {mode}", reason=reason)
-        rc = cmd_start(cwd, ctx, args.fix)
+        rc = cmd_start(cwd, ctx, mode)
 
-        if rc == 0 and args.push and not args.fix:
+        if rc == 0 and mode is RunMode.PUSH:
             rc = cmd_push(cwd, ctx)
 
         sys.exit(rc)

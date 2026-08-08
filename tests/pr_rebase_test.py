@@ -1607,7 +1607,7 @@ def test_drive_to_completion_already_done():
 
     with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0) as mock_success:
-        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     mock_success.assert_called_once()
@@ -1638,7 +1638,7 @@ def test_drive_to_completion_with_conflicts_fix():
          mock.patch.object(pr_rebase_cli, "_detect_conflicts", side_effect=fake_conflicts), \
          mock.patch.object(pr_rebase_cli, "_step_conflicts", return_value=None) as mock_step, \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0) as mock_success:
-        result = pr_rebase_cli._drive_to_completion("/fake", ctx, True)
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, pr_rebase_cli.RunMode.FIX)
 
     assert result == 0
     mock_step.assert_called_once()
@@ -1655,7 +1655,7 @@ def test_drive_to_completion_conflicts_no_fix():
     with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=["file.go"]), \
          mock.patch.object(pr_rebase_cli, "_step_conflicts", return_value=3):
-        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 3
 
@@ -1675,7 +1675,7 @@ def test_drive_to_completion_empty_commit():
          mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
          mock.patch.object(pr_rebase_cli, "_step_advance", return_value=None) as mock_advance, \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     mock_advance.assert_called_once()
@@ -1690,7 +1690,7 @@ def test_drive_to_completion_safety_valve():
          mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
          mock.patch.object(pr_rebase_cli, "_step_advance", return_value=None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
-        result = pr_rebase_cli._drive_to_completion("/fake", ctx, False)
+        result = pr_rebase_cli._drive_to_completion("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 1
 
@@ -1703,7 +1703,7 @@ def test_step_conflicts_no_fix_reports():
     ctx = mock.MagicMock()
     with mock.patch.object(pr_rebase_cli, "_report_conflicts_and_stop", return_value=3):
         rc = pr_rebase_cli._step_conflicts(
-            "/fake", ctx, False, ["a.py"], pr_rebase_cli.ResolutionTally(),
+            "/fake", ctx, pr_rebase_cli.RunMode.PUSH, ["a.py"], pr_rebase_cli.ResolutionTally(),
         )
 
     assert rc == 3
@@ -1720,7 +1720,7 @@ def test_step_conflicts_no_fix_saves_state():
     with mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", fake_save), \
          mock.patch.object(pr_rebase_cli.ConflictReport, "from_repo") as mock_report:
         pr_rebase_cli._step_conflicts(
-            "/fake", ctx, False, ["a.py"], pr_rebase_cli.ResolutionTally(),
+            "/fake", ctx, pr_rebase_cli.RunMode.PUSH, ["a.py"], pr_rebase_cli.ResolutionTally(),
         )
 
     assert saved == [(pr_rebase_cli.RebaseStatus.CONFLICTS, ctx)]
@@ -1741,7 +1741,7 @@ def test_step_conflicts_fix_resolves():
          ), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], tally)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, pr_rebase_cli.RunMode.FIX, ["a.py"], tally)
 
     assert rc is None
     assert tally.files == ["a.py"]
@@ -1762,7 +1762,7 @@ def test_step_conflicts_records_stale_files():
          mock.patch.object(pr_rebase_cli, "_resolve_file_conflicts", return_value=resolution), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["pnpm-lock.yaml"], tally)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, pr_rebase_cli.RunMode.FIX, ["pnpm-lock.yaml"], tally)
 
     assert rc is None
     assert tally.files == ["pnpm-lock.yaml"]
@@ -1783,7 +1783,7 @@ def test_rebase_success_emits_stale_files():
              lambda self, c: saved.append(self),
          ), \
          mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
-        rc = pr_rebase_cli._rebase_success("/fake", ctx, False, tally)
+        rc = pr_rebase_cli._rebase_success("/fake", ctx, pr_rebase_cli.RunMode.PUSH, tally)
 
     assert rc == 0
     assert saved[0].files_stale == ["pnpm-lock.yaml"]
@@ -1804,7 +1804,7 @@ def test_rebase_success_counts_commits_before_push():
          mock.patch.object(pr_rebase_cli, "_force_push", return_value=0), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
-        pr_rebase_cli._rebase_success("/fake", ctx, True, tally)
+        pr_rebase_cli._rebase_success("/fake", ctx, pr_rebase_cli.RunMode.FIX, tally)
 
     assert mock_emit.call_args[0][0]["commits_replayed"] == 2
 
@@ -1817,7 +1817,7 @@ def test_rebase_success_conflicts_resolved_counts_files():
     with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=5), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
-        pr_rebase_cli._rebase_success("/fake", ctx, False, tally)
+        pr_rebase_cli._rebase_success("/fake", ctx, pr_rebase_cli.RunMode.PUSH, tally)
 
     assert mock_emit.call_args[0][0]["conflicts_resolved"] == 3
 
@@ -1832,7 +1832,7 @@ def test_step_conflicts_fix_resolution_fails_aborts():
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
         mock_ai.is_available.return_value = True
         rc = pr_rebase_cli._step_conflicts(
-            "/fake", ctx, True, ["a.py"], pr_rebase_cli.ResolutionTally(),
+            "/fake", ctx, pr_rebase_cli.RunMode.FIX, ["a.py"], pr_rebase_cli.ResolutionTally(),
         )
 
     assert rc == 1
@@ -1845,7 +1845,7 @@ def test_step_conflicts_fix_ai_unavailable():
          mock.patch.object(pr_rebase_cli, "_report_conflicts_and_stop", return_value=3):
         mock_ai.is_available.return_value = False
         rc = pr_rebase_cli._step_conflicts(
-            "/fake", ctx, True, ["a.py"], pr_rebase_cli.ResolutionTally(),
+            "/fake", ctx, pr_rebase_cli.RunMode.FIX, ["a.py"], pr_rebase_cli.ResolutionTally(),
         )
 
     assert rc == 3
@@ -1873,7 +1873,7 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
-        rc = pr_rebase_cli._step_conflicts("/fake", ctx, True, ["a.py"], tally)
+        rc = pr_rebase_cli._step_conflicts("/fake", ctx, pr_rebase_cli.RunMode.FIX, ["a.py"], tally)
 
     assert rc is None
     assert tally.files == ["a.py"]
@@ -1903,7 +1903,7 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
         rc = pr_rebase_cli._step_conflicts(
-            "/fake", ctx, True, ["a.py"], pr_rebase_cli.ResolutionTally(),
+            "/fake", ctx, pr_rebase_cli.RunMode.FIX, ["a.py"], pr_rebase_cli.ResolutionTally(),
         )
 
     assert rc == 1
@@ -1992,7 +1992,7 @@ def test_fresh_no_dirty_check():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     assert len(status_cmds) == 0
@@ -2011,10 +2011,10 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_drive_to_completion", return_value=0) as mock_drive:
-        result = pr_rebase_cli._fresh("/fake", ctx, True)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.FIX)
 
     assert result == 0
-    mock_drive.assert_called_once_with("/fake", ctx, True)
+    mock_drive.assert_called_once_with("/fake", ctx, pr_rebase_cli.RunMode.FIX)
 
 
 def test_fresh_skips_checkout_when_on_correct_branch():
@@ -2032,7 +2032,7 @@ def test_fresh_skips_checkout_when_on_correct_branch():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     assert len(checkout_calls) == 0
@@ -2053,7 +2053,7 @@ def test_fresh_checks_out_branch_on_detached_head():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     assert len(checkout_calls) == 1
@@ -2075,7 +2075,7 @@ def test_fresh_checks_out_branch_on_wrong_branch():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     assert len(checkout_calls) == 1
@@ -2098,7 +2098,7 @@ def test_fresh_refuses_to_check_out_into_default_branch_worktree():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 1
     assert len(checkout_calls) == 0
@@ -2117,7 +2117,7 @@ def test_fresh_refuses_to_rebase_the_default_branch():
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 1
 
@@ -2135,7 +2135,7 @@ def test_fresh_checkout_failure_returns_error():
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False):
-        result = pr_rebase_cli._fresh("/fake", ctx, False)
+        result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 1
 
@@ -2571,7 +2571,7 @@ def test_cmd_start_skips_stash_when_rebase_in_progress():
     with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=True), \
          mock.patch.object(pr_rebase_cli, "_auto_stash") as mock_stash, \
          mock.patch.object(pr_rebase_cli, "_drive_to_completion", return_value=0):
-        result = pr_rebase_cli.cmd_start("/fake", ctx, True)
+        result = pr_rebase_cli.cmd_start("/fake", ctx, pr_rebase_cli.RunMode.FIX)
 
     assert result == 0
     mock_stash.assert_not_called()
@@ -2584,7 +2584,7 @@ def test_cmd_start_stashes_before_fresh_rebase():
     with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_auto_stash", return_value=False) as mock_stash, \
          mock.patch.object(pr_rebase_cli, "_fresh", return_value=0):
-        result = pr_rebase_cli.cmd_start("/fake", ctx, False)
+        result = pr_rebase_cli.cmd_start("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 0
     mock_stash.assert_called_once()
@@ -2597,7 +2597,7 @@ def test_cmd_start_stash_failure_aborts():
     with mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_auto_stash", return_value=None), \
          mock.patch.object(pr_rebase_cli, "_fresh") as mock_fresh:
-        result = pr_rebase_cli.cmd_start("/fake", ctx, False)
+        result = pr_rebase_cli.cmd_start("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 1
     mock_fresh.assert_not_called()
@@ -2606,8 +2606,8 @@ def test_cmd_start_stash_failure_aborts():
 # ── main() --push dispatch ──────────────────────────────────────────────────
 
 
-def _run_main_with_push(cmd_start_rc: int) -> tuple[int, mock.MagicMock]:
-    """Run main() with --push and return (exit_code, mock_cmd_push)."""
+def _run_main(cmd_start_rc: int, *flags: str) -> tuple[int, mock.MagicMock, mock.MagicMock]:
+    """Run main() with the given flags. Returns (exit_code, cmd_push, cmd_start)."""
     fake_ctx = mock.MagicMock()
     fake_ctx.worktree_root = Path("/fake")
     fake_ctx.require_worktree.return_value = Path("/fake")
@@ -2615,16 +2615,22 @@ def _run_main_with_push(cmd_start_rc: int) -> tuple[int, mock.MagicMock]:
     fake_trail.__enter__ = mock.Mock(return_value=fake_trail)
     fake_trail.__exit__ = mock.Mock(return_value=False)
 
-    with mock.patch("sys.argv", ["pr-rebase", "--push"]), \
+    with mock.patch("sys.argv", ["pr-rebase", *flags]), \
          mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=fake_ctx), \
          mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls, \
-         mock.patch.object(pr_rebase_cli, "cmd_start", return_value=cmd_start_rc), \
+         mock.patch.object(pr_rebase_cli, "cmd_start", return_value=cmd_start_rc) as mock_start, \
          mock.patch.object(pr_rebase_cli, "cmd_push", return_value=0) as mock_push:
         mock_trail_cls.start.return_value = fake_trail
         try:
             pr_rebase_cli.main()
         except SystemExit as exc:
             exit_code = exc.code
+    return exit_code, mock_push, mock_start
+
+
+def _run_main_with_push(cmd_start_rc: int) -> tuple[int, mock.MagicMock]:
+    """Run main() with --push and return (exit_code, mock_cmd_push)."""
+    exit_code, mock_push, _ = _run_main(cmd_start_rc, "--push")
     return exit_code, mock_push
 
 
@@ -2642,6 +2648,69 @@ def test_push_flag_skips_cmd_push_on_conflicts():
 
     mock_push.assert_not_called()
     assert exit_code == 3
+
+
+# ── --fix --no-push ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("flags,expected", [
+    (["--fix"], pr_rebase_cli.RunMode.FIX),
+    (["--fix", "--no-push"], pr_rebase_cli.RunMode.FIX_ONLY),
+    ([], pr_rebase_cli.RunMode.PUSH),
+    (["--no-push"], pr_rebase_cli.RunMode.REBASE_ONLY),
+])
+def test_select_mode_keeps_fix_and_push_independent(flags, expected):
+    """--fix says the AI may resolve; --no-push says nothing reaches the remote."""
+    args = mock.Mock(fix="--fix" in flags, push="--no-push" not in flags)
+    assert pr_rebase_cli._select_mode(args)[0] is expected
+
+
+def test_fix_with_no_push_does_not_reach_the_remote():
+    """`--fix --no-push` force-pushed anyway: main() branched on --fix first."""
+    exit_code, mock_push, mock_start = _run_main(0, "--fix", "--no-push")
+
+    mock_push.assert_not_called()
+    assert mock_start.call_args[0][2] is pr_rebase_cli.RunMode.FIX_ONLY
+    assert exit_code == 0
+
+
+def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
+    """The force-push is handed to the user, not issued — repository policy."""
+    ctx = mock.MagicMock()
+    with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "_force_push") as mock_force, \
+         mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
+        rc = pr_rebase_cli._rebase_success("/fake", ctx, pr_rebase_cli.RunMode.FIX_ONLY)
+
+    mock_force.assert_not_called()
+    assert rc == 0
+    # force_pushed is None, which the emitter drops — "not pushed" rather than
+    # "push failed", the same shape --no-push already reports.
+    assert "force_pushed" not in mock_emit.call_args[0][0]
+    assert "git push --force-with-lease" in capsys.readouterr().err
+
+
+def test_fix_only_still_resolves_conflicts():
+    """--no-push suppresses the push, not the AI — the two must stay separable."""
+    ctx = mock.MagicMock()
+    tally = pr_rebase_cli.ResolutionTally()
+
+    with mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(
+             pr_rebase_cli, "_resolve_file_conflicts",
+             return_value=pr_rebase_cli.Resolution(files=["a.py"]),
+         ), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts(
+            "/fake", ctx, pr_rebase_cli.RunMode.FIX_ONLY, ["a.py"], tally,
+        )
+
+    assert rc is None
+    assert tally.files == ["a.py"]
 
 
 # ── worktree_root guard ─────────────────────────────────────────────────────

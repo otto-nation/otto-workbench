@@ -1,8 +1,10 @@
 """Tests for pr_state library."""
 
+import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -19,7 +21,7 @@ from pr_state import (
     update_review, update_comments, update_triage, update_rebase, update_fix,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
-    STATE_VERSION,
+    STATE_DIR, STATE_FILE, STATE_VERSION,
 )
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
 
@@ -588,7 +590,6 @@ def test_load_state_without_seen_ids_defaults_empty():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         save_state(root, state)
         path = root / ".workbench" / "state.json"
-        import json
         data = json.loads(path.read_text())
         del data["comments"]["seen_issue_comment_ids"]
         path.write_text(json.dumps(data))
@@ -604,7 +605,6 @@ def test_load_state_without_seen_review_body_comment_ids_defaults_empty():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         save_state(root, state)
         path = root / ".workbench" / "state.json"
-        import json
         data = json.loads(path.read_text())
         del data["comments"]["seen_review_body_comment_ids"]
         path.write_text(json.dumps(data))
@@ -743,6 +743,86 @@ def test_fix_summary_defaults():
     assert f.deferred_issue_id == ""
     assert f.deferred_issue_url == ""
     assert f.updated_at == ""
+
+
+def test_fix_summary_round_trips_head_sha(tmp_path):
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(head_sha="abc1234"),
+    )
+    save_state(tmp_path, state)
+    assert load_state(tmp_path).fix.head_sha == "abc1234"
+
+
+def test_fix_summary_head_sha_defaults_empty_on_legacy_state(tmp_path):
+    """State written before this field must still load."""
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(head_sha="abc1234"),
+    )
+    save_state(tmp_path, state)
+    state_path = tmp_path / STATE_DIR / STATE_FILE
+    raw = json.loads(state_path.read_text())
+    del raw["fix"]["head_sha"]
+    state_path.write_text(json.dumps(raw))
+    assert load_state(tmp_path).fix.head_sha == ""
+
+
+def test_thread_outcome_round_trips_commit_sha(tmp_path):
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
+    )
+    save_state(tmp_path, state)
+    assert load_state(tmp_path).fix.threads[0].commit_sha == "deadbee"
+
+
+def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(tmp_path):
+    """State written before this field must still load."""
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="abc1234", worktree_root=str(tmp_path)),
+        fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
+    )
+    save_state(tmp_path, state)
+    state_path = tmp_path / STATE_DIR / STATE_FILE
+    raw = json.loads(state_path.read_text())
+    del raw["fix"]["threads"][0]["commit_sha"]
+    state_path.write_text(json.dumps(raw))
+    assert load_state(tmp_path).fix.threads[0].commit_sha == ""
+
+
+def test_accumulated_outcomes_keep_their_own_shas():
+    """The whole point: round two must not relabel round one's commit."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    update_fix(state, FixSummary(
+        commit_sha="1111111",
+        threads=[ThreadOutcome(id="t1", commit_sha="1111111",
+                               action=ThreadAction.FIXED)],
+    ))
+    update_fix(state, FixSummary(
+        commit_sha="2222222",
+        threads=[ThreadOutcome(id="t2", commit_sha="2222222",
+                               action=ThreadAction.FIXED)],
+    ))
+    by_id = {t.id: t.commit_sha for t in state.fix.threads}
+    assert by_id == {"t1": "1111111", "t2": "2222222"}
+
+
+def test_thread_outcome_from_entry_carries_commit_sha():
+    """Both branches of from_entry — attribute objects and raw dicts."""
+    entry = SimpleNamespace(
+        id="t1", file="a.go", line=7, reviewer="kgn", summary="rename it",
+        reason="", commit_sha="deadbee",
+    )
+    assert ThreadOutcome.from_entry(
+        entry, ThreadAction.FIXED).commit_sha == "deadbee"
+    assert ThreadOutcome.from_entry(
+        {"id": "t1", "commit_sha": "deadbee"}, ThreadAction.FIXED,
+    ).commit_sha == "deadbee"
 
 
 def test_pr_state_has_fix_field():
@@ -910,7 +990,6 @@ def test_load_state_without_fix_defaults_empty():
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
         save_state(root, state)
         path = root / ".workbench" / "state.json"
-        import json
         data = json.loads(path.read_text())
         del data["fix"]
         path.write_text(json.dumps(data))

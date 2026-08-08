@@ -1159,6 +1159,71 @@ class TestRenderDeferredSummary:
         assert fix.summary_deferred is True
 
 
+class TestSummaryUsesPerThreadCommit:
+    """A thread's row names the commit that fixed it, not the last pass's."""
+
+    def _post(self, rt, *threads, commit_sha="", commit_status="no_changes"):
+        fix = FixSummary(
+            commit_sha=commit_sha, commit_status=commit_status,
+            summary_deferred=True, threads=list(threads),
+        )
+        with patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        return post.call_args[0][2]
+
+    def test_row_links_the_thread_own_commit(self, rt):
+        body = self._post(rt, ThreadOutcome(
+            id="t1", summary="fix regex", file="p.py", line=10,
+            action=ThreadAction.FIXED, commit_sha="deadbee",
+        ))
+        assert "deadbee" in body
+        assert "no commit needed" not in body
+
+    def test_row_without_a_sha_still_says_no_commit_needed(self, rt):
+        body = self._post(rt, ThreadOutcome(
+            id="t1", summary="fix regex", file="p.py", line=10,
+            action=ThreadAction.FIXED,
+        ))
+        assert "no commit needed" in body
+
+    def test_each_round_keeps_its_own_attribution(self, rt):
+        """The #2670 failure: one pass's envelope SHA relabelled every round."""
+        body = self._post(
+            rt,
+            ThreadOutcome(id="t1", summary="round one", file="a.py", line=1,
+                          action=ThreadAction.FIXED, commit_sha="1111111"),
+            ThreadOutcome(id="t2", summary="round two", file="b.py", line=2,
+                          action=ThreadAction.FIXED, commit_sha="2222222"),
+        )
+        assert "1111111" in body
+        assert "2222222" in body
+
+    def test_a_reconciled_thread_claims_no_commit(self, rt):
+        """It was fixed by hand — crediting the pass's commit would be a lie.
+
+        The file cell still permalinks at the pass's SHA; that is a location
+        anchor, not a claim about who fixed it. The status cell is the claim.
+        """
+        body = self._post(
+            rt,
+            ThreadOutcome(id="t1", summary="fixed by hand", file="a.py", line=1,
+                          action=ThreadAction.FIXED,
+                          reason=rt._RECONCILED_REASON),
+            commit_sha="def5678", commit_status="pushed",
+        )
+        assert "Fixed in" not in body
+        assert "Addressed outside the fix pass" in body
+
+    def test_pass_sha_still_covers_a_thread_with_none(self, rt):
+        body = self._post(
+            rt,
+            ThreadOutcome(id="t1", summary="fix it", file="a.py", line=1,
+                          action=ThreadAction.FIXED),
+            commit_sha="def5678", commit_status="pushed",
+        )
+        assert "def5678" in body
+
+
 class TestSummaryStillOwed:
     """Whether --resolve has to re-render the fix summary."""
 
@@ -1394,7 +1459,7 @@ class TestFinalizeDeferredCarriesTheReason:
             create.side_effect = lambda deferred, *a, **kw: (
                 captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
             )
-            rt._finalize_deferred(state, ctx, {})
+            rt._finalize_deferred(state, ctx, {}, track={"t1"})
         return captured
 
     def test_reason_survives_into_the_tracking_issue(self, rt, tmp_path):
@@ -1417,6 +1482,137 @@ class TestFinalizeDeferredCarriesTheReason:
         on_disk = pr_state.load_state(tmp_path)
         assert on_disk.fix.commit_status == ""
         assert on_disk.fix.deferred_issue_id == ""
+
+
+class TestDeferralRequiresAChoice:
+    """Deferral is a decision. An agent running out of turns is not one."""
+
+    def _state(self, tmp_path, ids):
+        state = PRState(
+            identity=PRIdentity(
+                repo="owner/repo", branch="b", pr_number=42,
+                head_sha="abc1234", worktree_root=str(tmp_path),
+            ),
+            fix=FixSummary(threads=[
+                ThreadOutcome(
+                    id=i, file="a.go", line=1, reviewer="kgn",
+                    summary=f"item {i}", action=ThreadAction.DEFERRED,
+                    reason="agent could not auto-fix",
+                )
+                for i in ids
+            ]),
+        )
+        pr_state.save_state(tmp_path, state)
+        return state
+
+    def _ctx(self, tmp_path):
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="abc1234",
+        )
+
+    def _run(self, rt, state, ctx, track):
+        captured = []
+        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies") as reply:
+            create.side_effect = lambda deferred, *a, **kw: (
+                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+            )
+            rt._finalize_deferred(state, ctx, {}, track=track)
+        return captured, create, reply
+
+    def test_no_selection_files_nothing(self, rt, tmp_path):
+        state = self._state(tmp_path, ["t1", "t2"])
+        captured, create, reply = self._run(
+            rt, state, self._ctx(tmp_path), track=frozenset())
+        assert captured == []
+        create.assert_not_called()
+        reply.assert_not_called()
+
+    def test_default_is_no_selection(self, rt, tmp_path):
+        """Omitting track entirely must not fall back to filing everything."""
+        state = self._state(tmp_path, ["t1", "t2"])
+        with patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies"):
+            rt._finalize_deferred(state, self._ctx(tmp_path), {})
+        create.assert_not_called()
+
+    def test_only_selected_threads_are_filed(self, rt, tmp_path):
+        state = self._state(tmp_path, ["t1", "t2", "t3"])
+        captured, _, _ = self._run(
+            rt, state, self._ctx(tmp_path), track={"t2"})
+        assert [e.id for e in captured] == ["t2"]
+
+    def test_track_all_files_everything(self, rt, tmp_path):
+        state = self._state(tmp_path, ["t1", "t2"])
+        captured, _, _ = self._run(
+            rt, state, self._ctx(tmp_path), track=rt.TRACK_ALL)
+        assert [e.id for e in captured] == ["t1", "t2"]
+
+    def test_unknown_id_is_an_error_not_a_silent_skip(self, rt, tmp_path):
+        state = self._state(tmp_path, ["t1"])
+        with pytest.raises(SystemExit):
+            self._run(rt, state, self._ctx(tmp_path), track={"t9"})
+
+    def test_a_non_deferred_id_is_also_an_error(self, rt, tmp_path):
+        """Naming a thread the pass already fixed is a mistake worth surfacing."""
+        state = self._state(tmp_path, ["t1"])
+        state.fix.threads.append(ThreadOutcome(id="t2", action=ThreadAction.FIXED))
+        with pytest.raises(SystemExit):
+            self._run(rt, state, self._ctx(tmp_path), track={"t2"})
+
+
+class TestUnfiledDeferralsAreNamed:
+    """The report has to name exactly the threads nobody asked to file."""
+
+    def _report(self, rt, ids, track):
+        state = PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="abc1234", worktree_root="/tmp/wt"),
+            fix=FixSummary(threads=[
+                ThreadOutcome(id=i, action=ThreadAction.DEFERRED) for i in ids
+            ]),
+        )
+        with patch.object(rt.log, "info") as info:
+            rt._report_unfiled_deferrals(state, track)
+        return " ".join(str(c) for c in info.call_args_list)
+
+    def test_no_selection_names_every_deferral(self, rt):
+        msg = self._report(rt, ["t1", "t2"], frozenset())
+        assert "t1" in msg and "t2" in msg
+
+    def test_partial_selection_names_only_the_rest(self, rt):
+        """A non-empty selection is not a reason to stop reporting the others."""
+        msg = self._report(rt, ["t1", "t2", "t3"], frozenset({"t2"}))
+        assert "t1" in msg and "t3" in msg
+        assert "t2" not in msg
+
+    def test_track_all_leaves_nothing_unfiled(self, rt):
+        assert self._report(rt, ["t1", "t2"], rt.TRACK_ALL) == ""
+
+    def test_nothing_deferred_says_nothing(self, rt):
+        assert self._report(rt, [], frozenset()) == ""
+
+    def test_the_sentinel_is_not_an_empty_set(self, rt):
+        """It selects everything; code that asks `if track:` must hear yes."""
+        assert bool(rt.TRACK_ALL) is True
+
+
+class TestTrackFlagParsing:
+    def test_track_is_repeatable(self, rt):
+        args = rt._build_parser().parse_args(
+            ["--finish", "--track", "t1", "--track", "t2"])
+        assert args.track == ["t1", "t2"]
+
+    def test_track_all_is_separate(self, rt):
+        args = rt._build_parser().parse_args(["--finish", "--track-all"])
+        assert args.track_all is True
+        assert args.track == []
+
+    def test_track_defaults_to_empty(self, rt):
+        args = rt._build_parser().parse_args(["--finish"])
+        assert args.track == []
+        assert args.track_all is False
 
 
 # ── _finish_deferred_work ─────────────────────────────────────────────────
@@ -1492,6 +1688,184 @@ class TestFinishDeferredWork:
                 patch.object(rt, "_render_deferred_summary"):
             with pytest.raises(RuntimeError):
                 rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+
+
+class TestReconcileFixSnapshot:
+    """Evidence on GitHub outranks a stale snapshot."""
+
+    def _state(self):
+        return _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id="t1", file="a.go", line=1, reviewer="kgn",
+                          summary="one", action=ThreadAction.DEFERRED,
+                          reason="agent could not auto-fix"),
+        ]))
+
+    def _thread(self, comments, **kw):
+        kw.setdefault("state", ThreadState.NEW)
+        kw.setdefault("is_resolved", False)
+        return ReportThread(id="t1", comments=comments, **kw)
+
+    def test_resolved_thread_is_reclaimed(self, rt):
+        state = self._state()
+        threads = {"t1": self._thread([{"body": "x"}],
+                                      state=ThreadState.RESOLVED, is_resolved=True)}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_thread_with_a_fix_reply_is_reclaimed_even_if_unresolved(self, rt):
+        """The 13 contradicted threads on the incident PR all looked like this."""
+        state = self._state()
+        threads = {"t1": self._thread([
+            {"body": "please rename this"},
+            {"body": "Applied: renamed the guard\n\nFixed in `abc1234`."},
+        ])}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_genuinely_open_thread_stays_deferred(self, rt):
+        state = self._state()
+        threads = {"t1": self._thread([{"body": "please rename this"}])}
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert state.fix.threads[0].action == ThreadAction.DEFERRED
+
+    def test_a_deferred_reply_is_not_evidence_of_a_fix(self, rt):
+        """Our own prior Deferred: reply must not reclaim the thread."""
+        state = self._state()
+        threads = {"t1": self._thread([
+            {"body": "please rename this"},
+            {"body": "Deferred: rename the guard\n\nTracked in ENG-3021."},
+        ])}
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert state.fix.threads[0].action == ThreadAction.DEFERRED
+
+    def test_a_thread_absent_from_github_stays_deferred(self, rt):
+        """Comment items carry synthetic ids that are not review threads."""
+        state = self._state()
+        assert rt._reconcile_fix_snapshot(state, {}) == 0
+        assert state.fix.threads[0].action == ThreadAction.DEFERRED
+
+    def test_non_deferred_outcomes_are_left_alone(self, rt):
+        state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id="t1", action=ThreadAction.NEEDS_HUMAN),
+        ]))
+        threads = {"t1": self._thread([{"body": "x"}],
+                                      state=ThreadState.RESOLVED, is_resolved=True)}
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert state.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
+
+    def test_the_reason_records_why_it_flipped(self, rt):
+        state = self._state()
+        threads = {"t1": self._thread([{"body": "x"}],
+                                      state=ThreadState.RESOLVED, is_resolved=True)}
+        rt._reconcile_fix_snapshot(state, threads)
+        assert "reconciled" in state.fix.threads[0].reason
+
+
+class TestReconcileRunsBeforeTheWrites:
+    """Within one invocation the two must not disagree about the same thread."""
+
+    def test_reconciled_thread_never_reaches_the_tracking_issue(self, rt, tmp_path):
+        pr_state.save_state(tmp_path, PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="aaaaaaa", worktree_root=str(tmp_path)),
+            fix=FixSummary(head_sha="aaaaaaa", threads=[
+                ThreadOutcome(id="t1", file="a.go", line=1, reviewer="kgn",
+                              summary="one", action=ThreadAction.DEFERRED),
+            ]),
+        ))
+        ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
+                                         worktree_root=tmp_path, head_sha="aaaaaaa")
+        report = PRReport(threads=[ReportThread(
+            id="t1", state=ThreadState.NEW, is_resolved=False,
+            comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
+        )])
+        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+                patch.object(rt, "_create_or_update_deferred_issue") as create, \
+                patch.object(rt, "_post_deferred_replies") as reply, \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(ctx, report, track=rt.TRACK_ALL)
+        create.assert_not_called()
+        reply.assert_not_called()
+
+    def test_the_flip_is_persisted(self, rt, tmp_path):
+        """Otherwise the next --finish re-derives it from the same stale row."""
+        pr_state.save_state(tmp_path, PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="aaaaaaa", worktree_root=str(tmp_path)),
+            fix=FixSummary(head_sha="aaaaaaa", threads=[
+                ThreadOutcome(id="t1", action=ThreadAction.DEFERRED),
+            ]),
+        ))
+        ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
+                                         worktree_root=tmp_path, head_sha="aaaaaaa")
+        report = PRReport(threads=[ReportThread(
+            id="t1", state=ThreadState.RESOLVED, is_resolved=True,
+            comments=[{"body": "x"}],
+        )])
+        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(ctx, report)
+        on_disk = pr_state.load_state(tmp_path)
+        assert on_disk.fix.threads[0].action == ThreadAction.FIXED
+
+
+class TestStaleSnapshotIsAnnounced:
+    """A snapshot from a different HEAD is a record of the past, not a plan."""
+
+    def _state(self, tmp_path, snapshot_sha):
+        state = PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha=snapshot_sha, worktree_root=str(tmp_path)),
+            fix=FixSummary(
+                head_sha=snapshot_sha,
+                threads=[ThreadOutcome(id="t1", file="a.go", line=7, reviewer="kgn",
+                                       summary="rename the guard",
+                                       action=ThreadAction.DEFERRED,
+                                       reason="agent could not auto-fix")],
+            ),
+        )
+        pr_state.save_state(tmp_path, state)
+        return state
+
+    def _ctx(self, tmp_path):
+        return pr_context.ResolvedContext(
+            repo="owner/repo", branch="b", pr_number=42,
+            worktree_root=tmp_path, head_sha="aaaaaaa",
+        )
+
+    def _warnings(self, rt, tmp_path, current_sha):
+        seen = []
+        with patch.object(rt, "_get_head_sha", return_value=current_sha), \
+                patch.object(rt.log, "warn", side_effect=seen.append), \
+                patch.object(rt, "_post_pending_fix_replies"), \
+                patch.object(rt, "_render_deferred_summary"), \
+                patch.object(rt, "_finalize_deferred"):
+            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+        return seen
+
+    def test_head_moved_is_announced(self, rt, tmp_path):
+        self._state(tmp_path, "aaaaaaa")
+        warned = self._warnings(rt, tmp_path, "bbbbbbb")
+        assert any("aaaaaaa" in w and "bbbbbbb" in w for w in warned)
+
+    def test_head_unchanged_says_nothing(self, rt, tmp_path):
+        self._state(tmp_path, "aaaaaaa")
+        assert self._warnings(rt, tmp_path, "aaaaaaa") == []
+
+    def test_missing_snapshot_sha_is_treated_as_stale(self, rt, tmp_path):
+        """Legacy state predates the field; it cannot be vouched for."""
+        state = self._state(tmp_path, "aaaaaaa")
+        state.fix.head_sha = ""
+        pr_state.save_state(tmp_path, state)
+        assert any("(unrecorded)" in w for w in self._warnings(rt, tmp_path, "aaaaaaa"))
+
+    def test_an_empty_snapshot_has_nothing_to_be_stale_about(self, rt, tmp_path):
+        pr_state.save_state(tmp_path, PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="aaaaaaa", worktree_root=str(tmp_path)),
+            fix=FixSummary(),
+        ))
+        assert self._warnings(rt, tmp_path, "bbbbbbb") == []
 
 
 class TestFinishFlag:
@@ -2158,6 +2532,23 @@ class TestClassifyAlreadyAddressed:
         outcomes = rt._build_thread_outcomes([], [], [], [], [entry])
         assert len(outcomes) == 1
         assert outcomes[0].action == ThreadAction.ALREADY_ADDRESSED
+
+    def test_only_fixed_outcomes_carry_the_pass_commit(self, rt):
+        """A deferred thread was not fixed by this commit — or any."""
+        fixed = self._entry("valid")
+        deferred = CommentItem(id="t2", file="b.py", line=2, reviewer="kgn",
+                               summary="too complex")
+        outcomes = rt._build_thread_outcomes(
+            [fixed], [deferred], [], [], commit_sha="deadbee",
+        )
+        by_id = {o.id: o.commit_sha for o in outcomes}
+        assert by_id == {"t1": "deadbee", "t2": ""}
+
+    def test_no_commit_leaves_the_sha_empty(self, rt):
+        outcomes = rt._build_thread_outcomes(
+            [self._entry("valid")], [], [], [], commit_sha="",
+        )
+        assert outcomes[0].commit_sha == ""
 
 
 class TestTriagePromptVerificationValues:

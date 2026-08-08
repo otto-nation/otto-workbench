@@ -33,6 +33,7 @@ from review_common import (
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
     AgentKind, Diagnosis, DiagnosisKind, Effort, Mode, Phase, Thinking,
+    EFFORT_PRESETS,
     PRIOR_DATE_RE,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
@@ -69,7 +70,7 @@ from review_prompt import (
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
-    CONSECUTIVE_FAIL_THRESHOLD, DEFAULT_MAX_BUDGET_PER_AGENT,
+    CONSECUTIVE_FAIL_THRESHOLD,
     AgentInvocation, _is_model_error, _parse_session_cost, _resolve_model,
     _resolve_provider, _resolve_thinking_level, build_add_dirs,
     diagnose_missing_output, invoke_agent, try_recover_output,
@@ -163,73 +164,6 @@ def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
     for phase in PHASES:
         models.setdefault(phase_model(phase, explicit), []).append(phase)
     return models
-
-
-# ── Effort presets ───────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class EffortPreset:
-    """Budgets, thresholds, and phase skips selected by ``--effort``.
-
-    ``thinking=None`` means the phase's own default stands; a level here
-    flattens every phase to it, matching what CLAUDE_REVIEW_THINKING does.
-    """
-
-    thinking: Thinking | None
-    agent_budget: float
-    max_groups: int
-    multi_phase_line_threshold: int
-    multi_phase_file_threshold: int
-    skip_synthesis: bool
-    skip_holistic: bool
-    skip_scout: bool
-    skip_disprove: bool
-    skip_omitted_files: bool
-    agent: AgentKind
-
-
-EFFORT_PRESETS: dict[Effort, EffortPreset] = {
-    Effort.LOW: EffortPreset(
-        thinking=Thinking.LOW,
-        agent_budget=3.0,
-        max_groups=6,
-        multi_phase_line_threshold=1000,
-        multi_phase_file_threshold=15,
-        skip_synthesis=True,
-        skip_holistic=True,
-        skip_scout=True,
-        skip_disprove=True,
-        skip_omitted_files=True,
-        agent=AgentKind.REVIEWER_LITE,
-    ),
-    Effort.MEDIUM: EffortPreset(
-        thinking=None,
-        agent_budget=DEFAULT_MAX_BUDGET_PER_AGENT,
-        max_groups=8,
-        multi_phase_line_threshold=500,
-        multi_phase_file_threshold=10,
-        skip_synthesis=False,
-        skip_holistic=False,
-        skip_scout=False,
-        skip_disprove=False,
-        skip_omitted_files=False,
-        agent=AgentKind.REVIEWER,
-    ),
-    Effort.HIGH: EffortPreset(
-        thinking=Thinking.HIGH,
-        agent_budget=8.0,
-        max_groups=16,
-        multi_phase_line_threshold=500,
-        multi_phase_file_threshold=10,
-        skip_synthesis=False,
-        skip_holistic=False,
-        skip_scout=False,
-        skip_disprove=False,
-        skip_omitted_files=False,
-        agent=AgentKind.REVIEWER,
-    ),
-}
 
 
 def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:

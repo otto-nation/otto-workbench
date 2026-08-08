@@ -24,7 +24,6 @@ from review_common import (
     preserve_log, restore_preserved,
 )
 
-DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
 _TRANSIENT_ERROR_MARKERS = (

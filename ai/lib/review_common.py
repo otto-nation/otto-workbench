@@ -141,6 +141,76 @@ class AgentKind(StrEnum):
     REVIEWER_LITE = "reviewer-lite"
 
 
+DEFAULT_MAX_BUDGET_PER_AGENT = 5.0
+
+
+@dataclass(frozen=True)
+class EffortPreset:
+    """Budgets, thresholds, and phase skips selected by ``--effort``.
+
+    ``thinking=None`` means the phase's own default stands; a level here
+    flattens every phase to it, matching what CLAUDE_REVIEW_THINKING does.
+    """
+
+    thinking: Thinking | None
+    agent_budget: float
+    max_groups: int
+    multi_phase_line_threshold: int
+    multi_phase_file_threshold: int
+    skip_synthesis: bool
+    skip_holistic: bool
+    skip_scout: bool
+    skip_disprove: bool
+    skip_omitted_files: bool
+    agent: AgentKind
+
+
+# Lives here rather than beside the pipeline that reads it most: every layer
+# down to prompt building needs a threshold from it, and the pipeline imports
+# those layers, so owning it there would make the lookup a circular import.
+EFFORT_PRESETS: dict[Effort, EffortPreset] = {
+    Effort.LOW: EffortPreset(
+        thinking=Thinking.LOW,
+        agent_budget=3.0,
+        max_groups=6,
+        multi_phase_line_threshold=1000,
+        multi_phase_file_threshold=15,
+        skip_synthesis=True,
+        skip_holistic=True,
+        skip_scout=True,
+        skip_disprove=True,
+        skip_omitted_files=True,
+        agent=AgentKind.REVIEWER_LITE,
+    ),
+    Effort.MEDIUM: EffortPreset(
+        thinking=None,
+        agent_budget=DEFAULT_MAX_BUDGET_PER_AGENT,
+        max_groups=8,
+        multi_phase_line_threshold=500,
+        multi_phase_file_threshold=10,
+        skip_synthesis=False,
+        skip_holistic=False,
+        skip_scout=False,
+        skip_disprove=False,
+        skip_omitted_files=False,
+        agent=AgentKind.REVIEWER,
+    ),
+    Effort.HIGH: EffortPreset(
+        thinking=Thinking.HIGH,
+        agent_budget=8.0,
+        max_groups=16,
+        multi_phase_line_threshold=500,
+        multi_phase_file_threshold=10,
+        skip_synthesis=False,
+        skip_holistic=False,
+        skip_scout=False,
+        skip_disprove=False,
+        skip_omitted_files=False,
+        agent=AgentKind.REVIEWER,
+    ),
+}
+
+
 EnumT = TypeVar("EnumT", bound=StrEnum)
 
 

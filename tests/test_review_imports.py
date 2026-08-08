@@ -404,6 +404,15 @@ def test_proxy_setattr_reaches_every_binding(ro):
 
     assert [mod.invoke_agent for mod in owners] == originals
 
+    # mock.patch reaches __delattr__ only because the name was absent from the
+    # proxy's own __dict__, which is its business and not a contract. Drive the
+    # set-then-delete cycle directly so the restore stays pinned either way.
+    ro.invoke_agent = sentinel
+    assert [mod.invoke_agent for mod in owners] == [sentinel] * len(owners)
+
+    del ro.invoke_agent
+    assert [mod.invoke_agent for mod in owners] == originals
+
 
 def test_shared_submodule_names_never_diverge(ro):
     """A name bound in several submodules must be the same object in each.

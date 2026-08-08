@@ -64,7 +64,9 @@ _SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rph, _rrt, _rst)
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
 # submodule back the way it was. mock.patch deletes rather than restores when the
 # attribute was not in the proxy's own __dict__ to begin with, which is every
-# first patch of a given name.
+# first patch of a given name. A caller that restores by assignment instead
+# (monkeypatch.setattr) leaves its entry behind, holding the value the attribute
+# already has again — bounded by the number of names ever patched.
 _ORIGINALS: dict[tuple[str, str], object] = {}
 _MISSING = object()
 

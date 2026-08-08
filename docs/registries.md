@@ -28,13 +28,15 @@ meta:
   loading: scoped                    # "always" or "scoped" (default: scoped)
   install_check: true                # gate entire registry on install state (optional)
   install_check_command: colima      # check if command exists in PATH
-  install_check_symlink: ~/.docker   # check if symlink exists
+  install_check_symlink: ~/.docker   # check if symlink exists (~ and ${WORKBENCH_*_DIR} expand)
   install_check_symlink_contains: x  # check if symlink target contains string
 ```
 
 `loading` controls AI context generation: `always` puts tools in every Claude session; `scoped` (default) loads only when editing related files.
 
 `install_check` gates the entire registry at runtime — when true, the registry is skipped by summary and env-var rendering if the check command/symlink is absent. Used for optional components (Docker, AWS). Omit for registries that are always active.
+
+`install_check_symlink` accepts a leading `~` and the three workbench roots, written as `${WORKBENCH_CONFIG_DIR}`, `${WORKBENCH_STATE_DIR}`, or `${WORKBENCH_CACHE_DIR}` — for example `${WORKBENCH_STATE_DIR}/docker-aliases.zsh`. Those four names are substituted literally rather than evaluated, so no other shell syntax is expanded. Reference a root this way instead of writing its default path: a hardcoded `~/.config/workbench/...` breaks the moment the root moves. See [Libraries — roots.sh](libraries.md#rootssh).
 
 ### Tool entries
 

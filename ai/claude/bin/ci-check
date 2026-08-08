@@ -14,7 +14,6 @@ Usage:
 """
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -35,6 +34,7 @@ import pr_context
 import pr_state
 import review_common
 import log
+import workbench_paths
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
@@ -1015,7 +1015,8 @@ def main():
 
     trail = Trail.start(
         script="ci-check",
-        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel else os.path.expanduser("~/.config/workbench/logs/ci-check"),
+        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel
+        else str(workbench_paths.logs_dir("ci-check")),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

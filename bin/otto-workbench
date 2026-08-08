@@ -671,10 +671,9 @@ cmd_maintenance_status() {
     return
   fi
 
-  local last_run_file="${XDG_CONFIG_HOME:-$HOME/.config}/workbench/maintenance.last"
-  [[ -f "$last_run_file" ]] || return 0
+  [[ -f "$MAINTENANCE_LAST_FILE" ]] || return 0
   local ts last_date
-  ts=$(cat "$last_run_file")
+  ts=$(cat "$MAINTENANCE_LAST_FILE")
   if [[ "$OSTYPE" == "darwin"* ]]; then
     last_date=$(date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
   else

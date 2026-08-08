@@ -1,0 +1,233 @@
+#!/usr/bin/env bats
+# Cross-validates the three definitions of the workbench roots (SSOT guard):
+#   lib/roots.sh                     — bash, sourced via lib/constants.sh
+#   ai/lib/workbench_paths.py        — Python
+#   zsh/config.d/aliases/docker.zsh  — inline, because it cannot source
+#                                      constants.sh at shell startup
+#
+# A divergence here is the bug class the roots split exists to prevent: before
+# it, lib/constants.sh assigned the state root unconditionally while the Python
+# side read WORKBENCH_STATE_DIR, so exporting that variable moved one root and
+# not the other.
+
+setup() {
+  load 'test_helper'
+  common_setup
+  TMPDIR="$(mktemp -d)"
+  export HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  unset WORKBENCH_CONFIG_DIR WORKBENCH_STATE_DIR WORKBENCH_CACHE_DIR
+  unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME
+}
+
+teardown() {
+  rm -rf "$TMPDIR"
+  common_teardown
+}
+
+# ─── Resolvers under test ───────────────────────────────────────────────────
+
+# resolve_shell VAR — the value lib/roots.sh gives VAR in a fresh bash.
+resolve_shell() {
+  bash -c '. "$1/lib/roots.sh"; printf "%s" "${!2}"' _ "$REPO_ROOT" "$1"
+}
+
+# resolve_python FUNC — the value ai/lib/workbench_paths.FUNC() returns.
+resolve_python() {
+  python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_paths
+print(workbench_paths.$1(), end='')
+"
+}
+
+# resolve_zsh_state — the state root as docker.zsh spells it.
+# The line is extracted and evaluated rather than the file sourced: docker.zsh
+# unsets the variable once it has used it, so the value cannot be read back.
+resolve_zsh_state() {
+  local line
+  line=$(grep -E '^_wb_docker_aliases=' "$REPO_ROOT/zsh/config.d/aliases/docker.zsh")
+  [[ -n "$line" ]] || {
+    echo "docker.zsh no longer assigns _wb_docker_aliases — update this test" >&2
+    return 1
+  }
+  zsh -fc "$line; print -rn -- \${_wb_docker_aliases%/docker-aliases.zsh}"
+}
+
+# ─── Defaults ───────────────────────────────────────────────────────────────
+
+@test "with nothing set, each root falls back to its built-in default" {
+  [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$HOME/.cache/workbench" ]
+}
+
+# ─── XDG rung ───────────────────────────────────────────────────────────────
+
+@test "XDG_CONFIG_HOME moves the config root" {
+  export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
+  [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$TMPDIR/xdg-config/workbench" ]
+  [ "$(resolve_python config_dir)" = "$TMPDIR/xdg-config/workbench" ]
+}
+
+@test "XDG_CACHE_HOME moves the cache root" {
+  export XDG_CACHE_HOME="$TMPDIR/xdg-cache"
+  [ "$(resolve_shell WORKBENCH_CACHE_DIR)" = "$TMPDIR/xdg-cache/workbench" ]
+  [ "$(resolve_python cache_dir)" = "$TMPDIR/xdg-cache/workbench" ]
+}
+
+@test "XDG_STATE_HOME does not move the state root yet" {
+  # Deliberate: the rung arrives in #624 phase 4, with the migration that
+  # carries ~198 MB of reviews and logs. Adding it earlier would relocate that
+  # data with nothing to move it. If this test starts failing because the rung
+  # landed, the migration must have landed with it.
+  export XDG_STATE_HOME="$TMPDIR/xdg-state"
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_python state_dir)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_zsh_state)" = "$HOME/.config/workbench" ]
+}
+
+# ─── Override rung ──────────────────────────────────────────────────────────
+
+@test "WORKBENCH_<ROOT>_DIR overrides both the XDG rung and the default" {
+  export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
+  export XDG_CACHE_HOME="$TMPDIR/xdg-cache"
+  export WORKBENCH_CONFIG_DIR="$TMPDIR/explicit-config"
+  export WORKBENCH_STATE_DIR="$TMPDIR/explicit-state"
+  export WORKBENCH_CACHE_DIR="$TMPDIR/explicit-cache"
+
+  [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$TMPDIR/explicit-config" ]
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$TMPDIR/explicit-state" ]
+  [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$TMPDIR/explicit-cache" ]
+  [ "$(resolve_python config_dir)" = "$TMPDIR/explicit-config" ]
+  [ "$(resolve_python state_dir)"  = "$TMPDIR/explicit-state" ]
+  [ "$(resolve_python cache_dir)"  = "$TMPDIR/explicit-cache" ]
+}
+
+@test "re-sourcing roots.sh keeps an already-resolved root stable" {
+  export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
+  run bash -c '. "$1/lib/roots.sh"; . "$1/lib/roots.sh"; printf "%s" "$WORKBENCH_CONFIG_DIR"' _ "$REPO_ROOT"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/xdg-config/workbench" ]
+}
+
+# ─── Cross-validation matrix ────────────────────────────────────────────────
+
+# export_or_unset VAR VALUE — export VAR, or unset it when VALUE is empty.
+export_or_unset() {
+  if [[ -n "$2" ]]; then
+    export "$1=$2"
+  else
+    unset "$1"
+  fi
+}
+
+# assert_agree WHAT SHELL_VALUE OTHER_NAME OTHER_VALUE COMBO
+assert_agree() {
+  if [[ "$2" != "$4" ]]; then
+    echo "$1: shell='$2' $3='$4' (combo: $5)" >&2
+    return 1
+  fi
+}
+
+# assert_combo_agrees "STATE|XDG_CONFIG|XDG_CACHE" — apply one environment and
+# check every resolver against the shell one.
+assert_combo_agrees() {
+  local combo="$1" rest
+  rest="${combo#*|}"
+  export_or_unset WORKBENCH_STATE_DIR "${combo%%|*}"
+  export_or_unset XDG_CONFIG_HOME "${rest%%|*}"
+  export_or_unset XDG_CACHE_HOME "${rest#*|}"
+
+  local sh_state
+  sh_state="$(resolve_shell WORKBENCH_STATE_DIR)"
+  assert_agree "state root" "$sh_state" python "$(resolve_python state_dir)" "$combo"
+  assert_agree "state root" "$sh_state" zsh "$(resolve_zsh_state)" "$combo"
+  assert_agree "config root" "$(resolve_shell WORKBENCH_CONFIG_DIR)" \
+    python "$(resolve_python config_dir)" "$combo"
+  assert_agree "cache root" "$(resolve_shell WORKBENCH_CACHE_DIR)" \
+    python "$(resolve_python cache_dir)" "$combo"
+}
+
+@test "shell, Python, and zsh agree across the set/unset matrix" {
+  # The eight combinations of WORKBENCH_STATE_DIR x XDG_CONFIG_HOME x
+  # XDG_CACHE_HOME, enumerated flat rather than as nested loops so the body
+  # stays inside the repo's nesting limit. An empty field means unset.
+  local combo
+  for combo in \
+    "||" \
+    "$TMPDIR/explicit-state||" \
+    "|$TMPDIR/xdg-config|" \
+    "||$TMPDIR/xdg-cache" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-config|" \
+    "$TMPDIR/explicit-state||$TMPDIR/xdg-cache" \
+    "|$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache"; do
+    assert_combo_agrees "$combo"
+  done
+}
+
+# ─── Registry root expansion ────────────────────────────────────────────────
+
+@test "install_check_symlink expands the workbench roots" {
+  export WORKBENCH_STATE_DIR="$TMPDIR/state"
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  ln -sf "$TMPDIR/colima/aliases.zsh" "$WORKBENCH_STATE_DIR/docker-aliases.zsh"
+
+  local registry="$TMPDIR/registry.yml"
+  cat > "$registry" <<'YML'
+meta:
+  install_check: true
+  install_check_symlink: "${WORKBENCH_STATE_DIR}/docker-aliases.zsh"
+  install_check_symlink_contains: "colima"
+tools: []
+YML
+
+  source "$REPO_ROOT/lib/registries.sh"
+  run registry_passes_install_check "$registry"
+  [ "$status" -eq 0 ]
+}
+
+@test "install_check_symlink fails when the expanded target does not match" {
+  export WORKBENCH_STATE_DIR="$TMPDIR/state"
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  ln -sf "$TMPDIR/orbstack/aliases.zsh" "$WORKBENCH_STATE_DIR/docker-aliases.zsh"
+
+  local registry="$TMPDIR/registry.yml"
+  cat > "$registry" <<'YML'
+meta:
+  install_check: true
+  install_check_symlink: "${WORKBENCH_STATE_DIR}/docker-aliases.zsh"
+  install_check_symlink_contains: "colima"
+tools: []
+YML
+
+  source "$REPO_ROOT/lib/registries.sh"
+  run registry_passes_install_check "$registry"
+  [ "$status" -ne 0 ]
+}
+
+@test "install_check_symlink still expands a leading tilde" {
+  mkdir -p "$HOME"
+  ln -sf "$TMPDIR/colima/aliases.zsh" "$HOME/legacy-aliases.zsh"
+
+  local registry="$TMPDIR/registry.yml"
+  cat > "$registry" <<'YML'
+meta:
+  install_check: true
+  install_check_symlink: "~/legacy-aliases.zsh"
+  install_check_symlink_contains: "colima"
+tools: []
+YML
+
+  source "$REPO_ROOT/lib/registries.sh"
+  run registry_passes_install_check "$registry"
+  [ "$status" -eq 0 ]
+}
+
+@test "docker/registry.yml references the state root rather than a literal path" {
+  local value
+  value=$(yq '.meta.install_check_symlink' "$REPO_ROOT/docker/registry.yml")
+  [[ "$value" == '${WORKBENCH_STATE_DIR}/docker-aliases.zsh' ]]
+}

@@ -2,7 +2,8 @@
 """Query trail files and AI usage across otto-workbench scripts.
 
 Discovers trail.jsonl files from worktree (.workbench/), review artifacts
-(~/.config/workbench/reviews/), and standalone tool logs (~/.config/workbench/logs/).
+(<state root>/reviews/), and standalone tool logs (<state root>/logs/) — see
+ai/lib/workbench_paths.py for how the state root resolves.
 The `stats` subcommand reads the global AI usage ledger instead — a separate,
 monthly-rotated store that every AI call appends to.
 """
@@ -11,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -23,13 +23,12 @@ sys.path.insert(0, str(LIB_DIR))
 
 import ai_usage
 import log
+import workbench_paths
 from trail import TRAIL_FILENAME
 from pr_state import STATE_DIR as WORKBENCH_DIR
 from review_common import REVIEWS_DIR
 
-LOGS_DIR = Path(os.environ.get(
-    "WORKBENCH_STATE_DIR", os.path.expanduser("~/.config/workbench"),
-)) / "logs"
+LOGS_DIR = workbench_paths.logs_dir()
 
 ANSI_RESET = "\033[0m"
 ANSI_BOLD = "\033[1m"

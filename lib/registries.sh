@@ -46,6 +46,14 @@
 #                                 — calls CALLBACK name env_var setup_url prefix
 #                                   for each tool with an auth block in FILE
 
+# install_check_symlink values may reference the workbench roots, so load them
+# when the caller has not already sourced lib/constants.sh — tests source this
+# module on its own.
+if [[ -z "${WORKBENCH_STATE_DIR:-}" ]]; then
+  # shellcheck source=./roots.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/roots.sh"
+fi
+
 # Known tool entry fields — used by validate-registries to reject unknown keys
 # shellcheck disable=SC2034
 KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs brew_name commands auth"
@@ -112,8 +120,13 @@ registry_passes_install_check() {
   check_symlink=$(yq '.meta.install_check_symlink // ""' "$file")
   check_contains=$(yq '.meta.install_check_symlink_contains // ""' "$file")
   if [[ -n "$check_symlink" && "$check_symlink" != "null" ]]; then
-    # Expand ~ to $HOME
+    # Expand ~ to $HOME, and the workbench roots to their resolved values.
+    # Literal substitution rather than eval — the value comes from a registry
+    # file, and only these three names are recognised.
     check_symlink="${check_symlink/#\~/$HOME}"
+    check_symlink="${check_symlink//\$\{WORKBENCH_CONFIG_DIR\}/$WORKBENCH_CONFIG_DIR}"
+    check_symlink="${check_symlink//\$\{WORKBENCH_STATE_DIR\}/$WORKBENCH_STATE_DIR}"
+    check_symlink="${check_symlink//\$\{WORKBENCH_CACHE_DIR\}/$WORKBENCH_CACHE_DIR}"
     local symlink_target
     symlink_target=$(readlink "$check_symlink" 2>/dev/null || true)
     [[ "$symlink_target" == *"$check_contains"* ]] && return 0 || return 1

@@ -1,5 +1,61 @@
 # Changelog
 
+## [1.43.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.42.0...otto-ai-tools-v1.43.0) (2026-08-08)
+
+
+### Features
+
+* **ai:** add usage ledger; extend the eval harness and lint gates ([#603](https://github.com/otto-nation/otto-workbench/issues/603)) ([3bae09d](https://github.com/otto-nation/otto-workbench/commit/3bae09d165ca0f1ec486ab91ecfc69297c45022c))
+* **eval:** add history tracking, comparison, and CI gate ([#574](https://github.com/otto-nation/otto-workbench/issues/574)) ([7b8fef9](https://github.com/otto-nation/otto-workbench/commit/7b8fef956416ab88cada78214bab95aadb550b06))
+* **pr-rebase:** add lockfile regeneration for all ecosystems ([#593](https://github.com/otto-nation/otto-workbench/issues/593)) ([3847119](https://github.com/otto-nation/otto-workbench/commit/3847119c98e174e72d53806124d08b06f88c8c61))
+* **pr-review:** resolve model aliases; gate runs on backend preflight ([#588](https://github.com/otto-nation/otto-workbench/issues/588)) ([9b1fe72](https://github.com/otto-nation/otto-workbench/commit/9b1fe72a32250795f10445af842c3847e319aafb))
+* **pr:** gate PR creation on nesting depth ratchet ([#587](https://github.com/otto-nation/otto-workbench/issues/587)) ([53f81db](https://github.com/otto-nation/otto-workbench/commit/53f81db2a25b86803efb7eab3951b9655bc5e8f2))
+* **pr:** guard worktree_root and lint for unguarded dereferences ([#617](https://github.com/otto-nation/otto-workbench/issues/617)) ([1d5c8d1](https://github.com/otto-nation/otto-workbench/commit/1d5c8d1fee43cadf920d58b77deb43239e9e8486))
+* **review:** add failure reporting, status metadata, and --recover flag ([#581](https://github.com/otto-nation/otto-workbench/issues/581)) ([d0579c0](https://github.com/otto-nation/otto-workbench/commit/d0579c0a04cbc27edf8432da2a43b095455b48a0))
+* **review:** add model evaluation system for review pipeline ([#572](https://github.com/otto-nation/otto-workbench/issues/572)) ([d5921d1](https://github.com/otto-nation/otto-workbench/commit/d5921d1867de83e2c4082bfa1fd998e11c48317f))
+* **tools:** add dynamic tool framework with MCP server and self-describing protocol ([#577](https://github.com/otto-nation/otto-workbench/issues/577)) ([04da24e](https://github.com/otto-nation/otto-workbench/commit/04da24e487d4836912e6f7497ead529e02942097))
+
+
+### Bug Fixes
+
+* **ai:** pin every AI subprocess to an explicit cwd ([#638](https://github.com/otto-nation/otto-workbench/issues/638)) ([a49e360](https://github.com/otto-nation/otto-workbench/commit/a49e360e2a7d733a3c68c38ad3ac8a67d53404e5))
+* **claude:** block bash function definitions in the permission guardrails ([#611](https://github.com/otto-nation/otto-workbench/issues/611)) ([c93d7aa](https://github.com/otto-nation/otto-workbench/commit/c93d7aaf7a21fd917c47377a80b1c4effa078699))
+* **claude:** point hook script paths at ~/.local/bin ([#616](https://github.com/otto-nation/otto-workbench/issues/616)) ([0bcb0f1](https://github.com/otto-nation/otto-workbench/commit/0bcb0f14748cc5492a1d8a646f7a2cd01bb455b7))
+* **cli:** drop the --repo alias; run every validator in both gates ([#633](https://github.com/otto-nation/otto-workbench/issues/633)) ([abb91fb](https://github.com/otto-nation/otto-workbench/commit/abb91fb5d75d1a422ca4cf1209cc4191386d78a9))
+* **mcp:** stop probing executables that don't declare --tool-schema ([#592](https://github.com/otto-nation/otto-workbench/issues/592)) ([58c1077](https://github.com/otto-nation/otto-workbench/commit/58c1077664b1a7768cbfd78204a39f2c89ddbf76))
+* **pr-comments:** deduplicate reply posts across all reply types ([#576](https://github.com/otto-nation/otto-workbench/issues/576)) ([662b2f6](https://github.com/otto-nation/otto-workbench/commit/662b2f6e37aaec3ef7808024d1086397b9e21ef0))
+* **pr-comments:** gate summary and replies on push success; defer for unaccounted threads ([#579](https://github.com/otto-nation/otto-workbench/issues/579)) ([36426f1](https://github.com/otto-nation/otto-workbench/commit/36426f12905f338c9cf0561a7ee89baace7a5f43))
+* **pr-comments:** give the fix pass a budget it can finish within ([#642](https://github.com/otto-nation/otto-workbench/issues/642)) ([e9bdee3](https://github.com/otto-nation/otto-workbench/commit/e9bdee37c21d9e9a8e9669bf06509ee942bd6f92))
+* **pr-comments:** one reply per thread, edited in place, always cited ([#610](https://github.com/otto-nation/otto-workbench/issues/610)) ([c474235](https://github.com/otto-nation/otto-workbench/commit/c47423587ce2b006736ca1fb62b969b69f0cf98a))
+* **pr-comments:** require --track to file a deferral; attribute fixes per commit ([#643](https://github.com/otto-nation/otto-workbench/issues/643)) ([7bf3b2e](https://github.com/otto-nation/otto-workbench/commit/7bf3b2e4047d6946de42c9357191eb95c957c13e))
+* **pr-comments:** resolve addressed threads; exclude from triage and summary ([#583](https://github.com/otto-nation/otto-workbench/issues/583)) ([1461b43](https://github.com/otto-nation/otto-workbench/commit/1461b43ed0d7e28d9d370806cfc530e0a6433565))
+* **pr-comments:** stop reporting a drafted --reply as a failure ([#630](https://github.com/otto-nation/otto-workbench/issues/630)) ([3b92507](https://github.com/otto-nation/otto-workbench/commit/3b925078cfc40381243ea9db3fea1932d9f3f8e5))
+* **pr-rebase:** --push runs rebase before pushing; add status to rebase state ([#568](https://github.com/otto-nation/otto-workbench/issues/568)) ([9a87592](https://github.com/otto-nation/otto-workbench/commit/9a87592f2110a26bd9dae812a923c3b243b3ee0b))
+* **pr-rebase:** detect .mise.toml and survive missing regen binary ([#596](https://github.com/otto-nation/otto-workbench/issues/596)) ([ed4ec8e](https://github.com/otto-nation/otto-workbench/commit/ed4ec8ee4bbe0bff61ebfbfc65d07b5ce6f8952f))
+* **pr-rebase:** force-push by default after clean rebase ([#573](https://github.com/otto-nation/otto-workbench/issues/573)) ([2251c04](https://github.com/otto-nation/otto-workbench/commit/2251c044227ffb2dca4cd754e25067b6e7aa299c))
+* **pr-rebase:** stop --fix from force-pushing under --no-push ([#640](https://github.com/otto-nation/otto-workbench/issues/640)) ([c6474c5](https://github.com/otto-nation/otto-workbench/commit/c6474c51ba710fddcef3226f722284a47d2e7963))
+* **pr-review:** include static analysis in posted review comments ([#578](https://github.com/otto-nation/otto-workbench/issues/578)) ([07c5c9f](https://github.com/otto-nation/otto-workbench/commit/07c5c9fc7d2370e30c4f51c53304ae3d942f10b6))
+* **pr-review:** stop filtering scout leads per group to preserve cache prefix ([#584](https://github.com/otto-nation/otto-workbench/issues/584)) ([f8d00f3](https://github.com/otto-nation/otto-workbench/commit/f8d00f3ed1729f323569abd270a658be7ccbafad))
+* **pr:** apply the review findings carried over from [#597](https://github.com/otto-nation/otto-workbench/issues/597) ([#601](https://github.com/otto-nation/otto-workbench/issues/601)) ([fcc654d](https://github.com/otto-nation/otto-workbench/commit/fcc654d92d34f35c726b0002f051bf799433e7d1))
+* **pr:** detect unpushed commits in pr status dashboard ([#575](https://github.com/otto-nation/otto-workbench/issues/575)) ([b434957](https://github.com/otto-nation/otto-workbench/commit/b4349578aa11b914ffa6c5be2f0bb17d42dce02a))
+* **pr:** harden comment triage, add commit-aware describe ([#597](https://github.com/otto-nation/otto-workbench/issues/597)) ([82af4ff](https://github.com/otto-nation/otto-workbench/commit/82af4ff94c9a598f07d90a240e561aa53e84d263))
+* **pr:** stop resolving a feature branch to the default branch worktree ([#609](https://github.com/otto-nation/otto-workbench/issues/609)) ([6eca5a1](https://github.com/otto-nation/otto-workbench/commit/6eca5a18fd3f624f92df31bd25e231c6551d9d0a))
+* **rebase:** close resolution gaps in pr-rebase and review pipeline ([#627](https://github.com/otto-nation/otto-workbench/issues/627)) ([3fd9d86](https://github.com/otto-nation/otto-workbench/commit/3fd9d862d5b88c794f70835552a21f84886a7d2c))
+* **review:** paginate review threads; share one fetcher ([#637](https://github.com/otto-nation/otto-workbench/issues/637)) ([1bafff6](https://github.com/otto-nation/otto-workbench/commit/1bafff6fde932e5a3265caa3876b26419681a6df))
+* **review:** recover at the commit the failed run started from ([#606](https://github.com/otto-nation/otto-workbench/issues/606)) ([1b11504](https://github.com/otto-nation/otto-workbench/commit/1b11504c431f46ca82a224d981e31ebbf9e4e700))
+* **review:** replace Write mandate with Edit; consolidate prompt blocks ([#591](https://github.com/otto-nation/otto-workbench/issues/591)) ([b6b7938](https://github.com/otto-nation/otto-workbench/commit/b6b7938a812acafe7257beaa7be7046f359bd3fb))
+* **review:** strip File Triage; collapse static analysis in summary ([#605](https://github.com/otto-nation/otto-workbench/issues/605)) ([46b724b](https://github.com/otto-nation/otto-workbench/commit/46b724be28c60e05e28255192067ae299b22968a))
+* **review:** support --recover with --self ([#589](https://github.com/otto-nation/otto-workbench/issues/589)) ([d0dce72](https://github.com/otto-nation/otto-workbench/commit/d0dce7220536f5169d8ef607ec4b78492bba2de3))
+* **settings:** deny EnterWorktree to enforce wt usage ([#590](https://github.com/otto-nation/otto-workbench/issues/590)) ([34ec6dc](https://github.com/otto-nation/otto-workbench/commit/34ec6dc3c7349409aea7e28768f8ad6c8434e884))
+
+
+### Code Refactoring
+
+* **ai:** extract Python lib from ai/claude/lib/ to ai/lib/ ([#582](https://github.com/otto-nation/otto-workbench/issues/582)) ([19d610c](https://github.com/otto-nation/otto-workbench/commit/19d610c2ebe1a58b2bcf8ade40e360917743e911))
+* **pr:** extract status rendering to domain lib modules ([#571](https://github.com/otto-nation/otto-workbench/issues/571)) ([d6e2c30](https://github.com/otto-nation/otto-workbench/commit/d6e2c30f49ee87daa31385226916a9d6d18ba03e))
+* **review:** config-driven section registry with auto-discovery ([#580](https://github.com/otto-nation/otto-workbench/issues/580)) ([76ec7fc](https://github.com/otto-nation/otto-workbench/commit/76ec7fc6fbd18277919d12f94e35be143a887437))
+* **review:** type the phase and effort tables ([#604](https://github.com/otto-nation/otto-workbench/issues/604)) ([a24482e](https://github.com/otto-nation/otto-workbench/commit/a24482eb84de9c9cd6e2064ff9c6794adf2a1db9))
+
 ## [1.42.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.41.1...otto-ai-tools-v1.42.0) (2026-08-03)
 
 

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import review_pipeline
 import review_preflight
 import review_retry
+import review_state
 from review_common import Diagnosis, DiagnosisKind
 
 _TURNS = 15
@@ -244,7 +245,7 @@ class TestResolveRecoveryPinnedMetadata:
         state_path = _write_state(tmp_path)
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        _, skip_groups, skip_holistic, state = review_pipeline._resolve_recovery(
+        _, skip_groups, skip_holistic, state = review_state._resolve_recovery(
             job, _GROUPS,
         )
 
@@ -261,7 +262,7 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        _, skip_groups, _, state = review_pipeline._resolve_recovery(job, _GROUPS)
+        _, skip_groups, _, state = review_state._resolve_recovery(job, _GROUPS)
 
         assert skip_groups == {0}
         assert state is not None
@@ -274,7 +275,7 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        _, skip_groups, _, state = review_pipeline._resolve_recovery(job, _GROUPS)
+        _, skip_groups, _, state = review_state._resolve_recovery(job, _GROUPS)
 
         assert state is None
         assert skip_groups is None
@@ -283,7 +284,7 @@ class TestResolveRecoveryPinnedMetadata:
         state_path = _write_state(tmp_path)
         job = _make_job(tmp_path, head_sha="new5678")
 
-        _, _, _, state = review_pipeline._resolve_recovery(job, _GROUPS)
+        _, _, _, state = review_state._resolve_recovery(job, _GROUPS)
 
         assert state is None
         assert not state_path.exists()

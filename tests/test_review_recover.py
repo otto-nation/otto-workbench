@@ -24,6 +24,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_pipeline
+import review_state
 
 _MAX_TURNS_RECORD = json.dumps({
     "type": "result", "subtype": "error_max_turns", "is_error": True,
@@ -128,7 +129,7 @@ def run(monkeypatch):
 
 
 def _state(job) -> dict:
-    return json.loads(Path(review_pipeline._pipeline_state_path(job)).read_text())
+    return json.loads(Path(review_state._pipeline_state_path(job)).read_text())
 
 
 def _review(job) -> str:
@@ -151,7 +152,7 @@ class TestRecoverRerunsOnlyWhatFailed:
 
         run(job)
 
-        assert not Path(review_pipeline._pipeline_state_path(job)).exists()
+        assert not Path(review_state._pipeline_state_path(job)).exists()
 
     def test_a_recovered_group_drops_the_failures_section(self, job, run):
         run(job, fails={"group-2"})
@@ -201,7 +202,7 @@ class TestRecoverAcrossASchemaChange:
 
     @staticmethod
     def _downgrade(job, reason: str):
-        path = Path(review_pipeline._pipeline_state_path(job))
+        path = Path(review_state._pipeline_state_path(job))
         state = json.loads(path.read_text())
         state["groups_failed"] = {"2": reason}
         path.write_text(json.dumps(state))
@@ -214,7 +215,7 @@ class TestRecoverAcrossASchemaChange:
 
         assert "group-1" not in second.phases
         assert "group-2" in second.phases
-        assert not Path(review_pipeline._pipeline_state_path(job)).exists()
+        assert not Path(review_state._pipeline_state_path(job)).exists()
 
     def test_a_legacy_string_failure_renders_verbatim(self, job, run):
         run(job, fails={"group-2"})
@@ -223,8 +224,8 @@ class TestRecoverAcrossASchemaChange:
         # from the prior run is not what is under test here.
         Path(job.review_file).write_text(_REVIEW_BODY)
 
-        review_pipeline._inject_failures_and_status(
-            job.review_file, review_pipeline._read_pipeline_state(job),
+        review_state._inject_failures_and_status(
+            job.review_file, review_state._read_pipeline_state(job),
             review_pipeline.group_files(job.pr),
         )
 
@@ -240,7 +241,7 @@ class TestRecoverDeclinesTheWorkItShould:
         whose output had vanished.
         """
         run(job)
-        Path(review_pipeline._pipeline_state_path(job)).write_text(json.dumps({
+        Path(review_state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "synthesis_done": True,
         }))

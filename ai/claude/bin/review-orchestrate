@@ -31,6 +31,8 @@ import review_preflight as _rp  # noqa: E402
 import review_prompt as _rpmt  # noqa: E402
 import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
+import review_retry as _rrt  # noqa: E402
+import review_state as _rst  # noqa: E402
 
 import log  # noqa: E402
 import pr_state  # noqa: E402
@@ -53,7 +55,9 @@ from review_static_analysis import (  # noqa: E402
 )
 import ai_backend  # noqa: E402
 
-_SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl)
+# review_pipeline stays ahead of the modules split out of it: a name it still
+# imports must resolve to (and be patched on) the binding its own callers read.
+_SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rrt, _rst)
 
 
 class _ProxyModule(type(sys.modules[__name__])):

@@ -17,7 +17,7 @@ from string import Template
 import json
 import log
 from review_common import (
-    EFFORT_PRESETS,
+    EFFORT_PRESETS, Effort,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS,
     TEMPLATE_DIR_REL,
@@ -47,7 +47,7 @@ def _template_dir() -> Path:
 
 def _build_pr_header(
     pr: PRMetadata, ctx: PRContext,
-    line_threshold: int,
+    effort: Effort,
     file_filter: list[str] | None = None,
     viewer_role: str = "",
 ) -> str:
@@ -86,7 +86,7 @@ def _build_pr_header(
         if file_stats:
             lines += ["", "### File breakdown (sorted by churn)", file_stats]
     else:
-        file_stats = pr.file_stats(line_threshold)
+        file_stats = pr.file_stats(EFFORT_PRESETS[effort].multi_phase_line_threshold)
         if file_stats:
             lines += ["", "### File breakdown (sorted by churn)", file_stats]
 
@@ -940,9 +940,7 @@ def _prompt_group(job, common, extra):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("pr_header", _build_pr_header(
-        job.pr, job.ctx,
-        EFFORT_PRESETS[job.effort].multi_phase_line_threshold,
-        file_filter=file_filter,
+        job.pr, job.ctx, job.effort, file_filter=file_filter,
     ))
     b.set("delta_section", _build_delta_section(job.preflight, file_filter=file_filter))
     b.set("reply_threads", _build_reply_threads_section(job.reply_threads, file_filter=file_filter))
@@ -1029,9 +1027,7 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
         today=date.today().isoformat(),
         generator_version=job.generator_version,
         pr_header=_build_pr_header(
-            job.pr, job.ctx,
-            EFFORT_PRESETS[job.effort].multi_phase_line_threshold,
-            viewer_role=job.viewer_role,
+            job.pr, job.ctx, job.effort, viewer_role=job.viewer_role,
         ),
         state_context=_build_state_context_section(job),
         reviews_section=_build_reviews_section(job.ctx),
@@ -1039,7 +1035,10 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
         env_section=_build_env_section(job.wt_path, preflight=job.preflight),
         issue_section=_build_issue_section(job.issue_link, job.issue_context),
         delta_section=_build_delta_section(job.preflight),
-        omitted_guidance=_build_omitted_guidance(job.preflight, skip_omitted=(job.effort == "low")),
+        omitted_guidance=_build_omitted_guidance(
+            job.preflight,
+            skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,
+        ),
         max_turns=max_turns,
     )
 

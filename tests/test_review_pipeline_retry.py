@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_pipeline
 import review_preflight
+import review_retry
 from review_common import Diagnosis, DiagnosisKind
 
 _TURNS = 15
@@ -64,16 +65,16 @@ class _Invoke:
 
 class TestRetryHintFor:
     def test_no_write_diagnosis_names_the_write_mechanism(self):
-        assert review_pipeline._retry_hint_for(_NO_WRITE) == review_pipeline._NO_WRITE_HINT
+        assert review_retry._retry_hint_for(_NO_WRITE) == review_retry._NO_WRITE_HINT
 
     def test_plain_max_turns_gets_the_generic_hint(self):
-        assert review_pipeline._retry_hint_for(_MAX_TURNS) == review_pipeline._RETRY_HINT
+        assert review_retry._retry_hint_for(_MAX_TURNS) == review_retry._RETRY_HINT
 
     def test_transient_error_gets_no_hint(self):
-        assert review_pipeline._retry_hint_for(_TRANSIENT) == ""
+        assert review_retry._retry_hint_for(_TRANSIENT) == ""
 
     def test_missing_result_record_gets_no_hint(self):
-        assert review_pipeline._retry_hint_for(
+        assert review_retry._retry_hint_for(
             Diagnosis(DiagnosisKind.NO_RESULT_RECORD),
         ) == ""
 
@@ -84,12 +85,12 @@ class TestIsRetryable:
         diagnosis = Diagnosis(
             DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
         )
-        assert review_pipeline._is_retryable(diagnosis)
-        assert review_pipeline._retry_hint_for(diagnosis) == review_pipeline._NO_WRITE_HINT
+        assert review_retry._is_retryable(diagnosis)
+        assert review_retry._retry_hint_for(diagnosis) == review_retry._NO_WRITE_HINT
 
     def test_clean_completion_that_wrote_nothing_observable_is_not_retryable(self):
         """Without the no-write flag there is no reason to expect a difference."""
-        assert not review_pipeline._is_retryable(
+        assert not review_retry._is_retryable(
             Diagnosis(DiagnosisKind.COMPLETED, detail="success"),
         )
 
@@ -97,26 +98,26 @@ class TestIsRetryable:
         diagnosis = Diagnosis(
             DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
         )
-        assert review_pipeline._retry_turns_for(diagnosis, 15) == 15
+        assert review_retry._retry_turns_for(diagnosis, 15) == 15
 
 
 class TestRetryTurnsFor:
     def test_max_turns_doubles(self):
-        assert review_pipeline._retry_turns_for(_MAX_TURNS, 15) == 30
+        assert review_retry._retry_turns_for(_MAX_TURNS, 15) == 30
 
     def test_doubling_is_capped_at_the_group_ceiling(self):
-        assert review_pipeline._retry_turns_for(_MAX_TURNS, 20) == review_pipeline.RETRY_MAX_TURNS_GROUP
+        assert review_retry._retry_turns_for(_MAX_TURNS, 20) == review_pipeline.RETRY_MAX_TURNS_GROUP
 
     def test_budget_above_the_ceiling_is_not_lowered(self):
-        assert review_pipeline._retry_turns_for(_MAX_TURNS, 40) == 40
+        assert review_retry._retry_turns_for(_MAX_TURNS, 40) == 40
 
     def test_non_turn_failures_keep_their_budget(self):
-        assert review_pipeline._retry_turns_for(_TRANSIENT, 15) == 15
+        assert review_retry._retry_turns_for(_TRANSIENT, 15) == 15
 
 
 class TestRetryMissingOutput:
     def _run(self, invoke, log_path, output_path, max_turns=_TURNS):
-        return review_pipeline._retry_missing_output(
+        return review_retry._retry_missing_output(
             invoke, "PROMPT", log_path, output_path,
             label="Test phase", max_turns=max_turns,
         )
@@ -145,7 +146,7 @@ class TestRetryMissingOutput:
         invoke = _Invoke(str(output), write_on=1, log_path=log_path)
         assert self._run(invoke, log_path, str(output)) is None
         prompt, turns = invoke.calls[0]
-        assert prompt == review_pipeline._RETRY_HINT + "PROMPT"
+        assert prompt == review_retry._RETRY_HINT + "PROMPT"
         assert turns == 30
 
     def test_no_write_diagnosis_selects_the_write_first_hint(self, tmp_path):
@@ -162,7 +163,7 @@ class TestRetryMissingOutput:
         output = tmp_path / "out.md"
         invoke = _Invoke(str(output), write_on=1, log_path=log_path)
         self._run(invoke, log_path, str(output))
-        assert invoke.calls[0][0].startswith(review_pipeline._NO_WRITE_HINT)
+        assert invoke.calls[0][0].startswith(review_retry._NO_WRITE_HINT)
 
     def test_retry_runs_once_and_reports_its_own_failure(self, tmp_path):
         log_path = _write_log(tmp_path, _result())

@@ -1,6 +1,6 @@
 """Tests for the thrash guard shared across the pr scripts.
 
-review_pipeline's own retry behaviour is covered in test_review_pipeline_retry;
+review_retry's own retry behaviour is covered in test_review_pipeline_retry;
 these cover the generalisations the other pr scripts depend on — an arbitrary
 `produced` predicate and the log-less prompt path.
 """
@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from conftest import write_thrash_log
 import agent_retry
 import review_pipeline
+import review_retry
 from review_common import Diagnosis, DiagnosisKind
 
 _TURNS = 15
@@ -31,18 +32,18 @@ def _write_log(tmp_path: Path, payload: dict) -> str:
 
 
 class TestPipelineDelegatesToSharedGuard:
-    """review_pipeline must not carry a second copy of the guard."""
+    """review_retry must not carry a second copy of the guard."""
 
     def test_retryability_is_the_same_function(self):
-        assert review_pipeline._is_retryable is agent_retry.is_retryable
+        assert review_retry._is_retryable is agent_retry.is_retryable
 
     def test_retry_driver_is_the_same_function(self):
-        assert review_pipeline._retry_missing_output is agent_retry.retry_missing_output
+        assert review_retry._retry_missing_output is agent_retry.retry_missing_output
 
     def test_hints_are_the_same_strings(self):
-        assert review_pipeline._NO_WRITE_HINT is agent_retry.NO_WRITE_HINT
-        assert review_pipeline._RETRY_HINT is agent_retry.RETRY_HINT
-        assert review_pipeline._FIX_RETRY_HINT is agent_retry.FIX_RETRY_HINT
+        assert review_retry._NO_WRITE_HINT is agent_retry.NO_WRITE_HINT
+        assert review_retry._RETRY_HINT is agent_retry.RETRY_HINT
+        assert review_retry._FIX_RETRY_HINT is agent_retry.FIX_RETRY_HINT
 
     def test_group_retry_ceiling_comes_from_the_shared_cap(self):
         assert review_pipeline.RETRY_MAX_TURNS_GROUP == agent_retry.RETRY_MAX_TURNS

@@ -71,9 +71,15 @@ from review_disprove import apply_disprove_results, parse_disprove_output
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
-    AgentInvocation, _is_model_error, _parse_session_cost, _resolve_model,
+    AgentInvocation, _parse_session_cost, _resolve_model,
     _resolve_provider, _resolve_thinking_level, build_add_dirs,
     diagnose_missing_output, invoke_agent, try_recover_output,
+)
+from review_retry import (
+    GroupFailure,
+    _FIX_RETRY_HINT,
+    _check_serial_abort, _has_output, _is_retryable, _render_reason,
+    _retry_hint_for, _retry_missing_output, _was_skipped,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -227,9 +233,6 @@ class PhaseRunner:
 def _touch(path: str) -> None:
     """Pre-create an empty output file without truncating existing content."""
     Path(path).touch(exist_ok=True)
-
-
-_has_output = agent_retry.has_output
 
 
 def _omitted_turns(job: "ReviewJob") -> int:
@@ -398,40 +401,6 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     _post_process_review(job)
     _write_review_sidecar(job)
-
-
-# The hints, the retryability test and the retry driver are shared with the
-# other `pr` scripts — see agent_retry. Aliased here so this module's internals
-# keep reading the way they always have.
-_RETRY_HINT = agent_retry.RETRY_HINT
-_FIX_RETRY_HINT = agent_retry.FIX_RETRY_HINT
-_NO_WRITE_HINT = agent_retry.NO_WRITE_HINT
-
-_retry_hint_for = agent_retry.hint_for
-_retry_turns_for = agent_retry.turns_for
-_retry_missing_output = agent_retry.retry_missing_output
-
-
-def _render_reason(diagnosis: "Diagnosis | None") -> str:
-    """The rendered reason for a phase that produced nothing.
-
-    A `None` only reaches here when the output disappeared after the retry
-    driver had already confirmed it — worth reporting, not worth crashing on.
-    """
-    return diagnosis.message if diagnosis else "unknown"
-
-
-@dataclass(frozen=True)
-class GroupFailure:
-    """One group review that produced nothing, and why.
-
-    Carried rather than the rendered message because the retry pass, the
-    consecutive-failure abort, and the circuit breaker all decide from the
-    diagnosis; only the merge and the failures table render it.
-    """
-
-    group: str
-    diagnosis: Diagnosis
 
 
 def build_failures_section(
@@ -1002,18 +971,6 @@ def run_fix_pass(job: ReviewJob):
                   summary=summary)
 
 
-def _check_serial_abort(
-    i: int, group_count: int, diagnosis: Diagnosis, log_path: str,
-    consecutive: int, last: "Diagnosis | None",
-) -> "tuple[str, int, Diagnosis | None]":
-    if _is_model_error(log_path):
-        return f"Model not available — aborting remaining {group_count - i} groups", 0, None
-    consecutive = consecutive + 1 if diagnosis == last else 1
-    if consecutive >= CONSECUTIVE_FAIL_THRESHOLD:
-        return f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({diagnosis.message}) — aborting remaining {group_count - i} groups", 0, None
-    return "", consecutive, diagnosis
-
-
 def _run_serial_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
@@ -1073,18 +1030,11 @@ def _run_parallel_reviews(
     return [failure for _, _, failure in results if failure]
 
 
-_is_retryable = agent_retry.is_retryable
-
-
 def _retry_turns(diagnosis: Diagnosis, job: "ReviewJob") -> int:
     extra = _omitted_turns(job)
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return RETRY_MAX_TURNS_GROUP + extra
     return PHASES[Phase.GROUP].max_turns + extra
-
-
-def _was_skipped(failure: "GroupFailure") -> bool:
-    return failure.diagnosis.kind is DiagnosisKind.SKIPPED
 
 
 def _retry_failed_groups(

@@ -1834,7 +1834,14 @@ class TestPhaseSynthesis:
 
     @staticmethod
     def _patch_pipeline(monkeypatch, ro, **overrides):
-        """Patch review_pipeline module-level imports used by _phase_synthesis."""
+        """Patch the module-level imports `_phase_synthesis` reaches through.
+
+        The synthesis phase spans two modules: it builds its own prompt and
+        post-processes its own findings, but invokes the agent through
+        `PhaseRunner`, whose bindings live in review_phases. Each name is
+        patched on whichever module binds it.
+        """
+        import review_phases
         import review_pipeline
         defaults = {
             "build_prompt": lambda *a, **kw: "mock prompt",
@@ -1842,7 +1849,8 @@ class TestPhaseSynthesis:
         }
         defaults.update(overrides)
         for name, func in defaults.items():
-            monkeypatch.setattr(review_pipeline, name, func)
+            owner = review_pipeline if hasattr(review_pipeline, name) else review_phases
+            monkeypatch.setattr(owner, name, func)
 
     def test_successful_synthesis(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -2159,7 +2167,7 @@ class TestRetryFailedGroups:
         )
 
     def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
+        import review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
@@ -2173,9 +2181,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
 
         failed = [ro.GroupFailure("grp-a", _max_turns_16(ro))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
@@ -2201,7 +2209,7 @@ class TestRetryFailedGroups:
         assert result == failed
 
     def test_skipped_groups_run_after_retries_succeed(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
+        import review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -2221,9 +2229,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
 
         failed = [
             ro.GroupFailure("grp-a", _max_turns_16(ro)),
@@ -2237,7 +2245,7 @@ class TestRetryFailedGroups:
         assert "grp-b" in calls
 
     def test_skipped_groups_kept_when_retries_fail(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
+        import review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -2250,10 +2258,10 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 1
 
-        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(
-            review_pipeline, "diagnose_missing_output",
+            review_phases, "diagnose_missing_output",
             lambda *a: ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30),
         )
 

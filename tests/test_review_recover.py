@@ -23,6 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review_phases
 import review_pipeline
 import review_state
 
@@ -116,11 +117,14 @@ def job(tmp_path):
 @pytest.fixture
 def run(monkeypatch):
     """Run the pipeline with a scripted agent, returning that agent."""
+    # Both modules bind build_prompt: the phases build the group prompts,
+    # review_pipeline builds the synthesis one.
+    monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
     monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
 
     def _run(job, fails=None, denied=None) -> _Agent:
         agent = _Agent(job.review_file, fails=fails, denied=denied)
-        monkeypatch.setattr(review_pipeline, "invoke_agent", agent)
+        monkeypatch.setattr(review_phases, "invoke_agent", agent)
         with contextlib.redirect_stdout(io.StringIO()):
             review_pipeline.run_multi_phase(job)
         return agent

@@ -632,7 +632,7 @@ class TestRunFixPassRetry:
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
     @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_pipeline.invoke_agent")
+    @patch("review_phases.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retries_on_zero_progress_max_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -646,7 +646,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.invoke_agent")
+    @patch("review_phases.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_no_retry_when_fixes_applied(
         self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
@@ -663,7 +663,7 @@ class TestRunFixPassRetry:
 
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
-    @patch("review_pipeline.invoke_agent")
+    @patch("review_phases.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_no_retry_when_skip_reasons_annotated(
         self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
@@ -685,7 +685,7 @@ class TestRunFixPassRetry:
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
     @patch("review_pipeline.diagnose_missing_output", return_value=_AGENT_ERROR)
-    @patch("review_pipeline.invoke_agent")
+    @patch("review_phases.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_no_retry_on_non_retryable_reason(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -697,7 +697,7 @@ class TestRunFixPassRetry:
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
     @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_pipeline.invoke_agent")
+    @patch("review_phases.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_retry_uses_increased_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -712,7 +712,7 @@ class TestRunFixPassRetry:
     @patch("review_pipeline._commit_fixes")
     @patch("review_pipeline._reconcile_checkboxes")
     @patch("review_pipeline.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_pipeline.invoke_agent")
+    @patch("review_phases.invoke_agent")
     @patch("review_pipeline.build_prompt", return_value="prompt")
     def test_never_runs_under_a_read_only_reviewer_agent(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,

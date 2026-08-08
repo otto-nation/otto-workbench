@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
 import agent_retry
-import review_pipeline
+import review_phases
 import review_retry
 from review_common import Diagnosis, DiagnosisKind
 
@@ -46,7 +46,7 @@ class TestPipelineDelegatesToSharedGuard:
         assert review_retry._FIX_RETRY_HINT is agent_retry.FIX_RETRY_HINT
 
     def test_group_retry_ceiling_comes_from_the_shared_cap(self):
-        assert review_pipeline.RETRY_MAX_TURNS_GROUP == agent_retry.RETRY_MAX_TURNS
+        assert review_phases.RETRY_MAX_TURNS_GROUP == agent_retry.RETRY_MAX_TURNS
 
 
 class TestRetryUnproductive:

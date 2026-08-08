@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review_phases
 import review_pipeline
 import review_preflight
 import review_retry
@@ -107,7 +108,7 @@ class TestRetryTurnsFor:
         assert review_retry._retry_turns_for(_MAX_TURNS, 15) == 30
 
     def test_doubling_is_capped_at_the_group_ceiling(self):
-        assert review_retry._retry_turns_for(_MAX_TURNS, 20) == review_pipeline.RETRY_MAX_TURNS_GROUP
+        assert review_retry._retry_turns_for(_MAX_TURNS, 20) == review_phases.RETRY_MAX_TURNS_GROUP
 
     def test_budget_above_the_ceiling_is_not_lowered(self):
         assert review_retry._retry_turns_for(_MAX_TURNS, 40) == 40
@@ -188,7 +189,7 @@ class TestRetryMissingOutput:
         job = _make_job(tmp_path, session_log=log_path)
         codes = iter([0, 3])
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_pipeline, "invoke_agent", lambda *a, **k: next(codes))
+        monkeypatch.setattr(review_phases, "invoke_agent", lambda *a, **k: next(codes))
         errors = []
         monkeypatch.setattr(review_pipeline.log, "error", errors.append)
 

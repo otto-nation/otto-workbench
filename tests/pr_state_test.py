@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -813,13 +814,12 @@ def test_accumulated_outcomes_keep_their_own_shas():
 
 def test_thread_outcome_from_entry_carries_commit_sha():
     """Both branches of from_entry — attribute objects and raw dicts."""
-    class _Entry:
-        id, file, line = "t1", "a.go", 7
-        reviewer, summary, reason = "kgn", "rename it", ""
-        commit_sha = "deadbee"
-
+    entry = SimpleNamespace(
+        id="t1", file="a.go", line=7, reviewer="kgn", summary="rename it",
+        reason="", commit_sha="deadbee",
+    )
     assert ThreadOutcome.from_entry(
-        _Entry(), ThreadAction.FIXED).commit_sha == "deadbee"
+        entry, ThreadAction.FIXED).commit_sha == "deadbee"
     assert ThreadOutcome.from_entry(
         {"id": "t1", "commit_sha": "deadbee"}, ThreadAction.FIXED,
     ).commit_sha == "deadbee"

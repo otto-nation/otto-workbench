@@ -1834,7 +1834,14 @@ class TestPhaseSynthesis:
 
     @staticmethod
     def _patch_pipeline(monkeypatch, ro, **overrides):
-        """Patch review_pipeline module-level imports used by _phase_synthesis."""
+        """Patch the module-level imports `_phase_synthesis` reaches through.
+
+        The synthesis phase spans two modules: it builds its own prompt and
+        post-processes its own findings, but invokes the agent through
+        `PhaseRunner`, whose bindings live in review_phases. Each name is
+        patched on whichever module binds it.
+        """
+        import review_phases
         import review_pipeline
         defaults = {
             "build_prompt": lambda *a, **kw: "mock prompt",
@@ -1842,7 +1849,8 @@ class TestPhaseSynthesis:
         }
         defaults.update(overrides)
         for name, func in defaults.items():
-            monkeypatch.setattr(review_pipeline, name, func)
+            owner = review_pipeline if hasattr(review_pipeline, name) else review_phases
+            monkeypatch.setattr(owner, name, func)
 
     def test_successful_synthesis(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -2159,7 +2167,7 @@ class TestRetryFailedGroups:
         )
 
     def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
+        import review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
@@ -2173,9 +2181,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
 
         failed = [ro.GroupFailure("grp-a", _max_turns_16(ro))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
@@ -2201,7 +2209,7 @@ class TestRetryFailedGroups:
         assert result == failed
 
     def test_skipped_groups_run_after_retries_succeed(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
+        import review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -2221,9 +2229,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_pipeline, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
 
         failed = [
             ro.GroupFailure("grp-a", _max_turns_16(ro)),
@@ -2237,7 +2245,7 @@ class TestRetryFailedGroups:
         assert "grp-b" in calls
 
     def test_skipped_groups_kept_when_retries_fail(self, ro, tmp_path, monkeypatch):
-        import review_pipeline
+        import review_phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -2250,10 +2258,10 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 1
 
-        monkeypatch.setattr(review_pipeline, "invoke_agent", mock_invoke)
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(
-            review_pipeline, "diagnose_missing_output",
+            review_phases, "diagnose_missing_output",
             lambda *a: ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30),
         )
 
@@ -3810,7 +3818,7 @@ class TestPipelineStateFailureRoundTrip:
 class TestBuildFailuresSection:
     def test_no_failures_returns_empty(self):
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
@@ -3821,7 +3829,7 @@ class TestBuildFailuresSection:
     def test_group_failures_produce_table(self):
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
             groups_done=[1], groups_failed={
@@ -3841,7 +3849,7 @@ class TestBuildFailuresSection:
 
     def test_synthesis_fallback_in_table(self):
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
@@ -3859,7 +3867,7 @@ class TestBuildFailuresSection:
         """
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[],
@@ -3876,7 +3884,7 @@ class TestBuildFailuresSection:
     def test_recover_hint_survives_one_recoverable_failure(self):
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[],
@@ -3891,7 +3899,7 @@ class TestBuildFailuresSection:
     def test_no_recover_hint_when_every_group_is_unrecoverable(self):
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         denial = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied")
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
@@ -3903,7 +3911,7 @@ class TestBuildFailuresSection:
     def test_recover_hint_offered_for_max_turns(self):
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
@@ -3913,7 +3921,7 @@ class TestBuildFailuresSection:
 
     def test_synthesis_failure_alone_stays_recoverable(self):
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
@@ -3934,7 +3942,7 @@ class TestFailuresSectionInReview:
         """When synthesis falls back, the review includes ## Agent Failures."""
         from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
-        from review_pipeline import build_failures_section
+        from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1], groups_failed={2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)},
@@ -3969,7 +3977,7 @@ class TestInjectFailuresAndStatus:
     def test_replaces_existing_status_line(self, tmp_path):
         """I1: status already present as 'completed' is updated to 'partial' on synthesis failure."""
         from review_preflight import PipelineState
-        from review_pipeline import _inject_failures_and_status
+        from review_state import _inject_failures_and_status
 
         # Write a review file that already has a 'completed' status line
         review_file = tmp_path / "review.md"
@@ -3997,7 +4005,7 @@ class TestInjectFailuresAndStatus:
     def test_inserts_status_when_absent(self, tmp_path):
         """Status line is inserted before the generator line when not already present."""
         from review_preflight import PipelineState
-        from review_pipeline import _inject_failures_and_status
+        from review_state import _inject_failures_and_status
 
         review_file = tmp_path / "review.md"
         review_file.write_text(
@@ -4021,7 +4029,7 @@ class TestInjectFailuresAndStatus:
     def test_replaces_status_not_duplicated(self, tmp_path):
         """Replacing an existing status line does not add a second status line."""
         from review_preflight import PipelineState
-        from review_pipeline import _inject_failures_and_status
+        from review_state import _inject_failures_and_status
 
         review_file = tmp_path / "review.md"
         review_file.write_text(

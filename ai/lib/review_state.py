@@ -73,11 +73,11 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     total = 0.0
     if state.holistic_done:
-        log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
-        total += _parse_session_cost(log)
+        log_path = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
+        total += _parse_session_cost(log_path)
     for idx in state.groups_done:
-        log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(idx))
-        total += _parse_session_cost(log)
+        log_path = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(idx))
+        total += _parse_session_cost(log_path)
     return total
 
 

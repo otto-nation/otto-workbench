@@ -59,8 +59,10 @@ from review_static_analysis import (  # noqa: E402
 )
 import ai_backend  # noqa: E402
 
-# review_pipeline stays ahead of the modules split out of it: a name it still
-# imports must resolve to (and be patched on) the binding its own callers read.
+# Dependency order, importers first: `__setattr__` patches the first submodule
+# that has the attribute, so a module must precede everything it imports from.
+# review_pipeline therefore stays ahead of the modules split out of it — a name
+# it still imports must be patched on the binding its own callers read.
 _SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rph, _rrt, _rst)
 
 

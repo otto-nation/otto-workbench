@@ -153,7 +153,6 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     _write_review_sidecar(job)
 
 
-
 def _build_meta_header(
     job: ReviewJob,
     skipped_groups: int = 0, total_groups: int = 0,

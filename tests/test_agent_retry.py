@@ -21,6 +21,7 @@ from review_common import Diagnosis, DiagnosisKind
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
 _NO_WRITE = Diagnosis(DiagnosisKind.COMPLETED, detail="success", no_write_tool=True)
+_TRANSIENT = Diagnosis(DiagnosisKind.TRANSIENT, detail="ECONNRESET")
 
 
 def _write_log(tmp_path: Path, payload: dict) -> str:
@@ -299,3 +300,22 @@ class TestCIFixRetryHint:
         Pointing it back at that constant is the regression this guards.
         """
         assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) != agent_retry.FIX_RETRY_HINT
+
+
+class TestTurnsForCeiling:
+    """The ceiling belongs to the caller — 30 fits group phases, not the fix pass."""
+
+    def test_default_ceiling_preserves_group_phase_doubling(self):
+        assert agent_retry.turns_for(_MAX_TURNS, 15) == 30
+
+    def test_default_ceiling_does_not_lower_a_larger_budget(self):
+        assert agent_retry.turns_for(_MAX_TURNS, 40) == 40
+
+    def test_explicit_ceiling_lets_a_large_budget_grow(self):
+        assert agent_retry.turns_for(_MAX_TURNS, 60, ceiling=120) == 120
+
+    def test_explicit_ceiling_caps_the_doubling(self):
+        assert agent_retry.turns_for(_MAX_TURNS, 60, ceiling=100) == 100
+
+    def test_non_turn_failures_ignore_the_ceiling(self):
+        assert agent_retry.turns_for(_TRANSIENT, 60, ceiling=120) == 60

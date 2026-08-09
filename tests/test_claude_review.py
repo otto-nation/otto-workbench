@@ -615,11 +615,7 @@ def test_build_failure_detail_groups_failed(cr, tmp_path):
 
 
 def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
-    """The format `_write_pipeline_state` actually produces.
-
-    This reader parses pipeline.json itself rather than going through
-    `_read_pipeline_state`, so it has to hydrate the nested records too.
-    """
+    """The format `_write_pipeline_state` actually produces."""
     from review_common import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
@@ -661,6 +657,27 @@ def test_build_failure_detail_all_groups_failed(cr, tmp_path):
     }))
     result = build_failure_detail(tmp_path)
     assert "all groups failed" in result
+
+
+def test_the_two_readers_agree_on_the_all_failed_sentinel(cr, tmp_path):
+    """Status and detail answer the same question the same way.
+
+    Synthesis records `all groups failed` when no group produced usable output,
+    and the state can still carry fewer failure entries than there are groups —
+    a group that crashed before it registered one. The two readers used to
+    compute the all-failed rule separately, and only the status reader honoured
+    the sentinel, so the review said `error` and `1/2 groups failed` at once.
+    """
+    from review_common import build_failure_detail
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1", "g2"],
+        "synthesis_done": True, "synthesis_failed": "all groups failed",
+        "groups_done": [], "groups_failed": {"1": "quota exhausted (429)"},
+    }))
+
+    assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
+    assert build_failure_detail(tmp_path).startswith("all groups failed:")
 
 
 def test_json_summary_includes_failure_detail(cr, tmp_path):

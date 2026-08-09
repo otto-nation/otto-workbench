@@ -25,6 +25,11 @@ def from_dict(cls, data: dict):
     - Extra keys are ignored
     - Enum fields are reconstructed from their string values
     - Nested dataclass fields are recursively reconstructed
+    - `dict[int, V]` keys are restored to ints from the strings JSON makes of them
+    - A nested dataclass defining `_from_raw` reconstructs itself through it,
+      which is how a type stored in more than one shape stays readable
+
+    Raises TypeError if the data omits a field that has no default.
     """
     if not data:
         data = {}
@@ -37,6 +42,10 @@ def from_dict(cls, data: dict):
         raw = data[f.name]
         kwargs[f.name] = _coerce(hints[f.name], raw)
     return cls(**kwargs)
+
+
+def _identity(value):
+    return value
 
 
 def _coerce(hint, value):
@@ -59,9 +68,14 @@ def _coerce(hint, value):
             return value
         return hint(value)
 
-    # Nested dataclass
-    if isinstance(hint, type) and dataclasses.is_dataclass(hint) and isinstance(value, dict):
-        return from_dict(hint, value)
+    # Nested dataclass. A class that can be stored in more than one shape owns
+    # its own reconstruction through `_from_raw` — the plain path below only
+    # knows how to read a dict.
+    if isinstance(hint, type) and dataclasses.is_dataclass(hint):
+        if hasattr(hint, "_from_raw"):
+            return hint._from_raw(value)
+        if isinstance(value, dict):
+            return from_dict(hint, value)
 
     # list[X] — coerce elements
     if origin is list and args:
@@ -75,10 +89,12 @@ def _coerce(hint, value):
         if isinstance(value, (list, tuple)):
             return tuple(_coerce(item_type, v) for v in value)
 
-    # dict[K, V] — coerce values
+    # dict[K, V] — coerce values, and int keys back from the strings JSON made
+    # of them. Only int: every other key type survives the trip as itself.
     if origin is dict and args and len(args) >= 2:
-        val_type = args[1]
+        key_type, val_type = args[0], args[1]
         if isinstance(value, dict):
-            return {k: _coerce(val_type, v) for k, v in value.items()}
+            coerce_key = int if key_type is int else _identity
+            return {coerce_key(k): _coerce(val_type, v) for k, v in value.items()}
 
     return value

@@ -27,7 +27,6 @@ from review_common import (
     META_STATUS,
     Diagnosis,
     _derive_path,
-    hydrate_failures,
     read_pipeline_status,
 )
 from review_preflight import Group, PipelineState, ReviewJob
@@ -47,27 +46,7 @@ def _write_pipeline_state(job: ReviewJob, state: PipelineState):
 
 
 def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
-    path = Path(_pipeline_state_path(job))
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        groups_failed = hydrate_failures(data.get("groups_failed", {}))
-        return PipelineState(
-            head_sha=data["head_sha"],
-            group_names=data["group_names"],
-            holistic_done=data.get("holistic_done", False),
-            groups_done=data.get("groups_done", []),
-            groups_failed=groups_failed,
-            synthesis_done=data.get("synthesis_done", False),
-            synthesis_failed=data.get("synthesis_failed", ""),
-            review_type=data.get("review_type", "full"),
-            prior_sha=data.get("prior_sha", ""),
-            skipped_groups=data.get("skipped_groups", []),
-            angles_done=data.get("angles_done", False),
-        )
-    except (json.JSONDecodeError, KeyError):
-        return None
+    return PipelineState.load(Path(_pipeline_state_path(job)).parent)
 
 
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
@@ -116,10 +95,8 @@ def build_failures_section(
     """Build a markdown Agent Failures section from pipeline state."""
     rows: list[tuple[str, str, str]] = []
 
-    for idx, diagnosis in sorted(state.groups_failed.items(), key=lambda x: int(x[0])):
-        idx = int(idx) if isinstance(idx, str) else idx
-        name = state.group_names[idx - 1] if idx <= len(state.group_names) else f"group-{idx}"
-        rows.append((f"group-{idx}: {name}", diagnosis.message, "failed"))
+    for idx, diagnosis in sorted(state.groups_failed.items()):
+        rows.append((f"group-{idx}: {state.group_label(idx)}", diagnosis.message, "failed"))
 
     if state.synthesis_failed:
         status = "fallback" if state.synthesis_failed == "mechanical fallback" else "failed"

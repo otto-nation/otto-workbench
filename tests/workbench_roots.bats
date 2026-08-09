@@ -47,6 +47,10 @@ print(workbench_paths.$1(), end='')
 # unsets the variable once it has used it, so the value cannot be read back.
 resolve_zsh_state() {
   local line
+  command -v zsh >/dev/null || {
+    echo "zsh is required to cross-validate the state root — install it" >&2
+    return 1
+  }
   line=$(grep -E '^_wb_docker_aliases=' "$REPO_ROOT/zsh/config.d/aliases/docker.zsh")
   [[ -n "$line" ]] || {
     echo "docker.zsh no longer assigns _wb_docker_aliases — update this test" >&2

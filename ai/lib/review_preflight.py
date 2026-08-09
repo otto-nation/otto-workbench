@@ -180,8 +180,9 @@ class PipelineState:
     def load(cls, review_dir: Path | None) -> "PipelineState | None":
         """Read a review directory's state file, or None if there isn't a usable one.
 
-        A missing file and an unreadable one both come back as None — callers
-        that need to tell those apart should check for the file themselves.
+        A missing file and an unreadable one both come back as None. The one
+        caller that must tell those apart is `--recover`, which stats the file
+        first so it can say "nothing to recover" rather than "state is corrupt".
         """
         if not review_dir:
             return None

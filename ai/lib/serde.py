@@ -25,7 +25,7 @@ def from_dict(cls, data: dict):
     - Extra keys are ignored
     - Enum fields are reconstructed from their string values
     - Nested dataclass fields are recursively reconstructed
-    - `dict[int, V]` keys are restored to ints from the strings JSON made of them
+    - `dict[int, V]` keys are restored to ints from the strings JSON makes of them
     - A nested dataclass defining `_from_raw` reconstructs itself through it,
       which is how a type stored in more than one shape stays readable
 

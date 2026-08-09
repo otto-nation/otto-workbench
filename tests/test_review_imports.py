@@ -120,10 +120,13 @@ def _collect_bare_underscore_refs(tree: ast.Module) -> set[str]:
 
 
 def _collect_function_locals(func_node: ast.AST) -> set[str]:
-    """Collect names defined locally within a function (params, assignments).
+    """Collect names defined locally within a function (params, assignments, imports).
 
     Only walks the immediate function body — stops at nested function
     boundaries so inner locals don't mask outer module-level references.
+
+    A function-local import binds a local name, which is how a module breaks an
+    import cycle with a peer it cannot import at module level.
     """
     local_names: set[str] = set()
     for arg in func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs:
@@ -143,6 +146,10 @@ def _collect_function_locals(func_node: ast.AST) -> set[str]:
                 local_names.add(child.id)
             elif isinstance(child, ast.For) and isinstance(child.target, ast.Name):
                 local_names.add(child.target.id)
+            elif isinstance(child, ast.ImportFrom):
+                local_names.update(_names_from_import_from(child))
+            elif isinstance(child, ast.Import):
+                local_names.update(alias.asname or alias.name for alias in child.names)
             _walk_shallow(child)
 
     _walk_shallow(func_node)

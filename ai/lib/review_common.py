@@ -327,26 +327,21 @@ class Diagnosis:
         lowered = self.detail.lower()
         return not any(m in lowered for m in NON_RECOVERABLE_ERROR_MARKERS)
 
+    @classmethod
+    def _from_raw(cls, raw) -> "Diagnosis":
+        """Rebuild a diagnosis from any shape a state file can hold.
 
-def hydrate_failures(raw: dict) -> dict[int, Diagnosis]:
-    """A state file's `groups_failed`, in either of the two formats it can hold.
-
-    The single hydration path for pipeline state — every reader goes through
-    here, so a schema change cannot break one of them silently.
-
-    JSON serializes dict keys as strings and `serde.from_dict` coerces values
-    but not keys, so the int conversion lives here. A file written before
-    diagnoses were typed holds the rendered reason; keep it verbatim under
-    `UNKNOWN` so a `--recover` run against an in-flight review still renders
-    its failures.
-    """
-    return {
-        int(k): (
-            serde.from_dict(Diagnosis, v) if isinstance(v, dict)
-            else Diagnosis(DiagnosisKind.UNKNOWN, detail=str(v))
-        )
-        for k, v in raw.items()
-    }
+        `serde` hands the whole field over here rather than assuming a dict,
+        because reviews live in `~/.config/workbench/reviews/` and outlive the
+        code that wrote them. A file written before diagnoses were typed holds
+        the rendered reason; keep it verbatim under `UNKNOWN` so a `--recover`
+        run against an in-flight review still renders its failures.
+        """
+        if isinstance(raw, cls):
+            return raw
+        if isinstance(raw, dict):
+            return serde.from_dict(cls, raw)
+        return cls(DiagnosisKind.UNKNOWN, detail=str(raw))
 
 
 # ── Templates ────────────────────────────────────────────────────────────────
@@ -621,16 +616,11 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     ])
 
 
-def _read_pipeline_data(review_dir: Path | None) -> dict | None:
-    if not review_dir:
-        return None
-    pipeline_path = review_dir / FILENAME_PIPELINE_STATE
-    if not pipeline_path.is_file():
-        return None
-    try:
-        return json.loads(pipeline_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+def _load_pipeline_state(review_dir: Path | None) -> "PipelineState | None":
+    # Local import: review_preflight imports this module, and PipelineState is
+    # the one thing that knows how to read its own file.
+    from review_preflight import PipelineState
+    return PipelineState.load(review_dir)
 
 
 def read_pipeline_status(review_dir: Path | None) -> str:
@@ -640,70 +630,39 @@ def read_pipeline_status(review_dir: Path | None) -> str:
     partial  — review produced but with failures (groups or synthesis fallback)
     error    — all groups failed, no usable output
     """
-    from pr_state import ReviewStatus
-    data = _read_pipeline_data(review_dir)
-    if data is None:
+    state = _load_pipeline_state(review_dir)
+    if state is None:
         return ReviewStatus.COMPLETED.value
-
-    groups_failed = data.get("groups_failed", {})
-    synthesis_failed = data.get("synthesis_failed", "")
-    group_names = data.get("group_names", [])
-
-    if not groups_failed and not synthesis_failed:
-        return ReviewStatus.COMPLETED.value
-
-    all_groups_failed = (
-        synthesis_failed == "all groups failed"
-        or (groups_failed and len(groups_failed) >= len(group_names) and len(group_names) > 0)
-    )
-    if all_groups_failed:
-        return ReviewStatus.ERROR.value
-
-    return ReviewStatus.PARTIAL.value
+    return state.status.value
 
 
 def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
     """Return human-readable warnings for incomplete pipeline phases."""
-    data = _read_pipeline_data(review_dir)
-    if data is None:
+    state = _load_pipeline_state(review_dir)
+    if state is None:
         return []
-    synthesis_done = data.get("synthesis_done", False)
-    warnings = []
-    if not data.get("holistic_done", False) and not synthesis_done:
-        warnings.append("holistic phase")
-    groups_failed = data.get("groups_failed", {})
-    if groups_failed:
-        n = len(groups_failed)
-        warnings.append(f"{n} group{plural(n)} failed")
-    if data.get("synthesis_failed"):
-        warnings.append("synthesis")
-    return warnings
+    return state.warnings
 
 
 def build_failure_detail(review_dir: Path | None) -> str:
     """Build a human-readable failure detail string from pipeline state."""
-    data = _read_pipeline_data(review_dir)
-    if data is None:
+    state = _load_pipeline_state(review_dir)
+    if state is None:
         return ""
-    groups_failed = hydrate_failures(data.get("groups_failed", {}))
-    synthesis_failed = data.get("synthesis_failed", "")
-    group_names = data.get("group_names", [])
-
-    if not groups_failed and not synthesis_failed:
+    if not state.groups_failed and not state.synthesis_failed:
         return ""
 
     parts = []
-    if groups_failed:
-        n_failed = len(groups_failed)
-        n_total = len(group_names)
-        reasons = sorted({d.message for d in groups_failed.values()})
-        if n_failed >= n_total and n_total > 0:
-            parts.append(f"all groups failed: {', '.join(reasons)}")
+    if state.groups_failed:
+        reasons = ", ".join(sorted({d.message for d in state.groups_failed.values()}))
+        if state.all_groups_failed:
+            parts.append(f"all groups failed: {reasons}")
         else:
-            parts.append(f"{n_failed}/{n_total} groups failed: {', '.join(reasons)}")
+            n_failed, n_total = len(state.groups_failed), state.group_count
+            parts.append(f"{n_failed}/{n_total} groups failed: {reasons}")
 
-    if synthesis_failed and synthesis_failed != "all groups failed":
-        parts.append(f"synthesis: {synthesis_failed}")
+    if state.synthesis_failed and state.synthesis_failed != "all groups failed":
+        parts.append(f"synthesis: {state.synthesis_failed}")
 
     return "; ".join(parts)
 

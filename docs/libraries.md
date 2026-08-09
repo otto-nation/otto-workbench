@@ -11,15 +11,38 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 ```
 
-`ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers.
+`ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers. `roots.sh` reaches the facade through `constants.sh`, and is also sourced on its own by consumers that need the roots without the rest of the framework.
 
 ## Core Modules
 
 ### constants.sh
 
-Path and filename constants auto-derived from the workbench root. Single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`, `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALLED_STATE_FILE`, and all other shared paths.
+Path and filename constants auto-derived from the workbench root. Single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`, `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALLED_STATE_FILE`, `MAINTENANCE_LAST_FILE`, and all other shared paths.
 
-No functions — constants only. Loaded via `ui.sh`.
+No functions — constants only. Sources `roots.sh`. Loaded via `ui.sh`.
+
+### roots.sh
+
+The three user-level roots the workbench writes to, each resolved through the same chain:
+
+```
+WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
+```
+
+| Constant | Holds | XDG rung | Default |
+|----------|-------|----------|---------|
+| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `install.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
+| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, applied migrations | *(none yet)* | `~/.config/workbench` |
+| `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time | `XDG_CACHE_HOME` | `~/.cache/workbench` |
+
+The state root has no `XDG_STATE_HOME` rung yet: honouring it would relocate the existing reviews and logs with nothing to carry them. The rung and the `~/.local/state/workbench` default arrive together with that migration.
+
+Its own module rather than part of `constants.sh` because two other consumers need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh` alongside its own `ui.sh` facade, and `registries.sh` sources it directly when a caller has not loaded `constants.sh`.
+
+Two definitions outside `lib/` express the same chain, and `tests/workbench_roots.bats` cross-validates all three:
+
+- [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python owner. Exposes `config_dir()`, `state_dir()`, `cache_dir()`, and `logs_dir(tool=None)`, resolved per call rather than frozen at import.
+- [`zsh/config.d/aliases/docker.zsh`](../zsh/config.d/aliases/docker.zsh) — spelled inline, because `WORKBENCH_DIR` is unknown at shell startup and sourcing would add a file read to every shell.
 
 ### output.sh
 
@@ -98,7 +121,7 @@ Component installation state tracking.
 | `state_prune_orphans` | Remove entries for deleted components |
 | `state_detect_installed` | Heuristic-based detection for bootstrapping |
 
-State file: `~/.config/workbench/installed.components`. Loaded via `ui.sh`.
+State file: `$INSTALLED_STATE_FILE` — `installed.components` under the [state root](#rootssh). Loaded via `ui.sh`.
 
 ### migrations.sh
 
@@ -109,7 +132,7 @@ Migration framework with state tracking.
 | `run_component_migrations` | Run migrations in a single component directory |
 | `run_all_migrations` | Discover and run migrations across all components, prune stale state |
 
-State file: `~/.config/workbench/migrations.applied`. Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).
+State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state root](#rootssh). Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).
 
 ### components.sh
 

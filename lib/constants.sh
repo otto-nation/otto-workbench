@@ -17,17 +17,25 @@ if [[ -z "${WORKBENCH_DIR:-}" ]]; then
   unset _constants_dir
 fi
 
+# _main_worktree DIR — prints DIR's main worktree, or nothing when DIR is not a
+# bare repo. Ends on a command that succeeds either way: a bare `[[ ]] &&` here
+# would return 1 from the source and abort any caller running under `set -e`,
+# which maintenance/bin/otto-workbench-maintenance does.
+_main_worktree() {
+  local dir="$1"
+  [[ "$(git -C "$dir" config --get core.bare 2>/dev/null)" == "true" ]] || return 0
+  git -C "$dir" worktree list 2>/dev/null | awk '/\[main\]/{print $1; exit}'
+}
+
 # Stable symlink target — in bare repos, resolves to the main worktree so
 # symlinks created by install_symlink survive worktree switches.
 # In normal repos (non-bare), equals WORKBENCH_DIR.
 if [[ -z "${WORKBENCH_STABLE_DIR:-}" ]]; then
-  WORKBENCH_STABLE_DIR="$WORKBENCH_DIR"
-  if [[ "$(git -C "$WORKBENCH_DIR" config --get core.bare 2>/dev/null)" == "true" ]]; then
-    _main_wt="$(git -C "$WORKBENCH_DIR" worktree list 2>/dev/null | awk '/\[main\]/{print $1; exit}')"
-    [[ -n "$_main_wt" ]] && WORKBENCH_STABLE_DIR="$_main_wt"
-    unset _main_wt
-  fi
+  _main_wt="$(_main_worktree "$WORKBENCH_DIR")"
+  WORKBENCH_STABLE_DIR="${_main_wt:-$WORKBENCH_DIR}"
+  unset _main_wt
 fi
+unset -f _main_worktree
 
 # ─── Shell dotfiles ───────────────────────────────────────────────────────────
 ZSHRC_FILE="$HOME/.zshrc"
@@ -43,10 +51,12 @@ STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
 TASK_CONFIG_DIR="$HOME/.config/task"
 TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 
-# ─── Workbench runtime state ──────────────────────────────────────────────────
-# Written by setup scripts; read by zsh snippets and sync steps.
-# Never committed — machine-specific, lives in ~/.config/workbench/.
-WORKBENCH_STATE_DIR="$HOME/.config/workbench"
+# ─── Workbench roots (config / state / cache) ─────────────────────────────────
+# WORKBENCH_CONFIG_DIR, WORKBENCH_STATE_DIR, WORKBENCH_CACHE_DIR are owned by
+# lib/roots.sh — its own module because the otto-ai-tools tarball ships it
+# without shipping this file.
+# shellcheck source=./roots.sh
+. "$(dirname "${BASH_SOURCE[0]}")/roots.sh"
 
 # Core components — always synced, never tracked in install.yml.
 CORE_COMPONENTS="bin git zsh task"
@@ -59,6 +69,9 @@ TESTCONTAINERS_FILE="$HOME/.testcontainers.properties"
 # Sourced by zsh/config.d/aliases/docker.zsh to load runtime-specific config.
 DOCKER_RUNTIME_ALIASES="$WORKBENCH_STATE_DIR/docker-aliases.zsh"
 MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
+# Written by maintenance/bin/otto-workbench-maintenance, read by `otto-workbench
+# maintenance status`.
+MAINTENANCE_LAST_FILE="$WORKBENCH_STATE_DIR/maintenance.last"
 INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 

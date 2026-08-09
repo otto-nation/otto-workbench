@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -21,6 +20,7 @@ from typing import TypeVar
 import ai_usage
 import log
 import serde
+import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
 from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
 
@@ -433,14 +433,9 @@ REVIEW_EXT = ".md"
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
 
-_WORKBENCH_STATE_ENV = "WORKBENCH_STATE_DIR"
-_WORKBENCH_STATE_DEFAULT = "~/.config/workbench"
-
-
 def workbench_dir() -> Path:
-    return Path(os.environ.get(
-        _WORKBENCH_STATE_ENV, os.path.expanduser(_WORKBENCH_STATE_DEFAULT),
-    ))
+    """The state root. Kept as an alias — `workbench_paths` owns the chain."""
+    return workbench_paths.state_dir()
 
 
 REVIEWS_DIR = workbench_dir() / "reviews"

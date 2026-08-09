@@ -4,7 +4,7 @@
 # so all docker tooling works regardless of which runtime is active.
 #
 # Runtime-specific config (Colima lazy-start, OrbStack no-op, etc.) is loaded
-# from ~/.config/workbench/docker-aliases.zsh — a symlink written by
+# from <state root>/docker-aliases.zsh — a symlink written by
 # docker/setup.sh pointing to docker/<runtime>/aliases.zsh in the workbench.
 # No-op if that symlink does not exist (fresh machine before docker/setup.sh runs).
 #
@@ -27,8 +27,13 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 # Runtime-specific config (lazy-start, vars, etc.)
 # ============================================================================
 
-[[ -f "$HOME/.config/workbench/docker-aliases.zsh" ]] \
-  && source "$HOME/.config/workbench/docker-aliases.zsh"
+# The state root is spelled inline rather than sourced from lib/constants.sh:
+# WORKBENCH_DIR is not known at shell startup, and sourcing would add a file
+# read to every shell. Keep this chain identical to the one in constants.sh —
+# tests/workbench_roots.bats cross-validates them.
+_wb_docker_aliases="${WORKBENCH_STATE_DIR:-$HOME/.config/workbench}/docker-aliases.zsh"
+[[ -f "$_wb_docker_aliases" ]] && source "$_wb_docker_aliases"
+unset _wb_docker_aliases
 
 # ============================================================================
 # Docker shortcuts

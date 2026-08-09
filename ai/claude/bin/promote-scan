@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
 
@@ -404,7 +405,7 @@ def main() -> None:
 
     home = Path(os.path.expanduser(args.home))
     workbench = _resolve_workbench(args.workbench)
-    log_dir = os.path.expanduser("~/.config/workbench/logs/promote-scan")
+    log_dir = str(workbench_paths.logs_dir("promote-scan"))
     trail = Trail.start(
         script="promote-scan",
         artifact_dir=log_dir,

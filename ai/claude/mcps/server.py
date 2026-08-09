@@ -18,13 +18,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
+
+import workbench_paths  # noqa: E402
 
 # MCP SDK imports are deferred to create_server() / main() so that the
 # discovery and extraction utilities can be tested without the SDK installed.
 
 logger = logging.getLogger("otto-mcp")
 
-CONFIG_PATH = Path("~/.config/workbench/mcp-tools.json").expanduser()
+# Hand-authored, so it belongs to the config root rather than the state root.
+CONFIG_PATH = workbench_paths.config_dir() / "mcp-tools.json"
 DISCOVERY_TIMEOUT = 2.0
 TOOL_SCHEMA_FLAG = "--tool-schema"
 

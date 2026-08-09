@@ -31,7 +31,7 @@ MANIFEST_KEY="ai/claude"
 # Bash modules from lib/ that the tarball scripts need at runtime.
 # The full ui.sh sources the entire workbench framework; the tarball facade
 # sources only these.
-BASH_MODULES=(output.sh prompts.sh)
+BASH_MODULES=(output.sh prompts.sh roots.sh)
 
 # Files excluded from bin/ discovery (this script + support files)
 BIN_EXCLUDE="build-otto-ai-tools-tarball|_version.py"
@@ -146,11 +146,12 @@ echo "$VERSION" > "$DEST/VERSION"
 
 {
   echo '#!/usr/bin/env bash'
-  # Constants that packaged scripts reference (subset of lib/constants.sh)
+  # Constants that packaged scripts reference (subset of lib/constants.sh).
+  # The three roots are not among them — roots.sh is copied in via BASH_MODULES
+  # and sourced by the loop below, so the tarball resolves them the same way the
+  # monorepo does instead of freezing a literal here.
   # shellcheck disable=SC2016
   echo 'CLAUDE_DIR="$HOME/.claude"'
-  # shellcheck disable=SC2016
-  echo 'WORKBENCH_STATE_DIR="$HOME/.config/workbench"'
   # shellcheck disable=SC2016
   echo '_ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"'
   for sh in "$DEST/lib/"*.sh; do

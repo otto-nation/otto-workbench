@@ -10,10 +10,15 @@
 set -e
 
 WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/workbench"
-LAST_RUN_FILE="$STATE_DIR/maintenance.last"
 
-mkdir -p "$STATE_DIR"
+# Sourced rather than re-derived: constants.sh owns MAINTENANCE_LAST_FILE, and
+# the state root it hangs off comes from lib/roots.sh underneath. Not lib/ui.sh:
+# this runs under launchd/systemd with no terminal, and ui.sh pulls in the whole
+# interactive framework.
+# shellcheck source=../../lib/constants.sh
+. "$WORKBENCH_DIR/lib/constants.sh"
+
+mkdir -p "$WORKBENCH_STATE_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -63,5 +68,5 @@ else
   log "WARNING: worktree cleanup failed (non-fatal)"
 fi
 
-date '+%s' > "$LAST_RUN_FILE"
+date '+%s' > "$MAINTENANCE_LAST_FILE"
 log "Maintenance complete"

@@ -22,6 +22,7 @@ from pathlib import Path
 _BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(_BIN_DIR))
+import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
 from review_github import (  # noqa: E402
@@ -1009,7 +1010,7 @@ def main() -> None:
 
     home = Path(os.path.expanduser(args.home))
     workbench = Path(os.path.expanduser(args.workbench)).resolve()
-    log_dir = os.path.expanduser("~/.config/workbench/logs/retro-scan")
+    log_dir = str(workbench_paths.logs_dir("retro-scan"))
     trail = Trail.start(
         script="retro-scan",
         artifact_dir=log_dir,

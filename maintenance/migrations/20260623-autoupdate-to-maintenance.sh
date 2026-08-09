@@ -7,9 +7,8 @@
 migration_20260623_autoupdate_to_maintenance() {
   local old_label="com.otto-workbench.autoupdate"
   local old_plist="$HOME/Library/LaunchAgents/${old_label}.plist"
-  local state_dir="${XDG_CONFIG_HOME:-$HOME/.config}/workbench"
-  local old_state="$state_dir/autoupdate.last"
-  local new_state="$state_dir/maintenance.last"
+  local old_state="$WORKBENCH_STATE_DIR/autoupdate.last"
+  local new_state="$MAINTENANCE_LAST_FILE"
 
   # Track whether the old agent was running before we remove it
   local was_running=false

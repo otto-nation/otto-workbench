@@ -91,8 +91,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install bats and parallel
-        run: sudo apt-get install -y bats parallel
+      # zsh is not on the runner image; workbench_roots.bats cross-validates the
+      # root chain against the zsh definition in zsh/config.d/aliases/.
+      - name: Install bats, parallel, and zsh
+        run: sudo apt-get install -y bats parallel zsh
 
       - name: Install yq
         run: |

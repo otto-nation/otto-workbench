@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import log
+from pr_state import ReviewStatus
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
@@ -115,7 +116,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
 
 
 def _has_pipeline_failure(review_dir: Path) -> bool:
-    return read_pipeline_status(review_dir) == "error"
+    return read_pipeline_status(review_dir) == ReviewStatus.ERROR.value
 
 
 def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE_MAX_FILES) -> int:

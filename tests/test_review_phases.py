@@ -88,6 +88,25 @@ class TestPhaseAgentPins:
         assert editing == {Phase.FIX}
 
 
+class TestOmittedTurnBumpRegistry:
+    """Which phases pay for omitted files is a property of the spec.
+
+    Before, it was the presence or absence of `+ _omitted_turns(job)` at each
+    call site — which is how the parallel group fan-out lost its bump. Changing
+    this mapping should be a deliberate edit to this test.
+    """
+
+    def test_source_reading_phases_scale(self):
+        scaling = {
+            p for p, s in review_pipeline.PHASES.items() if s.scales_with_omitted
+        }
+        assert scaling == {Phase.SINGLE, Phase.HOLISTIC, Phase.SCOUT, Phase.GROUP}
+
+    def test_a_new_phase_inherits_the_bump(self):
+        """The default is on, so forgetting the flag over-budgets rather than under."""
+        assert review_phases.PhaseSpec(Phase.GROUP).scales_with_omitted is True
+
+
 def _job(tmp_path, effort=Effort.MEDIUM):
     from review_preflight import PRContext, PRMetadata, ReviewJob
 
@@ -99,6 +118,17 @@ def _job(tmp_path, effort=Effort.MEDIUM):
         session_log=str(tmp_path / "session.jsonl"),
         effort=effort,
     )
+
+
+def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
+    from review_preflight import PreflightData
+
+    job = _job(tmp_path, effort)
+    job.preflight = PreflightData(
+        diff="", commit_log="", file_contents={}, file_permissions={},
+        claude_md="", architecture_md="", omitted_files=list(omitted),
+    )
+    return job
 
 
 class TestPhaseRunnerResolution:
@@ -137,6 +167,20 @@ class TestPhaseRunnerResolution:
     def test_max_turns_comes_from_phase(self, tmp_path):
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.SCOUT)
         assert runner.max_turns == 10
+
+    def test_max_turns_takes_the_omitted_bump(self, tmp_path):
+        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
+        runner = review_pipeline.PhaseRunner(job, Phase.SCOUT)
+        expected = (
+            review_pipeline.PHASES[Phase.SCOUT].max_turns
+            + 2 * review_phases.OMITTED_FILE_TURNS
+        )
+        assert runner.max_turns == expected
+
+    def test_max_turns_skips_the_bump_when_the_phase_opts_out(self, tmp_path):
+        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
+        runner = review_pipeline.PhaseRunner(job, Phase.DISPROVE)
+        assert runner.max_turns == review_pipeline.PHASES[Phase.DISPROVE].max_turns
 
     def test_provider_reads_env(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_REVIEW_PROVIDER", "vertex")
@@ -352,15 +396,73 @@ def _capture_invocations(monkeypatch):
     return seen
 
 
-def _group_job(tmp_path, omitted=()):
-    from review_preflight import PreflightData
+class TestPhaseTurnBudgets:
+    """`phase_turns` is the single owner, and `PhaseRunner` reports what it says.
 
-    job = _job(tmp_path)
-    job.preflight = PreflightData(
-        diff="", commit_log="", file_contents={}, file_permissions={},
-        claude_md="", architecture_md="", omitted_files=list(omitted),
-    )
-    return job
+    Driven off the registry rather than a list of phases, so a phase added
+    later is covered here without an edit.
+    """
+
+    def test_every_phase_matches_its_spec(self, tmp_path):
+        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
+        bump = 2 * review_phases.OMITTED_FILE_TURNS
+        for phase, spec in review_pipeline.PHASES.items():
+            expected = spec.max_turns + (bump if spec.scales_with_omitted else 0)
+            assert review_phases.phase_turns(phase, job) == expected, phase
+
+    def test_the_runner_reports_what_phase_turns_resolves(self, tmp_path):
+        job = _omitted_job(tmp_path, omitted=["big.py"])
+        for phase in review_pipeline.PHASES:
+            runner = review_pipeline.PhaseRunner(job, phase)
+            assert runner.max_turns == review_phases.phase_turns(phase, job), phase
+
+    def test_nothing_bumps_with_no_omitted_files(self, tmp_path):
+        job = _omitted_job(tmp_path)
+        for phase, spec in review_pipeline.PHASES.items():
+            assert review_phases.phase_turns(phase, job) == spec.max_turns, phase
+
+    def test_an_opted_out_effort_bumps_nothing(self, tmp_path):
+        """`--effort low` skips omitted files entirely, so no phase pays for them."""
+        job = _omitted_job(tmp_path, omitted=["big.py"], effort=Effort.LOW)
+        for phase, spec in review_pipeline.PHASES.items():
+            assert review_phases.phase_turns(phase, job) == spec.max_turns, phase
+
+
+class TestExecutorsUseTheResolvedBudget:
+    """Each executor must hand the agent the budget its spec resolves to.
+
+    A phase that recomputes its own budget is how the parallel group fan-out
+    came to disagree with the serial one, so the assertion is against
+    `phase_turns`, not against a literal.
+    """
+
+    def _first_invocation(self, monkeypatch, run):
+        seen = _capture_invocations(monkeypatch)
+        run()
+        assert seen, "executor never reached the agent"
+        return seen[0]
+
+    def test_holistic(self, tmp_path, monkeypatch):
+        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
+        inv = self._first_invocation(
+            monkeypatch, lambda: review_phases._phase_holistic(job, 3),
+        )
+        assert inv.max_turns == review_phases.phase_turns(Phase.HOLISTIC, job)
+
+    def test_scout(self, tmp_path, monkeypatch):
+        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
+        inv = self._first_invocation(
+            monkeypatch, lambda: review_phases._phase_scout(job, 3),
+        )
+        assert inv.max_turns == review_phases.phase_turns(Phase.SCOUT, job)
+
+    def test_disprove_does_not_pay_for_omitted_files(self, tmp_path, monkeypatch):
+        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
+        Path(job.review_file).write_text("- [ ] **[M1]** must fix something\n")
+        inv = self._first_invocation(
+            monkeypatch, lambda: review_phases._phase_disprove(job),
+        )
+        assert inv.max_turns == review_pipeline.PHASES[Phase.DISPROVE].max_turns
 
 
 class TestGroupTurnBudget:
@@ -376,18 +478,18 @@ class TestGroupTurnBudget:
 
     def test_default_budget_includes_the_omitted_file_bump(self, tmp_path, monkeypatch):
         seen = _capture_invocations(monkeypatch)
-        self._run(_group_job(tmp_path, omitted=["big.py", "huge.py"]))
+        self._run(_omitted_job(tmp_path, omitted=["big.py", "huge.py"]))
         expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * review_phases.OMITTED_FILE_TURNS
         assert seen[0].max_turns == expected
 
     def test_default_budget_is_the_phase_budget_with_nothing_omitted(self, tmp_path, monkeypatch):
         seen = _capture_invocations(monkeypatch)
-        self._run(_group_job(tmp_path))
+        self._run(_omitted_job(tmp_path))
         assert seen[0].max_turns == review_phases.PHASES[Phase.GROUP].max_turns
 
     def test_explicit_budget_still_wins(self, tmp_path, monkeypatch):
         seen = _capture_invocations(monkeypatch)
-        self._run(_group_job(tmp_path, omitted=["big.py"]), max_turns=99)
+        self._run(_omitted_job(tmp_path, omitted=["big.py"]), max_turns=99)
         assert seen[0].max_turns == 99
 
     def test_budget_follows_the_registry_at_call_time(self, tmp_path, monkeypatch):
@@ -397,7 +499,7 @@ class TestGroupTurnBudget:
             review_phases.PHASES, Phase.GROUP,
             dataclasses.replace(review_phases.PHASES[Phase.GROUP], max_turns=99),
         )
-        self._run(_group_job(tmp_path))
+        self._run(_omitted_job(tmp_path))
         assert seen[0].max_turns == 99
 
 
@@ -409,7 +511,7 @@ class TestParallelGroupTurnBudget:
         from review_preflight import Group
 
         seen = _capture_invocations(monkeypatch)
-        job = _group_job(tmp_path, omitted=["big.py"])
+        job = _omitted_job(tmp_path, omitted=["big.py"])
         groups = [
             Group(name="g1", files=["a.py"], lines=10),
             Group(name="g2", files=["b.py"], lines=10),

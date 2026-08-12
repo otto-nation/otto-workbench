@@ -24,10 +24,11 @@ import log
 import serde
 from review_agent import _parse_session_cost
 from review_common import (
-    FILENAME_GROUP_LOG, FILENAME_HOLISTIC_LOG, FILENAME_PIPELINE_STATE,
+    FILENAME_PIPELINE_STATE,
     META_STATUS,
-    Diagnosis, DiagnosisKind,
+    Diagnosis, DiagnosisKind, Phase,
     _derive_path,
+    phase_log_path,
     read_pipeline_status,
 )
 from review_preflight import Group, PipelineState, ReviewJob
@@ -53,11 +54,9 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     total = 0.0
     if state.holistic_done:
-        log_path = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
-        total += _parse_session_cost(log_path)
+        total += _parse_session_cost(phase_log_path(job.review_file, Phase.HOLISTIC))
     for idx in state.groups_done:
-        log_path = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(idx))
-        total += _parse_session_cost(log_path)
+        total += _parse_session_cost(phase_log_path(job.review_file, Phase.GROUP, idx))
     return total
 
 

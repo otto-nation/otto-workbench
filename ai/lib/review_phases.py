@@ -29,13 +29,13 @@ from review_agent import (
 )
 from review_common import (
     FILE_STAT_FMT,
-    FILENAME_DISPROVE, FILENAME_DISPROVE_LOG,
-    FILENAME_GROUP, FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
-    FILENAME_HOLISTIC_LOG, FILENAME_SCOUT, FILENAME_SCOUT_LOG,
+    FILENAME_DISPROVE,
+    FILENAME_GROUP, FILENAME_HOLISTIC, FILENAME_SCOUT,
     AgentKind, Diagnosis, DiagnosisKind, Effort, Phase, Thinking,
     EFFORT_PRESETS,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     _derive_path,
+    phase_log_path,
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_findings import _count_findings, _validate_group_output, merge_reviews
@@ -182,17 +182,18 @@ class PhaseRunner:
     agent, and max turns — resolved from the phase spec, the effort preset,
     and the environment. Resolving them here means one place to read rather
     than seven blocks that must be kept in step. The session log joins them:
-    a runner belongs to one phase of one review, and that phase writes to
-    exactly one log.
+    a runner belongs to one phase of one review, so it derives the one log
+    that phase writes rather than being told.
     """
 
-    def __init__(self, job: ReviewJob, phase: Phase, session_log: str = ""):
+    def __init__(self, job: ReviewJob, phase: Phase, index: int | None = None):
         spec = PHASES[phase]
         preset = EFFORT_PRESETS[job.effort]
         self.job = job
-        # A phase that writes no log of its own logs to the job's — that is
-        # where the single-agent path already sends every record.
-        self.session_log = session_log or job.session_log
+        # A phase that names no log of its own logs to the job's — that is
+        # where the single-agent path already sends every record, and the
+        # caller may have pointed it outside the review directory.
+        self.session_log = phase_log_path(job.review_file, phase, index) or job.session_log
         self.model = phase_model(phase, job.model)
         self.thinking = _resolve_thinking_level(
             None, phase.thinking_env_key, _phase_thinking(job.effort, phase),
@@ -257,7 +258,6 @@ def _review_group(
     retry_hint: str = "",
 ) -> tuple[int, str, GroupFailure | None]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
-    group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
     if skip:
         if _has_output(group_output):
@@ -268,7 +268,8 @@ def _review_group(
             grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
         ))
 
-    runner = PhaseRunner(job, Phase.GROUP, group_log)
+    runner = PhaseRunner(job, Phase.GROUP, i)
+    group_log = runner.session_log
     # Resolved here, not in the signature: a default argument is evaluated once
     # at import, which both freezes the registry value and hides the fact that
     # the budget depends on the job's omitted files. Only the retry paths, which
@@ -291,6 +292,7 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
+
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
     runner.invoke(group_prompt, max_turns, label=grp.name)
 
@@ -314,15 +316,16 @@ def _review_group(
 
 def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
-    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
 
     _touch(holistic_output)
 
-    runner = PhaseRunner(job, Phase.HOLISTIC, holistic_log)
+    runner = PhaseRunner(job, Phase.HOLISTIC)
+    holistic_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
+
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
 
@@ -348,15 +351,16 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
 def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
-    scout_log = _derive_path(job.review_file, FILENAME_SCOUT_LOG)
 
     _touch(scout_output)
 
-    runner = PhaseRunner(job, Phase.SCOUT, scout_log)
+    runner = PhaseRunner(job, Phase.SCOUT)
+    scout_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
+
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
 
@@ -387,16 +391,17 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         return "", 0.0
 
     disprove_output = _derive_path(job.review_file, FILENAME_DISPROVE)
-    disprove_log = _derive_path(job.review_file, FILENAME_DISPROVE_LOG)
 
     _touch(disprove_output)
 
-    runner = PhaseRunner(job, Phase.DISPROVE, disprove_log)
+    runner = PhaseRunner(job, Phase.DISPROVE)
+    disprove_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
+
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
 
@@ -467,7 +472,7 @@ def _run_serial_reviews(
             last = None
             continue
         failed_groups.append(failed)
-        group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
+        group_log = phase_log_path(job.review_file, Phase.GROUP, i)
         abort_msg, consecutive_same_reason, last = _check_serial_abort(
             i, group_count, failed.diagnosis, group_log, consecutive_same_reason, last,
         )

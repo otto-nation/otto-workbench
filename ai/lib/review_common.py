@@ -535,11 +535,11 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
     """
     name = phase.log_filename
     if index is not None and "{}" not in name:
-        raise ValueError(f"{phase} writes one log — pass index=None")
+        raise ValueError(f"{phase} writes a single log — do not pass an index")
     if not name:
         return ""
     if "{}" in name and index is None:
-        raise ValueError(f"{phase} writes one log per index — pass index=")
+        raise ValueError(f"{phase} writes one log per index — pass an index")
     return _derive_path(review_file, name.format(index))
 
 

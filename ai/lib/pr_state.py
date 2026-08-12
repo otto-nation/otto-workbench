@@ -321,6 +321,12 @@ def state_to_dict(state: PRState) -> dict:
 
 
 def state_from_dict(d: dict) -> PRState:
+    # ceiling: strict reconstruction — a field with no dataclass default must be present in
+    # the file or serde raises TypeError. Every writer has always been dataclasses.asdict,
+    # which emits every field, so no shape ever written can be missing one. The state file
+    # is a regenerable per-worktree cache, so the recovery is `rm -rf .workbench/`. Upgrade
+    # to catching and returning None (as PipelineState.load does) if it ever fires in
+    # practice, or give the field a default if it becomes genuinely optional.
     return _serde_from_dict(PRState, d)
 
 

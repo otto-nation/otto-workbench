@@ -140,18 +140,23 @@ def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:
 
 
 class PhaseRunner:
-    """The six per-phase values, resolved once.
+    """The per-phase values, resolved once.
 
     Every phase needs the same six — model, thinking level, provider, budget,
     agent, and max turns — resolved from the phase spec, the effort preset,
     and the environment. Resolving them here means one place to read rather
-    than seven blocks that must be kept in step.
+    than seven blocks that must be kept in step. The session log joins them:
+    a runner belongs to one phase of one review, and that phase writes to
+    exactly one log.
     """
 
-    def __init__(self, job: ReviewJob, phase: Phase):
+    def __init__(self, job: ReviewJob, phase: Phase, session_log: str = ""):
         spec = PHASES[phase]
         preset = EFFORT_PRESETS[job.effort]
         self.job = job
+        # A phase that writes no log of its own logs to the job's — that is
+        # where the single-agent path already sends every record.
+        self.session_log = session_log or job.session_log
         self.model = phase_model(phase, job.model)
         self.thinking = _resolve_thinking_level(
             None, phase.thinking_env_key, _phase_thinking(job.effort, phase),
@@ -164,13 +169,12 @@ class PhaseRunner:
         self.max_turns = spec.max_turns
 
     def invocation(
-        self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "",
+        self, prompt: str, max_turns: int | None = None, *, label: str = "",
     ) -> AgentInvocation:
         return AgentInvocation(
             prompt=prompt,
             cwd=str(self.job.wt_path),
-            session_log=session_log,
+            session_log=self.session_log,
             add_dirs=build_add_dirs(self.job.wt_path, self.job.artifact_dir),
             agent=self.agent,
             max_turns=self.max_turns if max_turns is None else max_turns,
@@ -182,11 +186,13 @@ class PhaseRunner:
         )
 
     def invoke(
-        self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "",
+        self, prompt: str, max_turns: int | None = None, *, label: str = "",
     ) -> int:
+        """Run one attempt. Positional `(prompt, max_turns)` is the shape
+        `agent_retry.retry_missing_output` calls its callback with, so a
+        runner can be handed to it directly."""
         return invoke_agent(
-            self.invocation(prompt, session_log, max_turns=max_turns, label=label),
+            self.invocation(prompt, max_turns, label=label),
             throttle=self.job.throttle,
         )
 
@@ -249,9 +255,9 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
-    runner = PhaseRunner(job, Phase.GROUP)
+    runner = PhaseRunner(job, Phase.GROUP, group_log)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    runner.invoke(group_prompt, group_log, max_turns=max_turns, label=grp.name)
+    runner.invoke(group_prompt, max_turns, label=grp.name)
 
     failed = None
     if not _has_output(group_output):
@@ -281,18 +287,15 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    runner = PhaseRunner(job, Phase.HOLISTIC)
+    runner = PhaseRunner(job, Phase.HOLISTIC, holistic_log)
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
 
-    def invoke(text: str, turns: int) -> int:
-        return runner.invoke(text, holistic_log, max_turns=turns)
-
-    invoke(prompt, max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     diagnosis = _retry_missing_output(
-        invoke, prompt, holistic_log, holistic_output,
+        runner.invoke, prompt, holistic_log, holistic_output,
         label="Holistic scan", max_turns=max_turns,
     )
 
@@ -318,18 +321,15 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
-    runner = PhaseRunner(job, Phase.SCOUT)
+    runner = PhaseRunner(job, Phase.SCOUT, scout_log)
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
 
-    def invoke(text: str, turns: int) -> int:
-        return runner.invoke(text, scout_log, max_turns=turns)
-
-    invoke(prompt, max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     diagnosis = _retry_missing_output(
-        invoke, prompt, scout_log, scout_output,
+        runner.invoke, prompt, scout_log, scout_output,
         label="Scout", max_turns=max_turns,
     )
 
@@ -361,18 +361,15 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
-    runner = PhaseRunner(job, Phase.DISPROVE)
+    runner = PhaseRunner(job, Phase.DISPROVE, disprove_log)
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
 
-    def invoke(text: str, turns: int) -> int:
-        return runner.invoke(text, disprove_log, max_turns=turns)
-
-    invoke(prompt, max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     diagnosis = _retry_missing_output(
-        invoke, prompt, disprove_log, disprove_output,
+        runner.invoke, prompt, disprove_log, disprove_output,
         label="Disprove gate", max_turns=max_turns,
     )
 

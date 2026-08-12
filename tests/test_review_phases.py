@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_pipeline
+import review_phases
 from review_common import AgentKind, Effort, Phase, Thinking
 
 
@@ -165,8 +166,10 @@ class TestPhaseRunnerInvocation:
     def test_carries_resolved_values(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
-        inv = runner.invocation("PROMPT", "/tmp/g.jsonl", label="grp")
+        runner = review_pipeline.PhaseRunner(
+            _job(tmp_path, Effort.HIGH), Phase.GROUP, "/tmp/g.jsonl",
+        )
+        inv = runner.invocation("PROMPT", label="grp")
         assert inv.prompt == "PROMPT"
         assert inv.session_log == "/tmp/g.jsonl"
         assert inv.agent is AgentKind.REVIEWER_LITE
@@ -176,17 +179,20 @@ class TestPhaseRunnerInvocation:
         assert inv.label == "grp"
 
     def test_max_turns_override(self, tmp_path):
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
-        inv = runner.invocation("P", "/tmp/g.jsonl", max_turns=42)
-        assert inv.max_turns == 42
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, "/tmp/g.jsonl")
+        assert runner.invocation("P", 42).max_turns == 42
+
+    def test_session_log_defaults_to_the_jobs_own_log(self, tmp_path):
+        job = _job(tmp_path)
+        inv = review_pipeline.PhaseRunner(job, Phase.SINGLE).invocation("P")
+        assert inv.session_log == job.session_log
 
     def test_add_dirs_grant_only_the_review_artifact_dir(self, tmp_path):
         # Never the shared reviews root: a root grant is how scratch files
         # ended up beside unrelated reviews.
         job = _job(tmp_path)
         runner = review_pipeline.PhaseRunner(job, Phase.SINGLE)
-        inv = runner.invocation("P", job.session_log)
-        assert inv.add_dirs == [job.artifact_dir, job.wt_path]
+        assert runner.invocation("P").add_dirs == [job.artifact_dir, job.wt_path]
 
 
 class TestPhaseRunnerReachesBackend:
@@ -226,9 +232,7 @@ class TestPhaseRunnerReachesBackend:
         job = _job(tmp_path, Effort.HIGH)
         job.throttle = self._RecordingThrottle()
 
-        rc = review_pipeline.PhaseRunner(job, Phase.GROUP).invoke(
-            "PROMPT", job.session_log,
-        )
+        rc = review_pipeline.PhaseRunner(job, Phase.GROUP).invoke("PROMPT")
 
         assert rc == 0
         assert job.throttle.waited
@@ -238,6 +242,18 @@ class TestPhaseRunnerReachesBackend:
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
         assert inv.max_turns == 15
+
+    def test_invoke_matches_the_retry_callback_shape(self, tmp_path, monkeypatch):
+        """`retry_missing_output` calls its callback as `invoke(prompt, turns)`."""
+        seen = []
+        monkeypatch.setattr(
+            review_phases, "invoke_agent",
+            lambda inv, throttle=None: seen.append(inv) or 0,
+        )
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, "/tmp/g.jsonl")
+        runner.invoke("PROMPT", 33)
+        assert seen[0].max_turns == 33
+        assert seen[0].session_log == "/tmp/g.jsonl"
 
 
 class TestNoDuplicateDefaults:

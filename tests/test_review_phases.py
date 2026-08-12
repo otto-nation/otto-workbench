@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review_common
 import review_pipeline
 import review_phases
 from review_common import AgentKind, Effort, Phase, Thinking
@@ -105,6 +106,63 @@ class TestOmittedTurnBumpRegistry:
     def test_a_new_phase_inherits_the_bump(self):
         """The default is on, so forgetting the flag over-budgets rather than under."""
         assert review_phases.PhaseSpec(Phase.GROUP).scales_with_omitted is True
+
+
+class TestPhaseLogNames:
+    """Each phase's session log is named after the phase.
+
+    Adding a phase must not mean naming its log by hand, so these assert the
+    convention over the enum rather than a hand-written list. The exception
+    is the pinning test: it is what proves the convention renamed nothing.
+    """
+
+    def test_preserves_current_filenames(self):
+        expected = {
+            Phase.SINGLE: "",
+            Phase.HOLISTIC: "holistic.jsonl",
+            Phase.SCOUT: "scout.jsonl",
+            Phase.GROUP: "group-{}.jsonl",
+            Phase.SYNTHESIS: "synthesis.jsonl",
+            Phase.DISPROVE: "disprove.jsonl",
+            Phase.FIX: "fix.jsonl",
+        }
+        assert {p: p.log_filename for p in Phase} == expected
+
+    def test_every_phase_but_single_has_a_distinct_log(self):
+        names = [p.log_filename for p in Phase if p is not Phase.SINGLE]
+        assert all(names)
+        assert len(set(names)) == len(names)
+
+    def test_single_names_no_log_of_its_own(self):
+        # It writes to the job's log, which the caller may point anywhere.
+        assert Phase.SINGLE.log_filename == ""
+
+    def test_group_is_the_only_indexed_phase(self):
+        indexed = {p for p in Phase if "{}" in p.log_filename}
+        assert indexed == {Phase.GROUP}
+
+
+class TestPhaseLogPath:
+    def test_derives_into_the_review_directory(self, tmp_path):
+        review_file = str(tmp_path / "review.md")
+        assert review_common.phase_log_path(review_file, Phase.HOLISTIC) == str(
+            tmp_path / "holistic.jsonl"
+        )
+
+    def test_group_carries_its_index(self, tmp_path):
+        review_file = str(tmp_path / "review.md")
+        assert review_common.phase_log_path(review_file, Phase.GROUP, 3) == str(
+            tmp_path / "group-3.jsonl"
+        )
+
+    def test_group_without_an_index_raises(self, tmp_path):
+        # Formatting None would yield `group-None.jsonl` — a wrong file
+        # rather than an error, which is the failure this change removes.
+        with pytest.raises(ValueError):
+            review_common.phase_log_path(str(tmp_path / "review.md"), Phase.GROUP)
+
+    def test_single_has_no_path_of_its_own(self, tmp_path):
+        assert review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SINGLE) == ""
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):

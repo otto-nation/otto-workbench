@@ -124,6 +124,20 @@ class Phase(StrEnum):
     def thinking_env_key(self) -> str:
         return f"{REVIEW_ENV_PREFIX}{self.upper()}_THINKING"
 
+    @property
+    def log_filename(self) -> str:
+        """The session log this phase writes, named after the phase.
+
+        ``single`` names no file of its own: it writes to the job's session
+        log, which ``review-orchestrate --session-log`` may point outside the
+        review directory. ``group`` is the one fan-out phase, so its name
+        carries the index.
+        """
+        if self is Phase.SINGLE:
+            return ""
+        suffix = "-{}" if self is Phase.GROUP else ""
+        return f"{self}{suffix}.jsonl"
+
 
 # ── Agent tuning ─────────────────────────────────────────────────────────────
 
@@ -517,6 +531,20 @@ def detect_repo(cwd: str | None = None) -> str:
 
 def _derive_path(review_file: str, filename: str) -> str:
     return str(Path(review_file).parent / filename)
+
+
+def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> str:
+    """Where ``phase`` writes its session log for the review at ``review_file``.
+
+    Empty for a phase that names no log of its own — the caller falls back to
+    the job's.
+    """
+    name = phase.log_filename
+    if not name:
+        return ""
+    if "{}" in name and index is None:
+        raise ValueError(f"{phase} writes one log per index — pass index=")
+    return _derive_path(review_file, name.format(index))
 
 
 # ── Review metadata ──────────────────────────────────────────────────────────

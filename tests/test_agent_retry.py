@@ -228,6 +228,10 @@ _RETRY_POLICY = {
     DiagnosisKind.SKIPPED: (False, "", _TURNS),
     DiagnosisKind.BUDGET_EXCEEDED: (False, "", _TURNS),
     DiagnosisKind.OUTPUT_MISSING: (False, "", _TURNS),
+    # Synthesis outcomes. No agent call produced them, so nothing here re-invokes
+    # one — `pr review --recover` re-runs the phase, which is a different lever.
+    DiagnosisKind.ALL_GROUPS_FAILED: (False, "", _TURNS),
+    DiagnosisKind.MECHANICAL_FALLBACK: (False, "", _TURNS),
     DiagnosisKind.UNKNOWN: (False, "", _TURNS),
 }
 

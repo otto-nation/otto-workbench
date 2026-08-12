@@ -21,8 +21,8 @@ import serde
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from pr_state import ReviewStatus
 from review_common import (
-    FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, Effort, Mode, PRIOR_SHA_RE,
-    _run, plural,
+    FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Effort, Mode,
+    PRIOR_SHA_RE, ReviewType, _run, plural,
 )
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
@@ -168,10 +168,10 @@ class PipelineState:
     groups_done: list[int] = field(default_factory=list)
     groups_failed: dict[int, Diagnosis] = field(default_factory=dict)
     synthesis_done: bool = False
-    # Not an agent diagnosis — synthesis records its own pipeline outcomes
-    # ("all groups failed", "mechanical fallback"), which have no session log.
-    synthesis_failed: str = ""
-    review_type: str = "full"
+    # Synthesis's failures are diagnoses like any other, just reached without a
+    # session log — see the pipeline-outcome kinds on `DiagnosisKind`.
+    synthesis_failed: Diagnosis | None = None
+    review_type: ReviewType = ReviewType.FULL
     prior_sha: str = ""
     skipped_groups: list[int] = field(default_factory=list)
     angles_done: bool = False
@@ -209,7 +209,7 @@ class PipelineState:
     @property
     def all_groups_failed(self) -> bool:
         """Whether the run produced no usable group output at all."""
-        if self.synthesis_failed == "all groups failed":
+        if self.synthesis_failed and self.synthesis_failed.kind is DiagnosisKind.ALL_GROUPS_FAILED:
             return True
         return bool(self.groups_failed) and len(self.groups_failed) >= self.group_count > 0
 

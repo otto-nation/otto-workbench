@@ -2038,7 +2038,7 @@ class TestSynthesisFailedTracking:
         ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
-        assert state.synthesis_failed == "mechanical fallback"
+        assert state.synthesis_failed == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
 
 
 class TestIsRetryable:
@@ -3796,23 +3796,71 @@ class TestPipelineStateFailureRoundTrip:
         ro._write_pipeline_state(job, self._state(ro, {1: diagnosis}))
         assert ro._read_pipeline_state(job).groups_failed == {1: diagnosis}
 
-    def test_a_legacy_string_hydrates_as_unknown(self, ro, tmp_path):
-        """State written before diagnoses were typed holds a rendered reason."""
+    def test_a_legacy_string_recovers_the_kind_it_renders_as(self, ro, tmp_path):
+        """State written before diagnoses were typed holds a rendered reason.
+
+        Where that reason is one a kind renders verbatim, the kind comes back —
+        a recovered run gets the real retry policy rather than UNKNOWN's.
+        """
         path = ro._pipeline_state_path(self._job(ro, tmp_path))
         Path(path).write_text(json.dumps({
             "head_sha": "abc", "group_names": ["ui"],
             "groups_failed": {"1": "quota exhausted (429)"},
         }))
         state = ro._read_pipeline_state(self._job(ro, tmp_path))
+        assert state.groups_failed == {1: ro.Diagnosis(ro.DiagnosisKind.QUOTA_EXHAUSTED)}
+
+    def test_a_legacy_string_no_kind_renders_stays_unknown(self, ro, tmp_path):
+        """An interpolated reason names no kind, so it is kept as written."""
+        path = ro._pipeline_state_path(self._job(ro, tmp_path))
+        Path(path).write_text(json.dumps({
+            "head_sha": "abc", "group_names": ["ui"],
+            "groups_failed": {"1": "agent hit max turns (12)"},
+        }))
+        state = ro._read_pipeline_state(self._job(ro, tmp_path))
         assert state.groups_failed == {
-            1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="quota exhausted (429)"),
+            1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="agent hit max turns (12)"),
         }
+
+    def _synthesis_state(self, ro, tmp_path, raw):
+        path = ro._pipeline_state_path(self._job(ro, tmp_path))
+        Path(path).write_text(json.dumps({
+            "head_sha": "abc", "group_names": ["ui"], "synthesis_failed": raw,
+        }))
+        return ro._read_pipeline_state(self._job(ro, tmp_path))
+
+    @pytest.mark.parametrize("raw,kind", [
+        ("all groups failed", "ALL_GROUPS_FAILED"),
+        ("mechanical fallback", "MECHANICAL_FALLBACK"),
+        ("budget exceeded", "BUDGET_EXCEEDED"),
+    ])
+    def test_a_legacy_synthesis_sentinel_becomes_its_kind(self, ro, tmp_path, raw, kind):
+        """The three strings synthesis used to write are now diagnoses.
+
+        A review directory written before the change is the common case for
+        `--recover`, so each sentinel has to read back as the kind it names —
+        otherwise the recovered run loses the outcome it recorded.
+        """
+        state = self._synthesis_state(ro, tmp_path, raw)
+        assert state.synthesis_failed == ro.Diagnosis(getattr(ro.DiagnosisKind, kind))
+
+    def test_a_legacy_empty_synthesis_field_is_no_failure_at_all(self, ro, tmp_path):
+        """`""` was how the old schema spelled "synthesis did not fail".
+
+        Read as a blank diagnosis it would be truthy, and every reader tests
+        truthiness — a clean recovered run would report itself partial and
+        grow an Agent Failures section with an empty reason.
+        """
+        state = self._synthesis_state(ro, tmp_path, "")
+
+        assert state.synthesis_failed is None
+        assert ro.build_failures_section(state) == ""
 
     def test_a_legacy_reason_still_renders_verbatim(self, ro, tmp_path):
         state = self._state(ro, {
             1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="quota exhausted (429)"),
         })
-        assert "quota exhausted (429)" in ro.build_failures_section(state, [])
+        assert "quota exhausted (429)" in ro.build_failures_section(state)
 
 
 class TestBuildFailuresSection:
@@ -3822,9 +3870,9 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        assert build_failures_section(state, []) == ""
+        assert build_failures_section(state) == ""
 
     def test_group_failures_produce_table(self):
         from review_common import Diagnosis, DiagnosisKind
@@ -3836,9 +3884,9 @@ class TestBuildFailuresSection:
                 2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED),
                 3: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5),
             },
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        result = build_failures_section(state, [])
+        result = build_failures_section(state)
         assert "## Agent Failures" in result
         assert "group-2: api-routes" in result
         assert "quota exhausted (429)" in result
@@ -3848,14 +3896,16 @@ class TestBuildFailuresSection:
         assert "pr review --recover" in result
 
     def test_synthesis_fallback_in_table(self):
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True, synthesis_failed="mechanical fallback",
+            synthesis_done=True,
+            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
         )
-        result = build_failures_section(state, [])
+        result = build_failures_section(state)
         assert "synthesis" in result
         assert "fallback" in result
 
@@ -3874,9 +3924,9 @@ class TestBuildFailuresSection:
             groups_failed={
                 1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied"),
             },
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        result = build_failures_section(state, [])
+        result = build_failures_section(state)
         assert "## Agent Failures" in result
         assert "agent error: permission denied" in result
         assert "pr review --recover" not in result
@@ -3892,9 +3942,9 @@ class TestBuildFailuresSection:
                 1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied"),
                 2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5),
             },
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        assert "pr review --recover" in build_failures_section(state, [])
+        assert "pr review --recover" in build_failures_section(state)
 
     def test_no_recover_hint_when_every_group_is_unrecoverable(self):
         from review_common import Diagnosis, DiagnosisKind
@@ -3904,9 +3954,9 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[], groups_failed={1: denial, 2: denial},
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        assert "pr review --recover" not in build_failures_section(state, [])
+        assert "pr review --recover" not in build_failures_section(state)
 
     def test_recover_hint_offered_for_max_turns(self):
         from review_common import Diagnosis, DiagnosisKind
@@ -3915,19 +3965,21 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        assert "pr review --recover" in build_failures_section(state, [])
+        assert "pr review --recover" in build_failures_section(state)
 
     def test_synthesis_failure_alone_stays_recoverable(self):
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True, synthesis_failed="mechanical fallback",
+            synthesis_done=True,
+            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
         )
-        assert "pr review --recover" in build_failures_section(state, [])
+        assert "pr review --recover" in build_failures_section(state)
 
 
 def test_meta_status_constant_format():
@@ -3946,9 +3998,10 @@ class TestFailuresSectionInReview:
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1], groups_failed={2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)},
-            synthesis_done=True, synthesis_failed="mechanical fallback",
+            synthesis_done=True,
+            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
         )
-        result = build_failures_section(state, [])
+        result = build_failures_section(state)
         assert "group-2: api" in result
         assert "quota exhausted" in result
         assert "synthesis" in result
@@ -3976,6 +4029,7 @@ class TestInjectFailuresAndStatus:
 
     def test_replaces_existing_status_line(self, tmp_path):
         """I1: status already present as 'completed' is updated to 'partial' on synthesis failure."""
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_state import _inject_failures_and_status
 
@@ -3994,9 +4048,10 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True, synthesis_failed="budget exceeded",
+            synthesis_done=True,
+            synthesis_failed=Diagnosis(DiagnosisKind.BUDGET_EXCEEDED),
         )
-        _inject_failures_and_status(str(review_file), state, [])
+        _inject_failures_and_status(str(review_file), state)
 
         content = review_file.read_text()
         assert "<!-- status: partial -->" in content
@@ -4004,6 +4059,7 @@ class TestInjectFailuresAndStatus:
 
     def test_inserts_status_when_absent(self, tmp_path):
         """Status line is inserted before the generator line when not already present."""
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_state import _inject_failures_and_status
 
@@ -4019,15 +4075,16 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
-            synthesis_done=True, synthesis_failed="",
+            synthesis_done=True,
         )
-        _inject_failures_and_status(str(review_file), state, [])
+        _inject_failures_and_status(str(review_file), state)
 
         content = review_file.read_text()
         assert "<!-- status: completed -->" in content
 
     def test_replaces_status_not_duplicated(self, tmp_path):
         """Replacing an existing status line does not add a second status line."""
+        from review_common import Diagnosis, DiagnosisKind
         from review_preflight import PipelineState
         from review_state import _inject_failures_and_status
 
@@ -4044,9 +4101,10 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True, synthesis_failed="mechanical fallback",
+            synthesis_done=True,
+            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
         )
-        _inject_failures_and_status(str(review_file), state, [])
+        _inject_failures_and_status(str(review_file), state)
 
         content = review_file.read_text()
         assert content.count("<!-- status:") == 1

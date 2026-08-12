@@ -17,6 +17,7 @@ import json
 import os
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 import log
@@ -25,7 +26,7 @@ from review_agent import _parse_session_cost
 from review_common import (
     FILENAME_GROUP_LOG, FILENAME_HOLISTIC_LOG, FILENAME_PIPELINE_STATE,
     META_STATUS,
-    Diagnosis,
+    Diagnosis, DiagnosisKind,
     _derive_path,
     read_pipeline_status,
 )
@@ -89,9 +90,7 @@ def _update_group_failed(
         _write_pipeline_state(job, state)
 
 
-def build_failures_section(
-    state: "PipelineState", groups: "list[Group]",
-) -> str:
+def build_failures_section(state: "PipelineState") -> str:
     """Build a markdown Agent Failures section from pipeline state."""
     rows: list[tuple[str, str, str]] = []
 
@@ -99,8 +98,12 @@ def build_failures_section(
         rows.append((f"group-{idx}: {state.group_label(idx)}", diagnosis.message, "failed"))
 
     if state.synthesis_failed:
-        status = "fallback" if state.synthesis_failed == "mechanical fallback" else "failed"
-        rows.append(("synthesis", state.synthesis_failed, status))
+        fell_back = state.synthesis_failed.kind is DiagnosisKind.MECHANICAL_FALLBACK
+        rows.append((
+            "synthesis",
+            state.synthesis_failed.message,
+            "fallback" if fell_back else "failed",
+        ))
 
     if not rows:
         return ""
@@ -115,10 +118,8 @@ def build_failures_section(
         lines.append(f"| {agent} | {reason} | {status} |")
 
     recoverable = [d.recoverable for d in state.groups_failed.values()]
-    # Synthesis carries no diagnosis — its failures are pipeline outcomes and a
-    # re-run can always do better, so it never suppresses the hint.
     if state.synthesis_failed:
-        recoverable.append(True)
+        recoverable.append(state.synthesis_failed.recoverable)
     if any(recoverable):
         lines.append("")
         lines.append("Run `pr review --recover` to retry failed agents.")
@@ -126,9 +127,7 @@ def build_failures_section(
     return "\n".join(lines) + "\n"
 
 
-def _inject_failures_and_status(
-    review_file: str, state: "PipelineState", groups: "list[Group]",
-) -> None:
+def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:
     """Insert Agent Failures section and status metadata into an existing review."""
     path = Path(review_file)
     if not path.exists():
@@ -137,7 +136,7 @@ def _inject_failures_and_status(
 
     status = read_pipeline_status(path.parent)
 
-    failures = build_failures_section(state, groups)
+    failures = build_failures_section(state)
     if failures and "## Agent Failures" not in content:
         content = content.replace("## Summary", f"{failures}\n## Summary", 1)
 
@@ -155,16 +154,35 @@ def _inject_failures_and_status(
     path.write_text(content)
 
 
-def _resolve_recovery(
-    job: ReviewJob, groups: list[Group],
-) -> tuple[float, "set[int] | None", bool, "PipelineState | None"]:
+@dataclass
+class RecoveryPlan:
+    """What a new run should reuse from the prior attempt in this review directory.
+
+    A `state` of None means there is nothing to resume, which happens two ways:
+    no prior run, or one whose state no longer describes this branch. A prior run
+    that finished cleanly is the third case and needs telling apart from those,
+    because the caller aborts on it rather than starting over — that is what
+    `already_complete` is for.
+    """
+
+    state: "PipelineState | None" = None
+    cost_so_far: float = 0.0
+    # None is not the empty set. Empty says "resume, skipping nothing"; None says
+    # "no resume opinion", which lets the caller substitute its own incremental
+    # skips rather than merge with a set that was never a decision.
+    skip_groups: "set[int] | None" = None
+    skip_holistic: bool = False
+    already_complete: bool = False
+
+
+def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     state = _read_pipeline_state(job)
     if not state:
-        return 0.0, None, False, None
+        return RecoveryPlan()
     if not _validate_resume_state(state, job.pr.head_sha, groups):
         log.warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
-        return 0.0, None, False, None
+        return RecoveryPlan()
 
     has_failed_groups = bool(state.groups_failed)
     has_failed_synthesis = bool(state.synthesis_failed)
@@ -172,7 +190,7 @@ def _resolve_recovery(
 
     if is_complete and not has_failed_groups and not has_failed_synthesis:
         log.info("Prior review completed successfully — nothing to recover")
-        return 0.0, None, False, None
+        return RecoveryPlan(already_complete=True)
 
     cost_so_far = _sum_existing_costs(job, state)
 
@@ -185,12 +203,17 @@ def _resolve_recovery(
             log.info(f"  Re-running {failed_count} failed groups")
         if has_failed_synthesis:
             state.synthesis_done = False
-            state.synthesis_failed = ""
+            state.synthesis_failed = None
             log.info("  Re-running synthesis")
-        return cost_so_far, skip_groups, state.holistic_done, state
+        return RecoveryPlan(
+            state=state, cost_so_far=cost_so_far, skip_groups=skip_groups,
+            skip_holistic=state.holistic_done,
+        )
 
     # Incomplete pipeline — resume from where it left off
     log.info("Resuming incomplete pipeline")
-    skip_holistic = state.holistic_done
-    skip_groups = set(state.groups_done) if state.groups_done else None
-    return cost_so_far, skip_groups, skip_holistic, state
+    return RecoveryPlan(
+        state=state, cost_so_far=cost_so_far,
+        skip_groups=set(state.groups_done) if state.groups_done else None,
+        skip_holistic=state.holistic_done,
+    )

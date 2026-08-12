@@ -135,6 +135,19 @@ def test_state_from_dict_requires_identity():
         state_from_dict({"created_at": "t"})
 
 
+def test_state_from_dict_null_ci_defaults_empty():
+    """A domain reset to `null` reconstructs its default, not `None`.
+
+    CIDomain has no null state of its own — every field defaults — so a `null`
+    written for it means "value omitted", same as the key being absent.
+    """
+    state = new_state("owner/repo", "main", pr_number=1, head_sha="abc", worktree_root="/wt")
+    d = state_to_dict(state)
+    d["ci"] = None
+    restored = state_from_dict(d)
+    assert restored.ci == CIDomain()
+
+
 def test_state_roundtrip_with_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     update_ci_domain(state, CIDomain(

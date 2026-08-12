@@ -64,6 +64,23 @@ class Keyed:
     tags: dict[int, Tagged] = field(default_factory=dict)
 
 
+@dataclass
+class OuterOptional:
+    """A nested dataclass field that is genuinely optional, not just defaulted."""
+    inner: Inner | None = None
+
+
+@dataclass
+class Required:
+    """A dataclass with no default for its only field."""
+    name: str
+
+
+@dataclass
+class HasRequired:
+    inner: Required = field(default_factory=lambda: Required(name="x"))
+
+
 class TestToDict:
     def test_simple_dataclass(self):
         d = to_dict(Inner(name="x", color=Color.BLUE))
@@ -165,6 +182,29 @@ class TestFromRawHook:
     def test_the_hook_reaches_dict_values(self):
         obj = from_dict(Keyed, {"tags": {"1": "legacy", "2": {"value": "typed"}}})
         assert obj.tags == {1: Tagged(value="legacy"), 2: Tagged(value="typed")}
+
+
+class TestNullOnNestedDataclass:
+    """`None` on a nested-dataclass field means "value omitted", not "field is None".
+
+    A dataclass has no null state of its own, so an explicit `null` written for
+    one — e.g. a hand-edited state file, or a domain reset to its default — must
+    reconstruct the same way a missing key does: default fields fall back to
+    their defaults, required fields still raise.
+    """
+
+    def test_null_on_a_defaulted_field_yields_the_default_instance(self):
+        obj = from_dict(Outer, {"label": "a", "inner": None})
+        assert obj.inner == Inner()
+
+    def test_null_still_reconstructs_none_for_an_optional_field(self):
+        """`X | None` fields are unaffected — the union branch returns first."""
+        obj = from_dict(OuterOptional, {"inner": None})
+        assert obj.inner is None
+
+    def test_null_on_a_dataclass_with_required_fields_still_raises(self):
+        with pytest.raises(TypeError):
+            from_dict(HasRequired, {"inner": None})
 
 
 # ── The round-trip guard ─────────────────────────────────────────────────────

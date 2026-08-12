@@ -74,6 +74,14 @@ def _coerce(hint, value):
     if isinstance(hint, type) and dataclasses.is_dataclass(hint):
         if hasattr(hint, "_from_raw"):
             return hint._from_raw(value)
+        # An explicit `null` on a nested-dataclass field means "value omitted",
+        # matching from_dict's own `if not data: data = {}` guard one level up.
+        # A dataclass has no null state of its own — treating None as {} here
+        # lets fields with defaults reconstruct as a default instance, and
+        # lets a dataclass with required fields (e.g. PRIdentity) still raise
+        # TypeError, rather than smuggling a bare None past the type hint.
+        if value is None:
+            value = {}
         if isinstance(value, dict):
             return from_dict(hint, value)
 

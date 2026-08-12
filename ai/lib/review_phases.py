@@ -268,7 +268,8 @@ def _review_group(
             grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
         ))
 
-    runner = PhaseRunner(job, Phase.GROUP, group_log)
+    runner = PhaseRunner(job, Phase.GROUP, i)
+    group_log = runner.session_log
     # Resolved here, not in the signature: a default argument is evaluated once
     # at import, which both freezes the registry value and hides the fact that
     # the budget depends on the job's omitted files. Only the retry paths, which
@@ -318,7 +319,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
     _touch(holistic_output)
 
-    runner = PhaseRunner(job, Phase.HOLISTIC, holistic_log)
+    runner = PhaseRunner(job, Phase.HOLISTIC)
+    holistic_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
@@ -352,7 +354,8 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
     _touch(scout_output)
 
-    runner = PhaseRunner(job, Phase.SCOUT, scout_log)
+    runner = PhaseRunner(job, Phase.SCOUT)
+    scout_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
@@ -391,7 +394,8 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
 
     _touch(disprove_output)
 
-    runner = PhaseRunner(job, Phase.DISPROVE, disprove_log)
+    runner = PhaseRunner(job, Phase.DISPROVE)
+    disprove_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_DISPROVE, job, max_turns=max_turns,

@@ -1,5 +1,7 @@
 import dataclasses
+import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -327,6 +329,29 @@ class TestAnnotationsResolve:
         assert hints["pipeline_state"] == review_phases.PipelineState | None
 
 
+def _capture_invocations(monkeypatch):
+    """Record each invocation and leave a real session log behind.
+
+    The group writes no findings, so `_review_group` takes its no-output
+    branch and diagnoses the log — which has to exist. The lock is what
+    makes the same fake safe for the parallel fan-out.
+    """
+    seen = []
+    lock = threading.Lock()
+
+    def fake_invoke(inv, throttle=None):
+        with lock:
+            seen.append(inv)
+        Path(inv.session_log).write_text(json.dumps({
+            "type": "result", "subtype": "success", "num_turns": 3,
+        }) + "\n")
+        return 0
+
+    monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
+    monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
+    return seen
+
+
 def _group_job(tmp_path, omitted=()):
     from review_preflight import PreflightData
 
@@ -341,27 +366,6 @@ def _group_job(tmp_path, omitted=()):
 class TestGroupTurnBudget:
     """The group budget is resolved when the group runs, not when the module loads."""
 
-    def _capture(self, monkeypatch):
-        """Record each invocation and leave a real session log behind.
-
-        The group writes no findings, so `_review_group` takes its
-        no-output branch and diagnoses the log — which has to exist.
-        """
-        import json
-
-        seen = []
-
-        def fake_invoke(inv, throttle=None):
-            seen.append(inv)
-            Path(inv.session_log).write_text(json.dumps({
-                "type": "result", "subtype": "success", "num_turns": 3,
-            }) + "\n")
-            return 0
-
-        monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
-        return seen
-
     def _run(self, job, **kwargs):
         from review_preflight import Group
 
@@ -371,24 +375,24 @@ class TestGroupTurnBudget:
         )
 
     def test_default_budget_includes_the_omitted_file_bump(self, tmp_path, monkeypatch):
-        seen = self._capture(monkeypatch)
+        seen = _capture_invocations(monkeypatch)
         self._run(_group_job(tmp_path, omitted=["big.py", "huge.py"]))
         expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * review_phases.OMITTED_FILE_TURNS
         assert seen[0].max_turns == expected
 
     def test_default_budget_is_the_phase_budget_with_nothing_omitted(self, tmp_path, monkeypatch):
-        seen = self._capture(monkeypatch)
+        seen = _capture_invocations(monkeypatch)
         self._run(_group_job(tmp_path))
         assert seen[0].max_turns == review_phases.PHASES[Phase.GROUP].max_turns
 
     def test_explicit_budget_still_wins(self, tmp_path, monkeypatch):
-        seen = self._capture(monkeypatch)
+        seen = _capture_invocations(monkeypatch)
         self._run(_group_job(tmp_path, omitted=["big.py"]), max_turns=99)
         assert seen[0].max_turns == 99
 
     def test_budget_follows_the_registry_at_call_time(self, tmp_path, monkeypatch):
         """An import-time default would freeze the old value here."""
-        seen = self._capture(monkeypatch)
+        seen = _capture_invocations(monkeypatch)
         monkeypatch.setitem(
             review_phases.PHASES, Phase.GROUP,
             dataclasses.replace(review_phases.PHASES[Phase.GROUP], max_turns=99),
@@ -402,25 +406,9 @@ class TestParallelGroupTurnBudget:
     serial path — it forwards no `max_turns` of its own."""
 
     def test_parallel_groups_get_the_default_budget(self, tmp_path, monkeypatch):
-        import json
-        import threading
-
         from review_preflight import Group
 
-        seen: list = []
-        lock = threading.Lock()
-
-        def fake_invoke(inv, throttle=None):
-            with lock:
-                seen.append(inv)
-            Path(inv.session_log).write_text(json.dumps({
-                "type": "result", "subtype": "success", "num_turns": 3,
-            }) + "\n")
-            return 0
-
-        monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
-
+        seen = _capture_invocations(monkeypatch)
         job = _group_job(tmp_path, omitted=["big.py"])
         groups = [
             Group(name="g1", files=["a.py"], lines=10),

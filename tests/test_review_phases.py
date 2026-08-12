@@ -504,7 +504,9 @@ class TestPhaseTurnBudgets:
     def test_the_runner_reports_what_phase_turns_resolves(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py"])
         for phase in review_phases.PHASES:
-            runner = review_pipeline.PhaseRunner(job, phase)
+            # A fan-out phase derives its log from an index, so it needs one.
+            index = 1 if "{}" in phase.log_filename else None
+            runner = review_pipeline.PhaseRunner(job, phase, index)
             assert runner.max_turns == review_phases.phase_turns(phase, job), phase
 
     def test_nothing_bumps_with_no_omitted_files(self, tmp_path):

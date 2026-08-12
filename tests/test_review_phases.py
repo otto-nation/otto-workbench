@@ -287,26 +287,39 @@ class TestAnnotationsResolve:
     `PipelineState` and nothing noticed. `get_type_hints` reads them all.
     """
 
-    def test_every_function_signature_resolves(self):
+    @staticmethod
+    def _own_functions():
+        """Every function review_phases defines, methods included."""
         import inspect
+
+        owned = [
+            (name, obj) for name, obj in vars(review_phases).items()
+            if getattr(obj, "__module__", None) == "review_phases"
+        ]
+        return [
+            (name, obj) for name, obj in owned if inspect.isfunction(obj)
+        ] + [
+            (f"{name}.{method_name}", method)
+            for name, cls in owned if inspect.isclass(cls)
+            for method_name, method in vars(cls).items()
+            if inspect.isfunction(method)
+        ]
+
+    def test_every_function_signature_resolves(self):
         import typing
 
         unresolved = {}
-        for name, obj in vars(review_phases).items():
-            if inspect.isfunction(obj) and obj.__module__ == "review_phases":
-                try:
-                    typing.get_type_hints(obj)
-                except NameError as exc:
-                    unresolved[name] = str(exc)
-            elif inspect.isclass(obj) and obj.__module__ == "review_phases":
-                for method_name, method in vars(obj).items():
-                    if not inspect.isfunction(method):
-                        continue
-                    try:
-                        typing.get_type_hints(method)
-                    except NameError as exc:
-                        unresolved[f"{name}.{method_name}"] = str(exc)
+        for name, obj in self._own_functions():
+            try:
+                typing.get_type_hints(obj)
+            except NameError as exc:
+                unresolved[name] = str(exc)
         assert unresolved == {}
+
+    def test_the_walk_reaches_the_runners_methods(self):
+        names = [name for name, _ in self._own_functions()]
+        assert "PhaseRunner.invoke" in names
+        assert "PhaseRunner.invocation" in names
 
     def test_skipped_group_sweep_takes_the_pipeline_state(self):
         import typing

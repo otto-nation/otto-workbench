@@ -23,7 +23,6 @@ from review_common import (
     count_severity,
     FILENAME_HOLISTIC, FILENAME_META,
     FILENAME_PROMPT_STATS, FILENAME_SCOUT,
-    FILENAME_SYNTHESIS_LOG,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
@@ -247,7 +246,6 @@ def _phase_synthesis(
     group_count: int, merged_content: str,
     skipped_groups: int = 0,
 ) -> str:
-    synthesis_log = _derive_path(job.review_file, FILENAME_SYNTHESIS_LOG)
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == Mode.SELF else TEMPLATE_SYNTHESIS
 
     Path(job.review_file).write_text("")
@@ -258,7 +256,8 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
-    runner = PhaseRunner(job, Phase.SYNTHESIS, synthesis_log)
+    runner = PhaseRunner(job, Phase.SYNTHESIS)
+    synthesis_log = runner.session_log
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
 

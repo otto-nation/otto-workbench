@@ -192,7 +192,7 @@ def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
 class TestPhaseRunnerResolution:
     def test_pinned_phase_ignores_effort(self, tmp_path):
         for effort in Effort:
-            runner = review_pipeline.PhaseRunner(_job(tmp_path, effort), Phase.GROUP)
+            runner = review_pipeline.PhaseRunner(_job(tmp_path, effort), Phase.GROUP, 1)
             assert runner.agent is AgentKind.REVIEWER_LITE
 
     def test_editing_phase_takes_no_agent_at_any_effort(self, tmp_path):
@@ -213,13 +213,13 @@ class TestPhaseRunnerResolution:
     def test_thinking_prefers_effort_override(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP, 1)
         assert runner.thinking is Thinking.HIGH
 
     def test_thinking_falls_back_to_phase_default(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.GROUP)
+        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.GROUP, 1)
         assert runner.thinking is Thinking.LOW
 
     def test_max_turns_comes_from_phase(self, tmp_path):
@@ -242,7 +242,7 @@ class TestPhaseRunnerResolution:
 
     def test_provider_reads_env(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_REVIEW_PROVIDER", "vertex")
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.provider == "vertex"
 
     def test_model_reads_phase_env_key(self, tmp_path, monkeypatch):
@@ -256,13 +256,13 @@ class TestPhaseRunnerResolution:
         # env override on top of the effort/phase default — PhaseRunner must
         # keep that layering rather than reading _phase_thinking() bare.
         monkeypatch.setenv("CLAUDE_REVIEW_GROUP_THINKING", "xhigh")
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.thinking == "xhigh"
 
     def test_thinking_reads_global_env_key(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
         monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.thinking == "xhigh"
 
 
@@ -271,11 +271,11 @@ class TestPhaseRunnerInvocation:
         monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(
-            _job(tmp_path, Effort.HIGH), Phase.GROUP, "/tmp/g.jsonl",
+            _job(tmp_path, Effort.HIGH), Phase.GROUP, 1,
         )
         inv = runner.invocation("PROMPT", label="grp")
         assert inv.prompt == "PROMPT"
-        assert inv.session_log == "/tmp/g.jsonl"
+        assert inv.session_log == str(tmp_path / "group-1.jsonl")
         assert inv.agent is AgentKind.REVIEWER_LITE
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
@@ -283,7 +283,7 @@ class TestPhaseRunnerInvocation:
         assert inv.label == "grp"
 
     def test_max_turns_override(self, tmp_path):
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, "/tmp/g.jsonl")
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.invocation("P", 42).max_turns == 42
 
     def test_session_log_defaults_to_the_jobs_own_log(self, tmp_path):
@@ -297,6 +297,26 @@ class TestPhaseRunnerInvocation:
         job = _job(tmp_path)
         runner = review_pipeline.PhaseRunner(job, Phase.SINGLE)
         assert runner.invocation("P").add_dirs == [job.artifact_dir, job.wt_path]
+
+    def test_log_comes_from_the_phase(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.HOLISTIC)
+        assert runner.session_log == str(tmp_path / "holistic.jsonl")
+
+    def test_group_log_carries_the_index(self, tmp_path):
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 3)
+        assert runner.session_log == str(tmp_path / "group-3.jsonl")
+
+    def test_group_without_an_index_raises(self, tmp_path):
+        with pytest.raises(ValueError):
+            review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
+
+    def test_single_honours_a_session_log_outside_the_review_dir(self, tmp_path):
+        # `review-orchestrate --session-log` may point anywhere. Deriving the
+        # log from the phase must not override the caller's choice.
+        job = _job(tmp_path)
+        job.session_log = str(tmp_path / "elsewhere" / "custom.jsonl")
+        runner = review_pipeline.PhaseRunner(job, Phase.SINGLE)
+        assert runner.session_log == job.session_log
 
 
 class TestPhaseRunnerReachesBackend:
@@ -336,7 +356,7 @@ class TestPhaseRunnerReachesBackend:
         job = _job(tmp_path, Effort.HIGH)
         job.throttle = self._RecordingThrottle()
 
-        rc = review_pipeline.PhaseRunner(job, Phase.GROUP).invoke("PROMPT")
+        rc = review_pipeline.PhaseRunner(job, Phase.GROUP, 1).invoke("PROMPT")
 
         assert rc == 0
         assert job.throttle.waited
@@ -354,10 +374,10 @@ class TestPhaseRunnerReachesBackend:
             review_phases, "invoke_agent",
             lambda inv, throttle=None: seen.append(inv) or 0,
         )
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, "/tmp/g.jsonl")
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         runner.invoke("PROMPT", 33)
         assert seen[0].max_turns == 33
-        assert seen[0].session_log == "/tmp/g.jsonl"
+        assert seen[0].session_log == str(tmp_path / "group-1.jsonl")
 
 
 class TestNoDuplicateDefaults:
@@ -381,6 +401,17 @@ class TestNoDuplicateDefaults:
             "DEFAULT_MAX_BUDGET_PER_AGENT",
         ):
             assert not hasattr(review_preflight, name), f"{name} is a stale copy"
+
+    def test_phase_log_names_are_not_also_constants(self):
+        import review_common
+
+        # `Phase.log_filename` is the one owner. A reintroduced constant is a
+        # second one, and the two would drift.
+        for name in (
+            "FILENAME_HOLISTIC_LOG", "FILENAME_SCOUT_LOG", "FILENAME_GROUP_LOG",
+            "FILENAME_SYNTHESIS_LOG", "FILENAME_DISPROVE_LOG", "FILENAME_FIX_LOG",
+        ):
+            assert not hasattr(review_common, name)
 
 
 class TestAnnotationsResolve:

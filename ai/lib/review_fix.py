@@ -18,10 +18,8 @@ from pathlib import Path
 import log
 from review_agent import diagnose_missing_output
 from review_common import (
-    FILENAME_FIX_LOG,
     Phase,
     TEMPLATE_FIX,
-    _derive_path,
     has_uncommitted_changes,
     preserve_log, restore_preserved,
 )
@@ -278,7 +276,6 @@ def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         log.warn("No review file to fix — skipping fix pass")
         return
-    fix_log = _derive_path(job.review_file, FILENAME_FIX_LOG)
 
     before_text = Path(job.review_file).read_text()
     before_findings = parse_findings(before_text)
@@ -293,7 +290,8 @@ def run_fix_pass(job: ReviewJob):
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
     )
-    runner = PhaseRunner(job, Phase.FIX, fix_log)
+    runner = PhaseRunner(job, Phase.FIX)
+    fix_log = runner.session_log
     log.info("Fix pass — applying review findings...")
     log.blank()
     runner.invoke(prompt, max_turns)

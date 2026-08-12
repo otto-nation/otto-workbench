@@ -36,6 +36,7 @@ from review_common import (
     EFFORT_PRESETS,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     _derive_path,
+    phase_log_path,
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_findings import _count_findings, _validate_group_output, merge_reviews
@@ -467,7 +468,7 @@ def _run_serial_reviews(
             last = None
             continue
         failed_groups.append(failed)
-        group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
+        group_log = phase_log_path(job.review_file, Phase.GROUP, i)
         abort_msg, consecutive_same_reason, last = _check_serial_abort(
             i, group_count, failed.diagnosis, group_log, consecutive_same_reason, last,
         )

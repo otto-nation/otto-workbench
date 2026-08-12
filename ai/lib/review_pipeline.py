@@ -21,9 +21,8 @@ from pathlib import Path
 import log
 from review_common import (
     count_severity,
-    FILENAME_GROUP_LOG, FILENAME_HOLISTIC,
-    FILENAME_HOLISTIC_LOG, FILENAME_META,
-    FILENAME_PROMPT_STATS, FILENAME_SCOUT, FILENAME_SCOUT_LOG,
+    FILENAME_HOLISTIC, FILENAME_META,
+    FILENAME_PROMPT_STATS, FILENAME_SCOUT,
     FILENAME_SYNTHESIS_LOG,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
@@ -34,6 +33,7 @@ from review_common import (
     TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
+    phase_log_path,
     read_pipeline_status,
 )
 from review_findings import (
@@ -294,7 +294,10 @@ def _phase_synthesis(
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
-    return [_derive_path(job.review_file, FILENAME_GROUP_LOG.format(i)) for i in range(1, group_count + 1)]
+    return [
+        phase_log_path(job.review_file, Phase.GROUP, i)
+        for i in range(1, group_count + 1)
+    ]
 
 
 def _read_existing_logs(log_paths: list[str]) -> str:
@@ -453,7 +456,7 @@ def _run_holistic_phase(
 
     if use_scout:
         scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
-        scout_log = _derive_path(job.review_file, FILENAME_SCOUT_LOG)
+        scout_log = phase_log_path(job.review_file, Phase.SCOUT)
         if resume_exists and _has_output(scout_output):
             raw = Path(scout_output).read_text()
             leads, no_scrutiny = parse_scout_output(raw)
@@ -468,7 +471,7 @@ def _run_holistic_phase(
         return content, output, log_path, cost
 
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
-    holistic_log = _derive_path(job.review_file, FILENAME_HOLISTIC_LOG)
+    holistic_log = phase_log_path(job.review_file, Phase.HOLISTIC)
     if resume_exists and _has_output(holistic_output):
         log.info("Phase 1: Holistic scan skipped (exists)")
         return Path(holistic_output).read_text(), holistic_output, holistic_log, 0.0
@@ -496,8 +499,7 @@ def _run_group_phase(
         if skip_groups is None or i not in skip_groups
     ]
     for i in new_group_indices:
-        gl = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
-        cost += _parse_session_cost(gl)
+        cost += _parse_session_cost(phase_log_path(job.review_file, Phase.GROUP, i))
 
     return group_outputs, failed_groups, cost
 

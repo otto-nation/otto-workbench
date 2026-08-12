@@ -863,6 +863,26 @@ def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(tmp_path):
     assert load_state(tmp_path).fix.threads[0].commit_sha == ""
 
 
+def test_legacy_thread_id_key_loads_as_id():
+    """Outcomes written before the field was renamed carry `thread_id`."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    d = state_to_dict(state)
+    d["fix"] = {"threads": [{"thread_id": "t1", "file": "f.go", "action": "fixed"}]}
+    restored = state_from_dict(d)
+    assert restored.fix.threads[0].id == "t1"
+    assert restored.fix.threads[0].file == "f.go"
+
+
+def test_the_thread_id_rename_does_not_mutate_the_caller():
+    """The old reader popped `thread_id` out of the dict it was handed."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    d = state_to_dict(state)
+    incoming = {"threads": [{"thread_id": "t1"}]}
+    d["fix"] = incoming
+    state_from_dict(d)
+    assert incoming["threads"][0] == {"thread_id": "t1"}
+
+
 def test_accumulated_outcomes_keep_their_own_shas():
     """The whole point: round two must not relabel round one's commit."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")

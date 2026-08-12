@@ -243,6 +243,23 @@ class ThreadOutcome:
             commit_sha=entry.get("commit_sha", ""),
         )
 
+    @classmethod
+    def _from_raw(cls, raw) -> "ThreadOutcome":
+        """Rebuild an outcome from any shape a state file can hold.
+
+        `serde` hands the whole field over here rather than assuming the
+        current key names: an outcome written before the field was renamed
+        carries `thread_id` where the dataclass now declares `id`. Copying
+        rather than popping leaves the caller's dict alone — `apply_state_update`
+        is handed a payload it does not expect this function to rewrite.
+        """
+        if isinstance(raw, cls):
+            return raw
+        data = dict(raw)
+        if "thread_id" in data and "id" not in data:
+            data["id"] = data.pop("thread_id")
+        return _serde_from_dict(cls, data)
+
 
 @dataclass
 class FixSummary:
@@ -370,9 +387,6 @@ def _describe_from_dict(d: dict) -> DescribeSummary:
 
 
 def _fix_from_dict(d: dict) -> FixSummary:
-    for t in d.get("threads", []):
-        if "thread_id" in t and "id" not in t:
-            t["id"] = t.pop("thread_id")
     return _serde_from_dict(FixSummary, d)
 
 

@@ -277,3 +277,31 @@ class TestNoDuplicateDefaults:
             "DEFAULT_MAX_BUDGET_PER_AGENT",
         ):
             assert not hasattr(review_preflight, name), f"{name} is a stale copy"
+
+
+class TestAnnotationsResolve:
+    """Every annotation in review_phases names the type it means.
+
+    The module runs under PEP 563, so a wrong or stale annotation is inert
+    until something reads it — `_run_skipped_groups` carried `dict` for a
+    `PipelineState` and nothing noticed. `get_type_hints` reads them all.
+    """
+
+    def test_every_function_signature_resolves(self):
+        import inspect
+        import typing
+
+        unresolved = {}
+        for name, obj in vars(review_phases).items():
+            if not inspect.isfunction(obj) or obj.__module__ != "review_phases":
+                continue
+            try:
+                typing.get_type_hints(obj)
+            except NameError as exc:
+                unresolved[name] = str(exc)
+        assert unresolved == {}
+
+    def test_skipped_group_sweep_takes_the_pipeline_state(self):
+        import typing
+        hints = typing.get_type_hints(review_phases._run_skipped_groups)
+        assert hints["pipeline_state"] == review_phases.PipelineState | None

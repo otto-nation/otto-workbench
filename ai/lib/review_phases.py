@@ -202,7 +202,7 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _omitted_turns(job: "ReviewJob") -> int:
+def _omitted_turns(job: ReviewJob) -> int:
     if EFFORT_PRESETS[job.effort].skip_omitted_files:
         return 0
     if not job.preflight or not job.preflight.omitted_files:
@@ -224,10 +224,10 @@ def _review_group(
     i: int, grp: Group, job: ReviewJob,
     group_count: int, holistic_content: str,
     skip: bool = False,
-    pipeline_state: "PipelineState | None" = None,
+    pipeline_state: PipelineState | None = None,
     max_turns: int = PHASES[Phase.GROUP].max_turns,
     retry_hint: str = "",
-) -> tuple[int, str, "GroupFailure | None"]:
+) -> tuple[int, str, GroupFailure | None]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
@@ -415,9 +415,9 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
 def _run_serial_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
-    skip_groups: "set[int] | None",
-    pipeline_state: "PipelineState | None",
-) -> "list[GroupFailure]":
+    skip_groups: set[int] | None,
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     failed_groups: list[GroupFailure] = []
     consecutive_same_reason = 0
     last: Diagnosis | None = None
@@ -452,9 +452,9 @@ def _run_serial_reviews(
 def _run_parallel_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, workers: int,
-    skip_groups: "set[int] | None",
-    pipeline_state: "PipelineState | None",
-) -> "list[GroupFailure]":
+    skip_groups: set[int] | None,
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
     log.blank()
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -471,7 +471,7 @@ def _run_parallel_reviews(
     return [failure for _, _, failure in results if failure]
 
 
-def _retry_turns(diagnosis: Diagnosis, job: "ReviewJob") -> int:
+def _retry_turns(diagnosis: Diagnosis, job: ReviewJob) -> int:
     extra = _omitted_turns(job)
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return RETRY_MAX_TURNS_GROUP + extra
@@ -479,11 +479,11 @@ def _retry_turns(diagnosis: Diagnosis, job: "ReviewJob") -> int:
 
 
 def _retry_failed_groups(
-    failed_groups: "list[GroupFailure]",
+    failed_groups: list[GroupFailure],
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
-    pipeline_state: "PipelineState | None",
-) -> "list[GroupFailure]":
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     retryable = [f for f in failed_groups if _is_retryable(f.diagnosis)]
     skipped = [f for f in failed_groups if _was_skipped(f)]
     non_retryable = [
@@ -535,13 +535,13 @@ def _retry_failed_groups(
 
 
 def _run_skipped_groups(
-    skipped: "list[GroupFailure]",
+    skipped: list[GroupFailure],
     group_by_name: dict,
     job: ReviewJob,
     group_count: int,
     holistic_content: str,
-    pipeline_state: dict,
-) -> "list[GroupFailure]":
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     log.info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
     failures: list[GroupFailure] = []
     for failed in skipped:
@@ -564,9 +564,9 @@ def _run_skipped_groups(
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
-    skip_groups: "set[int] | None" = None,
-    pipeline_state: "PipelineState | None" = None,
-) -> "tuple[list[str], list[GroupFailure]]":
+    skip_groups: set[int] | None = None,
+    pipeline_state: PipelineState | None = None,
+) -> tuple[list[str], list[GroupFailure]]:
     group_outputs = [_derive_path(job.review_file, FILENAME_GROUP.format(i)) for i in range(1, group_count + 1)]
 
     workers = min(max_parallel, group_count)
@@ -587,7 +587,7 @@ def _phase_group_reviews(
     return group_outputs, failed_groups
 
 
-def _phase_merge(group_outputs: list[str], failed_groups: "list[GroupFailure]") -> str:
+def _phase_merge(group_outputs: list[str], failed_groups: list[GroupFailure]) -> str:
     log.info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 

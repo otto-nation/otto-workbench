@@ -27,6 +27,7 @@ import rebase_status
 import review_gc
 import log
 import review_common
+import worktree_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
 )
@@ -418,6 +419,23 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
+def _clear_state_dir(state_dir: Path) -> None:
+    """Empty the state directory, leaving the lock file in place.
+
+    Deleting run.lock would unlink the inode this very run holds its flock
+    on, so the next contender would create a fresh file and take an
+    uncontended lock while we are still working — exclusion only holds
+    while every process agrees on one inode.
+    """
+    for entry in state_dir.iterdir():
+        if entry.name == worktree_lock.LOCK_FILE:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+            continue
+        entry.unlink(missing_ok=True)
+
+
 def _gc_stale_pr_state(worktree_root: Path) -> int:
     """Remove pr state directory if the PR is merged or closed. Returns 1 if cleaned."""
     state_dir = worktree_root / pr_state.STATE_DIR
@@ -439,7 +457,7 @@ def _gc_stale_pr_state(worktree_root: Path) -> int:
         pr_st = ""
     if pr_st not in ("MERGED", "CLOSED"):
         return 0
-    shutil.rmtree(state_dir, ignore_errors=True)
+    _clear_state_dir(state_dir)
     log.info(f"GC: removed stale pr state ({pr_st})")
     return 1
 
@@ -485,6 +503,12 @@ _CUSTOM = {
 # Commands that do not need a remote fetch before dispatch.
 _NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
 
+# Read-only commands, safe to run alongside another pr run. Everything
+# else writes state.json and may edit/commit the worktree, so it takes
+# the worktree lock — see worktree_lock.py. 'gc' is absent deliberately:
+# it deletes the state directory, which is the opposite of read-only.
+_NO_LOCK_COMMANDS = {"status"}
+
 
 def _build_usage() -> str:
     max_name = max(len(n) for n in _COMMANDS)
@@ -529,6 +553,41 @@ def _tool_schema() -> dict:
         },
         "output_schema": schema_gen.dataclass_to_schema(pr_state.PRState),
     }
+
+
+def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_args, *,
+              original_pr: str | None,
+              original_branch: str | None) -> int:
+    """Start the trail and route to the command's handler or backing script."""
+    trail = Trail.start(
+        script="pr",
+        artifact_dir=str(ctx.worktree_root / pr_state.STATE_DIR) if ctx.worktree_root else "/tmp",
+        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
+        debug=getattr(global_args, "debug", False),
+    )
+    try:
+        trail.decision(
+            "dispatch",
+            f"routing to {args.command}",
+            reason="matched command registry",
+            data={"subcommand": args.command},
+        )
+
+        handler = _CUSTOM.get(args.command)
+        if handler:
+            return handler(extra, ctx,
+                           original_pr=original_pr,
+                           original_branch=original_branch)
+        assert "script" in _COMMANDS[args.command], \
+            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
+        return _run_delegate(_COMMANDS[args.command], extra, ctx,
+                             original_pr=original_pr,
+                             original_branch=original_branch)
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()
 
 
 def main():
@@ -603,36 +662,23 @@ def main():
     if args.command not in _NO_UPDATE_COMMANDS:
         ctx = pr_context.update_to_remote(ctx)
 
-    trail = Trail.start(
-        script="pr",
-        artifact_dir=str(ctx.worktree_root / pr_state.STATE_DIR) if ctx.worktree_root else "/tmp",
-        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
-        debug=getattr(global_args, "debug", False),
-    )
+    # Read-only commands pass None so they never contend for the lock.
+    # Acquired before _dispatch so contention costs no trail artifacts.
+    lock_root = None
+    if ctx.worktree_root and args.command not in _NO_LOCK_COMMANDS:
+        lock_root = ctx.worktree_root
     try:
-        trail.decision(
-            "dispatch",
-            f"routing to {args.command}",
-            reason="matched command registry",
-            data={"subcommand": args.command},
-        )
-
-        handler = _CUSTOM.get(args.command)
-        if handler:
-            sys.exit(handler(extra, ctx,
-                             original_pr=original_pr,
-                             original_branch=original_branch))
-        else:
-            assert "script" in _COMMANDS[args.command], \
-                f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
-            sys.exit(_run_delegate(_COMMANDS[args.command], extra, ctx,
-                                   original_pr=original_pr,
-                                   original_branch=original_branch))
-    except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
-    finally:
-        trail.finish()
+        with worktree_lock.acquire(
+            lock_root,
+            command=" ".join(["pr"] + sys.argv[1:]),
+            started=pr_state.now_iso(),
+        ):
+            sys.exit(_dispatch(args, ctx, extra, global_args,
+                               original_pr=original_pr,
+                               original_branch=original_branch))
+    except worktree_lock.LockBusy as exc:
+        worktree_lock.report_busy(exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

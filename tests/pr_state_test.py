@@ -382,6 +382,55 @@ def test_save_preserves_triage_data():
         assert loaded.triage.questions == 1
 
 
+def test_save_never_exposes_a_truncated_file(tmp_path, monkeypatch):
+    """Regression: save_state used to truncate the target in place, so a
+    concurrent reader could load a zero-byte file and die on JSONDecodeError.
+    A failed write must leave the previous state readable."""
+    import pr_state as pr_state_module
+
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
+                      worktree_root=str(tmp_path))
+    save_state(tmp_path, state)
+
+    def _explode(obj, fp, **kwargs):
+        fp.write('{"partial":')
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pr_state_module.json, "dump", _explode)
+    with pytest.raises(OSError):
+        save_state(tmp_path, state)
+
+    reloaded = load_state(tmp_path)
+    assert reloaded is not None
+    assert reloaded.identity.repo == "owner/repo"
+
+
+def test_save_leaves_no_temp_files_behind(tmp_path):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
+                      worktree_root=str(tmp_path))
+    save_state(tmp_path, state)
+    save_state(tmp_path, state)
+    leftovers = list((tmp_path / STATE_DIR).glob("*.tmp"))
+    assert leftovers == []
+
+
+def test_save_discards_the_temp_file_when_the_write_fails(tmp_path, monkeypatch):
+    import pr_state as pr_state_module
+
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
+                      worktree_root=str(tmp_path))
+    save_state(tmp_path, state)
+
+    def _explode(obj, fp, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pr_state_module.json, "dump", _explode)
+    with pytest.raises(OSError):
+        save_state(tmp_path, state)
+
+    assert list((tmp_path / STATE_DIR).glob("*.tmp")) == []
+
+
 # ── Updaters ────────────────────────────────────────────────────────────────
 
 

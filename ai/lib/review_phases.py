@@ -69,6 +69,13 @@ class PhaseSpec:
     ``edits=True`` marks a phase that writes to the branch. Every ``AgentKind``
     is a reviewer persona instructed never to modify source files, so such a
     phase runs with no agent at all — the default agent, which can edit.
+
+    ``scales_with_omitted`` says whether ``max_turns`` grows with the files
+    preflight had to leave out of the prompt: a phase that reads branch source
+    must open those itself, and that costs turns. It defaults to on because the
+    opposite default is what #653 fixed — a phase that silently misses the bump
+    is under-budgeted, where one that takes it needlessly just finishes early.
+    A phase that reasons only over text already in its prompt opts out.
     """
 
     phase: Phase
@@ -77,6 +84,7 @@ class PhaseSpec:
     max_turns: int = 15
     agent: AgentKind | None = None
     edits: bool = False
+    scales_with_omitted: bool = True
 
 
 PHASES: dict[Phase, PhaseSpec] = {
@@ -94,16 +102,22 @@ PHASES: dict[Phase, PhaseSpec] = {
         Phase.GROUP, thinking=Thinking.LOW, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
     ),
+    # Synthesis and disprove are handed the findings they judge, so an omitted
+    # file costs them nothing. Fix takes its budget from _fix_turn_budget, which
+    # scales with unchecked findings instead.
     Phase.SYNTHESIS: PhaseSpec(
         Phase.SYNTHESIS, thinking=Thinking.MEDIUM, max_turns=15,
+        scales_with_omitted=False,
     ),
     Phase.DISPROVE: PhaseSpec(
         Phase.DISPROVE, thinking=Thinking.MEDIUM, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
+        scales_with_omitted=False,
     ),
     Phase.FIX: PhaseSpec(
         Phase.FIX, thinking=Thinking.LOW, max_turns=20,
         edits=True,
+        scales_with_omitted=False,
     ),
 }
 
@@ -139,6 +153,28 @@ def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:
     return override if override is not None else PHASES[phase].thinking
 
 
+# ── Phase turn budgets ───────────────────────────────────────────────────────
+
+
+def _omitted_turns(job: ReviewJob) -> int:
+    """What this job's omitted files cost a phase that has to open them."""
+    if EFFORT_PRESETS[job.effort].skip_omitted_files:
+        return 0
+    if not job.preflight or not job.preflight.omitted_files:
+        return 0
+    return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS
+
+
+def _omitted_bump(phase: Phase, job: ReviewJob) -> int:
+    """The omitted-file turns this phase is owed — zero unless its spec opts in."""
+    return _omitted_turns(job) if PHASES[phase].scales_with_omitted else 0
+
+
+def phase_turns(phase: Phase, job: ReviewJob) -> int:
+    """A phase's turn budget for this job: registry default plus its bump."""
+    return PHASES[phase].max_turns + _omitted_bump(phase, job)
+
+
 class PhaseRunner:
     """The per-phase values, resolved once.
 
@@ -166,7 +202,7 @@ class PhaseRunner:
         self.agent = None if spec.edits else (
             spec.agent if spec.agent is not None else preset.agent
         )
-        self.max_turns = spec.max_turns
+        self.max_turns = phase_turns(phase, job)
 
     def invocation(
         self, prompt: str, max_turns: int | None = None, *, label: str = "",
@@ -202,18 +238,6 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _omitted_turns(job: ReviewJob) -> int:
-    if EFFORT_PRESETS[job.effort].skip_omitted_files:
-        return 0
-    if not job.preflight or not job.preflight.omitted_files:
-        return 0
-    return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS
-
-
-def _group_turns(job: ReviewJob) -> int:
-    return PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
-
-
 def _synthesis_max_turns(merged_content: str) -> int:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
@@ -244,11 +268,13 @@ def _review_group(
             grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
         ))
 
+    runner = PhaseRunner(job, Phase.GROUP, group_log)
     # Resolved here, not in the signature: a default argument is evaluated once
     # at import, which both freezes the registry value and hides the fact that
-    # the budget depends on the job's omitted files.
+    # the budget depends on the job's omitted files. Only the retry paths, which
+    # escalate past the phase default, pass a budget of their own.
     if max_turns is None:
-        max_turns = _group_turns(job)
+        max_turns = runner.max_turns
 
     _touch(group_output)
 
@@ -265,7 +291,6 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
-    runner = PhaseRunner(job, Phase.GROUP, group_log)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
     runner.invoke(group_prompt, max_turns, label=grp.name)
 
@@ -293,15 +318,15 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
     _touch(holistic_output)
 
-    max_turns = PHASES[Phase.HOLISTIC].max_turns + _omitted_turns(job)
+    runner = PhaseRunner(job, Phase.HOLISTIC, holistic_log)
+    max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    runner = PhaseRunner(job, Phase.HOLISTIC, holistic_log)
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
 
-    runner.invoke(prompt, max_turns)
+    runner.invoke(prompt)
     log.blank()
 
     diagnosis = _retry_missing_output(
@@ -327,15 +352,15 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
 
     _touch(scout_output)
 
-    max_turns = PHASES[Phase.SCOUT].max_turns + _omitted_turns(job)
+    runner = PhaseRunner(job, Phase.SCOUT, scout_log)
+    max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
-    runner = PhaseRunner(job, Phase.SCOUT, scout_log)
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
 
-    runner.invoke(prompt, max_turns)
+    runner.invoke(prompt)
     log.blank()
 
     diagnosis = _retry_missing_output(
@@ -366,16 +391,16 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
 
     _touch(disprove_output)
 
-    max_turns = PHASES[Phase.DISPROVE].max_turns
+    runner = PhaseRunner(job, Phase.DISPROVE, disprove_log)
+    max_turns = runner.max_turns
     prompt = build_prompt(
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
-    runner = PhaseRunner(job, Phase.DISPROVE, disprove_log)
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
 
-    runner.invoke(prompt, max_turns)
+    runner.invoke(prompt)
     log.blank()
 
     diagnosis = _retry_missing_output(
@@ -480,9 +505,12 @@ def _run_parallel_reviews(
 
 
 def _retry_turns(diagnosis: Diagnosis, job: ReviewJob) -> int:
+    # The escalated ceiling is not a registry default, so it cannot come from
+    # phase_turns — but its bump still goes through the group spec, so the spec
+    # remains the only thing that decides whether the group scales at all.
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
-        return RETRY_MAX_TURNS_GROUP + _omitted_turns(job)
-    return _group_turns(job)
+        return RETRY_MAX_TURNS_GROUP + _omitted_bump(Phase.GROUP, job)
+    return phase_turns(Phase.GROUP, job)
 
 
 def _retry_failed_groups(

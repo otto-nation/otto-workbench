@@ -114,6 +114,20 @@ If the hook printed no config origins, the identity is coming from `GIT_AUTHOR_N
 
 Commits already made under the bad identity keep it — rewriting them requires `git filter-branch --env-filter` plus a force push.
 
+## "another pr run already owns this worktree"
+
+A second `pr` run refused to start because one is already in flight against the same worktree. The message names the holder:
+
+```
+✗ another pr run already owns this worktree: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
+```
+
+Two runs on one worktree corrupt each other — they both read-modify-write `.workbench/state.json`, and with `--fix` they both edit and commit the same files. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
+
+`pr status` and `pr gc` are read-only and never contend. Delegates (`claude-review`, `ci-check`, `review-threads`) launched by `pr` inherit `WORKBENCH_WORKTREE_LOCK` and pass through the lock rather than deadlocking on it.
+
+The lock is an advisory `flock` on `.workbench/run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
+
 ## "merge conflict" in `~/.claude/settings.json`
 
 The AI sync merges `settings.json` rather than overwriting. If you see unexpected values, re-sync:

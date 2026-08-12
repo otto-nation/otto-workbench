@@ -10,6 +10,7 @@ State file: ``<worktree>/.workbench/state.json``
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -458,16 +459,28 @@ def _ensure_gitignored(worktree_root: Path) -> None:
 
 
 def save_state(worktree_root: Path, state: PRState) -> None:
-    """Save unified PR state, creating directories as needed."""
+    """Save unified PR state, creating directories as needed.
+
+    Writes to a per-process temp file and renames it over the target.
+    ``open(path, "w")`` truncates in place, so a concurrent reader can
+    observe a zero-byte file and fail with a JSONDecodeError; os.replace
+    is atomic, so readers see either the old state or the new one.
+    """
     path = worktree_root / STATE_DIR / STATE_FILE
     created = not path.parent.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
     if created:
         _ensure_gitignored(worktree_root)
     state.updated_at = datetime.now(timezone.utc).isoformat()
-    with open(path, "w") as f:
-        json.dump(state_to_dict(state), f, indent=2)
-        f.write("\n")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(state_to_dict(state), f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 # ── Updaters ────────────────────────────────────────────────────────────────

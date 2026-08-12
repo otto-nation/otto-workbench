@@ -1020,6 +1020,30 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, tmp_path):
     assert _lock_file(tmp_path).is_file()
 
 
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_gc_run_does_not_destroy_the_lock_it_is_holding(
+        mock_resolve, mock_run, _gc, _prune, tmp_path):
+    """The full dispatch path: gc takes the lock, then clears the very
+    directory the lock file lives in. The lock has to outlive the sweep."""
+    mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)
+    mock_run.return_value = MagicMock(returncode=0, stdout="MERGED\n")
+    state_dir = tmp_path / pr_state.STATE_DIR
+    state_dir.mkdir()
+    (state_dir / pr_state.STATE_FILE).write_text("{}")
+    state = MagicMock()
+    state.identity.pr_number = 42
+    state.identity.repo = "owner/repo"
+
+    with patch("pr_cli.pr_state.load_state", return_value=state):
+        _run_main("--repo-dir", str(tmp_path), "gc")
+
+    assert not (state_dir / pr_state.STATE_FILE).exists()
+    assert _lock_file(tmp_path).is_file()
+
+
 @patch("pr_cli.pr_context.resolve")
 def test_main_reports_contention_and_exits_1(mock_resolve, tmp_path, capsys):
     mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)

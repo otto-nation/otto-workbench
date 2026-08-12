@@ -2788,6 +2788,7 @@ def main():
     head_sha = ctx.head_sha
 
     # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
+    # toplevel came from require_worktree(), so it is never None here.
     # Acquired before Trail.start so contention costs no trail artifacts.
     worktree_lock.claim_for_process(
         toplevel,

@@ -1314,6 +1314,8 @@ def main() -> None:
     pr_num = str(ctx.pr_number)
     review_file = review_file_path(ctx.repo, pr_num)
     # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
+    # claim_for_process handles None itself; the explicit test is what the
+    # worktree-guard check requires of a direct ctx.worktree_root reference.
     if ctx.worktree_root:
         worktree_lock.claim_for_process(
             ctx.worktree_root,

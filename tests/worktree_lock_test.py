@@ -106,6 +106,17 @@ def test_reentrancy_is_keyed_on_the_worktree(tmp_path):
     with acquire(tmp_path, command="pr review", started="t"):
         with acquire(other, command="pr review", started="t"):
             assert (other / ".workbench" / LOCK_FILE).exists()
+        # Releasing the inner lock must hand the marker back to the outer one,
+        # not leave it pointing at a worktree we no longer hold.
+        assert os.environ[LOCK_ENV] == str(tmp_path.resolve())
+
+
+def test_acquire_is_noop_when_the_path_is_not_a_directory(tmp_path):
+    """A --repo-dir pointing at a file has no worktree to serialize against."""
+    not_a_dir = tmp_path / "file"
+    not_a_dir.write_text("")
+    with acquire(not_a_dir, command="pr review", started="t"):
+        assert LOCK_ENV not in os.environ
 
 
 def test_lock_released_when_body_raises(tmp_path):

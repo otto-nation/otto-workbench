@@ -1014,7 +1014,8 @@ def main():
     pr_number = ctx.pr_number
     toplevel = ctx.worktree_root
 
-    # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
+    # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK —
+    # and also when toplevel is None, which claim_for_process handles.
     # Acquired before Trail.start so contention costs no trail artifacts.
     worktree_lock.claim_for_process(
         toplevel,

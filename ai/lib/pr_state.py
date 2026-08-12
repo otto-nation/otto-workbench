@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from pathlib import Path
 
+# get_type_hints(CIDomain) resolves its `runs` annotation at runtime, so
+# RunState must be bound in this module's namespace; ci_failures keeps its
+# own pr_state import under TYPE_CHECKING, which is what keeps this acyclic.
 from ci_failures import RunState
 import log
 from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
@@ -245,7 +248,7 @@ class ThreadOutcome:
 
     @classmethod
     def _from_raw(cls, raw) -> "ThreadOutcome":
-        """Rebuild an outcome from any shape a state file can hold.
+        """Rebuild an outcome from an instance or a dict, renaming a legacy key.
 
         `serde` hands the whole field over here rather than assuming the
         current key names: an outcome written before the field was renamed

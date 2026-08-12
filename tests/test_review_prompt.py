@@ -17,9 +17,11 @@ from review_common import (
     TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
 )
 from review_prompt import (
-    _PROMPT_HANDLERS, _build_common_sections, _build_delta_section, _build_pr_header,
-    _compute_diff_budget,
+    _PROMPT_HANDLERS, _build_ci_failure_items, _build_common_sections, _build_delta_section,
+    _build_pr_header, _compute_diff_budget,
 )
+from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
+from pr_state import CIDomain
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────
@@ -154,6 +156,33 @@ class TestBuildPrHeaderScoped:
         assert "File breakdown" not in _build_pr_header(
             pr, _make_ctx(), Effort.LOW,
         )
+
+
+# ── _build_ci_failure_items ─────────────────────────────────────────────────
+
+
+class TestBuildCiFailureItems:
+    def _make_run(self, run_id=999):
+        item = FailureItem(
+            id="sc2086-bin-foo-42",
+            annotation="SC2086: Double quote to prevent globbing",
+            file="bin/foo.sh", line=42,
+            diagnosis=None, fix_sha=None, outcome=None,
+        )
+        group = FailureGroup(job="lint / shellcheck", kind=FailureKind.LINT, items=(item,))
+        return RunState(
+            run_id=run_id, run_number=1, head_sha="abc", status="completed",
+            conclusion="failure", fetched_at="2026-08-12T00:00:00+00:00",
+            failures={"shellcheck": group},
+        )
+
+    def test_returns_failure_items_for_the_latest_run(self):
+        ci = CIDomain(latest_run_id=999, runs={999: self._make_run()})
+        pr = _make_pr(files=[{"path": "bin/foo.sh", "additions": 1, "deletions": 0}])
+        items = _build_ci_failure_items(ci, pr)
+        assert items
+        assert any("bin/foo.sh:42" in item for item in items)
+        assert any("SC2086" in item for item in items)
 
 
 # ── _compute_diff_budget ────────────────────────────────────────────────────

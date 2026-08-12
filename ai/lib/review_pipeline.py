@@ -59,8 +59,8 @@ from review_prompt import (
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import _parse_session_cost
 from review_phases import (
-    PHASES, PhaseRunner,
-    _omitted_turns, _phase_disprove, _phase_group_reviews, _phase_holistic,
+    PhaseRunner,
+    _phase_disprove, _phase_group_reviews, _phase_holistic,
     _phase_merge, _phase_scout, _should_disprove, _synthesis_max_turns, _touch,
 )
 from review_retry import (
@@ -110,7 +110,8 @@ def _write_review_sidecar(job: ReviewJob):
 
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     template = TEMPLATE_SELF_REVIEW if job.mode == Mode.SELF else TEMPLATE_SINGLE
-    max_turns = PHASES[Phase.SINGLE].max_turns + _omitted_turns(job)
+    runner = PhaseRunner(job, Phase.SINGLE)
+    max_turns = runner.max_turns
     prompt = build_prompt(
         template, job, max_turns=max_turns, branch_name=job.pr.head,
     )
@@ -118,7 +119,6 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     log.info(f"Running review agent on {label}...")
     log.blank()
     _touch(job.review_file)
-    runner = PhaseRunner(job, Phase.SINGLE)
 
     # `rc` tracks the latest attempt so the failure message below reports the
     # retry's exit code, not the first attempt's.

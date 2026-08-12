@@ -319,51 +319,8 @@ def _identity_from_dict(d: dict) -> PRIdentity:
     return _serde_from_dict(PRIdentity, d)
 
 
-def _run_state_from_dict(d: dict):
-    """Deserialize a RunState including nested FailureGroup/FailureItem objects."""
-    from ci_failures import FailureGroup, FailureItem, FailureKind, Outcome, RunState
-    failures = {}
-    for group_key, group_data in d.get("failures", {}).items():
-        items = []
-        for item_data in group_data.get("items", []):
-            outcome_val = item_data.get("outcome")
-            items.append(FailureItem(
-                id=item_data["id"],
-                annotation=item_data.get("annotation", ""),
-                file=item_data.get("file"),
-                line=item_data.get("line"),
-                diagnosis=item_data.get("diagnosis"),
-                fix_sha=item_data.get("fix_sha"),
-                outcome=Outcome(outcome_val) if outcome_val else None,
-                headline=item_data.get("headline"),
-                source_run_id=item_data.get("source_run_id"),
-                context=item_data.get("context"),
-            ))
-        failures[group_key] = FailureGroup(
-            job=group_data.get("job", group_key),
-            kind=FailureKind(group_data["kind"]),
-            items=tuple(items),
-            failed_step=group_data.get("failed_step"),
-        )
-    return RunState(
-        run_id=d["run_id"],
-        run_number=d.get("run_number", 0),
-        head_sha=d.get("head_sha", ""),
-        status=d.get("status", ""),
-        conclusion=d.get("conclusion", ""),
-        fetched_at=d.get("fetched_at", ""),
-        failures=failures,
-    )
-
-
 def _ci_from_dict(d: dict) -> CIDomain:
-    """Deserialize CIDomain, handling nested RunState objects in runs dict."""
-    d = dict(d)
-    runs_raw = d.pop("runs", {})
-    domain = _serde_from_dict(CIDomain, d)
-    if runs_raw:
-        domain.runs = {int(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
-    return domain
+    return _serde_from_dict(CIDomain, d)
 
 
 def _review_from_dict(d: dict) -> ReviewSummary:
@@ -390,23 +347,11 @@ def _fix_from_dict(d: dict) -> FixSummary:
     return _serde_from_dict(FixSummary, d)
 
 
-def _ci_to_dict(ci: CIDomain) -> dict:
-    """Serialize CIDomain, handling nested RunState objects in runs dict."""
-    d = _serde_to_dict(ci)
-    # runs values are RunState dataclasses; serde.to_dict already handles them
-    # but keys must be strings for JSON compatibility
-    if ci.runs:
-        d["runs"] = {k: _serde_to_dict(v) for k, v in ci.runs.items()}
-    return d
-
-
 def state_to_dict(state: PRState) -> dict:
     d = _serde_to_dict(state)
     d["_version"] = STATE_VERSION
     # identity is a required positional arg — serialize separately
     d["identity"] = _identity_to_dict(state.identity)
-    # ci.runs needs special handling for RunState nested objects
-    d["ci"] = _ci_to_dict(state.ci)
     return d
 
 

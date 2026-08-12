@@ -472,6 +472,9 @@ def save_state(worktree_root: Path, state: PRState) -> None:
     if created:
         _ensure_gitignored(worktree_root)
     state.updated_at = datetime.now(timezone.utc).isoformat()
+    # Per-process, not per-call: two threads in one process saving at once
+    # would share this name. Nothing here saves off the main thread, and the
+    # worktree lock already keeps other processes out.
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         with open(tmp, "w") as f:

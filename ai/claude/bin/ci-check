@@ -32,6 +32,7 @@ import ai_backend
 import ci_failures as ci
 import pr_context
 import pr_state
+import worktree_lock
 import review_common
 import log
 import workbench_paths
@@ -1012,6 +1013,14 @@ def main():
     branch = ctx.branch
     pr_number = ctx.pr_number
     toplevel = ctx.worktree_root
+
+    # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
+    # Acquired before Trail.start so contention costs no trail artifacts.
+    worktree_lock.claim_for_process(
+        toplevel,
+        command=" ".join(["ci-check"] + sys.argv[1:]),
+        started=pr_state.now_iso(),
+    )
 
     trail = Trail.start(
         script="ci-check",

@@ -31,6 +31,7 @@ import ai_backend
 import pr_comments as pc
 import pr_context
 import pr_state
+import worktree_lock
 import publishing
 from pr_comments import ThreadState
 import review_common
@@ -2785,6 +2786,14 @@ def main():
     branch = ctx.branch
     toplevel = ctx.require_worktree()
     head_sha = ctx.head_sha
+
+    # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
+    # Acquired before Trail.start so contention costs no trail artifacts.
+    worktree_lock.claim_for_process(
+        toplevel,
+        command=" ".join(["review-threads"] + sys.argv[1:]),
+        started=pr_state.now_iso(),
+    )
 
     trail = Trail.start(
         script="review-threads",

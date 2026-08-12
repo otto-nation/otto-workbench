@@ -124,7 +124,9 @@ A second `pr` run refused to start because one is already in flight against the 
 
 Two runs on one worktree corrupt each other — they both read-modify-write `.workbench/state.json`, and with `--fix` they both edit and commit the same files. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
 
-`pr status` and `pr gc` are read-only and never contend. Delegates (`claude-review`, `ci-check`, `review-threads`) launched by `pr` inherit `WORKBENCH_WORKTREE_LOCK` and pass through the lock rather than deadlocking on it.
+`pr status` is read-only and never contends. `pr gc` does take the lock — it deletes the state directory, so it is not safe to run against a live run.
+
+`claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_WORKTREE_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
 
 The lock is an advisory `flock` on `.workbench/run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 

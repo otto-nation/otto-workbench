@@ -305,3 +305,75 @@ class TestAnnotationsResolve:
         import typing
         hints = typing.get_type_hints(review_phases._run_skipped_groups)
         assert hints["pipeline_state"] == review_phases.PipelineState | None
+
+
+def _group_job(tmp_path, omitted=()):
+    from review_preflight import PreflightData
+
+    job = _job(tmp_path)
+    job.preflight = PreflightData(
+        diff="", commit_log="", file_contents={}, file_permissions={},
+        claude_md="", architecture_md="", omitted_files=list(omitted),
+    )
+    return job
+
+
+class TestGroupTurnBudget:
+    """The group budget is resolved when the group runs, not when the module loads."""
+
+    def _capture(self, monkeypatch):
+        """Record each invocation and leave a real session log behind.
+
+        The group writes no findings, so `_review_group` takes its
+        no-output branch and diagnoses the log — which has to exist.
+        """
+        import json
+
+        seen = []
+
+        def fake_invoke(inv, throttle=None):
+            seen.append(inv)
+            Path(inv.session_log).write_text(json.dumps({
+                "type": "result", "subtype": "success", "num_turns": 3,
+            }) + "\n")
+            return 0
+
+        monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
+        return seen
+
+    def _run(self, tmp_path, job, **kwargs):
+        from review_preflight import Group
+
+        return review_phases._review_group(
+            1, Group(name="g1", files=["a.py"], lines=10),
+            job, 1, "holistic", **kwargs,
+        )
+
+    def test_default_budget_includes_the_omitted_file_bump(self, tmp_path, monkeypatch):
+        seen = self._capture(monkeypatch)
+        self._run(tmp_path, _group_job(tmp_path, omitted=["big.py", "huge.py"]))
+        expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * review_phases.OMITTED_FILE_TURNS
+        assert seen[0].max_turns == expected
+
+    def test_default_budget_is_the_phase_budget_with_nothing_omitted(self, tmp_path, monkeypatch):
+        seen = self._capture(monkeypatch)
+        self._run(tmp_path, _group_job(tmp_path))
+        assert seen[0].max_turns == review_phases.PHASES[Phase.GROUP].max_turns
+
+    def test_explicit_budget_still_wins(self, tmp_path, monkeypatch):
+        seen = self._capture(monkeypatch)
+        self._run(tmp_path, _group_job(tmp_path, omitted=["big.py"]), max_turns=99)
+        assert seen[0].max_turns == 99
+
+    def test_budget_follows_the_registry_at_call_time(self, tmp_path, monkeypatch):
+        """An import-time default would freeze the old value here."""
+        import dataclasses
+
+        seen = self._capture(monkeypatch)
+        monkeypatch.setitem(
+            review_phases.PHASES, Phase.GROUP,
+            dataclasses.replace(review_phases.PHASES[Phase.GROUP], max_turns=99),
+        )
+        self._run(tmp_path, _group_job(tmp_path))
+        assert seen[0].max_turns == 99

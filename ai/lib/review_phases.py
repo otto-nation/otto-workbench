@@ -225,7 +225,7 @@ def _review_group(
     group_count: int, holistic_content: str,
     skip: bool = False,
     pipeline_state: PipelineState | None = None,
-    max_turns: int = PHASES[Phase.GROUP].max_turns,
+    max_turns: int | None = None,
     retry_hint: str = "",
 ) -> tuple[int, str, GroupFailure | None]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
@@ -239,6 +239,12 @@ def _review_group(
         return (i, group_output, GroupFailure(
             grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
         ))
+
+    # Resolved here, not in the signature: a default argument is evaluated once
+    # at import, which both freezes the registry value and hides the fact that
+    # the budget depends on the job's omitted files.
+    if max_turns is None:
+        max_turns = PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
 
     _touch(group_output)
 
@@ -421,13 +427,11 @@ def _run_serial_reviews(
     failed_groups: list[GroupFailure] = []
     consecutive_same_reason = 0
     last: Diagnosis | None = None
-    group_turns = PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
     for i, grp in enumerate(groups, 1):
         skip = skip_groups is not None and i in skip_groups
         _, _, failed = _review_group(
             i, grp, job, group_count, holistic_content,
             skip=skip, pipeline_state=pipeline_state,
-            max_turns=group_turns,
         )
         if not failed:
             consecutive_same_reason = 0
@@ -554,7 +558,6 @@ def _run_skipped_groups(
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
-            max_turns=PHASES[Phase.GROUP].max_turns + _omitted_turns(job),
         )
         if failure:
             failures.append(failure)

@@ -76,6 +76,24 @@ class Mode(StrEnum):
     SELF = "self"
 
 
+class ReviewType(StrEnum):
+    """How much of the branch the review covers.
+
+    Orthogonal to `Mode` — a self-review can be either. The two travel together
+    in `meta.json` and reading one for the other is the bug fixed alongside this
+    enum, so neither vocabulary borrows the other's members.
+    """
+
+    FULL = "full"
+    INCREMENTAL = "incremental"
+
+    @classmethod
+    def of(cls, incremental: bool) -> "ReviewType":
+        """The type a run of this shape has — the sidecar, the header and the
+        pipeline state all record it, and they must agree."""
+        return cls.INCREMENTAL if incremental else cls.FULL
+
+
 # ── Phases ───────────────────────────────────────────────────────────────────
 
 
@@ -256,6 +274,11 @@ class DiagnosisKind(StrEnum):
     SKIPPED = "skipped"
     BUDGET_EXCEEDED = "budget_exceeded"
     OUTPUT_MISSING = "output_missing"
+    # Synthesis's own outcomes. Recorded against the pipeline rather than an
+    # agent, so neither has a session log behind it: no group produced usable
+    # output, and a synthesis that degraded to the mechanical merge.
+    ALL_GROUPS_FAILED = "all_groups_failed"
+    MECHANICAL_FALLBACK = "mechanical_fallback"
     # Only reachable by reading a pipeline state file written before failures
     # were structured. `detail` holds that file's rendered message verbatim.
     UNKNOWN = "unknown"
@@ -278,7 +301,16 @@ _DIAGNOSIS_MESSAGES = {
     DiagnosisKind.NO_RESULT_RECORD: "no result record in session log",
     DiagnosisKind.BUDGET_EXCEEDED: "budget exceeded",
     DiagnosisKind.OUTPUT_MISSING: "output missing",
+    DiagnosisKind.ALL_GROUPS_FAILED: "all groups failed",
+    DiagnosisKind.MECHANICAL_FALLBACK: "mechanical fallback",
 }
+
+# Every constant message, reversed. A state file written before a message was a
+# kind holds the rendered text; this reads it back as the kind it renders as,
+# rather than burying it in `UNKNOWN`. Derived, so a new message is covered
+# without a second edit. Kinds whose message interpolates `detail` are absent
+# from the forward map and so stay verbatim under `UNKNOWN`, as before.
+_MESSAGE_KINDS = {message: kind for kind, message in _DIAGNOSIS_MESSAGES.items()}
 
 NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
 
@@ -328,20 +360,30 @@ class Diagnosis:
         return not any(m in lowered for m in NON_RECOVERABLE_ERROR_MARKERS)
 
     @classmethod
-    def _from_raw(cls, raw) -> "Diagnosis":
+    def _from_raw(cls, raw) -> "Diagnosis | None":
         """Rebuild a diagnosis from any shape a state file can hold.
 
         `serde` hands the whole field over here rather than assuming a dict,
         because reviews live in `~/.config/workbench/reviews/` and outlive the
         code that wrote them. A file written before diagnoses were typed holds
-        the rendered reason; keep it verbatim under `UNKNOWN` so a `--recover`
-        run against an in-flight review still renders its failures.
+        the rendered reason — recover the kind where the text names one, and
+        keep the rest verbatim under `UNKNOWN`, so a `--recover` run against an
+        in-flight review still renders its failures.
+
+        Returns None for a raw value that records no failure at all: an optional
+        field written before it was optional holds `""`, and reading that as a
+        blank diagnosis would turn a clean run into a failed one.
         """
+        if not raw:
+            return None
         if isinstance(raw, cls):
             return raw
         if isinstance(raw, dict):
             return serde.from_dict(cls, raw)
-        return cls(DiagnosisKind.UNKNOWN, detail=str(raw))
+        text = str(raw)
+        if text in _MESSAGE_KINDS:
+            return cls(_MESSAGE_KINDS[text])
+        return cls(DiagnosisKind.UNKNOWN, detail=text)
 
 
 # ── Templates ────────────────────────────────────────────────────────────────
@@ -487,7 +529,25 @@ class ReviewMeta:
     head_sha: str = ""
     head_ref: str = ""
     base_ref: str = ""
-    review_type: str = ""
+    # The sidecar carries both, and they answer different questions — how much of
+    # the branch was reviewed, and what was being reviewed. Both are None for a
+    # meta.json written before the field existed, or by a caller that wrote only
+    # the repo; `mode` defaulting to PR would claim a fact the file never stated.
+    review_type: ReviewType | None = None
+    mode: Mode | None = None
+
+
+def _meta_enum(enum_cls, value):
+    """Read a fixed-vocabulary meta.json field, tolerating a value we don't know.
+
+    meta.json is written by whatever version of the reviewer produced the review
+    and read by whatever version is running now, so an unrecognised member reads
+    as absent rather than taking the whole file down with it.
+    """
+    try:
+        return enum_cls(value) if value else None
+    except ValueError:
+        return None
 
 
 def review_meta_from_dict(d: dict) -> ReviewMeta:
@@ -499,7 +559,8 @@ def review_meta_from_dict(d: dict) -> ReviewMeta:
         head_sha=d.get("head_sha", ""),
         head_ref=d.get("head_ref", ""),
         base_ref=d.get("base_ref", ""),
-        review_type=d.get("review_type", ""),
+        review_type=_meta_enum(ReviewType, d.get("review_type")),
+        mode=_meta_enum(Mode, d.get("mode")),
     )
 
 
@@ -656,8 +717,9 @@ def build_failure_detail(review_dir: Path | None) -> str:
             n_failed, n_total = len(state.groups_failed), state.group_count
             parts.append(f"{n_failed}/{n_total} groups failed: {reasons}")
 
-    if state.synthesis_failed and state.synthesis_failed != "all groups failed":
-        parts.append(f"synthesis: {state.synthesis_failed}")
+    # ALL_GROUPS_FAILED restates what the groups line already said.
+    if state.synthesis_failed and state.synthesis_failed.kind is not DiagnosisKind.ALL_GROUPS_FAILED:
+        parts.append(f"synthesis: {state.synthesis_failed.message}")
 
     return "; ".join(parts)
 
@@ -706,7 +768,8 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
     parsed_verdict = parse_review_verdict(review_path)
     if parsed_verdict:
         verdict = parsed_verdict
-    elif meta.review_type == "self":
+    elif meta.mode is Mode.SELF:
+        # A self-review is advisory — it has no PR to approve or block.
         verdict = ""
     else:
         must_count = counts.get("must_fix", 0)
@@ -730,7 +793,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
         "head_sha": meta.head_sha or None,
         "head_ref": meta.head_ref or None,
         "base_ref": meta.base_ref or None,
-        "review_type": meta.review_type or None,
+        "review_type": meta.review_type,
         "review_file": review_file,
         "review_content": review_content,
         "findings": {**counts, "total": total},

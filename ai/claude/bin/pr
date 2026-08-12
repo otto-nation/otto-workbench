@@ -27,7 +27,9 @@ import rebase_status
 import review_gc
 import log
 import review_common
-from review_common import build_review_summary, find_review_file, json_summary, review_file_path
+from review_common import (
+    ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
+)
 from trail import Trail, add_trail_args
 
 
@@ -131,7 +133,10 @@ def _update_review_state(summary_data: dict,
     state = _load_or_init(ctx)
     pr_state.update_review(state, pr_state.ReviewSummary(
         review_file=summary_data.get("review_file", ""),
-        review_type=state.review.review_type or "pr",
+        # The summary carries the type the review recorded; the stored value is
+        # the fallback for a summary that predates the field. "pr" was never a
+        # review type — that is a mode, and it is not this field's vocabulary.
+        review_type=summary_data.get("review_type") or state.review.review_type or ReviewType.FULL,
         head_sha=summary_data.get("head_sha", ""),
         finding_counts=finding_counts,
         verdict=summary_data.get("verdict", ""),

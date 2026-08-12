@@ -28,7 +28,7 @@ from review_common import (
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
-    Diagnosis, DiagnosisKind, Effort, Mode, Phase,
+    Diagnosis, DiagnosisKind, Effort, Mode, Phase, ReviewType,
     EFFORT_PRESETS,
     PRIOR_DATE_RE,
     TEMPLATE_SELF_REVIEW,
@@ -69,7 +69,7 @@ from review_retry import (
     _retry_missing_output,
 )
 from review_state import (
-    _inject_failures_and_status, _pipeline_state_path, _read_pipeline_state,
+    _inject_failures_and_status, _pipeline_state_path,
     _resolve_recovery,
     _write_pipeline_state,
     build_failures_section,
@@ -98,7 +98,7 @@ def _write_review_sidecar(job: ReviewJob):
         meta["generator_version"] = job.generator_version
 
     incremental = _is_incremental(job)
-    meta["review_type"] = "incremental" if incremental else "full"
+    meta["review_type"] = ReviewType.of(incremental)
     if incremental:
         pf = job.preflight
         meta["prior_sha"] = pf.prior_head_sha
@@ -160,7 +160,7 @@ def _build_meta_header(
 ) -> str:
     today = date.today().isoformat()
     incremental = _is_incremental(job)
-    review_type = "incremental" if incremental else "full"
+    review_type = ReviewType.of(incremental)
 
     lines = [
         META_DATE.format(today=today),
@@ -200,7 +200,6 @@ def _build_mechanical_fallback(
     job: ReviewJob, group_count: int, merged_content: str,
     skipped_groups: int = 0,
     pipeline_state: "PipelineState | None" = None,
-    groups: "list[Group] | None" = None,
 ) -> str:
     status = read_pipeline_status(Path(job.review_file).parent) if Path(job.review_file).parent.exists() else "error"
     meta = _build_meta_header(
@@ -212,7 +211,7 @@ def _build_mechanical_fallback(
     else:
         title = f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}"
 
-    failures_section = build_failures_section(pipeline_state, groups or []) if pipeline_state else ""
+    failures_section = build_failures_section(pipeline_state) if pipeline_state else ""
 
     return build_mechanical_review(
         merged_content,
@@ -508,7 +507,6 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged_content: str, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
-    groups: "list[Group] | None" = None,
 ) -> str:
     all_groups_failed = len(failed_groups) == group_count
 
@@ -523,12 +521,12 @@ def _run_synthesis_or_fallback(
         log.warn("All group agents failed — skipping synthesis")
         fallback = _build_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=n_skipped,
-            pipeline_state=state, groups=groups,
+            pipeline_state=state,
         )
         Path(job.review_file).write_text(fallback)
         _write_review_sidecar(job)
         state.synthesis_done = True
-        state.synthesis_failed = "all groups failed"
+        state.synthesis_failed = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         _write_pipeline_state(job, state)
         return ""
 
@@ -539,7 +537,7 @@ def _run_synthesis_or_fallback(
         _write_review_sidecar(job)
         state.synthesis_done = True
         _write_pipeline_state(job, state)
-        _inject_failures_and_status(job.review_file, state, groups or [])
+        _inject_failures_and_status(job.review_file, state)
         return ""
 
     if cost_so_far > max_cost:
@@ -547,9 +545,9 @@ def _run_synthesis_or_fallback(
         Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)
         state.synthesis_done = True
-        state.synthesis_failed = "budget exceeded"
+        state.synthesis_failed = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
         _write_pipeline_state(job, state)
-        _inject_failures_and_status(job.review_file, state, groups or [])
+        _inject_failures_and_status(job.review_file, state)
         return ""
 
     synthesis_log = _phase_synthesis(
@@ -559,9 +557,9 @@ def _run_synthesis_or_fallback(
     state.synthesis_done = True
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
     if _MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
-        state.synthesis_failed = "mechanical fallback"
+        state.synthesis_failed = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
     _write_pipeline_state(job, state)
-    _inject_failures_and_status(job.review_file, state, groups or [])
+    _inject_failures_and_status(job.review_file, state)
     return synthesis_log
 
 
@@ -603,19 +601,21 @@ def run_multi_phase(
                 job.prior_review, groups, incremental_skips,
             )
 
-    cost_so_far, skip_groups, skip_holistic_phase, state = _resolve_recovery(
-        job, groups,
-    )
-
-    if state is None and _read_pipeline_state(job) is not None:
+    recovery = _resolve_recovery(job, groups)
+    if recovery.already_complete:
         log.info("Review already complete — use --force to re-run from scratch")
         return
+
+    cost_so_far = recovery.cost_so_far
+    skip_groups = recovery.skip_groups
+    skip_holistic_phase = recovery.skip_holistic
+    state = recovery.state
 
     if state is None:
         state = PipelineState(
             head_sha=job.pr.head_sha,
             group_names=[g.name for g in groups],
-            review_type="incremental" if incremental else "full",
+            review_type=ReviewType.of(incremental),
             prior_sha=job.preflight.prior_head_sha if incremental else "",
             skipped_groups=sorted(incremental_skips),
         )
@@ -659,7 +659,6 @@ def run_multi_phase(
     synthesis_log = _run_synthesis_or_fallback(
         job, state, holistic_content, group_count,
         merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
-        groups=groups,
     )
 
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────

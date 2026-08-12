@@ -20,7 +20,7 @@ from trail import Trail, add_trail_args
 from review_common import (
     FILENAME_GROUP,
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
-    Mode,
+    Mode, ReviewType,
 )
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
@@ -57,7 +57,7 @@ def _build_meta_header(meta: dict) -> str:
     ]
     if meta.get("head_sha"):
         lines.append(META_HEAD_SHA.format(head_sha=meta["head_sha"]))
-    review_type = meta.get("review_type", "full")
+    review_type = meta.get("review_type") or ReviewType.FULL
     lines.append(META_REVIEW_TYPE.format(review_type=review_type))
     if meta.get("generator_version"):
         lines.append(META_GENERATOR.format(generator_version=meta["generator_version"]))

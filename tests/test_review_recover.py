@@ -230,7 +230,6 @@ class TestRecoverAcrossASchemaChange:
 
         review_state._inject_failures_and_status(
             job.review_file, review_state._read_pipeline_state(job),
-            review_pipeline.group_files(job.pr),
         )
 
         assert "| group-2: b | agent error: model not available | failed |" in _review(job)

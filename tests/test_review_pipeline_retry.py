@@ -246,13 +246,12 @@ class TestResolveRecoveryPinnedMetadata:
         state_path = _write_state(tmp_path)
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        _, skip_groups, skip_holistic, state = review_state._resolve_recovery(
-            job, _GROUPS,
-        )
+        plan = review_state._resolve_recovery(job, _GROUPS)
 
-        assert state is not None
-        assert skip_holistic is True
-        assert skip_groups is None
+        assert plan.state is not None
+        assert plan.skip_holistic is True
+        assert plan.skip_groups is None
+        assert plan.already_complete is False
         assert state_path.exists()
 
     def test_pinned_metadata_reruns_only_the_failed_groups(self, tmp_path):
@@ -263,12 +262,13 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        _, skip_groups, _, state = review_state._resolve_recovery(job, _GROUPS)
+        plan = review_state._resolve_recovery(job, _GROUPS)
 
-        assert skip_groups == {0}
-        assert state is not None
-        assert state.groups_failed == {}
-        assert state.synthesis_done is False
+        assert plan.skip_groups == {0}
+        assert plan.state is not None
+        assert plan.state.groups_failed == {}
+        assert plan.state.synthesis_done is False
+        assert plan.state.synthesis_failed is None
 
     def test_pinned_metadata_on_a_clean_run_recovers_nothing(self, tmp_path):
         _write_state(
@@ -276,16 +276,20 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        _, skip_groups, _, state = review_state._resolve_recovery(job, _GROUPS)
+        plan = review_state._resolve_recovery(job, _GROUPS)
 
-        assert state is None
-        assert skip_groups is None
+        assert plan.state is None
+        assert plan.skip_groups is None
+        # The caller aborts on this rather than starting over, and told apart
+        # from "no state" without re-reading the file.
+        assert plan.already_complete is True
 
     def test_unpinned_metadata_discards_the_state(self, tmp_path):
         state_path = _write_state(tmp_path)
         job = _make_job(tmp_path, head_sha="new5678")
 
-        _, _, _, state = review_state._resolve_recovery(job, _GROUPS)
+        plan = review_state._resolve_recovery(job, _GROUPS)
 
-        assert state is None
+        assert plan.state is None
+        assert plan.already_complete is False
         assert not state_path.exists()

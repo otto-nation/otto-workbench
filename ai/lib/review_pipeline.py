@@ -126,7 +126,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = runner.invoke(text, job.session_log, max_turns=turns)
+        rc = runner.invoke(text, turns)
         return rc
 
     invoke(prompt, max_turns)
@@ -259,7 +259,7 @@ def _phase_synthesis(
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )
-    runner = PhaseRunner(job, Phase.SYNTHESIS)
+    runner = PhaseRunner(job, Phase.SYNTHESIS, synthesis_log)
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
 
@@ -269,7 +269,7 @@ def _phase_synthesis(
 
     def invoke(text: str, turns: int) -> int:
         nonlocal rc
-        rc = runner.invoke(text, synthesis_log, max_turns=turns)
+        rc = runner.invoke(text, turns)
         return rc
 
     invoke(prompt, max_turns)

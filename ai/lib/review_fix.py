@@ -293,10 +293,10 @@ def run_fix_pass(job: ReviewJob):
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
     )
-    runner = PhaseRunner(job, Phase.FIX)
+    runner = PhaseRunner(job, Phase.FIX, fix_log)
     log.info("Fix pass — applying review findings...")
     log.blank()
-    runner.invoke(prompt, fix_log, max_turns=max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     _reconcile_checkboxes(job.review_file, job.wt_path)
@@ -318,7 +318,7 @@ def run_fix_pass(job: ReviewJob):
             log.info(f"Retrying fix pass (max_turns={retry_turns})...")
             prior_log = preserve_log(fix_log)
             log.blank()
-            runner.invoke(retry_prompt, fix_log, max_turns=retry_turns)
+            runner.invoke(retry_prompt, retry_turns)
             restore_preserved(fix_log, prior_log)
             log.blank()
             _reconcile_checkboxes(job.review_file, job.wt_path)

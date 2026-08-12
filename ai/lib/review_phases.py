@@ -2,8 +2,8 @@
 
 A review is a sequence of agent phases, and this module owns what a phase *is*:
 the built-in spec (`PhaseSpec`, `PHASES`), the resolution of a spec plus an
-effort preset into the six values an invocation needs (`PhaseRunner`), the turn
-budgets, and the executors that actually run each phase.
+effort preset into the seven values an invocation needs (`PhaseRunner`), the
+turn budgets, and the executors that actually run each phase.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
@@ -210,6 +210,10 @@ def _omitted_turns(job: ReviewJob) -> int:
     return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS
 
 
+def _group_turns(job: ReviewJob) -> int:
+    return PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
+
+
 def _synthesis_max_turns(merged_content: str) -> int:
     counts = _count_findings(merged_content)
     total = sum(counts.values())
@@ -244,7 +248,7 @@ def _review_group(
     # at import, which both freezes the registry value and hides the fact that
     # the budget depends on the job's omitted files.
     if max_turns is None:
-        max_turns = PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
+        max_turns = _group_turns(job)
 
     _touch(group_output)
 
@@ -476,10 +480,9 @@ def _run_parallel_reviews(
 
 
 def _retry_turns(diagnosis: Diagnosis, job: ReviewJob) -> int:
-    extra = _omitted_turns(job)
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
-        return RETRY_MAX_TURNS_GROUP + extra
-    return PHASES[Phase.GROUP].max_turns + extra
+        return RETRY_MAX_TURNS_GROUP + _omitted_turns(job)
+    return _group_turns(job)
 
 
 def _retry_failed_groups(
@@ -540,7 +543,7 @@ def _retry_failed_groups(
 
 def _run_skipped_groups(
     skipped: list[GroupFailure],
-    group_by_name: dict,
+    group_by_name: dict[str, tuple[int, Group]],
     job: ReviewJob,
     group_count: int,
     holistic_content: str,

@@ -293,12 +293,19 @@ class TestAnnotationsResolve:
 
         unresolved = {}
         for name, obj in vars(review_phases).items():
-            if not inspect.isfunction(obj) or obj.__module__ != "review_phases":
-                continue
-            try:
-                typing.get_type_hints(obj)
-            except NameError as exc:
-                unresolved[name] = str(exc)
+            if inspect.isfunction(obj) and obj.__module__ == "review_phases":
+                try:
+                    typing.get_type_hints(obj)
+                except NameError as exc:
+                    unresolved[name] = str(exc)
+            elif inspect.isclass(obj) and obj.__module__ == "review_phases":
+                for method_name, method in vars(obj).items():
+                    if not inspect.isfunction(method):
+                        continue
+                    try:
+                        typing.get_type_hints(method)
+                    except NameError as exc:
+                        unresolved[f"{name}.{method_name}"] = str(exc)
         assert unresolved == {}
 
     def test_skipped_group_sweep_takes_the_pipeline_state(self):
@@ -342,7 +349,7 @@ class TestGroupTurnBudget:
         monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
         return seen
 
-    def _run(self, tmp_path, job, **kwargs):
+    def _run(self, job, **kwargs):
         from review_preflight import Group
 
         return review_phases._review_group(
@@ -352,28 +359,65 @@ class TestGroupTurnBudget:
 
     def test_default_budget_includes_the_omitted_file_bump(self, tmp_path, monkeypatch):
         seen = self._capture(monkeypatch)
-        self._run(tmp_path, _group_job(tmp_path, omitted=["big.py", "huge.py"]))
+        self._run(_group_job(tmp_path, omitted=["big.py", "huge.py"]))
         expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * review_phases.OMITTED_FILE_TURNS
         assert seen[0].max_turns == expected
 
     def test_default_budget_is_the_phase_budget_with_nothing_omitted(self, tmp_path, monkeypatch):
         seen = self._capture(monkeypatch)
-        self._run(tmp_path, _group_job(tmp_path))
+        self._run(_group_job(tmp_path))
         assert seen[0].max_turns == review_phases.PHASES[Phase.GROUP].max_turns
 
     def test_explicit_budget_still_wins(self, tmp_path, monkeypatch):
         seen = self._capture(monkeypatch)
-        self._run(tmp_path, _group_job(tmp_path, omitted=["big.py"]), max_turns=99)
+        self._run(_group_job(tmp_path, omitted=["big.py"]), max_turns=99)
         assert seen[0].max_turns == 99
 
     def test_budget_follows_the_registry_at_call_time(self, tmp_path, monkeypatch):
         """An import-time default would freeze the old value here."""
-        import dataclasses
-
         seen = self._capture(monkeypatch)
         monkeypatch.setitem(
             review_phases.PHASES, Phase.GROUP,
             dataclasses.replace(review_phases.PHASES[Phase.GROUP], max_turns=99),
         )
-        self._run(tmp_path, _group_job(tmp_path))
+        self._run(_group_job(tmp_path))
         assert seen[0].max_turns == 99
+
+
+class TestParallelGroupTurnBudget:
+    """The parallel fan-out must resolve the same default budget as the
+    serial path — it forwards no `max_turns` of its own."""
+
+    def test_parallel_groups_get_the_default_budget(self, tmp_path, monkeypatch):
+        import json
+        import threading
+
+        from review_preflight import Group
+
+        seen: list = []
+        lock = threading.Lock()
+
+        def fake_invoke(inv, throttle=None):
+            with lock:
+                seen.append(inv)
+            Path(inv.session_log).write_text(json.dumps({
+                "type": "result", "subtype": "success", "num_turns": 3,
+            }) + "\n")
+            return 0
+
+        monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
+
+        job = _group_job(tmp_path, omitted=["big.py"])
+        groups = [
+            Group(name="g1", files=["a.py"], lines=10),
+            Group(name="g2", files=["b.py"], lines=10),
+        ]
+        review_phases._run_parallel_reviews(
+            groups, job, len(groups), "holistic", workers=2,
+            skip_groups=None, pipeline_state=None,
+        )
+
+        expected = review_phases.PHASES[Phase.GROUP].max_turns + review_phases.OMITTED_FILE_TURNS
+        assert len(seen) == 2
+        assert all(inv.max_turns == expected for inv in seen)

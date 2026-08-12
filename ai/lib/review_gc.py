@@ -17,6 +17,7 @@ from review_common import (
     FILENAME_PIPELINE_STATE,
     REVIEW_EXT,
     REVIEWS_DIR,
+    Phase,
     read_pipeline_status,
     read_review_meta,
 )
@@ -41,11 +42,12 @@ def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
 def _clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
     """Remove stale intermediate files from a completed review directory."""
     count = 0
-    patterns = [
-        "group-*.md", "group-*.jsonl",
-        "holistic.md", "holistic.jsonl",
-        "synthesis.jsonl",
-    ]
+    # Output artifacts (group-*.md, holistic.md) follow a naming convention of
+    # their own and stay literal here; session logs are named after the
+    # phase, so that half is derived from Phase.log_filename rather than
+    # hand-copied — a phase added there is collected here for free.
+    log_globs = [p.log_filename.format("*") for p in Phase if p.log_filename]
+    patterns = ["group-*.md", "holistic.md", *log_globs]
     files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
     now = datetime.now().timestamp()
     for f in files:

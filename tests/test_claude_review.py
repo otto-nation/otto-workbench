@@ -1147,6 +1147,26 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
     assert not (d / "holistic.jsonl").exists()
 
 
+def test_gc_removes_stale_logs_for_every_phase(cr, reviews_dir):
+    """The log half of the glob is derived from Phase — every phase that
+    writes a session log of its own must be collected, not just the ones a
+    hand-written list happened to name."""
+    d = reviews_dir / "test-repo-320"
+    d.mkdir()
+    (d / "review.md").write_text("## Summary")
+    log_names = ("holistic.jsonl", "scout.jsonl", "group-1.jsonl", "synthesis.jsonl", "disprove.jsonl", "fix.jsonl")
+    for f_name in log_names:
+        p = d / f_name
+        p.write_text("{}")
+        os.utime(str(p), (1622505600, 1622505600))
+
+    review_gc.gc_reviews(reviews_dir)
+
+    assert (d / "review.md").exists()
+    for f_name in log_names:
+        assert not (d / f_name).exists(), f"{f_name} should have been collected"
+
+
 def test_gc_preserves_recent_intermediates(cr, reviews_dir):
     d = reviews_dir / "test-repo-350"
     d.mkdir()

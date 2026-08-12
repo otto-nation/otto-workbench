@@ -1,5 +1,7 @@
 import dataclasses
+import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -7,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_pipeline
+import review_phases
 from review_common import AgentKind, Effort, Phase, Thinking
 
 
@@ -165,8 +168,10 @@ class TestPhaseRunnerInvocation:
     def test_carries_resolved_values(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
         monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP)
-        inv = runner.invocation("PROMPT", "/tmp/g.jsonl", label="grp")
+        runner = review_pipeline.PhaseRunner(
+            _job(tmp_path, Effort.HIGH), Phase.GROUP, "/tmp/g.jsonl",
+        )
+        inv = runner.invocation("PROMPT", label="grp")
         assert inv.prompt == "PROMPT"
         assert inv.session_log == "/tmp/g.jsonl"
         assert inv.agent is AgentKind.REVIEWER_LITE
@@ -176,17 +181,20 @@ class TestPhaseRunnerInvocation:
         assert inv.label == "grp"
 
     def test_max_turns_override(self, tmp_path):
-        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP)
-        inv = runner.invocation("P", "/tmp/g.jsonl", max_turns=42)
-        assert inv.max_turns == 42
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, "/tmp/g.jsonl")
+        assert runner.invocation("P", 42).max_turns == 42
+
+    def test_session_log_defaults_to_the_jobs_own_log(self, tmp_path):
+        job = _job(tmp_path)
+        inv = review_pipeline.PhaseRunner(job, Phase.SINGLE).invocation("P")
+        assert inv.session_log == job.session_log
 
     def test_add_dirs_grant_only_the_review_artifact_dir(self, tmp_path):
         # Never the shared reviews root: a root grant is how scratch files
         # ended up beside unrelated reviews.
         job = _job(tmp_path)
         runner = review_pipeline.PhaseRunner(job, Phase.SINGLE)
-        inv = runner.invocation("P", job.session_log)
-        assert inv.add_dirs == [job.artifact_dir, job.wt_path]
+        assert runner.invocation("P").add_dirs == [job.artifact_dir, job.wt_path]
 
 
 class TestPhaseRunnerReachesBackend:
@@ -226,9 +234,7 @@ class TestPhaseRunnerReachesBackend:
         job = _job(tmp_path, Effort.HIGH)
         job.throttle = self._RecordingThrottle()
 
-        rc = review_pipeline.PhaseRunner(job, Phase.GROUP).invoke(
-            "PROMPT", job.session_log,
-        )
+        rc = review_pipeline.PhaseRunner(job, Phase.GROUP).invoke("PROMPT")
 
         assert rc == 0
         assert job.throttle.waited
@@ -238,6 +244,18 @@ class TestPhaseRunnerReachesBackend:
         assert inv.thinking is Thinking.HIGH
         assert inv.max_budget == 8.0
         assert inv.max_turns == 15
+
+    def test_invoke_matches_the_retry_callback_shape(self, tmp_path, monkeypatch):
+        """`retry_missing_output` calls its callback as `invoke(prompt, turns)`."""
+        seen = []
+        monkeypatch.setattr(
+            review_phases, "invoke_agent",
+            lambda inv, throttle=None: seen.append(inv) or 0,
+        )
+        runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, "/tmp/g.jsonl")
+        runner.invoke("PROMPT", 33)
+        assert seen[0].max_turns == 33
+        assert seen[0].session_log == "/tmp/g.jsonl"
 
 
 class TestNoDuplicateDefaults:
@@ -261,3 +279,146 @@ class TestNoDuplicateDefaults:
             "DEFAULT_MAX_BUDGET_PER_AGENT",
         ):
             assert not hasattr(review_preflight, name), f"{name} is a stale copy"
+
+
+class TestAnnotationsResolve:
+    """Every annotation in review_phases names the type it means.
+
+    The module runs under PEP 563, so a wrong or stale annotation is inert
+    until something reads it — `_run_skipped_groups` carried `dict` for a
+    `PipelineState` and nothing noticed. `get_type_hints` reads them all.
+    """
+
+    @staticmethod
+    def _own_functions():
+        """Every function review_phases defines, methods included."""
+        import inspect
+
+        owned = [
+            (name, obj) for name, obj in vars(review_phases).items()
+            if getattr(obj, "__module__", None) == "review_phases"
+        ]
+        return [
+            (name, obj) for name, obj in owned if inspect.isfunction(obj)
+        ] + [
+            (f"{name}.{method_name}", method)
+            for name, cls in owned if inspect.isclass(cls)
+            for method_name, method in vars(cls).items()
+            if inspect.isfunction(method)
+        ]
+
+    def test_every_function_signature_resolves(self):
+        import typing
+
+        unresolved = {}
+        for name, obj in self._own_functions():
+            try:
+                typing.get_type_hints(obj)
+            except NameError as exc:
+                unresolved[name] = str(exc)
+        assert unresolved == {}
+
+    def test_the_walk_reaches_the_runners_methods(self):
+        names = [name for name, _ in self._own_functions()]
+        assert "PhaseRunner.invoke" in names
+        assert "PhaseRunner.invocation" in names
+
+    def test_skipped_group_sweep_takes_the_pipeline_state(self):
+        import typing
+        hints = typing.get_type_hints(review_phases._run_skipped_groups)
+        assert hints["pipeline_state"] == review_phases.PipelineState | None
+
+
+def _capture_invocations(monkeypatch):
+    """Record each invocation and leave a real session log behind.
+
+    The group writes no findings, so `_review_group` takes its no-output
+    branch and diagnoses the log — which has to exist. The lock is what
+    makes the same fake safe for the parallel fan-out.
+    """
+    seen = []
+    lock = threading.Lock()
+
+    def fake_invoke(inv, throttle=None):
+        with lock:
+            seen.append(inv)
+        Path(inv.session_log).write_text(json.dumps({
+            "type": "result", "subtype": "success", "num_turns": 3,
+        }) + "\n")
+        return 0
+
+    monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
+    monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
+    return seen
+
+
+def _group_job(tmp_path, omitted=()):
+    from review_preflight import PreflightData
+
+    job = _job(tmp_path)
+    job.preflight = PreflightData(
+        diff="", commit_log="", file_contents={}, file_permissions={},
+        claude_md="", architecture_md="", omitted_files=list(omitted),
+    )
+    return job
+
+
+class TestGroupTurnBudget:
+    """The group budget is resolved when the group runs, not when the module loads."""
+
+    def _run(self, job, **kwargs):
+        from review_preflight import Group
+
+        return review_phases._review_group(
+            1, Group(name="g1", files=["a.py"], lines=10),
+            job, 1, "holistic", **kwargs,
+        )
+
+    def test_default_budget_includes_the_omitted_file_bump(self, tmp_path, monkeypatch):
+        seen = _capture_invocations(monkeypatch)
+        self._run(_group_job(tmp_path, omitted=["big.py", "huge.py"]))
+        expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * review_phases.OMITTED_FILE_TURNS
+        assert seen[0].max_turns == expected
+
+    def test_default_budget_is_the_phase_budget_with_nothing_omitted(self, tmp_path, monkeypatch):
+        seen = _capture_invocations(monkeypatch)
+        self._run(_group_job(tmp_path))
+        assert seen[0].max_turns == review_phases.PHASES[Phase.GROUP].max_turns
+
+    def test_explicit_budget_still_wins(self, tmp_path, monkeypatch):
+        seen = _capture_invocations(monkeypatch)
+        self._run(_group_job(tmp_path, omitted=["big.py"]), max_turns=99)
+        assert seen[0].max_turns == 99
+
+    def test_budget_follows_the_registry_at_call_time(self, tmp_path, monkeypatch):
+        """An import-time default would freeze the old value here."""
+        seen = _capture_invocations(monkeypatch)
+        monkeypatch.setitem(
+            review_phases.PHASES, Phase.GROUP,
+            dataclasses.replace(review_phases.PHASES[Phase.GROUP], max_turns=99),
+        )
+        self._run(_group_job(tmp_path))
+        assert seen[0].max_turns == 99
+
+
+class TestParallelGroupTurnBudget:
+    """The parallel fan-out must resolve the same default budget as the
+    serial path — it forwards no `max_turns` of its own."""
+
+    def test_parallel_groups_get_the_default_budget(self, tmp_path, monkeypatch):
+        from review_preflight import Group
+
+        seen = _capture_invocations(monkeypatch)
+        job = _group_job(tmp_path, omitted=["big.py"])
+        groups = [
+            Group(name="g1", files=["a.py"], lines=10),
+            Group(name="g2", files=["b.py"], lines=10),
+        ]
+        review_phases._run_parallel_reviews(
+            groups, job, len(groups), "holistic", workers=2,
+            skip_groups=None, pipeline_state=None,
+        )
+
+        expected = review_phases.PHASES[Phase.GROUP].max_turns + review_phases.OMITTED_FILE_TURNS
+        assert len(seen) == 2
+        assert all(inv.max_turns == expected for inv in seen)

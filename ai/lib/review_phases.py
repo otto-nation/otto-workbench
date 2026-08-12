@@ -2,8 +2,8 @@
 
 A review is a sequence of agent phases, and this module owns what a phase *is*:
 the built-in spec (`PhaseSpec`, `PHASES`), the resolution of a spec plus an
-effort preset into the six values an invocation needs (`PhaseRunner`), the turn
-budgets, and the executors that actually run each phase.
+effort preset into the seven values an invocation needs (`PhaseRunner`), the
+turn budgets, and the executors that actually run each phase.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
@@ -140,18 +140,23 @@ def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:
 
 
 class PhaseRunner:
-    """The six per-phase values, resolved once.
+    """The per-phase values, resolved once.
 
     Every phase needs the same six — model, thinking level, provider, budget,
     agent, and max turns — resolved from the phase spec, the effort preset,
     and the environment. Resolving them here means one place to read rather
-    than seven blocks that must be kept in step.
+    than seven blocks that must be kept in step. The session log joins them:
+    a runner belongs to one phase of one review, and that phase writes to
+    exactly one log.
     """
 
-    def __init__(self, job: ReviewJob, phase: Phase):
+    def __init__(self, job: ReviewJob, phase: Phase, session_log: str = ""):
         spec = PHASES[phase]
         preset = EFFORT_PRESETS[job.effort]
         self.job = job
+        # A phase that writes no log of its own logs to the job's — that is
+        # where the single-agent path already sends every record.
+        self.session_log = session_log or job.session_log
         self.model = phase_model(phase, job.model)
         self.thinking = _resolve_thinking_level(
             None, phase.thinking_env_key, _phase_thinking(job.effort, phase),
@@ -164,13 +169,12 @@ class PhaseRunner:
         self.max_turns = spec.max_turns
 
     def invocation(
-        self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "",
+        self, prompt: str, max_turns: int | None = None, *, label: str = "",
     ) -> AgentInvocation:
         return AgentInvocation(
             prompt=prompt,
             cwd=str(self.job.wt_path),
-            session_log=session_log,
+            session_log=self.session_log,
             add_dirs=build_add_dirs(self.job.wt_path, self.job.artifact_dir),
             agent=self.agent,
             max_turns=self.max_turns if max_turns is None else max_turns,
@@ -182,11 +186,13 @@ class PhaseRunner:
         )
 
     def invoke(
-        self, prompt: str, session_log: str, *,
-        max_turns: int | None = None, label: str = "",
+        self, prompt: str, max_turns: int | None = None, *, label: str = "",
     ) -> int:
+        """Run one attempt. Positional `(prompt, max_turns)` is the shape
+        `agent_retry.retry_missing_output` calls its callback with, so a
+        runner can be handed to it directly."""
         return invoke_agent(
-            self.invocation(prompt, session_log, max_turns=max_turns, label=label),
+            self.invocation(prompt, max_turns, label=label),
             throttle=self.job.throttle,
         )
 
@@ -196,12 +202,16 @@ def _touch(path: str) -> None:
     Path(path).touch(exist_ok=True)
 
 
-def _omitted_turns(job: "ReviewJob") -> int:
+def _omitted_turns(job: ReviewJob) -> int:
     if EFFORT_PRESETS[job.effort].skip_omitted_files:
         return 0
     if not job.preflight or not job.preflight.omitted_files:
         return 0
     return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS
+
+
+def _group_turns(job: ReviewJob) -> int:
+    return PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
 
 
 def _synthesis_max_turns(merged_content: str) -> int:
@@ -218,10 +228,10 @@ def _review_group(
     i: int, grp: Group, job: ReviewJob,
     group_count: int, holistic_content: str,
     skip: bool = False,
-    pipeline_state: "PipelineState | None" = None,
-    max_turns: int = PHASES[Phase.GROUP].max_turns,
+    pipeline_state: PipelineState | None = None,
+    max_turns: int | None = None,
     retry_hint: str = "",
-) -> tuple[int, str, "GroupFailure | None"]:
+) -> tuple[int, str, GroupFailure | None]:
     group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
     group_log = _derive_path(job.review_file, FILENAME_GROUP_LOG.format(i))
 
@@ -233,6 +243,12 @@ def _review_group(
         return (i, group_output, GroupFailure(
             grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
         ))
+
+    # Resolved here, not in the signature: a default argument is evaluated once
+    # at import, which both freezes the registry value and hides the fact that
+    # the budget depends on the job's omitted files.
+    if max_turns is None:
+        max_turns = _group_turns(job)
 
     _touch(group_output)
 
@@ -249,9 +265,9 @@ def _review_group(
         group_output=group_output, holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
-    runner = PhaseRunner(job, Phase.GROUP)
+    runner = PhaseRunner(job, Phase.GROUP, group_log)
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    runner.invoke(group_prompt, group_log, max_turns=max_turns, label=grp.name)
+    runner.invoke(group_prompt, max_turns, label=grp.name)
 
     failed = None
     if not _has_output(group_output):
@@ -281,18 +297,15 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
     )
-    runner = PhaseRunner(job, Phase.HOLISTIC)
+    runner = PhaseRunner(job, Phase.HOLISTIC, holistic_log)
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
 
-    def invoke(text: str, turns: int) -> int:
-        return runner.invoke(text, holistic_log, max_turns=turns)
-
-    invoke(prompt, max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     diagnosis = _retry_missing_output(
-        invoke, prompt, holistic_log, holistic_output,
+        runner.invoke, prompt, holistic_log, holistic_output,
         label="Holistic scan", max_turns=max_turns,
     )
 
@@ -318,18 +331,15 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     prompt = build_prompt(
         TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
     )
-    runner = PhaseRunner(job, Phase.SCOUT)
+    runner = PhaseRunner(job, Phase.SCOUT, scout_log)
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
 
-    def invoke(text: str, turns: int) -> int:
-        return runner.invoke(text, scout_log, max_turns=turns)
-
-    invoke(prompt, max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     diagnosis = _retry_missing_output(
-        invoke, prompt, scout_log, scout_output,
+        runner.invoke, prompt, scout_log, scout_output,
         label="Scout", max_turns=max_turns,
     )
 
@@ -361,18 +371,15 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         TEMPLATE_DISPROVE, job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
-    runner = PhaseRunner(job, Phase.DISPROVE)
+    runner = PhaseRunner(job, Phase.DISPROVE, disprove_log)
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
     log.blank()
 
-    def invoke(text: str, turns: int) -> int:
-        return runner.invoke(text, disprove_log, max_turns=turns)
-
-    invoke(prompt, max_turns)
+    runner.invoke(prompt, max_turns)
     log.blank()
 
     diagnosis = _retry_missing_output(
-        invoke, prompt, disprove_log, disprove_output,
+        runner.invoke, prompt, disprove_log, disprove_output,
         label="Disprove gate", max_turns=max_turns,
     )
 
@@ -418,19 +425,17 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
 def _run_serial_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
-    skip_groups: "set[int] | None",
-    pipeline_state: "PipelineState | None",
-) -> "list[GroupFailure]":
+    skip_groups: set[int] | None,
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     failed_groups: list[GroupFailure] = []
     consecutive_same_reason = 0
     last: Diagnosis | None = None
-    group_turns = PHASES[Phase.GROUP].max_turns + _omitted_turns(job)
     for i, grp in enumerate(groups, 1):
         skip = skip_groups is not None and i in skip_groups
         _, _, failed = _review_group(
             i, grp, job, group_count, holistic_content,
             skip=skip, pipeline_state=pipeline_state,
-            max_turns=group_turns,
         )
         if not failed:
             consecutive_same_reason = 0
@@ -455,9 +460,9 @@ def _run_serial_reviews(
 def _run_parallel_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, workers: int,
-    skip_groups: "set[int] | None",
-    pipeline_state: "PipelineState | None",
-) -> "list[GroupFailure]":
+    skip_groups: set[int] | None,
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
     log.blank()
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -474,19 +479,18 @@ def _run_parallel_reviews(
     return [failure for _, _, failure in results if failure]
 
 
-def _retry_turns(diagnosis: Diagnosis, job: "ReviewJob") -> int:
-    extra = _omitted_turns(job)
+def _retry_turns(diagnosis: Diagnosis, job: ReviewJob) -> int:
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
-        return RETRY_MAX_TURNS_GROUP + extra
-    return PHASES[Phase.GROUP].max_turns + extra
+        return RETRY_MAX_TURNS_GROUP + _omitted_turns(job)
+    return _group_turns(job)
 
 
 def _retry_failed_groups(
-    failed_groups: "list[GroupFailure]",
+    failed_groups: list[GroupFailure],
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
-    pipeline_state: "PipelineState | None",
-) -> "list[GroupFailure]":
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     retryable = [f for f in failed_groups if _is_retryable(f.diagnosis)]
     skipped = [f for f in failed_groups if _was_skipped(f)]
     non_retryable = [
@@ -538,13 +542,13 @@ def _retry_failed_groups(
 
 
 def _run_skipped_groups(
-    skipped: "list[GroupFailure]",
-    group_by_name: dict,
+    skipped: list[GroupFailure],
+    group_by_name: dict[str, tuple[int, Group]],
     job: ReviewJob,
     group_count: int,
     holistic_content: str,
-    pipeline_state: dict,
-) -> "list[GroupFailure]":
+    pipeline_state: PipelineState | None,
+) -> list[GroupFailure]:
     log.info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
     failures: list[GroupFailure] = []
     for failed in skipped:
@@ -557,7 +561,6 @@ def _run_skipped_groups(
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
-            max_turns=PHASES[Phase.GROUP].max_turns + _omitted_turns(job),
         )
         if failure:
             failures.append(failure)
@@ -567,9 +570,9 @@ def _run_skipped_groups(
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
-    skip_groups: "set[int] | None" = None,
-    pipeline_state: "PipelineState | None" = None,
-) -> "tuple[list[str], list[GroupFailure]]":
+    skip_groups: set[int] | None = None,
+    pipeline_state: PipelineState | None = None,
+) -> tuple[list[str], list[GroupFailure]]:
     group_outputs = [_derive_path(job.review_file, FILENAME_GROUP.format(i)) for i in range(1, group_count + 1)]
 
     workers = min(max_parallel, group_count)
@@ -590,7 +593,7 @@ def _phase_group_reviews(
     return group_outputs, failed_groups
 
 
-def _phase_merge(group_outputs: list[str], failed_groups: "list[GroupFailure]") -> str:
+def _phase_merge(group_outputs: list[str], failed_groups: list[GroupFailure]) -> str:
     log.info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 

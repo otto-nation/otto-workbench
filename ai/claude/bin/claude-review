@@ -33,7 +33,7 @@ from review_common import (
     FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
     SEVERITIES,
-    ReviewMeta, aggregate_session_usage, build_failure_detail,
+    Mode, ReviewMeta, ReviewType, aggregate_session_usage, build_failure_detail,
     count_severity, detect_repo, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
@@ -273,7 +273,9 @@ def _print_summary(
     log.blank()
 
 
-def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str, review_type: str = "") -> None:
+def _update_pr_state(
+    repo: str, pr_number: str, review_file: str, repo_dir: str, mode: Mode,
+) -> None:
     if not repo_dir or not review_file or not os.path.isfile(review_file):
         return
 
@@ -287,9 +289,9 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
             finding_counts[key] = c
 
     meta = read_review_meta(review_dir)
-    effective_type = meta.review_type or review_type
-
-    if effective_type == "self":
+    # Mode, not review type. A self-review has no PR to approve or block; how
+    # much of the branch it covered is a separate question, and both are recorded.
+    if mode is Mode.SELF:
         verdict = ""
     else:
         parsed_verdict = parse_review_verdict(review_path)
@@ -305,7 +307,7 @@ def _update_pr_state(repo: str, pr_number: str, review_file: str, repo_dir: str,
 
     summary = pr_state.ReviewSummary(
         review_file=review_file,
-        review_type=effective_type,
+        review_type=meta.review_type or ReviewType.FULL,
         head_sha=meta.head_sha,
         finding_counts=finding_counts,
         verdict=verdict,
@@ -1079,7 +1081,7 @@ def _run_self_review_body(
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
     _print_summary(str(review_file), session_log, pr_url, "", branch_name, wall_clock_ms=wall_ms)
 
-    _update_pr_state(repo, pr_number, str(review_file), wt_path, "self")
+    _update_pr_state(repo, pr_number, str(review_file), wt_path, Mode.SELF)
 
     json_stdout = getattr(args, "_json_stdout", None)
     if json_stdout is not None:
@@ -1311,7 +1313,7 @@ def main() -> None:
     pr_num = str(ctx.pr_number)
     review_file = review_file_path(ctx.repo, pr_num)
     _run_review(parsed)
-    _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", "pr")
+    _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", Mode.PR)
     if _json_stdout_fd is not None:
         summary = json_summary(ctx.repo, pr_num, str(review_file))
         os.write(_json_stdout_fd, (summary + "\n").encode())

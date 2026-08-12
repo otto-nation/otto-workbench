@@ -169,8 +169,8 @@ job = mod.ReviewJob(
     session_log="/tmp/log.jsonl",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
-cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
-print(cost, skip_groups, skip_hol, state)
+plan = mod._resolve_recovery(job, groups)
+print(plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state)
 PYEOF
 )
   [ "$result" = "0.0 None False None" ]
@@ -190,8 +190,8 @@ job = mod.ReviewJob(
     session_log="/tmp/log.jsonl",
 )
 groups = [mod.Group("g1", ["a.go"], 10), mod.Group("g2", ["b.go"], 20)]
-cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
-print(skip_groups, skip_hol, state is not None)
+plan = mod._resolve_recovery(job, groups)
+print(plan.skip_groups, plan.skip_holistic, plan.state is not None)
 PYEOF
 )
   # _info prints a status line to stdout; check last line for the actual result
@@ -213,8 +213,8 @@ job = mod.ReviewJob(
     session_log="/tmp/log.jsonl",
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
-cost, skip_groups, skip_hol, state = mod._resolve_recovery(job, groups)
-print(state)
+plan = mod._resolve_recovery(job, groups)
+print(plan.state)
 PYEOF
 )
   last_line=$(echo "$result" | tail -1)
@@ -256,7 +256,10 @@ job = mod.ReviewJob(
     session_log=f"{d}/session.jsonl",
 )
 
-cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+plan = mod._resolve_recovery(job, groups)
+cost, skip_groups, skip_holistic, state = (
+    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
+)
 assert skip_groups == {1, 3}, f"expected skip {{1, 3}}, got {skip_groups}"
 assert skip_holistic is True
 assert state is not None
@@ -293,7 +296,10 @@ job = mod.ReviewJob(
     session_log=f"{d}/session.jsonl",
 )
 
-cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+plan = mod._resolve_recovery(job, groups)
+cost, skip_groups, skip_holistic, state = (
+    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
+)
 assert state is None, "state should be None when review is complete with no failures"
 PY
 }
@@ -330,7 +336,10 @@ job = mod.ReviewJob(
     session_log=f"{d}/session.jsonl",
 )
 
-cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+plan = mod._resolve_recovery(job, groups)
+cost, skip_groups, skip_holistic, state = (
+    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
+)
 assert skip_groups == {1, 2}, f"expected skip {{1, 2}}, got {skip_groups}"
 assert skip_holistic is True
 assert state is not None
@@ -370,7 +379,10 @@ job = mod.ReviewJob(
     session_log=f"{d}/session.jsonl",
 )
 
-cost, skip_groups, skip_holistic, state = mod._resolve_recovery(job, groups)
+plan = mod._resolve_recovery(job, groups)
+cost, skip_groups, skip_holistic, state = (
+    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
+)
 assert skip_groups == {1}, f"expected skip {{1}}, got {skip_groups}"
 assert skip_holistic is True
 assert state is not None
@@ -771,7 +783,9 @@ state = mod.PipelineState(
         mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
     )},
     synthesis_done=False,
-    synthesis_failed="agent exited with code 1 (no output)",
+    synthesis_failed=mod.Diagnosis(
+        mod.DiagnosisKind.UNKNOWN, detail="agent exited with code 1 (no output)",
+    ),
 )
 
 d = tempfile.mkdtemp()
@@ -791,7 +805,9 @@ assert loaded.groups_failed == {2: mod.Diagnosis(
     mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
 )}, f"got {loaded.groups_failed}"
 assert loaded.synthesis_done is False
-assert loaded.synthesis_failed == "agent exited with code 1 (no output)"
+assert loaded.synthesis_failed == mod.Diagnosis(
+    mod.DiagnosisKind.UNKNOWN, detail="agent exited with code 1 (no output)",
+), f"got {loaded.synthesis_failed}"
 PY
 }
 
@@ -823,7 +839,7 @@ job = mod.ReviewJob(
 loaded = mod._read_pipeline_state(job)
 assert loaded.groups_failed == {}, f"got {loaded.groups_failed}"
 assert loaded.synthesis_done is False, f"got {loaded.synthesis_done}"
-assert loaded.synthesis_failed == "", f"got {loaded.synthesis_failed}"
+assert loaded.synthesis_failed is None, f"got {loaded.synthesis_failed}"
 PY
 }
 

@@ -680,6 +680,84 @@ def test_the_two_readers_agree_on_the_all_failed_sentinel(cr, tmp_path):
     assert build_failure_detail(tmp_path).startswith("all groups failed:")
 
 
+def _self_review_dir(tmp_path, review_type: str) -> Path:
+    """A self-review with one must-fix finding and no verdict of its own."""
+    review_dir = tmp_path / "reviews" / "test-repo-self"
+    review_dir.mkdir(parents=True)
+    (review_dir / "review.md").write_text(
+        "# Review\n<!-- head_sha: abc -->\n"
+        "## Must Fix\n- **[M1]** `a.py:1` — broken\n"
+    )
+    (review_dir / "meta.json").write_text(json.dumps({
+        "repo": "owner/test-repo", "head_sha": "abc",
+        "review_type": review_type, "mode": "self",
+    }))
+    return review_dir
+
+
+def test_a_self_review_states_no_verdict(cr, tmp_path):
+    """Mode decides whether there is a verdict to give, not review type.
+
+    A self-review is advisory — nothing to approve or block. The sidecar has
+    always carried both fields, but the check read `review_type == "self"`,
+    which the writer never produces: it writes full or incremental there and
+    puts self under `mode`. So the branch never fired and a self-review with a
+    must-fix finding claimed `changes_requested` against a PR it has no say in.
+    """
+    from review_common import build_review_summary
+    review_dir = _self_review_dir(tmp_path, "full")
+
+    result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
+
+    assert result["findings"]["must_fix"] == 1
+    assert result["verdict"] == ""
+    assert result["review_type"] == "full"
+
+
+def test_an_incremental_self_review_states_no_verdict(cr, tmp_path):
+    """The two fields are orthogonal — being incremental does not restore a verdict."""
+    from review_common import build_review_summary
+    review_dir = _self_review_dir(tmp_path, "incremental")
+
+    result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
+
+    assert result["verdict"] == ""
+    assert result["review_type"] == "incremental"
+
+
+def test_a_pr_review_still_requests_changes(cr, tmp_path):
+    """The same finding under `mode: pr` keeps the verdict it always had."""
+    from review_common import build_review_summary
+    review_dir = _self_review_dir(tmp_path, "full")
+    (review_dir / "meta.json").write_text(json.dumps({
+        "repo": "owner/test-repo", "head_sha": "abc",
+        "review_type": "full", "mode": "pr",
+    }))
+
+    result = build_review_summary("owner/test-repo", "1", str(review_dir / "review.md"))
+
+    assert result["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
+
+
+def test_an_unknown_meta_vocabulary_reads_as_absent(cr, tmp_path):
+    """meta.json outlives the code that wrote it.
+
+    A member this version does not know reads as unset rather than raising, so
+    one unrecognised field does not cost the whole summary.
+    """
+    from review_common import build_review_summary
+    review_dir = _self_review_dir(tmp_path, "full")
+    (review_dir / "meta.json").write_text(json.dumps({
+        "repo": "owner/test-repo", "head_sha": "abc",
+        "review_type": "sampled", "mode": "audit",
+    }))
+
+    result = build_review_summary("owner/test-repo", "1", str(review_dir / "review.md"))
+
+    assert result["review_type"] is None
+    assert result["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
+
+
 def test_json_summary_includes_failure_detail(cr, tmp_path):
     review_dir = tmp_path / "reviews" / "test-repo-1"
     review_dir.mkdir(parents=True)

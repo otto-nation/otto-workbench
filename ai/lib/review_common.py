@@ -534,6 +534,8 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
     the job's.
     """
     name = phase.log_filename
+    if index is not None and "{}" not in name:
+        raise ValueError(f"{phase} writes one log — pass index=None")
     if not name:
         return ""
     if "{}" in name and index is None:

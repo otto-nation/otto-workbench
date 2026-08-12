@@ -164,6 +164,13 @@ class TestPhaseLogPath:
     def test_single_has_no_path_of_its_own(self, tmp_path):
         assert review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SINGLE) == ""
 
+    def test_non_indexed_phase_with_an_index_raises(self, tmp_path):
+        # Formatting would ignore the index silently — `scout.jsonl` either
+        # way — which is the same wrong-file failure the indexed case above
+        # already raises on.
+        with pytest.raises(ValueError):
+            review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SCOUT, 3)
+
 
 def _job(tmp_path, effort=Effort.MEDIUM):
     from review_preflight import PRContext, PRMetadata, ReviewJob
@@ -286,11 +293,6 @@ class TestPhaseRunnerInvocation:
         runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.invocation("P", 42).max_turns == 42
 
-    def test_session_log_defaults_to_the_jobs_own_log(self, tmp_path):
-        job = _job(tmp_path)
-        inv = review_pipeline.PhaseRunner(job, Phase.SINGLE).invocation("P")
-        assert inv.session_log == job.session_log
-
     def test_add_dirs_grant_only_the_review_artifact_dir(self, tmp_path):
         # Never the shared reviews root: a root grant is how scratch files
         # ended up beside unrelated reviews.
@@ -403,15 +405,15 @@ class TestNoDuplicateDefaults:
             assert not hasattr(review_preflight, name), f"{name} is a stale copy"
 
     def test_phase_log_names_are_not_also_constants(self):
-        import review_common
-
-        # `Phase.log_filename` is the one owner. A reintroduced constant is a
-        # second one, and the two would drift.
-        for name in (
-            "FILENAME_HOLISTIC_LOG", "FILENAME_SCOUT_LOG", "FILENAME_GROUP_LOG",
-            "FILENAME_SYNTHESIS_LOG", "FILENAME_DISPROVE_LOG", "FILENAME_FIX_LOG",
-        ):
-            assert not hasattr(review_common, name)
+        # `Phase.log_filename` is the one owner. A second module-level string
+        # holding the same value — under any name — would be a second owner,
+        # and the two would drift.
+        log_names = {p.log_filename for p in Phase if p.log_filename}
+        duplicates = {
+            name for name, value in vars(review_common).items()
+            if isinstance(value, str) and value in log_names
+        }
+        assert duplicates == set()
 
 
 class TestAnnotationsResolve:

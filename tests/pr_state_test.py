@@ -129,6 +129,12 @@ def test_state_to_dict_and_back_empty():
     assert restored.triage.total == 0
 
 
+def test_state_from_dict_requires_identity():
+    """identity has no default: a payload without it is not a PRState."""
+    with pytest.raises(TypeError, match="identity"):
+        state_from_dict({"created_at": "t"})
+
+
 def test_state_roundtrip_with_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
     update_ci_domain(state, CIDomain(

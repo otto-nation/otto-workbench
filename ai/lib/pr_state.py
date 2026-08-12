@@ -311,66 +311,14 @@ class PRState:
 # ── Serialization ───────────────────────────────────────────────────────────
 
 
-def _identity_to_dict(ident: PRIdentity) -> dict:
-    return _serde_to_dict(ident)
-
-
-def _identity_from_dict(d: dict) -> PRIdentity:
-    return _serde_from_dict(PRIdentity, d)
-
-
-def _ci_from_dict(d: dict) -> CIDomain:
-    return _serde_from_dict(CIDomain, d)
-
-
-def _review_from_dict(d: dict) -> ReviewSummary:
-    return _serde_from_dict(ReviewSummary, d)
-
-
-def _comments_from_dict(d: dict) -> CommentsSummary:
-    return _serde_from_dict(CommentsSummary, d)
-
-
-def _triage_from_dict(d: dict) -> TriageSummary:
-    return _serde_from_dict(TriageSummary, d)
-
-
-def _rebase_from_dict(d: dict) -> RebaseSummary:
-    return _serde_from_dict(RebaseSummary, d)
-
-
-def _describe_from_dict(d: dict) -> DescribeSummary:
-    return _serde_from_dict(DescribeSummary, d)
-
-
-def _fix_from_dict(d: dict) -> FixSummary:
-    return _serde_from_dict(FixSummary, d)
-
-
 def state_to_dict(state: PRState) -> dict:
     d = _serde_to_dict(state)
     d["_version"] = STATE_VERSION
-    # identity is a required positional arg — serialize separately
-    d["identity"] = _identity_to_dict(state.identity)
     return d
 
 
 def state_from_dict(d: dict) -> PRState:
-    pending_raw = d.get("pending_comments", [])
-    pending = [_serde_from_dict(PendingComment, p) for p in pending_raw]
-    return PRState(
-        identity=_identity_from_dict(d["identity"]),
-        ci=_ci_from_dict(d.get("ci", {})),
-        review=_serde_from_dict(ReviewSummary, d.get("review", {})),
-        comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
-        triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
-        rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
-        describe=_serde_from_dict(DescribeSummary, d.get("describe", {})),
-        fix=_fix_from_dict(d.get("fix", {})),
-        pending_comments=pending,
-        created_at=d.get("created_at", ""),
-        updated_at=d.get("updated_at", ""),
-    )
+    return _serde_from_dict(PRState, d)
 
 
 # ── I/O ─────────────────────────────────────────────────────────────────────
@@ -591,14 +539,14 @@ def load_or_init(
     )
 
 
-_DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
-    "ci": (_ci_from_dict, update_ci_domain),
-    "review": (_review_from_dict, update_review),
-    "comments": (_comments_from_dict, update_comments),
-    "triage": (_triage_from_dict, update_triage),
-    "rebase": (_rebase_from_dict, update_rebase),
-    "describe": (_describe_from_dict, update_describe),
-    "fix": (_fix_from_dict, update_fix),
+_DOMAIN_UPDATERS: dict[str, tuple[type, Callable]] = {
+    "ci": (CIDomain, update_ci_domain),
+    "review": (ReviewSummary, update_review),
+    "comments": (CommentsSummary, update_comments),
+    "triage": (TriageSummary, update_triage),
+    "rebase": (RebaseSummary, update_rebase),
+    "describe": (DescribeSummary, update_describe),
+    "fix": (FixSummary, update_fix),
 }
 
 
@@ -613,9 +561,9 @@ def apply_state_update(
     data: dict,
 ) -> None:
     """Load-or-init state, apply a domain update from a dict, and save."""
-    if domain not in _DOMAIN_DESERIALIZERS:
+    if domain not in _DOMAIN_UPDATERS:
         raise ValueError(f"Unknown state domain: {domain!r}")
-    domain_from_dict, updater = _DOMAIN_DESERIALIZERS[domain]
+    domain_cls, updater = _DOMAIN_UPDATERS[domain]
     state = load_or_init(
         worktree_root=worktree_root,
         repo=repo,
@@ -623,5 +571,5 @@ def apply_state_update(
         pr_number=pr_number,
         head_sha=head_sha,
     )
-    updater(state, domain_from_dict(data))
+    updater(state, _serde_from_dict(domain_cls, data))
     save_state(worktree_root, state)

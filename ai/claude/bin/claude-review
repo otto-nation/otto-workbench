@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import log
 import pr_context
 import pr_state
+import worktree_lock
 from trail import Trail, add_trail_args
 from serde import to_dict as _serde_to_dict
 try:
@@ -1312,6 +1313,15 @@ def main() -> None:
     ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
     pr_num = str(ctx.pr_number)
     review_file = review_file_path(ctx.repo, pr_num)
+    # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
+    # claim_for_process handles None itself; the explicit test is what the
+    # worktree-guard check requires of a direct ctx.worktree_root reference.
+    if ctx.worktree_root:
+        worktree_lock.claim_for_process(
+            ctx.worktree_root,
+            command=" ".join(["claude-review"] + sys.argv[1:]),
+            started=pr_state.now_iso(),
+        )
     _run_review(parsed)
     _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", Mode.PR)
     if _json_stdout_fd is not None:

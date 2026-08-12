@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import types
@@ -27,8 +28,19 @@ _spec.loader.exec_module(pr_cli)
 sys.modules.setdefault("pr_cli", pr_cli)
 
 import pr_state  # noqa: E402
+import worktree_lock  # noqa: E402
 
 from conftest import assert_no_worktree_exit  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _clear_lock_env():
+    """Never inherit a real run's lock marker, or leak one into another test."""
+    saved = os.environ.pop(worktree_lock.LOCK_ENV, None)
+    yield
+    os.environ.pop(worktree_lock.LOCK_ENV, None)
+    if saved is not None:
+        os.environ[worktree_lock.LOCK_ENV] = saved
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -963,3 +975,100 @@ def test_review_state_cache_is_skipped_without_a_worktree():
     with patch("pr_cli.pr_state.save_state") as save:
         pr_cli._update_review_state({"findings": {"M": 1}}, ctx)
     save.assert_not_called()
+
+
+# ── worktree lock wiring ────────────────────────────────────────────────────
+
+
+def _lock_file(worktree_root):
+    return Path(worktree_root) / pr_state.STATE_DIR / worktree_lock.LOCK_FILE
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_locks_the_worktree_for_a_mutating_command(mock_resolve, mock_run, tmp_path):
+    mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)
+    mock_run.return_value = MagicMock(returncode=0)
+    seen = {}
+    mock_run.side_effect = lambda *a, **k: (
+        seen.update(env=os.environ.get(worktree_lock.LOCK_ENV)),
+        MagicMock(returncode=0),
+    )[1]
+    _run_main("--repo-dir", str(tmp_path), "comments")
+    assert _lock_file(tmp_path).is_file()
+    # The delegate has to inherit the marker, or it would deadlock on us.
+    assert seen["env"] == str(tmp_path.resolve())
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_does_not_lock_for_status(mock_resolve, mock_run, tmp_path):
+    """status is read-only, so it must never block on a run in flight."""
+    mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("--repo-dir", str(tmp_path), "status")
+    assert not _lock_file(tmp_path).exists()
+
+
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.pr_context.resolve")
+def test_main_locks_for_gc(mock_resolve, _gc, _prune, tmp_path):
+    """gc deletes the state directory, so it is not safe to run unlocked."""
+    mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)
+    _run_main("--repo-dir", str(tmp_path), "gc")
+    assert _lock_file(tmp_path).is_file()
+
+
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_gc_run_does_not_destroy_the_lock_it_is_holding(
+        mock_resolve, mock_run, _gc, _prune, tmp_path):
+    """The full dispatch path: gc takes the lock, then clears the very
+    directory the lock file lives in. The lock has to outlive the sweep."""
+    mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)
+    mock_run.return_value = MagicMock(returncode=0, stdout="MERGED\n")
+    state_dir = tmp_path / pr_state.STATE_DIR
+    state_dir.mkdir()
+    (state_dir / pr_state.STATE_FILE).write_text("{}")
+    state = MagicMock()
+    state.identity.pr_number = 42
+    state.identity.repo = "owner/repo"
+
+    with patch("pr_cli.pr_state.load_state", return_value=state):
+        _run_main("--repo-dir", str(tmp_path), "gc")
+
+    assert not (state_dir / pr_state.STATE_FILE).exists()
+    assert _lock_file(tmp_path).is_file()
+
+
+@patch("pr_cli.pr_context.resolve")
+def test_main_reports_contention_and_exits_1(mock_resolve, tmp_path, capsys):
+    mock_resolve.return_value = _make_ctx(worktree_root=tmp_path)
+    busy = worktree_lock.LockBusy(
+        {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, tmp_path)
+    with patch("pr_cli.worktree_lock.acquire", side_effect=busy):
+        code = _run_main("--repo-dir", str(tmp_path), "comments")
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "pr review --self --fix" in err
+    assert "15461" in err
+
+
+def test_gc_clears_state_without_deleting_the_live_lock(tmp_path):
+    """Regression: rmtree of the state dir took run.lock with it, handing the
+    next run an uncontended lock on a fresh inode while gc was still going."""
+    state_dir = tmp_path / pr_state.STATE_DIR
+    state_dir.mkdir()
+    (state_dir / pr_state.STATE_FILE).write_text("{}")
+    (state_dir / worktree_lock.LOCK_FILE).write_text('{"pid": 1}')
+    (state_dir / "trails").mkdir()
+    (state_dir / "trails" / "a.jsonl").write_text("{}")
+
+    pr_cli._clear_state_dir(state_dir)
+
+    assert (state_dir / worktree_lock.LOCK_FILE).is_file()
+    assert not (state_dir / pr_state.STATE_FILE).exists()
+    assert not (state_dir / "trails").exists()

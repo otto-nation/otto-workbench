@@ -15,19 +15,19 @@ from review_common import AgentKind, Effort, Phase, Thinking
 
 class TestPhasesRegistry:
     def test_covers_every_phase(self):
-        assert set(review_pipeline.PHASES) == set(Phase)
+        assert set(review_phases.PHASES) == set(Phase)
 
     def test_key_matches_spec_phase(self):
-        for phase, spec in review_pipeline.PHASES.items():
+        for phase, spec in review_phases.PHASES.items():
             assert spec.phase is phase
 
     def test_spec_is_frozen(self):
-        spec = review_pipeline.PHASES[Phase.GROUP]
+        spec = review_phases.PHASES[Phase.GROUP]
         with pytest.raises(dataclasses.FrozenInstanceError):
             spec.max_turns = 99
 
     def test_every_phase_defaults_to_sonnet(self):
-        assert {s.model for s in review_pipeline.PHASES.values()} == {"sonnet"}
+        assert {s.model for s in review_phases.PHASES.values()} == {"sonnet"}
 
 
 class TestPhaseThinkingDefaults:
@@ -41,7 +41,7 @@ class TestPhaseThinkingDefaults:
             Phase.DISPROVE: Thinking.MEDIUM,
             Phase.FIX: Thinking.LOW,
         }
-        actual = {p: s.thinking for p, s in review_pipeline.PHASES.items()}
+        actual = {p: s.thinking for p, s in review_phases.PHASES.items()}
         assert actual == expected
 
 
@@ -56,7 +56,7 @@ class TestPhaseMaxTurnsDefaults:
             Phase.DISPROVE: 15,
             Phase.FIX: 20,
         }
-        actual = {p: s.max_turns for p, s in review_pipeline.PHASES.items()}
+        actual = {p: s.max_turns for p, s in review_phases.PHASES.items()}
         assert actual == expected
 
 
@@ -69,22 +69,22 @@ class TestPhaseAgentPins:
     """
 
     def test_pinned_phases(self):
-        pinned = {p for p, s in review_pipeline.PHASES.items() if s.agent is not None}
+        pinned = {p for p, s in review_phases.PHASES.items() if s.agent is not None}
         assert pinned == {Phase.GROUP, Phase.SCOUT, Phase.DISPROVE}
 
     def test_pinned_phases_use_reviewer_lite(self):
         for phase in (Phase.GROUP, Phase.SCOUT, Phase.DISPROVE):
-            assert review_pipeline.PHASES[phase].agent is AgentKind.REVIEWER_LITE
+            assert review_phases.PHASES[phase].agent is AgentKind.REVIEWER_LITE
 
     def test_effort_derived_phases(self):
         derived = {
-            p for p, s in review_pipeline.PHASES.items()
+            p for p, s in review_phases.PHASES.items()
             if s.agent is None and not s.edits
         }
         assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
 
     def test_only_the_fix_phase_edits(self):
-        editing = {p for p, s in review_pipeline.PHASES.items() if s.edits}
+        editing = {p for p, s in review_phases.PHASES.items() if s.edits}
         assert editing == {Phase.FIX}
 
 
@@ -98,7 +98,7 @@ class TestOmittedTurnBumpRegistry:
 
     def test_source_reading_phases_scale(self):
         scaling = {
-            p for p, s in review_pipeline.PHASES.items() if s.scales_with_omitted
+            p for p, s in review_phases.PHASES.items() if s.scales_with_omitted
         }
         assert scaling == {Phase.SINGLE, Phase.HOLISTIC, Phase.SCOUT, Phase.GROUP}
 
@@ -172,7 +172,7 @@ class TestPhaseRunnerResolution:
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
         runner = review_pipeline.PhaseRunner(job, Phase.SCOUT)
         expected = (
-            review_pipeline.PHASES[Phase.SCOUT].max_turns
+            review_phases.PHASES[Phase.SCOUT].max_turns
             + 2 * review_phases.OMITTED_FILE_TURNS
         )
         assert runner.max_turns == expected
@@ -180,7 +180,7 @@ class TestPhaseRunnerResolution:
     def test_max_turns_skips_the_bump_when_the_phase_opts_out(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
         runner = review_pipeline.PhaseRunner(job, Phase.DISPROVE)
-        assert runner.max_turns == review_pipeline.PHASES[Phase.DISPROVE].max_turns
+        assert runner.max_turns == review_phases.PHASES[Phase.DISPROVE].max_turns
 
     def test_provider_reads_env(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_REVIEW_PROVIDER", "vertex")
@@ -406,25 +406,25 @@ class TestPhaseTurnBudgets:
     def test_every_phase_matches_its_spec(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
         bump = 2 * review_phases.OMITTED_FILE_TURNS
-        for phase, spec in review_pipeline.PHASES.items():
+        for phase, spec in review_phases.PHASES.items():
             expected = spec.max_turns + (bump if spec.scales_with_omitted else 0)
             assert review_phases.phase_turns(phase, job) == expected, phase
 
     def test_the_runner_reports_what_phase_turns_resolves(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py"])
-        for phase in review_pipeline.PHASES:
+        for phase in review_phases.PHASES:
             runner = review_pipeline.PhaseRunner(job, phase)
             assert runner.max_turns == review_phases.phase_turns(phase, job), phase
 
     def test_nothing_bumps_with_no_omitted_files(self, tmp_path):
         job = _omitted_job(tmp_path)
-        for phase, spec in review_pipeline.PHASES.items():
+        for phase, spec in review_phases.PHASES.items():
             assert review_phases.phase_turns(phase, job) == spec.max_turns, phase
 
     def test_an_opted_out_effort_bumps_nothing(self, tmp_path):
         """`--effort low` skips omitted files entirely, so no phase pays for them."""
         job = _omitted_job(tmp_path, omitted=["big.py"], effort=Effort.LOW)
-        for phase, spec in review_pipeline.PHASES.items():
+        for phase, spec in review_phases.PHASES.items():
             assert review_phases.phase_turns(phase, job) == spec.max_turns, phase
 
 
@@ -462,7 +462,7 @@ class TestExecutorsUseTheResolvedBudget:
         inv = self._first_invocation(
             monkeypatch, lambda: review_phases._phase_disprove(job),
         )
-        assert inv.max_turns == review_pipeline.PHASES[Phase.DISPROVE].max_turns
+        assert inv.max_turns == review_phases.PHASES[Phase.DISPROVE].max_turns
 
 
 class TestGroupTurnBudget:

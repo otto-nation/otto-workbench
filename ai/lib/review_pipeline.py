@@ -59,7 +59,7 @@ from review_prompt import (
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import _parse_session_cost
 from review_phases import (
-    PHASES, PhaseRunner,
+    PhaseRunner,
     _phase_disprove, _phase_group_reviews, _phase_holistic,
     _phase_merge, _phase_scout, _should_disprove, _synthesis_max_turns, _touch,
 )

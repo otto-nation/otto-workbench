@@ -226,7 +226,7 @@ def test_state_roundtrip_with_ci_runs():
         failures={"shellcheck": group},
     )
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="def456", worktree_root="/wt")
-    state.ci.runs["999"] = run
+    state.ci.runs[999] = run
     state.ci.latest_run_id = 999
     state.ci.conclusion = "failure"
     state.ci.failure_count = 1
@@ -235,8 +235,8 @@ def test_state_roundtrip_with_ci_runs():
     restored = state_from_dict(d)
 
     assert restored.ci.latest_run_id == 999
-    assert "999" in restored.ci.runs
-    restored_run = restored.ci.runs["999"]
+    assert 999 in restored.ci.runs
+    restored_run = restored.ci.runs[999]
     assert restored_run.head_sha == "def456"
     assert "shellcheck" in restored_run.failures
     restored_group = restored_run.failures["shellcheck"]
@@ -263,12 +263,12 @@ def test_state_roundtrip_ci_with_context():
         failures={"generate-verify": group},
     )
     state = new_state("owner/repo", "feat", pr_number=2, head_sha="bbb", worktree_root="/wt")
-    state.ci.runs["200"] = run
+    state.ci.runs[200] = run
     state.ci.latest_run_id = 200
 
     d = state_to_dict(state)
     restored = state_from_dict(d)
-    restored_item = restored.ci.runs["200"].failures["generate-verify"].items[0]
+    restored_item = restored.ci.runs[200].failures["generate-verify"].items[0]
     assert restored_item.context == "Run 'mise run generate' locally and commit\n7 lines to delete"
     assert restored_item.annotation == "Process completed with exit code 1"
 
@@ -287,14 +287,14 @@ def test_state_roundtrip_ci_runs_without_headline():
         failures={"build": group},
     )
     state = new_state("owner/repo", "feat", pr_number=1, head_sha="aaa", worktree_root="/wt")
-    state.ci.runs["100"] = run
+    state.ci.runs[100] = run
     state.ci.latest_run_id = 100
 
     d = state_to_dict(state)
-    del d["ci"]["runs"]["100"]["failures"]["build"]["items"][0]["headline"]
+    del d["ci"]["runs"][100]["failures"]["build"]["items"][0]["headline"]
 
     restored = state_from_dict(d)
-    restored_item = restored.ci.runs["100"].failures["build"].items[0]
+    restored_item = restored.ci.runs[100].failures["build"].items[0]
     assert restored_item.headline is None
 
 
@@ -353,15 +353,34 @@ def test_save_preserves_ci_runs():
             status="completed", conclusion="failure",
             fetched_at="2026-06-18T14:30:00+00:00", failures={},
         )
-        state.ci.runs["200"] = run
+        state.ci.runs[200] = run
         state.ci.latest_run_id = 200
         save_state(root, state)
 
         loaded = load_state(root)
         assert loaded is not None
         assert loaded.ci.latest_run_id == 200
-        assert "200" in loaded.ci.runs
-        assert loaded.ci.runs["200"].run_number == 3
+        assert 200 in loaded.ci.runs
+        assert loaded.ci.runs[200].run_number == 3
+
+
+def test_run_keys_load_back_as_ints(tmp_path):
+    """JSON has no int keys. serde restores them, so a lookup by
+    `latest_run_id` — which is an int — finds its run without a conversion."""
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
+                      worktree_root=str(tmp_path))
+    state.ci.runs[999] = RunState(
+        run_id=999, run_number=1, head_sha="abc", status="completed",
+        conclusion="failure", fetched_at="2026-08-12T00:00:00+00:00", failures={},
+    )
+    state.ci.latest_run_id = 999
+    save_state(tmp_path, state)
+
+    raw = json.loads((tmp_path / STATE_DIR / STATE_FILE).read_text())
+    assert list(raw["ci"]["runs"]) == ["999"]
+
+    loaded = load_state(tmp_path)
+    assert loaded.ci.runs[loaded.ci.latest_run_id].run_number == 1
 
 
 def test_save_preserves_triage_data():

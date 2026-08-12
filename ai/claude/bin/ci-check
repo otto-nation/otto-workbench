@@ -525,7 +525,7 @@ def _run_ci(trail, args, ctx) -> dict:
     )
 
     # Compute progression from prior run in domain
-    prior_run = ci_domain.runs.get(str(ci_domain.latest_run_id)) if ci_domain.latest_run_id else None
+    prior_run = ci_domain.runs.get(ci_domain.latest_run_id) if ci_domain.latest_run_id else None
     prior_failures = prior_run.failures if prior_run else {}
     progression = ci.compute_progression(run_state.failures, prior_failures)
 
@@ -926,7 +926,7 @@ def _run_ci_wait(trail, args, ctx) -> dict:
         state = None
         ci_domain = pr_state.CIDomain()
 
-    prior_run = ci_domain.runs.get(str(ci_domain.latest_run_id)) if ci_domain.latest_run_id else None
+    prior_run = ci_domain.runs.get(ci_domain.latest_run_id) if ci_domain.latest_run_id else None
     prior_failures = prior_run.failures if prior_run else {}
     progression = ci.compute_progression(run_state.failures, prior_failures)
 

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from pathlib import Path
 
+from ci_failures import RunState
 import log
 from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
 
@@ -62,7 +63,9 @@ class CIDomain:
     last_run_number: int | None = None
     updated_at: str = ""
     # Detailed run tracking (formerly in CIState)
-    runs: dict = field(default_factory=dict)
+    # Keyed by run_id. JSON stringifies every key on the way out; serde
+    # restores the ints on the way back in.
+    runs: dict[int, RunState] = field(default_factory=dict)
     latest_run_id: int | None = None
 
 
@@ -342,7 +345,7 @@ def _ci_from_dict(d: dict) -> CIDomain:
     runs_raw = d.pop("runs", {})
     domain = _serde_from_dict(CIDomain, d)
     if runs_raw:
-        domain.runs = {str(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
+        domain.runs = {int(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
     return domain
 
 
@@ -379,7 +382,7 @@ def _ci_to_dict(ci: CIDomain) -> dict:
     # runs values are RunState dataclasses; serde.to_dict already handles them
     # but keys must be strings for JSON compatibility
     if ci.runs:
-        d["runs"] = {str(k): _serde_to_dict(v) for k, v in ci.runs.items()}
+        d["runs"] = {k: _serde_to_dict(v) for k, v in ci.runs.items()}
     return d
 
 

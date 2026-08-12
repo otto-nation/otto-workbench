@@ -177,8 +177,21 @@ def test_sync_ci_domain_adds_new_run():
         fetched_at="2026-06-18T14:30:00+00:00", failures={},
     )
     updated = sync_ci_domain(domain, run)
-    assert "100" in updated.runs
+    assert 100 in updated.runs
     assert updated.latest_run_id == 100
+
+
+def test_sync_ci_domain_prunes_the_oldest_runs_numerically():
+    """Run ids that differ in digit count catch a lexical sort: "10" sorts
+    before "9", so string keys would prune the newest runs instead."""
+    domain = CIDomain()
+    for run_id in range(2, 14):
+        sync_ci_domain(domain, RunState(
+            run_id=run_id, run_number=run_id, head_sha=f"sha{run_id}",
+            status="completed", conclusion="failure",
+            fetched_at="2026-06-18T00:00:00+00:00", failures={},
+        ))
+    assert sorted(domain.runs) == list(range(4, 14))
 
 
 def test_sync_ci_domain_preserves_prior_diagnosis():
@@ -193,7 +206,7 @@ def test_sync_ci_domain_preserves_prior_diagnosis():
         failures={"shellcheck": prior_group},
     )
     domain = CIDomain()
-    domain.runs["100"] = prior_run
+    domain.runs[100] = prior_run
     domain.latest_run_id = 100
 
     new_item = _make_item("a")
@@ -209,7 +222,7 @@ def test_sync_ci_domain_preserves_prior_diagnosis():
 
     updated = sync_ci_domain(domain, new_run)
     assert updated.latest_run_id == 200
-    synced_item = updated.runs["200"].failures["shellcheck"].items[0]
+    synced_item = updated.runs[200].failures["shellcheck"].items[0]
     assert synced_item.diagnosis == "root cause found"
     assert synced_item.fix_sha == "abc"
 

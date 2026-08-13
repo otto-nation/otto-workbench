@@ -557,6 +557,23 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
     assert "2973" in capsys.readouterr().err
 
 
+def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsys):
+    """A branch with no SHA is a partial result too — never stamp the caller's."""
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/x", ""))
+    monkeypatch.setattr(pr_context, "_current_branch",
+                        lambda cwd=None: pytest.fail("must not read the caller's branch"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.resolve(pr="2973")
+
+    assert excinfo.value.code == 1
+    assert "2973" in capsys.readouterr().err
+
+
 def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr_context, "_resolve_worktree",
@@ -590,6 +607,11 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
 
     assert first.target_dir != second.target_dir
     assert first.worktree_root == second.worktree_root
+    # Pins the composed value, not just its distinctness: a regression that
+    # keyed the path on _detect_repo's "owner/name" instead of the origin-derived
+    # repo name would still make the two dirs differ, while violating "repo name
+    # comes from git remote get-url origin".
+    assert first.target_dir == tmp_path / "pr" / "widget-feat-a"
 
 
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):

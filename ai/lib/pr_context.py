@@ -98,26 +98,28 @@ def resolve(
     worktree_root, cwd = _resolve_worktree(cwd, pr=pr, branch=branch)
 
     repo = _detect_repo(cwd)
-    head_sha = _head_sha(cwd) if worktree_root else ""
 
     if pr:
         pr_number = _parse_pr_input(pr)
         branch_name, pr_sha = _pr_head(repo, pr_number)
-        if not branch_name:
+        if not branch_name or not pr_sha:
             log.error(
                 f"Cannot resolve the head branch of {repo}#{pr_number} — "
-                f"pr keys a run's state and lock on its target branch"
+                f"pr keys a run's state and lock on its target branch and "
+                f"stamps state with its head SHA"
             )
             sys.exit(1)
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
-        head_sha = pr_sha or head_sha
+        head_sha = pr_sha
     elif branch:
         branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
+        head_sha = _head_sha(cwd) if worktree_root else ""
     else:
         branch_name = _current_branch(cwd)
         pr_number = _pr_from_current(cwd)
+        head_sha = _head_sha(cwd) if worktree_root else ""
 
     current = _current_branch_quiet(cwd) if worktree_root else None
 

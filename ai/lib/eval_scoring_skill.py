@@ -67,7 +67,7 @@ def match_tokens(argv: list[str]) -> set[str]:
 
 
 def check_group(label: str, group: object) -> None:
-    """Reject a token group that is not a list of strings.
+    """Reject a token group that is not a non-empty list of strings.
 
     A group written one level too shallow — `["--post"]` where `[["--post"]]`
     was meant — is not a type error to any code downstream: matching iterates
@@ -76,9 +76,17 @@ def check_group(label: str, group: object) -> None:
     argv elements. The rule can then never fire. Nothing else reports it — a
     `requires` typo at least surfaces as recall 0.0, but a `forbids` typo
     surfaces as a gate that was silently never armed.
+
+    An empty group is the same failure reached by a different typo, so it is
+    rejected here rather than merely never matched. It is not harmless in a
+    shim rule either: under `passthrough` a rule whose `match` came out empty
+    stops intercepting and hands the call to the real binary, which is how a
+    `git` stub meant to refuse a push would quietly perform one.
     """
     if not isinstance(group, list) or not all(isinstance(t, str) for t in group):
         raise ValueError(f"{label} must be a list of strings, got {group!r}")
+    if not group:
+        raise ValueError(f"{label} must not be empty: {group!r}")
 
 
 def check_groups(label: str, groups: object) -> None:
@@ -100,7 +108,9 @@ def group_matches(group: list[str], argv: list[str]) -> bool:
     `["pr", "rebase"]` sat inside the single word `pr-rebase`.
 
     An empty group is never a match: `all([])` is True, and an empty `forbids`
-    entry would then fail every run.
+    entry would then fail every run. `check_group` rejects one before it ever
+    reaches here; this guard keeps the matcher safe for callers that skipped
+    validation, which the tests do deliberately.
     """
     if not group:
         return False
@@ -182,6 +192,12 @@ def load_trace(trace_file: str) -> list[list[str]]:
 # should not read like the stubbed command reporting an ordinary failure.
 NO_MATCH_EXIT = 97
 
+# The only two policies the shim implements. A typo silently reads as "fail",
+# which is the safe direction but the wrong one: a stub meant to passthrough
+# would exit 97 on every call it has no rule for, and the case fails as a
+# scenario bug rather than as the fixture typo it is.
+POLICIES = ("fail", "passthrough")
+
 # The trace path and the rules are baked in rather than passed through the
 # environment, so nothing in the driven session can retarget the recorder.
 _SHIM = '''#!/usr/bin/env python3
@@ -213,7 +229,9 @@ for rule in RULES:
     # contained the subcommand it named: a rule matching ["push"] intercepted
     # the harness's own `git remote get-url --push origin`.
     # An empty match is never a match, mirroring group_matches: all([]) is
-    # True, and an empty list would otherwise fire on every call.
+    # True, and an empty list would otherwise fire on every call. write_shims
+    # rejects one before generating this file; the guard stays because the
+    # generated file cannot import the validator that made that true.
     if rule["match"] and all(token in TOKENS for token in rule["match"]):
         sys.stdout.write(rule.get("stdout", ""))
         sys.stderr.write(rule.get("stderr", ""))
@@ -234,11 +252,11 @@ sys.exit(NO_MATCH_EXIT)
 def _resolve_rules(name: str, rules: list[dict], case_dir: Path) -> list[dict]:
     """Inline every `stdout_file` so the shim never reads the case directory.
 
-    A rule with no `match` key is a malformed fixture, not a catch-all — a
-    default of `[]` here would silently make the rule fire on every call. A
-    `match` that is not a list of strings is the same class of fixture bug in
-    the other direction: `"push"` explodes to `['p','u','s','h']`, a rule that
-    can never fire.
+    A rule with no `match` key is a malformed fixture, not a catch-all. A
+    `match` that is empty, or that is not a list of strings, is the same class
+    of fixture bug in the other direction: `"push"` explodes to
+    `['p','u','s','h']`, a rule that can never fire. To stub a binary purely so
+    its calls are traced, give it no rules at all rather than an empty one.
     """
     resolved = []
     for rule in rules:
@@ -264,12 +282,16 @@ def write_shims(
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
     for name, spec in responses.items():
+        policy = spec.get("on_no_match", "fail")
+        if policy not in POLICIES:
+            raise ValueError(
+                f"{name}: on_no_match must be one of {POLICIES}, got {policy!r}")
         shim = bin_dir / name
         shim.write_text(_SHIM.format(
             name=name,
             trace=str(trace_file),
             rules=_resolve_rules(name, spec.get("rules", []), case_dir),
-            policy=spec.get("on_no_match", "fail"),
+            policy=policy,
             no_match_exit=NO_MATCH_EXIT,
         ))
         shim.chmod(0o755)

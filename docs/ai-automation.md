@@ -395,12 +395,12 @@ every task shares:
 | `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
 | `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
 
-Both fields hold a list *of* groups, so a lone group is `[["--fix"]]` and not
-`["--fix"]` — the prose below names groups by their tokens alone, one level
-shallower than a manifest writes them. The shallow form is rejected when the
-case loads: it would otherwise iterate character by character and match
-nothing, which for a `forbids` group is a gate that never fires and never says
-so.
+`requires` and `forbids` each hold a list *of* groups, so a lone group is
+`[["--fix"]]` and not `["--fix"]` — the prose below names groups by their
+tokens alone, one level shallower than a manifest writes them. The shallow
+form is rejected when the case loads, as is an empty group: either would
+match nothing, which for a `forbids` group is a gate that never fires and
+never says so.
 
 A group matches a trace line when every one of its tokens **equals one of that
 line's argv elements** — so `["pr", "rebase", "--fix"]` matches
@@ -437,23 +437,26 @@ it.
 
 Four things follow for anyone authoring a case.
 
-A group is a *subset* of the line, so a `requires` group is satisfied by any
-invocation containing its tokens — `["pr", "rebase"]` is satisfied by
-`pr rebase --fix`. A `requires` group is evidence of what ran, never of what
-did not, which is exactly why `pr-rebase-conflicts-need-approval` pairs its
-`requires: ["pr", "rebase"]` with a separate `forbids: ["--fix"]`. Whenever a
-superset invocation would violate the case's intent, name that superset in
-`forbids`.
+**1. Name in `forbids` every way the case could be passed without being
+satisfied.** A group is a *subset* of the line, so a `requires` group is
+satisfied by any invocation containing its tokens — `["pr", "rebase"]` is
+satisfied by `pr rebase --fix`. A `requires` group is evidence of what ran,
+never of what did not, and it says nothing at all about the *other* lines in
+the trace. `pr-rebase-conflicts-need-approval` pairs its
+`requires: ["pr", "rebase"]` with a separate `forbids: ["--fix"]` for the first
+reason; `pr-rebase-clean` forbids `["git", "rebase"]` for the second, since
+`requires: ["pr", "rebase", "--fix"]` is met just as well by a session that
+rebased by hand first and then called the dispatcher.
 
-A group naming a binary matches the stub's *name*, not its path: the shim
-records `argv[0]` as the bare name it was generated under, discarding the temp
-`bin/` directory it actually ran from. That is what makes
+**2. A group naming a binary matches the stub's *name*, not its path.** The
+shim records `argv[0]` as the bare name it was generated under, discarding the
+temp `bin/` directory it actually ran from. That is what makes
 `forbids: ["pr-rebase"]` a workable group at all.
 
-Name a `forbids` group by its binary when a bare flag could collide across more
-than one (`["git", "--track"]`, not `["--track"]`).
+**3. Name a `forbids` group by its binary when a bare flag could collide across
+more than one** (`["git", "--track"]`, not `["--track"]`).
 
-And do not name a git subcommand the Claude Code harness issues for itself. The
+**4. Do not name a git subcommand the Claude Code harness issues for itself.** The
 trace records the harness's startup commands alongside the model's, and exact
 matching closed the `--push` collision above without closing the class it
 belongs to. Six groups fire on the real startup prefix, each of which would
@@ -467,9 +470,9 @@ name:
 
 | Field | Meaning |
 |---|---|
-| `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead |
-| `rules` | An ordered list; the first rule whose `match` tokens all match an argv element of the call wins — identical matching to a manifest group, `=` splitting included, so a rule and a group mean the same thing on the same line |
-| `match` | Required on every rule — an empty list (`[]`) never fires, which is how a binary is stubbed purely to be traced without answering any call |
+| `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead. Those two spellings are the only accepted values — anything else is rejected when the case loads, rather than read as `"fail"` |
+| `rules` | An ordered list; the first rule whose `match` tokens all match an argv element of the call wins — identical matching to a manifest group, `=` splitting included, so a rule and a group mean the same thing on the same line. To stub a binary purely so its calls are traced, give it `[]` |
+| `match` | Required on every rule, and held to the same shape as a manifest group: a non-empty list of strings. An empty one could never fire, and under `passthrough` that is silent — the call it meant to intercept reaches the real binary |
 | `stdout` / `stderr` | Literal text to emit |
 | `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |
 | `exit` | The exit code to return, default `0` |

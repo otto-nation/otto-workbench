@@ -5,7 +5,7 @@
   "description": "Drives the dispatcher, never raw git and never the backing script",
   "prompt": "Rebase this branch onto main.",
   "requires": [["pr", "rebase", "--fix"]],
-  "forbids": [["git", "push"], ["pr-rebase"]],
+  "forbids": [["git", "push"], ["pr-rebase"], ["git", "rebase"]],
   "false_positives_max": 0,
   "tags": ["skill", "pr-rebase"]
 }

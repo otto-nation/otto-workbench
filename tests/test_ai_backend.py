@@ -1,5 +1,6 @@
 """Tests for ai_backend — dispatch, invocation shape, and usage ledger emission."""
 
+import importlib
 import io
 import json
 import subprocess
@@ -379,59 +380,62 @@ class TestBackendsRunInTheGivenDirectory:
         ))
         assert seen["cwd"] == str(tmp_path)
 
+
+def _recording_popen(seen):
+    """A Popen stand-in that records its kwargs and streams nothing back."""
+
+    class FakeProc:
+        returncode = 0
+        stdin = io.StringIO()
+        stdout = io.StringIO("")
+        stderr = io.StringIO("")
+
+        def wait(self):
+            return 0
+
+    def popen(cmd, **kwargs):
+        seen.update(kwargs)
+        return FakeProc()
+
+    return popen
+
+
+class TestBackendsGetTheInvocationEnv:
+    """The env must reach subprocess, not just the invocation object.
+
+    The skill eval hands its recording shims to the agent through `env["PATH"]`
+    and has no other way in. A backend that drops the field runs the driven
+    session against the real binaries: nothing is traced, and the case scores
+    zero for a reason its own trace cannot explain.
+    """
+
+    BACKENDS = ["ai_backend_claude", "ai_backend_pi"]
+
+    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
-    def test_claude_agents_get_the_invocation_env(
-        self, monkeypatch, tmp_path, entry_point,
+    def test_agents_get_the_invocation_env(
+        self, monkeypatch, tmp_path, backend, entry_point,
     ):
-        import ai_backend_claude
-
+        module = importlib.import_module(backend)
         seen = {}
-
-        class FakeProc:
-            returncode = 0
-            stdin = io.StringIO()
-            stdout = io.StringIO("")
-            stderr = io.StringIO("")
-
-            def wait(self):
-                return 0
-
-        def fake_popen(cmd, **kwargs):
-            seen.update(kwargs)
-            return FakeProc()
-
-        monkeypatch.setattr(subprocess, "Popen", fake_popen)
-        getattr(ai_backend_claude, entry_point)(ai_backend.AgentInvocation(
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(module, entry_point)(ai_backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             env={"PATH": "/stub:/usr/bin"},
         ))
         assert seen["env"] == {"PATH": "/stub:/usr/bin"}
 
+    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
-    def test_claude_agents_inherit_when_env_is_unset(
-        self, monkeypatch, tmp_path, entry_point,
+    def test_agents_inherit_when_env_is_unset(
+        self, monkeypatch, tmp_path, backend, entry_point,
     ):
         """None means inherit — the field must not turn every call into a scrub."""
-        import ai_backend_claude
-
+        module = importlib.import_module(backend)
         seen = {}
-
-        class FakeProc:
-            returncode = 0
-            stdin = io.StringIO()
-            stdout = io.StringIO("")
-            stderr = io.StringIO("")
-
-            def wait(self):
-                return 0
-
-        def fake_popen(cmd, **kwargs):
-            seen.update(kwargs)
-            return FakeProc()
-
-        monkeypatch.setattr(subprocess, "Popen", fake_popen)
-        getattr(ai_backend_claude, entry_point)(ai_backend.AgentInvocation(
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(module, entry_point)(ai_backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
         ))

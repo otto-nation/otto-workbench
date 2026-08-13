@@ -192,6 +192,11 @@ class TestGroupShapeIsValidated:
         with pytest.raises(ValueError, match=re.escape("['pr', 42]")):
             ess.check_groups("requires", [["pr", 42]])
 
+    def test_an_empty_group_is_rejected(self):
+        """`group_matches` never fires on one, so nothing else would report it."""
+        with pytest.raises(ValueError, match="must not be empty"):
+            ess.check_groups("forbids", [["git", "push"], []])
+
     def test_the_error_names_the_offending_group(self):
         with pytest.raises(ValueError, match="forbids group"):
             ess.check_groups("forbids", [["pr", "--track"], "--post"])
@@ -360,18 +365,42 @@ class TestWriteShims:
         ess.write_shims({"pr": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
         assert os.access(bin_dir / "pr", os.X_OK)
 
-    def test_an_empty_match_list_never_fires(self, tmp_path):
-        """all([]) is True; an empty match must not become a catch-all rule."""
+    def test_an_empty_match_list_is_rejected(self, tmp_path):
+        """A rule that can never fire is a fixture typo, and under passthrough
+        it is a silent one: the call it meant to intercept reaches the real
+        binary. Stub a binary for tracing alone with no rules, not an empty one.
+        """
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        with pytest.raises(ValueError, match="must not be empty"):
+            ess.write_shims(
+                {"git": {"on_no_match": "passthrough", "rules": [
+                    {"match": [], "stderr": "refusing", "exit": 1},
+                ]}},
+                bin_dir, case, tmp_path / "t.jsonl",
+            )
+
+    def test_an_unknown_on_no_match_policy_is_rejected(self, tmp_path):
+        """A typo reads as "fail", so a passthrough stub would exit 97 on every
+        call — the case then fails as a scenario bug, not as the typo it is.
+        """
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        with pytest.raises(ValueError, match="on_no_match"):
+            ess.write_shims(
+                {"git": {"on_no_match": "passthru", "rules": []}},
+                bin_dir, case, tmp_path / "t.jsonl",
+            )
+
+    @pytest.mark.parametrize("policy", ess.POLICIES)
+    def test_both_documented_policies_are_accepted(self, tmp_path, policy):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         ess.write_shims(
-            {"pr": {"rules": [
-                {"match": [], "stdout": "should never appear", "exit": 0},
-            ]}},
+            {"git": {"on_no_match": policy, "rules": []}},
             bin_dir, case, tmp_path / "t.jsonl",
         )
-        result = _run(bin_dir, "pr", "comments", "--fix")
-        assert result.returncode == ess.NO_MATCH_EXIT
+        assert (bin_dir / "git").is_file()
 
     def test_a_rule_missing_match_raises_naming_the_binary(self, tmp_path):
         """A missing `match` key is a malformed fixture, not a silent catch-all."""

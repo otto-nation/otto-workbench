@@ -13,12 +13,17 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
+from functools import cache
 from pathlib import Path
+from typing import get_type_hints
 
+# get_type_hints(CIDomain) resolves its `runs` annotation at runtime, so
+# RunState must be bound in this module's namespace; ci_failures keeps its
+# own pr_state import under TYPE_CHECKING, which is what keeps this acyclic.
+from ci_failures import RunState
 import log
 from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
 
@@ -47,7 +52,34 @@ class PRIdentity:
 
 
 @dataclass
-class CIDomain:
+class Domain:
+    """A section of PRState that one subcommand owns and writes as a unit.
+
+    Subclassing is the registration. ``_domains`` derives the registry from
+    PRState's own annotations, so a new domain is one field there and nothing
+    else — no updater, no table entry, no deserializer.
+
+    Every domain records when it was last written, so the field lives here
+    rather than being restated by each one.  It is not stamped automatically:
+    a default-constructed domain would then claim a write that never happened,
+    and the writer is the only code that knows whether one occurred.
+    """
+
+    updated_at: str = ""
+
+    def merge_into(self, prior: "Domain") -> "Domain":
+        """Combine this update with what is already stored.
+
+        A write replaces what came before, which is what every domain wants
+        except the ones that accumulate across rounds. Those override this and
+        fold ``prior`` in themselves, so the policy lives with the shape it
+        applies to rather than in the code that happens to call the write.
+        """
+        return self
+
+
+@dataclass
+class CIDomain(Domain):
     """Full CI domain — summary fields plus detailed run history.
 
     Merges the former CISummary (summary snapshot) with run-history tracking
@@ -60,9 +92,10 @@ class CIDomain:
     failure_kinds: dict[str, int] = field(default_factory=dict)
     last_run_id: int | None = None
     last_run_number: int | None = None
-    updated_at: str = ""
     # Detailed run tracking (formerly in CIState)
-    runs: dict = field(default_factory=dict)
+    # Keyed by run_id. JSON stringifies every key on the way out; serde
+    # restores the ints on the way back in.
+    runs: dict[int, RunState] = field(default_factory=dict)
     latest_run_id: int | None = None
 
 
@@ -125,7 +158,7 @@ class PostTracking:
 
 
 @dataclass
-class ReviewSummary:
+class ReviewSummary(Domain):
     """Snapshot written by ``pr review``."""
     review_file: str = ""
     review_type: str = ""
@@ -136,11 +169,10 @@ class ReviewSummary:
     failure_detail: str = ""
     cost_usd: float = 0.0
     total_tokens: int = 0
-    updated_at: str = ""
 
 
 @dataclass
-class CommentsSummary:
+class CommentsSummary(Domain):
     """Snapshot written by ``pr comments``."""
     total_threads: int = 0
     by_state: dict[str, int] = field(default_factory=dict)
@@ -148,11 +180,10 @@ class CommentsSummary:
     has_approvals: bool = False
     seen_issue_comment_ids: list[int] = field(default_factory=list)
     seen_review_body_comment_ids: list[int] = field(default_factory=list)
-    updated_at: str = ""
 
 
 @dataclass
-class TriageSummary:
+class TriageSummary(Domain):
     """Snapshot written by ``pr triage``."""
     total: int = 0
     actionable: int = 0
@@ -160,11 +191,10 @@ class TriageSummary:
     questions: int = 0
     comment_items_total: int = 0
     comment_items_actionable: int = 0
-    updated_at: str = ""
 
 
 @dataclass
-class RebaseSummary:
+class RebaseSummary(Domain):
     """Snapshot written by ``pr rebase``."""
     status: str = ""
     target_base: str = ""
@@ -173,11 +203,10 @@ class RebaseSummary:
     files_resolved: list[str] = field(default_factory=list)
     files_stale: list[str] = field(default_factory=list)
     force_pushed: bool = False
-    updated_at: str = ""
 
 
 @dataclass
-class DescribeSummary:
+class DescribeSummary(Domain):
     """Snapshot written by ``pr describe``.
 
     ``head_sha`` is what makes the pass commit-aware: a description already
@@ -187,7 +216,6 @@ class DescribeSummary:
     head_sha: str = ""
     template_path: str = ""
     changed: bool = False
-    updated_at: str = ""
 
 
 class ThreadAction(StrEnum):
@@ -209,7 +237,7 @@ class ThreadOutcome:
     action: ThreadAction = ThreadAction.FIXED
     reason: str = ""
     # The commit that landed this thread's fix. Per-outcome rather than
-    # per-pass: update_fix accumulates outcomes across rounds, so one envelope
+    # per-pass: FixSummary accumulates outcomes across rounds, so one envelope
     # SHA would relabel every earlier round's work with the latest round's
     # commit — or, when the latest round commits nothing, with none at all.
     commit_sha: str = ""
@@ -240,9 +268,26 @@ class ThreadOutcome:
             commit_sha=entry.get("commit_sha", ""),
         )
 
+    @classmethod
+    def _from_raw(cls, raw) -> "ThreadOutcome":
+        """Rebuild an outcome from an instance or a dict, renaming a legacy key.
+
+        `serde` hands the whole field over here rather than assuming the
+        current key names: an outcome written before the field was renamed
+        carries `thread_id` where the dataclass now declares `id`. Copying
+        rather than popping leaves the caller's dict alone — `apply_state_update`
+        is handed a payload it does not expect this function to rewrite.
+        """
+        if isinstance(raw, cls):
+            return raw
+        data = dict(raw)
+        if "thread_id" in data and "id" not in data:
+            data["id"] = data.pop("thread_id")
+        return _serde_from_dict(cls, data)
+
 
 @dataclass
-class FixSummary:
+class FixSummary(Domain):
     """Snapshot written by comment fix pass."""
     threads: list[ThreadOutcome] = field(default_factory=list)
     commit_sha: str = ""
@@ -261,7 +306,41 @@ class FixSummary:
     deferred_issue_id: str = ""
     deferred_issue_url: str = ""
     has_comment_items: bool = False
-    updated_at: str = ""
+
+    def merge_into(self, prior: "FixSummary") -> "FixSummary":
+        """Merge this fix pass into the accumulated summary.
+
+        Thread outcomes accumulate across rounds, keyed by thread id — a later
+        pass supersedes an earlier outcome for the same thread, but never drops
+        threads it did not touch.  A review cycle spans several rounds and the
+        summary comment must account for all of them, not just the most recent
+        pass.
+
+        The deferred tracking issue is likewise cycle-scoped: it is created once
+        and updated on later rounds.  A fix pass builds its FixSummary before
+        knowing about it, so an empty id/url means "not set this round", not
+        "cleared" — dropping it would make the next deferred round open a
+        duplicate issue.  Every other field is per-round and comes from this pass.
+        """
+        merged = {t.id: t for t in prior.threads if t.id}
+        no_id: list[ThreadOutcome] = [t for t in prior.threads if not t.id]
+        for outcome in self.threads:
+            if outcome.id:
+                merged[outcome.id] = outcome
+            else:
+                # Entries without an id cannot be de-duplicated; append rather than
+                # colliding every one onto the "" key and losing all but the last.
+                # ceiling: this list only grows across rounds. No-id outcomes are
+                # rare and a cycle's rounds are bounded, so the growth is bounded in
+                # practice — de-dup on content if a cycle ever accumulates enough to
+                # bloat the state file or the summary comment.
+                no_id.append(outcome)
+        return dataclass_replace(
+            self,
+            threads=list(merged.values()) + no_id,
+            deferred_issue_id=self.deferred_issue_id or prior.deferred_issue_id,
+            deferred_issue_url=self.deferred_issue_url or prior.deferred_issue_url,
+        )
 
 
 @dataclass
@@ -291,124 +370,20 @@ class PRState:
 # ── Serialization ───────────────────────────────────────────────────────────
 
 
-def _identity_to_dict(ident: PRIdentity) -> dict:
-    return _serde_to_dict(ident)
-
-
-def _identity_from_dict(d: dict) -> PRIdentity:
-    return _serde_from_dict(PRIdentity, d)
-
-
-def _run_state_from_dict(d: dict):
-    """Deserialize a RunState including nested FailureGroup/FailureItem objects."""
-    from ci_failures import FailureGroup, FailureItem, FailureKind, Outcome, RunState
-    failures = {}
-    for group_key, group_data in d.get("failures", {}).items():
-        items = []
-        for item_data in group_data.get("items", []):
-            outcome_val = item_data.get("outcome")
-            items.append(FailureItem(
-                id=item_data["id"],
-                annotation=item_data.get("annotation", ""),
-                file=item_data.get("file"),
-                line=item_data.get("line"),
-                diagnosis=item_data.get("diagnosis"),
-                fix_sha=item_data.get("fix_sha"),
-                outcome=Outcome(outcome_val) if outcome_val else None,
-                headline=item_data.get("headline"),
-                source_run_id=item_data.get("source_run_id"),
-                context=item_data.get("context"),
-            ))
-        failures[group_key] = FailureGroup(
-            job=group_data.get("job", group_key),
-            kind=FailureKind(group_data["kind"]),
-            items=tuple(items),
-            failed_step=group_data.get("failed_step"),
-        )
-    return RunState(
-        run_id=d["run_id"],
-        run_number=d.get("run_number", 0),
-        head_sha=d.get("head_sha", ""),
-        status=d.get("status", ""),
-        conclusion=d.get("conclusion", ""),
-        fetched_at=d.get("fetched_at", ""),
-        failures=failures,
-    )
-
-
-def _ci_from_dict(d: dict) -> CIDomain:
-    """Deserialize CIDomain, handling nested RunState objects in runs dict."""
-    d = dict(d)
-    runs_raw = d.pop("runs", {})
-    domain = _serde_from_dict(CIDomain, d)
-    if runs_raw:
-        domain.runs = {str(k): _run_state_from_dict(v) for k, v in runs_raw.items()}
-    return domain
-
-
-def _review_from_dict(d: dict) -> ReviewSummary:
-    return _serde_from_dict(ReviewSummary, d)
-
-
-def _comments_from_dict(d: dict) -> CommentsSummary:
-    return _serde_from_dict(CommentsSummary, d)
-
-
-def _triage_from_dict(d: dict) -> TriageSummary:
-    return _serde_from_dict(TriageSummary, d)
-
-
-def _rebase_from_dict(d: dict) -> RebaseSummary:
-    return _serde_from_dict(RebaseSummary, d)
-
-
-def _describe_from_dict(d: dict) -> DescribeSummary:
-    return _serde_from_dict(DescribeSummary, d)
-
-
-def _fix_from_dict(d: dict) -> FixSummary:
-    for t in d.get("threads", []):
-        if "thread_id" in t and "id" not in t:
-            t["id"] = t.pop("thread_id")
-    return _serde_from_dict(FixSummary, d)
-
-
-def _ci_to_dict(ci: CIDomain) -> dict:
-    """Serialize CIDomain, handling nested RunState objects in runs dict."""
-    d = _serde_to_dict(ci)
-    # runs values are RunState dataclasses; serde.to_dict already handles them
-    # but keys must be strings for JSON compatibility
-    if ci.runs:
-        d["runs"] = {str(k): _serde_to_dict(v) for k, v in ci.runs.items()}
-    return d
-
-
 def state_to_dict(state: PRState) -> dict:
     d = _serde_to_dict(state)
     d["_version"] = STATE_VERSION
-    # identity is a required positional arg — serialize separately
-    d["identity"] = _identity_to_dict(state.identity)
-    # ci.runs needs special handling for RunState nested objects
-    d["ci"] = _ci_to_dict(state.ci)
     return d
 
 
 def state_from_dict(d: dict) -> PRState:
-    pending_raw = d.get("pending_comments", [])
-    pending = [_serde_from_dict(PendingComment, p) for p in pending_raw]
-    return PRState(
-        identity=_identity_from_dict(d["identity"]),
-        ci=_ci_from_dict(d.get("ci", {})),
-        review=_serde_from_dict(ReviewSummary, d.get("review", {})),
-        comments=_serde_from_dict(CommentsSummary, d.get("comments", {})),
-        triage=_serde_from_dict(TriageSummary, d.get("triage", {})),
-        rebase=_serde_from_dict(RebaseSummary, d.get("rebase", {})),
-        describe=_serde_from_dict(DescribeSummary, d.get("describe", {})),
-        fix=_fix_from_dict(d.get("fix", {})),
-        pending_comments=pending,
-        created_at=d.get("created_at", ""),
-        updated_at=d.get("updated_at", ""),
-    )
+    # ceiling: strict reconstruction — a field with no dataclass default must be present in
+    # the file or serde raises TypeError. Every writer has always been dataclasses.asdict,
+    # which emits every field, so no shape ever written can be missing one. The state file
+    # is a regenerable per-worktree cache, so the recovery is `rm -rf .workbench/`. Upgrade
+    # to catching and returning None (as PipelineState.load does) if it ever fires in
+    # practice, or give the field a default if it becomes genuinely optional.
+    return _serde_from_dict(PRState, d)
 
 
 # ── I/O ─────────────────────────────────────────────────────────────────────
@@ -518,69 +493,45 @@ def update_identity(state: PRState, head_sha: str, pr_number: int | None = None)
         state.identity.pr_number = pr_number
 
 
-def update_ci_domain(state: PRState, domain: CIDomain) -> None:
-    """Replace CI domain (summary + run history)."""
-    state.ci = domain
+@cache
+def _domains() -> dict[str, type[Domain]]:
+    """Domain field name → type, derived from PRState's own annotations.
 
-
-def update_review(state: PRState, summary: ReviewSummary) -> None:
-    """Replace review summary."""
-    state.review = summary
-
-
-def update_comments(state: PRState, summary: CommentsSummary) -> None:
-    """Replace comments summary."""
-    state.comments = summary
-
-
-def update_triage(state: PRState, summary: TriageSummary) -> None:
-    """Replace triage summary."""
-    state.triage = summary
-
-
-def update_rebase(state: PRState, summary: RebaseSummary) -> None:
-    """Replace rebase summary."""
-    state.rebase = summary
-
-
-def update_describe(state: PRState, summary: DescribeSummary) -> None:
-    """Replace describe summary."""
-    state.describe = summary
-
-
-def update_fix(state: PRState, summary: FixSummary) -> None:
-    """Merge a fix pass into the accumulated fix summary.
-
-    Thread outcomes accumulate across rounds, keyed by thread id — a later pass
-    supersedes an earlier outcome for the same thread, but never drops threads
-    it did not touch.  A review cycle spans several rounds and the summary
-    comment must account for all of them, not just the most recent pass.
-
-    The deferred tracking issue is likewise cycle-scoped: it is created once and
-    updated on later rounds.  A fix pass builds its FixSummary before knowing
-    about it, so an empty id/url means "not set this round", not "cleared" —
-    dropping it would make the next deferred round open a duplicate issue.
-    Every other field is per-round and taken from the incoming summary.
+    Cached because the answer cannot change after import: PRState's fields are
+    fixed at class creation.
     """
-    merged = {t.id: t for t in state.fix.threads if t.id}
-    no_id: list[ThreadOutcome] = [t for t in state.fix.threads if not t.id]
-    for outcome in summary.threads:
-        if outcome.id:
-            merged[outcome.id] = outcome
-        else:
-            # Entries without an id cannot be de-duplicated; append rather than
-            # colliding every one onto the "" key and losing all but the last.
-            # ceiling: this list only grows across rounds. No-id outcomes are
-            # rare and a cycle's rounds are bounded, so the growth is bounded in
-            # practice — de-dup on content if a cycle ever accumulates enough to
-            # bloat the state file or the summary comment.
-            no_id.append(outcome)
-    state.fix = dataclass_replace(
-        summary,
-        threads=list(merged.values()) + no_id,
-        deferred_issue_id=summary.deferred_issue_id or state.fix.deferred_issue_id,
-        deferred_issue_url=summary.deferred_issue_url or state.fix.deferred_issue_url,
-    )
+    return {
+        name: hint
+        for name, hint in get_type_hints(PRState).items()
+        if isinstance(hint, type) and issubclass(hint, Domain)
+    }
+
+
+@cache
+def _domain_names() -> dict[type[Domain], str]:
+    """The inverse of `_domains`, for routing an update by its type.
+
+    A domain class held by two PRState fields has no single home to write to,
+    so it fails here at first use rather than silently writing to whichever
+    field happened to be annotated last.
+    """
+    names: dict[type[Domain], str] = {}
+    for name, cls in _domains().items():
+        if cls in names:
+            raise TypeError(
+                f"{cls.__name__} is the type of both PRState.{names[cls]} and "
+                f"PRState.{name}; a domain needs exactly one field to own it"
+            )
+        names[cls] = name
+    return names
+
+
+def apply(state: PRState, domain: Domain) -> None:
+    """Write a domain update into the field that owns it, honoring its merge policy."""
+    name = _domain_names().get(type(domain))
+    if name is None:
+        raise ValueError(f"{type(domain).__name__} is not a PRState domain")
+    setattr(state, name, domain.merge_into(getattr(state, name)))
 
 
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:
@@ -629,17 +580,6 @@ def load_or_init(
     )
 
 
-_DOMAIN_DESERIALIZERS: dict[str, tuple[Callable, Callable]] = {
-    "ci": (_ci_from_dict, update_ci_domain),
-    "review": (_review_from_dict, update_review),
-    "comments": (_comments_from_dict, update_comments),
-    "triage": (_triage_from_dict, update_triage),
-    "rebase": (_rebase_from_dict, update_rebase),
-    "describe": (_describe_from_dict, update_describe),
-    "fix": (_fix_from_dict, update_fix),
-}
-
-
 def apply_state_update(
     *,
     worktree_root: Path,
@@ -651,9 +591,9 @@ def apply_state_update(
     data: dict,
 ) -> None:
     """Load-or-init state, apply a domain update from a dict, and save."""
-    if domain not in _DOMAIN_DESERIALIZERS:
+    domain_cls = _domains().get(domain)
+    if domain_cls is None:
         raise ValueError(f"Unknown state domain: {domain!r}")
-    domain_from_dict, updater = _DOMAIN_DESERIALIZERS[domain]
     state = load_or_init(
         worktree_root=worktree_root,
         repo=repo,
@@ -661,5 +601,5 @@ def apply_state_update(
         pr_number=pr_number,
         head_sha=head_sha,
     )
-    updater(state, domain_from_dict(data))
+    apply(state, _serde_from_dict(domain_cls, data))
     save_state(worktree_root, state)

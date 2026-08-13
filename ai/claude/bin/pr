@@ -132,7 +132,7 @@ def _update_review_state(summary_data: dict,
         if k != "total" and isinstance(v, int) and v > 0
     }
     state = _load_or_init(ctx)
-    pr_state.update_review(state, pr_state.ReviewSummary(
+    pr_state.apply(state, pr_state.ReviewSummary(
         review_file=summary_data.get("review_file", ""),
         # The summary carries the type the review recorded; the stored value is
         # the fallback for a summary that predates the field. "pr" was never a

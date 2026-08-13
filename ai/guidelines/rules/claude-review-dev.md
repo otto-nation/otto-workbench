@@ -72,8 +72,8 @@ messages on stderr.
 1. Create the external script in `ai/claude/bin/`
 2. Add argparse subparser in `pr`
 3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
-4. If the subcommand has persistent state: add a dataclass to `pr_state.py`
-   (serialized via generic `serde.to_dict()`/`serde.from_dict()`) and an `update_<name>()` function
+4. If the subcommand has persistent state: add a `Domain` subclass to `pr_state.py`
+   and a field for it on `PRState` — see State management below
 5. Add `_render_<name>_section()` to `pr` for the `cmd_status` dashboard
 6. Register in `ai/claude/registry.yml`
 7. Add tests in `tests/`
@@ -82,9 +82,15 @@ messages on stderr.
 
 - State file: `<worktree>/.workbench/state.json`
 - Lib module: `ai/lib/pr_state.py`
-- Each domain has a dataclass (e.g., `CIDomain`, `RebaseSummary`) serialized
-  via generic `serde.to_dict()`/`serde.from_dict()`
-- Updated via `pr_state.update_<domain>(state, summary)` + `pr_state.save_state()`
+- Each domain is a `pr_state.Domain` subclass (e.g., `CIDomain`, `RebaseSummary`)
+  serialized via generic `serde.to_dict()`/`serde.from_dict()`
+- **Adding a domain is one edit**: subclass `Domain` and add a field for it on
+  `PRState`. The registry, the `apply` routing, and the `apply_state_update`
+  domain name are all derived from that field's annotation
+- Updated via `pr_state.apply(state, summary)` + `pr_state.save_state()`.
+  `apply` routes by type to the field annotated with it
+- A write replaces the stored domain. A domain that must accumulate across
+  rounds overrides `merge_into` to fold the prior value in (see `FixSummary`)
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - `pr_state.load_or_init()` provides DRY state loading across all scripts
 - `pr_state.apply_state_update()` provides generic dict-based state updates

@@ -309,7 +309,7 @@ def sync_ci_domain(domain, run: RunState):
     If a failure item existed in the prior run with a diagnosis or fix_sha,
     those values carry forward to the new run's matching item.
     """
-    prior_run = domain.runs.get(str(domain.latest_run_id)) if domain.latest_run_id is not None else None
+    prior_run = domain.runs.get(domain.latest_run_id) if domain.latest_run_id is not None else None
     prior_items = collect_item_ids(prior_run.failures) if prior_run else {}
 
     synced_failures: dict[str, FailureGroup] = {}
@@ -328,13 +328,13 @@ def sync_ci_domain(domain, run: RunState):
         failures=synced_failures,
     )
 
-    domain.runs[str(run.run_id)] = synced_run
+    domain.runs[run.run_id] = synced_run
     domain.latest_run_id = run.run_id
 
     # Prune old runs to bound state file size
     _MAX_RUNS = 10
     if len(domain.runs) > _MAX_RUNS:
-        oldest_ids = sorted(domain.runs, key=int)[:len(domain.runs) - _MAX_RUNS]
+        oldest_ids = sorted(domain.runs)[:len(domain.runs) - _MAX_RUNS]
         for old_id in oldest_ids:
             del domain.runs[old_id]
 

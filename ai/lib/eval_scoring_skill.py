@@ -121,7 +121,9 @@ with open(TRACE, "a") as fh:
 
 line = " ".join(argv)
 for rule in RULES:
-    if all(token in line for token in rule["match"]):
+    # An empty match is never a match, mirroring group_matches: all([]) is
+    # True, and an empty list would otherwise fire on every call.
+    if rule["match"] and all(token in line for token in rule["match"]):
         sys.stdout.write(rule.get("stdout", ""))
         sys.stderr.write(rule.get("stderr", ""))
         sys.exit(rule.get("exit", 0))
@@ -138,15 +140,21 @@ sys.exit(NO_MATCH_EXIT)
 '''
 
 
-def _resolve_rules(rules: list[dict], case_dir: Path) -> list[dict]:
-    """Inline every `stdout_file` so the shim never reads the case directory."""
+def _resolve_rules(name: str, rules: list[dict], case_dir: Path) -> list[dict]:
+    """Inline every `stdout_file` so the shim never reads the case directory.
+
+    A rule with no `match` key is a malformed fixture, not a catch-all — a
+    default of `[]` here would silently make the rule fire on every call.
+    """
     resolved = []
     for rule in rules:
+        if "match" not in rule:
+            raise ValueError(f"{name}: rule missing 'match': {rule!r}")
         out = dict(rule)
         source = out.pop("stdout_file", "")
         if source:
             out["stdout"] = (case_dir / source).read_text()
-        out["match"] = list(out.get("match", []))
+        out["match"] = list(out["match"])
         resolved.append(out)
     return resolved
 
@@ -165,7 +173,7 @@ def write_shims(
         shim.write_text(_SHIM.format(
             name=name,
             trace=str(trace_file),
-            rules=_resolve_rules(spec.get("rules", []), case_dir),
+            rules=_resolve_rules(name, spec.get("rules", []), case_dir),
             policy=spec.get("on_no_match", "fail"),
             no_match_exit=NO_MATCH_EXIT,
         ))

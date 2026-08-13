@@ -210,3 +210,26 @@ class TestWriteShims:
         case.mkdir()
         ess.write_shims({"pr": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
         assert os.access(bin_dir / "pr", os.X_OK)
+
+    def test_an_empty_match_list_never_fires(self, tmp_path):
+        """all([]) is True; an empty match must not become a catch-all rule."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": [], "stdout": "should never appear", "exit": 0},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl",
+        )
+        result = _run(bin_dir, "pr", "comments", "--fix")
+        assert result.returncode == ess.NO_MATCH_EXIT
+
+    def test_a_rule_missing_match_raises_naming_the_binary(self, tmp_path):
+        """A missing `match` key is a malformed fixture, not a silent catch-all."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        with pytest.raises(ValueError, match="gh"):
+            ess.write_shims(
+                {"gh": {"rules": [{"stdout": "ok", "exit": 0}]}},
+                bin_dir, case, tmp_path / "t.jsonl",
+            )

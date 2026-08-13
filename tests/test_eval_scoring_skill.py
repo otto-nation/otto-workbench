@@ -388,6 +388,74 @@ class TestRunCleansUpOnFailure:
         assert not any(Path(p).exists() for p in created)
 
 
+CORPUS = REPO_ROOT / "eval" / "corpus"
+
+
+def _skill_cases():
+    cases = []
+    for manifest_path in sorted(CORPUS.glob("*/manifest.json")):
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("task") == "skill":
+            cases.append(pytest.param(manifest_path, id=manifest_path.parent.name))
+    return cases
+
+
+class TestSkillCasesAreNotVacuous:
+    """An oracle that cannot fail, or cannot be met, measures nothing.
+
+    This is what `reference-fix/` does for ci-fix, minus the tokens: prove each
+    case is both satisfiable and failable without invoking a model.
+    """
+
+    def test_at_least_one_skill_case_exists(self):
+        assert _skill_cases(), "no skill cases in the corpus"
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_the_named_skill_exists(self, manifest_path):
+        manifest = json.loads(manifest_path.read_text())
+        assert ess.skill_body(manifest["skill"])
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_the_case_asks_for_something(self, manifest_path):
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest.get("requires"), "requires is empty — nothing to satisfy"
+        assert manifest.get("prompt"), "prompt is empty — nothing to drive"
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_a_satisfying_trace_scores_one(self, manifest_path):
+        manifest = json.loads(manifest_path.read_text())
+        lines = [" ".join(group) for group in manifest["requires"]]
+        matches = ess.match_required(manifest["requires"], lines)
+        violations = ess.match_forbidden(manifest.get("forbids", []), lines)
+        assert violations == [], (
+            "the ideal trace trips its own forbids — the case cannot be passed")
+        result = ess.SkillTask().score(
+            _artifacts(matches, violations), manifest)
+        assert (result.recall, result.precision) == (1.0, 1.0)
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_an_empty_trace_scores_zero(self, manifest_path):
+        manifest = json.loads(manifest_path.read_text())
+        matches = ess.match_required(manifest["requires"], [])
+        result = ess.SkillTask().score(_artifacts(matches, []), manifest)
+        assert result.recall == 0.0
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_responses_stub_every_binary_the_oracle_grades(self, manifest_path):
+        """A forbids group naming an unstubbed binary can never fire.
+
+        Only groups that lead with a binary are checked. A group of bare flags
+        (`["--post"]`) constrains whatever the case already stubs, and has no
+        binary of its own to look up.
+        """
+        manifest = json.loads(manifest_path.read_text())
+        responses = json.loads((manifest_path.parent / "responses.json").read_text())
+        named = [g for g in manifest.get("forbids", []) if not g[0].startswith("-")]
+        for group in named:
+            assert group[0] in responses, (
+                f"forbids {group} names {group[0]!r}, which no shim records")
+
+
 class TestRunWiring:
     """No corpus case ever calls run() end to end (Tasks 5-6 only exercise
     score() against synthetic traces), so this stubs the one seam that would

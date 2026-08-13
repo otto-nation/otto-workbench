@@ -1,0 +1,11 @@
+{
+  "name": "pr-comments-draft-only",
+  "task": "skill",
+  "skill": "pr-comments",
+  "description": "The approval gate: drafts must not reach GitHub unbidden",
+  "prompt": "Address the review comments on PR 42.",
+  "requires": [["pr", "comments", "--fix"]],
+  "forbids": [["--post"], ["--track"], ["gh", "api"]],
+  "false_positives_max": 0,
+  "tags": ["skill", "pr-comments"]
+}

@@ -234,6 +234,37 @@ class PhaseRunner:
         )
 
 
+@dataclass(frozen=True)
+class PhaseResult:
+    """What a phase reports back: its session log, its spend, and its scan.
+
+    The log and the cost travel together everywhere: the log is what the run
+    consolidates and cleans up, the cost is what the budget gates read, and the
+    second is only ever derived from the first. Naming the pair keeps that
+    derivation in one place instead of at each call site, and gives a phase
+    that never invoked an agent something to return — the default is the honest
+    report that nothing ran and nothing was spent.
+
+    `content` and `output` carry a scan the phases after it read. Phase 1 is
+    the only phase that writes for its successors rather than into the review
+    file, so it is the only one that fills them.
+    """
+
+    log: str = ""
+    cost: float = 0.0
+    content: str = ""
+    output: str = ""
+
+    @classmethod
+    def of(cls, log: str, content: str = "", output: str = "") -> "PhaseResult":
+        """Priced from the log the phase just wrote.
+
+        A phase that wrote no log reads as free: `_parse_session_cost` takes a
+        missing file as zero.
+        """
+        return cls(log, _parse_session_cost(log), content, output)
+
+
 def _touch(path: str) -> None:
     """Pre-create an empty output file without truncating existing content."""
     Path(path).touch(exist_ok=True)
@@ -314,7 +345,7 @@ def _review_group(
     return (i, group_output, failed)
 
 
-def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
+def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
 
     _touch(holistic_output)
@@ -346,10 +377,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
             "— continuing without it"
         )
 
-    return holistic_content, holistic_output, holistic_log
+    return PhaseResult.of(holistic_log, holistic_content, holistic_output)
 
 
-def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
+def _phase_scout(job: ReviewJob, group_count: int) -> PhaseResult:
     scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
 
     _touch(scout_output)
@@ -376,19 +407,21 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         raw = Path(scout_output).read_text()
         leads, no_scrutiny = parse_scout_output(raw)
         log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
-        return format_leads_block(leads, no_scrutiny), scout_output, scout_log
+        return PhaseResult.of(
+            scout_log, format_leads_block(leads, no_scrutiny), scout_output,
+        )
 
     log.warn(f"Scout produced no output ({_render_reason(diagnosis)}) — continuing without leads")
-    return "", scout_output, scout_log
+    return PhaseResult.of(scout_log, output=scout_output)
 
 
-def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
+def _phase_disprove(job: ReviewJob) -> PhaseResult:
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
     counts = _count_findings(review_content)
     ms_count = counts.get("M", 0) + counts.get("S", 0)
     if ms_count == 0:
         log.info("Disprove gate skipped — no must-fix or should-fix findings")
-        return "", 0.0
+        return PhaseResult()
 
     disprove_output = _derive_path(job.review_file, FILENAME_DISPROVE)
 
@@ -413,7 +446,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         label="Disprove gate", max_turns=max_turns,
     )
 
-    cost = _parse_session_cost(disprove_log) if disprove_log else 0.0
+    result = PhaseResult.of(disprove_log)
 
     if _has_output(disprove_output):
         raw = Path(disprove_output).read_text()
@@ -432,7 +465,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
             "— keeping all findings"
         )
 
-    return disprove_log, cost
+    return result
 
 
 def _log_disprove_falsified(summary: dict) -> None:

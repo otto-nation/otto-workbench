@@ -1871,6 +1871,41 @@ class TestPhaseSynthesis:
         assert "## Summary" in result
         assert ro.FALLBACK_SUMMARY not in result
 
+    def test_cost_comes_from_the_session_log(self, ro, tmp_path, monkeypatch):
+        job = self._make_job(ro, tmp_path)
+        review_content = "# Review\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
+
+        def mock_invoke(inv, **kwargs):
+            Path(job.review_file).write_text(review_content)
+            Path(inv.session_log).write_text(
+                '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
+            return 0
+
+        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+
+        assert ro._phase_synthesis(job, "", 3, "merged content").cost == 2.5
+
+    def test_a_fallen_back_synthesis_is_still_charged(self, ro, tmp_path, monkeypatch):
+        """The agent ran and spent; the review file just came from the merge."""
+        job = self._make_job(ro, tmp_path)
+
+        def mock_invoke(inv, **kwargs):
+            Path(inv.session_log).write_text(
+                '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
+            return 1
+
+        self._patch_pipeline(
+            monkeypatch, ro,
+            invoke_agent=mock_invoke,
+            try_recover_output=lambda *a: False,
+        )
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        result = ro._phase_synthesis(job, "", 3, merged)
+
+        assert ro.FALLBACK_SUMMARY in Path(job.review_file).read_text()
+        assert result.cost == 2.5
+
     def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
 
@@ -1994,7 +2029,9 @@ class TestPhaseSynthesis:
         assert len(calls) == 1
 
 
-class TestSynthesisFailedTracking:
+class TestRunSynthesisOrFallback:
+    """What the synthesis step records in state, and what it reports spending."""
+
     def _make_state(self, ro):
         return ro.PipelineState(
             head_sha="abc123",
@@ -2029,7 +2066,7 @@ class TestSynthesisFailedTracking:
                 job, count, merged, skipped_groups=skipped_groups,
             )
             Path(job.review_file).write_text(fallback)
-            return str(tmp_path / "synthesis.jsonl")
+            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
 
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
@@ -2039,6 +2076,52 @@ class TestSynthesisFailedTracking:
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
         assert state.synthesis_failed == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
+
+    def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        state = self._make_state(ro)
+
+        def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
+            from pathlib import Path
+            Path(job.review_file).write_text(
+                "# Review\n\n## Summary\nok\n\n## Verdict\nApprove\n")
+            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"), 1.25)
+
+        monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        result = ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [], 0, 0.0, 20.0,
+        )
+        assert result.cost == 1.25
+
+    def test_a_clean_review_spends_nothing(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        result = ro._run_synthesis_or_fallback(
+            job, state, "", 1, "No findings.\n", [], 0, 0.0, 20.0,
+        )
+        assert result == review_pipeline.PhaseResult()
+
+    def test_a_synthesis_skipped_on_budget_spends_nothing(self, ro, tmp_path, monkeypatch):
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        result = ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [], 0, 25.0, 20.0,
+        )
+        assert result == review_pipeline.PhaseResult()
 
 
 class TestIsRetryable:

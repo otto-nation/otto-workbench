@@ -87,6 +87,10 @@ def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
         if flat_file.is_file():
             shutil.move(str(flat_file), str(review_dir / new_name))
 
+    # Literal, unlike review_gc's derived list: these name the historical flat
+    # layout, not the current convention. A phase added to the enum tomorrow
+    # never wrote a file here, so deriving these from Phase would claim
+    # otherwise.
     intermediate_patterns = (
         f"{dir_name}.group-*.md", f"{dir_name}.group-*.jsonl",
         f"{dir_name}.holistic.md", f"{dir_name}.holistic.jsonl",

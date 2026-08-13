@@ -42,12 +42,16 @@ def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
 def _clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
     """Remove stale intermediate files from a completed review directory."""
     count = 0
-    # Output artifacts (group-*.md, holistic.md) follow a naming convention of
-    # their own and stay literal here; session logs are named after the
-    # phase, so that half is derived from Phase.log_filename rather than
-    # hand-copied — a phase added there is collected here for free.
-    log_globs = [p.log_filename.format("*") for p in Phase if p.log_filename]
-    patterns = ["group-*.md", "holistic.md", *log_globs]
+    # Both an artifact and a session log are named after the phase that wrote
+    # them, so the list is derived rather than hand-copied — a phase added to
+    # the enum is collected here for free. review.md is the deliverable and
+    # names no phase, so it is never matched.
+    patterns = [
+        name.format("*")
+        for p in Phase
+        for name in (p.output_filename, p.log_filename)
+        if name
+    ]
     files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
     now = datetime.now().timestamp()
     for f in files:

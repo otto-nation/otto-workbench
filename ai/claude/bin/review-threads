@@ -36,6 +36,7 @@ import publishing
 from pr_comments import ThreadState
 import review_common
 import review_issue
+import workbench_paths
 from review_common import Diagnosis
 from pr_thread_models import (
     ClassificationResult,
@@ -2798,7 +2799,7 @@ def main():
 
     trail = Trail.start(
         script="review-threads",
-        artifact_dir=str(toplevel / pr_state.STATE_DIR),
+        artifact_dir=str(workbench_paths.trail_dir(toplevel, "review-threads")),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

@@ -122,15 +122,17 @@ A second `pr` run refused to start because one is already in flight against the 
 ✗ another pr run already owns this worktree: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
 ```
 
-Two runs on one worktree corrupt each other — they both read-modify-write `.workbench/state.json`, and with `--fix` they both edit and commit the same files. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
+Two runs on one worktree corrupt each other — they both read-modify-write the worktree's `state.json`, and with `--fix` they both edit and commit the same files. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
 
 `pr status` is read-only and never contends. `pr gc` does take the lock — it deletes the state directory, so it is not safe to run against a live run.
 
 `claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_WORKTREE_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
 
-The lock is an advisory `flock` on `.workbench/run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
+The lock is an advisory `flock` on `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 
-## "`.workbench/state.json` is unreadable — discarding it"
+Both files live in the worktree's own git dir, under `workbench/` — `<repo>/.git/workbench/` for the main worktree, `<repo>/.git/worktrees/<name>/workbench/` for a linked one. `git rev-parse --absolute-git-dir` prints the git dir of whichever worktree you are standing in. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` takes the state with the worktree.
+
+## "`state.json` is unreadable — discarding it"
 
 The per-worktree PR state file did not parse — truncated by a killed write, hand-edited, or written by an older schema. Nothing in it is authoritative: every field is rebuilt by the command that wrote it, so `pr` commands carry on with no cached state rather than failing.
 

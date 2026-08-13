@@ -44,6 +44,14 @@ Two definitions outside `lib/` express the same chain, and `tests/workbench_root
 - [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`, and `logs_dir(tool=None)`, resolved per call rather than frozen at import. The two that take a name return one consumer's subtree of the root, and reject anything but a bare directory name — a path would land outside the tree the root's owner globs over.
 - [`zsh/config.d/aliases/docker.zsh`](../zsh/config.d/aliases/docker.zsh) — spelled inline, because `WORKBENCH_DIR` is unknown at shell startup and sourcing would add a file read to every shell.
 
+#### The fourth root: per-worktree state
+
+Data that belongs to one worktree rather than to the user — the `pr` scoreboard (`state.json`), its `trail.jsonl`, and the `run.lock` — lives in that worktree's own git dir, under `workbench/`. `workbench_paths.worktree_state_dir(root)` resolves it via `git rev-parse --absolute-git-dir`, which answers `<repo>/.git` for the main worktree and `<common>/worktrees/<name>` for a linked one; that is what scopes the state to a worktree instead of to the repository. It raises `NotAWorktree` when the path has no git dir to hang state from — callers that read catch it, callers that were told to write should not.
+
+Python-only, so it has no shell twin and no entry in the cross-validation. Two consequences make it worth the git dir over a directory in the working tree: `wt remove` deletes the state along with the worktree it describes, and nothing is written where the consumer repo can see it, so there is no `.gitignore` entry to maintain in every repo the tools touch. A pre-#624 `.workbench/` found in the working tree is moved into place on the first resolve.
+
+`trail_dir(root, tool)` is the same path for callers writing a trail, falling back to `logs_dir(tool)` when the directory is not a worktree — the other place `otto-log` looks.
+
 ### output.sh
 
 Output helpers: colors, logging, portable sed.

@@ -1,16 +1,21 @@
-"""Tests for the Python side of the three workbench roots.
+"""Tests for the Python side of the workbench roots.
 
 Each rung of the chain is exercised in isolation here. That the shell, zsh, and
 Python resolvers agree on the *same* rung is asserted separately, in
-tests/workbench_roots.bats.
+tests/workbench_roots.bats. The fourth root — per-worktree state, which has no
+shell twin — is covered at the bottom of this file.
 """
 
 import importlib.machinery
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from conftest import init_worktree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -192,3 +197,179 @@ class TestConsumers:
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
         server = _load_module("mcp_server", MCP_SERVER)
         assert server.CONFIG_PATH == tmp_path / "config/mcp-tools.json"
+
+
+def _add_linked_worktree(main: Path, path: Path, branch: str) -> Path:
+    """Attach *path* to *main* as a linked worktree, and return it.
+
+    ``git worktree add`` needs a commit to branch from, and the identity for it
+    is passed per-invocation: HOME is a throwaway here, so there is no global
+    config to read one from.
+    """
+    subprocess.run(
+        ["git", "-C", str(main),
+         "-c", "user.email=t@example.com", "-c", "user.name=T",
+         "commit", "--allow-empty", "-q", "-m", "init", "--no-verify"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "-b", branch, str(path)],
+        check=True, capture_output=True,
+    )
+    return path
+
+
+class TestWorktreeStateDir:
+    def test_it_sits_in_the_worktrees_own_git_dir(self, worktree):
+        assert workbench_paths.worktree_state_dir(worktree) == worktree / ".git/workbench"
+
+    def test_a_linked_worktree_gets_its_own(self, worktree, tmp_path):
+        """The point of the git dir over the common dir: state per worktree."""
+        linked = _add_linked_worktree(worktree, tmp_path / "linked", "feat")
+        state = workbench_paths.worktree_state_dir(linked)
+        assert state == worktree / ".git/worktrees/linked/workbench"
+        assert state != workbench_paths.worktree_state_dir(worktree)
+
+    def test_a_subdirectory_resolves_to_the_same_state(self, worktree):
+        """One scoreboard per worktree, wherever inside it the command ran."""
+        nested = worktree / "a" / "b"
+        nested.mkdir(parents=True)
+        assert workbench_paths.worktree_state_dir(nested) == \
+            workbench_paths.worktree_state_dir(worktree)
+
+    def test_it_accepts_a_string_root(self, worktree):
+        assert workbench_paths.worktree_state_dir(str(worktree)) == worktree / ".git/workbench"
+
+    def test_resolving_does_not_create_it(self, worktree):
+        """Callers that only read must not leave a directory behind."""
+        workbench_paths.worktree_state_dir(worktree)
+        assert not (worktree / ".git/workbench").exists()
+
+    def test_a_directory_outside_a_worktree_raises(self, tmp_path):
+        outside = tmp_path / "plain"
+        outside.mkdir()
+        with pytest.raises(workbench_paths.NotAWorktree):
+            workbench_paths.worktree_state_dir(outside)
+
+    def test_a_missing_directory_raises(self, tmp_path):
+        with pytest.raises(workbench_paths.NotAWorktree):
+            workbench_paths.worktree_state_dir(tmp_path / "gone")
+
+    def test_a_relative_git_dir_raises(self, worktree, monkeypatch):
+        """git was asked for an absolute path, so a relative answer is not git.
+
+        Trusting it would hang the worktree's state off whatever directory the
+        process happened to be sitting in.
+        """
+        monkeypatch.setattr(
+            workbench_paths.subprocess, "run",
+            lambda *a, **k: SimpleNamespace(returncode=0, stdout=".git\n"),
+        )
+        with pytest.raises(workbench_paths.NotAWorktree):
+            workbench_paths.worktree_state_dir(worktree)
+
+    def test_no_git_on_the_path_raises(self, worktree, monkeypatch):
+        def _no_git(*_args, **_kwargs):
+            raise FileNotFoundError("git")
+
+        monkeypatch.setattr(workbench_paths.subprocess, "run", _no_git)
+        with pytest.raises(workbench_paths.NotAWorktree):
+            workbench_paths.worktree_state_dir(worktree)
+
+
+def _refuse_to_move(*_args, **_kwargs):
+    """A shutil.move that must never be reached."""
+    raise AssertionError("the copy fallback ran after the target already existed")
+
+
+class TestLegacyAdoption:
+    """A pre-#624 `.workbench/` in the working tree, carried into the git dir."""
+
+    def _legacy(self, worktree: Path) -> Path:
+        legacy = worktree / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+        legacy.mkdir()
+        (legacy / "state.json").write_text('{"version": 1}')
+        # The trail and the lock live in there too, so the move has to be whole:
+        # anything left behind in the working tree is read by nothing afterwards.
+        (legacy / "trail.jsonl").write_text('{"step": "fetch"}\n')
+        (legacy / "run.lock").write_text("{}")
+        return legacy
+
+    def test_it_moves_the_whole_directory(self, worktree):
+        legacy = self._legacy(worktree)
+        state = workbench_paths.worktree_state_dir(worktree)
+        assert (state / "state.json").read_text() == '{"version": 1}'
+        assert (state / "trail.jsonl").read_text() == '{"step": "fetch"}\n'
+        assert (state / "run.lock").exists()
+        assert not legacy.exists()
+
+    def test_it_happens_once(self, worktree):
+        self._legacy(worktree)
+        state = workbench_paths.worktree_state_dir(worktree)
+        (state / "state.json").write_text('{"version": 2}')
+        self._legacy(worktree)
+        # The adopted state is the live one now; a `.workbench/` that reappears
+        # is a stale leftover and must not overwrite it.
+        assert workbench_paths.worktree_state_dir(worktree) == state
+        assert (state / "state.json").read_text() == '{"version": 2}'
+
+    def test_a_legacy_file_is_not_adopted(self, worktree):
+        """Only a directory is the old layout; a stray file is somebody else's."""
+        stray = worktree / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+        stray.write_text("not a state dir")
+        assert not workbench_paths.worktree_state_dir(worktree).exists()
+        assert stray.read_text() == "not a state dir"
+
+    def test_it_falls_back_to_a_copy_across_filesystems(self, worktree, monkeypatch):
+        """os.rename refuses a cross-device move; the git dir of a linked
+        worktree can well be on another filesystem."""
+        def _cross_device(*_args, **_kwargs):
+            raise OSError(18, "Invalid cross-device link")
+
+        monkeypatch.setattr(workbench_paths.os, "rename", _cross_device)
+        self._legacy(worktree)
+        state = workbench_paths.worktree_state_dir(worktree)
+        assert (state / "state.json").read_text() == '{"version": 1}'
+
+    def test_a_failed_move_warns_and_starts_fresh(self, worktree, monkeypatch, capsys):
+        """The scoreboard is rebuilt by whatever writes it next, so a run must
+        not die over one."""
+        def _refuse(*_args, **_kwargs):
+            raise OSError("nope")
+
+        monkeypatch.setattr(workbench_paths.os, "rename", _refuse)
+        monkeypatch.setattr(workbench_paths.shutil, "move", _refuse)
+        self._legacy(worktree)
+        state = workbench_paths.worktree_state_dir(worktree)
+        assert not state.exists()
+        assert "starting fresh" in capsys.readouterr().err
+
+    def test_a_race_that_lost_is_not_a_failure(self, worktree, monkeypatch):
+        """Two runs can resolve at once. The loser finds the data already there,
+        which is the outcome it wanted."""
+        target = worktree / ".git" / workbench_paths.WORKTREE_STATE_DIRNAME
+
+        def _rename_then_lose(*_args, **_kwargs):
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "state.json").write_text('{"version": 9}')
+            raise OSError("lost the race")
+
+        monkeypatch.setattr(workbench_paths.os, "rename", _rename_then_lose)
+        monkeypatch.setattr(workbench_paths.shutil, "move", _refuse_to_move)
+        self._legacy(worktree)
+        state = workbench_paths.worktree_state_dir(worktree)
+        assert (state / "state.json").read_text() == '{"version": 9}'
+
+
+class TestTrailDir:
+    def test_a_trail_sits_beside_the_state_it_describes(self, worktree):
+        assert workbench_paths.trail_dir(worktree, "pr") == \
+            workbench_paths.worktree_state_dir(worktree)
+
+    def test_outside_a_worktree_it_falls_back_to_the_tools_logs(self, tmp_path, clean_env):
+        """`pr status` from a bare repo still has a trail to write, and it goes
+        to the other place otto-log looks."""
+        outside = tmp_path / "plain"
+        outside.mkdir()
+        assert workbench_paths.trail_dir(outside, "pr") == \
+            clean_env / ".config/workbench/logs/pr"

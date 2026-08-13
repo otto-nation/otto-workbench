@@ -27,6 +27,7 @@ import rebase_status
 import review_gc
 import log
 import review_common
+import workbench_paths
 import worktree_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
@@ -439,7 +440,7 @@ def _clear_state_dir(state_dir: Path) -> None:
 def _gc_stale_pr_state(worktree_root: Path) -> int:
     """Remove pr state directory if it is unreadable, or if the PR is merged or
     closed. Returns 1 if cleaned."""
-    state_dir = worktree_root / pr_state.STATE_DIR
+    state_dir = workbench_paths.worktree_state_dir(worktree_root)
     state_file = state_dir / pr_state.STATE_FILE
     if not state_file.is_file():
         return 0
@@ -567,9 +568,14 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
               original_pr: str | None,
               original_branch: str | None) -> int:
     """Start the trail and route to the command's handler or backing script."""
+    # A command that runs without a worktree — `pr status` from a bare repo —
+    # has no state for its trail to sit beside, so it goes to pr's own logs.
+    trail_root = workbench_paths.logs_dir("pr")
+    if ctx.worktree_root:
+        trail_root = workbench_paths.trail_dir(ctx.worktree_root, "pr")
     trail = Trail.start(
         script="pr",
-        artifact_dir=str(ctx.worktree_root / pr_state.STATE_DIR) if ctx.worktree_root else "/tmp",
+        artifact_dir=str(trail_root),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=getattr(global_args, "debug", False),
     )

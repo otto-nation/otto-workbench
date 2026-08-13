@@ -1432,11 +1432,11 @@ class TestBuildDeferredIssueBody:
 class TestFinalizeDeferredCarriesTheReason:
     """The reason is the only column separating "agent gave up" from a decision."""
 
-    def _state_with_deferred(self, tmp_path):
+    def _state_with_deferred(self, worktree):
         state = PRState(
             identity=PRIdentity(
                 repo="owner/repo", branch="b", pr_number=42,
-                head_sha="abc1234", worktree_root=str(tmp_path),
+                head_sha="abc1234", worktree_root=str(worktree),
             ),
             fix=FixSummary(threads=[
                 ThreadOutcome(
@@ -1447,10 +1447,10 @@ class TestFinalizeDeferredCarriesTheReason:
                 ),
             ]),
         )
-        pr_state.save_state(tmp_path, state)
+        pr_state.save_state(worktree, state)
         ctx = pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=tmp_path, head_sha="abc1234",
+            worktree_root=worktree, head_sha="abc1234",
         )
         return state, ctx
 
@@ -1464,24 +1464,24 @@ class TestFinalizeDeferredCarriesTheReason:
             rt._finalize_deferred(state, ctx, {}, track={"t1"})
         return captured
 
-    def test_reason_survives_into_the_tracking_issue(self, rt, tmp_path):
-        state, ctx = self._state_with_deferred(tmp_path)
+    def test_reason_survives_into_the_tracking_issue(self, rt, worktree):
+        state, ctx = self._state_with_deferred(worktree)
         captured = self._run(rt, state, ctx)
         assert [e.reason for e in captured] == ["agent could not auto-fix"]
 
-    def test_the_rest_of_the_outcome_survives_too(self, rt, tmp_path):
-        state, ctx = self._state_with_deferred(tmp_path)
+    def test_the_rest_of_the_outcome_survives_too(self, rt, worktree):
+        state, ctx = self._state_with_deferred(worktree)
         entry = self._run(rt, state, ctx)[0]
         assert (entry.id, entry.file, entry.line) == ("t1", "a.go", 7)
         assert (entry.reviewer, entry.summary) == ("kgn", "rename the guard")
 
-    def test_the_caller_owns_the_save(self, rt, tmp_path):
+    def test_the_caller_owns_the_save(self, rt, worktree):
         """Saving its own read would drop whatever the caller already wrote."""
-        state, ctx = self._state_with_deferred(tmp_path)
+        state, ctx = self._state_with_deferred(worktree)
         state.fix.commit_status = "pushed"
         self._run(rt, state, ctx)
         assert state.fix.deferred_issue_id == "I_1"
-        on_disk = pr_state.load_state(tmp_path)
+        on_disk = pr_state.load_state(worktree)
         assert on_disk.fix.commit_status == ""
         assert on_disk.fix.deferred_issue_id == ""
 
@@ -1489,11 +1489,11 @@ class TestFinalizeDeferredCarriesTheReason:
 class TestDeferralRequiresAChoice:
     """Deferral is a decision. An agent running out of turns is not one."""
 
-    def _state(self, tmp_path, ids):
+    def _state(self, worktree, ids):
         state = PRState(
             identity=PRIdentity(
                 repo="owner/repo", branch="b", pr_number=42,
-                head_sha="abc1234", worktree_root=str(tmp_path),
+                head_sha="abc1234", worktree_root=str(worktree),
             ),
             fix=FixSummary(threads=[
                 ThreadOutcome(
@@ -1504,13 +1504,13 @@ class TestDeferralRequiresAChoice:
                 for i in ids
             ]),
         )
-        pr_state.save_state(tmp_path, state)
+        pr_state.save_state(worktree, state)
         return state
 
-    def _ctx(self, tmp_path):
+    def _ctx(self, worktree):
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=tmp_path, head_sha="abc1234",
+            worktree_root=worktree, head_sha="abc1234",
         )
 
     def _run(self, rt, state, ctx, track):
@@ -1523,45 +1523,45 @@ class TestDeferralRequiresAChoice:
             rt._finalize_deferred(state, ctx, {}, track=track)
         return captured, create, reply
 
-    def test_no_selection_files_nothing(self, rt, tmp_path):
-        state = self._state(tmp_path, ["t1", "t2"])
+    def test_no_selection_files_nothing(self, rt, worktree):
+        state = self._state(worktree, ["t1", "t2"])
         captured, create, reply = self._run(
-            rt, state, self._ctx(tmp_path), track=frozenset())
+            rt, state, self._ctx(worktree), track=frozenset())
         assert captured == []
         create.assert_not_called()
         reply.assert_not_called()
 
-    def test_default_is_no_selection(self, rt, tmp_path):
+    def test_default_is_no_selection(self, rt, worktree):
         """Omitting track entirely must not fall back to filing everything."""
-        state = self._state(tmp_path, ["t1", "t2"])
+        state = self._state(worktree, ["t1", "t2"])
         with patch.object(rt, "_create_or_update_deferred_issue") as create, \
                 patch.object(rt, "_post_deferred_replies"):
-            rt._finalize_deferred(state, self._ctx(tmp_path), {})
+            rt._finalize_deferred(state, self._ctx(worktree), {})
         create.assert_not_called()
 
-    def test_only_selected_threads_are_filed(self, rt, tmp_path):
-        state = self._state(tmp_path, ["t1", "t2", "t3"])
+    def test_only_selected_threads_are_filed(self, rt, worktree):
+        state = self._state(worktree, ["t1", "t2", "t3"])
         captured, _, _ = self._run(
-            rt, state, self._ctx(tmp_path), track={"t2"})
+            rt, state, self._ctx(worktree), track={"t2"})
         assert [e.id for e in captured] == ["t2"]
 
-    def test_track_all_files_everything(self, rt, tmp_path):
-        state = self._state(tmp_path, ["t1", "t2"])
+    def test_track_all_files_everything(self, rt, worktree):
+        state = self._state(worktree, ["t1", "t2"])
         captured, _, _ = self._run(
-            rt, state, self._ctx(tmp_path), track=rt.TRACK_ALL)
+            rt, state, self._ctx(worktree), track=rt.TRACK_ALL)
         assert [e.id for e in captured] == ["t1", "t2"]
 
-    def test_unknown_id_is_an_error_not_a_silent_skip(self, rt, tmp_path):
-        state = self._state(tmp_path, ["t1"])
+    def test_unknown_id_is_an_error_not_a_silent_skip(self, rt, worktree):
+        state = self._state(worktree, ["t1"])
         with pytest.raises(SystemExit):
-            self._run(rt, state, self._ctx(tmp_path), track={"t9"})
+            self._run(rt, state, self._ctx(worktree), track={"t9"})
 
-    def test_a_non_deferred_id_is_also_an_error(self, rt, tmp_path):
+    def test_a_non_deferred_id_is_also_an_error(self, rt, worktree):
         """Naming a thread the pass already fixed is a mistake worth surfacing."""
-        state = self._state(tmp_path, ["t1"])
+        state = self._state(worktree, ["t1"])
         state.fix.threads.append(ThreadOutcome(id="t2", action=ThreadAction.FIXED))
         with pytest.raises(SystemExit):
-            self._run(rt, state, self._ctx(tmp_path), track={"t2"})
+            self._run(rt, state, self._ctx(worktree), track={"t2"})
 
 
 class TestUnfiledDeferralsAreNamed:
@@ -1623,23 +1623,23 @@ class TestTrackFlagParsing:
 class TestFinishDeferredWork:
     """The close-out phase: push-deferred replies, tracking issue, summary."""
 
-    def _ctx(self, tmp_path):
+    def _ctx(self, worktree):
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=tmp_path, head_sha="abc1234",
+            worktree_root=worktree, head_sha="abc1234",
         )
 
-    def _save(self, tmp_path, **fix_kw):
-        pr_state.save_state(tmp_path, PRState(
+    def _save(self, worktree, **fix_kw):
+        pr_state.save_state(worktree, PRState(
             identity=PRIdentity(
                 repo="owner/repo", branch="b", pr_number=42,
-                head_sha="abc1234", worktree_root=str(tmp_path),
+                head_sha="abc1234", worktree_root=str(worktree),
             ),
             fix=FixSummary(**fix_kw),
         ))
 
-    def test_all_three_steps_run_in_order(self, rt, tmp_path):
-        self._save(tmp_path)
+    def test_all_three_steps_run_in_order(self, rt, worktree):
+        self._save(worktree)
         order = []
         with patch.object(rt, "_post_pending_fix_replies",
                           side_effect=lambda *a, **k: order.append("replies")), \
@@ -1647,12 +1647,12 @@ class TestFinishDeferredWork:
                              side_effect=lambda *a, **k: order.append("issue")), \
                 patch.object(rt, "_render_deferred_summary",
                              side_effect=lambda *a, **k: order.append("summary")):
-            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
         assert order == ["replies", "issue", "summary"]
 
-    def test_state_written_by_the_steps_is_persisted(self, rt, tmp_path):
+    def test_state_written_by_the_steps_is_persisted(self, rt, worktree):
         """The steps mutate in place; this phase is the one that saves."""
-        self._save(tmp_path)
+        self._save(worktree)
 
         def mark(state, *a, **k):
             state.fix.commit_status = "pushed"
@@ -1660,12 +1660,12 @@ class TestFinishDeferredWork:
         with patch.object(rt, "_post_pending_fix_replies", side_effect=mark), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
-            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
-        assert pr_state.load_state(tmp_path).fix.commit_status == "pushed"
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+        assert pr_state.load_state(worktree).fix.commit_status == "pushed"
 
-    def test_it_reads_state_from_disk_not_from_the_caller(self, rt, tmp_path):
+    def test_it_reads_state_from_disk_not_from_the_caller(self, rt, worktree):
         """The fix pass writes its outcomes there; a stale copy would miss them."""
-        self._save(tmp_path, threads=[
+        self._save(worktree, threads=[
             ThreadOutcome(id="t9", action=ThreadAction.DEFERRED, reason="r"),
         ])
         seen = []
@@ -1673,23 +1673,23 @@ class TestFinishDeferredWork:
                           side_effect=lambda st, *a, **k: seen.extend(st.fix.threads)), \
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
-            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
         assert [t.id for t in seen] == ["t9"]
 
-    def test_no_state_on_disk_is_a_no_op(self, rt, tmp_path):
+    def test_no_state_on_disk_is_a_no_op(self, rt, worktree):
         with patch.object(rt, "_post_pending_fix_replies") as replies:
-            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
         replies.assert_not_called()
 
-    def test_a_failing_step_propagates(self, rt, tmp_path):
+    def test_a_failing_step_propagates(self, rt, worktree):
         """A caller closing the loop needs a failure to be an error, not a log line."""
-        self._save(tmp_path)
+        self._save(worktree)
         with patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_finalize_deferred",
                              side_effect=RuntimeError("gh down")), \
                 patch.object(rt, "_render_deferred_summary"):
             with pytest.raises(RuntimeError):
-                rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+                rt._finish_deferred_work(self._ctx(worktree), PRReport())
 
 
 class TestReconcileFixSnapshot:
@@ -1766,17 +1766,17 @@ class TestReconcileFixSnapshot:
 class TestReconcileRunsBeforeTheWrites:
     """Within one invocation the two must not disagree about the same thread."""
 
-    def test_reconciled_thread_never_reaches_the_tracking_issue(self, rt, tmp_path):
-        pr_state.save_state(tmp_path, PRState(
+    def test_reconciled_thread_never_reaches_the_tracking_issue(self, rt, worktree):
+        pr_state.save_state(worktree, PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
-                                head_sha="aaaaaaa", worktree_root=str(tmp_path)),
+                                head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(head_sha="aaaaaaa", threads=[
                 ThreadOutcome(id="t1", file="a.go", line=1, reviewer="kgn",
                               summary="one", action=ThreadAction.DEFERRED),
             ]),
         ))
         ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=tmp_path, head_sha="aaaaaaa")
+                                         worktree_root=worktree, head_sha="aaaaaaa")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
@@ -1789,17 +1789,17 @@ class TestReconcileRunsBeforeTheWrites:
         create.assert_not_called()
         reply.assert_not_called()
 
-    def test_the_flip_is_persisted(self, rt, tmp_path):
+    def test_the_flip_is_persisted(self, rt, worktree):
         """Otherwise the next --finish re-derives it from the same stale row."""
-        pr_state.save_state(tmp_path, PRState(
+        pr_state.save_state(worktree, PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
-                                head_sha="aaaaaaa", worktree_root=str(tmp_path)),
+                                head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(head_sha="aaaaaaa", threads=[
                 ThreadOutcome(id="t1", action=ThreadAction.DEFERRED),
             ]),
         ))
         ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=tmp_path, head_sha="aaaaaaa")
+                                         worktree_root=worktree, head_sha="aaaaaaa")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.RESOLVED, is_resolved=True,
             comments=[{"body": "x"}],
@@ -1807,17 +1807,17 @@ class TestReconcileRunsBeforeTheWrites:
         with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(ctx, report)
-        on_disk = pr_state.load_state(tmp_path)
+        on_disk = pr_state.load_state(worktree)
         assert on_disk.fix.threads[0].action == ThreadAction.FIXED
 
 
 class TestStaleSnapshotIsAnnounced:
     """A snapshot from a different HEAD is a record of the past, not a plan."""
 
-    def _state(self, tmp_path, snapshot_sha):
+    def _state(self, worktree, snapshot_sha):
         state = PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
-                                head_sha=snapshot_sha, worktree_root=str(tmp_path)),
+                                head_sha=snapshot_sha, worktree_root=str(worktree)),
             fix=FixSummary(
                 head_sha=snapshot_sha,
                 threads=[ThreadOutcome(id="t1", file="a.go", line=7, reviewer="kgn",
@@ -1826,48 +1826,48 @@ class TestStaleSnapshotIsAnnounced:
                                        reason="agent could not auto-fix")],
             ),
         )
-        pr_state.save_state(tmp_path, state)
+        pr_state.save_state(worktree, state)
         return state
 
-    def _ctx(self, tmp_path):
+    def _ctx(self, worktree):
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=tmp_path, head_sha="aaaaaaa",
+            worktree_root=worktree, head_sha="aaaaaaa",
         )
 
-    def _warnings(self, rt, tmp_path, current_sha):
+    def _warnings(self, rt, worktree, current_sha):
         seen = []
         with patch.object(rt, "_get_head_sha", return_value=current_sha), \
                 patch.object(rt.log, "warn", side_effect=seen.append), \
                 patch.object(rt, "_post_pending_fix_replies"), \
                 patch.object(rt, "_render_deferred_summary"), \
                 patch.object(rt, "_finalize_deferred"):
-            rt._finish_deferred_work(self._ctx(tmp_path), PRReport())
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
         return seen
 
-    def test_head_moved_is_announced(self, rt, tmp_path):
-        self._state(tmp_path, "aaaaaaa")
-        warned = self._warnings(rt, tmp_path, "bbbbbbb")
+    def test_head_moved_is_announced(self, rt, worktree):
+        self._state(worktree, "aaaaaaa")
+        warned = self._warnings(rt, worktree, "bbbbbbb")
         assert any("aaaaaaa" in w and "bbbbbbb" in w for w in warned)
 
-    def test_head_unchanged_says_nothing(self, rt, tmp_path):
-        self._state(tmp_path, "aaaaaaa")
-        assert self._warnings(rt, tmp_path, "aaaaaaa") == []
+    def test_head_unchanged_says_nothing(self, rt, worktree):
+        self._state(worktree, "aaaaaaa")
+        assert self._warnings(rt, worktree, "aaaaaaa") == []
 
-    def test_missing_snapshot_sha_is_treated_as_stale(self, rt, tmp_path):
+    def test_missing_snapshot_sha_is_treated_as_stale(self, rt, worktree):
         """Legacy state predates the field; it cannot be vouched for."""
-        state = self._state(tmp_path, "aaaaaaa")
+        state = self._state(worktree, "aaaaaaa")
         state.fix.head_sha = ""
-        pr_state.save_state(tmp_path, state)
-        assert any("(unrecorded)" in w for w in self._warnings(rt, tmp_path, "aaaaaaa"))
+        pr_state.save_state(worktree, state)
+        assert any("(unrecorded)" in w for w in self._warnings(rt, worktree, "aaaaaaa"))
 
-    def test_an_empty_snapshot_has_nothing_to_be_stale_about(self, rt, tmp_path):
-        pr_state.save_state(tmp_path, PRState(
+    def test_an_empty_snapshot_has_nothing_to_be_stale_about(self, rt, worktree):
+        pr_state.save_state(worktree, PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
-                                head_sha="aaaaaaa", worktree_root=str(tmp_path)),
+                                head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(),
         ))
-        assert self._warnings(rt, tmp_path, "bbbbbbb") == []
+        assert self._warnings(rt, worktree, "bbbbbbb") == []
 
 
 class TestFinishFlag:

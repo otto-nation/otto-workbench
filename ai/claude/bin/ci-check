@@ -1031,10 +1031,13 @@ def main():
         started=pr_state.now_iso(),
     )
 
+    # No worktree means no state to sit beside; the trail still gets written.
+    trail_root = workbench_paths.logs_dir("ci-check")
+    if toplevel:
+        trail_root = workbench_paths.trail_dir(toplevel, "ci-check")
     trail = Trail.start(
         script="ci-check",
-        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel
-        else str(workbench_paths.logs_dir("ci-check")),
+        artifact_dir=str(trail_root),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

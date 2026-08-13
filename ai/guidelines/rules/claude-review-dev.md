@@ -80,7 +80,8 @@ messages on stderr.
 
 ### State management
 
-- State file: `<worktree>/.workbench/state.json`
+- State file: `state.json` in the worktree's own git dir, under `workbench/` —
+  resolve it with `workbench_paths.worktree_state_dir()`, never by hand
 - Lib module: `ai/lib/pr_state.py`
 - Each domain is a `pr_state.Domain` subclass (e.g., `CIDomain`, `RebaseSummary`)
   serialized via generic `serde.to_dict()`/`serde.from_dict()`
